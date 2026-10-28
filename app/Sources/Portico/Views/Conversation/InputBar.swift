@@ -10,14 +10,18 @@ import UniformTypeIdentifiers
 struct InputBar: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
-    @State private var draft: String = ""
     @FocusState private var editorFocused: Bool
 
+    /// The editor's text lives in the model (per chat) so it survives
+    /// switching chats and comes back when the gateway refuses a send.
+    private var draft: Binding<String> {
+        Binding(get: { model.draft(for: chat) }, set: { model.setDraft($0, for: chat) })
+    }
     private var attachments: [String] { model.draftAttachments[chat] ?? [] }
     private var busy: Bool { model.isBusy(chat: chat) }
     private var connected: Bool { model.connection == .connected }
     private var canSend: Bool {
-        connected && !busy && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        connected && !busy && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -70,14 +74,14 @@ struct InputBar: View {
 
     private var editor: some View {
         ZStack(alignment: .topLeading) {
-            if draft.isEmpty {
+            if draft.wrappedValue.isEmpty {
                 Text(placeholder)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 8)
                     .allowsHitTesting(false)
             }
-            TextEditor(text: $draft)
+            TextEditor(text: draft)
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 36, maxHeight: 160)
@@ -135,10 +139,11 @@ struct InputBar: View {
         }
     }
 
+    /// The model clears the draft on send and restores it if the gateway
+    /// refuses (`attachment.missing`, `chat.busy`).
     private func send() {
         guard canSend else { return }
-        model.sendMessage(chat: chat, text: draft)
-        draft = ""
+        model.sendMessage(chat: chat, text: draft.wrappedValue)
         editorFocused = true
     }
 

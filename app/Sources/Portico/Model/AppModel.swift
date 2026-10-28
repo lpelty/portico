@@ -82,6 +82,21 @@ final class AppModel: ObservableObject {
     /// Per chat, the attachment paths queued in the input bar: the Files
     /// pane and drag-and-drop add here; a send clears the chat's list.
     @Published private(set) var draftAttachments: [Int: [String]] = [:]
+    /// Per chat, the text in the input bar's editor. Kept here rather than
+    /// in the view so switching chats keeps a half-typed message, like the
+    /// chips, and so a refused send can give the text back.
+    @Published private(set) var drafts: [Int: String] = [:]
+
+    /// A `message.send` the gateway has not answered yet. The gateway says
+    /// nothing about the person's own text on a live turn (`user.text` is
+    /// replay-only), so the app keeps it until `turn.started` names the
+    /// turn — then it becomes the bubble — or an `error` with the send's id
+    /// refuses it, and the text and chips go back into the input bar.
+    struct PendingSend: Equatable, Sendable {
+        var id: String
+        var text: String
+        var attachments: [String]
+    }
 
     enum ConnectionState: Equatable, Sendable {
         case disconnected
@@ -108,6 +123,8 @@ final class AppModel: ObservableObject {
     private var pendingNewChats: Set<String> = []
     /// Per chat, the turn the last delta belonged to, for coalescing.
     private var currentTurn: [Int: Int] = [:]
+    /// Per chat, the one send in flight (a second is refused `chat.busy`).
+    private(set) var pendingSends: [Int: PendingSend] = [:]
     private var nextItemId = 0
 
     init() {}
@@ -125,6 +142,9 @@ final class AppModel: ObservableObject {
     func handleHello(_ incoming: HelloServer) -> [ClientMessage] {
         if let previous = hello, previous.epoch != incoming.epoch {
             lastSeq = [:]
+            // A restarted gateway never saw (or will never answer) a send in
+            // flight; the replay from the beginning carries any turn that ran.
+            pendingSends = [:]
         }
         hello = incoming
         return openedChats.sorted().map { chat in
@@ -218,6 +238,9 @@ final class AppModel: ObservableObject {
             lastError = error
             if let chat = error.chat {
                 status[chat] = error.message
+                if let id = error.id, let pending = pendingSends[chat], pending.id == id {
+                    restore(pending, to: chat)
+                }
             }
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardCancel:
@@ -260,6 +283,9 @@ final class AppModel: ObservableObject {
             closedCards[chat] = [:]
             currentTurn[chat] = nil
             lastSeq[chat] = nil
+            // The replay is the whole truth of the chat: its `user.text` is
+            // the bubble for any send that ran, so the pending one must not add a second.
+            pendingSends[chat] = nil
         }
         for event in history.events {
             if let seq = event.envelope.seq, let seen = lastSeq[chat], seq <= seen { continue }
@@ -276,6 +302,9 @@ final class AppModel: ObservableObject {
         switch event {
         case .turnStarted(let started):
             currentTurn[chat] = started.turn
+            if let pending = pendingSends.removeValue(forKey: chat) {
+                items.append(.userText(UserText(chat: chat, turn: started.turn, text: pending.text)))
+            }
 
         case .userText(let user):
             currentTurn[chat] = user.turn
@@ -393,13 +422,39 @@ final class AppModel: ObservableObject {
 
     /// Send `text` (trimmed) with the chat's draft attachments as one
     /// `message.send`, then clear the draft. Blank text sends nothing: the
-    /// gateway would have nothing to give the engine.
+    /// gateway would have nothing to give the engine. The send is remembered
+    /// until the gateway starts its turn (the user bubble) or refuses it
+    /// (the text and chips come back).
     func sendMessage(chat: Int, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let attachments = draftAttachments[chat] ?? []
-        send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: Self.requestId())))
+        let id = Self.requestId()
+        pendingSends[chat] = PendingSend(id: id, text: trimmed, attachments: attachments)
+        send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: id)))
         draftAttachments[chat] = nil
+        drafts[chat] = nil
+    }
+
+    /// Put a refused send back where it was composed. Text typed since the
+    /// send stays, after the returned text; chips are re-added ahead of any
+    /// attached since.
+    private func restore(_ pending: PendingSend, to chat: Int) {
+        pendingSends[chat] = nil
+        let typedSince = draft(for: chat)
+        drafts[chat] = typedSince.isEmpty ? pending.text : pending.text + "\n" + typedSince
+        let attachedSince = draftAttachments[chat] ?? []
+        draftAttachments[chat] = nil
+        attach(pending.attachments + attachedSince, to: chat)
+    }
+
+    /// The input bar's text for a chat (empty when nothing is typed).
+    func draft(for chat: Int) -> String {
+        drafts[chat] ?? ""
+    }
+
+    func setDraft(_ text: String, for chat: Int) {
+        drafts[chat] = text.isEmpty ? nil : text
     }
 
     /// Interrupt the running turn; the gateway answers with
@@ -438,6 +493,8 @@ final class AppModel: ObservableObject {
     private func forget(chat: Int) {
         noteClosed(chat: chat)
         draftAttachments[chat] = nil
+        drafts[chat] = nil
+        pendingSends[chat] = nil
         transcripts[chat] = nil
         openCards[chat] = nil
         artifacts[chat] = nil

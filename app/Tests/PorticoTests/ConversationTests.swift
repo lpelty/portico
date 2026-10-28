@@ -25,6 +25,12 @@ final class ConversationTests: XCTestCase {
         ChatSummary(chat: chat, folder: "/tmp/demo", alias: nil, state: state, created: "2026-10-27T12:00:00Z")
     }
 
+    private func hello(epoch: String) -> HelloServer {
+        HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.1.0", epoch: epoch,
+            brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [], commands: [], capabilities: [])
+    }
+
     // MARK: - send and stop
 
     func testSendMessageEmitsMessageSendWithAttachmentsAndClearsDraft() {
@@ -74,6 +80,141 @@ final class ConversationTests: XCTestCase {
         XCTAssertTrue(model.isBusy(chat: 3))
         XCTAssertFalse(model.isBusy(chat: 4))
         XCTAssertFalse(model.isBusy(chat: 9), "an unknown chat is not busy")
+    }
+
+    // MARK: - the user bubble on a live send
+
+    func testLiveSendShowsAUserBubbleWhenTheTurnStarts() {
+        let (model, sent) = model()
+        model.sendMessage(chat: 1, text: "say hi")
+        guard case .messageSend? = sent.frames.first else { return XCTFail("expected message.send, got \(sent.frames)") }
+        XCTAssertEqual(model.transcripts[1] ?? [], [], "nothing is shown until the gateway accepts the send")
+
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        model.apply(.chatState(ChatState(chat: 1, state: .working, seq: 2)))
+        model.apply(.textDelta(TextDelta(chat: 1, turn: 1, text: "hi", seq: 3)))
+
+        let items = model.transcripts[1] ?? []
+        XCTAssertEqual(items.count, 2, "the user bubble then the streamed reply; got \(items)")
+        guard case .userText(let user)? = items.first else { return XCTFail("expected the user bubble first, got \(items)") }
+        XCTAssertEqual(user.chat, 1)
+        XCTAssertEqual(user.turn, 1, "the bubble carries the turn the gateway numbered")
+        XCTAssertEqual(user.text, "say hi")
+        guard case .assistantText(_, let text)? = items.last else { return XCTFail("expected the reply last, got \(items)") }
+        XCTAssertEqual(text, "hi")
+
+        // The send was consumed by its turn: a later turn.started adds no bubble of its own.
+        model.apply(.turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 4)))
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 2, seq: 5)))
+        let bubbles = (model.transcripts[1] ?? []).filter { if case .userText = $0 { return true } else { return false } }
+        XCTAssertEqual(bubbles.count, 1)
+    }
+
+    func testLiveSendBubbleArrivesThroughACatchUpReplay() {
+        // The socket dropped right after the send; the same gateway's ring
+        // replays the turn.started we missed and the bubble appears once.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = model.handleHello(hello(epoch: "epoch-A"))
+        model.open(chat: 1)
+        model.apply(.chatLive(ChatLive(chat: 1, seq: 0)))
+        model.sendMessage(chat: 1, text: "say hi")
+
+        model.apply(.hello(hello(epoch: "epoch-A")))
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open") }
+        model.apply(.chatHistory(ChatHistory(
+            chat: 1,
+            events: [
+                .turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)),
+                .textDelta(TextDelta(chat: 1, turn: 1, text: "hi", seq: 2)),
+            ],
+            truncated: false, id: open.id)))
+        let items = model.transcripts[1] ?? []
+        guard case .userText(let user)? = items.first else { return XCTFail("expected the user bubble first, got \(items)") }
+        XCTAssertEqual(user.text, "say hi")
+        XCTAssertEqual(items.count, 2)
+    }
+
+    func testFullReplayAfterARestartDoesNotDuplicateTheBubble() {
+        // The gateway restarted before answering: the in-flight send is gone,
+        // and the replay from the beginning is the whole truth of the chat.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = model.handleHello(hello(epoch: "epoch-A"))
+        model.open(chat: 1)
+        model.sendMessage(chat: 1, text: "say hi")
+
+        model.apply(.hello(hello(epoch: "epoch-B")))
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open") }
+        model.apply(.chatHistory(ChatHistory(
+            chat: 1,
+            events: [
+                .turnStarted(TurnStarted(chat: 1, turn: 1)),
+                .userText(UserText(chat: 1, turn: 1, text: "say hi")),
+                .turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done)),
+            ],
+            truncated: false, id: open.id)))
+        let bubbles = (model.transcripts[1] ?? []).filter { if case .userText = $0 { return true } else { return false } }
+        XCTAssertEqual(bubbles.count, 1, "the replay's user.text is the bubble; got \(model.transcripts[1] ?? [])")
+    }
+
+    // MARK: - refused sends keep what was composed
+
+    func testRefusedSendRestoresTheDraftTextAndAttachments() {
+        let (model, sent) = model()
+        model.setDraft("Summarise the attached notes.", for: 1)
+        model.attach(["/tmp/demo/notes.md"], to: 1)
+        model.sendMessage(chat: 1, text: model.draft(for: 1))
+        guard case .messageSend(let send)? = sent.frames.first else { return XCTFail("expected message.send, got \(sent.frames)") }
+        XCTAssertEqual(model.draft(for: 1), "", "the editor clears on send")
+        XCTAssertEqual(model.draftAttachments[1] ?? [], [])
+
+        model.apply(.error(ErrorMessage(
+            code: "attachment.missing", message: "attachment does not exist: /tmp/demo/notes.md", chat: 1, id: send.id)))
+
+        XCTAssertEqual(model.draft(for: 1), "Summarise the attached notes.", "a refusal gives the text back")
+        XCTAssertEqual(model.draftAttachments[1], ["/tmp/demo/notes.md"], "and the chips")
+        XCTAssertEqual(model.status[1], "attachment does not exist: /tmp/demo/notes.md")
+        XCTAssertEqual(model.transcripts[1] ?? [], [], "nothing was sent, so nothing is shown")
+
+        // The refused send is forgotten: a turn that starts later owes it no bubble.
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        XCTAssertEqual(model.transcripts[1] ?? [], [])
+    }
+
+    func testRefusedSendWithTextAlreadyRetypedKeepsBoth() {
+        let (model, sent) = model()
+        model.sendMessage(chat: 1, text: "first")
+        guard case .messageSend(let send)? = sent.frames.first else { return XCTFail("expected message.send") }
+        model.setDraft("second", for: 1)
+        model.apply(.error(ErrorMessage(code: "chat.busy", message: "a turn is already running in chat 1", chat: 1, id: send.id)))
+        XCTAssertEqual(model.draft(for: 1), "first\nsecond")
+    }
+
+    func testAnErrorForAnotherRequestLeavesTheDraftAlone() {
+        let (model, sent) = model()
+        model.sendMessage(chat: 1, text: "say hi")
+        guard case .messageSend? = sent.frames.first else { return XCTFail("expected message.send") }
+        model.apply(.error(ErrorMessage(code: "chat.unknown", message: "no chat 7", chat: 1, id: "some-other-request")))
+        XCTAssertEqual(model.draft(for: 1), "")
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        guard case .userText(let user)? = (model.transcripts[1] ?? []).first else { return XCTFail("the send still owes a bubble") }
+        XCTAssertEqual(user.text, "say hi")
+    }
+
+    // MARK: - the draft text lives in the model
+
+    func testDraftTextSurvivesSwitchingChats() {
+        let (model, _) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1), summary(2)])))
+        model.open(chat: 1)
+        model.setDraft("half a thought", for: 1)
+        model.open(chat: 2)
+        XCTAssertEqual(model.draft(for: 2), "")
+        model.open(chat: 1)
+        XCTAssertEqual(model.draft(for: 1), "half a thought")
+        model.remove(chat: 1)
+        XCTAssertEqual(model.draft(for: 1), "", "a removed chat drops its draft")
     }
 
     // MARK: - tool row presentation
