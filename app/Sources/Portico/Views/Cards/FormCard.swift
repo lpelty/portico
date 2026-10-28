@@ -86,6 +86,7 @@ struct FormCard: View {
                     if let answer = draft.answer() { onAnswer(answer) }
                 }
                 .buttonStyle(.borderedProminent)
+                .pointerStyle(.link)
                 .disabled(!draft.isComplete)
                 .help(draft.isComplete ? "Send the form" : "Fill in every field first")
             }

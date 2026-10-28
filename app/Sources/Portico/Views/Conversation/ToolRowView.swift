@@ -69,7 +69,7 @@ struct ToolRowView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hover)
             if expanded {
                 Text(shown.prettyInput)
                     .font(.system(size: 11, design: .monospaced))

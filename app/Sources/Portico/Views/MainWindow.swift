@@ -260,7 +260,7 @@ struct PanelToggle: View {
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .help(help)
         .accessibilityLabel(help)
     }

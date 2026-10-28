@@ -26,6 +26,12 @@
   conversation; a smaller one narrows the viewer, then the sidebar, before
   the conversation goes below 420. The window's own size is remembered by
   macOS.
+- **Earlier sessions, as tall as you like**: drag the line under the
+  EARLIER list to show more or fewer sessions (remembered; double-click for
+  four rows); the list scrolls, and "All sessions…" is gone.
+- **Everything clickable says so**: the pointing hand, a tint on hover and
+  a deeper one while pressed, on every button, chip, row and menu; a
+  folder's arrow (and the whole row) opens it.
 - **Deep folders stay readable**: the file tree indents less past four
   levels, cuts long names in the middle, and shows the full path on hover.
 - **Releases by tag**: `bin/update` moves to the newest `vX.Y.Z` tag,

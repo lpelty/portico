@@ -466,6 +466,20 @@ final class ColumnWidthTests: XCTestCase {
         XCTAssertEqual(ColumnWidths.clampViewer(2000, sidebar: 0, window: 1440), 1020)
     }
 
+    func testTheEarlierListKeepsItsDraggedHeightButNeverOutgrowsItsSessions() throws {
+        XCTAssertEqual(ColumnWidths.earlierDefault, 120, "four rows to start")
+        XCTAssertEqual(ColumnWidths.earlierHeight(remembered: 120, sessions: 10), 120)
+        XCTAssertEqual(ColumnWidths.earlierHeight(remembered: 300, sessions: 10), 300)
+        XCTAssertEqual(ColumnWidths.earlierHeight(remembered: 300, sessions: 2), 60, "the files move up under the last session")
+        XCTAssertEqual(ColumnWidths.earlierHeight(remembered: 5, sessions: 10), 30, "never less than one row")
+        XCTAssertEqual(ColumnWidths.clampEarlier(2000), 480)
+        let suite = "portico-earlier-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        Settings(defaults: defaults).earlierHeight = 210
+        XCTAssertEqual(Settings(defaults: defaults).earlierHeight, 210)
+    }
+
     func testDeepFoldersIndentLessPastFourLevels() {
         XCTAssertEqual(FileTree.indent(depth: 0), 0)
         XCTAssertEqual(FileTree.indent(depth: 4), 56)

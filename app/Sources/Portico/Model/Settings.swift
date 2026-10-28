@@ -56,6 +56,7 @@ final class Settings: ObservableObject {
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
+        static let earlierHeight = "earlierHeight"
     }
 
     private let defaults: UserDefaults
@@ -102,6 +103,11 @@ final class Settings: ObservableObject {
         didSet { defaults.set(Double(canvasWidth), forKey: Key.canvasWidth) }
     }
 
+    /// The single-session sidebar's EARLIER list height as last dragged.
+    @Published var earlierHeight: CGFloat {
+        didSet { defaults.set(Double(earlierHeight), forKey: Key.earlierHeight) }
+    }
+
     func viewerWidth(for fit: ColumnWidths.Fit) -> CGFloat {
         fit == .canvas ? canvasWidth : readingWidth
     }
@@ -127,6 +133,7 @@ final class Settings: ObservableObject {
         sidebarWidth = Self.width(Key.sidebarWidth, in: defaults) ?? ColumnWidths.sidebarDefault
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
+        earlierHeight = Self.width(Key.earlierHeight, in: defaults) ?? ColumnWidths.earlierDefault
     }
 
     /// Whether an artifact of `media` should open on its own.

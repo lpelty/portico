@@ -3,16 +3,15 @@ import SwiftUI
 /// The single-session sidebar's upper part, frames "S1 · Session card +
 /// earlier" and "S2 · The nudge": THIS SESSION (the live session's card,
 /// which turns into the amber nudge when the session is long), then
-/// EARLIER (ended sessions, newest first, searchable by title, a few
-/// until "All sessions…").
+/// EARLIER (ended sessions, newest first, searchable by title, in a list
+/// whose height is dragged at the line under it and remembered).
 struct SessionSidebar: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var settings: Settings
     @State private var searching = false
     @State private var query = ""
-    @State private var showAll = false
-
-    /// How many earlier sessions show before "All sessions…".
-    static let earlierShown = 4
+    /// The list's height when its divider drag began.
+    @State private var dragStart: CGFloat?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -52,7 +51,7 @@ struct SessionSidebar: View {
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
                 .help(searching ? "Stop searching" : "Search earlier sessions by title")
             }
             .padding(.horizontal, 16)
@@ -69,10 +68,10 @@ struct SessionSidebar: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 4)
             }
-            let shown = showAll || searching ? all : Array(all.prefix(Self.earlierShown))
+            let height = ColumnWidths.earlierHeight(remembered: settings.earlierHeight, sessions: all.count)
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(shown, id: \.chat) { summary in
+                    ForEach(all, id: \.chat) { summary in
                         EarlierRow(summary: summary, selected: model.selected == summary.chat) {
                             model.open(chat: summary.chat)
                         }
@@ -80,21 +79,24 @@ struct SessionSidebar: View {
                 }
                 .padding(.horizontal, 8)
             }
-            .frame(maxHeight: showAll || searching ? 260 : CGFloat(shown.count) * 30)
+            .frame(height: all.isEmpty ? 0 : height)
             if searching && all.isEmpty {
                 Text("No session titled “\(query)”")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 16)
             }
-            if !searching && model.earlierSessions.count > Self.earlierShown {
-                Button(showAll ? "Fewer sessions" : "All sessions…") { showAll.toggle() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.text3)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 6)
-            }
+            // Drag to show more or fewer earlier sessions; the files take the rest.
+            ColumnDivider(
+                axis: .horizontal,
+                onDrag: { dy in
+                    let start = dragStart ?? height
+                    dragStart = start
+                    settings.earlierHeight = ColumnWidths.clampEarlier(start + dy)
+                },
+                onEnd: { dragStart = nil },
+                onReset: { settings.earlierHeight = ColumnWidths.earlierDefault })
+                .padding(.top, 6)
         }
     }
 }
@@ -129,7 +131,7 @@ struct EarlierRow: View {
             .padding(.horizontal, 10)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .background(selected ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .help(summary.logged == true ? "Logged" : summary.logged == false ? "Not logged" : "")
     }
@@ -243,7 +245,7 @@ struct SessionCard: View {
                     Button(action: renew) { renewButtonLabel }
                         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
                     Button("Not now") { model.dismissNudge(chat: chat) }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverText)
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.text2)
                 }

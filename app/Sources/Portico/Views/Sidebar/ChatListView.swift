@@ -48,7 +48,7 @@ struct ChatListView: View {
                         } label: {
                             row(for: ChatRow(summary: summary))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hover)
                         .background(
                             model.selected == summary.chat ? Theme.selected : .clear,
                             in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -149,7 +149,7 @@ struct ChatListView: View {
                 .background(Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hover)
             .help("Start a new chat")
         }
         .padding(.top, 8)

@@ -77,6 +77,8 @@ struct QuickOpenView: View {
                     VStack(spacing: 2) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { offset, item in
                             row(item, selected: offset == index)
+                                .contentShape(Rectangle())
+                                .hoverHighlight(RoundedRectangle(cornerRadius: 6, style: .continuous))
                                 .id(item.id)
                                 .onTapGesture {
                                     index = offset

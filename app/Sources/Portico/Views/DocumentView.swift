@@ -66,7 +66,7 @@ struct DocumentView: View {
                 }
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hover)
                         .foregroundStyle(Theme.text3)
                         .help("Clear the search")
                 }
@@ -147,6 +147,7 @@ struct DocumentView: View {
             }
         }
         .contentShape(Rectangle())
+        .hoverHighlight()
         .help(path)
         .onTapGesture { model.reveal(file: path, in: chat) }
     }
@@ -226,7 +227,7 @@ struct DocumentHeader: View {
                     .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hover)
             .help(pinned ? "Unpin" : "Pin to Quick")
             Button {
                 Obsidian.open(path: path)

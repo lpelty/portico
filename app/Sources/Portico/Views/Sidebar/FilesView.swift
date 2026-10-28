@@ -96,7 +96,7 @@ struct FilesView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
                 .foregroundStyle(.secondary)
                 .help("Clear the filter")
             }
@@ -232,21 +232,16 @@ struct FileTree: View {
     @ViewBuilder
     private func row(_ line: Line) -> some View {
         let node = line.node
-        HStack(spacing: 2) {
-            Color.clear.frame(width: Self.indent(depth: line.depth), height: 1)
-            if node.dir && !node.placeholder {
-                Image(systemName: expanded.contains(key(node.root, node.path)) ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.text3)
-                    .frame(width: 12)
-            } else {
-                Color.clear.frame(width: 12, height: 1)
-            }
-            if node.placeholder {
+        if node.placeholder {
+            HStack(spacing: 2) {
+                Color.clear.frame(width: Self.indent(depth: line.depth) + FileRow.disclosureWidth, height: 1)
                 placeholder(node)
-            } else {
-                FileRow(node: node, subtitle: nil, toggle: { toggle(node) })
             }
+        } else {
+            FileRow(
+                node: node, subtitle: nil, depth: line.depth,
+                expanded: node.dir ? expanded.contains(key(node.root, node.path)) : nil,
+                toggle: { toggle(node) })
         }
     }
 
@@ -265,6 +260,7 @@ struct FileTree: View {
                     .lineLimit(2)
             }
             .contentShape(Rectangle())
+            .hoverHighlight()
             .help("Click to ask again")
             .onTapGesture { model.listFiles(chat: chat, root: node.root, path: node.path) }
         } else {
@@ -289,8 +285,16 @@ struct FileRow: View {
     let node: FileNode
     /// Shown under the name in the filter's flat list (root and path).
     let subtitle: String?
+    /// How deep it sits in the tree (0 in the filter's flat list).
+    var depth: Int = 0
+    /// Whether a directory in the tree is open: draws the disclosure
+    /// arrow. `nil` for a file, and in the flat list.
+    var expanded: Bool? = nil
     /// Opens or closes a directory in the tree; `nil` in the flat list.
     var toggle: (() -> Void)? = nil
+
+    /// The column the disclosure arrow sits in, kept for files too so names line up.
+    static let disclosureWidth: CGFloat = 14
     @EnvironmentObject private var model: AppModel
 
     private var absolutePath: String? {
@@ -306,6 +310,17 @@ struct FileRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            if toggle != nil {
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: FileTree.indent(depth: depth), height: 1)
+                    Image(systemName: expanded == true ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.text3)
+                        .opacity(expanded == nil ? 0 : 1)
+                        .frame(width: Self.disclosureWidth)
+                }
+                .padding(.trailing, -4)
+            }
             Image(systemName: icon)
                 .foregroundStyle(node.dir ? Color.accentColor : .secondary)
                 .frame(width: 16)
@@ -331,7 +346,9 @@ struct FileRow: View {
         }
         .padding(.vertical, 1)
         .background(isShown ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        // The whole line answers, arrow and indent included.
         .contentShape(Rectangle())
+        .hoverHighlight()
         .help(absolutePath ?? node.name)
         .onTapGesture {
             if node.dir { toggle?(); return }
@@ -415,7 +432,7 @@ struct HeaderIcon: View {
                 .frame(width: 20, height: 18)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -477,7 +494,7 @@ struct QuickFilesView: View {
                         .padding(.horizontal, 18)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hover)
                     .help("Show every file read this session")
                 }
             }
@@ -541,8 +558,9 @@ struct QuickFileRow: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 10)
         .background(isShown ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .padding(.horizontal, 8)
         .contentShape(Rectangle())
+        .hoverHighlight(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.horizontal, 8)
         .help(path)
         .onTapGesture {
             if isDirectory {
@@ -611,7 +629,7 @@ struct FilesTabSwitch: View {
                 .background(on ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 4))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

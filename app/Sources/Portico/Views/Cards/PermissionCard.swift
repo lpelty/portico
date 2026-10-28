@@ -98,15 +98,19 @@ struct PermissionCard: View {
         case .allowOnce:
             Button(choice.label) { answer(choice) }
                 .buttonStyle(.borderedProminent)
+                .pointerStyle(.link)
                 .help("Allow this one call")
         case .allowChat:
             Button(choice.label) { answer(choice) }
+                .pointerStyle(.link)
                 .help("Allow this for the rest of this chat without asking again (a command: this command, or the agent's own rule for it)")
         case .allowAlways:
             Button(choice.label) { answer(choice) }
+                .pointerStyle(.link)
                 .help("Add \(shown.tool) to the folder's own allow rules")
         case .deny:
             Button(choice.label, role: .destructive) { answer(choice) }
+                .pointerStyle(.link)
                 .help("Refuse; the note, if any, goes to the agent")
         }
     }

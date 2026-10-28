@@ -66,7 +66,7 @@ struct InputBar: View {
                         .frame(width: 20, height: 20)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
                 .help("Attach files to the next message")
                 .disabled(!connected)
                 Spacer(minLength: 0)
@@ -131,7 +131,7 @@ struct InputBar: View {
                         Button(action: { model.detach(path, from: chat) }) {
                             Image(systemName: "xmark.circle.fill")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hover)
                         .foregroundStyle(.secondary)
                         .help("Remove \(path)")
                     }
@@ -171,7 +171,7 @@ struct InputBar: View {
                         .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
                         .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverCapsule)
                     .help(action.text)
                     .disabled(!connected || busy || sending || renewing)
                 }
@@ -211,9 +211,19 @@ struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary(Color), quiet }
 
     let kind: Kind
-    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
+        Pill(kind: kind, configuration: configuration)
+    }
+
+    /// The drawn pill; a view of its own so it can track the pointer.
+    private struct Pill: View {
+        let kind: Kind
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+    var body: some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(foreground)
@@ -225,8 +235,15 @@ struct PillButtonStyle: ButtonStyle {
                     RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1)
                 }
             }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(!isEnabled ? .clear : configuration.isPressed ? Theme.pressTint : hovering ? Theme.hoverTint : .clear)
+                    .allowsHitTesting(false)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .onHover { hovering = $0 }
+            .pointerStyle(isEnabled ? .link : nil)
     }
 
     private var foreground: Color {
@@ -237,5 +254,6 @@ struct PillButtonStyle: ButtonStyle {
     private var background: Color {
         if case .primary(let accent) = kind { return accent }
         return Theme.control
+    }
     }
 }

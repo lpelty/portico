@@ -101,6 +101,7 @@ struct QuestionCard: View {
                     if let answer = draft.answer() { onAnswer(answer) }
                 }
                 .buttonStyle(.borderedProminent)
+                .pointerStyle(.link)
                 .disabled(!draft.isComplete)
                 .help(draft.isComplete ? "Send these answers" : "Answer every question first")
             }
@@ -155,6 +156,6 @@ struct QuestionCard: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
     }
 }
