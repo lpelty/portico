@@ -543,7 +543,8 @@
                 "tool.finished": "#/$defs/ToolFinished",
                 "tool.started": "#/$defs/ToolStarted",
                 "turn.finished": "#/$defs/TurnFinished",
-                "turn.started": "#/$defs/TurnStarted"
+                "turn.started": "#/$defs/TurnStarted",
+                "user.text": "#/$defs/UserText"
               },
               "propertyName": "type"
             },
@@ -553,6 +554,9 @@
               },
               {
                 "$ref": "#/$defs/TurnStarted"
+              },
+              {
+                "$ref": "#/$defs/UserText"
               },
               {
                 "$ref": "#/$defs/TextDelta"
@@ -1746,6 +1750,9 @@
           "$ref": "#/$defs/TurnStarted"
         },
         {
+          "$ref": "#/$defs/UserText"
+        },
+        {
           "$ref": "#/$defs/TextDelta"
         },
         {
@@ -2206,6 +2213,66 @@
         "ts"
       ],
       "title": "TurnStop",
+      "type": "object"
+    },
+    "UserText": {
+      "additionalProperties": false,
+      "description": "What the person sent to start a turn, as the engine's transcript keeps it.\n\nOnly in a transcript replay (``chat.history``): a live turn's text is\nwhat the app itself sent in ``message.send``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "type": {
+          "const": "user.text",
+          "default": "user.text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "turn",
+        "text"
+      ],
+      "title": "UserText",
       "type": "object"
     }
   },

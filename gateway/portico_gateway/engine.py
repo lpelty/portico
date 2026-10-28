@@ -9,6 +9,12 @@ need a model. Permission and question requests from the SDK are routed to
 Nothing here names a model, a provider, or a credential: the SDK reads
 those from the environment. ``verbatim_prompts`` is never set, so slash
 text in a message keeps dispatching the folder's commands.
+
+History (Task 10): ``read_history`` reads a session's transcript through
+the SDK's ``get_session_messages`` and ``history_events`` translates it
+into the same events a live turn produces (plus ``user.text`` for what the
+person said), so the app has one rendering path for live and replayed
+conversation.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -39,7 +46,7 @@ from claude_agent_sdk import (
     get_session_messages,
 )
 
-from .messages import ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished
+from .messages import ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
 
 log = logging.getLogger(__name__)
 
@@ -337,8 +344,133 @@ class SDKEngine:
 
 # --- history -------------------------------------------------------------------------
 
+# User text blocks the engine's CLI adds around a person's message and never
+# shows as the message itself: local command output, skill loads, reminders.
+_HIDDEN_USER_TEXT_PREFIXES = ("<system-reminder>", "<local-command-", "<command-")
 
-def read_history(session_id: str, folder: Path) -> list[dict[str, Any]]:
-    """The engine's transcript for ``session_id`` under ``folder``, as plain dicts, oldest first."""
-    messages = get_session_messages(session_id, directory=str(folder))
+
+def read_history(session_id: str | None, folder: Path) -> list[dict[str, Any]]:
+    """The engine's transcript for ``session_id`` under ``folder``, as plain dicts, oldest first.
+
+    Empty — never an error — when there is no session id, the id is not one
+    the engine knows, the transcript is missing, or it cannot be read: a
+    chat whose history is gone still opens.
+    """
+    if not session_id:
+        return []
+    try:
+        messages = get_session_messages(session_id, directory=str(folder))
+    except Exception:
+        log.exception("could not read the transcript for session %s in %s", session_id, folder)
+        return []
     return [dataclasses.asdict(m) for m in messages]
+
+
+def _blocks(content: Any) -> list[dict[str, Any]]:
+    """A message's content as a list of block dicts (a plain string is one text block)."""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    if isinstance(content, list):
+        return [b for b in content if isinstance(b, dict)]
+    return []
+
+
+def _user_text(blocks: list[dict[str, Any]]) -> str:
+    """The person's own words from a user message: text blocks, minus the engine's scaffolding."""
+    parts: list[str] = []
+    for block in blocks:
+        if block.get("type") != "text" or not isinstance(block.get("text"), str):
+            continue
+        text = block["text"].strip()
+        if not text or text.startswith(_HIDDEN_USER_TEXT_PREFIXES):
+            continue
+        parts.append(text)
+    return "\n\n".join(parts)
+
+
+def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1) -> list[ServerMessage]:
+    """Transcript messages (``read_history``'s dicts, or ``SessionMessage``-like) -> replay events. Pure.
+
+    Each user message with text starts a turn (``turn.started``, ``user.text``);
+    assistant text becomes ``text.delta``, tool calls and results
+    ``tool.started`` / ``tool.finished``; every turn ends with
+    ``turn.finished outcome=done``. Turns count from ``first_turn``. Nothing
+    is stamped: ``seq`` is left unset, and the events carry today's ``ts``
+    because the SDK's session messages carry none.
+    """
+    ts = _now()
+    out: list[ServerMessage] = []
+    turn = first_turn - 1
+    open_turn = False
+
+    def begin() -> None:
+        nonlocal turn, open_turn
+        turn += 1
+        open_turn = True
+        out.append(TurnStarted(ts=ts, chat=chat, turn=turn))
+
+    def end() -> None:
+        nonlocal open_turn
+        if open_turn:
+            out.append(TurnFinished(ts=ts, chat=chat, turn=turn, outcome="done"))
+            open_turn = False
+
+    for raw in messages:
+        m = raw if isinstance(raw, Mapping) else dataclasses.asdict(raw)
+        if m.get("parent_tool_use_id"):
+            continue  # a subagent's message, never shown in the conversation
+        message = m.get("message")
+        if not isinstance(message, Mapping):
+            continue
+        role = m.get("type") or message.get("role")
+        blocks = _blocks(message.get("content"))
+        if role == "user":
+            text = _user_text(blocks)
+            if text:
+                end()
+                begin()
+                out.append(UserText(ts=ts, chat=chat, turn=turn, text=text))
+            for block in blocks:
+                if block.get("type") != "tool_result":
+                    continue
+                if not open_turn:
+                    begin()
+                out.append(
+                    ToolFinished(
+                        ts=ts,
+                        chat=chat,
+                        turn=turn,
+                        tool_use_id=str(block.get("tool_use_id") or ""),
+                        ok=not bool(block.get("is_error")),
+                        summary=_result_summary(block.get("content")),
+                    )
+                )
+        elif role == "assistant":
+            for block in blocks:
+                kind = block.get("type")
+                if kind == "text":
+                    text = block.get("text")
+                    if not isinstance(text, str) or not text:
+                        continue
+                    if not open_turn:
+                        begin()
+                    out.append(TextDelta(ts=ts, chat=chat, turn=turn, text=text))
+                elif kind == "tool_use":
+                    if not open_turn:
+                        begin()
+                    name = str(block.get("name") or "")
+                    input = block.get("input") if isinstance(block.get("input"), Mapping) else {}
+                    out.append(
+                        ToolStarted(
+                            ts=ts,
+                            chat=chat,
+                            turn=turn,
+                            tool_use_id=str(block.get("id") or ""),
+                            tool=name,
+                            summary=summarize_tool(name, dict(input)),
+                            input=dict(input),
+                        )
+                    )
+                # thinking and anything else: not part of the conversation
+    end()
+    return out

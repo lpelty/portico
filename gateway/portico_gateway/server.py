@@ -50,6 +50,14 @@ before ``turn.finished``, with ``open`` on the newest viewable one only.
 location, title?}``) is the producer seam: its artifact is reported at
 once with ``open=true``. ``artifact.opened`` from the app is telemetry
 and is acknowledged with nothing.
+
+History (Task 10): ``chat.open`` replays from the ring when the ring can
+serve ``since`` (or the chat was created this launch and nothing has
+fallen off); otherwise — first open after a gateway restart, or ``since``
+older than the ring — the engine's transcript is read (``read_history``)
+and translated (``history_events``) into ``chat.history``, the chat's
+stored artifacts follow as ``artifact.created open=false``, then
+``chat.live``. A missing transcript is an empty history, not an error.
 """
 
 from __future__ import annotations
@@ -77,9 +85,10 @@ from .artifacts import TurnCollector, artifact_for_location
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat
 from .config import Config, hello_for
-from .engine import Engine, PermissionDecision
+from .engine import Engine, PermissionDecision, history_events, read_history
 from .messages import (
     PROTOCOL_VERSION,
+    Artifact,
     ArtifactCreated,
     ArtifactOpened,
     CardAnswer,
@@ -428,6 +437,8 @@ class GatewayServer:
         self._runs: dict[int, TurnRun] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self.cards = CardBroker(hold_seconds=config.card_hold_seconds)
+        # Reads a session's transcript (``engine.read_history``); replaceable for tests.
+        self.history_reader: Callable[[str | None, Path], list[dict[str, Any]]] = read_history
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
             ("GET", "/v1/health"): self._health,
             ("POST", "/v1/artifact"): self._producer,
@@ -794,12 +805,39 @@ class GatewayServer:
 
     async def on_chat_open(self, msg: ChatOpen, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
-        events, truncated = chat.events_since(msg.since)
+        events, truncated, artifacts = await self._history(chat, msg.since)
         await self._send(conn, ChatHistory(ts=_now(), chat=chat.number, id=msg.id, events=events, truncated=truncated))
+        # Artifacts the index remembers from before this launch: listed, never opened.
+        for artifact in artifacts:
+            await self._send(conn, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact.model_copy(update={"open": False})))
         await self._send(conn, ChatLive(ts=_now(), chat=chat.number, id=msg.id, seq=chat.seq))
         # Open cards again, as sent (same id and seq): the app de-duplicates by id.
         for card in self.cards.open_cards(chat):
             await self._send(conn, card)
+
+    async def _history(self, chat: Chat, since: int | None) -> tuple[list[ServerMessage], bool, list[Artifact]]:
+        """What ``chat.open`` replays: ring events, or the transcript when the ring cannot serve.
+
+        The ring serves when ``since`` is inside it, or when the chat was
+        created this launch and the ring still reaches back to its first
+        event. Otherwise the engine's transcript is read and translated;
+        the chat's stored artifacts come with it. When there is no
+        transcript to read, the ring is the best the gateway has and is
+        sent with its own ``truncated`` flag.
+        """
+        ring, truncated = chat.events_since(since)
+        if not truncated and (since is not None or not chat.restored):
+            return ring, truncated, []
+        transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
+        events = history_events(transcript, chat.number)
+        if not events:
+            replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
+            return ring, truncated, [a for a in chat.artifacts if a.id not in replayed]
+        # Live turns continue the transcript's numbering when none has run yet this launch.
+        turns = sum(1 for e in events if isinstance(e, TurnStarted))
+        if chat.turn == 0 and chat.number not in self._runs:
+            chat.turn = turns
+        return events, False, list(chat.artifacts)
 
     async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)

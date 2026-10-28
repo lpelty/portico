@@ -14,7 +14,9 @@ already dropped some of what it asked for (so it should refetch history).
 The ring, ``seq``, ``turn``, the engine and the per-chat allows belong to
 one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
 number, folder, engine session id, alias, state word, creation time and
-the artifacts the chat produced.
+the artifacts the chat produced. A chat that came back from the index with
+a session is ``restored``: its conversation before this launch lives in
+the engine's transcript, which the server replays on ``chat.open``.
 """
 
 from __future__ import annotations
@@ -83,6 +85,10 @@ class Chat:
         self.artifacts: list[Artifact] = list(artifacts or [])
         self.chat_allows: set[str] = set()
         self.engine: Engine | None = None
+        # True for a chat restored from the index with a session: the ring
+        # cannot hold what happened before this launch, so a replay from
+        # the beginning comes from the engine's transcript.
+        self.restored = False
 
     def __repr__(self) -> str:
         return f"Chat({self.number}, {str(self.folder)!r}, state={self.state!r}, seq={self.seq})"
@@ -139,7 +145,7 @@ class Chat:
     @classmethod
     def from_record(cls, record: ChatRecord, history_buffer: int) -> Chat:
         state = "idle" if record.state in _TRANSIENT_STATES else record.state
-        return cls(
+        chat = cls(
             record.chat,
             Path(record.folder),
             history_buffer,
@@ -149,6 +155,8 @@ class Chat:
             created=record.created,
             artifacts=record.artifacts,
         )
+        chat.restored = record.session_id is not None
+        return chat
 
 
 def _checked_state(word: str) -> ChatStateWord:

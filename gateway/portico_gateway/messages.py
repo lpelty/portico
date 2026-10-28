@@ -226,6 +226,19 @@ class TurnStarted(Envelope):
     turn: int
 
 
+class UserText(Envelope):
+    """What the person sent to start a turn, as the engine's transcript keeps it.
+
+    Only in a transcript replay (``chat.history``): a live turn's text is
+    what the app itself sent in ``message.send``.
+    """
+
+    type: Literal["user.text"] = "user.text"
+    chat: int
+    turn: int
+    text: str
+
+
 class TextDelta(Envelope):
     type: Literal["text.delta"] = "text.delta"
     chat: int
@@ -307,6 +320,7 @@ HistoryEvent = Annotated[
     Union[
         ChatState,
         TurnStarted,
+        UserText,
         TextDelta,
         ToolStarted,
         ToolFinished,
@@ -351,6 +365,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatHistory,
     ChatLive,
     TurnStarted,
+    UserText,
     TextDelta,
     ToolStarted,
     ToolFinished,
@@ -502,6 +517,7 @@ def example_messages() -> dict[str, BaseModel]:
             truncated=False,
         ),
         ChatLive(ts=_TS, chat=1, seq=42),
+        UserText(ts=_TS, chat=1, turn=1, text="Say hello."),
         TurnStarted(ts=_TS, chat=1, seq=43, turn=2),
         TextDelta(ts=_TS, chat=1, seq=44, turn=2, text="Looking at the notes now."),
         ToolStarted(

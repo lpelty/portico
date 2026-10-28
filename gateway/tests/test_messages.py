@@ -38,6 +38,7 @@ EXPECTED_KEYS = {
     "server.tool.started",
     "server.tool.finished",
     "server.turn.finished",
+    "server.user.text",
     "server.card.ask",
     "server.card.cancel",
     "server.artifact.created",
@@ -52,7 +53,7 @@ def test_every_type_has_schema_def_and_example():
     ex = example_messages()
     for key, msg in ex.items():
         assert type(msg).__name__ in schema["$defs"], key
-    assert len(ex) == 27  # one per message type listed in Task 1
+    assert len(ex) == 28  # Task 1's 27 plus user.text (Task 10)
     assert set(ex) == EXPECTED_KEYS
 
 

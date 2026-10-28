@@ -96,13 +96,25 @@ and the reply is `error code=engine.start_failed`. *(`before_first_chat` at Task
 ### `chat.open` — `ChatOpen`
 `chat`, `since: integer | absent` (the last `seq` the app saw; absent means
 from the beginning), `id` to correlate. Reply: `chat.history` carrying the
-chat's events after `since` from the gateway's ring buffer, then
-`chat.live` with the chat's current `seq`, then the chat's open cards
+chat's events, then (after a transcript replay) the chat's stored
+artifacts as `artifact.created` frames with `open: false` and no `seq`,
+then `chat.live` with the chat's current `seq`, then the chat's open cards
 again as `card.ask` frames exactly as first sent (same `id`, same `seq`,
 so an app that already holds one de-duplicates by `id`; re-sending does
 not advance `seq`). Opening a chat neither starts a turn nor advances `seq`; it
-can be repeated at any time, including while a turn is running. Events
-older than the ring buffer come from the engine's transcript. *(Task 10)*
+can be repeated at any time, including while a turn is running.
+
+Where the history comes from: the gateway's ring buffer when it can serve
+the request — `since` is inside the ring, or the chat was created in this
+gateway launch and nothing has fallen off the ring yet. Otherwise — the
+first open after a gateway restart (a new `epoch`), or `since` older than
+the ring — the gateway reads the engine's transcript for the chat's
+session and translates it into the same events a live turn produces,
+with `user.text` for what the person sent; those events carry no `seq`
+and `truncated` is false. A chat whose transcript cannot be found (no
+session yet, or the engine's files are gone) opens with an empty history,
+never an error. When the transcript is empty but the ring holds events,
+the ring is sent with its own `truncated` flag.
 
 ### `chat.stop` — `ChatStop`
 `chat`. Interrupts and closes the chat's engine. A turn in flight ends with
@@ -201,11 +213,16 @@ shows the state transitions in order. The one answering `chat.new` also
 carries the request's `id`.
 
 ### `chat.history` — `ChatHistory`
-`chat`, `id` (echoing `chat.open`), `events: [event]` (chat-scoped events
-with their original `seq`, oldest first; empty when the app is up to date),
-`truncated: bool` (true when `since` fell behind the ring buffer and the
-replay starts later than asked; the app should then refetch from the
-beginning). Not itself stamped. *(Transcript replay: Task 10)*
+`chat`, `id` (echoing `chat.open`), `events: [event]` (chat-scoped events,
+oldest first; empty when the app is up to date), `truncated: bool` (true
+when `since` fell behind the ring buffer and no transcript could fill the
+gap, so the replay starts later than asked; the app should then refetch
+from the beginning). Not itself stamped. Events from the ring carry their
+original `seq`; events from a transcript replay carry none (see
+`chat.open`) and are: `turn.started`, `user.text`, `text.delta`,
+`tool.started`, `tool.finished`, `turn.finished outcome=done` per turn.
+Transcript turns count from 1 over the whole session; when no turn has
+run yet in this launch, live turns continue from the last replayed one.
 
 ### `chat.live` — `ChatLive`
 `chat`, `id` (echoing `chat.open`), `seq` (the chat's current sequence
@@ -214,6 +231,13 @@ number, not a new one). History is complete; what follows is live.
 ### `turn.started` — `TurnStarted`
 `chat`, `seq`, `turn: integer` (counts from 1 per gateway launch). Always
 followed by `chat.state working`.
+
+### `user.text` — `UserText`
+`chat`, `turn`, `text`. What the person sent to start `turn`, as the
+engine's transcript keeps it (attachments appear in the exact
+`message.send` form). Only inside a transcript replay (`chat.history`
+after a gateway restart or past the ring); never sent live — a live
+turn's text is what the app itself sent — so it carries no `seq`.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
