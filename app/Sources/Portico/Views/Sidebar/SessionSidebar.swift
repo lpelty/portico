@@ -68,7 +68,7 @@ struct SessionSidebar: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 4)
             }
-            let height = ColumnWidths.earlierHeight(remembered: settings.earlierHeight, sessions: all.count)
+            let height = ColumnWidths.earlierHeight(dragged: settings.earlierHeight, sessions: all.count)
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(all, id: \.chat) { summary in
@@ -95,7 +95,7 @@ struct SessionSidebar: View {
                     settings.earlierHeight = ColumnWidths.clampEarlier(start + dy)
                 },
                 onEnd: { dragStart = nil },
-                onReset: { settings.earlierHeight = ColumnWidths.earlierDefault })
+                onReset: { settings.earlierHeight = nil })
                 .padding(.top, 6)
         }
     }

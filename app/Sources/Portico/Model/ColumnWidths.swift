@@ -40,10 +40,12 @@ enum ColumnWidths {
         min(max(height, earlierRange.lowerBound), earlierRange.upperBound)
     }
 
-    /// The list's drawn height: the remembered height, or less when there
-    /// are fewer sessions than fill it (the files move up under the last).
-    static func earlierHeight(remembered: CGFloat, sessions: Int) -> CGFloat {
-        min(clampEarlier(remembered), CGFloat(max(sessions, 1)) * earlierRow)
+    /// The list's drawn height. Until the person drags it, it fits the
+    /// sessions, up to four rows (the files sit right under the last one);
+    /// once dragged, it is the dragged height, empty space and all.
+    static func earlierHeight(dragged: CGFloat?, sessions: Int) -> CGFloat {
+        if let dragged { return clampEarlier(dragged) }
+        return min(earlierDefault, CGFloat(max(sessions, 1)) * earlierRow)
     }
 
     static func viewerDefault(for fit: Fit) -> CGFloat {
