@@ -74,6 +74,76 @@ final class WebPaneRenderTests: XCTestCase {
         XCTAssertEqual(result["escapeWidth"] as? Int, 0, "a reference above the markdown's directory is not served")
     }
 
+    func testFailedNavigationIsAskedForAgainOnlyThroughTheRetryLink() async throws {
+        // A URL nobody serves (the dev server went away). The pane shows
+        // why once; SwiftUI's redraws, which call apply with the same load
+        // on every text delta while a turn streams, must not ask for it
+        // again. The failure page's link is the one way to try again.
+        let port = try await freeLoopbackPort()
+        let dead = URL(string: "http://127.0.0.1:\(port)/")!
+        let coordinator = WebPane.Coordinator()
+        let view = CountingWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: coordinator.configuration())
+        coordinator.attach(view)
+        keepAlive = [view, coordinator]
+
+        coordinator.apply(.url(dead), to: view)
+        XCTAssertEqual(view.loads, 1)
+        try await poll("the navigation fails") { coordinator.failed == .url(dead) }
+
+        for _ in 0..<5 { coordinator.apply(.url(dead), to: view) }
+        XCTAssertEqual(view.loads, 1, "a redraw with the same load does not try the dead URL again")
+        XCTAssertEqual(coordinator.failed, .url(dead), "the failure stands until a retry")
+
+        // The failure page is up, with the message and the link.
+        try await poll("the failure page is shown") { !view.isLoading && view.url?.absoluteString == "about:blank" }
+        let shown = try await evaluate(
+            "({text: document.body.textContent, link: (document.querySelector('a') || {}).href || ''})", in: view)
+        XCTAssertTrue((shown["text"] as? String ?? "").contains("connect"), "the page says why: \(shown)")
+        XCTAssertEqual(shown["link"] as? String, WebPane.Coordinator.retryURL.absoluteString)
+
+        // Following the link asks once more (and fails again, which is a new failure, not a loop).
+        _ = try await evaluate("document.querySelector('a').click(); true", in: view)
+        try await poll("the link asks again") { view.loads == 2 }
+        try await poll("the second attempt fails too") { coordinator.failed == .url(dead) }
+        coordinator.apply(.url(dead), to: view)
+        XCTAssertEqual(view.loads, 2)
+
+        // Another load is another matter: it goes out at once.
+        let other = URL(string: "http://127.0.0.1:\(port)/other")!
+        coordinator.apply(.url(other), to: view)
+        XCTAssertEqual(view.loads, 3)
+        XCTAssertNil(coordinator.failed, "a new load clears the old failure until it fails itself")
+    }
+
+    /// A web view that counts the navigations it is asked for.
+    final class CountingWebView: WKWebView {
+        var loads = 0
+        override func load(_ request: URLRequest) -> WKNavigation? {
+            loads += 1
+            return super.load(request)
+        }
+    }
+
+    private func poll(_ what: String, seconds: Double = 15, _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while !condition() {
+            if ContinuousClock.now >= deadline { throw PollTimeout(what: what) }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    struct PollTimeout: Error, CustomStringConvertible {
+        let what: String
+        var description: String { "timed out waiting until \(what)" }
+    }
+
+    /// Run `script` (which must evaluate to something, never undefined) and
+    /// return its object result, or an empty one for a scalar.
+    private func evaluate(_ script: String, in view: WKWebView) async throws -> [String: Any] {
+        let value = try await view.evaluateJavaScript(script)
+        return value as? [String: Any] ?? [:]
+    }
+
     final class FinishDelegate: NSObject, WKNavigationDelegate {
         var onFinish: (() -> Void)?
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onFinish?() }

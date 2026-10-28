@@ -158,25 +158,60 @@ struct WebPane: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         private var loaded: Load?
+        /// The load whose navigation failed (or whose file could not be
+        /// read), until a retry or another load. It stays `loaded` too:
+        /// SwiftUI re-evaluates the viewer on every text delta while a
+        /// turn streams, and each `updateNSView` would otherwise ask for
+        /// the same dead URL again, flickering between the attempt and the
+        /// failure page. The failure page carries the one way to ask again.
+        private(set) var failed: Load?
         private var renderedURL: URL?
         let handler = RenderedPageHandler()
 
-        /// A web view wired to this coordinator: the rendered-page scheme
-        /// registered (it must be before the view exists) and navigation
-        /// failures reported into the pane.
-        func makeWebView() -> WKWebView {
+        /// The link on the failure page that asks for the load again. It
+        /// is under the pane's private scheme so nothing else can reach it,
+        /// and the navigation delegate acts on it before any handler would.
+        static let retryURL = URL(string: "\(RenderedPageHandler.scheme)://retry/")!
+
+        /// The configuration a web view for this coordinator needs: the
+        /// rendered-page scheme registered (it must be before the view exists).
+        func configuration() -> WKWebViewConfiguration {
             let configuration = WKWebViewConfiguration()
             configuration.defaultWebpagePreferences.allowsContentJavaScript = true
             configuration.setURLSchemeHandler(handler, forURLScheme: RenderedPageHandler.scheme)
-            let view = WKWebView(frame: .zero, configuration: configuration)
+            return configuration
+        }
+
+        /// A web view wired to this coordinator: navigation failures
+        /// reported into the pane, the retry link honoured.
+        func makeWebView() -> WKWebView {
+            attach(WKWebView(frame: .zero, configuration: configuration()))
+        }
+
+        /// Wire a view made from `configuration()` to this coordinator.
+        @discardableResult
+        func attach(_ view: WKWebView) -> WKWebView {
             view.navigationDelegate = self
             view.setValue(false, forKey: "drawsBackground")
             return view
         }
 
+        /// Show `load` unless it is what the view already shows (or showed
+        /// and failed to): a SwiftUI redraw is not a request to try again.
         func apply(_ load: Load, to view: WKWebView) {
             guard load != loaded else { return }
+            start(load, in: view)
+        }
+
+        /// Ask for the current load again: the failure page's link.
+        func retry(in view: WKWebView) {
+            guard let load = loaded else { return }
+            start(load, in: view)
+        }
+
+        private func start(_ load: Load, in view: WKWebView) {
             loaded = load
+            failed = nil
             if let old = renderedURL {
                 handler.forget(old)
                 renderedURL = nil
@@ -190,7 +225,7 @@ struct WebPane: NSViewRepresentable {
                     renderedURL = url
                     view.load(URLRequest(url: url))
                 } catch {
-                    view.loadHTMLString(Self.errorPage("Cannot read \(file.path): \(error)"), baseURL: nil)
+                    showFailure("Cannot read \(file.path): \(error)", in: view)
                 }
             case .html(let file):
                 view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
@@ -199,20 +234,38 @@ struct WebPane: NSViewRepresentable {
             }
         }
 
+        private func showFailure(_ message: String, in view: WKWebView) {
+            failed = loaded
+            view.loadHTMLString(Self.errorPage(message), baseURL: nil)
+        }
+
         /// A failed navigation (the dev server went away, a file vanished)
-        /// shows why instead of a blank pane.
+        /// shows why instead of a blank pane, with a link to try again.
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Swift.Error) {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
-            webView.loadHTMLString(Self.errorPage(error.localizedDescription), baseURL: nil)
-            loaded = nil
+            showFailure(error.localizedDescription, in: webView)
+        }
+
+        func webView(
+            _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+        ) {
+            if navigationAction.request.url == Self.retryURL {
+                decisionHandler(.cancel)
+                retry(in: webView)
+                return
+            }
+            decisionHandler(.allow)
         }
 
         static func errorPage(_ message: String) -> String {
             """
                 <!doctype html><html><head><meta charset="utf-8"><style>
                 body{font:14px -apple-system,sans-serif;color:#888;padding:24px;margin:0}
-                </style></head><body><p>\(MarkdownPage.escapeHTML(message))</p></body></html>
+                a{color:#888}
+                </style></head><body><p>\(MarkdownPage.escapeHTML(message))</p>
+                <p><a href="\(retryURL.absoluteString)">Try again</a></p></body></html>
                 """
         }
     }
