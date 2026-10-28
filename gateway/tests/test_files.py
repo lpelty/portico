@@ -172,3 +172,22 @@ def test_list_directory_is_pure(projects: Path) -> None:
     with pytest.raises(ProtocolError) as e:
         list_directory(projects, "../")
     assert e.value.code == "files.outside_root"
+
+
+async def test_root_written_with_a_tilde_lists(state_dir: StateDir, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "notes.md").write_text("n")
+    config: Config = make_config(roots=[Root(name="vault", path="~/vault")])
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=EngineFactory(), version=__version__)
+    await srv.serve(0)
+    conn = await attach(srv)
+    try:
+        reply = await ask(conn, "vault", "", id="req-v")
+        assert isinstance(reply, FilesList), reply
+        assert [(e.name, e.dir) for e in reply.entries] == [("notes.md", False)]
+    finally:
+        await conn.close()
+        await srv.shutdown()

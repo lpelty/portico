@@ -57,6 +57,23 @@ class Config(BaseModel):
             raise ConfigError(EMPTY_SETTING_SOURCES_MESSAGE)
         return value
 
+    @field_validator("roots")
+    @classmethod
+    def _roots_absolute(cls, value: list[Root]) -> list[Root]:
+        # The gateway is a detached process with no working directory a
+        # person could mean: a root is an absolute path, written with a
+        # leading ``~`` if they like. The expanded path is what ``hello``
+        # carries and what ``files.list`` reads.
+        out: list[Root] = []
+        for root in value:
+            path = Path(root.path).expanduser()
+            if not path.is_absolute():
+                raise ConfigError(
+                    f"roots: {root.name!r} has the relative path {root.path!r}; a root must be an absolute path (~ is expanded)"
+                )
+            out.append(Root(name=root.name, path=str(path)))
+        return out
+
 
 def _describe(path: Path, e: ValidationError) -> str:
     parts = []

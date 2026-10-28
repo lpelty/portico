@@ -259,7 +259,8 @@ the app refers to the agent, `accent` is a CSS hex colour — `#RRGGBB`,
 `#RGB` or `#RRGGBBAA` — for the app's controls, `icon` an absolute path
 to an image file for the Dock, the About panel and the sidebar header;
 absent or unreadable values fall back to "Portico" and the system
-defaults), `actions: [{label, text}]`, `roots: [{name, path}]`, `commands: [string]`
+defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
+absolute, as configured with any `~` expanded), `commands: [string]`
 (reserved; empty in v0.1), `capabilities: [string]` (v0.1: `cards.form`,
 `files`, `producer`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives.

@@ -181,3 +181,23 @@ def test_hello_with_defaults_has_default_brand_and_no_actions() -> None:
     hello = hello_for(Config(), epoch="e", gateway_version="0.1.0")
     assert hello.brand == Brand(name="Portico", agent_name="Agent")
     assert hello.actions == [] and hello.roots == []
+
+
+def test_root_path_with_a_tilde_is_expanded_at_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The gateway is a detached process: a root must name an absolute
+    # directory, and "~/vault" is how a person writes one in config.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / "config.toml"
+    path.write_text('[[roots]]\nname = "vault"\npath = "~/vault"\n')
+    config = load_config(path)
+    assert config.roots == [Root(name="vault", path=str(tmp_path / "vault"))]
+    hello = hello_for(config, epoch="e", gateway_version="0.1.0")
+    assert hello.roots[0].path == str(tmp_path / "vault")
+
+
+def test_relative_root_path_is_refused_naming_the_root(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[[roots]]\nname = "vault"\npath = "vault"\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "vault" in str(e.value) and "absolute" in str(e.value)

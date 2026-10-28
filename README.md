@@ -65,7 +65,7 @@ text = "/review"
 
 [[roots]]                           # folders the files pane can browse
 name = "projects"
-path = "/Users/me/projects"
+path = "~/projects"                 # absolute; a leading ~ is expanded
 ```
 
 ## The producer endpoint
