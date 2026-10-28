@@ -183,7 +183,8 @@ stop when nothing is running does nothing and answers nothing.
 `multi_select` question). An unknown, already-answered, or cancelled id is
 refused with `error code=card.stale` and nothing else happens; an answer
 whose shape does not fit the card's kind is refused with
-`error code=card.invalid_answer` and the card stays open. The answer
+`error code=card.invalid_answer` and the card stays open. An accepted
+answer is recorded in the chat's history as `card.answered`. The answer
 resolves the engine's request: `allow` with scope `once` (or no scope)
 allows this use; scope `chat` also allows the tool for the rest of this
 chat, so later requests for it answer without a card (the gateway's
@@ -312,6 +313,14 @@ gateway sends `card.cancel` with `reason: nobody was there to answer` and
 the engine sees a deny with that message (a question is refused the same
 way). An app that attaches while a card is open gets it again through
 `chat.open`.
+
+### `card.answered` — `CardAnswered`
+`chat`, `seq`, `id`. The gateway accepted a `card.answer` for the card
+`id`: the card is closed. Stamped and kept in the ring right after the
+answer (before the `chat.state working` that follows), so a replay that
+carries a `card.ask` also carries what became of it and the app does not
+pin an answered card again after a relaunch. The app that answered has
+already unpinned the card; for it this frame confirms.
 
 ### `card.cancel` — `CardCancel`
 `chat`, `seq`, `id`, `reason?`. The card is closed and its answer is no

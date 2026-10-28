@@ -293,6 +293,18 @@ class CardAsk(Envelope):
     form: list[FormField] | None = None
 
 
+class CardAnswered(Envelope):
+    """The card ``id`` was answered (``card.answer`` accepted); it is closed.
+
+    Stamped and kept in the ring, so a replay that carries the ``card.ask``
+    also carries its closing and the app does not pin the card again.
+    """
+
+    type: Literal["card.answered"] = "card.answered"
+    chat: int
+    id: str
+
+
 class CardCancel(Envelope):
     type: Literal["card.cancel"] = "card.cancel"
     chat: int
@@ -336,6 +348,7 @@ HistoryEvent = Annotated[
         ToolFinished,
         TurnFinished,
         CardAsk,
+        CardAnswered,
         CardCancel,
         ArtifactCreated,
         StatusSet,
@@ -382,6 +395,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ToolFinished,
     TurnFinished,
     CardAsk,
+    CardAnswered,
     CardCancel,
     ArtifactCreated,
     FilesList,
@@ -559,6 +573,7 @@ def example_messages() -> dict[str, BaseModel]:
             questions=None,
             form=None,
         ),
+        CardAnswered(ts=_TS, chat=1, id="card-7", seq=49),
         CardCancel(ts=_TS, chat=1, id="card-7", seq=49, reason="turn stopped"),
         ArtifactCreated(
             ts=_TS,

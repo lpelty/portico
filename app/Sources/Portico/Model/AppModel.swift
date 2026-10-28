@@ -306,7 +306,7 @@ final class AppModel: ObservableObject {
                 }
             }
 
-        case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardCancel:
+        case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel:
             guard let chat = message.envelope.chat else { return }
             // A sequenced event we already hold (a re-sent card, a ring
             // overlap) is not applied twice; the card case de-duplicates by
@@ -429,6 +429,11 @@ final class AppModel: ObservableObject {
                 items.append(.card(card))
             }
 
+        case .cardAnswered(let answered):
+            // The gateway accepted an answer (ours, or one given before a
+            // relaunch and now replayed): the card is closed either way.
+            closeCard(chat: chat, id: answered.id, why: Self.answeredMarker)
+
         case .cardCancel(let cancel):
             closeCard(chat: chat, id: cancel.id, why: cancel.reason ?? "cancelled")
 
@@ -458,7 +463,8 @@ final class AppModel: ObservableObject {
     }
 
     /// Take a card out of the open set and record why. Called on
-    /// `card.cancel`, and by `answerCard` once an answer is sent.
+    /// `card.answered` and `card.cancel`, and by `answerCard` as soon as an
+    /// answer is sent (the gateway's `card.answered` then confirms).
     func closeCard(chat: Int, id: String, why: String) {
         openCards[chat] = (openCards[chat] ?? []).filter { $0.id != id }
         var closed = closedCards[chat] ?? [:]

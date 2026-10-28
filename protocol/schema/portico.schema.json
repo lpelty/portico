@@ -308,6 +308,49 @@
       "title": "CardAnswer",
       "type": "object"
     },
+    "CardAnswered": {
+      "additionalProperties": false,
+      "description": "The card ``id`` was answered (``card.answer`` accepted); it is closed.\n\nStamped and kept in the ring, so a replay that carries the ``card.ask``\nalso carries its closing and the app does not pin the card again.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "card.answered",
+          "default": "card.answered",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts"
+      ],
+      "title": "CardAnswered",
+      "type": "object"
+    },
     "CardAsk": {
       "additionalProperties": false,
       "properties": {
@@ -534,6 +577,7 @@
             "discriminator": {
               "mapping": {
                 "artifact.created": "#/$defs/ArtifactCreated",
+                "card.answered": "#/$defs/CardAnswered",
                 "card.ask": "#/$defs/CardAsk",
                 "card.cancel": "#/$defs/CardCancel",
                 "chat.state": "#/$defs/ChatState",
@@ -572,6 +616,9 @@
               },
               {
                 "$ref": "#/$defs/CardAsk"
+              },
+              {
+                "$ref": "#/$defs/CardAnswered"
               },
               {
                 "$ref": "#/$defs/CardCancel"
@@ -1828,6 +1875,9 @@
           "$ref": "#/$defs/CardAsk"
         },
         {
+          "$ref": "#/$defs/CardAnswered"
+        },
+        {
           "$ref": "#/$defs/CardCancel"
         },
         {
@@ -2277,7 +2327,7 @@
     },
     "UserText": {
       "additionalProperties": false,
-      "description": "What the person sent to start a turn, as the engine's transcript keeps it.\n\nOnly in a transcript replay (``chat.history``): a live turn's text is\nwhat the app itself sent in ``message.send``.",
+      "description": "What the person sent to start a turn, as the engine received it.\n\nLive, right after ``turn.started`` (stamped, in the ring), and in a\ntranscript replay (``chat.history``, unstamped): one rendering path\nfor the person's words whichever way the conversation arrives.",
       "properties": {
         "chat": {
           "title": "Chat",

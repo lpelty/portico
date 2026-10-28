@@ -20,6 +20,7 @@ from portico_gateway.cards import NOBODY_ANSWERED, CardBroker, QuestionDeclined,
 from portico_gateway.chats import Chat, ChatRegistry
 from portico_gateway.messages import (
     CardAnswer,
+    CardAnswered,
     CardAsk,
     CardCancel,
     ChatHistory,
@@ -143,9 +144,10 @@ async def test_permission_card_round_trip_allow_once(server: GatewayServer, fact
         await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"decision": "allow"}, scope="once")))
         after = await recv_until(conn, TurnFinished)
         idle = await recv(conn)
-        assert [type(m) for m in after] == [ChatState, TurnFinished]
-        assert isinstance(after[0], ChatState) and after[0].state == "working"
-        assert isinstance(after[1], TurnFinished) and after[1].outcome == "done"
+        assert [type(m) for m in after] == [CardAnswered, ChatState, TurnFinished]
+        assert isinstance(after[0], CardAnswered) and after[0].id == card.id
+        assert isinstance(after[1], ChatState) and after[1].state == "working"
+        assert isinstance(after[2], TurnFinished) and after[2].outcome == "done"
         assert isinstance(idle, ChatState) and idle.state == "idle"
 
         assert engine.decisions == ["allow"]
@@ -284,7 +286,8 @@ async def test_question_card_round_trip_maps_answers(server: GatewayServer, fact
         await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"answers": answers})))
         after = await recv_until(conn, TurnFinished)
         await recv(conn)
-        assert isinstance(after[0], ChatState) and after[0].state == "working"
+        assert isinstance(after[0], CardAnswered) and after[0].id == card.id
+        assert isinstance(after[1], ChatState) and after[1].state == "working"
         assert engine.answers == [answers]
     finally:
         await conn.close()
@@ -392,7 +395,8 @@ async def test_held_card_delivered_on_attach(server: GatewayServer, factory: Eng
 
         await again.send(dump(CardAnswer(ts=TS, chat=number, id=held.id, answer={"decision": "allow"})))
         after = await recv_until(again, TurnFinished)
-        assert isinstance(after[0], ChatState) and after[0].state == "working"
+        assert isinstance(after[0], CardAnswered) and after[0].id == held.id
+        assert isinstance(after[1], ChatState) and after[1].state == "working"
         await recv(again)
         assert engine.decisions == ["allow"]
     finally:
@@ -469,6 +473,43 @@ async def test_stale_card_answer_is_rejected_not_crash(server: GatewayServer, fa
 
 
 # --- replay and cancel ----------------------------------------------------------
+
+
+async def test_answered_card_is_closed_in_a_ring_replay(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    # Answer a card, quit the app, reopen: the replay from the beginning must
+    # carry the card and its closing event, so the app does not pin it again.
+    conn = await attach(server)
+    number = await new_chat(conn, folder)
+    engine = factory.last
+    _, card = await start_turn_with_card(conn, number, engine, write_ask(folder), fake_result())
+    await recv(conn)  # waiting on you
+    await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"decision": "allow"}, scope="once")))
+    after = await recv_until(conn, TurnFinished)
+    await recv(conn)  # idle
+    assert [type(m) for m in after] == [CardAnswered, ChatState, TurnFinished]
+    answered = after[0]
+    assert isinstance(answered, CardAnswered) and answered.id == card.id and answered.chat == number
+    assert answered.seq is not None and card.seq is not None and answered.seq > card.seq
+    await conn.close()
+
+    again = await attach(server)
+    try:
+        await again.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(again)
+        assert isinstance(history, ChatHistory) and not history.truncated
+        kinds = [type(m) for m in history.events]
+        assert kinds.index(CardAsk) < kinds.index(CardAnswered)
+        assert [m.id for m in history.events if isinstance(m, CardAnswered)] == [card.id]
+        assert isinstance(await recv(again), ChatLive)
+        # Nothing is open, so nothing is re-sent after chat.live.
+        with pytest.raises(TimeoutError):
+            await recv(again, timeout=0.2)
+        # And the stale answer is refused, as before.
+        await again.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"decision": "allow"})))
+        err = await recv(again)
+        assert isinstance(err, Error) and err.code == "card.stale"
+    finally:
+        await again.close()
 
 
 async def test_open_cards_replay_on_chat_open(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:

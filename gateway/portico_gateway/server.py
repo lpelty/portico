@@ -35,7 +35,8 @@ session.
 Cards (Task 8): a permission or question from the engine goes through the
 ``CardBroker`` (``cards.py``). The chat is ``waiting on you`` while a card
 is open and back to ``working`` once it resolves with the turn still
-running; ``card.answer`` resolves it, ``turn.stop`` / ``chat.stop`` /
+running; ``card.answer`` resolves it (``card.answered`` goes in the ring so
+a replay closes the card too), ``turn.stop`` / ``chat.stop`` /
 ``chat.remove`` / gateway stop cancel it (``card.cancel`` with the reason),
 and a card held while no app is attached is denied after the hold with
 ``nobody was there to answer``. ``chat.open`` re-sends the chat's open
@@ -117,6 +118,7 @@ from .messages import (
     ArtifactCreated,
     ArtifactOpened,
     CardAnswer,
+    CardAnswered,
     CardAsk,
     ChatAlias,
     ChatHistory,
@@ -968,6 +970,9 @@ class GatewayServer:
     async def on_card_answer(self, msg: CardAnswer, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
         self.cards.answer(chat.number, msg.id, msg)
+        # The closing goes in the ring before the engine resumes (and the
+        # state goes back to working): a replay closes what it opened.
+        await self.emit(chat, CardAnswered(ts=_now(), chat=chat.number, id=msg.id))
 
     # --- handlers: chats --------------------------------------------------------
 

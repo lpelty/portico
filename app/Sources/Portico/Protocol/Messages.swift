@@ -489,6 +489,18 @@ struct CardAsk: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// The gateway accepted a `card.answer`: the card is closed. In the ring,
+/// so a replay that carries the `card.ask` carries its closing too.
+struct CardAnswered: Codable, Equatable, Sendable {
+    static let messageType = "card.answered"
+    var chat: Int
+    var id: String
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 struct CardCancel: Codable, Equatable, Sendable {
     static let messageType = "card.cancel"
     var chat: Int
@@ -649,6 +661,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case toolFinished(ToolFinished)
     case turnFinished(TurnFinished)
     case cardAsk(CardAsk)
+    case cardAnswered(CardAnswered)
     case cardCancel(CardCancel)
     case artifactCreated(ArtifactCreated)
     case filesList(FilesList)
@@ -669,6 +682,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .toolFinished: ToolFinished.messageType
         case .turnFinished: TurnFinished.messageType
         case .cardAsk: CardAsk.messageType
+        case .cardAnswered: CardAnswered.messageType
         case .cardCancel: CardCancel.messageType
         case .artifactCreated: ArtifactCreated.messageType
         case .filesList: FilesList.messageType
@@ -691,6 +705,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .toolFinished(let m): m.envelope
         case .turnFinished(let m): m.envelope
         case .cardAsk(let m): m.envelope
+        case .cardAnswered(let m): m.envelope
         case .cardCancel(let m): m.envelope
         case .artifactCreated(let m): m.envelope
         case .filesList(let m): m.envelope
@@ -714,6 +729,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ToolFinished.messageType: self = .toolFinished(try ToolFinished(from: decoder))
         case TurnFinished.messageType: self = .turnFinished(try TurnFinished(from: decoder))
         case CardAsk.messageType: self = .cardAsk(try CardAsk(from: decoder))
+        case CardAnswered.messageType: self = .cardAnswered(try CardAnswered(from: decoder))
         case CardCancel.messageType: self = .cardCancel(try CardCancel(from: decoder))
         case ArtifactCreated.messageType: self = .artifactCreated(try ArtifactCreated(from: decoder))
         case FilesList.messageType: self = .filesList(try FilesList(from: decoder))
@@ -739,6 +755,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .toolFinished(let m): try m.encode(to: encoder)
         case .turnFinished(let m): try m.encode(to: encoder)
         case .cardAsk(let m): try m.encode(to: encoder)
+        case .cardAnswered(let m): try m.encode(to: encoder)
         case .cardCancel(let m): try m.encode(to: encoder)
         case .artifactCreated(let m): try m.encode(to: encoder)
         case .filesList(let m): try m.encode(to: encoder)

@@ -198,6 +198,53 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pinnedCards(for: 2), [])
     }
 
+    func testAnsweredCardIsNotReopenedByARelaunchReplay() {
+        // Run 1: a card is asked and answered; the gateway stamps card.answered.
+        let (first, _) = model()
+        first.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = first.handleHello(hello(epoch: "epoch-A"))
+        first.open(chat: 1)
+        first.apply(.chatLive(ChatLive(chat: 1, seq: 0)))
+        let card = CardAsk(
+            chat: 1, id: "card-1", kind: .permission, title: "Write a file",
+            permission: Permission(tool: "Write", summary: "/tmp/demo/a.md", input: [:]),
+            questions: nil, form: nil, seq: 2)
+        first.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        first.apply(.cardAsk(card))
+        first.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")], scope: .once))
+        first.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-1", seq: 3)))
+        first.apply(.turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 4)))
+        XCTAssertEqual(first.pinnedCards(for: 1), [])
+        XCTAssertEqual(first.cardStatus(chat: 1, id: "card-1"), .answered)
+
+        // Run 2: a fresh app on the same gateway opens from the beginning and
+        // gets the ring back, the card and its closing included.
+        let (second, sent) = model()
+        second.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = second.handleHello(hello(epoch: "epoch-A"))
+        second.open(chat: 1)
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open") }
+        XCTAssertNil(open.since)
+        second.apply(.chatHistory(ChatHistory(
+            chat: 1,
+            events: [
+                .turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)),
+                .cardAsk(card),
+                .cardAnswered(CardAnswered(chat: 1, id: "card-1", seq: 3)),
+                .turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 4)),
+            ],
+            truncated: false, id: open.id)))
+        second.apply(.chatLive(ChatLive(chat: 1, id: open.id, seq: 4)))
+
+        XCTAssertEqual(second.pinnedCards(for: 1), [], "an answered card does not come back as open after a relaunch")
+        XCTAssertEqual(second.cardStatus(chat: 1, id: "card-1"), .answered)
+        XCTAssertEqual((second.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }.count, 1, "the inline copy is still there")
+        // Answering it sends nothing: there is no open card to answer.
+        let before = sent.frames.count
+        second.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")]))
+        XCTAssertEqual(sent.frames.count, before)
+    }
+
     func testHistoryThenLiveReplacesTranscript() {
         let (model, sent) = model()
         // Before a restart the app held a live transcript for chat 1.
