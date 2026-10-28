@@ -72,7 +72,8 @@ is ``files.not_found``. The reply is a direct answer (``id``), not a
 history event: it carries no ``seq``.
 
 Lifecycle (Task 11): the deployment's ``before_first_chat`` command runs
-once per gateway launch, before the first ``chat.new`` is honoured; its
+once per gateway launch, before the first engine starts (``chat.new``, or
+``message.send`` on a chat restored from the index); its
 lines go to the app as chat-less ``status.set`` frames, and a non-zero
 exit or a timeout answers the request with
 ``error code=lifecycle.before_first_chat_failed`` (carrying the command's
@@ -809,7 +810,12 @@ class GatewayServer:
         The real engine often names its session only with the first turn's
         messages (``start`` then returns ``""``); ``_sync_session`` picks
         the id up from the engine as its events arrive.
+
+        The deployment's ``before_first_chat`` runs first (once per launch):
+        a chat restored from the index gets its engine from ``message.send``,
+        not ``chat.new``, and the preflight guards that path too.
         """
+        await self._preflight()
         engine = self.engine_factory()
         engine.chat = chat.number
         session = await engine.start(
@@ -1082,6 +1088,8 @@ class GatewayServer:
         if engine is None:
             try:
                 engine = await self._start_engine(chat)
+            except ProtocolError:
+                raise  # the preflight refused: lifecycle.before_first_chat_failed, as on chat.new
             except Exception as e:
                 log.exception("chat %d: engine failed to start", chat.number)
                 raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e

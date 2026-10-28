@@ -101,7 +101,12 @@ line (stdout and stderr, merged) is sent to the app as a chat-less
 `error code=lifecycle.before_first_chat_failed` carrying the exit code or
 the timeout and the command's last line, and no chat is created (no number
 is consumed, no engine starts); the next `chat.new` runs the command again.
-Once it has passed, later `chat.new`s in the same launch skip it.
+Once it has passed, later `chat.new`s in the same launch skip it. The
+same preflight guards a `message.send` that starts an engine for a chat
+restored from a previous launch (the first thing a person does after a
+gateway restart is usually to continue a chat, not open one): it is
+refused with the same `error code=lifecycle.before_first_chat_failed`,
+carrying the send's `id`, and no turn starts.
 
 ### `chat.open` — `ChatOpen`
 `chat`, `since: integer | absent` (the last `seq` the app saw; absent means

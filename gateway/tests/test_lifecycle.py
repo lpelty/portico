@@ -39,10 +39,11 @@ from portico_gateway.messages import (
     StatusSet,
     TextDelta,
     TurnFinished,
+    TurnStarted,
     dump,
 )
 from portico_gateway.server import GatewayServer
-from portico_gateway.state import StateDir
+from portico_gateway.state import ChatRecord, Index, StateDir
 from tests.conftest import Block, make_config
 from tests.test_server import attach
 from tests.test_turns import EngineFactory, new_chat, recv, recv_until, text_delta
@@ -250,6 +251,50 @@ async def test_before_first_chat_is_retried_after_a_failure(
         assert [type(m) for m in frames] == [StatusSet, ChatState, ChatList]
         assert isinstance(frames[0], StatusSet) and frames[0].text == "ready"
         assert len(server.registry) == 1
+    finally:
+        await conn.close()
+
+
+async def test_before_first_chat_runs_for_a_restored_chat_continued_after_restart(
+    served: Served, factory: EngineFactory, folder: Path, state_dir: StateDir, tmp_path: Path
+) -> None:
+    # The common path after a gateway restart is "continue yesterday's chat":
+    # its engine starts from message.send, not chat.new, and the deployment's
+    # preflight must run there too (spec section 5.5, D19).
+    state_dir.save_index(
+        Index(
+            chats=[ChatRecord(chat=1, folder=str(folder), session_id=None, alias=None, state="idle", created=TS, artifacts=[])],
+            next_chat=2,
+        )
+    )
+    flag = tmp_path / "ready"
+    server = await served(before_first_chat=f"echo checking; test -e {flag} || {{ echo 'memory service is down' >&2; exit 3; }}")
+    conn = await attach(server)
+    try:
+        await conn.send(dump(MessageSend(ts=TS, chat=1, id="req-send", text="go on")))
+        frames = await recv_until(conn, Error)
+        assert [type(m) for m in frames] == [StatusSet, StatusSet, Error]
+        err = frames[-1]
+        assert isinstance(err, Error)
+        assert err.code == "lifecycle.before_first_chat_failed" and err.id == "req-send" and err.chat == 1
+        assert "memory service is down" in err.message
+        # No engine, no turn: the chat is untouched.
+        assert factory.engines == []
+        chat = server.registry.get(1)
+        assert chat.engine is None and chat.turn == 0 and chat.state == "idle"
+        assert not any(isinstance(m, TurnStarted) for m in chat.ring)
+
+        # Fixed: the preflight passes once, the turn runs, and a chat.new afterwards skips it.
+        flag.write_text("")
+        await conn.send(dump(MessageSend(ts=TS, chat=1, text="go on")))
+        frames = await recv_until(conn, TurnFinished)
+        assert [type(m) for m in frames][:2] == [StatusSet, TurnStarted]
+        assert isinstance(frames[0], StatusSet) and frames[0].text == "checking"
+        assert factory.last.started
+        await recv(conn)  # idle
+        await conn.send(dump(ChatNew(ts=TS, id="req-2", folder=str(folder))))
+        frames = await recv_until(conn, ChatList)
+        assert [type(m) for m in frames] == [ChatState, ChatList]
     finally:
         await conn.close()
 
