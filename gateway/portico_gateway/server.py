@@ -139,6 +139,8 @@ from .messages import (
     Error,
     FilesList,
     FilesListRequest,
+    FilesResults,
+    FilesSearch,
     GatewayStop,
     HelloClient,
     MessageSend,
@@ -158,6 +160,7 @@ from .messages import (
     parse_client,
 )
 from .plugins import Plugins, RenewContext
+from .search import Runner, clean_hits, run_command, search_files
 from .state import StateDir
 
 log = logging.getLogger(__name__)
@@ -563,6 +566,8 @@ class GatewayServer:
         self.cards = CardBroker(hold_seconds=config.card_hold_seconds)
         # Reads a session's transcript (``engine.read_history``); replaceable for tests.
         self.history_reader: Callable[[str | None, Path], list[dict[str, Any]]] = read_history
+        # Runs Spotlight for ``files.search`` (``search.run_command``); replaceable for tests.
+        self.search_runner: Runner = run_command
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
             ("GET", "/v1/health"): self._health,
             ("POST", "/v1/artifact"): self._producer,
@@ -578,6 +583,7 @@ class GatewayServer:
         self.register("turn.stop", self.on_turn_stop)
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
+        self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
 
     @property
@@ -1329,6 +1335,20 @@ class GatewayServer:
         except Exception:
             log.exception("chat %d: the plug-in's on_renew failed; the session ends unlogged", chat.number)
             return False
+
+    async def on_files_search(self, msg: FilesSearch, conn: ServerConnection) -> None:
+        """Hits for ``query`` under a root (named as ``files.list`` names them): a plug-in's, else Spotlight's."""
+        root = self.root_path(msg.root, msg.chat)
+        if not root.is_dir():
+            raise ProtocolError("files.not_found", f"root {msg.root!r} is not a directory")
+        if self.plugins.search is not None:
+            base = root.resolve()
+            hits = clean_hits(base, await self.plugins.run_search(base, msg.query), msg.query)
+        else:
+            hits = await search_files(root, msg.query, self.search_runner)
+        await self._send(
+            conn, FilesResults(ts=_now(), chat=msg.chat, id=msg.id, root=msg.root, query=msg.query, hits=hits)
+        )
 
     # --- handlers: turns --------------------------------------------------------
 
