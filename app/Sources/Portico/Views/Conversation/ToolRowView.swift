@@ -10,20 +10,12 @@ struct ToolRowPresentation: Equatable {
         self.row = row
     }
 
-    /// An SF Symbol per well-known engine tool; a wrench for the rest.
-    var icon: String {
-        switch row.tool {
-        case "Read": "doc.text"
-        case "Write", "Edit", "MultiEdit", "NotebookEdit": "pencil"
-        case "Bash": "terminal"
-        case "Grep", "Glob": "magnifyingglass"
-        case "WebFetch", "WebSearch": "globe"
-        case "Task", "Agent": "person.2"
-        case "TodoWrite": "checklist"
-        case "AskUserQuestion": "questionmark.bubble"
-        default: "wrench.and.screwdriver"
-        }
-    }
+    /// The one icon every tool row wears. A tool's name is data the agent
+    /// reports, not something the app knows (spec section 3: no
+    /// special-casing a tool name); the name and summary carry the meaning.
+    static let toolIcon = "wrench.and.screwdriver"
+
+    var icon: String { Self.toolIcon }
 
     /// `running` until the finish arrives; then the finish summary, or
     /// `failed: <summary>` when the call did not go well.

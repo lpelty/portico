@@ -60,7 +60,7 @@ struct PermissionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: ToolRowPresentation(row: ToolRow(toolUseId: card.id, turn: 0, tool: shown.tool, summary: "", input: [:])).icon)
+                Image(systemName: ToolRowPresentation.toolIcon)
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
                 Text(shown.tool)

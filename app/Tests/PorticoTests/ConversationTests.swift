@@ -259,12 +259,16 @@ final class ConversationTests: XCTestCase {
             toolUseId: "tu-1", turn: 1, tool: "Read", summary: "/tmp/demo/a.md",
             input: ["file_path": .string("/tmp/demo/a.md"), "limit": .int(20)])
         let shown = ToolRowPresentation(row: row)
-        XCTAssertEqual(shown.icon, "doc.text")
         XCTAssertEqual(shown.prettyInput, "{\n  \"file_path\" : \"/tmp/demo/a.md\",\n  \"limit\" : 20\n}")
         XCTAssertEqual(shown.stateText, "running")
 
-        XCTAssertEqual(ToolRowPresentation(row: ToolRow(toolUseId: "x", turn: 1, tool: "Bash", summary: "ls", input: [:])).icon, "terminal")
-        XCTAssertEqual(ToolRowPresentation(row: ToolRow(toolUseId: "x", turn: 1, tool: "Mystery", summary: "", input: [:])).icon, "wrench.and.screwdriver")
+        // Tool names are the agent's data, never the app's vocabulary (spec
+        // section 3 anti-goal): every tool row wears the same icon.
+        let generic = ToolRowPresentation.toolIcon
+        XCTAssertEqual(shown.icon, generic)
+        for name in ["Bash", "Write", "AskUserQuestion", "mcp__thing__do", "Mystery"] {
+            XCTAssertEqual(ToolRowPresentation(row: ToolRow(toolUseId: "x", turn: 1, tool: name, summary: "", input: [:])).icon, generic, name)
+        }
 
         var done = row
         done.finished = true
