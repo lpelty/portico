@@ -109,6 +109,10 @@ final class AppModel: ObservableObject {
     /// normalised relative path), the entries the last `files.list` gave.
     /// A directory is fetched when it is expanded, once, until a refresh.
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
+    /// Per directory, the gateway's refusal of its last `files.list`
+    /// (`files.outside_root` for a link that leaves the root, say), shown
+    /// in the directory's row instead of a listing; cleared when it is asked for again.
+    @Published private(set) var fileListErrors: [FilesKey: String] = [:]
 
     /// One directory in one root of one chat's Files pane.
     struct FilesKey: Hashable, Sendable {
@@ -162,8 +166,11 @@ final class AppModel: ObservableObject {
     /// Per chat, the id of the artifact that was on screen when a replay
     /// from the beginning reset the list; put back when it is re-listed.
     private var restoreCurrent: [Int: String] = [:]
-    /// Directories with a `files.list` in flight, so an expand asks once.
-    private var pendingFileLists: Set<FilesKey> = []
+    /// The `files.list` requests in flight, by request id: the directory
+    /// each asked for, so an expand asks once and the reply (or the error)
+    /// lands on the directory as requested, whatever path the gateway
+    /// echoes (a symlinked directory comes back under its resolved path).
+    private var pendingFileLists: [String: FilesKey] = [:]
     private var nextItemId = 0
     /// Ordering for status lines: per chat and chat-less, the strip shows
     /// whichever `status.set` (or error) came last.
@@ -213,9 +220,19 @@ final class AppModel: ObservableObject {
             pendingSends = [:]
         }
         hello = incoming
-        return openedChats.sorted().map { chat in
+        var frames: [ClientMessage] = openedChats.sorted().map { chat in
             .chatOpen(ChatOpen(chat: chat, since: lastSeq[chat], id: Self.requestId()))
         }
+        // A listing in flight when the socket went away was never answered
+        // (or its answer was lost with the socket): ask for each directory
+        // again, under a new id, so its row does not say "Listing…" until
+        // a refresh.
+        let unanswered = Set(pendingFileLists.values)
+        pendingFileLists = [:]
+        for key in unanswered.sorted(by: { ($0.chat, $0.root, $0.path) < ($1.chat, $1.root, $1.path) }) {
+            frames.append(filesListRequest(for: key))
+        }
+        return frames
     }
 
     /// Remember that a chat has been opened, so a reattach re-opens it.
@@ -289,13 +306,17 @@ final class AppModel: ObservableObject {
             noteSeq(of: message)
 
         case .filesList(let list):
-            // A direct answer (`id`, no seq) to the Files pane's request;
-            // keyed by the gateway's normalised path so a child's key is
-            // what `listFiles` joins (`src/lib`).
-            if let chat = list.chat {
-                let key = FilesKey(chat: chat, root: list.root, path: list.path)
+            // A direct answer (`id`, no seq) to the Files pane's request,
+            // filed under the directory that was asked for: the gateway
+            // echoes the path it resolved, which for a symlinked directory
+            // is the target's, and the tree's rows are the names as listed.
+            // A reply to a request no longer waited for (a refresh dropped
+            // it) is stale and goes nowhere.
+            if let id = list.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileTree[key] = list.entries
-                pendingFileLists.remove(key)
+                fileListErrors[key] = nil
+            } else if list.id == nil, let chat = list.chat {
+                fileTree[FilesKey(chat: chat, root: list.root, path: list.path)] = list.entries
             }
 
         case .statusSet(let status):
@@ -314,6 +335,11 @@ final class AppModel: ObservableObject {
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
                     restore(pending, to: chat)
                 }
+            }
+            // A refused listing: the directory is no longer pending (so it
+            // can be asked for again) and its row shows the refusal.
+            if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
+                fileListErrors[key] = error.message
             }
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel:
@@ -703,7 +729,8 @@ final class AppModel: ObservableObject {
         pendingOpenSince[chat] = nil
         currentTurn[chat] = nil
         fileTree = fileTree.filter { $0.key.chat != chat }
-        pendingFileLists = pendingFileLists.filter { $0.chat != chat }
+        fileListErrors = fileListErrors.filter { $0.key.chat != chat }
+        pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
         if selected == chat { selected = nil }
     }
 
@@ -796,20 +823,34 @@ extension AppModel {
         fileTree[FilesKey(chat: chat, root: root, path: path)]
     }
 
+    /// The gateway's refusal of the directory's last listing, if it was
+    /// refused; `nil` while it is listed, pending, or not asked for yet.
+    func fileListError(chat: Int, root: String, path: String) -> String? {
+        fileListErrors[FilesKey(chat: chat, root: root, path: path)]
+    }
+
     /// Ask the gateway for a directory's entries, once: a directory already
     /// listed, or with a request in flight, is not asked again (a refresh
-    /// clears both).
+    /// clears both). A refused directory may be asked for again.
     func listFiles(chat: Int, root: String, path: String) {
         let key = FilesKey(chat: chat, root: root, path: path)
-        guard fileTree[key] == nil, !pendingFileLists.contains(key) else { return }
-        pendingFileLists.insert(key)
-        send(.filesList(FilesListRequest(root: root, path: path, chat: chat, id: Self.requestId())))
+        guard fileTree[key] == nil, !pendingFileLists.values.contains(key) else { return }
+        fileListErrors[key] = nil
+        send(filesListRequest(for: key))
+    }
+
+    /// A `files.list` for the directory, remembered as pending under its id.
+    private func filesListRequest(for key: FilesKey) -> ClientMessage {
+        let id = Self.requestId()
+        pendingFileLists[id] = key
+        return .filesList(FilesListRequest(root: key.root, path: key.path, chat: key.chat, id: id))
     }
 
     /// Drop the chat's tree so every expanded directory is listed afresh.
     func refreshFiles(chat: Int) {
         fileTree = fileTree.filter { $0.key.chat != chat }
-        pendingFileLists = pendingFileLists.filter { $0.chat != chat }
+        fileListErrors = fileListErrors.filter { $0.key.chat != chat }
+        pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
     }
 
     /// Show a file from the Files pane in the viewer, as a local artifact:

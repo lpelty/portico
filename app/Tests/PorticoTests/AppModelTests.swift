@@ -670,6 +670,99 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 3)
     }
 
+    func testFilesListReplyLandsOnTheDirectoryAsRequestedNotAsResolved() {
+        // `root/link -> real`: the gateway lists the link's target and
+        // echoes the resolved path, `real`. The tree asked under `link`
+        // (the name it shows) and must find the entries there.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        model.open(chat: 1)
+        sent.frames.removeAll()
+
+        model.listFiles(chat: 1, root: "chat", path: "link")
+        guard case .filesList(let request)? = sent.frames.last else { return XCTFail("expected files.list, got \(sent.types())") }
+        let entries = [Entry(name: "a.txt", dir: false, size: 0)]
+        model.apply(.filesList(FilesList(root: "chat", path: "real", entries: entries, chat: 1, id: request.id)))
+
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "chat", path: "link"), entries)
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: "real"), "the resolved path was never asked for")
+        model.listFiles(chat: 1, root: "chat", path: "link")
+        XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 1, "listed: not asked again")
+
+        // A reply to a request a refresh dropped is stale and fills nothing.
+        model.listFiles(chat: 1, root: "chat", path: "src")
+        guard case .filesList(let dropped)? = sent.frames.last else { return XCTFail("expected files.list") }
+        model.refreshFiles(chat: 1)
+        model.apply(.filesList(FilesList(root: "chat", path: "src", entries: entries, chat: 1, id: dropped.id)))
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: "src"))
+    }
+
+    func testFilesListRefusalClearsThePendingDirectoryAndShowsWhy() {
+        // `root/esc -> ../outside`: listed as a directory, refused on expand
+        // with files.outside_root. The row must show the refusal and the
+        // directory must be askable again, not pending forever.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        model.open(chat: 1)
+        sent.frames.removeAll()
+
+        model.listFiles(chat: 1, root: "chat", path: "esc")
+        guard case .filesList(let request)? = sent.frames.last else { return XCTFail("expected files.list, got \(sent.types())") }
+        XCTAssertNil(model.fileListError(chat: 1, root: "chat", path: "esc"))
+
+        // An error for some other request leaves the listing pending.
+        model.apply(.error(ErrorMessage(code: "chat.busy", message: "a turn is running", chat: 1, id: "other")))
+        model.listFiles(chat: 1, root: "chat", path: "esc")
+        XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 1)
+
+        model.apply(.error(ErrorMessage(code: "files.outside_root", message: "path leaves the root: esc", chat: 1, id: request.id)))
+        XCTAssertEqual(model.fileListError(chat: 1, root: "chat", path: "esc"), "path leaves the root: esc")
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: "esc"), "a refusal is not an empty directory")
+
+        // Asking again (the row's click) sends once more and clears the refusal until the answer.
+        model.listFiles(chat: 1, root: "chat", path: "esc")
+        XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 2)
+        XCTAssertNil(model.fileListError(chat: 1, root: "chat", path: "esc"))
+        guard case .filesList(let again)? = sent.frames.last else { return XCTFail("expected files.list") }
+        model.apply(.filesList(FilesList(root: "chat", path: "esc", entries: [], chat: 1, id: again.id)))
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "chat", path: "esc"), [])
+    }
+
+    func testFilesListInFlightWhenTheSocketDropsIsAskedAgainOnReattach() {
+        // The listing went out, the socket died before the answer: on the
+        // next hello the directory is asked for again under a new id, same
+        // gateway or a restarted one, instead of saying "Listing…" until a refresh.
+        let (model, sent) = model()
+        model.apply(.hello(hello(epoch: "epoch-A")))
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        model.open(chat: 1)
+        model.listFiles(chat: 1, root: "chat", path: "")
+        model.listFiles(chat: 1, root: "chat", path: "src")
+        guard case .filesList(let lost)? = sent.frames.last else { return XCTFail("expected files.list") }
+        sent.frames.removeAll()
+
+        model.apply(.hello(hello(epoch: "epoch-A")))
+        XCTAssertEqual(sent.types(), ["chat.open", "files.list", "files.list"], "the chat is re-opened, then each unanswered directory asked for again")
+        let asked = sent.frames.compactMap { if case .filesList(let r) = $0 { return r } else { return nil } }
+        XCTAssertEqual(asked.map(\.path), ["", "src"])
+        XCTAssertFalse(asked.map(\.id).contains(lost.id), "a fresh id: the old reply, if it ever comes, is stale")
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: "src"))
+
+        // Pending once more: a redraw does not ask a third time; the new reply fills the row.
+        model.listFiles(chat: 1, root: "chat", path: "src")
+        XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 2)
+        let entries = [Entry(name: "lib", dir: true, size: nil)]
+        model.apply(.filesList(FilesList(root: "chat", path: "src", entries: entries, chat: 1, id: asked[1].id)))
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "chat", path: "src"), entries)
+
+        // A restarted gateway (new epoch) asks again too; the listed directory is kept.
+        model.listFiles(chat: 1, root: "chat", path: "src/lib")
+        sent.frames.removeAll()
+        model.apply(.hello(hello(epoch: "epoch-B")))
+        XCTAssertEqual(sent.types(), ["chat.open", "files.list", "files.list"])
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "chat", path: "src"), entries)
+    }
+
     // MARK: - Status strip, settings and quit (Task 21)
 
     func testStatusStripTextComposition() {

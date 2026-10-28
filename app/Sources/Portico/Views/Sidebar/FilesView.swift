@@ -132,14 +132,31 @@ struct FilesView: View {
     @ViewBuilder
     private func row(_ node: FileNode) -> some View {
         if node.placeholder {
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.mini)
-                Text(model.connection == .connected ? "Listing…" : "Not connected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if let refusal = model.fileListError(chat: chat, root: node.root, path: node.path) {
+                // The gateway refused the listing (a link that leaves the
+                // root, a directory gone): say so where the entries would
+                // be; a click asks again.
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                    Text(refusal)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .contentShape(Rectangle())
+                .help("Click to ask again")
+                .onTapGesture { model.listFiles(chat: chat, root: node.root, path: node.path) }
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(model.connection == .connected ? "Listing…" : "Not connected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .onAppear { model.listFiles(chat: chat, root: node.root, path: node.path) }
             }
-            .onAppear { model.listFiles(chat: chat, root: node.root, path: node.path) }
         } else {
             FileRow(node: node, subtitle: nil)
         }
