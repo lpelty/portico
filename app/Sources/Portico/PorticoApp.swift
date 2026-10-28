@@ -103,6 +103,18 @@ struct PorticoApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var quitHandler: (() async -> Void)?
 
+    /// A bare executable (`swift run`, no app bundle) is a background-only
+    /// process to AppKit: no Dock tile, no menu bar, and its window never
+    /// shows. Ask for a regular app and come to the front, so the window
+    /// appears from a checkout the same as it will from a bundle.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let app = NSApplication.shared
+        if app.activationPolicy() != .regular {
+            app.setActivationPolicy(.regular)
+        }
+        app.activate()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let quitHandler else { return .terminateNow }
         Task { @MainActor in

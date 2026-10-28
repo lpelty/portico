@@ -148,6 +148,8 @@ build hand-off and the live close-out.
 
 **App**
 
+- The window shows from `swift run`: a bare executable is a background-only
+  process to AppKit until the app asks to be a regular one.
 - The ready-line and hello deadlines fire against a silent gateway.
 - The first open of a chat only heard through broadcasts asks for history
   from the beginning.

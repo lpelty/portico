@@ -36,6 +36,13 @@ Opt-in live tests, when a credential is in the environment:
 
 ### 1. Fresh clone: one command starts the gateway; `swift run` opens the app; pick a folder; send a message; the reply streams.
 
+- **Observed 2026-10-28, morning:** the window did not show at all from
+  `swift run`. A bare SwiftPM executable has no bundle, so AppKit ran it as
+  a background-only process: one window, invisible, no Dock tile. The build
+  never looked at the screen. Fixed in the app delegate (activation policy
+  `.regular` and activate at launch); confirmed through System Events and
+  the window list, not pixels: regular app, window on screen, frontmost.
+
 - [x] **Gateway half demonstrated live** on 2026-10-28 by
   `gateway/tests/test_live_check1.py` (4 passed): a fresh clone installed
   through its own `bin/`, started with one command, a folder picked on
