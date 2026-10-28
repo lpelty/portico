@@ -1,0 +1,17 @@
+{
+  "chat": 1,
+  "id": "card-7",
+  "kind": "permission",
+  "permission": {
+    "input": {
+      "content": "# Summary\n",
+      "file_path": "/Users/someone/projects/demo/summary.md"
+    },
+    "summary": "/Users/someone/projects/demo/summary.md",
+    "tool": "Write"
+  },
+  "seq": 48,
+  "title": "Write a file",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "card.ask"
+}

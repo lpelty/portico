@@ -1,0 +1,15 @@
+{
+  "artifact": {
+    "id": "art-3",
+    "kind": "file",
+    "location": "/Users/someone/projects/demo/summary.md",
+    "media": "markdown",
+    "open": true,
+    "source": "tool",
+    "title": "summary.md"
+  },
+  "chat": 1,
+  "seq": 50,
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "artifact.created"
+}

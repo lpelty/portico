@@ -1,0 +1,19 @@
+{
+  "chats": [
+    {
+      "alias": "report draft",
+      "chat": 1,
+      "created": "2026-10-27T12:00:00Z",
+      "folder": "/Users/someone/projects/demo",
+      "state": "idle"
+    },
+    {
+      "chat": 2,
+      "created": "2026-10-27T12:00:00Z",
+      "folder": "/Users/someone/projects/demo-two",
+      "state": "working"
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "chat.list"
+}

@@ -1,0 +1,11 @@
+{
+  "answer": {
+    "decision": "allow"
+  },
+  "chat": 1,
+  "id": "card-7",
+  "note": "fine for this chat",
+  "scope": "chat",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "card.answer"
+}

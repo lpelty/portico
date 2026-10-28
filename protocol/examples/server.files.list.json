@@ -1,0 +1,19 @@
+{
+  "chat": 1,
+  "entries": [
+    {
+      "dir": true,
+      "name": "lib"
+    },
+    {
+      "dir": false,
+      "name": "main.py",
+      "size": 1204
+    }
+  ],
+  "id": "req-3",
+  "path": "src",
+  "root": "chat",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "files.list"
+}

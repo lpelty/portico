@@ -1,0 +1,30 @@
+{
+  "actions": [
+    {
+      "label": "Review",
+      "text": "/review"
+    }
+  ],
+  "brand": {
+    "accent": "#3B6EF5",
+    "agent_name": "Agent",
+    "name": "Portico"
+  },
+  "capabilities": [
+    "cards.form",
+    "files",
+    "producer"
+  ],
+  "commands": [],
+  "epoch": "7f1c4a2e-3b5d-4c6e-9a8b-0d1e2f3a4b5c",
+  "gateway_version": "0.1.0",
+  "protocol": 1,
+  "roots": [
+    {
+      "name": "projects",
+      "path": "/Users/someone/projects"
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "hello"
+}

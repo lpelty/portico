@@ -1,0 +1,10 @@
+{
+  "chat": 1,
+  "ok": true,
+  "seq": 46,
+  "summary": "read 120 lines",
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "turn": 2,
+  "type": "tool.finished"
+}

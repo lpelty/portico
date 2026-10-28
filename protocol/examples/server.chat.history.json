@@ -1,0 +1,31 @@
+{
+  "chat": 1,
+  "events": [
+    {
+      "chat": 1,
+      "seq": 1,
+      "ts": "2026-10-27T12:00:00Z",
+      "turn": 1,
+      "type": "turn.started"
+    },
+    {
+      "chat": 1,
+      "seq": 2,
+      "text": "Hello.",
+      "ts": "2026-10-27T12:00:00Z",
+      "turn": 1,
+      "type": "text.delta"
+    },
+    {
+      "chat": 1,
+      "outcome": "done",
+      "seq": 3,
+      "ts": "2026-10-27T12:00:00Z",
+      "turn": 1,
+      "type": "turn.finished"
+    }
+  ],
+  "truncated": false,
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "chat.history"
+}

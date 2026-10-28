@@ -1,0 +1,13 @@
+{
+  "chat": 1,
+  "input": {
+    "file_path": "/Users/someone/projects/demo/notes.md"
+  },
+  "seq": 45,
+  "summary": "/Users/someone/projects/demo/notes.md",
+  "tool": "Read",
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "turn": 2,
+  "type": "tool.started"
+}

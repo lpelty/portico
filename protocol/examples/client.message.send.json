@@ -1,0 +1,10 @@
+{
+  "attachments": [
+    "/Users/someone/projects/demo/notes.md"
+  ],
+  "chat": 1,
+  "id": "req-2",
+  "text": "Summarise the attached notes.",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "message.send"
+}
