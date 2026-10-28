@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -269,6 +270,139 @@ def test_sdk_engine_satisfies_the_protocol() -> None:
     assert eng.session_id is None and eng.chat == 7 and eng.turn == 0
     assert isinstance(FakeEngine(), Engine)
     assert isinstance(RecordingCallbacks(), EngineCallbacks)
+
+
+# --- the pump dying mid-turn --------------------------------------------------
+
+_END = object()  # the stream ends, as it does when the CLI process exits
+
+
+class _FakeSDKClient:
+    """Stands in for ``ClaudeSDKClient``: ``query`` feeds ``script`` to ``receive_messages``.
+
+    An item that is an exception is raised from the stream; ``_END`` ends it.
+    """
+
+    instances: list[_FakeSDKClient] = []
+
+    def __init__(self, options: Any) -> None:
+        self.options = options
+        self.disconnected = False
+        self.script: list[Any] = []
+        self._queue: asyncio.Queue[Any] = asyncio.Queue()
+        _FakeSDKClient.instances.append(self)
+
+    async def connect(self) -> None:
+        self._queue.put_nowait(SystemMessage(subtype="init", data={"session_id": "sess-live"}))
+
+    async def query(self, text: str) -> None:
+        for item in self.script:
+            self._queue.put_nowait(item)
+
+    async def interrupt(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+        self._queue.put_nowait(_END)
+
+    async def receive_messages(self) -> Any:
+        while True:
+            item = await self._queue.get()
+            if item is _END:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+    def push(self, item: Any) -> None:
+        self._queue.put_nowait(item)
+
+
+@pytest.fixture
+def sdk_client(monkeypatch: pytest.MonkeyPatch) -> type[_FakeSDKClient]:
+    _FakeSDKClient.instances.clear()
+    monkeypatch.setattr(engine_mod, "ClaudeSDKClient", _FakeSDKClient)
+    return _FakeSDKClient
+
+
+async def _until(predicate: Any, timeout: float = 2.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+def _finished(cb: RecordingCallbacks) -> list[TurnFinished]:
+    return [e for e in cb.events if isinstance(e, TurnFinished)]
+
+
+async def _started_engine(tmp_path: Path, cb: RecordingCallbacks) -> tuple[SDKEngine, _FakeSDKClient]:
+    eng = SDKEngine(chat=3)
+    sid = await eng.start(tmp_path, None, ["project"], cb)
+    assert sid == "sess-live"
+    (client,) = _FakeSDKClient.instances
+    return eng, client
+
+
+async def test_pump_failure_mid_turn_reports_the_turn_as_error(tmp_path: Path, sdk_client: Any) -> None:
+    # The CLI dies (the stream raises) after some text: the owner must hear the
+    # turn end in error, or the chat sits at ``working`` forever.
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    client.script = [_text_delta("partial "), RuntimeError("the CLI process exited")]
+    await eng.send("go")
+    await _until(lambda: _finished(cb))
+    assert [type(e).__name__ for e in cb.events] == ["TextDelta", "TurnFinished"]
+    (end,) = _finished(cb)
+    assert end.chat == 3 and end.turn == 1 and end.outcome == "error"
+    assert end.seq is None  # the chat stamps it, as with every engine event
+    await eng.close()
+
+
+async def test_pump_ending_mid_turn_reports_the_turn_as_error(tmp_path: Path, sdk_client: Any) -> None:
+    # The stream ends without a result (the process went away quietly): same.
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    client.script = [_text_delta("partial "), _END]
+    await eng.send("go")
+    await _until(lambda: _finished(cb))
+    (end,) = _finished(cb)
+    assert end.turn == 1 and end.outcome == "error"
+    await eng.close()
+
+
+async def test_pump_failure_after_the_turn_finished_adds_nothing(tmp_path: Path, sdk_client: Any) -> None:
+    # The result already closed the turn; a failure after it is not a second finish.
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    client.script = [_result(), RuntimeError("gone after the result")]
+    await eng.send("go")
+    await _until(lambda: eng._pump is not None and eng._pump.done())
+    assert [e.outcome for e in _finished(cb)] == ["done"]
+    await eng.close()
+
+
+async def test_pump_failure_before_any_turn_adds_nothing(tmp_path: Path, sdk_client: Any) -> None:
+    # No turn in flight: nothing to report, and the chat stays as it was.
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    client.push(RuntimeError("died idle"))
+    await _until(lambda: eng._pump is not None and eng._pump.done())
+    assert cb.events == []
+    await eng.close()
+
+
+async def test_close_mid_turn_is_not_an_error(tmp_path: Path, sdk_client: Any) -> None:
+    # The owner closing the engine (chat.stop) ended the turn itself; the
+    # pump must not answer with an error finish on the way out.
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    client.script = [_text_delta("working")]
+    await eng.send("go")
+    await _until(lambda: cb.events)
+    await eng.close()
+    assert client.disconnected
+    assert _finished(cb) == []
 
 
 # --- history ------------------------------------------------------------------

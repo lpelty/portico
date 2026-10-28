@@ -267,6 +267,11 @@ class SDKEngine:
     engine's ``init`` message names it (or ``resume`` when resuming), and
     keeps ``session_id`` current from later messages if ``init`` arrives
     only with the first turn.
+
+    If the pump dies mid-turn (the CLI process exits, the stream raises),
+    the owner hears ``turn.finished outcome=error`` for the turn in
+    flight, so a chat is never left ``working`` with nothing on screen.
+    A deliberate ``close`` reports nothing: the owner ended the turn.
     """
 
     def __init__(self, chat: int = 0, init_timeout: float = 5.0) -> None:
@@ -278,6 +283,9 @@ class SDKEngine:
         self._callbacks: EngineCallbacks | None = None
         self._pump: asyncio.Task[None] | None = None
         self._init_seen = asyncio.Event()
+        # The last turn a result message closed; ``turn`` beyond it is in flight.
+        self._finished_turn = 0
+        self._closing = False
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
         if self._client is not None:
@@ -299,12 +307,29 @@ class SDKEngine:
             async for msg in self._client.receive_messages():
                 self._note_session(msg)
                 for event in translate(msg, self.chat, self.turn):
+                    if isinstance(event, TurnFinished):
+                        self._finished_turn = event.turn
                     await self._callbacks.on_event(event)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("chat %s: engine pump stopped", self.chat)
-            self._init_seen.set()
+        # The stream is gone, by failure or because the CLI exited: release a
+        # waiting ``start`` and settle any turn still in flight.
+        self._init_seen.set()
+        await self._report_lost_turn()
+
+    async def _report_lost_turn(self) -> None:
+        """The pump ended mid-turn: tell the owner the turn ended in error."""
+        if self._closing or self._callbacks is None or self.turn <= self._finished_turn:
+            return
+        turn = self.turn
+        self._finished_turn = turn
+        log.warning("chat %s: engine went away during turn %d; reporting the turn as an error", self.chat, turn)
+        try:
+            await self._callbacks.on_event(TurnFinished(ts=_now(), chat=self.chat, turn=turn, outcome="error"))
+        except Exception:
+            log.exception("chat %s: could not report the lost turn", self.chat)
 
     def _note_session(self, msg: Message) -> None:
         sid: str | None = None
@@ -327,6 +352,7 @@ class SDKEngine:
             await self._client.interrupt()
 
     async def close(self) -> None:
+        self._closing = True
         pump, self._pump = self._pump, None
         client, self._client = self._client, None
         if client is not None:
