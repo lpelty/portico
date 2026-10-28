@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .messages import Action, Brand, HelloServer, Root
 
@@ -41,10 +41,14 @@ class Config(BaseModel):
     setting_sources: list[str] = ["project"]
     before_first_chat: str | None = None
     on_stop: str | None = None
-    command_timeout_seconds: int = 120
+    # Bounds are checked at load so a typo fails here with the key named,
+    # not downstream: a timeout of 0 or less can never elapse, a ring of 0
+    # drops every event. A hold of 0 is a choice (deny at once when nobody
+    # is attached); a negative one is not.
+    command_timeout_seconds: int = Field(default=120, ge=1)
     default_folder: str | None = None
-    card_hold_seconds: int = 600
-    history_buffer: int = 2000
+    card_hold_seconds: int = Field(default=600, ge=0)
+    history_buffer: int = Field(default=2000, ge=1)
 
     @field_validator("setting_sources")
     @classmethod

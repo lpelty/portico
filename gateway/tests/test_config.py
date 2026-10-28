@@ -121,6 +121,37 @@ def test_wrong_type_is_a_config_error(tmp_path: Path) -> None:
     assert "card_hold_seconds" in str(e.value)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "command_timeout_seconds = 0",
+        "command_timeout_seconds = -1",
+        "card_hold_seconds = -1",
+        "history_buffer = 0",
+        "history_buffer = -5",
+    ],
+)
+def test_out_of_range_number_is_refused_naming_the_key(tmp_path: Path, line: str) -> None:
+    # A typo must fail at load with the key named, not downstream (a timeout
+    # that can never elapse, a ring buffer that drops every event).
+    path = tmp_path / "config.toml"
+    path.write_text(line + "\n")
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    key = line.split(" = ")[0]
+    assert key in str(e.value) and "config.toml" in str(e.value)
+
+
+def test_zero_card_hold_is_allowed(tmp_path: Path) -> None:
+    # No hold at all is a deployment's choice: with nobody attached a card is
+    # denied at once. The smallest timeout and ring are 1.
+    path = tmp_path / "config.toml"
+    path.write_text("card_hold_seconds = 0\ncommand_timeout_seconds = 1\nhistory_buffer = 1\n")
+    config = load_config(path)
+    assert config.card_hold_seconds == 0
+    assert config.command_timeout_seconds == 1 and config.history_buffer == 1
+
+
 def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     config = Config(
         brand=Brand(name="Front Door", agent_name="Helper", accent="#3B6EF5"),

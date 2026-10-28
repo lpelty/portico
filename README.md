@@ -48,10 +48,10 @@ credential is present.
 setting_sources = ["project"]   # never empty: [] drops the folder's instructions and hooks
 before_first_chat = "bin/prepare"   # run once per launch before the first engine starts
 on_stop = "bin/cleanup"             # run on the way out
-command_timeout_seconds = 120
+command_timeout_seconds = 120       # at least 1
 default_folder = "/Users/me/work"
-card_hold_seconds = 600             # a card with no app attached waits this long, then is denied
-history_buffer = 2000               # events kept per chat for reattach
+card_hold_seconds = 600             # a card with no app attached waits this long, then is denied; 0 = deny at once
+history_buffer = 2000               # events kept per chat for reattach; at least 1
 
 [brand]
 name = "Portico"
