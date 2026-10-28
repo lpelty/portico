@@ -41,5 +41,6 @@ def test_no_deployment_names_in_distributed_files():
 
 
 def test_version_and_changelog_agree():
-    assert (REPO / "VERSION").read_text().strip() == "0.1.0"
-    assert "## v0.1.0" in (REPO / "CHANGELOG.md").read_text()
+    version = (REPO / "VERSION").read_text().strip()
+    assert version == "0.2.0"
+    assert f"## v{version} (" in (REPO / "CHANGELOG.md").read_text()
