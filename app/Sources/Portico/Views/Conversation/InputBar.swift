@@ -19,9 +19,13 @@ struct InputBar: View {
     }
     private var attachments: [String] { model.draftAttachments[chat] ?? [] }
     private var busy: Bool { model.isBusy(chat: chat) }
+    /// A send is out and unanswered: the gateway may be starting the
+    /// engine (seconds) before `turn.started` makes the chat `working`.
+    private var sending: Bool { model.isSending(chat: chat) }
     private var connected: Bool { model.connection == .connected }
     private var canSend: Bool {
-        connected && !busy && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        connected && !busy && !sending
+            && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -96,6 +100,7 @@ struct InputBar: View {
     private var placeholder: String {
         if !connected { return "Not connected" }
         if busy { return "Working — Stop to interrupt" }
+        if sending { return "Sending…" }
         return "Message \(model.hello?.brand.agentName ?? "the agent") (⌘↩ to send)"
     }
 
@@ -133,7 +138,7 @@ struct InputBar: View {
                     }
                     .controlSize(.small)
                     .help(action.text)
-                    .disabled(!connected || busy)
+                    .disabled(!connected || busy || sending)
                 }
             }
         }

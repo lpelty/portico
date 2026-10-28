@@ -82,6 +82,34 @@ final class ConversationTests: XCTestCase {
         XCTAssertFalse(model.isBusy(chat: 9), "an unknown chat is not busy")
     }
 
+    func testASecondSendWhileTheFirstIsUnansweredStaysInTheEditor() {
+        // On a chat's first message the gateway starts the engine (seconds)
+        // before turn.started makes the chat `working`; a second send in that
+        // gap must not overwrite the first's pending slot (whose text became
+        // the bubble, and whose refusal restored nothing). It waits in the editor.
+        let (model, sent) = model()
+        model.sendMessage(chat: 1, text: "first")
+        XCTAssertTrue(model.isSending(chat: 1))
+        model.setDraft("second", for: 1)
+        model.sendMessage(chat: 1, text: model.draft(for: 1))
+        XCTAssertEqual(sent.frames.count, 1, "one send in flight per chat")
+        XCTAssertEqual(model.draft(for: 1), "second", "the second stays where it was typed")
+        XCTAssertEqual(model.pendingSends[1]?.text, "first")
+
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        model.apply(.userText(UserText(chat: 1, turn: 1, text: "first", seq: 2)))
+        guard case .userText(let user)? = (model.transcripts[1] ?? []).first else { return XCTFail("expected the bubble") }
+        XCTAssertEqual(user.text, "first")
+        XCTAssertFalse(model.isSending(chat: 1), "answered: the composer is free again")
+
+        model.apply(.turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 3)))
+        model.sendMessage(chat: 1, text: model.draft(for: 1))
+        XCTAssertEqual(sent.frames.count, 2)
+        guard case .messageSend(let second)? = sent.frames.last else { return XCTFail("expected message.send") }
+        XCTAssertEqual(second.text, "second")
+        XCTAssertEqual(model.draft(for: 1), "")
+    }
+
     // MARK: - the user bubble on a live send
 
     func testLiveSendShowsAUserBubbleWhenItsUserTextArrives() {

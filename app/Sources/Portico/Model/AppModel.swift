@@ -579,9 +579,16 @@ final class AppModel: ObservableObject {
     /// gateway would have nothing to give the engine. The send is remembered
     /// until the gateway starts its turn (the user bubble) or refuses it
     /// (the text and chips come back).
+    ///
+    /// One send in flight per chat: while the last one is unanswered
+    /// (`isSending`), another is not sent and the composer keeps what it
+    /// has. The gateway would refuse it `chat.busy` anyway, but only after
+    /// it has started the first turn — and between a send and its
+    /// `turn.started` the engine may take seconds to start, with the state
+    /// word still `idle`, so the state word alone cannot gate the composer.
     func sendMessage(chat: Int, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, !isSending(chat: chat) else { return }
         let attachments = draftAttachments[chat] ?? []
         let id = Self.requestId()
         pendingSends[chat] = PendingSend(id: id, text: trimmed, attachments: attachments)
@@ -633,6 +640,12 @@ final class AppModel: ObservableObject {
     /// The chat's state word as the sidebar last heard it.
     func state(of chat: Int) -> ChatStateWord? {
         chats.first { $0.chat == chat }?.state
+    }
+
+    /// A send the gateway has not answered yet (no `turn.started` and no
+    /// refusal so far): the composer holds the next one until it is.
+    func isSending(chat: Int) -> Bool {
+        pendingSends[chat] != nil
     }
 
     /// A turn is running or a card is waiting: a send would be refused
