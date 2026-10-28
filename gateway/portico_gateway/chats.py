@@ -13,8 +13,9 @@ already dropped some of what it asked for (so it should refetch history).
 
 The ring, ``seq``, ``turn``, the engine and the per-chat allows belong to
 one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
-number, folder, engine session id, alias, state word, creation time and
-the artifacts the chat produced. A chat that came back from the index with
+number, folder, engine session id, alias, state word, creation time,
+the artifacts the chat produced, and (v0.2) the session facts: title,
+ended, logged, parent, compactions and the last context percentage. A chat that came back from the index with
 a session is ``restored``: its conversation before this launch lives in
 the engine's transcript, which the server replays on ``chat.open``.
 """
@@ -33,6 +34,9 @@ if TYPE_CHECKING:
     from .engine import Engine
 
 STATE_WORDS: frozenset[str] = frozenset(get_args(ChatStateWord))
+
+# A session's title: the first line of its first message, at most this long.
+TITLE_LIMIT = 60
 
 # A chat recorded in one of these states comes back ``idle`` on the next
 # launch: no turn can be running when the gateway has just started.
@@ -54,6 +58,15 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def title_from(text: str) -> str | None:
+    """The first non-blank line of ``text``, trimmed to ``TITLE_LIMIT``; ``None`` when there is none."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            return line[:TITLE_LIMIT].rstrip()
+    return None
+
+
 class Chat:
     """One numbered conversation. Mutable; the registry owns its lifetime."""
 
@@ -68,6 +81,12 @@ class Chat:
         state: ChatStateWord = "idle",
         created: str | None = None,
         artifacts: list[Artifact] | None = None,
+        title: str | None = None,
+        ended: str | None = None,
+        logged: bool | None = None,
+        parent: int | None = None,
+        compactions: int = 0,
+        context_percent: float | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -83,6 +102,15 @@ class Chat:
         self.seq = 0
         self.ring: deque[ServerMessage] = deque(maxlen=history_buffer)
         self.artifacts: list[Artifact] = list(artifacts or [])
+        # Session facts: ``ended`` is when a renewal closed this session;
+        # ``logged`` whether its log step finished cleanly (``None`` when
+        # none ran); ``parent`` the session this one followed.
+        self.title = title
+        self.ended = ended
+        self.logged = logged
+        self.parent = parent
+        self.compactions = compactions
+        self.context_percent = context_percent
         # Chat-scoped allows: bare tool names, or ``Tool(rule)`` keys for a
         # command tool (``cards.CardBroker.chat_allow_keys``).
         self.chat_allows: set[str] = set()
@@ -128,9 +156,24 @@ class Chat:
 
     # --- views ----------------------------------------------------------------
 
+    def _session_facts(self) -> dict[str, object]:
+        return {
+            "title": self.title,
+            "ended": self.ended,
+            "logged": self.logged,
+            "parent": self.parent,
+            "compactions": self.compactions,
+            "context_percent": self.context_percent,
+        }
+
     def summary(self) -> ChatSummary:
         return ChatSummary(
-            chat=self.number, folder=str(self.folder), alias=self.alias, state=self.state, created=self.created
+            chat=self.number,
+            folder=str(self.folder),
+            alias=self.alias,
+            state=self.state,
+            created=self.created,
+            **self._session_facts(),  # type: ignore[arg-type]
         )
 
     def record(self) -> ChatRecord:
@@ -142,6 +185,7 @@ class Chat:
             state=self.state,
             created=self.created,
             artifacts=list(self.artifacts),
+            **self._session_facts(),  # type: ignore[arg-type]
         )
 
     @classmethod
@@ -156,6 +200,12 @@ class Chat:
             state=state,  # type: ignore[arg-type]
             created=record.created,
             artifacts=record.artifacts,
+            title=record.title,
+            ended=record.ended,
+            logged=record.logged,
+            parent=record.parent,
+            compactions=record.compactions,
+            context_percent=record.context_percent,
         )
         chat.restored = record.session_id is not None
         return chat
@@ -189,11 +239,11 @@ class ChatRegistry:
     def chats(self) -> list[Chat]:
         return [self._chats[n] for n in sorted(self._chats)]
 
-    def create(self, folder: Path) -> Chat:
+    def create(self, folder: Path, parent: int | None = None) -> Chat:
         """A new chat on ``folder`` with the next number; saved to the index at once."""
         number = self._index.next_chat
         self._index.next_chat = number + 1
-        chat = Chat(number, Path(folder), self._history_buffer)
+        chat = Chat(number, Path(folder), self._history_buffer, parent=parent)
         self._chats[number] = chat
         self.persist()
         return chat

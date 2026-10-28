@@ -109,7 +109,7 @@ from websockets.server import ServerProtocol
 
 from .artifacts import TurnCollector, artifact_for_location
 from .cards import CardBroker
-from .chats import Chat, ChatRegistry, UnknownChat
+from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
 from .engine import Engine, PermissionDecision, history_events, read_history
 from .lifecycle import CommandFailed, run_lifecycle_command
@@ -140,8 +140,11 @@ from .messages import (
     GatewayStop,
     HelloClient,
     MessageSend,
+    Outcome,
     ProtocolError,
     ServerMessage,
+    SessionRenew,
+    SessionRenewed,
     StatusSet,
     TextDelta,
     ToolStarted,
@@ -152,6 +155,7 @@ from .messages import (
     dump,
     parse_client,
 )
+from .plugins import Plugins, RenewContext
 from .state import StateDir
 
 log = logging.getLogger(__name__)
@@ -283,6 +287,9 @@ class TurnRun:
     collector: TurnCollector
     stop_requested: bool = False
     finished: asyncio.Event = field(default_factory=asyncio.Event)
+    # How the turn ended, once it has; a turn ended by closing its engine
+    # (``chat.stop``, gateway stop) leaves it unset and counts as stopped.
+    outcome: Outcome | None = None
 
 
 class ChatCallbacks:
@@ -521,8 +528,10 @@ class GatewayServer:
         registry: ChatRegistry,
         engine_factory: Callable[[], Engine],
         version: str,
+        plugins: Plugins | None = None,
     ) -> None:
         self.config = config
+        self.plugins = plugins if plugins is not None else Plugins.none()
         self.state = state
         self.registry = registry
         self.engine_factory = engine_factory
@@ -535,6 +544,8 @@ class GatewayServer:
         self._handlers: dict[str, Handler] = {}
         self._runs: dict[int, TurnRun] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        # Chats with a ``session.renew`` in flight: no second renew, no send.
+        self._renewing: set[int] = set()
         # Lifecycle: ``before_first_chat`` runs once per launch; ``stop`` runs once.
         self._preflight_done = False
         self._preflight_lock = asyncio.Lock()
@@ -562,6 +573,7 @@ class GatewayServer:
         self.register("turn.stop", self.on_turn_stop)
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
+        self.register("session.renew", self.on_session_renew)
 
     @property
     def attached(self) -> bool:
@@ -771,7 +783,7 @@ class GatewayServer:
             return
 
         await self._attach(conn)
-        await self._send(conn, hello_for(self.config, self.epoch, self.version))
+        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins))
         await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while
@@ -969,6 +981,7 @@ class GatewayServer:
             return
         if run.stop_requested:
             event = event.model_copy(update={"outcome": "stopped"})
+        run.outcome = event.outcome
         await self._report_artifacts(chat, run)
         await self.emit(chat, event)
         await self._finish_run(chat, run)
@@ -998,6 +1011,7 @@ class GatewayServer:
         # during a later one (the adapter stamps events with the current
         # turn). The next send resumes the session on a fresh engine.
         await self._close_engine(chat)
+        run.outcome = "stopped"
         await self._report_artifacts(chat, run)
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self._finish_run(chat, run)
@@ -1099,6 +1113,14 @@ class GatewayServer:
         folder = Path(msg.folder)
         if not folder.is_absolute() or not folder.is_dir():
             raise ProtocolError("chat.folder_invalid", f"not an absolute path to a directory: {msg.folder}")
+        if self.config.presentation == "single":
+            live = [c.number for c in self.registry.chats() if c.ended is None]
+            if live:
+                raise ProtocolError(
+                    "session.live",
+                    f"this deployment keeps one session at a time and session {live[-1]} is live; "
+                    "end it with session.renew to start the next",
+                )
         await self._preflight()
         chat = self.registry.create(folder)
         try:
@@ -1201,13 +1223,112 @@ class GatewayServer:
         rel, entries = await asyncio.to_thread(list_directory, root, msg.path)
         await self._send(conn, FilesList(ts=_now(), chat=msg.chat, id=msg.id, root=msg.root, path=rel, entries=entries))
 
+    # --- handlers: sessions -----------------------------------------------------
+
+    def has_log_step(self) -> bool:
+        return self.plugins.renew is not None or bool(self.config.log_prompt)
+
+    async def on_session_renew(self, msg: SessionRenew, conn: ServerConnection) -> None:
+        """End session ``chat`` (after its log step, when asked) and open the next one in the same folder.
+
+        Checked here, answered from a task: the log step is a whole turn,
+        and the frames that answer its cards (or stop it) must still be read
+        while it runs.
+        """
+        chat = self.registry.get(msg.chat)
+        if chat.ended is not None:
+            raise ProtocolError("session.ended", f"session {chat.number} has already ended")
+        self._check_can_send(chat)
+        self._renewing.add(chat.number)
+        self._spawn(self._renew_task(chat, msg, conn), name=f"portico-renew-{chat.number}")
+
+    async def _renew_task(self, chat: Chat, msg: SessionRenew, conn: ServerConnection) -> None:
+        try:
+            await self.renew(chat, msg.log, msg.id)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
+        except Exception as e:
+            log.exception("chat %d: renew failed", chat.number)
+            await self._send(conn, self.error("gateway.error", f"session.renew failed: {e}", chat=chat.number, id=msg.id))
+        finally:
+            self._renewing.discard(chat.number)
+
+    async def renew(self, chat: Chat, log_first: bool, id: str | None = None) -> Chat:
+        """Run the log step (when asked and one exists), end ``chat``, create the next; returns it.
+
+        Sends ``chat.state`` for both, then ``session.renewed`` (with ``id``),
+        then ``chat.list``. The next session's engine starts with its first
+        message, as a restored chat's does.
+        """
+        logged: bool | None = None
+        if log_first and self.has_log_step():
+            logged = await self._run_log_step(chat)
+        await self.cards.cancel_all(chat, "session ended", self.emit)
+        await self._close_engine(chat)
+        chat.ended = _now()
+        chat.logged = logged
+        await self.set_state(chat, "stopped")
+        following = self.registry.create(chat.folder, parent=chat.number)
+        await self.set_state(following, "idle")
+        log.info("chat %d: session ended (logged=%s); session %d follows", chat.number, logged, following.number)
+        await self.broadcast(SessionRenewed(ts=_now(), id=id, ended=chat.summary(), next=following.summary()))
+        await self.send_chat_list()
+        return following
+
+    async def _run_log_step(self, chat: Chat) -> bool:
+        """The plug-in's ``on_renew``, else ``log_prompt`` as a message; whether it finished cleanly."""
+
+        async def send(text: str) -> Outcome:
+            # Turns are this method's own: the renew holds the chat.
+            if chat.number in self._runs:
+                raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
+            run = await self.start_turn(chat, text)
+            await run.finished.wait()
+            return run.outcome or "stopped"
+
+        hook = self.plugins.renew
+        if hook is None:
+            assert self.config.log_prompt
+            return await send(self.config.log_prompt) == "done"
+        ctx = RenewContext(chat=chat.number, folder=chat.folder, log_prompt=self.config.log_prompt, send=send)
+        try:
+            return bool(await hook(ctx, chat.summary()))
+        except Exception:
+            log.exception("chat %d: the plug-in's on_renew failed; the session ends unlogged", chat.number)
+            return False
+
     # --- handlers: turns --------------------------------------------------------
 
     async def on_message_send(self, msg: MessageSend, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
-        if chat.number in self._runs:
-            raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
+        self._check_can_send(chat)
         attachments = check_attachments(msg.attachments)
+        # The session's title: the first line of the first thing the person
+        # said (never a log step's message, which does not come this way).
+        # A chat restored from a v0.1 index keeps no title rather than
+        # taking a later message's. No ``chat.list`` is pushed for it: the
+        # app has the same first line in ``user.text``, and the next
+        # ``chat.list`` (renew, new, alias, reattach) carries the title.
+        title = None
+        if chat.title is None and chat.turn == 0 and not chat.restored:
+            title = title_from(msg.text)
+        await self.start_turn(chat, with_attachments(msg.text, attachments))
+        if title is not None and chat.title is None:
+            chat.title = title
+            self.registry.persist()
+
+    def _check_can_send(self, chat: Chat) -> None:
+        if chat.ended is not None:
+            raise ProtocolError("session.ended", f"session {chat.number} has ended; send to the session that followed it")
+        if chat.number in self._runs or chat.number in self._renewing:
+            raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
+
+    async def start_turn(self, chat: Chat, text: str) -> TurnRun:
+        """Start one turn of ``text`` in ``chat`` (starting its engine if needed); returns the run.
+
+        The caller has checked the chat can take a turn. ``run.finished`` is
+        set when the turn ends, with ``run.outcome`` saying how.
+        """
         engine = chat.engine
         if engine is None:
             try:
@@ -1217,7 +1338,6 @@ class GatewayServer:
             except Exception as e:
                 log.exception("chat %d: engine failed to start", chat.number)
                 raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e
-        text = with_attachments(msg.text, attachments)
 
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
@@ -1234,9 +1354,11 @@ class GatewayServer:
             await engine.send(text)
         except Exception as e:
             log.exception("chat %d: engine send failed", chat.number)
+            run.outcome = "error"
             await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="error"))
             await self._finish_run(chat, run)
             raise ProtocolError("engine.send_failed", f"the engine refused the message: {e}") from e
+        return run
 
     async def on_turn_stop(self, msg: TurnStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)

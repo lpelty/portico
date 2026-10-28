@@ -22,18 +22,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     """Run the gateway until ``gateway.stop`` or SIGINT/SIGTERM. Refuses a second copy on the same state directory."""
     from portico_gateway.config import ConfigError, load_config
     from portico_gateway.lifecycle import AlreadyRunning, single_instance
+    from portico_gateway.plugins import PluginError, load_plugins
     from portico_gateway.state import StateDir, StateError
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         state = StateDir(Path(args.state).expanduser() if args.state else None)
         config = load_config(Path(args.config).expanduser() if args.config else state.config_path)
+        plugins = load_plugins(config.plugins, config.plugin_paths)
         single_instance(state)
-    except (ConfigError, StateError, AlreadyRunning, OSError) as e:
+    except (ConfigError, PluginError, StateError, AlreadyRunning, OSError) as e:
         print(f"portico-gateway: {e}", file=sys.stderr)
         return 1
     try:
-        return asyncio.run(_run_server(config, state, args.port))
+        return asyncio.run(_run_server(config, state, args.port, plugins=plugins))
     except StateError as e:
         print(f"portico-gateway: {e}", file=sys.stderr)
         return 1
@@ -41,7 +43,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         state.release_lock()
 
 
-async def _run_server(config, state, port: int, engine_factory=None) -> int:  # noqa: ANN001 - types live in the modules below
+async def _run_server(config, state, port: int, engine_factory=None, plugins=None) -> int:  # noqa: ANN001 - types live in the modules below
     """Serve until ``stop`` has run (``gateway.stop`` from the app, or a stop signal), then shut down; exit 0."""
     from portico_gateway.chats import ChatRegistry
     from portico_gateway.lifecycle import install_stop_signals
@@ -52,7 +54,9 @@ async def _run_server(config, state, port: int, engine_factory=None) -> int:  # 
 
         engine_factory = SDKEngine
     registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=config.history_buffer)
-    server = GatewayServer(config=config, state=state, registry=registry, engine_factory=engine_factory, version=__version__)
+    server = GatewayServer(
+        config=config, state=state, registry=registry, engine_factory=engine_factory, version=__version__, plugins=plugins
+    )
     install_stop_signals(asyncio.get_running_loop(), server.request_stop)
     await server.serve(port)
     try:
