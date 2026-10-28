@@ -123,7 +123,10 @@ class Plugins:
             hook = getattr(module, "on_hello", None)
             if hook is None:
                 continue
-            changed = hook(hello)
+            try:
+                changed = hook(hello)
+            except Exception as e:
+                raise PluginError(f"plug-in {module.__name__!r}: on_hello failed: {type(e).__name__}: {e}") from e
             if not isinstance(changed, HelloServer):
                 raise PluginError(f"plug-in {module.__name__!r}: on_hello must return the hello it was given (or a copy)")
             hello = changed

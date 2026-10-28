@@ -20,7 +20,7 @@ PROTOCOL_DIR = REPO_ROOT / "protocol"
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run the gateway until ``gateway.stop`` or SIGINT/SIGTERM. Refuses a second copy on the same state directory."""
-    from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.config import ConfigError, hello_for, load_config
     from portico_gateway.lifecycle import AlreadyRunning, single_instance
     from portico_gateway.plugins import PluginError, load_plugins
     from portico_gateway.state import StateDir, StateError
@@ -30,6 +30,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         state = StateDir(Path(args.state).expanduser() if args.state else None)
         config = load_config(Path(args.config).expanduser() if args.config else state.config_path)
         plugins = load_plugins(config.plugins, config.plugin_paths)
+        hello_for(config, "start", __version__, plugins)  # a plug-in's on_hello fails here, not at the app's connect
         single_instance(state)
     except (ConfigError, PluginError, StateError, AlreadyRunning, OSError) as e:
         print(f"portico-gateway: {e}", file=sys.stderr)

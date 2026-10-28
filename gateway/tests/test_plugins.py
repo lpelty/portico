@@ -165,3 +165,22 @@ def test_the_example_plugin_loads_and_names_its_hooks() -> None:
 
 def test_plugins_none_is_empty() -> None:
     assert Plugins.none().names == []
+
+
+def test_a_failing_on_hello_is_a_plugin_error(tmp_path: Path) -> None:
+    write_module(tmp_path, "pp_bad_hello", "PORTICO_PLUGIN_API = 1\ndef on_hello(hello):\n    raise KeyError('x')\n")
+    plugins = load_plugins(["pp_bad_hello"], [str(tmp_path)])
+    with pytest.raises(PluginError) as e:
+        hello_for(Config(), epoch="e", gateway_version="0.2.0", plugins=plugins)
+    assert "pp_bad_hello" in str(e.value) and "on_hello" in str(e.value)
+
+
+def test_run_refuses_to_start_with_a_missing_plugin(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from portico_gateway.__main__ import main
+
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.toml").write_text('plugins = ["pp_absent"]\n')
+    assert main(["run", "--state", str(state)]) == 1
+    err = capsys.readouterr().err
+    assert "pp_absent" in err and "not found" in err
