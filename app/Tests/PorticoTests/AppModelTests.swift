@@ -401,4 +401,90 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(reloaded.appearance, .dark)
         XCTAssertEqual(reloaded.gatewayURL, "ws://127.0.0.1:4321")
     }
+
+    // MARK: - Files pane (Task 20)
+
+    func testOpenFileFromTreeShowsInViewer() {
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        model.open(chat: 1)
+        sent.frames.removeAll()
+
+        // A click in the Files pane: a local artifact, in the viewer at once.
+        model.openArtifact(file: "/tmp/demo/notes/report.md", in: 1)
+        let shown = model.current[1]
+        XCTAssertEqual(shown?.location, "/tmp/demo/notes/report.md")
+        XCTAssertEqual(shown?.media, .markdown)
+        XCTAssertEqual(shown?.kind, .file)
+        XCTAssertEqual(shown?.source, .text)
+        XCTAssertEqual(shown?.title, "report.md")
+        XCTAssertTrue(model.isViewerShown(for: 1), "the viewer column is there for a file opened from the tree")
+        XCTAssertEqual(model.artifacts[1]?.map(\.location), ["/tmp/demo/notes/report.md"], "listed in the history too")
+        XCTAssertTrue(sent.frames.isEmpty, "no gateway round trip for a local open, got \(sent.types())")
+
+        // Media follows the extension the way the gateway maps it; unknown is `other`.
+        model.openArtifact(file: "/tmp/demo/shot.PNG", in: 1)
+        XCTAssertEqual(model.current[1]?.media, .image)
+        model.openArtifact(file: "/tmp/demo/data.csv", in: 1)
+        XCTAssertEqual(model.current[1]?.media, .other)
+        model.openArtifact(file: "/tmp/demo/readme.txt", in: 1)
+        XCTAssertEqual(model.current[1]?.media, .text)
+
+        // Opening the same file again does not duplicate it in the history.
+        model.openArtifact(file: "/tmp/demo/notes/report.md", in: 1)
+        XCTAssertEqual(model.artifacts[1]?.filter { $0.location == "/tmp/demo/notes/report.md" }.count, 1)
+        XCTAssertEqual(model.current[1]?.location, "/tmp/demo/notes/report.md")
+
+        // A replay from the beginning keeps what the person opened locally:
+        // the gateway never lists it, so it must not vanish on reattach.
+        model.apply(.chatHistory(ChatHistory(chat: 1, events: [], truncated: false)))
+        XCTAssertEqual(model.current[1]?.location, "/tmp/demo/notes/report.md")
+        XCTAssertEqual(model.artifacts[1]?.count, 4)
+    }
+
+    func testFilesListRequestsAndRepliesFillTheTree() {
+        let (model, sent) = model()
+        var hello = hello()
+        hello.roots = [Root(name: "projects", path: "/Users/someone/projects")]
+        model.apply(.hello(hello))
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        model.open(chat: 1)
+        sent.frames.removeAll()
+
+        // The chat's folder is root "chat"; config roots come from hello.
+        XCTAssertEqual(model.fileRoots(for: 1).map(\.name), ["chat", "projects"])
+        XCTAssertEqual(model.rootPath(root: "chat", chat: 1), "/tmp/demo")
+        XCTAssertEqual(model.rootPath(root: "projects", chat: 1), "/Users/someone/projects")
+        XCTAssertNil(model.rootPath(root: "nope", chat: 1))
+
+        // Nothing listed yet; asking sends one files.list and marks it pending.
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: ""))
+        model.listFiles(chat: 1, root: "chat", path: "")
+        model.listFiles(chat: 1, root: "chat", path: "")
+        XCTAssertEqual(sent.types(), ["files.list"], "one request per directory while it is pending")
+        guard case .filesList(let request)? = sent.frames.first else { return XCTFail("expected files.list, got \(sent.frames)") }
+        XCTAssertEqual(request.chat, 1)
+        XCTAssertEqual(request.root, "chat")
+        XCTAssertEqual(request.path, "")
+
+        // The reply is keyed by chat, root and the gateway's normalised path.
+        let entries = [Entry(name: "src", dir: true, size: nil), Entry(name: "main.py", dir: false, size: 1204)]
+        model.apply(.filesList(FilesList(root: "chat", path: "", entries: entries, chat: 1, id: request.id)))
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "chat", path: ""), entries)
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: "src"), "a child is fetched on its own expand")
+        XCTAssertNil(model.fileEntries(chat: 2, root: "chat", path: ""), "another chat's folder is another tree")
+
+        // A child path is joined with `/`, matching the gateway's posix form.
+        model.listFiles(chat: 1, root: "chat", path: "src")
+        guard case .filesList(let child)? = sent.frames.last else { return XCTFail("expected files.list, got \(sent.frames)") }
+        XCTAssertEqual(child.path, "src")
+        XCTAssertEqual(model.absolutePath(chat: 1, root: "chat", path: "src", name: "lib"), "/tmp/demo/src/lib")
+        XCTAssertEqual(model.absolutePath(chat: 1, root: "projects", path: "", name: "demo"), "/Users/someone/projects/demo")
+
+        // Refresh drops the cache so the next expand asks again.
+        model.refreshFiles(chat: 1)
+        XCTAssertNil(model.fileEntries(chat: 1, root: "chat", path: ""))
+        model.listFiles(chat: 1, root: "chat", path: "")
+        XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 3)
+    }
 }

@@ -10,8 +10,8 @@ struct MainWindow: View {
 
     var body: some View {
         NavigationSplitView {
-            ChatListView()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 360)
+            sidebar
+                .navigationSplitViewColumnWidth(min: 200, ideal: 260, max: 400)
         } detail: {
             VStack(spacing: 0) {
                 connectionLine
@@ -21,6 +21,23 @@ struct MainWindow: View {
         }
         .navigationTitle(model.hello?.brand.name ?? "Portico")
         .frame(minWidth: 720, minHeight: 480)
+    }
+
+    /// The chat list, and under it the Files pane for the selected chat
+    /// when the gateway offers files (`hello.capabilities`).
+    @ViewBuilder
+    private var sidebar: some View {
+        if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
+            VSplitView {
+                ChatListView()
+                    .frame(minHeight: 120)
+                FilesView(chat: chat)
+                    .id(chat)
+                    .frame(minHeight: 120)
+            }
+        } else {
+            ChatListView()
+        }
     }
 
     /// The conversation, and the viewer beside it when the chat has

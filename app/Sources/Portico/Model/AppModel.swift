@@ -101,6 +101,17 @@ final class AppModel: ObservableObject {
     /// in the view so switching chats keeps a half-typed message, like the
     /// chips, and so a refused send can give the text back.
     @Published private(set) var drafts: [Int: String] = [:]
+    /// The Files pane's cache: per chat, root and directory (the gateway's
+    /// normalised relative path), the entries the last `files.list` gave.
+    /// A directory is fetched when it is expanded, once, until a refresh.
+    @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
+
+    /// One directory in one root of one chat's Files pane.
+    struct FilesKey: Hashable, Sendable {
+        var chat: Int
+        var root: String
+        var path: String
+    }
 
     /// A `message.send` the gateway has not answered yet. The gateway says
     /// nothing about the person's own text on a live turn (`user.text` is
@@ -143,6 +154,8 @@ final class AppModel: ObservableObject {
     /// Per chat, the id of the artifact that was on screen when a replay
     /// from the beginning reset the list; put back when it is re-listed.
     private var restoreCurrent: [Int: String] = [:]
+    /// Directories with a `files.list` in flight, so an expand asks once.
+    private var pendingFileLists: Set<FilesKey> = []
     private var nextItemId = 0
 
     /// The auto-open settings the reducer consults (spec §5.3).
@@ -245,9 +258,15 @@ final class AppModel: ObservableObject {
             applyEvent(message, to: created.chat)
             noteSeq(of: message)
 
-        case .filesList:
-            // Task 20 consumes these; nothing to keep in the model yet.
-            break
+        case .filesList(let list):
+            // A direct answer (`id`, no seq) to the Files pane's request;
+            // keyed by the gateway's normalised path so a child's key is
+            // what `listFiles` joins (`src/lib`).
+            if let chat = list.chat {
+                let key = FilesKey(chat: chat, root: list.root, path: list.path)
+                fileTree[key] = list.entries
+                pendingFileLists.remove(key)
+            }
 
         case .statusSet(let status):
             if let chat = status.chat {
@@ -302,11 +321,13 @@ final class AppModel: ObservableObject {
         if fromBeginning {
             transcripts[chat] = []
             openCards[chat] = []
-            artifacts[chat] = []
+            // Files the person opened from the Files pane are this app's
+            // alone: the gateway never lists them, so they stay.
+            artifacts[chat] = (artifacts[chat] ?? []).filter { Self.isLocal($0) }
             // The stored artifacts follow as open=false; the one on screen
             // comes back if it is still among them (`applyEvent`), and
             // nothing else pops open on a replay.
-            if let shown = current[chat] {
+            if let shown = current[chat], !Self.isLocal(shown) {
                 restoreCurrent[chat] = shown.id
                 current[chat] = nil
             }
@@ -595,6 +616,8 @@ final class AppModel: ObservableObject {
         live.remove(chat)
         pendingOpenSince[chat] = nil
         currentTurn[chat] = nil
+        fileTree = fileTree.filter { $0.key.chat != chat }
+        pendingFileLists = pendingFileLists.filter { $0.chat != chat }
         if selected == chat { selected = nil }
     }
 
@@ -611,6 +634,112 @@ final class AppModel: ObservableObject {
     private static func itemId(_ counter: inout Int) -> String {
         counter += 1
         return String(counter)
+    }
+}
+
+// MARK: - The Files pane
+
+extension AppModel {
+    /// The root name the gateway gives every chat's own folder (spec §5.6).
+    static let chatRoot = "chat"
+
+    /// The prefix of an artifact this app made for a file opened from the
+    /// Files pane. The gateway never hears of these, so a replay keeps them.
+    static let localArtifactPrefix = "local:"
+
+    static func isLocal(_ artifact: Artifact) -> Bool {
+        artifact.id.hasPrefix(localArtifactPrefix)
+    }
+
+    /// The roots the Files pane offers a chat: its own folder first, as
+    /// `chat`, then the deployment's roots from `hello`, in their order.
+    func fileRoots(for chat: Int) -> [Root] {
+        var roots: [Root] = []
+        if let folder = chats.first(where: { $0.chat == chat })?.folder {
+            roots.append(Root(name: Self.chatRoot, path: folder))
+        }
+        for root in hello?.roots ?? [] where root.name != Self.chatRoot {
+            roots.append(root)
+        }
+        return roots
+    }
+
+    /// The absolute directory a root name stands for, or `nil` for a name
+    /// neither the chat nor `hello` offers.
+    func rootPath(root: String, chat: Int) -> String? {
+        fileRoots(for: chat).first { $0.name == root }?.path
+    }
+
+    /// The absolute path of `name` inside `path` under `root`; `nil` when
+    /// the root is unknown.
+    func absolutePath(chat: Int, root: String, path: String, name: String) -> String? {
+        guard let base = rootPath(root: root, chat: chat) else { return nil }
+        var url = URL(fileURLWithPath: base)
+        if !path.isEmpty { url.appendPathComponent(path) }
+        url.appendPathComponent(name)
+        return url.path
+    }
+
+    /// The gateway's relative path of `name` inside `path`: `/`-joined,
+    /// as the gateway normalises it, so the reply lands on the same key.
+    static func childPath(_ path: String, _ name: String) -> String {
+        path.isEmpty ? name : path + "/" + name
+    }
+
+    /// What the last `files.list` gave for a directory; `nil` until asked.
+    func fileEntries(chat: Int, root: String, path: String) -> [Entry]? {
+        fileTree[FilesKey(chat: chat, root: root, path: path)]
+    }
+
+    /// Ask the gateway for a directory's entries, once: a directory already
+    /// listed, or with a request in flight, is not asked again (a refresh
+    /// clears both).
+    func listFiles(chat: Int, root: String, path: String) {
+        let key = FilesKey(chat: chat, root: root, path: path)
+        guard fileTree[key] == nil, !pendingFileLists.contains(key) else { return }
+        pendingFileLists.insert(key)
+        send(.filesList(FilesListRequest(root: root, path: path, chat: chat, id: Self.requestId())))
+    }
+
+    /// Drop the chat's tree so every expanded directory is listed afresh.
+    func refreshFiles(chat: Int) {
+        fileTree = fileTree.filter { $0.key.chat != chat }
+        pendingFileLists = pendingFileLists.filter { $0.chat != chat }
+    }
+
+    /// Show a file from the Files pane in the viewer, as a local artifact:
+    /// no gateway round trip, the media from the extension the way the
+    /// gateway maps it, listed once in the chat's history, and the viewer
+    /// column brought back if it was collapsed.
+    func openArtifact(file path: String, in chat: Int) {
+        let id = Self.localArtifactPrefix + path
+        let artifact = Artifact(
+            id: id, kind: .file, location: path, media: Media.of(path: path),
+            title: URL(fileURLWithPath: path).lastPathComponent, source: .text, open: true)
+        var list = artifacts[chat] ?? []
+        if let index = list.firstIndex(where: { $0.id == id }) {
+            list[index] = artifact
+        } else {
+            list.append(artifact)
+        }
+        artifacts[chat] = list
+        current[chat] = artifact
+        viewerVisible = true
+    }
+}
+
+extension Media {
+    /// The media kind the gateway would give a path, by extension
+    /// (`artifacts.MEDIA_BY_EXTENSION`); anything else is `other`.
+    static func of(path: String) -> Media {
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "md", "markdown": .markdown
+        case "png", "jpg", "jpeg", "gif", "webp", "svg": .image
+        case "html", "htm": .html
+        case "pdf": .pdf
+        case "txt": .text
+        default: .other
+        }
     }
 }
 
