@@ -134,7 +134,10 @@ with `user.text` for what the person sent; those events carry no `seq`
 and `truncated` is false. A chat whose transcript cannot be found (no
 session yet, or the engine's files are gone) opens with an empty history,
 never an error. When the transcript is empty but the ring holds events,
-the ring is sent with its own `truncated` flag.
+the ring is sent; it is marked `truncated` only when the request named a
+`since` the ring no longer reaches (the app then asks from the
+beginning), never for a request from the beginning, which nothing could
+serve better — so the app never loops.
 
 ### `chat.stop` — `ChatStop`
 `chat`. Interrupts and closes the chat's engine. A turn in flight ends with
@@ -266,7 +269,9 @@ carries the request's `id`.
 oldest first; empty when the app is up to date), `truncated: bool` (true
 when `since` fell behind the ring buffer and no transcript could fill the
 gap, so the replay starts later than asked; the app should then refetch
-from the beginning). Not itself stamped. Events from the ring carry their
+from the beginning. Never true for a request from the beginning, and an
+app that asked from the beginning applies what it got rather than asking
+again). Not itself stamped. Events from the ring carry their
 original `seq`; events from a transcript replay carry none (see
 `chat.open`) and are: `turn.started`, `user.text`, `text.delta`,
 `tool.started`, `tool.finished`, `turn.finished outcome=done` per turn.

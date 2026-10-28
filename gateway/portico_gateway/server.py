@@ -1040,8 +1040,10 @@ class GatewayServer:
         created this launch and the ring still reaches back to its first
         event. Otherwise the engine's transcript is read and translated;
         the chat's stored artifacts come with it. When there is no
-        transcript to read, the ring is the best the gateway has and is
-        sent with its own ``truncated`` flag.
+        transcript to read, the ring is the best the gateway has: it is
+        sent ``truncated`` only for a ``since`` request (the app then asks
+        from the beginning), never for a from-the-beginning one, which no
+        refetch could serve better.
         """
         ring, truncated = chat.events_since(since)
         if not truncated and (since is not None or not chat.restored):
@@ -1050,7 +1052,7 @@ class GatewayServer:
         events = history_events(transcript, chat.number)
         if not events:
             replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
-            return ring, truncated, [a for a in chat.artifacts if a.id not in replayed]
+            return ring, truncated and since is not None, [a for a in chat.artifacts if a.id not in replayed]
         # Live turns continue the transcript's numbering when none has run yet this launch.
         turns = sum(1 for e in events if isinstance(e, TurnStarted))
         if chat.turn == 0 and chat.number not in self._runs:

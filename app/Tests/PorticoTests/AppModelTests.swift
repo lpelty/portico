@@ -341,6 +341,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(again.since, "the refetch starts from the beginning")
     }
 
+    func testTruncatedReplyToAnOpenFromTheBeginningIsAppliedNotReopened() {
+        // The gateway's ring has wrapped and there is no transcript: a replay
+        // from the beginning is the best there is. Asking again would only
+        // get the same answer, so the events are shown and no chat.open follows.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = model.handleHello(hello())
+        model.open(chat: 1)
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open") }
+        XCTAssertNil(open.since)
+
+        let before = sent.frames.count
+        model.apply(.chatHistory(ChatHistory(
+            chat: 1,
+            events: [
+                delta(1, turn: 1, "tail of the ring", seq: 40),
+                .turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 41)),
+            ],
+            truncated: true, id: open.id)))
+        XCTAssertEqual(sent.frames.count, before, "no second chat.open for a truncated reply to an open from the beginning")
+        let items = model.transcripts[1] ?? []
+        XCTAssertEqual(items.count, 2, "the events are applied; got \(items)")
+        XCTAssertEqual(model.lastSeq[1], 41)
+        model.apply(.chatLive(ChatLive(chat: 1, id: open.id, seq: 41)))
+        XCTAssertTrue(model.isLive(chat: 1))
+    }
+
     func testChatStateWordShown() {
         let (model, _) = model()
         model.apply(.chatList(ChatList(chats: [summary(1), summary(2, alias: "notes")])))

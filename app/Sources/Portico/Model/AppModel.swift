@@ -333,17 +333,19 @@ final class AppModel: ObservableObject {
 
     /// `chat.history`: a replay from the beginning replaces the transcript;
     /// a catch-up (`since` was sent) appends what the ring held after the
-    /// watermark. `truncated` means the gap could not be filled: refetch
-    /// from the beginning.
+    /// watermark. `truncated` on a catch-up means the gap could not be
+    /// filled: refetch from the beginning. `truncated` on a reply to an
+    /// open from the beginning is as good as it gets (the ring wrapped and
+    /// there is no transcript): apply it, asking again would only loop.
     private func applyHistory(_ history: ChatHistory) {
         let chat = history.chat
-        if history.truncated {
+        let since: Int? = pendingOpenSince[chat] ?? nil
+        if history.truncated, since != nil {
             lastSeq[chat] = nil
             pendingOpenSince[chat] = .some(nil)
             send(.chatOpen(ChatOpen(chat: chat, since: nil, id: Self.requestId())))
             return
         }
-        let since: Int? = pendingOpenSince[chat] ?? nil
         let fromBeginning = since == nil || history.events.contains { $0.envelope.seq == nil }
         if fromBeginning {
             transcripts[chat] = []

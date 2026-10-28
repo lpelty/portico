@@ -363,6 +363,44 @@ async def test_open_with_since_off_the_ring_replays_transcript(
         await srv.shutdown()
 
 
+async def test_open_from_beginning_with_empty_transcript_and_wrapped_ring_is_not_truncated(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A from-the-beginning request cannot be served better than the ring when
+    # there is no transcript: answering `truncated` would only make the app ask
+    # from the beginning again, forever.
+    config = make_config(history_buffer=3)
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    monkeypatch.setattr(srv, "history_reader", lambda session_id, folder: [])
+    await srv.serve(0)
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        factory.last.script(text_delta("a"), text_delta("b"), text_delta("c"), fake_result())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)  # idle
+        chat = srv.registry.get(number)
+        assert chat.ring[0].seq is not None and chat.ring[0].seq > 1, "the ring has wrapped"
+
+        # since behind the ring: truncated, so the app refetches from the beginning ...
+        await conn.send(dump(ChatOpen(ts=TS, chat=number, since=1)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and history.truncated
+        assert isinstance(await recv(conn), ChatLive)
+
+        # ... and that refetch is final: the ring's tail, not truncated.
+        await conn.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and not history.truncated
+        assert [m.seq for m in history.events] == [m.seq for m in chat.ring]
+        assert isinstance(await recv(conn), ChatLive)
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
 async def test_missing_transcript_gives_empty_history_not_error(
     state_dir: StateDir, factory: EngineFactory, folder: Path, config_dir: Path
 ) -> None:
