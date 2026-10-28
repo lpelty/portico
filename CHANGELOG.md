@@ -85,6 +85,87 @@ Python reference gateway on the Claude Agent SDK, and a SwiftUI Mac app.
 - `bin/install`, `bin/doctor`, `bin/update`, `bin/portico-gateway` (loads
   `~/.portico/env` when present, then runs the installed CLI).
 - Model-free tests on both sides (gateway against a fake engine; Swift
-  against every protocol example), one opt-in live smoke test
-  (`PORTICO_LIVE=1`), and a distribution test that keeps deployment names
-  out of the repo.
+  against every protocol example), opt-in live tests against a real model
+  (`PORTICO_LIVE=1`: the smoke plus one file per window-facing done-when
+  check), and a distribution test that keeps deployment names out of the
+  repo.
+
+### Validated live
+
+On 2026-10-28 the gateway was driven against a real model, opt-in, by
+`gateway/tests/test_live_smoke.py` and `test_live_check1/2/3/4/5/9.py`:
+25 tests, all passed, in 5 minutes 20 seconds. Together they cover the
+gateway half of done-when checks 1, 2, 3, 4, 5, 6 and 9: a fresh `git
+clone` installed and started through its own `bin/`, a reply streamed over
+the protocol, a permission card denied (no file, the agent says so) and
+allowed (the file written, its markdown artifact opening), a chat-scoped
+allow covering the next write, question cards answered single-select,
+multi-select and with free text, a markdown report and a page on a local
+port opening as artifacts, the producer endpoint mid-turn, stop
+interrupting a turn, a client leaving mid-turn with the gateway finishing
+the work and replaying it gaplessly on return, a card held while nothing
+was attached, two chats with their own state words, a gateway restart
+replaying the transcript and resuming the session, a configured root
+browsed and an attached file read by the agent, and a folder's own deny
+hook firing. What is left is the window itself, seen by a person;
+`docs/done-when.md` says which part of each check that is, and holds the
+numbers.
+
+### Fixed after review
+
+Found by the live runs and a code review, fixed in the commits between the
+build hand-off and the live close-out.
+
+**Gateway**
+
+- A frame nested too deeply is refused as `protocol.invalid` instead of
+  crashing on recursion.
+- Config refuses a zero or negative timeout, a zero history buffer, or a
+  negative card hold.
+- An engine that dies mid-turn ends the turn with `outcome=error`.
+- An index holding an unknown chat state word is refused as a state error.
+- Shutdown closes a connection that never said hello instead of hanging on it.
+- The stop watchdog closes an engine that ignored an interrupt, so its late
+  finish cannot end the next turn.
+- A viewable file named as a markdown link in the reply is reported as an
+  artifact.
+- A stale or zero `since` on a restored chat replays the transcript, not an
+  empty history.
+- A stop during a hung `before_first_chat` is honoured at once, not after
+  its timeout.
+- A root written as `~/vault` is expanded at config load; a relative root
+  is refused.
+- Transcript replay no longer shows the engine's interrupt marker as the
+  person's words.
+- Doctor: a login token in the environment counts as a provider credential.
+- Doctor: a malformed env file is reported by line number instead of
+  killing `bin/doctor`.
+- Tests: the live smoke answers a permission card in the protocol's shape;
+  the live drivers for checks 1, 2, 3, 4, 5 and 9 are opt-in gateway tests.
+
+**App**
+
+- The ready-line and hello deadlines fire against a silent gateway.
+- The first open of a chat only heard through broadcasts asks for history
+  from the beginning.
+- One send in flight per chat; a second waits in the editor.
+- An action button sends on its own and leaves the composer alone.
+- A card the gateway re-sends after an unconfirmed answer is open again.
+- A failed viewer load is not retried on every redraw; the failure page
+  offers Try again.
+- A Files pane listing lands where it was asked for, and never says
+  Listing… forever.
+- Quit with "stop everything" stops the gateway after the main window was
+  closed.
+
+**Protocol** (wording in `PROTOCOL.md`; version 1 unchanged)
+
+- `roots[].path` in `hello` is absolute, with `~` expanded.
+- `since: 0` means from the beginning; a `since` beyond the chat's current
+  `seq` replays from the transcript.
+- A stop during `before_first_chat` kills the command's process group and
+  refuses the request waiting on it.
+- After the stop grace period the gateway closes the engine; the next send
+  starts a fresh one on the same session.
+- User-role entries the engine writes for itself (reminders, command
+  output, the interrupt marker) replay as nothing and start no turn.

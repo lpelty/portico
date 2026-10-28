@@ -107,6 +107,7 @@ cd gateway && uv run pytest -q                      # model-free, a few seconds
 cd app && swift test                                # model-free
 cd gateway && uv run pytest ../tests/test_distribution.py -q
 cd gateway && PORTICO_LIVE=1 uv run pytest tests/test_live_smoke.py -v   # opt-in, needs a credential
+cd gateway && PORTICO_LIVE=1 uv run pytest tests/test_live_*.py -v        # the smoke plus done-when checks 1-5 and 9 live; about five minutes
 ```
 
 Other commands: `bin/update` (fast-forward pull, then install);

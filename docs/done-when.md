@@ -2,15 +2,26 @@
 
 The nine checks from the design's "Done when" list. A box is ticked only
 when an automated test or probe in this repo demonstrably covers it, and
-the test is cited. The rest are marked **manual** for a person at the
-screen; where a check cannot run without a provider credential, it says so.
+the test is cited. For a check whose text names the window, the tick means
+the gateway half ran live against a real model and passed, and the line
+says what the window itself still owes a person at the screen. Where a
+check cannot run without a provider credential, it says so.
 
-Baseline on 2026-10-28, with the live checks folded in:
+Baseline on 2026-10-28, with the live checks folded in and run (measured
+at HEAD `abc9ea8`, tree clean, before this docs commit):
 
-- `cd gateway && uv run pytest -q`: 195 passed, 25 skipped (the opt-in live
-  smoke and the six opt-in live check files below)
-- `cd app && swift test`: 77 tests, 1 skipped (the opt-in live hello handshake), 0 failures
-- `tests/test_distribution.py`: 2 passed
+- `cd gateway && uv run pytest -q`: 195 passed, 25 skipped in 5.80s (the
+  skips are the opt-in live smoke and the six opt-in live check files below)
+- `cd app && swift test`: Executed 89 tests, with 1 test skipped (the opt-in
+  live hello handshake) and 0 failures (0 unexpected) in 4.623 (4.634)
+  seconds; no `error:` or `failed` lines
+- `tests/test_distribution.py`: 2 passed in 0.02s
+- Live, with a credential in the environment (`PORTICO_LIVE=1`): 25 passed
+  in 320.43s (0:05:20) — `tests/test_live_smoke.py` plus
+  `tests/test_live_check1/2/3/4/5/9.py`
+- Forbidden-token grep over `git ls-files` (excluding
+  `tests/test_distribution.py`): 0 matches
+- All green.
 
 Opt-in live tests, when a credential is in the environment:
 
@@ -25,7 +36,12 @@ Opt-in live tests, when a credential is in the environment:
 
 ### 1. Fresh clone: one command starts the gateway; `swift run` opens the app; pick a folder; send a message; the reply streams.
 
-- [ ] **manual — Larry.** Needs a credential in the environment and a window.
+- [x] **Gateway half demonstrated live** on 2026-10-28 by
+  `gateway/tests/test_live_check1.py` (4 passed): a fresh clone installed
+  through its own `bin/`, started with one command, a folder picked on
+  `chat.new`, a message sent and the reply streamed. **Still at the screen —
+  Larry:** the window itself (`swift run`, picking the folder in it, the
+  reply streaming on screen).
   - Automated pieces: the gateway's ready line and ledger
     (`gateway/tests/test_server.py::test_ready_line_and_ledger`), the app
     starting a gateway from its command and reading the ready line and token
@@ -47,11 +63,17 @@ Opt-in live tests, when a credential is in the environment:
     `::test_b_ready_line_ledger_health_and_token_gate`,
     `::test_c_conversation_streams_a_reply`,
     `::test_d_gateway_stop_exits_and_clears_the_ledger`).
-  - Not automated: the real window (`swift run`) and picking a folder in it.
+  - Left to a person at the screen: the real window (`swift run`) and
+    picking a folder in it.
 
 ### 2. Ask for a file write: a permission card appears; deny leaves no file and the agent says it was denied; allow writes it, and the file opens in the viewer on its own.
 
-- [ ] **manual — Larry.** Needs a credential in the environment.
+- [x] **Gateway half demonstrated live** on 2026-10-28 by
+  `gateway/tests/test_live_check2.py` (3 passed): the real model asks a
+  permission card for the write, a deny leaves no file and the agent says it
+  was denied, an allow writes it and the markdown artifact is reported
+  `open=true`. **Still at the screen — Larry:** the card in the window and
+  the file opening in the viewer.
   - Automated pieces: the permission round trip on allow
     (`gateway/tests/test_cards.py::test_permission_card_round_trip_allow_once`),
     deny carrying a note to the engine
@@ -73,11 +95,17 @@ Opt-in live tests, when a credential is in the environment:
     (`::test_a_deny_leaves_no_file_and_the_agent_says_so`,
     `::test_b_allow_once_writes_and_the_markdown_artifact_opens`,
     `::test_c_chat_scoped_allow_covers_the_next_write_in_the_chat`).
-  - Not automated: the card in the window and the file opening in the viewer.
+  - Left to a person at the screen: the card in the window and the file
+    opening in the viewer.
 
 ### 3. Ask a question the agent must put back to the user: a question card appears; the chosen answer reaches the agent.
 
-- [ ] **manual — Larry.** Needs a credential in the environment.
+- [x] **Gateway half demonstrated live** on 2026-10-28 by
+  `gateway/tests/test_live_check3.py` (3 passed): the real model puts a
+  question back, a question card arrives in the protocol's shape, and the
+  chosen answer reaches the agent for single-select, multi-select and
+  "Other" free text. **Still at the screen — Larry:** the card in the
+  window and picking the answer there.
   - Automated pieces: the question card round trip with the answers mapped
     into the engine's shape
     (`gateway/tests/test_cards.py::test_question_card_round_trip_maps_answers`,
@@ -91,11 +119,18 @@ Opt-in live tests, when a credential is in the environment:
     (`::test_single_select_answer_reaches_the_agent`,
     `::test_multi_select_answers_reach_the_agent`,
     `::test_other_free_text_reaches_the_agent`).
-  - Not automated: the card in the window.
+  - Left to a person at the screen: the card in the window.
 
 ### 4. Ask for a markdown report: it opens rendered in the viewer. Ask for a small HTML page served from a local port: the URL opens in the viewer. Turn auto-open off in settings: the next artifact appears in the history only.
 
-- [ ] **manual — Larry.** Needs a credential in the environment.
+- [x] **Gateway half demonstrated live** on 2026-10-28 by
+  `gateway/tests/test_live_check4.py` (4 passed): the real model writes a
+  markdown report that is reported `open=true` at turn end and replays on
+  `chat.open`; it writes and serves an HTML page on a local port and the URL
+  is reported `open=true` with the HTML file listed only; the producer
+  endpoint opens an artifact mid-turn at once. **Still at the screen —
+  Larry:** the report rendered and the URL shown in the viewer, and
+  auto-open off in settings keeping the next artifact in the history only.
   - Automated pieces: markdown rendered through the real `WKWebView` pane
     (`app/Tests/PorticoTests/WebPaneRenderTests.swift::testMarkdownRendersHeadingsAndRelativeImage`),
     a local URL in the reply reported as an artifact that opens
@@ -113,12 +148,22 @@ Opt-in live tests, when a credential is in the environment:
     `::test_b_html_page_and_local_url_open`,
     `::test_c_producer_mid_turn_opens_immediately`,
     `::test_d_prose_naming_an_existing_viewable_path_reports_it`).
-  - Not automated: the viewer rendering, and auto-open off in settings (an
-    app setting; the gateway reports `open` the same either way).
+  - Left to a person at the screen: the viewer rendering, and auto-open off
+    in settings (an app setting; the gateway reports `open` the same either
+    way).
 
 ### 5. Stop interrupts a running turn. Quit the app while a turn is running; the gateway keeps going; reopen, pick the chat, see the prior conversation and its artifacts, and continue it. A permission asked while the app was closed is waiting as a card on reopen. Two chats open at once, each with its own state word.
 
-- [ ] **manual — Larry.** Needs a credential in the environment and a window.
+- [x] **Gateway half demonstrated live** on 2026-10-28 by
+  `gateway/tests/test_live_check5.py` (6 passed) against a real detached
+  gateway process and the real model: stop interrupts a running turn; the
+  client goes away mid-turn and the gateway keeps going and finishes the
+  writes; reattach replays the conversation and its artifacts gaplessly and
+  the chat continues; a permission asked while nothing was attached is
+  waiting as a card on reopen; two chats each carry their own state word;
+  a gateway restart replays the transcript and resumes the session.
+  **Still at the screen — Larry:** quitting and reopening the real window
+  with a turn running.
   - Automated pieces, which together cover every protocol step of this flow
     model-free: stop interrupts and finishes `stopped`
     (`gateway/tests/test_turns.py::test_turn_stop_interrupts_and_finishes_stopped`);
@@ -156,7 +201,8 @@ Opt-in live tests, when a credential is in the environment:
     `::test_c_a_card_asked_while_detached_is_replayed_on_reopen`,
     `::test_d_two_chats_each_with_their_own_state_word`,
     `::test_e_a_restart_replays_the_transcript_and_resumes_the_session`).
-  - Not automated: quitting and reopening the real window with a turn running.
+  - Left to a person at the screen: quitting and reopening the real window
+    with a turn running.
 
 ### 6. A folder whose `.claude/settings.json` has a deny hook (the probe's fixture) still has it fire through the app.
 
@@ -166,12 +212,13 @@ Opt-in live tests, when a credential is in the environment:
   throwaway folder, the real SDK engine, the codeword in the streamed reply
   and the hook's denial reaching the model. **Needs a credential in the
   environment** (`PORTICO_LIVE=1`); skipped otherwise. Passed on this
-  machine when it was written (2026-10-27). Model-free: `setting_sources`
+  machine when it was written (2026-10-27) and again in the 2026-10-28 live
+  run. Model-free: `setting_sources`
   defaults to `["project"]` and an empty list is refused
   (`gateway/tests/test_config.py::test_empty_setting_sources_refused_with_exact_message`,
   `gateway/tests/test_turns.py::test_new_chat_starts_engine_in_folder_with_project_setting_sources`).
-  - Still manual — Larry: the same fixture driven from the app window
-    rather than the gateway's socket.
+  - Still at the screen — Larry: the same fixture driven from the app
+    window rather than the gateway's socket.
 
 ### 7. Tests that need no model: gateway tests against a fake engine (permission round trip, no-client deny, empty settings sources refused, token rejected, artifact detection from tool events and text, producer endpoint); Swift tests decoding every protocol example; one opt-in live smoke test like the probe.
 
@@ -218,7 +265,13 @@ Opt-in live tests, when a credential is in the environment:
 
 ### 9. With a root configured, browse to a markdown file in the tree, open it in the viewer, add it to the chat, and the agent's reply shows it read that file.
 
-- [ ] **manual — Larry.** Needs a credential in the environment.
+- [x] **Gateway half demonstrated live** on 2026-10-28 by
+  `gateway/tests/test_live_check9.py` (4 passed): a configured root arrives
+  in `hello`, `files.list` walks it in the documented shape, a file from the
+  root attached to a message is read by the real model and its reply shows
+  it, and spaced and unicode paths both work. **Still at the screen —
+  Larry:** browsing the tree, the file in the viewer and "Add to chat" in
+  the window.
   - Automated pieces: roots listed from `hello` and the tree filled from
     `files.list`
     (`gateway/tests/test_config.py::test_hello_carries_brand_actions_roots_and_protocol_1`,
@@ -238,12 +291,13 @@ Opt-in live tests, when a credential is in the environment:
     `::test_b_an_attached_file_is_read_by_the_agent`,
     `::test_c_a_missing_attachment_is_refused_before_any_turn`,
     `::test_d_a_spaced_path_and_a_unicode_path_are_both_read`).
-  - Not automated: browsing the tree, the file in the viewer and "Add to
-    chat" in the window.
+  - Left to a person at the screen: browsing the tree, the file in the
+    viewer and "Add to chat" in the window.
 
 ## Left for a person at the screen
 
-The app-window half of checks 1, 2, 3, 4, 5, 6 and 9 (the gateway half of
-each runs live, opt-in, as listed above), and the "busy port" reading of 8.
-All but the busy-port question need a provider credential in the
-environment (`~/.portico/env` or the shell).
+The app-window half of checks 1, 2, 3, 4, 5, 6 and 9 — the gateway half of
+each was demonstrated live on 2026-10-28 (25 live tests, every one passed,
+listed above) — and the "busy port" reading of 8. The window checks need a
+provider credential in the environment (`~/.portico/env` or the shell); the
+busy-port question needs only a decision.
