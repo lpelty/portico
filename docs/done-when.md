@@ -10,7 +10,7 @@ check cannot run without a provider credential, it says so.
 Baseline on 2026-10-28, with the live checks folded in and run (measured
 at HEAD `abc9ea8`, tree clean, before this docs commit):
 
-- `cd gateway && uv run pytest -q`: 195 passed, 25 skipped in 5.80s (the
+- `cd gateway && uv run pytest -q`: 199 passed, 25 skipped in 6.4s (the
   skips are the opt-in live smoke and the six opt-in live check files below)
 - `cd app && swift test`: Executed 89 tests, with 1 test skipped (the opt-in
   live hello handshake) and 0 failures (0 unexpected) in 4.623 (4.634)

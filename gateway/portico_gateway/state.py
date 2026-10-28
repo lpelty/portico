@@ -69,11 +69,14 @@ class Index(BaseModel):
 class StateDir:
     """The state directory. Creating one makes the directory (mode 0700)."""
 
+    @staticmethod
+    def default_path() -> Path:
+        """``$PORTICO_HOME`` when set, else ``~/.portico``. Creates nothing."""
+        env = os.environ.get(ENV_HOME)
+        return Path(env).expanduser() if env else Path.home() / DEFAULT_DIRNAME
+
     def __init__(self, path: Path | None = None) -> None:
-        if path is None:
-            env = os.environ.get(ENV_HOME)
-            path = Path(env).expanduser() if env else Path.home() / DEFAULT_DIRNAME
-        self.path = Path(path)
+        self.path = Path(path) if path is not None else self.default_path()
         self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._lock_fd: int | None = None
 

@@ -233,3 +233,120 @@ def test_bin_doctor_survives_a_malformed_env_file(tmp_path: Path) -> None:
     assert "command not found" not in proc.stderr
     assert "BAD" not in proc.stdout + proc.stderr
     assert "GOOD" not in proc.stdout + proc.stderr
+
+
+def test_launcher_never_runs_a_line_of_the_env_file(tmp_path: Path) -> None:
+    # The file is parsed, never sourced: a line that would be a command to a
+    # shell (``SNEAKY=1; touch marker``) is a bad line, nothing runs, and the
+    # doctor still runs every check and names the line by number.
+    cli = REPO_ROOT / "gateway" / ".venv" / "bin" / "portico-gateway"
+    if not os.access(cli, os.X_OK):
+        pytest.skip("bin/install has not been run; the installed CLI is missing")
+    home = tmp_path / "home"
+    home.mkdir()
+    marker = tmp_path / "marker"
+    env_path = home / "env"
+    env_path.write_text(f"OK=1\nSNEAKY=1; touch {marker}\n", encoding="utf-8")
+    env_path.chmod(0o600)
+    proc = subprocess.run(
+        [str(REPO_ROOT / "bin" / "doctor")],
+        env={**os.environ, "PORTICO_HOME": str(home)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert not marker.exists()
+    assert proc.returncode == 1, proc.stderr
+    assert any(line.startswith("FAIL env") and "line 2" in line for line in proc.stdout.splitlines()), proc.stdout
+    assert "not loaded: line(s) 2" in proc.stderr, proc.stderr
+    assert "SNEAKY" not in proc.stdout + proc.stderr
+
+
+def test_env_file_values_reach_the_cli_literally(tmp_path: Path) -> None:
+    # A well-formed file is loaded by the CLI for doctor (and run); values are
+    # literal, so the doctor's credential check sees the variable and nothing
+    # is expanded.
+    cli = REPO_ROOT / "gateway" / ".venv" / "bin" / "portico-gateway"
+    if not os.access(cli, os.X_OK):
+        pytest.skip("bin/install has not been run; the installed CLI is missing")
+    home = tmp_path / "home"
+    home.mkdir()
+    env_path = home / "env"
+    env_path.write_text(f"export {CREDENTIAL_PREFIXES[0]}PROBE='$(not run) # literal'\n", encoding="utf-8")
+    env_path.chmod(0o600)
+    env = {k: v for k, v in os.environ.items() if k not in CREDENTIAL_VARS and not k.startswith(CREDENTIAL_PREFIXES)}
+    proc = subprocess.run(
+        [str(REPO_ROOT / "bin" / "doctor")],
+        env={**env, "PORTICO_HOME": str(home)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    lines = proc.stdout.splitlines()
+    assert any(line.startswith("ok   credential") for line in lines), proc.stdout
+    assert any(line.startswith("ok   env") and "loaded" in line for line in lines), proc.stdout
+    assert proc.stderr == "", proc.stderr
+
+
+def test_check_env_subcommand_prints_bad_line_numbers_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from portico_gateway.__main__ import main
+
+    env_path = tmp_path / "env"
+    env_path.write_text("A=1\nB=a b\nC='open\n# fine\nexport D='x y'\n", encoding="utf-8")
+    assert main(["check-env", str(env_path)]) == 1
+    assert capsys.readouterr().out.strip() == "2 3"
+    env_path.write_text("A=1\nexport D='x y'\n", encoding="utf-8")
+    assert main(["check-env", str(env_path)]) == 0
+    assert main(["check-env", str(tmp_path / "missing")]) == 0
+
+
+def test_parse_env_file_is_literal_and_shell_free(tmp_path: Path) -> None:
+    from portico_gateway.doctor import EnvFileError, apply_env_file, parse_env_file
+
+    env_path = tmp_path / "env"
+    env_path.write_bytes(
+        b"# comment\n"
+        b"A=1#x\n"
+        b"B=1 # a comment\n"
+        b"C='a # b $HOME'\n"
+        b'D="x \\"y\\" \\\\ $HOME"\n'
+        b"export E=${NOPE?}\n"
+        b"F=\n"
+        b"G=last"
+    )
+    assert parse_env_file(env_path) == {
+        "A": "1#x", "B": "1", "C": "a # b $HOME", "D": 'x "y" \\ $HOME', "E": "${NOPE?}", "F": "", "G": "last",
+    }
+    environ = {"A": "kept"}
+    assert apply_env_file(env_path, environ) == ["B", "C", "D", "E", "F", "G"]
+    assert environ["A"] == "kept" and environ["E"] == "${NOPE?}"
+    # Lines a shell would tokenise differently are bad lines, named by number only.
+    for bad in (
+        b"KEY=1\r# c ; touch marker\n",
+        b"KEY=1\x0c# c ; touch marker\n",
+        b"KEY=1\xc2\xa0# c ; touch marker\n",
+        b"KEY=1# c ; touch marker\n",
+        b"KEY=1 x\n",
+        b"KEY='a\n",
+        b'KEY="a\n',
+        b"KEY=\"a\"b\n",
+        b"1KEY=a\n",
+        b"KEY\n",
+        b"KEY=caf\xe9\n",
+    ):
+        env_path.write_bytes(b"OK=1\n" + bad)
+        with pytest.raises(EnvFileError) as e:
+            parse_env_file(env_path)
+        assert e.value.lines == [2], bad
+        assert b"marker" not in str(e.value).encode()
+    # A malformed file loads nothing, not part of it.
+    environ = {}
+    env_path.write_bytes(b"OK=1\nBAD LINE\n")
+    with pytest.raises(EnvFileError):
+        apply_env_file(env_path, environ)
+    assert environ == {}
+    assert apply_env_file(tmp_path / "missing", environ) == []

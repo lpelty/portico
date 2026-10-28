@@ -124,6 +124,9 @@ build hand-off and the live close-out.
   negative card hold.
 - An engine that dies mid-turn ends the turn with `outcome=error`.
 - An index holding an unknown chat state word is refused as a state error.
+- The env file is read by the gateway itself as literal `KEY=value` lines and
+  is never sourced by a shell, so nothing in it can run; `check-env` applies
+  the same parser.
 - Shutdown closes a connection that never said hello instead of hanging on it.
 - The stop watchdog closes an engine that ignored an interrupt, so its late
   finish cannot end the next turn.

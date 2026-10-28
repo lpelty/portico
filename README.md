@@ -29,11 +29,14 @@ folder's own `.claude/` settings and hooks in force.
 
 **Credential.** Auth and provider come from the environment only; nothing in
 this repo names one. Export the variable the agent engine reads in your
-shell, or put `KEY=value` lines in `~/.portico/env` (mode 0600), which
-`bin/portico-gateway` loads before starting. `bin/doctor` says whether a
-credential is present, and names (by line number, never by content) any
-line of that file that is not `KEY=value`; such a file is not loaded
-until it is fixed.
+shell, or put `KEY=value` lines in `~/.portico/env` (mode 0600), which the
+gateway reads itself before `run` and `doctor`. Values are literal: the file
+is never sourced by a shell, nothing is expanded (`$HOME` stays `$HOME`),
+quotes are optional (`'...'` or `"..."`), a comment needs a blank before its
+`#`, and a variable already set in the shell wins. `bin/doctor` says whether
+a credential is present, and names (by line number, never by content) any
+line of that file that is not `KEY=value`; such a file is not loaded until it
+is fixed.
 
 ## Where things live
 

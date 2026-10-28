@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import re
+from collections.abc import MutableMapping
 import shutil
 import socket
 import stat
@@ -38,16 +39,90 @@ CREDENTIAL_PREFIXES: tuple[str, ...] = ("CLAUDE_CODE_USE_",)
 ENV_FILE = "env"
 STALE_LEDGER = "stale ledger, will be rewritten"
 
-# One line of the env file: ``KEY=value``, optionally ``export``ed, with the
-# value bare (no whitespace or shell operators), single-quoted, or
-# double-quoted, and an optional trailing comment. Anything else would run
-# as a command when the file is sourced, so it is a problem to report.
+# One line of the env file: ``KEY=value``, optionally ``export``ed. The value is a
+# literal string: bare (no blanks or quotes), single-quoted (no escapes), or
+# double-quoted (``\\`` and ``\"`` only). A comment needs a blank before its ``#``.
+# Nothing is expanded: no ``$``, no backticks, no shell at all. The file is read by
+# this module and never sourced, so the rule here is the only rule.
 _ENV_LINE = re.compile(
-    r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*="
-    r"(?:'[^']*'|\"(?:[^\"\\]|\\.)*\"|[^\s'\"`;&|<>()]*)"
-    r"\s*(?:#.*)?$"
+    r"^[ \t]*(?:export[ \t]+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)="
+    r"(?P<value>'[^']*'|\"(?:[^\"\\]|\\[\\\"])*\"|[^ \t'\"]*)"
+    r"(?:[ \t]+#.*)?[ \t]*$",
+    re.ASCII,
 )
-_ENV_RUNS_SOMETHING = re.compile(r"`|\$\(")
+_CONTROL_CHAR = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]")
+
+
+class EnvFileError(ValueError):
+    """The env file has lines that are not ``KEY=value``; ``lines`` holds their 1-based numbers."""
+
+    def __init__(self, lines: list[int]) -> None:
+        super().__init__(f"line(s) {' '.join(str(n) for n in lines[:3])} are not KEY=value")
+        self.lines = lines
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    """The ``KEY=value`` pairs of ``path``, values literal. Raises EnvFileError naming bad lines by number.
+
+    Split on ``\\n`` only and read as bytes, so a stray ``\\r`` or form feed is a bad
+    line rather than a second line. A bad line's content is never part of the
+    error: it may hold a credential.
+    """
+    raw_lines = path.read_bytes().split(b"\n")
+    if raw_lines and raw_lines[-1] == b"":
+        raw_lines.pop()
+    pairs: dict[str, str] = {}
+    bad: list[int] = []
+    for number, raw_line in enumerate(raw_lines, start=1):
+        try:
+            line = raw_line.decode("utf-8")  # strict: a mangled credential must be a bad line, not a loaded one
+        except UnicodeDecodeError:
+            bad.append(number)
+            continue
+        stripped = line.strip(" \t")
+        if not stripped or stripped.startswith("#"):
+            continue
+        m = None if _CONTROL_CHAR.search(line) else _ENV_LINE.match(line)
+        if m is None:
+            bad.append(number)
+            continue
+        raw = m.group("value")
+        if raw.startswith("'"):
+            value = raw[1:-1]
+        elif raw.startswith('"'):
+            value = raw[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        else:
+            value = raw
+        pairs[m.group("key")] = value
+    if bad:
+        raise EnvFileError(bad)
+    return pairs
+
+
+def env_file_bad_lines(path: Path) -> list[int]:
+    """1-based numbers of the lines in ``path`` that are not ``KEY=value`` lines; [] when all are."""
+    try:
+        parse_env_file(path)
+    except EnvFileError as e:
+        return e.lines
+    return []
+
+
+def apply_env_file(path: Path, environ: MutableMapping[str, str]) -> list[str]:
+    """Load ``path`` into ``environ`` without overriding variables already set; returns the keys set.
+
+    A missing file sets nothing. A malformed file sets nothing and raises
+    EnvFileError, so a partial load can never happen.
+    """
+    if not path.is_file():
+        return []
+    pairs = parse_env_file(path)
+    applied: list[str] = []
+    for key, value in pairs.items():
+        if key not in environ:
+            environ[key] = value
+            applied.append(key)
+    return applied
 
 
 @dataclass(frozen=True)
@@ -116,22 +191,6 @@ def _mode(path: Path) -> int:
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
-
-
-def env_file_bad_lines(path: Path) -> list[int]:
-    """1-based numbers of the lines in ``path`` that are not ``KEY=value`` lines.
-
-    Blank lines and ``#`` comments are fine. The content of a bad line is
-    never returned: it may hold a credential.
-    """
-    bad: list[int] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if not _ENV_LINE.match(line) or _ENV_RUNS_SOMETHING.search(line):
-            bad.append(number)
-    return bad
 
 
 # --- the checks ----------------------------------------------------------------
@@ -226,9 +285,9 @@ def check_env_file(state: StateDir) -> Check:
         return Check(
             "env",
             False,
-            f"{path} line {bad[0]} is not a KEY=value line{more}; the file is not loaded until every line is one",
+            f"{path} line {bad[0]} is not a KEY=value line{more}; the file is not loaded until every line is one (values are literal: no $, no quotes inside bare values)",
         )
-    return Check("env", True, f"{path} mode 0600, KEY=value lines")
+    return Check("env", True, f"{path} mode 0600, KEY=value lines, loaded")
 
 
 def check_ledger(state: StateDir) -> Check:

@@ -1,6 +1,6 @@
 """``portico-gateway`` command line.
 
-Subcommands: ``run``, ``doctor``, ``export-schema``, ``export-examples``. ``run`` holds the
+Subcommands: ``run``, ``doctor``, ``check-env``, ``export-schema``, ``export-examples``. ``run`` holds the
 state directory lock, serves until ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``.
 """
 
@@ -77,6 +77,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_check_env(args: argparse.Namespace) -> int:
+    """Exit 0 when every line of the env file is ``KEY=value``; else print the bad line numbers and exit 1.
+
+    The same parser ``run`` and ``doctor`` load the file with; the file is never
+    sourced by a shell. A line's content is never printed: it may hold a credential.
+    """
+    from portico_gateway.doctor import env_file_bad_lines
+
+    path = Path(args.path)
+    if not path.is_file():
+        return 0
+    try:
+        bad = env_file_bad_lines(path)
+    except OSError as e:
+        print(f"{path} could not be read: {e}", file=sys.stderr)
+        return 1
+    if bad:
+        print(" ".join(str(n) for n in bad[:3]))
+        return 1
+    return 0
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_doctor)
 
+    p = sub.add_parser("check-env", help="exit 1 and print the line numbers when an env file has a line that is not KEY=value")
+    p.add_argument("path", help="the env file to check; a missing file passes")
+    p.set_defaults(func=cmd_check_env)
+
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")
     p.set_defaults(func=cmd_export_schema)
@@ -123,8 +149,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_env_file(args: argparse.Namespace) -> None:
+    """Load ``<state>/env`` into this process's environment before ``run`` or ``doctor``.
+
+    Values are literal (never sourced by a shell). Variables already set win. A
+    malformed file loads nothing and is named by line number on stderr; the
+    doctor then reports it as its ``env`` check, so this never stops the command.
+    """
+    import os
+
+    from portico_gateway.doctor import ENV_FILE, EnvFileError, apply_env_file
+    from portico_gateway.state import StateDir
+
+    state_arg = getattr(args, "state", None)
+    path = (Path(state_arg).expanduser() if state_arg else StateDir.default_path()) / ENV_FILE
+    try:
+        apply_env_file(path, os.environ)
+    except EnvFileError as e:
+        print(f"portico-gateway: {path} not loaded: {e}; run bin/doctor", file=sys.stderr)
+    except OSError as e:
+        print(f"portico-gateway: {path} not loaded: {e}; run bin/doctor", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in ("run", "doctor"):
+        _load_env_file(args)
     return int(args.func(args))
 
 
