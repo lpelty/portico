@@ -127,20 +127,20 @@ final class AppModel: ObservableObject {
     @Published private(set) var contextUsage: [Int: ContextUsage] = [:]
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
-    @Published internal(set) var renewing: [Int: String] = [:]
+    @Published var renewing: [Int: String] = [:]
     /// Chats whose nudge (S2) the person put off with "Not now".
-    @Published internal(set) var nudgeDismissed: Set<Int> = []
+    @Published var nudgeDismissed: Set<Int> = []
     /// The Files pane's switch (F1 Folder, F2 Quick).
     @Published var filesTab: FilesTab = .folder
     /// The quick-open palette (F4) is showing.
     @Published var quickOpenShown = false
     /// The document view (F3) replaces the conversation and the viewer.
-    @Published internal(set) var documentMode = false
+    @Published var documentMode = false
     /// The file the document view shows (absolute path).
-    @Published internal(set) var documentFile: String?
+    @Published var documentFile: String?
     /// The document view's text search: the query, the hits so far, and
     /// the `files.search` requests (one per root) still out.
-    @Published internal(set) var fileSearch: FileSearch?
+    @Published var fileSearch: FileSearch?
     /// The tab to go back to when the document view closes.
     var filesTabBeforeDocument: FilesTab?
 

@@ -48,30 +48,44 @@ struct FilesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 SidebarSectionLabel("Files")
                 Spacer(minLength: 0)
-                Button {
-                    model.refreshFiles(chat: chat)
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.text2)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
+                HeaderIcon(systemName: "magnifyingglass", help: "Find a file (⌘P)") {
+                    model.quickOpenShown = true
                 }
-                .buttonStyle(.plain)
-                .help("List the open folders again")
+                HeaderIcon(systemName: "arrow.clockwise", help: "List the open folders again") {
+                    model.refreshFiles(chat: chat)
+                }
                 .disabled(model.connection != .connected)
+                HeaderIcon(
+                    systemName: model.documentMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                    help: model.documentMode ? "Back to the conversation (⌘⇧F)" : "Open the document view (⌘⇧F)"
+                ) {
+                    model.toggleDocumentView()
+                }
             }
             .padding(.top, 18)
             .padding(.bottom, 6)
             .padding(.horizontal, 16)
-            header
-            if filter.trimmingCharacters(in: .whitespaces).isEmpty {
-                tree
-            } else {
-                matches
+            Picker("Files", selection: $model.filesTab) {
+                Text("Folder").tag(AppModel.FilesTab.folder)
+                Text("Quick").tag(AppModel.FilesTab.quick)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            switch model.filesTab {
+            case .folder:
+                header
+                if filter.trimmingCharacters(in: .whitespaces).isEmpty {
+                    tree
+                } else {
+                    matches
+                }
+            case .quick:
+                QuickFilesView(chat: chat)
             }
         }
     }
@@ -108,6 +122,58 @@ struct FilesView: View {
     // MARK: the outline
 
     private var tree: some View {
+        FileTree(chat: chat)
+    }
+
+    // MARK: the filter's flat list
+
+    /// Every listed entry, in every root, whose name contains the filter.
+    private var matchingNodes: [FileNode] {
+        let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        var found: [FileNode] = []
+        for root in model.fileRoots(for: chat) {
+            collect(root: root.name, path: "", needle: needle, into: &found)
+        }
+        return found
+    }
+
+    private func collect(root: String, path: String, needle: String, into found: inout [FileNode]) {
+        guard let entries = model.fileEntries(chat: chat, root: root, path: path) else { return }
+        for entry in entries {
+            let childPath = AppModel.childPath(path, entry.name)
+            if entry.name.lowercased().contains(needle) {
+                found.append(FileNode(chat: chat, root: root, path: childPath, name: entry.name, dir: entry.dir, size: entry.size))
+            }
+            if entry.dir {
+                collect(root: root, path: childPath, needle: needle, into: &found)
+            }
+        }
+    }
+
+    private var matches: some View {
+        List(matchingNodes) { node in
+            FileRow(node: node, subtitle: "\(node.root)/\(node.path)")
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if matchingNodes.isEmpty {
+                ContentUnavailableView.search(text: filter)
+            }
+        }
+    }
+}
+
+// MARK: - FileTree
+
+/// The chat's roots as outlines, each directory listed lazily the first
+/// time it opens. Shared by the sidebar's Folder tab (F1) and the
+/// document view's tree (F3); a file's click goes where the person is
+/// looking (`AppModel.reveal`).
+struct FileTree: View {
+    let chat: Int
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
         List {
             ForEach(model.fileRoots(for: chat), id: \.name) { root in
                 Section {
@@ -176,42 +242,6 @@ struct FilesView: View {
         }
     }
 
-    // MARK: the filter's flat list
-
-    /// Every listed entry, in every root, whose name contains the filter.
-    private var matchingNodes: [FileNode] {
-        let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        var found: [FileNode] = []
-        for root in model.fileRoots(for: chat) {
-            collect(root: root.name, path: "", needle: needle, into: &found)
-        }
-        return found
-    }
-
-    private func collect(root: String, path: String, needle: String, into found: inout [FileNode]) {
-        guard let entries = model.fileEntries(chat: chat, root: root, path: path) else { return }
-        for entry in entries {
-            let childPath = AppModel.childPath(path, entry.name)
-            if entry.name.lowercased().contains(needle) {
-                found.append(FileNode(chat: chat, root: root, path: childPath, name: entry.name, dir: entry.dir, size: entry.size))
-            }
-            if entry.dir {
-                collect(root: root, path: childPath, needle: needle, into: &found)
-            }
-        }
-    }
-
-    private var matches: some View {
-        List(matchingNodes) { node in
-            FileRow(node: node, subtitle: "\(node.root)/\(node.path)")
-        }
-        .listStyle(.sidebar)
-        .overlay {
-            if matchingNodes.isEmpty {
-                ContentUnavailableView.search(text: filter)
-            }
-        }
-    }
 }
 
 // MARK: - FileRow
@@ -228,6 +258,12 @@ struct FileRow: View {
     private var absolutePath: String? {
         model.absolutePath(
             chat: node.chat, root: node.root, path: (node.path as NSString).deletingLastPathComponent, name: node.name)
+    }
+
+    /// The file the viewer (or the document view) shows right now.
+    private var isShown: Bool {
+        guard !node.dir, let path = absolutePath else { return false }
+        return model.documentMode ? model.documentFile == path : model.current[node.chat]?.location == path
     }
 
     var body: some View {
@@ -255,11 +291,13 @@ struct FileRow: View {
                     .monospacedDigit()
             }
         }
+        .padding(.vertical, 1)
+        .background(isShown ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         .contentShape(Rectangle())
         .help(absolutePath ?? node.name)
         .onTapGesture {
             guard !node.dir, let path = absolutePath else { return }
-            model.openArtifact(file: path, in: node.chat)
+            model.reveal(file: path, in: node.chat)
         }
         .contextMenu { menu }
         .modifier(DragFile(path: absolutePath))
@@ -287,6 +325,11 @@ struct FileRow: View {
                     .help("Attach to the next message")
                 Divider()
             }
+            Button(model.isPinned(path) ? "Unpin" : "Pin") { model.togglePin(path) }
+            if !node.dir {
+                Button("Open in Obsidian") { Obsidian.open(path: path) }
+                    .disabled(!Obsidian.isInstalled)
+            }
             Button("Open externally") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             if node.dir {
@@ -312,6 +355,190 @@ private struct DragFile: ViewModifier {
             content.draggable(URL(fileURLWithPath: path))
         } else {
             content
+        }
+    }
+}
+
+// MARK: - The header's icon buttons
+
+/// One of the FILES header's 18-point icon buttons (F1: search, refresh,
+/// expand).
+struct HeaderIcon: View {
+    let systemName: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text2)
+                .frame(width: 20, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+// MARK: - Quick (F2)
+
+/// The Files pane's Quick tab: PINNED (from settings, by absolute path)
+/// then TOUCHED THIS SESSION (from the session's tool calls: "wrote" in
+/// green, "read" dim, reads folded past four).
+struct QuickFilesView: View {
+    let chat: Int
+    @EnvironmentObject private var model: AppModel
+    @State private var allReads = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                let pinned = model.settings.pinnedFiles
+                SidebarSectionLabel("Pinned")
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                if pinned.isEmpty {
+                    hint("Pin a file from its menu or the document view.")
+                }
+                ForEach(pinned, id: \.self) { path in
+                    QuickFileRow(chat: chat, path: path, verb: nil)
+                }
+                // In single presentation "this session" is the live one,
+                // even while an earlier session is open read-only.
+                let session = model.isSinglePresentation ? (model.liveSession?.chat ?? chat) : chat
+                let touched = model.touchedFiles(chat: session)
+                let list = allReads ? TouchedList(shown: touched, moreRead: 0) : TouchedList(touched)
+                SidebarSectionLabel("Touched this session")
+                    .padding(.horizontal, 16)
+                    .padding(.top, 18)
+                    .padding(.bottom, 6)
+                if touched.isEmpty {
+                    hint("Files the agent reads or writes show here.")
+                }
+                ForEach(list.shown, id: \.path) { file in
+                    QuickFileRow(chat: chat, path: file.path, verb: file)
+                }
+                if list.moreRead > 0 {
+                    Button {
+                        allReads = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.text3)
+                                .frame(width: 16)
+                            Text("… \(list.moreRead) more read")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.text2)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 18)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show every file read this session")
+                }
+            }
+            .padding(.bottom, 12)
+        }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.text3)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 2)
+    }
+}
+
+extension TouchedList {
+    /// Every touched file, unfolded ("… N more read" clicked).
+    init(shown: [TouchedFile], moreRead: Int) {
+        self.shown = shown
+        self.moreRead = moreRead
+    }
+}
+
+/// One Quick row: icon, name, and for a touched file its verb. A click
+/// shows a file where the person is looking (viewer or document view); a
+/// pinned folder is revealed in Finder.
+struct QuickFileRow: View {
+    let chat: Int
+    let path: String
+    let verb: TouchedFile?
+    @EnvironmentObject private var model: AppModel
+
+    private var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    private var isDirectory: Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+    private var isShown: Bool {
+        model.documentMode ? model.documentFile == path : model.current[chat]?.location == path
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isDirectory ? "folder" : FileIcon.systemName(for: name))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text2)
+                .frame(width: 16)
+            Text(name)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if let verb {
+                Text(verb.verb)
+                    .font(.system(size: 11))
+                    .foregroundStyle(verb.wrote ? Theme.working : Theme.text3)
+            }
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .background(isShown ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.horizontal, 8)
+        .contentShape(Rectangle())
+        .help(path)
+        .onTapGesture {
+            if isDirectory {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            } else {
+                model.reveal(file: path, in: chat)
+            }
+        }
+        .contextMenu {
+            if !isDirectory {
+                Button("Open in viewer") { model.reveal(file: path, in: chat) }
+                Button("Add to chat") { model.attach([path], to: chat) }
+                Button("Open in Obsidian") { Obsidian.open(path: path) }
+                    .disabled(!Obsidian.isInstalled)
+                Divider()
+            }
+            Button(model.isPinned(path) ? "Unpin" : "Pin") { model.togglePin(path) }
+            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+        }
+        .draggable(URL(fileURLWithPath: path))
+    }
+}
+
+/// The SF Symbol a file's name gets, by media kind (shared by the tree,
+/// Quick, quick open and the document view).
+enum FileIcon {
+    static func systemName(for name: String) -> String {
+        switch Media.of(path: name) {
+        case .markdown: "doc.richtext"
+        case .image: "photo"
+        case .html: "globe"
+        case .pdf: "doc.text"
+        case .text: "doc.plaintext"
+        case .url: "link"
+        case .other: URL(fileURLWithPath: name).pathExtension.lowercased() == "csv" ? "tablecells" : "doc"
         }
     }
 }

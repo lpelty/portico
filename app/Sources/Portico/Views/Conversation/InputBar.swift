@@ -9,6 +9,9 @@ import UniformTypeIdentifiers
 /// the Files pane adds chips through `AppModel.attach`.
 struct InputBar: View {
     let chat: Int
+    /// The document view's open file (F3): the placeholder asks about it
+    /// and the message carries it as an attachment.
+    var about: String? = nil
     @EnvironmentObject private var model: AppModel
     @FocusState private var editorFocused: Bool
 
@@ -23,8 +26,11 @@ struct InputBar: View {
     /// engine (seconds) before `turn.started` makes the chat `working`.
     private var sending: Bool { model.isSending(chat: chat) }
     private var connected: Bool { model.connection == .connected }
+    /// A `session.renew` is out: the session is logging and the next one
+    /// is not there yet, so nothing is sent until it is.
+    private var renewing: Bool { model.isRenewing(chat: chat) }
     private var canSend: Bool {
-        connected && !busy && !sending
+        connected && !busy && !sending && !renewing
             && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -101,13 +107,16 @@ struct InputBar: View {
                 .frame(minHeight: 20, maxHeight: 160)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
+                .disabled(renewing)
         }
     }
 
     private var placeholder: String {
         if !connected { return "Not connected" }
+        if renewing { return "Starting the next session…" }
         if busy { return "Working — Stop to interrupt" }
         if sending { return "Sending…" }
+        if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
         return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
     }
 
@@ -164,7 +173,7 @@ struct InputBar: View {
                     }
                     .buttonStyle(.plain)
                     .help(action.text)
-                    .disabled(!connected || busy || sending)
+                    .disabled(!connected || busy || sending || renewing)
                 }
             }
         }
@@ -174,7 +183,7 @@ struct InputBar: View {
     /// refuses (`attachment.missing`, `chat.busy`).
     private func send() {
         guard canSend else { return }
-        model.sendMessage(chat: chat, text: draft.wrappedValue)
+        model.sendMessage(chat: chat, text: draft.wrappedValue, about: about)
         editorFocused = true
     }
 

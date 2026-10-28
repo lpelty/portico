@@ -19,7 +19,7 @@ struct MainWindow: View {
             }
             MainColumn()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if let chat = model.selected, model.isViewerShown(for: chat) {
+            if let chat = model.selected, model.isViewerShown(for: chat), !model.documentMode {
                 Rectangle().fill(Theme.border).frame(width: 1)
                 ViewerView(chat: chat)
                     .frame(width: Theme.viewerWidth)
@@ -27,6 +27,11 @@ struct MainWindow: View {
             }
         }
         .background(Theme.window)
+        .overlay {
+            if model.quickOpenShown, let chat = model.filesChat {
+                QuickOpenView(chat: chat)
+            }
+        }
         // No title bar: the columns run to the top edge, and the sidebar's
         // first band is where the traffic lights sit.
         .ignoresSafeArea(.container, edges: .top)
@@ -36,7 +41,17 @@ struct MainWindow: View {
     }
 
     private var viewerShown: Bool {
-        model.selected.map { model.isViewerShown(for: $0) } ?? false
+        guard !model.documentMode else { return false }
+        return model.selected.map { model.isViewerShown(for: $0) } ?? false
+    }
+}
+
+extension AppModel {
+    /// The chat whose files the sidebar, quick open and the document view
+    /// use: the one shown, else (single presentation) the live session.
+    var filesChat: Int? {
+        guard hello?.capabilities.contains("files") == true else { return nil }
+        return selected ?? liveSession?.chat
     }
 }
 
@@ -51,7 +66,17 @@ struct SidebarColumn: View {
                 .frame(height: Theme.toolbarHeight)
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
-            if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
+            if model.isSinglePresentation {
+                // S1: the session card and Earlier, then the files.
+                SessionSidebar()
+                if let chat = model.filesChat {
+                    FilesView(chat: chat)
+                        .id(chat)
+                        .frame(maxHeight: .infinity)
+                } else {
+                    Spacer(minLength: 0)
+                }
+            } else if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
                 VSplitView {
                     ChatListView()
                         .frame(minHeight: 120)
@@ -85,7 +110,9 @@ struct MainColumn: View {
 
     @ViewBuilder
     private var content: some View {
-        if let chat = model.selected {
+        if model.documentMode, let chat = model.filesChat {
+            DocumentView(chat: chat)
+        } else if let chat = model.selected {
             ConversationView(chat: chat)
                 .id(chat)
         } else {
@@ -123,7 +150,7 @@ struct MainToolbar: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 0)
-            if let chat = model.selected {
+            if let chat = model.selected, !model.documentMode {
                 let shown = model.isViewerShown(for: chat)
                 PanelToggle(shown: shown, side: .trailing, help: shown ? "Hide the viewer" : "Show the viewer") {
                     model.setViewer(visible: !shown, for: chat)
@@ -138,8 +165,19 @@ struct MainToolbar: View {
         .gesture(WindowDragGesture())
     }
 
-    /// `Chat #3`, or the alias when the chat has one.
+    /// `Chat #3`, or the alias when the chat has one; `Session 14` in
+    /// single presentation; `Files · Research vault` in the document view.
     private var chatTitle: String? {
+        if model.documentMode, let chat = model.filesChat {
+            let roots = model.fileRoots(for: chat)
+            let root = roots.first { $0.name != AppModel.chatRoot } ?? roots.first
+            guard let root else { return "Files" }
+            return "Files · " + (root.name == AppModel.chatRoot ? URL(fileURLWithPath: root.path).lastPathComponent : root.name)
+        }
+        if model.isSinglePresentation {
+            guard let id = model.selected else { return "New session" }
+            return "Session \(id)"
+        }
         guard let id = model.selected else { return "New chat" }
         let summary = model.chats.first { $0.chat == id }
         if let alias = summary?.alias, !alias.isEmpty { return alias }
