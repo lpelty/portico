@@ -9,6 +9,13 @@ Python reference gateway on the Claude Agent SDK, and a SwiftUI Mac app.
 
 **The app**
 
+- The window laid out as the A1 frame in `design/portico.pen` ("Classic
+  three-column"): no title bar, a 260-wide sidebar whose top band holds the
+  traffic lights, the conversation under a 52-high toolbar and a 30-high
+  status strip, a 440-wide viewer; opens at 1440 x 900. The toolbar's end
+  buttons (and View > Hide Sidebar / Hide Viewer, ctrl-cmd-S / ctrl-cmd-V)
+  collapse the side columns; the viewer's state is per chat. Colours come
+  from the frame's variables in light and dark.
 - A native Mac window: a sidebar of numbered chats (`#1`, `#2`, ...) with an
   optional alias, each showing its state in plain words (`idle`, `working`,
   `waiting on you`, `stopped`) and its folder; New Chat picks a folder.

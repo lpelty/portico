@@ -78,7 +78,7 @@ struct ViewerView: View {
                     .frame(minHeight: 80, idealHeight: 140, maxHeight: 220)
             }
         }
-        .frame(minWidth: 280)
+        .background(Theme.panel)
     }
 
     private var header: some View {
@@ -116,16 +116,15 @@ struct ViewerView: View {
             .buttonStyle(.borderless)
             .help(historyShown ? "Hide the history" : "Show the history")
             Button {
-                model.viewerVisible = false
+                model.setViewer(visible: false, for: chat)
             } label: {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
             .help("Collapse the viewer")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
+        .padding(.horizontal, 16)
+        .frame(height: Theme.toolbarHeight)
     }
 
     @ViewBuilder

@@ -78,10 +78,13 @@ final class AppModel: ObservableObject {
     /// Per chat, the artifact the viewer shows: the last one that
     /// auto-opened or that the person picked from the history.
     @Published private(set) var current: [Int: Artifact] = [:]
-    /// Whether the viewer column is wanted. A person collapses it; an
-    /// auto-open or a pick from the history brings it back. It is only
-    /// shown when the chat has artifacts at all (`isViewerShown`).
-    @Published var viewerVisible: Bool = true
+    /// Per chat, whether the person collapsed or opened the viewer column
+    /// by hand. Unset, the column follows the chat: shown once it has
+    /// produced something, hidden until then (`isViewerShown`). An auto-open
+    /// or a pick from the history opens it again.
+    @Published private(set) var viewerVisible: [Int: Bool] = [:]
+    /// Whether the sidebar column (chats and files) is shown.
+    @Published var sidebarVisible: Bool = true
     /// Per chat, the last `status.set` line (or the last error's message).
     @Published private(set) var status: [Int: String] = [:]
     /// The last chat-less `status.set` line: lifecycle command output, "stopping".
@@ -559,7 +562,7 @@ final class AppModel: ObservableObject {
     /// auto-open rule and by a pick from the history list.
     func show(_ artifact: Artifact, in chat: Int) {
         current[chat] = artifact
-        viewerVisible = true
+        viewerVisible[chat] = true
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
     }
 
@@ -568,10 +571,16 @@ final class AppModel: ObservableObject {
         (artifacts[chat] ?? []).reversed()
     }
 
-    /// The viewer column is there when the chat has produced something
-    /// and the person has not collapsed it. Nothing produced: no column.
+    /// The viewer column is there when the person opened it, or when the
+    /// chat has produced something and the person has not collapsed it.
+    /// Nothing produced and nothing asked: no column.
     func isViewerShown(for chat: Int) -> Bool {
-        viewerVisible && !(artifacts[chat] ?? []).isEmpty
+        viewerVisible[chat] ?? !(artifacts[chat] ?? []).isEmpty
+    }
+
+    /// Open or collapse the viewer column for `chat` by hand.
+    func setViewer(visible: Bool, for chat: Int) {
+        viewerVisible[chat] = visible
     }
 
     // MARK: - sidebar actions
@@ -726,6 +735,7 @@ final class AppModel: ObservableObject {
         openCards[chat] = nil
         artifacts[chat] = nil
         current[chat] = nil
+        viewerVisible[chat] = nil
         restoreCurrent[chat] = nil
         status[chat] = nil
         statusStamps[chat] = nil
@@ -875,7 +885,7 @@ extension AppModel {
         }
         artifacts[chat] = list
         current[chat] = artifact
-        viewerVisible = true
+        viewerVisible[chat] = true
     }
 }
 

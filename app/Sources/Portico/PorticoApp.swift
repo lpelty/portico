@@ -48,8 +48,14 @@ struct PorticoApp: App {
         return "0.0.0-dev"
     }()
 
+    private var viewerShown: Bool {
+        model.selected.map { model.isViewerShown(for: $0) } ?? false
+    }
+
     var body: some Scene {
-        WindowGroup(model.brand.name) {
+        // The id names the saved window frame; "a1" starts fresh at the
+        // frame's size after the three-column layout landed.
+        WindowGroup(model.brand.name, id: "main-a1") {
             MainWindow()
                 .environmentObject(model)
                 .environmentObject(settings)
@@ -70,7 +76,20 @@ struct PorticoApp: App {
                     await model.run(supervisor: supervisor, settings: settings, appVersion: Self.version)
                 }
         }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: Theme.defaultWindowSize.width, height: Theme.defaultWindowSize.height)
         .commands {
+            CommandGroup(after: .sidebar) {
+                Button(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
+                    model.sidebarVisible.toggle()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+                Button(viewerShown ? "Hide Viewer" : "Show Viewer") {
+                    if let chat = model.selected { model.setViewer(visible: !viewerShown, for: chat) }
+                }
+                .keyboardShortcut("v", modifiers: [.command, .control])
+                .disabled(model.selected == nil)
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About \(model.brand.name)") {
                     model.brand.showAboutPanel(version: Self.version)

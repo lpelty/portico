@@ -38,28 +38,21 @@ struct ChatListView: View {
     @State private var aliasDraft: String = ""
 
     var body: some View {
-        List(selection: selectionBinding) {
-            Section("Chats") {
+        VStack(spacing: 0) {
+            header
+            List(selection: selectionBinding) {
                 ForEach(model.chats, id: \.chat) { summary in
                     row(for: ChatRow(summary: summary))
                         .tag(summary.chat)
                         .contextMenu { menu(for: summary) }
                 }
             }
-        }
-        .listStyle(.sidebar)
-        .overlay {
-            if model.chats.isEmpty {
-                ContentUnavailableView("No chats yet", systemImage: "bubble.left", description: Text("New Chat picks a folder to work in."))
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: newChat) {
-                    Label("New Chat", systemImage: "plus")
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .overlay {
+                if model.chats.isEmpty {
+                    ContentUnavailableView("No chats yet", systemImage: "bubble.left", description: Text("New Chat picks a folder to work in."))
                 }
-                .help("Start a chat in a folder")
-                .disabled(model.connection != .connected)
             }
         }
         .alert("Alias for chat #\(aliasTarget ?? 0)", isPresented: aliasPresented) {
@@ -134,6 +127,32 @@ struct ChatListView: View {
     }
 
     /// Ask for a folder (directories only) and start a chat there.
+    /// The frame's "CHATS" header with the New Chat button at its right.
+    private var header: some View {
+        HStack(spacing: 8) {
+            SidebarSectionLabel("Chats")
+            Spacer(minLength: 0)
+            Button(action: newChat) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
+                    Text("New Chat").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Theme.text)
+                .padding(.vertical, 3)
+                .padding(.leading, 6)
+                .padding(.trailing, 8)
+                .background(Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Start a chat in a folder")
+            .disabled(model.connection != .connected)
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .padding(.horizontal, 16)
+    }
+
     private func newChat() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -144,5 +163,21 @@ struct ChatListView: View {
         panel.message = "Choose the folder the agent works in"
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         model.newChat(folder: folder)
+    }
+}
+
+
+/// A sidebar section label the way the frame sets it: small caps-like
+/// tracking, 11 points, the dim text colour.
+struct SidebarSectionLabel: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(0.4)
+            .foregroundStyle(Theme.text3)
     }
 }

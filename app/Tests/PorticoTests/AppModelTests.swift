@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -946,5 +947,33 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(
             GatewaySupervisor.runCapturing(URL(fileURLWithPath: "/nonexistent/doctor"), [], environment: [:]).count, 1,
             "a doctor that cannot run is one line, not a crash")
+    }
+
+    // MARK: - the three columns
+
+    func testSidebarTogglesAndStartsShown() throws {
+        let model = AppModel()
+        XCTAssertTrue(model.sidebarVisible, "the A1 frame opens with the sidebar")
+        model.sidebarVisible.toggle()
+        XCTAssertFalse(model.sidebarVisible)
+    }
+
+    func testThemeMeasuresMatchTheFrame() {
+        XCTAssertEqual(Theme.defaultWindowSize, CGSize(width: 1440, height: 900))
+        XCTAssertEqual(Theme.sidebarWidth, 260)
+        XCTAssertEqual(Theme.viewerWidth, 440)
+        XCTAssertEqual(Theme.toolbarHeight, 52)
+        XCTAssertEqual(Theme.statusStripHeight, 30)
+        // The pen variables, dark and light, read back exactly.
+        XCTAssertEqual(NSColor(hex: "#1E1E20").hexString, "#1E1E20")
+        XCTAssertEqual(NSColor(hex: "#F3F3F5").hexString, "#F3F3F5")
+    }
+}
+
+extension NSColor {
+    /// `#RRGGBB` of an sRGB colour, for the tests.
+    var hexString: String {
+        let c = usingColorSpace(.sRGB)!
+        return String(format: "#%02X%02X%02X", Int(round(c.redComponent * 255)), Int(round(c.greenComponent * 255)), Int(round(c.blueComponent * 255)))
     }
 }

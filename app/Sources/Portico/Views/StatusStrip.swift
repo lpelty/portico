@@ -79,8 +79,10 @@ struct StatusStrip: View {
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 16)
+        .frame(height: Theme.statusStripHeight)
+        .frame(maxWidth: .infinity)
+        .background(Theme.panel)
         .help(strip.text)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Status: \(strip.text)")
