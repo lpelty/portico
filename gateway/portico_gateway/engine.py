@@ -345,8 +345,11 @@ class SDKEngine:
 # --- history -------------------------------------------------------------------------
 
 # User text blocks the engine's CLI adds around a person's message and never
-# shows as the message itself: local command output, skill loads, reminders.
-_HIDDEN_USER_TEXT_PREFIXES = ("<system-reminder>", "<local-command-", "<command-")
+# shows as the message itself: local command output, skill loads, reminders,
+# and the "[Request interrupted by user]" marker (also its "... for tool use]"
+# form) the CLI writes as a user message after a stop. The SDK's own session
+# reader classes the same strings as scaffolding.
+_HIDDEN_USER_TEXT_PREFIXES = ("<system-reminder>", "<local-command-", "<command-", "[Request interrupted by user")
 
 
 def read_history(session_id: str | None, folder: Path) -> list[dict[str, Any]]:

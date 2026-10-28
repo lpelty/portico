@@ -131,7 +131,11 @@ first open after a gateway restart (a new `epoch`), or `since` older than
 the ring — the gateway reads the engine's transcript for the chat's
 session and translates it into the same events a live turn produces,
 with `user.text` for what the person sent; those events carry no `seq`
-and `truncated` is false. A chat whose transcript cannot be found (no
+and `truncated` is false. User-role entries the engine writes for itself
+(reminders, local command output, and the `[Request interrupted by user]`
+marker it records after a stop) are not the person's words: they replay as
+no event and start no turn, so turn numbers match the prompts the person
+actually sent. A chat whose transcript cannot be found (no
 session yet, or the engine's files are gone) opens with an empty history,
 never an error. When the transcript is empty but the ring holds events,
 the ring is sent; it is marked `truncated` only when the request named a

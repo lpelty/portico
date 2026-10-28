@@ -136,6 +136,30 @@ def test_empty_and_meta_only_transcripts_translate_to_nothing() -> None:
     assert history_events([], chat=1) == []
     assert history_events([user("<local-command-stdout>x</local-command-stdout>")], chat=1) == []
     assert history_events([user([text("<system-reminder>only</system-reminder>")])], chat=1) == []
+    assert history_events([user("[Request interrupted by user]")], chat=1) == []
+
+
+def test_interrupt_marker_is_not_the_persons_turn() -> None:
+    """After ``turn.stop`` / ``chat.stop`` the engine's CLI writes ``[Request interrupted by user]``
+    as a user message. It is scaffolding: no bubble, no turn, and the next real
+    prompt keeps its number (seen live: 7 prompts replayed as 9 turns)."""
+    events = history_events(
+        [
+            user("Count to 200"),
+            assistant(text("1\n2")),
+            user([text("[Request interrupted by user]\n")]),
+            user("[Request interrupted by user for tool use]"),
+            user("Reply OKAY"),
+            assistant(text("OKAY")),
+        ],
+        chat=1,
+    )
+    assert [type(e) for e in events] == [
+        TurnStarted, UserText, TextDelta, TurnFinished,
+        TurnStarted, UserText, TextDelta, TurnFinished,
+    ]
+    assert [e.text for e in events if isinstance(e, UserText)] == ["Count to 200", "Reply OKAY"]
+    assert [e.turn for e in events] == [1] * 4 + [2] * 4
 
 
 def test_history_events_start_turns_from_first_turn() -> None:
