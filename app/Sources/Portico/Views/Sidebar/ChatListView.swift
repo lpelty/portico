@@ -60,7 +60,7 @@ struct ChatListView: View {
             }
             .overlay {
                 if model.chats.isEmpty {
-                    ContentUnavailableView("No chats yet", systemImage: "bubble.left", description: Text("New Chat picks a folder to work in."))
+                    ContentUnavailableView("No chats yet", systemImage: "bubble.left", description: Text("Your chats will be listed here."))
                 }
             }
         }
@@ -150,24 +150,17 @@ struct ChatListView: View {
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .help("Start a chat in a folder")
-            .disabled(model.connection != .connected)
+            .help("Start a new chat")
         }
         .padding(.top, 8)
         .padding(.bottom, 6)
         .padding(.horizontal, 16)
     }
 
+    /// New Chat opens the start screen; the folder is chosen there and the
+    /// chat is made on the first Send.
     private func newChat() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Start Chat"
-        panel.message = "Choose the folder the agent works in"
-        guard panel.runModal() == .OK, let folder = panel.url else { return }
-        model.newChat(folder: folder)
+        model.showStart()
     }
 }
 

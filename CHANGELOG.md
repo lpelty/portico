@@ -16,6 +16,13 @@ Python reference gateway on the Claude Agent SDK, and a SwiftUI Mac app.
   buttons (and View > Hide Sidebar / Hide Viewer, ctrl-cmd-S / ctrl-cmd-V)
   collapse the side columns; the viewer's state is per chat. Colours come
   from the frame's variables in light and dark.
+- A start screen (frame "A4 · New chat" in `design/portico.pen`) whenever no
+  chat is selected, and behind New Chat: a greeting, one large composer with
+  Attach, the folder the chat will work in (the last one used, else the first
+  configured root, or any folder through its menu) and Send, and the
+  deployment's actions as suggestion chips. Send or a chip makes the chat in
+  that folder and sends the message in one motion; a refused start puts the
+  words and files back with the reason.
 - A native Mac window: a sidebar of numbered chats (`#1`, `#2`, ...) with an
   optional alias, each showing its state in plain words (`idle`, `working`,
   `waiting on you`, `stopped`) and its folder; New Chat picks a folder.

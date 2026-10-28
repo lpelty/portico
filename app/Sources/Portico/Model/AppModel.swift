@@ -162,6 +162,27 @@ final class AppModel: ObservableObject {
     private var pendingOpenSince: [Int: Int?] = [:]
     /// `chat.new` request ids whose reply should select the new chat.
     private var pendingNewChats: Set<String> = []
+    /// Per `chat.new` request id, the first message to send once the
+    /// gateway answers with the new chat (the start screen's Send).
+    private var pendingStarts: [String: PendingStart] = [:]
+
+    struct PendingStart: Equatable {
+        var text: String
+        var attachments: [String]
+        var folder: URL
+    }
+
+    // MARK: - start screen state (no chat selected)
+
+    /// What is typed on the start screen.
+    @Published var startDraft: String = ""
+    /// Files attached on the start screen, sent with the first message.
+    @Published private(set) var startAttachments: [String] = []
+    /// The folder the next chat starts in; `nil` means the default
+    /// (`defaultStartFolder`). Set by the folder chip.
+    @Published var chosenStartFolder: URL?
+    /// Why the last start was refused (the gateway's message), shown under the composer.
+    @Published private(set) var startError: String?
     /// Per chat, the turn the last delta belonged to, for coalescing.
     private var currentTurn: [Int: Int] = [:]
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
@@ -297,6 +318,9 @@ final class AppModel: ObservableObject {
             }
             if let id = state.id, pendingNewChats.remove(id) != nil {
                 open(chat: state.chat)
+                if let start = pendingStarts.removeValue(forKey: id) {
+                    dispatch(chat: state.chat, text: start.text, attachments: start.attachments, fromComposer: true)
+                }
             }
             noteSeq(of: message)
 
@@ -338,6 +362,14 @@ final class AppModel: ObservableObject {
 
         case .error(let error):
             lastError = error
+            // A refused start: the chat was never made, so the words and
+            // files go back on the start screen with the gateway's reason.
+            if let id = error.id, let start = pendingStarts.removeValue(forKey: id) {
+                pendingNewChats.remove(id)
+                startDraft = startDraft.isEmpty ? start.text : start.text + "\n" + startDraft
+                startAttachments = start.attachments + startAttachments.filter { !start.attachments.contains($0) }
+                startError = error.message
+            }
             if let chat = error.chat {
                 setStatus(error.message, for: chat)
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
@@ -586,6 +618,71 @@ final class AppModel: ObservableObject {
     // MARK: - sidebar actions
 
     /// Ask the gateway for a chat in `folder`; the reply selects it.
+    /// Go to the start screen: no chat selected.
+    func showStart() {
+        selected = nil
+    }
+
+    /// The folder the start screen offers: the person's choice, else the
+    /// folder the last chat started in (when it still exists), else the
+    /// deployment's first root. `nil` when there is nothing to offer.
+    var startFolder: URL? {
+        if let chosen = chosenStartFolder { return chosen }
+        if let last = settings.lastFolder, Self.isDirectory(last) { return URL(fileURLWithPath: last) }
+        if let root = hello?.roots.first, Self.isDirectory(root.path) { return URL(fileURLWithPath: root.path) }
+        return nil
+    }
+
+    /// Folders the chip's menu lists: the last one used and the deployment's roots, de-duplicated.
+    var startFolderChoices: [URL] {
+        var paths: [String] = []
+        if let last = settings.lastFolder, Self.isDirectory(last) { paths.append(last) }
+        for root in hello?.roots ?? [] where Self.isDirectory(root.path) && !paths.contains(root.path) {
+            paths.append(root.path)
+        }
+        return paths.map { URL(fileURLWithPath: $0) }
+    }
+
+    /// A start is out and the gateway has not answered yet.
+    var isStarting: Bool { !pendingStarts.isEmpty }
+
+    /// Start a chat in the start folder and send `text` (with the start
+    /// screen's attachments when `fromComposer`) as its first message, in
+    /// one motion: `chat.new`, then on the reply `chat.open` and
+    /// `message.send`. Nothing happens without a folder or with blank text.
+    func startChat(text: String, fromComposer: Bool = true) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let folder = startFolder, !isStarting else { return }
+        let id = Self.requestId()
+        let attachments = fromComposer ? startAttachments : []
+        pendingNewChats.insert(id)
+        pendingStarts[id] = PendingStart(text: trimmed, attachments: attachments, folder: folder)
+        startError = nil
+        settings.lastFolder = folder.path
+        chosenStartFolder = nil
+        if fromComposer {
+            startDraft = ""
+            startAttachments = []
+        }
+        send(.chatNew(ChatNew(folder: folder.path, id: id)))
+    }
+
+    /// Queue files for the first message on the start screen.
+    func attachToStart(_ paths: [String]) {
+        for path in paths where !startAttachments.contains(path) {
+            startAttachments.append(path)
+        }
+    }
+
+    func detachFromStart(_ path: String) {
+        startAttachments.removeAll { $0 == path }
+    }
+
+    private static func isDirectory(_ path: String) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+
     func newChat(folder: URL) {
         let id = Self.requestId()
         pendingNewChats.insert(id)

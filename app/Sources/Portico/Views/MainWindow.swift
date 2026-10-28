@@ -89,9 +89,7 @@ struct MainColumn: View {
             ConversationView(chat: chat)
                 .id(chat)
         } else {
-            ContentUnavailableView(
-                "No chat selected", systemImage: "sidebar.left",
-                description: Text("Pick a chat in the sidebar, or start one with New Chat."))
+            StartView()
         }
     }
 }
@@ -142,7 +140,7 @@ struct MainToolbar: View {
 
     /// `Chat #3`, or the alias when the chat has one.
     private var chatTitle: String? {
-        guard let id = model.selected else { return nil }
+        guard let id = model.selected else { return "New chat" }
         let summary = model.chats.first { $0.chat == id }
         if let alias = summary?.alias, !alias.isEmpty { return alias }
         return "Chat #\(id)"

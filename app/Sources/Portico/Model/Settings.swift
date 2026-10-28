@@ -51,6 +51,7 @@ final class Settings: ObservableObject {
         static let appearance = "appearance"
         static let gatewayURL = "gatewayURL"
         static let tokenFile = "tokenFile"
+        static let lastFolder = "lastFolder"
     }
 
     private let defaults: UserDefaults
@@ -74,6 +75,11 @@ final class Settings: ObservableObject {
         didSet { Self.store(tokenFile, forKey: Key.tokenFile, in: defaults) }
     }
 
+    /// The folder the last chat started in; the start screen's folder chip begins there.
+    @Published var lastFolder: String? {
+        didSet { Self.store(lastFolder, forKey: Key.lastFolder, in: defaults) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         autoOpen = defaults.object(forKey: Key.autoOpen) as? Bool ?? true
@@ -86,6 +92,7 @@ final class Settings: ObservableObject {
         appearance = defaults.string(forKey: Key.appearance).flatMap(Appearance.init(rawValue:)) ?? .system
         gatewayURL = Self.read(Key.gatewayURL, in: defaults)
         tokenFile = Self.read(Key.tokenFile, in: defaults)
+        lastFolder = Self.read(Key.lastFolder, in: defaults)
     }
 
     /// Whether an artifact of `media` should open on its own.

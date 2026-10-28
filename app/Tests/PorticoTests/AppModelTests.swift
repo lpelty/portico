@@ -968,6 +968,108 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(NSColor(hex: "#1E1E20").hexString, "#1E1E20")
         XCTAssertEqual(NSColor(hex: "#F3F3F5").hexString, "#F3F3F5")
     }
+
+    // MARK: - the start screen (A4)
+
+    private func startModel() throws -> (AppModel, Sent, URL) {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "portico-start-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        let sent = Sent()
+        model.outbound = { sent.frames.append($0) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("portico-start-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return (model, sent, folder)
+    }
+
+    func testStartSendsChatNewThenOpensAndSendsTheFirstMessage() throws {
+        let (model, sent, folder) = try startModel()
+        model.chosenStartFolder = folder
+        model.startDraft = "  Summarize this folder  "
+        model.attachToStart(["/tmp/a.md", "/tmp/a.md", "/tmp/b.md"])
+        model.startChat(text: model.startDraft)
+
+        guard case .chatNew(let new)? = sent.frames.last else { return XCTFail("expected chat.new, got \(sent.frames)") }
+        XCTAssertEqual(new.folder, folder.path)
+        XCTAssertTrue(model.isStarting)
+        XCTAssertEqual(model.startDraft, "", "the composer clears on send")
+        XCTAssertTrue(model.startAttachments.isEmpty)
+        XCTAssertEqual(model.settings.lastFolder, folder.path, "the folder is remembered for next time")
+
+        model.apply(.chatState(ChatState(chat: 7, state: .idle, id: new.id, seq: 1)))
+        XCTAssertEqual(model.selected, 7)
+        XCTAssertFalse(model.isStarting)
+        XCTAssertEqual(Array(sent.types().suffix(2)), ["chat.open", "message.send"])
+        guard case .messageSend(let message)? = sent.frames.last else { return XCTFail("expected message.send") }
+        XCTAssertEqual(message.chat, 7)
+        XCTAssertEqual(message.text, "Summarize this folder")
+        XCTAssertEqual(message.attachments, ["/tmp/a.md", "/tmp/b.md"])
+    }
+
+    func testRefusedStartPutsTheWordsBackWithTheReason() throws {
+        let (model, sent, folder) = try startModel()
+        model.chosenStartFolder = folder
+        model.attachToStart(["/tmp/a.md"])
+        model.startChat(text: "hello")
+        guard case .chatNew(let new)? = sent.frames.last else { return XCTFail("expected chat.new") }
+        model.startDraft = "more"
+        model.apply(.error(ErrorMessage(code: "engine.start_failed", message: "the engine could not start", id: new.id)))
+        XCTAssertEqual(model.startDraft, "hello\nmore")
+        XCTAssertEqual(model.startAttachments, ["/tmp/a.md"])
+        XCTAssertEqual(model.startError, "the engine could not start")
+        XCTAssertFalse(model.isStarting)
+        XCTAssertNil(model.selected)
+    }
+
+    func testStartNeedsAFolderAndWordsAndOneAtATime() throws {
+        let (model, sent, folder) = try startModel()
+        model.startChat(text: "no folder yet")
+        XCTAssertTrue(sent.frames.isEmpty, "no folder: nothing is sent")
+        model.chosenStartFolder = folder
+        model.startChat(text: "   ")
+        XCTAssertTrue(sent.frames.isEmpty, "blank: nothing is sent")
+        model.startChat(text: "one")
+        model.startChat(text: "two")
+        XCTAssertEqual(sent.types(), ["chat.new"], "a second start waits for the first")
+    }
+
+    func testStartFolderFallsBackToTheLastThenTheFirstRoot() throws {
+        let (model, _, folder) = try startModel()
+        XCTAssertNil(model.startFolder)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("portico-root-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = model.handleHello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.1.0", epoch: "e",
+            brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [Root(name: "vault", path: root.path)],
+            commands: [], capabilities: []))
+        XCTAssertEqual(model.startFolder?.path, root.path)
+        model.settings.lastFolder = folder.path
+        XCTAssertEqual(model.startFolder?.path, folder.path)
+        XCTAssertEqual(model.startFolderChoices.map(\.path), [folder.path, root.path])
+        model.settings.lastFolder = "/nonexistent/\(UUID().uuidString)"
+        XCTAssertEqual(model.startFolder?.path, root.path, "a folder that is gone is not offered")
+    }
+
+    func testActionChipStartsWithoutTakingTheTypedText() throws {
+        let (model, sent, folder) = try startModel()
+        model.chosenStartFolder = folder
+        model.startDraft = "half typed"
+        model.attachToStart(["/tmp/a.md"])
+        model.startChat(text: "Summarize this folder", fromComposer: false)
+        guard case .chatNew(let new)? = sent.frames.last else { return XCTFail("expected chat.new") }
+        XCTAssertEqual(model.startDraft, "half typed")
+        XCTAssertEqual(model.startAttachments, ["/tmp/a.md"])
+        model.apply(.chatState(ChatState(chat: 2, state: .idle, id: new.id, seq: 1)))
+        guard case .messageSend(let message)? = sent.frames.last else { return XCTFail("expected message.send") }
+        XCTAssertEqual(message.attachments, [])
+    }
+
+    func testGreetingByTimeOfDayAndFirstName() {
+        let cal = Calendar.current
+        func at(_ hour: Int) -> Date { cal.date(bySettingHour: hour, minute: 0, second: 0, of: Date())! }
+        XCTAssertEqual(StartView.greeting(at: at(9), fullName: "Larry Paul Pelty"), "Good morning, Larry")
+        XCTAssertEqual(StartView.greeting(at: at(14), fullName: "Larry Paul Pelty"), "Good afternoon, Larry")
+        XCTAssertEqual(StartView.greeting(at: at(20), fullName: ""), "Good evening")
+    }
 }
 
 extension NSColor {

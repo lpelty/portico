@@ -72,11 +72,11 @@ struct StatusStrip: View {
                 Circle()
                     .fill(stateColor)
                     .frame(width: 8, height: 8)
-                Text(strip.chatText)
+                Text(model.selected == nil ? "ready" : strip.chatText)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.text)
             }
-            if let folder = strip.folderName {
+            if let folder = strip.folderName ?? (model.selected == nil ? model.startFolder?.lastPathComponent : nil) {
                 HStack(spacing: 5) {
                     Image(systemName: "folder")
                         .font(.system(size: 11))
