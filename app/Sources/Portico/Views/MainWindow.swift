@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The window: sidebar of chats on the left, the conversation in the
-/// centre, the viewer on the right (Task 19).
+/// centre, the viewer on the right when the chat has artifacts.
 /// A one-line strip under the toolbar says what the connection is doing
 /// until the status strip (Task 21) replaces it.
 struct MainWindow: View {
@@ -23,11 +23,32 @@ struct MainWindow: View {
         .frame(minWidth: 720, minHeight: 480)
     }
 
+    /// The conversation, and the viewer beside it when the chat has
+    /// produced something and the person has not collapsed it.
     @ViewBuilder
     private var detail: some View {
         if let chat = model.selected {
-            ConversationView(chat: chat)
-                .id(chat)
+            HSplitView {
+                ConversationView(chat: chat)
+                    .id(chat)
+                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+                if model.isViewerShown(for: chat) {
+                    ViewerView(chat: chat)
+                        .frame(minWidth: 280, idealWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .toolbar {
+                if !(model.artifacts[chat] ?? []).isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            model.viewerVisible.toggle()
+                        } label: {
+                            Label("Viewer", systemImage: "sidebar.right")
+                        }
+                        .help(model.viewerVisible ? "Hide the viewer" : "Show the viewer")
+                    }
+                }
+            }
         } else {
             ContentUnavailableView(
                 "No chat selected", systemImage: "sidebar.left",

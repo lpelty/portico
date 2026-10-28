@@ -1,0 +1,32 @@
+<!doctype html>
+<!--
+  The markdown viewer page. `MarkdownPage` (WebPane.swift) fills the three
+  placeholders: the stylesheet, the vendored renderer, and the markdown
+  source as a JSON string. Everything is inlined: the page is served to the
+  web view under the app's own scheme (RenderedPageHandler) with the
+  markdown file's directory as its root, so relative images resolve and
+  nothing else is fetched.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{CSS}}
+</style>
+</head>
+<body>
+<article id="content"></article>
+<script>
+{{MARKED}}
+</script>
+<script>
+(function () {
+  var source = {{SOURCE}};
+  var html = marked.parse(source, { gfm: true, breaks: false });
+  document.getElementById("content").innerHTML = html;
+})();
+</script>
+</body>
+</html>

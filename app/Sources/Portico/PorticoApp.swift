@@ -5,9 +5,17 @@ import SwiftUI
 /// gateway for as long as the window is open.
 @main
 struct PorticoApp: App {
-    @StateObject private var model = AppModel()
-    @StateObject private var settings = Settings()
+    @StateObject private var model: AppModel
+    @StateObject private var settings: Settings
     @StateObject private var supervisor = GatewaySupervisor()
+
+    init() {
+        // The model reads the auto-open settings (spec §5.3), so it holds the
+        // same `Settings` object the settings scene edits.
+        let settings = Settings()
+        _settings = StateObject(wrappedValue: settings)
+        _model = StateObject(wrappedValue: AppModel(settings: settings))
+    }
 
     /// The app's version, sent in `hello`: the repo's VERSION file when the
     /// app runs from a checkout, else the bundle's, else a dev marker.

@@ -75,6 +75,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var openCards: [Int: [CardAsk]] = [:]
     /// Per chat, every artifact reported, oldest first, one per id.
     @Published private(set) var artifacts: [Int: [Artifact]] = [:]
+    /// Per chat, the artifact the viewer shows: the last one that
+    /// auto-opened or that the person picked from the history.
+    @Published private(set) var current: [Int: Artifact] = [:]
+    /// Whether the viewer column is wanted. A person collapses it; an
+    /// auto-open or a pick from the history brings it back. It is only
+    /// shown when the chat has artifacts at all (`isViewerShown`).
+    @Published var viewerVisible: Bool = true
     /// Per chat, the last `status.set` line (or the last error's message).
     @Published private(set) var status: [Int: String] = [:]
     /// The last chat-less `status.set` line: lifecycle command output, "stopping".
@@ -133,9 +140,17 @@ final class AppModel: ObservableObject {
     private var currentTurn: [Int: Int] = [:]
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
+    /// Per chat, the id of the artifact that was on screen when a replay
+    /// from the beginning reset the list; put back when it is re-listed.
+    private var restoreCurrent: [Int: String] = [:]
     private var nextItemId = 0
 
-    init() {}
+    /// The auto-open settings the reducer consults (spec §5.3).
+    let settings: Settings
+
+    init(settings: Settings = Settings()) {
+        self.settings = settings
+    }
 
     // MARK: - hello and reattach
 
@@ -288,6 +303,13 @@ final class AppModel: ObservableObject {
             transcripts[chat] = []
             openCards[chat] = []
             artifacts[chat] = []
+            // The stored artifacts follow as open=false; the one on screen
+            // comes back if it is still among them (`applyEvent`), and
+            // nothing else pops open on a replay.
+            if let shown = current[chat] {
+                restoreCurrent[chat] = shown.id
+                current[chat] = nil
+            }
             closedCards[chat] = [:]
             currentTurn[chat] = nil
             lastSeq[chat] = nil
@@ -369,13 +391,24 @@ final class AppModel: ObservableObject {
             closeCard(chat: chat, id: cancel.id, why: cancel.reason ?? "cancelled")
 
         case .artifactCreated(let created):
+            let artifact = created.artifact
             var list = artifacts[chat] ?? []
-            if let index = list.firstIndex(where: { $0.id == created.artifact.id }) {
-                list[index] = created.artifact
+            if let index = list.firstIndex(where: { $0.id == artifact.id }) {
+                list[index] = artifact
             } else {
-                list.append(created.artifact)
+                list.append(artifact)
             }
             artifacts[chat] = list
+            // Auto-open (spec §5.3): the gateway marks exactly the artifact
+            // that may open (`open`), and the settings say whether this app
+            // lets it, overall and per kind. Non-viewable kinds never pass
+            // `shouldAutoOpen`, whatever `open` says.
+            if artifact.open && settings.shouldAutoOpen(media: artifact.media.rawValue) {
+                show(artifact, in: chat)
+            } else if restoreCurrent[chat] == artifact.id {
+                current[chat] = artifact
+            }
+            if restoreCurrent[chat] == artifact.id { restoreCurrent[chat] = nil }
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error:
             break
@@ -416,6 +449,28 @@ final class AppModel: ObservableObject {
         guard pinnedCards(for: answer.chat).contains(where: { $0.id == answer.id }) else { return }
         send(.cardAnswer(answer))
         closeCard(chat: answer.chat, id: answer.id, why: Self.answeredMarker)
+    }
+
+    // MARK: - viewer
+
+    /// Put an artifact in the viewer, make sure the column is showing, and
+    /// tell the gateway (`artifact.opened`, telemetry only). Used by the
+    /// auto-open rule and by a pick from the history list.
+    func show(_ artifact: Artifact, in chat: Int) {
+        current[chat] = artifact
+        viewerVisible = true
+        send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
+    }
+
+    /// The chat's artifacts, newest first, for the history list.
+    func history(for chat: Int) -> [Artifact] {
+        (artifacts[chat] ?? []).reversed()
+    }
+
+    /// The viewer column is there when the chat has produced something
+    /// and the person has not collapsed it. Nothing produced: no column.
+    func isViewerShown(for chat: Int) -> Bool {
+        viewerVisible && !(artifacts[chat] ?? []).isEmpty
     }
 
     // MARK: - sidebar actions
@@ -533,6 +588,8 @@ final class AppModel: ObservableObject {
         transcripts[chat] = nil
         openCards[chat] = nil
         artifacts[chat] = nil
+        current[chat] = nil
+        restoreCurrent[chat] = nil
         status[chat] = nil
         closedCards[chat] = nil
         live.remove(chat)

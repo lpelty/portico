@@ -1,0 +1,105 @@
+/* The markdown viewer's stylesheet: system fonts, readable measure, and
+   light/dark from the system appearance. Inlined into viewer.html. */
+:root {
+  color-scheme: light dark;
+  --fg: #1d1d1f;
+  --fg-muted: #6e6e73;
+  --bg: #ffffff;
+  --rule: #d2d2d7;
+  --code-bg: #f5f5f7;
+  --link: #0a66c2;
+  --quote: #86868b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8e8ed;
+    --fg-muted: #98989d;
+    --bg: #1e1e1e;
+    --rule: #3a3a3c;
+    --code-bg: #2a2a2c;
+    --link: #6cb4ff;
+    --quote: #8e8e93;
+  }
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+body {
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+#content {
+  max-width: 76ch;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+  word-wrap: break-word;
+}
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.25;
+  margin: 1.6em 0 0.6em;
+  font-weight: 600;
+}
+h1 { font-size: 1.9em; margin-top: 0.4em; }
+h2 { font-size: 1.45em; border-bottom: 1px solid var(--rule); padding-bottom: 0.25em; }
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.05em; }
+p, ul, ol, blockquote, pre, table { margin: 0 0 1em; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { padding-left: 1.6em; }
+li + li { margin-top: 0.25em; }
+li > p { margin-bottom: 0.4em; }
+blockquote {
+  margin-left: 0;
+  padding: 0.2em 0 0.2em 1em;
+  border-left: 3px solid var(--rule);
+  color: var(--quote);
+}
+code, pre, kbd, samp {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+}
+code {
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.12em 0.35em;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.9em;
+}
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2em 0;
+}
+img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+}
+th, td {
+  border: 1px solid var(--rule);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: var(--code-bg); font-weight: 600; }
+input[type="checkbox"] { margin-right: 0.4em; }
+.muted { color: var(--fg-muted); }

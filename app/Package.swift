@@ -7,7 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Portico",
-            path: "Sources/Portico"
+            path: "Sources/Portico",
+            resources: [.copy("Resources")]
         ),
         .testTarget(
             name: "PorticoTests",
