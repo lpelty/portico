@@ -29,8 +29,16 @@ and the chat goes back to ``idle``. ``turn.stop`` interrupts the engine and
 the finish that follows is reported as ``outcome=stopped`` (synthesised if
 the engine never sends one within a grace period). ``chat.stop`` closes the
 engine outright; a later send starts a fresh engine resuming the same
-session. Cards (permission and question) are Task 8: until then the
-callbacks answer deny / no answers, never allow.
+session.
+
+Cards (Task 8): a permission or question from the engine goes through the
+``CardBroker`` (``cards.py``). The chat is ``waiting on you`` while a card
+is open and back to ``working`` once it resolves with the turn still
+running; ``card.answer`` resolves it, ``turn.stop`` / ``chat.stop`` /
+``chat.remove`` / gateway stop cancel it (``card.cancel`` with the reason),
+and a card held while no app is attached is denied after the hold with
+``nobody was there to answer``. ``chat.open`` re-sends the chat's open
+cards after ``chat.live``. Nothing is ever allowed by default.
 """
 
 from __future__ import annotations
@@ -54,11 +62,14 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
+from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat
 from .config import Config, hello_for
 from .engine import Engine, PermissionDecision
 from .messages import (
     PROTOCOL_VERSION,
+    CardAnswer,
+    CardAsk,
     ChatAlias,
     ChatHistory,
     ChatList,
@@ -399,7 +410,9 @@ class GatewayServer:
         self._handlers: dict[str, Handler] = {}
         self._runs: dict[int, TurnRun] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self.cards = CardBroker(hold_seconds=config.card_hold_seconds)
         self.http_routes: dict[tuple[str, str], HttpHandler] = {("GET", "/v1/health"): self._health}
+        self.register("card.answer", self.on_card_answer)
         self.register("chat.new", self.on_chat_new)
         self.register("chat.open", self.on_chat_open)
         self.register("chat.stop", self.on_chat_stop)
@@ -446,11 +459,13 @@ class GatewayServer:
         app, self._app = self._app, None
         if server is not None:
             server.close(close_connections=False)
+        self.cards.set_attached(False)
         if app is not None:
             await app.close(CLOSE_GOING_AWAY, "gateway stopping")
         for task in list(self._tasks):
             task.cancel()
         for chat in self.registry.chats():
+            await self.cards.cancel_all(chat, "gateway stopping", self.emit)
             await self._close_engine(chat)
         if server is not None:
             server.close()
@@ -509,9 +524,11 @@ class GatewayServer:
         finally:
             if self._app is conn:
                 self._app = None
+                self.cards.set_attached(False)
 
     async def _attach(self, conn: ServerConnection) -> None:
         previous, self._app = self._app, conn
+        self.cards.set_attached(True)
         if previous is not None and previous is not conn:
             await self._send(
                 previous,
@@ -647,18 +664,43 @@ class GatewayServer:
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self._finish_run(chat, run)
 
-    # --- cards (placeholders until Task 8 wires the broker) -------------------
+    # --- cards ------------------------------------------------------------------
 
     async def ask_permission(
         self, chat: Chat, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision:
-        """Never allow by default: without a card broker every permission is denied."""
-        log.warning("chat %d: %s asked for permission but cards are not wired; denied", chat.number, tool)
-        return ("deny", "the gateway cannot ask for permission yet")
+        """A permission card, unless a person already allowed the tool for this chat. Never allow by default."""
+        if self.cards.allowed(chat, tool):
+            return "allow"
+        run = self._runs.get(chat.number)
+        try:
+            return await self.cards.ask_permission(chat, tool, input, suggestions, tool_use_id, self._emit_card)
+        finally:
+            await self._resume_working(chat, run)
 
     async def ask_question(self, chat: Chat, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
-        log.warning("chat %d: the engine asked a question but cards are not wired; no answers", chat.number)
-        return {}
+        """A question card; raises ``QuestionDeclined`` (a deny to the engine) when nobody answered."""
+        run = self._runs.get(chat.number)
+        try:
+            return await self.cards.ask_question(chat, questions, self._emit_card)
+        finally:
+            await self._resume_working(chat, run)
+
+    async def _emit_card(self, chat: Chat, msg: ServerMessage) -> ServerMessage:
+        """The broker's ``send``: emit, and once a ``card.ask`` is out the chat is ``waiting on you``."""
+        stamped = await self.emit(chat, msg)
+        if isinstance(msg, CardAsk):
+            await self.set_state(chat, "waiting on you")
+        return stamped
+
+    async def _resume_working(self, chat: Chat, run: TurnRun | None) -> None:
+        """Back to ``working`` after a card, but only while the same turn is still running."""
+        if run is not None and self._runs.get(chat.number) is run and chat.state == "waiting on you":
+            await self.set_state(chat, "working")
+
+    async def on_card_answer(self, msg: CardAnswer, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        self.cards.answer(chat.number, msg.id, msg)
 
     # --- handlers: chats --------------------------------------------------------
 
@@ -684,10 +726,14 @@ class GatewayServer:
         events, truncated = chat.events_since(msg.since)
         await self._send(conn, ChatHistory(ts=_now(), chat=chat.number, id=msg.id, events=events, truncated=truncated))
         await self._send(conn, ChatLive(ts=_now(), chat=chat.number, id=msg.id, seq=chat.seq))
+        # Open cards again, as sent (same id and seq): the app de-duplicates by id.
+        for card in self.cards.open_cards(chat):
+            await self._send(conn, card)
 
     async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
         run = self._runs.get(chat.number)
+        await self.cards.cancel_all(chat, "chat stopped", self.emit)
         await self._close_engine(chat)
         if run is not None:
             await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
@@ -701,6 +747,7 @@ class GatewayServer:
 
     async def on_chat_remove(self, msg: ChatRemove, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
+        await self.cards.cancel_all(chat, "chat removed", self.emit)
         await self._close_engine(chat)
         self.registry.remove(chat.number)
         await self.send_chat_list()
@@ -743,6 +790,8 @@ class GatewayServer:
         if run is None or chat.engine is None:
             return  # nothing running: a stop is harmless
         run.stop_requested = True
+        # An open card would keep the engine's permission call waiting past the interrupt.
+        await self.cards.cancel_all(chat, "turn stopped", self.emit)
         await chat.engine.interrupt()
         self._spawn(self._await_stop(chat, run), name=f"portico-stop-{chat.number}")
 

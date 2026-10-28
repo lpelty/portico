@@ -18,7 +18,7 @@ import pytest
 from claude_agent_sdk import ResultMessage
 
 from portico_gateway.config import Config
-from portico_gateway.engine import EngineCallbacks, PermissionDecision, translate
+from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, translate
 from portico_gateway.messages import Action, Brand, Root, ServerMessage
 from portico_gateway.state import StateDir
 
@@ -106,7 +106,7 @@ class FakeEngine:
         self.scripts: deque[list[Any]] = deque()
         self.calls: list[tuple[str, Any]] = []
         self.decisions: list[PermissionDecision] = []
-        self.answers: list[dict[str, str | list[str]]] = []
+        self.answers: list[dict[str, str | list[str]] | tuple[str, str]] = []
         self.started = False
         self.closed = False
         self._task: asyncio.Task[None] | None = None
@@ -141,7 +141,10 @@ class FakeEngine:
                 decision = await cb.on_permission(item.tool, item.input, list(item.suggestions), item.tool_use_id)
                 self.decisions.append(decision)
             elif isinstance(item, AskQuestion):
-                self.answers.append(await cb.on_question(item.questions))
+                try:
+                    self.answers.append(await cb.on_question(item.questions))
+                except QuestionDeclined as e:
+                    self.answers.append(("declined", str(e)))
             elif isinstance(item, Block):
                 self._blocked.set()
                 await self._interrupted.wait()

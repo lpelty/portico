@@ -56,6 +56,14 @@ PermissionDecision = (
 )
 
 
+class QuestionDeclined(Exception):
+    """Raised by ``on_question`` when nobody answered (the card was cancelled or nobody was there).
+
+    The adapter turns it into a deny with the message, so the engine's
+    question tool is refused rather than answered with nothing.
+    """
+
+
 @runtime_checkable
 class EngineCallbacks(Protocol):
     async def on_event(self, event: ServerMessage) -> None: ...
@@ -208,7 +216,10 @@ def build_can_use_tool(callbacks: EngineCallbacks):
     ) -> PermissionResultAllow | PermissionResultDeny:
         if tool == QUESTION_TOOL:
             questions = list(input.get("questions") or [])
-            answers = await callbacks.on_question(questions)
+            try:
+                answers = await callbacks.on_question(questions)
+            except QuestionDeclined as e:
+                return PermissionResultDeny(message=str(e) or DEFAULT_DENY_MESSAGE)
             return PermissionResultAllow(updated_input={"questions": questions, "answers": answers})
         suggestions = list(context.suggestions or [])
         decision = await callbacks.on_permission(

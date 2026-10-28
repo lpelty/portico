@@ -87,8 +87,10 @@ and the reply is `error code=engine.start_failed`. *(`before_first_chat` at Task
 `chat`, `since: integer | absent` (the last `seq` the app saw; absent means
 from the beginning), `id` to correlate. Reply: `chat.history` carrying the
 chat's events after `since` from the gateway's ring buffer, then
-`chat.live` with the chat's current `seq`, then any open `card.ask` again
-*(Task 8)*. Opening a chat neither starts a turn nor advances `seq`; it
+`chat.live` with the chat's current `seq`, then the chat's open cards
+again as `card.ask` frames exactly as first sent (same `id`, same `seq`,
+so an app that already holds one de-duplicates by `id`; re-sending does
+not advance `seq`). Opening a chat neither starts a turn nor advances `seq`; it
 can be repeated at any time, including while a turn is running. Events
 older than the ring buffer come from the engine's transcript. *(Task 10)*
 
@@ -144,8 +146,19 @@ stop when nothing is running does nothing and answers nothing.
 `chat`, `id` (the card's id), `answer: object`, `scope: once | chat | always | absent`,
 `note: string | absent`. A permission answer is
 `{"decision": "allow" | "deny"}` with `scope`; a question answer is
-`{"answers": {<question text>: <label> | [labels]}}`. An unknown or
-already-answered id is refused with `error code=card.stale`. *(Task 8)*
+`{"answers": {<question text>: <label> | [labels]}}` (a label list for a
+`multi_select` question). An unknown, already-answered, or cancelled id is
+refused with `error code=card.stale` and nothing else happens; an answer
+whose shape does not fit the card's kind is refused with
+`error code=card.invalid_answer` and the card stays open. The answer
+resolves the engine's request: `allow` with scope `once` (or no scope)
+allows this use; scope `chat` also allows the tool for the rest of this
+chat, so later requests for it answer without a card (the gateway's
+memory of that lasts as long as the gateway runs); scope `always` hands
+the engine its own suggested permission rule, which lands in the folder's
+local settings, the same place the engine's own prompt writes it — the
+gateway keeps no permanent allow store. `deny` refuses the use, and
+`note` is the message the agent sees (default `denied by the user`).
 
 ### `files.list` — `FilesListRequest`
 `root: string` (a root name from `hello.roots`, or `chat` for the chat's
@@ -214,11 +227,35 @@ message. Always followed by `chat.state` (`idle`, or `stopped` after
 `permission {tool, summary, input}`,
 `questions: [{question, header, options: [{label, description}], multi_select}]`,
 `form: [{key, label, kind: text | choice | toggle, options?}]`.
-Held while no app is attached (`card_hold_seconds`, default 600) and then
-denied with the message `nobody was there to answer`. *(Task 8)*
+A `permission` card's `title` is a plain phrase for the tool (`Write a
+file`, `Run a command`, else `Use <tool>`), `summary` is the one-line
+summary also shown on the tool row (a path, the first line of a command),
+and `input` is the tool's full input. A `question` card maps the engine's
+question tool field for field (`multiSelect` → `multi_select`) and its
+`title` is the first question's `header`. `form` is defined for a
+deployment's gateway; the reference gateway never sends one.
+
+While a card is open the chat's state is `waiting on you` (sent right
+after the `card.ask`); once it resolves with the turn still running the
+state returns to `working`. Nothing is ever allowed by default: the only
+way to an `allow` is a person's `card.answer`, or a chat-scoped allow a
+person gave earlier in that chat.
+
+Held while no app is attached: the card stays open and the hold clock
+runs only while nobody is attached (`card_hold_seconds`, default 600; an
+attached app may take as long as it likes). When the hold runs out the
+gateway sends `card.cancel` with `reason: nobody was there to answer` and
+the engine sees a deny with that message (a question is refused the same
+way). An app that attaches while a card is open gets it again through
+`chat.open`.
 
 ### `card.cancel` — `CardCancel`
-`chat`, `seq`, `id`, `reason?`. *(Task 8)*
+`chat`, `seq`, `id`, `reason?`. The card is closed and its answer is no
+longer wanted; the engine's request resolved as a deny carrying the
+reason. Sent on `turn.stop` (`turn stopped`), `chat.stop` (`chat
+stopped`, before the `turn.finished`), `chat.remove` (`chat removed`), a
+gateway stop (`gateway stopping`), and a timed-out hold (`nobody was there
+to answer`). A `card.answer` that arrives afterwards is `card.stale`.
 
 ### `artifact.created` — `ArtifactCreated`
 `chat`, `seq`, `artifact {id, kind: file | url, location, media, title, source, open}`.
@@ -241,7 +278,8 @@ app should show now. *(Task 9)*
 directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
-`card.stale`, `files.outside_root`, `lifecycle.before_first_chat_failed`,
+`card.stale`, `card.invalid_answer`, `files.outside_root`,
+`lifecycle.before_first_chat_failed`,
 `gateway.error` (a handler failed; the message says which).
 
 An `error` that answers a request carries the request's `id` and `chat`
