@@ -75,37 +75,70 @@ gets its `protocol.*` error and the same close. A second `hello` on an
 open connection is `error code=protocol.invalid` and otherwise ignored.
 
 ### `chat.new` — `ChatNew`
-`folder: string` (absolute path). Reply: `chat.state` (`idle`) then an
-updated `chat.list`. *(Task 7; `before_first_chat` at Task 11)*
+`folder: string` (an absolute path to an existing directory; anything else
+is `error code=chat.folder_invalid`), `id` to correlate. The gateway numbers
+the chat, starts its engine in the folder with the configured
+`setting_sources`, records it in the index, and replies `chat.state`
+(`idle`, with the chat number and the request's `id`) followed by an
+updated `chat.list`. If the engine cannot start the chat is dropped again
+and the reply is `error code=engine.start_failed`. *(`before_first_chat` at Task 11)*
 
 ### `chat.open` — `ChatOpen`
-`chat`, `since: integer | absent` (last `seq` seen). Reply: `chat.history`,
-then `chat.live`, then any open `card.ask` again. *(Tasks 7, 8, 10)*
+`chat`, `since: integer | absent` (the last `seq` the app saw; absent means
+from the beginning), `id` to correlate. Reply: `chat.history` carrying the
+chat's events after `since` from the gateway's ring buffer, then
+`chat.live` with the chat's current `seq`, then any open `card.ask` again
+*(Task 8)*. Opening a chat neither starts a turn nor advances `seq`; it
+can be repeated at any time, including while a turn is running. Events
+older than the ring buffer come from the engine's transcript. *(Task 10)*
 
 ### `chat.stop` — `ChatStop`
-`chat`. Interrupts and closes the chat's engine; state becomes `stopped`. *(Task 7)*
+`chat`. Interrupts and closes the chat's engine. A turn in flight ends with
+`turn.finished outcome=stopped` (emitted by the gateway), then the state
+becomes `stopped`. The chat keeps its number, folder and session: the next
+`message.send` starts a fresh engine that resumes the same session and the
+chat goes `idle` → `working` as usual.
 
 ### `chat.alias` — `ChatAlias`
-`chat`, `alias: string | absent` (absent clears it). *(Task 7)*
+`chat`, `alias: string | absent` (absent or empty clears it). Reply: an
+updated `chat.list`.
 
 ### `chat.remove` — `ChatRemove`
-`chat`. *(Task 7)*
+`chat`. Closes the engine, forgets the chat (its number is never reused),
+and replies with an updated `chat.list`.
 
 ### `message.send` — `MessageSend`
 `chat`, `text: string`, `attachments: [string]` (absolute paths, default
-empty). A send while the chat is `working` is refused with
-`error code=chat.busy`; a missing attachment with `error code=attachment.missing`.
-Attachment form appended to the text: *(Task 7)*
+empty), `id` to correlate a refusal. The gateway emits `turn.started` (the
+chat's next `turn`), `chat.state working`, then streams the engine's events
+(`text.delta`, `tool.started`, `tool.finished`, cards, artifacts) and ends
+with `turn.finished` and `chat.state idle`. Slash text (`/review`) is passed
+to the engine as typed and dispatches the folder's commands.
+
+A send while a turn is running (state `working` or `waiting on you`) is
+refused with `error code=chat.busy`. Every attachment must be an absolute
+path to an existing file: a path that does not exist, or names a
+directory, is refused with `error code=attachment.missing` and nothing is
+sent to the engine. A send on a `stopped` chat restarts its engine first.
+
+Attachments reach the engine as their paths, appended to the text in
+exactly this form (one `- ` line per path, in the order given; the block
+is omitted when there are no attachments):
 
 ```
 <text>
 
 Attached files:
 - /abs/path
+- /abs/other
 ```
 
 ### `turn.stop` — `TurnStop`
-`chat`. Interrupts the running turn; it finishes with `outcome: stopped`. *(Task 7)*
+`chat`. Interrupts the running turn; it finishes with `outcome: stopped`
+(the engine's own finish is reported as `stopped`; if none arrives within
+the gateway's grace period, 15 seconds, the gateway ends the turn itself)
+and the chat returns to `idle`. The engine stays up for the next send. A
+stop when nothing is running does nothing and answers nothing.
 
 ### `card.answer` — `CardAnswer`
 `chat`, `id` (the card's id), `answer: object`, `scope: once | chat | always | absent`,
@@ -133,25 +166,35 @@ nothing. *(Task 9)*
 sidebar before anything else arrives.
 
 ### `chat.list` — `ChatList`
-`chats: [{chat, folder, alias?, state, created}]`. *(Tasks 5, 7)*
+`chats: [{chat, folder, alias?, state, created}]`. Sent after `hello` and
+after every change to the set of chats or their aliases (`chat.new`,
+`chat.alias`, `chat.remove`). State changes alone travel as `chat.state`.
+Not chat-scoped: no `seq`, not replayed in `chat.history`.
 
 ### `chat.state` — `ChatState`
-`chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`. *(Task 5)*
+`chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`.
+Stamped and kept in the ring like every chat-scoped event, so a replay
+shows the state transitions in order. The one answering `chat.new` also
+carries the request's `id`.
 
 ### `chat.history` — `ChatHistory`
-`chat`, `events: [event]` (chat-scoped events with their original `seq`),
+`chat`, `id` (echoing `chat.open`), `events: [event]` (chat-scoped events
+with their original `seq`, oldest first; empty when the app is up to date),
 `truncated: bool` (true when `since` fell behind the ring buffer and the
-replay starts later than asked). *(Tasks 7, 10)*
+replay starts later than asked; the app should then refetch from the
+beginning). Not itself stamped. *(Transcript replay: Task 10)*
 
 ### `chat.live` — `ChatLive`
-`chat`, `seq` (the chat's current sequence number). History is complete;
-what follows is live. *(Task 7)*
+`chat`, `id` (echoing `chat.open`), `seq` (the chat's current sequence
+number, not a new one). History is complete; what follows is live.
 
 ### `turn.started` — `TurnStarted`
-`chat`, `seq`, `turn: integer`. *(Task 7)*
+`chat`, `seq`, `turn: integer` (counts from 1 per gateway launch). Always
+followed by `chat.state working`.
 
 ### `text.delta` — `TextDelta`
-`chat`, `seq`, `turn`, `text`. *(Task 7)*
+`chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
+the app appends.
 
 ### `tool.started` — `ToolStarted`
 `chat`, `seq`, `turn`, `tool_use_id`, `tool`, `summary`, `input: object`. *(Task 4)*
@@ -160,7 +203,11 @@ what follows is live. *(Task 7)*
 `chat`, `seq`, `turn`, `tool_use_id`, `ok: bool`, `summary`. *(Task 4)*
 
 ### `turn.finished` — `TurnFinished`
-`chat`, `seq`, `turn`, `outcome: done | stopped | error`. *(Task 7)*
+`chat`, `seq`, `turn`, `outcome: done | stopped | error`. Exactly one per
+turn: `done` when the engine finished, `stopped` after `turn.stop` or
+`chat.stop`, `error` when the engine reported a failure or refused the
+message. Always followed by `chat.state` (`idle`, or `stopped` after
+`chat.stop`).
 
 ### `card.ask` — `CardAsk`
 `chat`, `seq`, `id`, `kind: permission | question | form`, `title`, and one of
@@ -189,10 +236,16 @@ app should show now. *(Task 9)*
 `chat?`, `id?` (the request it answers), `code`, `message`. Codes so far:
 `protocol.invalid`, `protocol.unknown_type`, `protocol.hello_required`,
 `protocol.unsupported` (a known type this gateway has no handler for),
-`session.replaced`, `chat.unknown` (no chat with that number), `chat.busy`,
-`attachment.missing`, `card.stale`, `files.outside_root`,
-`lifecycle.before_first_chat_failed`, `gateway.error` (a handler failed;
-the message says which).
+`session.replaced`, `chat.unknown` (no chat with that number),
+`chat.folder_invalid` (`chat.new` on a path that is not an existing
+directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
+(the engine could not start in the folder), `engine.send_failed` (the
+engine refused the message; the turn is finished with `outcome: error`),
+`card.stale`, `files.outside_root`, `lifecycle.before_first_chat_failed`,
+`gateway.error` (a handler failed; the message says which).
+
+An `error` that answers a request carries the request's `id` and `chat`
+and is not stamped: refusals are replies, not history.
 
 A bad frame after `hello` (unknown type, unknown field, not JSON) is
 answered with an `error` and the connection stays open; only the first

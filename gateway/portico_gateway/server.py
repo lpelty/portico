@@ -16,8 +16,21 @@
   writes the ledger; the app's supervisor reads that line when it launches
   the gateway itself and the ledger when it discovers a running one.
 
-Message handlers register by type name (``register``); this task wires the
-handshake and the dispatch table, later tasks add the handlers.
+Message handlers register by type name (``register``). Task 6 wired the
+handshake and the dispatch table; Task 7 added the chat and turn handlers
+(``chat.new``, ``chat.open``, ``chat.stop``, ``chat.alias``, ``chat.remove``,
+``message.send``, ``turn.stop``) and the per-chat engine callbacks that
+stamp every engine event with the chat's ``seq`` and broadcast it.
+
+A turn, as the gateway runs it: ``message.send`` emits ``turn.started`` and
+``chat.state working``, then hands the text to the engine; the engine's
+events stream through ``engine_event``; its ``turn.finished`` ends the turn
+and the chat goes back to ``idle``. ``turn.stop`` interrupts the engine and
+the finish that follows is reported as ``outcome=stopped`` (synthesised if
+the engine never sends one within a grace period). ``chat.stop`` closes the
+engine outright; a later send starts a fresh engine resuming the same
+session. Cards (permission and question) are Task 8: until then the
+callbacks answer deny / no answers, never allow.
 """
 
 from __future__ import annotations
@@ -29,9 +42,10 @@ import logging
 import os
 import secrets
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -40,18 +54,31 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
-from .chats import ChatRegistry, UnknownChat
+from .chats import Chat, ChatRegistry, UnknownChat
 from .config import Config, hello_for
-from .engine import Engine
+from .engine import Engine, PermissionDecision
 from .messages import (
     PROTOCOL_VERSION,
+    ChatAlias,
+    ChatHistory,
     ChatList,
+    ChatLive,
+    ChatNew,
+    ChatOpen,
+    ChatRemove,
+    ChatState,
+    ChatStateWord,
+    ChatStop,
     ClientMessage,
     Envelope,
     Error,
     HelloClient,
+    MessageSend,
     ProtocolError,
     ServerMessage,
+    TurnFinished,
+    TurnStarted,
+    TurnStop,
     dump,
     parse_client,
 )
@@ -74,9 +101,71 @@ CLOSE_GOING_AWAY = 1001
 CLOSE_PROTOCOL_ERROR = 1002
 CLOSE_POLICY = 1008
 
+# After ``turn.stop`` the engine is given this long to send its own
+# ``turn.finished``; then the gateway ends the turn itself so the app is
+# never left on a turn that cannot finish.
+STOP_GRACE_SECONDS = 15.0
+
+# The exact form attachments take in the text the engine receives
+# (PROTOCOL.md, ``message.send``).
+ATTACHMENT_HEADER = "Attached files:"
+
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- turns: helpers ----------------------------------------------------------
+
+
+def with_attachments(text: str, attachments: list[str]) -> str:
+    """``text`` with the attachment block appended; unchanged when there are none."""
+    if not attachments:
+        return text
+    return text + "\n\n" + ATTACHMENT_HEADER + "\n" + "\n".join(f"- {path}" for path in attachments)
+
+
+def check_attachments(paths: list[str]) -> list[str]:
+    """Every attachment must be an absolute path to an existing file; otherwise ``attachment.missing``."""
+    checked: list[str] = []
+    for raw in paths:
+        path = Path(raw)
+        if not path.is_absolute():
+            raise ProtocolError("attachment.missing", f"attachment path is not absolute: {raw}")
+        if path.is_dir():
+            raise ProtocolError("attachment.missing", f"attachment is a directory, not a file: {raw}")
+        if not path.is_file():
+            raise ProtocolError("attachment.missing", f"attachment does not exist: {raw}")
+        checked.append(str(path))
+    return checked
+
+
+@dataclass
+class TurnRun:
+    """One turn in flight on a chat."""
+
+    turn: int
+    stop_requested: bool = False
+    finished: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+class ChatCallbacks:
+    """The ``EngineCallbacks`` the server hands each chat's engine."""
+
+    def __init__(self, server: GatewayServer, chat: Chat) -> None:
+        self.server = server
+        self.chat = chat
+
+    async def on_event(self, event: ServerMessage) -> None:
+        await self.server.engine_event(self.chat, event)
+
+    async def on_permission(
+        self, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
+    ) -> PermissionDecision:
+        return await self.server.ask_permission(self.chat, tool, input, suggestions, tool_use_id)
+
+    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+        return await self.server.ask_question(self.chat, questions)
 
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
@@ -308,7 +397,16 @@ class GatewayServer:
         self._server: Server | None = None
         self._app: ServerConnection | None = None
         self._handlers: dict[str, Handler] = {}
+        self._runs: dict[int, TurnRun] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
         self.http_routes: dict[tuple[str, str], HttpHandler] = {("GET", "/v1/health"): self._health}
+        self.register("chat.new", self.on_chat_new)
+        self.register("chat.open", self.on_chat_open)
+        self.register("chat.stop", self.on_chat_stop)
+        self.register("chat.alias", self.on_chat_alias)
+        self.register("chat.remove", self.on_chat_remove)
+        self.register("message.send", self.on_message_send)
+        self.register("turn.stop", self.on_turn_stop)
 
     @property
     def attached(self) -> bool:
@@ -350,18 +448,21 @@ class GatewayServer:
             server.close(close_connections=False)
         if app is not None:
             await app.close(CLOSE_GOING_AWAY, "gateway stopping")
+        for task in list(self._tasks):
+            task.cancel()
         for chat in self.registry.chats():
-            engine, chat.engine = chat.engine, None
-            if engine is not None:
-                try:
-                    await engine.close()
-                except Exception:
-                    log.exception("closing engine for chat %d failed", chat.number)
+            await self._close_engine(chat)
         if server is not None:
             server.close()
             await server.wait_closed()
         self.state.clear_ledger()
         self.registry.persist()
+
+    def _spawn(self, coro: Coroutine[Any, Any, None], name: str) -> None:
+        """Run ``coro`` in the background; the task is cancelled at ``shutdown``."""
+        task = asyncio.create_task(coro, name=name)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     # --- connections ----------------------------------------------------------
 
@@ -462,6 +563,188 @@ class GatewayServer:
     @staticmethod
     def error(code: str, message: str, *, chat: int | None = None, id: str | None = None) -> Error:
         return Error(ts=_now(), chat=chat, id=id, code=code, message=message)
+
+    # --- chat-scoped events ---------------------------------------------------
+
+    async def emit(self, chat: Chat, msg: ServerMessage) -> ServerMessage:
+        """Stamp ``msg`` with the chat's next ``seq``, keep it in the ring, send it to the app."""
+        stamped = chat.stamp(msg)
+        await self.broadcast(stamped)
+        return stamped
+
+    async def set_state(self, chat: Chat, word: ChatStateWord) -> ChatState:
+        """Set the chat's state word, record it in the index, and emit ``chat.state``."""
+        event = chat.set_state(word)
+        self.registry.persist()
+        await self.broadcast(event)
+        return event
+
+    async def send_chat_list(self) -> None:
+        await self.broadcast(ChatList(ts=_now(), chats=self.registry.summaries()))
+
+    # --- engines --------------------------------------------------------------
+
+    async def _start_engine(self, chat: Chat) -> Engine:
+        """A fresh engine for ``chat`` in its folder, resuming its session when it has one."""
+        engine = self.engine_factory()
+        engine.chat = chat.number
+        session = await engine.start(
+            chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
+        )
+        chat.engine = engine
+        if session:
+            chat.session_id = session
+        self.registry.persist()
+        return engine
+
+    async def _close_engine(self, chat: Chat) -> None:
+        """Interrupt and close the chat's engine; any turn in flight is forgotten (the caller reports it)."""
+        engine, chat.engine = chat.engine, None
+        run = self._runs.pop(chat.number, None)
+        if run is not None:
+            run.stop_requested = True
+            run.finished.set()
+        if engine is None:
+            return
+        try:
+            if run is not None:
+                await engine.interrupt()
+            await engine.close()
+        except Exception:
+            log.exception("closing engine for chat %d failed", chat.number)
+
+    async def engine_event(self, chat: Chat, event: ServerMessage) -> None:
+        """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn."""
+        if not isinstance(event, TurnFinished):
+            await self.emit(chat, event)
+            return
+        run = self._runs.get(chat.number)
+        if run is None:
+            # The turn was already ended by the gateway (chat.stop, or the stop grace ran out).
+            log.debug("chat %d: engine finish for turn %d after the turn ended; dropped", chat.number, event.turn)
+            return
+        if run.stop_requested:
+            event = event.model_copy(update={"outcome": "stopped"})
+        await self.emit(chat, event)
+        await self._finish_run(chat, run)
+
+    async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
+        if self._runs.get(chat.number) is run:
+            del self._runs[chat.number]
+        await self.set_state(chat, "idle")
+        run.finished.set()
+
+    async def _await_stop(self, chat: Chat, run: TurnRun) -> None:
+        """After ``turn.stop``: give the engine its grace, then end the turn on its behalf."""
+        try:
+            await asyncio.wait_for(run.finished.wait(), STOP_GRACE_SECONDS)
+            return
+        except TimeoutError:
+            pass
+        if self._runs.get(chat.number) is not run:
+            return
+        log.warning("chat %d: engine did not finish turn %d within %.0fs of stop; ending it", chat.number, run.turn, STOP_GRACE_SECONDS)
+        await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
+        await self._finish_run(chat, run)
+
+    # --- cards (placeholders until Task 8 wires the broker) -------------------
+
+    async def ask_permission(
+        self, chat: Chat, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
+    ) -> PermissionDecision:
+        """Never allow by default: without a card broker every permission is denied."""
+        log.warning("chat %d: %s asked for permission but cards are not wired; denied", chat.number, tool)
+        return ("deny", "the gateway cannot ask for permission yet")
+
+    async def ask_question(self, chat: Chat, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+        log.warning("chat %d: the engine asked a question but cards are not wired; no answers", chat.number)
+        return {}
+
+    # --- handlers: chats --------------------------------------------------------
+
+    async def on_chat_new(self, msg: ChatNew, conn: ServerConnection) -> None:
+        folder = Path(msg.folder)
+        if not folder.is_absolute() or not folder.is_dir():
+            raise ProtocolError("chat.folder_invalid", f"not an absolute path to a directory: {msg.folder}")
+        chat = self.registry.create(folder)
+        try:
+            await self._start_engine(chat)
+        except Exception as e:
+            log.exception("chat %d: engine failed to start", chat.number)
+            self.registry.remove(chat.number)
+            await self.send_chat_list()
+            raise ProtocolError("engine.start_failed", f"the engine could not start in {msg.folder}: {e}") from e
+        state = chat.set_state("idle")
+        self.registry.persist()
+        await self._send(conn, state.model_copy(update={"id": msg.id}))
+        await self.send_chat_list()
+
+    async def on_chat_open(self, msg: ChatOpen, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        events, truncated = chat.events_since(msg.since)
+        await self._send(conn, ChatHistory(ts=_now(), chat=chat.number, id=msg.id, events=events, truncated=truncated))
+        await self._send(conn, ChatLive(ts=_now(), chat=chat.number, id=msg.id, seq=chat.seq))
+
+    async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        run = self._runs.get(chat.number)
+        await self._close_engine(chat)
+        if run is not None:
+            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
+        await self.set_state(chat, "stopped")
+
+    async def on_chat_alias(self, msg: ChatAlias, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        chat.alias = msg.alias or None
+        self.registry.persist()
+        await self.send_chat_list()
+
+    async def on_chat_remove(self, msg: ChatRemove, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        await self._close_engine(chat)
+        self.registry.remove(chat.number)
+        await self.send_chat_list()
+
+    # --- handlers: turns --------------------------------------------------------
+
+    async def on_message_send(self, msg: MessageSend, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        if chat.number in self._runs:
+            raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
+        attachments = check_attachments(msg.attachments)
+        engine = chat.engine
+        if engine is None:
+            try:
+                engine = await self._start_engine(chat)
+            except Exception as e:
+                log.exception("chat %d: engine failed to start", chat.number)
+                raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e
+        text = with_attachments(msg.text, attachments)
+
+        chat.turn += 1
+        run = TurnRun(turn=chat.turn)
+        self._runs[chat.number] = run
+        await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
+        await self.set_state(chat, "working")
+        # ``send`` advances the engine's own turn counter; align it so the
+        # engine's events carry this turn even after an engine restart.
+        engine.turn = chat.turn - 1
+        try:
+            await engine.send(text)
+        except Exception as e:
+            log.exception("chat %d: engine send failed", chat.number)
+            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="error"))
+            await self._finish_run(chat, run)
+            raise ProtocolError("engine.send_failed", f"the engine refused the message: {e}") from e
+
+    async def on_turn_stop(self, msg: TurnStop, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        run = self._runs.get(chat.number)
+        if run is None or chat.engine is None:
+            return  # nothing running: a stop is harmless
+        run.stop_requested = True
+        await chat.engine.interrupt()
+        self._spawn(self._await_stop(chat, run), name=f"portico-stop-{chat.number}")
 
     # --- sending --------------------------------------------------------------
 
