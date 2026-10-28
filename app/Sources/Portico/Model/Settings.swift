@@ -52,6 +52,7 @@ final class Settings: ObservableObject {
         static let gatewayURL = "gatewayURL"
         static let tokenFile = "tokenFile"
         static let lastFolder = "lastFolder"
+        static let pinnedFiles = "pinnedFiles"
     }
 
     private let defaults: UserDefaults
@@ -80,6 +81,12 @@ final class Settings: ObservableObject {
         didSet { Self.store(lastFolder, forKey: Key.lastFolder, in: defaults) }
     }
 
+    /// Files pinned in the Files pane's Quick tab (F2), by absolute path,
+    /// in the order they were pinned.
+    @Published var pinnedFiles: [String] {
+        didSet { defaults.set(pinnedFiles, forKey: Key.pinnedFiles) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         autoOpen = defaults.object(forKey: Key.autoOpen) as? Bool ?? true
@@ -93,6 +100,7 @@ final class Settings: ObservableObject {
         gatewayURL = Self.read(Key.gatewayURL, in: defaults)
         tokenFile = Self.read(Key.tokenFile, in: defaults)
         lastFolder = Self.read(Key.lastFolder, in: defaults)
+        pinnedFiles = defaults.stringArray(forKey: Key.pinnedFiles) ?? []
     }
 
     /// Whether an artifact of `media` should open on its own.

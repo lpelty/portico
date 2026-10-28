@@ -157,6 +157,31 @@ struct ChatSummary: Codable, Equatable, Sendable {
     var alias: String?
     var state: ChatStateWord
     var created: String
+    // v0.2 session facts. Optional so a v0.1 gateway's records (which
+    // carry none of them) decode, and absent ones stay absent on the wire.
+    /// The first line of the first user message (≤60), until something better names it.
+    var title: String? = nil
+    /// When the session ended (`session.renew`); `nil` while it is live.
+    var ended: String? = nil
+    /// Whether the log step finished cleanly; `nil` when no log step ran.
+    var logged: Bool? = nil
+    /// The session this one followed.
+    var parent: Int? = nil
+    /// How many times the engine summarized this session to make room.
+    var compactions: Int? = nil
+    /// The context window's fullness after the last turn, 0–100.
+    var contextPercent: Double? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case chat, folder, alias, state, created, title, ended, logged, parent, compactions
+        case contextPercent = "context_percent"
+    }
+}
+
+/// One `files.search` result: `path` is relative to the searched root.
+struct Hit: Codable, Equatable, Sendable {
+    var path: String
+    var snippet: String? = nil
 }
 
 struct Permission: Codable, Equatable, Sendable {
@@ -293,6 +318,27 @@ struct FilesListRequest: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// End the session `chat` and start the next one in the same folder;
+/// with `log`, the gateway first runs the deployment's log step in it.
+/// Answered with `session.renewed`.
+struct SessionRenew: Codable, Equatable, Sendable {
+    static let messageType = "session.renew"
+    var chat: Int
+    var log: Bool = true
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Search names and text under a root; answered with `files.results`.
+struct FilesSearch: Codable, Equatable, Sendable {
+    static let messageType = "files.search"
+    var root: String
+    var query: String
+    var chat: Int? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 struct ArtifactOpened: Codable, Equatable, Sendable {
     static let messageType = "artifact.opened"
     var chat: Int
@@ -326,17 +372,26 @@ struct HelloServer: Codable, Equatable, Sendable {
     var roots: [Root]
     var commands: [String]
     var capabilities: [String]
+    /// `single` (one live session at a time) or `multiple` (v0.1's chat
+    /// list); absent from a v0.1 gateway, which means `multiple`.
+    var presentation: String? = nil
+    /// Whether the deployment has a log step for `session.renew`.
+    var canLog: Bool? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, epoch, brand, actions, roots, commands, capabilities, chat, id, seq, ts
+        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts
         case gatewayVersion = "gateway_version"
+        case canLog = "can_log"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+
+    /// One live session at a time (S1), rather than the chat list.
+    var isSingle: Bool { presentation == "single" }
 }
 
 struct ChatList: Codable, Equatable, Sendable {
@@ -536,6 +591,60 @@ struct FilesList: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// How full the session's context window is, after each turn.
+struct ContextUsage: Codable, Equatable, Sendable {
+    static let messageType = "context.usage"
+    var chat: Int
+    var percent: Double
+    var model: String? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// The engine summarized earlier conversation to make room. In the ring
+/// and in a history replay, so the transcript draws its line either way.
+struct ChatCompacted: Codable, Equatable, Sendable {
+    static let messageType = "chat.compacted"
+    var chat: Int
+    /// `auto` or `manual`.
+    var trigger: String
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// The session `ended` was closed and `next` is the live one now.
+struct SessionRenewed: Codable, Equatable, Sendable {
+    static let messageType = "session.renewed"
+    var ended: ChatSummary
+    var next: ChatSummary
+    var chat: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// The answer to `files.search`.
+struct FilesResults: Codable, Equatable, Sendable {
+    static let messageType = "files.results"
+    var root: String
+    var query: String
+    var hits: [Hit]? = nil
+    var chat: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 struct StatusSet: Codable, Equatable, Sendable {
     static let messageType = "status.set"
     var text: String
@@ -589,6 +698,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case filesList(FilesListRequest)
     case artifactOpened(ArtifactOpened)
     case gatewayStop(GatewayStop)
+    case sessionRenew(SessionRenew)
+    case filesSearch(FilesSearch)
 
     var type: String {
         switch self {
@@ -604,6 +715,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .filesList: FilesListRequest.messageType
         case .artifactOpened: ArtifactOpened.messageType
         case .gatewayStop: GatewayStop.messageType
+        case .sessionRenew: SessionRenew.messageType
+        case .filesSearch: FilesSearch.messageType
         }
     }
 
@@ -622,6 +735,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case FilesListRequest.messageType: self = .filesList(try FilesListRequest(from: decoder))
         case ArtifactOpened.messageType: self = .artifactOpened(try ArtifactOpened(from: decoder))
         case GatewayStop.messageType: self = .gatewayStop(try GatewayStop(from: decoder))
+        case SessionRenew.messageType: self = .sessionRenew(try SessionRenew(from: decoder))
+        case FilesSearch.messageType: self = .filesSearch(try FilesSearch(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -642,6 +757,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .filesList(let m): try m.encode(to: encoder)
         case .artifactOpened(let m): try m.encode(to: encoder)
         case .gatewayStop(let m): try m.encode(to: encoder)
+        case .sessionRenew(let m): try m.encode(to: encoder)
+        case .filesSearch(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -667,6 +784,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case filesList(FilesList)
     case statusSet(StatusSet)
     case error(ErrorMessage)
+    case contextUsage(ContextUsage)
+    case chatCompacted(ChatCompacted)
+    case sessionRenewed(SessionRenewed)
+    case filesResults(FilesResults)
 
     var type: String {
         switch self {
@@ -688,6 +809,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .filesList: FilesList.messageType
         case .statusSet: StatusSet.messageType
         case .error: ErrorMessage.messageType
+        case .contextUsage: ContextUsage.messageType
+        case .chatCompacted: ChatCompacted.messageType
+        case .sessionRenewed: SessionRenewed.messageType
+        case .filesResults: FilesResults.messageType
         }
     }
 
@@ -711,6 +836,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .filesList(let m): m.envelope
         case .statusSet(let m): m.envelope
         case .error(let m): m.envelope
+        case .contextUsage(let m): m.envelope
+        case .chatCompacted(let m): m.envelope
+        case .sessionRenewed(let m): m.envelope
+        case .filesResults(let m): m.envelope
         }
     }
 
@@ -735,6 +864,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case FilesList.messageType: self = .filesList(try FilesList(from: decoder))
         case StatusSet.messageType: self = .statusSet(try StatusSet(from: decoder))
         case ErrorMessage.messageType: self = .error(try ErrorMessage(from: decoder))
+        case ContextUsage.messageType: self = .contextUsage(try ContextUsage(from: decoder))
+        case ChatCompacted.messageType: self = .chatCompacted(try ChatCompacted(from: decoder))
+        case SessionRenewed.messageType: self = .sessionRenewed(try SessionRenewed(from: decoder))
+        case FilesResults.messageType: self = .filesResults(try FilesResults(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -761,6 +894,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .filesList(let m): try m.encode(to: encoder)
         case .statusSet(let m): try m.encode(to: encoder)
         case .error(let m): try m.encode(to: encoder)
+        case .contextUsage(let m): try m.encode(to: encoder)
+        case .chatCompacted(let m): try m.encode(to: encoder)
+        case .sessionRenewed(let m): try m.encode(to: encoder)
+        case .filesResults(let m): try m.encode(to: encoder)
         }
     }
 }

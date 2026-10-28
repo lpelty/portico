@@ -11,12 +11,32 @@ struct StatusStripPresentation: Equatable, Sendable {
     var gatewayText: String
     var connectionText: String?
     var statusText: String?
+    /// The model's name from `context.usage` (A1/S5's Model segment), when known.
+    var modelText: String? = nil
+    /// `62% context`, when the gateway reports context usage.
+    var contextText: String? = nil
 
     static let separator = " · "
 
     var text: String {
-        [chatText, folderName, gatewayText, connectionText, statusText].compactMap { $0 }
+        [chatText, folderName, modelText, contextText, gatewayText, connectionText, statusText].compactMap { $0 }
             .joined(separator: Self.separator)
+    }
+
+    /// `claude-sonnet-5-5` reads `Claude Sonnet 5.5`; a dated id drops the
+    /// date; a name that is not a Claude id is shown as sent.
+    static func modelDisplayName(_ id: String) -> String {
+        var parts = id.split(separator: "-").map(String.init)
+        guard parts.first?.lowercased() == "claude", parts.count > 1 else { return id }
+        if let last = parts.last, last.count == 8, Int(last) != nil { parts.removeLast() }
+        let words = parts.prefix { Int($0) == nil }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        let version = parts.drop { Int($0) == nil }.joined(separator: ".")
+        return (words + (version.isEmpty ? [] : [version])).joined(separator: " ")
+    }
+
+    /// `62% context`, rounded to a whole percent.
+    static func contextText(_ percent: Double) -> String {
+        "\(Int(percent.rounded()))% context"
     }
 
     static func gatewayText(_ status: GatewaySupervisor.Status) -> String {
@@ -55,7 +75,9 @@ extension AppModel {
             folderName: summary.map { URL(fileURLWithPath: $0.folder).lastPathComponent },
             gatewayText: StatusStripPresentation.gatewayText(gateway),
             connectionText: StatusStripPresentation.connectionText(connection, gateway: gateway),
-            statusText: latestStatusLine(for: selected))
+            statusText: latestStatusLine(for: selected),
+            modelText: selected.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
+            contextText: selected.flatMap { contextPercent(for: $0) }.map(StatusStripPresentation.contextText))
     }
 }
 
@@ -82,6 +104,26 @@ struct StatusStrip: View {
                         .font(.system(size: 11))
                     Text(folder)
                         .font(.system(size: 12))
+                }
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+            }
+            if let modelText = strip.modelText {
+                HStack(spacing: 5) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 11))
+                    Text(modelText)
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+            }
+            if let contextText = strip.contextText {
+                HStack(spacing: 5) {
+                    Image(systemName: "gauge.with.dots.needle.50percent")
+                        .font(.system(size: 11))
+                    Text(contextText)
+                        .font(.system(size: 12).monospacedDigit())
                 }
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
