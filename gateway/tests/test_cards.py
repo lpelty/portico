@@ -201,6 +201,89 @@ async def test_permission_scope_chat_skips_next_ask_for_same_tool(
         await conn.close()
 
 
+def bash_ask(command: str, tool_use_id: str, rules: list[str] | None = None) -> AskPermission:
+    """A Bash ask; ``rules`` are the engine's own allow suggestions (``prefix:*`` or exact)."""
+    suggestions = []
+    if rules:
+        suggestions.append(
+            {
+                "type": "addRules",
+                "behavior": "allow",
+                "destination": "session",
+                "rules": [{"toolName": "Bash", "ruleContent": rule} for rule in rules],
+            }
+        )
+    return AskPermission("Bash", {"command": command}, suggestions=suggestions, tool_use_id=tool_use_id)
+
+
+async def answer(conn: ClientConnection, card: CardAsk, decision: str, scope: str | None = None) -> None:
+    await conn.send(dump(CardAnswer(ts=TS, chat=card.chat, id=card.id, answer={"decision": decision}, scope=scope)))  # type: ignore[arg-type]
+
+
+async def test_chat_scope_bash_does_not_cover_a_different_command(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    # "Allow for this chat" on one command must not silently allow every later
+    # command: a chat allow for a command tool is keyed the way the engine keys
+    # its own rules (its suggested prefix, else the exact command), never the bare tool name.
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        chat = server.registry.get(number)
+
+        # No suggestion from the engine: the allow covers exactly "ls".
+        _, card = await start_turn_with_card(conn, number, engine, bash_ask("ls", "t1"), bash_ask("rm -rf /", "t2"), fake_result())
+        await recv(conn)  # waiting on you
+        await answer(conn, card, "allow", "chat")
+        frames = await recv_until(conn, CardAsk)
+        second = frames[-1]
+        assert isinstance(second, CardAsk) and second.permission is not None
+        assert second.permission.summary == "rm -rf /", "a different command still asks"
+        await recv(conn)
+        await answer(conn, second, "deny")
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+        assert engine.decisions == ["allow", ("deny", None)]
+        assert chat.chat_allows == {"Bash(ls)"}
+
+        # The exact command is covered; a longer one is not.
+        _, card = await start_turn_with_card(
+            conn, number, engine, bash_ask("ls", "t3"), bash_ask("ls -la", "t4", rules=["ls:*"]), fake_result(), text="again"
+        )
+        assert card.permission is not None and card.permission.summary == "ls -la"
+        assert engine.decisions[-1] == "allow"  # "ls" went through without a card
+        await recv(conn)
+        # With the engine's own prefix rule, the chat allow is that prefix.
+        await answer(conn, card, "allow", "chat")
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+        assert chat.chat_allows == {"Bash(ls)", "Bash(ls:*)"}
+
+        # The prefix covers "ls -R"; a compound command with an uncovered part, or a
+        # look-alike word, still asks.
+        _, card = await start_turn_with_card(
+            conn, number, engine,
+            bash_ask("ls -R", "t5"), bash_ask("lsof", "t6"), bash_ask("ls && rm -rf /", "t7"), fake_result(),
+            text="more",
+        )
+        assert card.permission is not None and card.permission.summary == "lsof"
+        assert engine.decisions[-1] == "allow"
+        await recv(conn)
+        await answer(conn, card, "deny")
+        frames = await recv_until(conn, CardAsk)
+        compound = frames[-1]
+        assert isinstance(compound, CardAsk) and compound.permission is not None
+        assert compound.permission.summary == "ls && rm -rf /"
+        await recv(conn)
+        await answer(conn, compound, "deny")
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+        assert engine.decisions[-3:] == ["allow", ("deny", None), ("deny", None)]
+    finally:
+        await conn.close()
+
+
 async def test_permission_scope_always_returns_always(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
     conn = await attach(server)
     try:

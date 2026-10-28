@@ -8,8 +8,11 @@ turns the app's ``card.answer`` into the decision the engine callbacks
 expect:
 
 - permission ``allow`` with scope ``once`` → ``"allow"``; scope ``chat`` →
-  the tool joins ``chat.chat_allows`` and later asks for it in that chat
-  answer ``"allow"`` without a card; scope ``always`` →
+  an allow key joins ``chat.chat_allows`` and later asks it covers in that
+  chat answer ``"allow"`` without a card — the bare tool name for a path
+  tool, but for a command tool (``Bash``) the engine's own suggested rule
+  (``Bash(git status:*)``) or, without one, the exact command, so one
+  harmless command never allows every later one; scope ``always`` →
   ``("allow", "always")``, which the engine adapter hands to the engine's
   own settings (the gateway keeps no permanent allow store of its own);
   ``deny`` → ``("deny", note)``.
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -76,6 +80,15 @@ _TITLES: dict[str, str] = {
     "WebFetch": "Fetch a web page",
     "WebSearch": "Search the web",
 }
+
+
+# Tools whose input is a shell command: a chat-scoped allow for one of these
+# is keyed on the command (the engine's suggested prefix rule, or the exact
+# command), never on the bare tool name.
+COMMAND_TOOLS: frozenset[str] = frozenset({"Bash"})
+
+# Shell operators that join commands; every part must be covered on its own.
+_COMMAND_JOINERS = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
 
 def _now() -> str:
@@ -124,6 +137,14 @@ def question_card(chat: int, questions: list[dict[str, Any]]) -> CardAsk:
         )
     title = next((q.header for q in mapped if q.header), None) or "A question"
     return CardAsk(ts=_now(), chat=chat, id=_new_id(), kind="question", title=title, questions=mapped)
+
+
+def _rule_covers(rule: str, command: str) -> bool:
+    """``prefix:*`` covers the prefix as whole words; any other rule covers exactly itself."""
+    if rule.endswith(":*"):
+        prefix = rule[:-2].strip()
+        return bool(prefix) and (command == prefix or command.startswith(prefix + " "))
+    return command == rule
 
 
 # --- validating answers ----------------------------------------------------------
@@ -204,9 +225,45 @@ class CardBroker:
         """The chat's open cards, oldest first, as they were sent (stamped)."""
         return [p.card for p in self._open.get(chat.number, {}).values()]
 
-    def allowed(self, chat: Chat, tool: str) -> bool:
-        """``True`` when a person allowed ``tool`` for this chat earlier (scope ``chat``)."""
-        return tool in chat.chat_allows
+    def allowed(self, chat: Chat, tool: str, input: dict[str, Any] | None = None) -> bool:
+        """``True`` when a person's earlier chat-scoped allow covers this use of ``tool``.
+
+        A bare tool name covers every use. A command tool is covered only
+        when every part of its command (split on ``&&``, ``||``, ``;``, ``|``)
+        matches one of the chat's ``Tool(rule)`` keys: ``prefix:*`` matches
+        the prefix as whole words, anything else the exact command.
+        """
+        if tool in chat.chat_allows:
+            return True
+        if tool not in COMMAND_TOOLS:
+            return False
+        command = (input or {}).get("command")
+        if not isinstance(command, str) or not command.strip():
+            return False
+        rules = [key[len(tool) + 1 : -1] for key in chat.chat_allows if key.startswith(f"{tool}(") and key.endswith(")")]
+        if not rules:
+            return False
+        parts = [part for part in _COMMAND_JOINERS.split(command.strip()) if part]
+        return bool(parts) and all(any(_rule_covers(rule, part) for rule in rules) for part in parts)
+
+    @staticmethod
+    def chat_allow_keys(tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]]) -> set[str]:
+        """What a scope ``chat`` allow records for this use: the tool name, or ``Tool(rule)`` keys for a command tool."""
+        if tool not in COMMAND_TOOLS:
+            return {tool}
+        rules: list[str] = []
+        for suggestion in suggestions:
+            if suggestion.get("type") != "addRules" or suggestion.get("behavior") != "allow":
+                continue
+            for rule in suggestion.get("rules") or []:
+                content = rule.get("ruleContent") if isinstance(rule, dict) else None
+                if rule.get("toolName") == tool and isinstance(content, str) and content.strip():
+                    rules.append(content.strip())
+        if not rules:
+            command = input.get("command")
+            if isinstance(command, str) and command.strip():
+                rules.append(command.strip())
+        return {f"{tool}({rule})" for rule in rules}
 
     # --- asking ---------------------------------------------------------------
 
@@ -259,13 +316,13 @@ class CardBroker:
         send: Send,
     ) -> PermissionDecision:
         """A permission card for ``tool``, unless the chat already allows it; returns the engine's decision."""
-        if self.allowed(chat, tool):
+        if self.allowed(chat, tool, input):
             return "allow"
         answer = await self.ask(chat, permission_card(chat.number, tool, input), send)
         if _is_cancelled(answer) or answer.answer.get("decision") != "allow":
             return ("deny", answer.note)
         if answer.scope == "chat":
-            chat.chat_allows.add(tool)
+            chat.chat_allows.update(self.chat_allow_keys(tool, input, suggestions))
             return "allow"
         if answer.scope == "always":
             return ("allow", "always")

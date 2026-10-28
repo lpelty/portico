@@ -83,6 +83,8 @@ class Chat:
         self.seq = 0
         self.ring: deque[ServerMessage] = deque(maxlen=history_buffer)
         self.artifacts: list[Artifact] = list(artifacts or [])
+        # Chat-scoped allows: bare tool names, or ``Tool(rule)`` keys for a
+        # command tool (``cards.CardBroker.chat_allow_keys``).
         self.chat_allows: set[str] = set()
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring

@@ -196,9 +196,15 @@ whose shape does not fit the card's kind is refused with
 `error code=card.invalid_answer` and the card stays open. An accepted
 answer is recorded in the chat's history as `card.answered`. The answer
 resolves the engine's request: `allow` with scope `once` (or no scope)
-allows this use; scope `chat` also allows the tool for the rest of this
-chat, so later requests for it answer without a card (the gateway's
-memory of that lasts as long as the gateway runs); scope `always` hands
+allows this use; scope `chat` also allows it for the rest of this chat,
+so later requests it covers answer without a card (the gateway's memory
+of that lasts as long as the gateway runs). What "it" covers mirrors the
+engine's own prompt: for a tool that names a file, the tool; for a tool
+that runs a command, the engine's suggested rule for that command (a
+prefix such as `git status:*`, matched as whole words, every part of a
+compound command on its own) or, when the engine suggests none, that
+exact command — so allowing `ls` for the chat never allows `rm -rf /`.
+Scope `always` hands
 the engine its own suggested permission rule, which lands in the folder's
 local settings, the same place the engine's own prompt writes it — the
 gateway keeps no permanent allow store. `deny` refuses the use, and

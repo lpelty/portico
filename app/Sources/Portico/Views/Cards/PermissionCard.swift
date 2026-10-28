@@ -101,7 +101,7 @@ struct PermissionCard: View {
                 .help("Allow this one call")
         case .allowChat:
             Button(choice.label) { answer(choice) }
-                .help("Allow \(shown.tool) for the rest of this chat without asking")
+                .help("Allow this for the rest of this chat without asking again (a command: this command, or the agent's own rule for it)")
         case .allowAlways:
             Button(choice.label) { answer(choice) }
                 .help("Add \(shown.tool) to the folder's own allow rules")

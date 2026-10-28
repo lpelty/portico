@@ -966,7 +966,7 @@ class GatewayServer:
         self, chat: Chat, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision:
         """A permission card, unless a person already allowed the tool for this chat. Never allow by default."""
-        if self.cards.allowed(chat, tool):
+        if self.cards.allowed(chat, tool, input):
             return "allow"
         run = self._runs.get(chat.number)
         try:
