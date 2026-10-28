@@ -508,6 +508,11 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = user.turn
             items.append(.userText(user))
             pendingSends[chat] = nil
+            // The gateway records a session's title from its first message but
+            // only says so in the next chat.list; take it from the echo now.
+            if let index = chats.firstIndex(where: { $0.chat == chat }), chats[index].title == nil {
+                chats[index].title = SessionPresentation.title(from: user.text)
+            }
 
         case .textDelta(let delta):
             if case .assistantText(let id, let text)? = items.last, currentTurn[chat] == delta.turn {

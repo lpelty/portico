@@ -394,4 +394,10 @@ final class SessionAndFilesTests: XCTestCase {
             Obsidian.url(path: "/Users/me/My Vault/Q3 & notes.md")?.absoluteString,
             "obsidian://open?path=%2FUsers%2Fme%2FMy%20Vault%2FQ3%20%26%20notes.md")
     }
+
+    func testTitleFromFirstMessageMatchesTheGatewayRule() {
+        XCTAssertEqual(SessionPresentation.title(from: "\n  Pull the themes out  \nsecond line"), "Pull the themes out")
+        XCTAssertNil(SessionPresentation.title(from: "  \n \n"))
+        XCTAssertEqual(SessionPresentation.title(from: String(repeating: "a", count: 80))?.count, 60)
+    }
 }

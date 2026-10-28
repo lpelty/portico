@@ -185,6 +185,18 @@ struct SessionPresentation: Equatable {
 
     var number: String { "Session \(summary.chat)" }
 
+    /// A session's title from its first message: the first non-blank line,
+    /// trimmed to 60 characters (the gateway's `title_from`).
+    static func title(from text: String) -> String? {
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty {
+                return String(trimmed.prefix(60)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
+    }
+
     /// The title, else the alias; `nil` when the session has neither yet.
     var title: String? {
         for candidate in [summary.title, summary.alias] {
