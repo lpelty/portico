@@ -117,11 +117,11 @@ final class AppModel: ObservableObject {
         var path: String
     }
 
-    /// A `message.send` the gateway has not answered yet. The gateway says
-    /// nothing about the person's own text on a live turn (`user.text` is
-    /// replay-only), so the app keeps it until `turn.started` names the
-    /// turn — then it becomes the bubble — or an `error` with the send's id
-    /// refuses it, and the text and chips go back into the input bar.
+    /// A `message.send` the gateway has not answered yet. The gateway
+    /// echoes the person's words as `user.text` right after `turn.started`
+    /// (the one bubble, live or replayed), so the app keeps the send only
+    /// until that arrives — or until an `error` with the send's id refuses
+    /// it, and the text and chips go back into the input bar.
     struct PendingSend: Equatable, Sendable {
         var id: String
         var text: String
@@ -356,7 +356,7 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = nil
             lastSeq[chat] = nil
             // The replay is the whole truth of the chat: its `user.text` is
-            // the bubble for any send that ran, so the pending one must not add a second.
+            // the bubble for any send that ran; a send the gateway never saw is gone.
             pendingSends[chat] = nil
         }
         for event in history.events {
@@ -374,13 +374,13 @@ final class AppModel: ObservableObject {
         switch event {
         case .turnStarted(let started):
             currentTurn[chat] = started.turn
-            if let pending = pendingSends.removeValue(forKey: chat) {
-                items.append(.userText(UserText(chat: chat, turn: started.turn, text: pending.text)))
-            }
 
         case .userText(let user):
+            // The gateway's echo is the bubble, live or replayed; the send
+            // that started this turn has been accepted and owes nothing more.
             currentTurn[chat] = user.turn
             items.append(.userText(user))
+            pendingSends[chat] = nil
 
         case .textDelta(let delta):
             if case .assistantText(let id, let text)? = items.last, currentTurn[chat] == delta.turn {

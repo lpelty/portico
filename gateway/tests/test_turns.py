@@ -37,6 +37,7 @@ from portico_gateway.messages import (
     TurnFinished,
     TurnStarted,
     TurnStop,
+    UserText,
     dump,
     parse_server,
 )
@@ -243,10 +244,11 @@ async def test_send_streams_text_and_tool_events_with_seq(
 
         assert engine.calls[-1] == ("send", "hi")
         kinds = [type(m) for m in frames]
-        assert kinds == [TurnStarted, ChatState, TextDelta, ToolStarted, ToolFinished, TextDelta, TurnFinished]
+        assert kinds == [TurnStarted, UserText, ChatState, TextDelta, ToolStarted, ToolFinished, TextDelta, TurnFinished]
 
-        started, working, d1, t_on, t_off, d2, finished = frames
+        started, said, working, d1, t_on, t_off, d2, finished = frames
         assert isinstance(started, TurnStarted) and started.turn == 1 and started.chat == number
+        assert isinstance(said, UserText) and said.text == "hi" and said.turn == 1
         assert isinstance(working, ChatState) and working.state == "working"
         assert isinstance(d1, TextDelta) and d1.text == "Hello" and d1.turn == 1
         assert isinstance(t_on, ToolStarted) and t_on.tool == "Read" and t_on.summary == str(folder / "a.md")
@@ -385,7 +387,7 @@ async def test_chat_stop_closes_engine_and_state_stopped(
         assert factory.last.calls[0] == ("start", (folder, "fake-session", ["project"]))
         assert isinstance(frames[0], TurnStarted) and frames[0].turn == 2
         kinds = [type(m) for m in frames]
-        assert kinds == [TurnStarted, ChatState, TurnFinished]
+        assert kinds == [TurnStarted, UserText, ChatState, TurnFinished]
     finally:
         await conn.close()
 
@@ -475,7 +477,7 @@ async def test_chat_open_since_replays_ring_then_live(server: GatewayServer, fac
         assert history.id == "req-open" and not history.truncated
         assert [m.seq for m in history.events] == list(range(1, last_seq + 1))
         assert [type(m) for m in history.events] == [
-            ChatState, TurnStarted, ChatState, TextDelta, TextDelta, TurnFinished, ChatState
+            ChatState, TurnStarted, UserText, ChatState, TextDelta, TextDelta, TurnFinished, ChatState
         ]
         live = await recv(conn)
         assert isinstance(live, ChatLive)
@@ -499,6 +501,38 @@ async def test_chat_open_since_replays_ring_then_live(server: GatewayServer, fac
         assert server.registry.get(number).seq == last_seq
     finally:
         await conn.close()
+
+
+async def test_same_launch_replay_carries_user_text(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    # Quit the app, reopen, pick the chat: the ring must show what the person
+    # said, not only the agent's replies (done-when 5).
+    note = folder / "notes.md"
+    note.write_text("n")
+    conn = await attach(server)
+    number = await new_chat(conn, folder)
+    factory.last.script(text_delta("sure"), fake_result())
+    await conn.send(dump(MessageSend(ts=TS, chat=number, text="Summarise this.", attachments=[str(note)])))
+    frames = await recv_until(conn, TurnFinished)
+    await recv(conn)  # idle
+    kinds = [type(m) for m in frames]
+    assert kinds == [TurnStarted, UserText, ChatState, TextDelta, TurnFinished]
+    live_text = frames[1]
+    assert isinstance(live_text, UserText) and live_text.turn == 1 and live_text.seq is not None
+    # The text as the engine received it, attachments included, like the transcript keeps it.
+    assert live_text.text == f"Summarise this.\n\nAttached files:\n- {note}"
+    await conn.close()
+
+    again = await attach(server)
+    try:
+        await again.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(again)
+        assert isinstance(history, ChatHistory) and not history.truncated
+        replayed = [m for m in history.events if isinstance(m, UserText)]
+        assert [m.text for m in replayed] == [live_text.text]
+        assert replayed[0].seq == live_text.seq
+        assert isinstance(await recv(again), ChatLive)
+    finally:
+        await again.close()
 
 
 async def test_chat_open_reports_truncation_when_since_fell_off_the_ring(

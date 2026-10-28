@@ -236,10 +236,11 @@ class TurnStarted(Envelope):
 
 
 class UserText(Envelope):
-    """What the person sent to start a turn, as the engine's transcript keeps it.
+    """What the person sent to start a turn, as the engine received it.
 
-    Only in a transcript replay (``chat.history``): a live turn's text is
-    what the app itself sent in ``message.send``.
+    Live, right after ``turn.started`` (stamped, in the ring), and in a
+    transcript replay (``chat.history``, unstamped): one rendering path
+    for the person's words whichever way the conversation arrives.
     """
 
     type: Literal["user.text"] = "user.text"

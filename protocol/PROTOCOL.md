@@ -144,7 +144,8 @@ and replies with an updated `chat.list`.
 ### `message.send` — `MessageSend`
 `chat`, `text: string`, `attachments: [string]` (absolute paths, default
 empty), `id` to correlate a refusal. The gateway emits `turn.started` (the
-chat's next `turn`), `chat.state working`, then streams the engine's events
+chat's next `turn`), `user.text` (the text as the engine receives it,
+attachments included), `chat.state working`, then streams the engine's events
 (`text.delta`, `tool.started`, `tool.finished`, cards, artifacts) and ends
 with `turn.finished` and `chat.state idle`. Slash text (`/review`) is passed
 to the engine as typed and dispatches the folder's commands.
@@ -256,14 +257,17 @@ number, not a new one). History is complete; what follows is live.
 
 ### `turn.started` — `TurnStarted`
 `chat`, `seq`, `turn: integer` (counts from 1 per gateway launch). Always
-followed by `chat.state working`.
+followed by `user.text` and then `chat.state working`.
 
 ### `user.text` — `UserText`
-`chat`, `turn`, `text`. What the person sent to start `turn`, as the
-engine's transcript keeps it (attachments appear in the exact
-`message.send` form). Only inside a transcript replay (`chat.history`
-after a gateway restart or past the ring); never sent live — a live
-turn's text is what the app itself sent — so it carries no `seq`.
+`chat`, `turn`, `text`, `seq` when live. What the person sent to start
+`turn`, as the engine receives it (attachments appear in the exact
+`message.send` form). Sent live right after `turn.started`, stamped and
+kept in the ring, so a replay from the ring shows the person's side of
+the conversation; a transcript replay (`chat.history` after a gateway
+restart or past the ring) carries it too, without `seq`. The app renders
+the one `user.text` per turn as the bubble and does not add a second from
+the `message.send` it sent.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;

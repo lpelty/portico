@@ -395,8 +395,9 @@ struct TurnStarted: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
-/// What the person sent to start a turn, as the engine's transcript keeps it.
-/// Only seen in a `chat.history` replay.
+/// What the person sent to start a turn, as the engine received it. Sent
+/// live right after `turn.started` (with `seq`) and in a `chat.history`
+/// transcript replay (without).
 struct UserText: Codable, Equatable, Sendable {
     static let messageType = "user.text"
     var chat: Int

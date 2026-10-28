@@ -84,30 +84,60 @@ final class ConversationTests: XCTestCase {
 
     // MARK: - the user bubble on a live send
 
-    func testLiveSendShowsAUserBubbleWhenTheTurnStarts() {
+    func testLiveSendShowsAUserBubbleWhenItsUserTextArrives() {
         let (model, sent) = model()
         model.sendMessage(chat: 1, text: "say hi")
         guard case .messageSend? = sent.frames.first else { return XCTFail("expected message.send, got \(sent.frames)") }
         XCTAssertEqual(model.transcripts[1] ?? [], [], "nothing is shown until the gateway accepts the send")
 
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
-        model.apply(.chatState(ChatState(chat: 1, state: .working, seq: 2)))
-        model.apply(.textDelta(TextDelta(chat: 1, turn: 1, text: "hi", seq: 3)))
+        XCTAssertEqual(model.transcripts[1] ?? [], [], "turn.started alone adds nothing; the gateway's user.text is the bubble")
+        model.apply(.userText(UserText(chat: 1, turn: 1, text: "say hi\n\nAttached files:\n- /tmp/demo/a.md", seq: 2)))
+        model.apply(.chatState(ChatState(chat: 1, state: .working, seq: 3)))
+        model.apply(.textDelta(TextDelta(chat: 1, turn: 1, text: "hi", seq: 4)))
 
         let items = model.transcripts[1] ?? []
         XCTAssertEqual(items.count, 2, "the user bubble then the streamed reply; got \(items)")
         guard case .userText(let user)? = items.first else { return XCTFail("expected the user bubble first, got \(items)") }
         XCTAssertEqual(user.chat, 1)
         XCTAssertEqual(user.turn, 1, "the bubble carries the turn the gateway numbered")
-        XCTAssertEqual(user.text, "say hi")
+        XCTAssertEqual(user.text, "say hi\n\nAttached files:\n- /tmp/demo/a.md", "the text as the engine received it")
         guard case .assistantText(_, let text)? = items.last else { return XCTFail("expected the reply last, got \(items)") }
         XCTAssertEqual(text, "hi")
+        XCTAssertNil(model.pendingSends[1], "the send has been accepted")
 
-        // The send was consumed by its turn: a later turn.started adds no bubble of its own.
-        model.apply(.turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 4)))
-        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 2, seq: 5)))
-        let bubbles = (model.transcripts[1] ?? []).filter { if case .userText = $0 { return true } else { return false } }
-        XCTAssertEqual(bubbles.count, 1)
+        // A refusal arriving late for that send no longer puts the text back.
+        model.apply(.error(ErrorMessage(code: "chat.busy", message: "late", chat: 1, id: (sent.frames.first.flatMap { if case .messageSend(let m) = $0 { return m.id } else { return nil } }))))
+        XCTAssertEqual(model.draft(for: 1), "")
+    }
+
+    func testSameLaunchReplayShowsThePersonsMessages() {
+        // Quit the app mid-turn, reopen, pick the chat: the ring replay (seq'd
+        // events, from the beginning) must read as a conversation, not a monologue.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = model.handleHello(hello(epoch: "epoch-A"))
+        model.open(chat: 1)
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open") }
+        XCTAssertNil(open.since, "a fresh launch opens from the beginning")
+        model.apply(.chatHistory(ChatHistory(
+            chat: 1,
+            events: [
+                .chatState(ChatState(chat: 1, state: .idle, seq: 1)),
+                .turnStarted(TurnStarted(chat: 1, turn: 1, seq: 2)),
+                .userText(UserText(chat: 1, turn: 1, text: "write a summary", seq: 3)),
+                .chatState(ChatState(chat: 1, state: .working, seq: 4)),
+                .textDelta(TextDelta(chat: 1, turn: 1, text: "On it.", seq: 5)),
+                .turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 6)),
+                .chatState(ChatState(chat: 1, state: .idle, seq: 7)),
+            ],
+            truncated: false, id: open.id)))
+        model.apply(.chatLive(ChatLive(chat: 1, id: open.id, seq: 7)))
+        let items = model.transcripts[1] ?? []
+        XCTAssertEqual(items.count, 3, "user bubble, reply, turn marker; got \(items)")
+        guard case .userText(let user)? = items.first else { return XCTFail("expected the user bubble first, got \(items)") }
+        XCTAssertEqual(user.text, "write a summary")
+        XCTAssertEqual(model.lastSeq[1], 7)
     }
 
     func testLiveSendBubbleArrivesThroughACatchUpReplay() {
@@ -126,13 +156,15 @@ final class ConversationTests: XCTestCase {
             chat: 1,
             events: [
                 .turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)),
-                .textDelta(TextDelta(chat: 1, turn: 1, text: "hi", seq: 2)),
+                .userText(UserText(chat: 1, turn: 1, text: "say hi", seq: 2)),
+                .textDelta(TextDelta(chat: 1, turn: 1, text: "hi", seq: 3)),
             ],
             truncated: false, id: open.id)))
         let items = model.transcripts[1] ?? []
         guard case .userText(let user)? = items.first else { return XCTFail("expected the user bubble first, got \(items)") }
         XCTAssertEqual(user.text, "say hi")
         XCTAssertEqual(items.count, 2)
+        XCTAssertNil(model.pendingSends[1])
     }
 
     func testFullReplayAfterARestartDoesNotDuplicateTheBubble() {
@@ -177,7 +209,8 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(model.status[1], "attachment does not exist: /tmp/demo/notes.md")
         XCTAssertEqual(model.transcripts[1] ?? [], [], "nothing was sent, so nothing is shown")
 
-        // The refused send is forgotten: a turn that starts later owes it no bubble.
+        // The refused send is forgotten.
+        XCTAssertNil(model.pendingSends[1])
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
         XCTAssertEqual(model.transcripts[1] ?? [], [])
     }
@@ -197,8 +230,10 @@ final class ConversationTests: XCTestCase {
         guard case .messageSend? = sent.frames.first else { return XCTFail("expected message.send") }
         model.apply(.error(ErrorMessage(code: "chat.unknown", message: "no chat 7", chat: 1, id: "some-other-request")))
         XCTAssertEqual(model.draft(for: 1), "")
+        XCTAssertNotNil(model.pendingSends[1], "the send is still in flight")
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
-        guard case .userText(let user)? = (model.transcripts[1] ?? []).first else { return XCTFail("the send still owes a bubble") }
+        model.apply(.userText(UserText(chat: 1, turn: 1, text: "say hi", seq: 2)))
+        guard case .userText(let user)? = (model.transcripts[1] ?? []).first else { return XCTFail("expected the bubble") }
         XCTAssertEqual(user.text, "say hi")
     }
 

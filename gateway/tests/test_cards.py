@@ -35,6 +35,7 @@ from portico_gateway.messages import (
     TurnFinished,
     TurnStarted,
     TurnStop,
+    UserText,
     dump,
 )
 from portico_gateway.server import GatewayServer
@@ -126,7 +127,7 @@ async def test_permission_card_round_trip_allow_once(server: GatewayServer, fact
         frames, card = await start_turn_with_card(conn, number, engine, write_ask(folder), fake_result())
         waiting = await recv(conn)
 
-        assert [type(m) for m in frames] == [TurnStarted, ChatState, CardAsk]
+        assert [type(m) for m in frames] == [TurnStarted, UserText, ChatState, CardAsk]
         assert card.chat == number and card.kind == "permission" and card.id
         assert card.title == "Write a file"
         assert card.permission is not None
@@ -330,7 +331,7 @@ async def test_no_app_attached_holds_then_denies_with_message(
 
     chat = server.registry.get(number)
     kinds = [type(m) for m in chat.ring]
-    assert kinds == [ChatState, TurnStarted, ChatState, TextDelta, CardAsk, ChatState, CardCancel, ChatState, TurnFinished, ChatState]
+    assert kinds == [ChatState, TurnStarted, UserText, ChatState, TextDelta, CardAsk, ChatState, CardCancel, ChatState, TurnFinished, ChatState]
     card = next(m for m in chat.ring if isinstance(m, CardAsk))
     cancel = next(m for m in chat.ring if isinstance(m, CardCancel))
     assert cancel.id == card.id and cancel.reason == NOBODY_ANSWERED

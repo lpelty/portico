@@ -22,8 +22,9 @@ handshake and the dispatch table; Task 7 added the chat and turn handlers
 ``message.send``, ``turn.stop``) and the per-chat engine callbacks that
 stamp every engine event with the chat's ``seq`` and broadcast it.
 
-A turn, as the gateway runs it: ``message.send`` emits ``turn.started`` and
-``chat.state working``, then hands the text to the engine; the engine's
+A turn, as the gateway runs it: ``message.send`` emits ``turn.started``,
+``user.text`` (the text as the engine receives it) and ``chat.state
+working``, then hands the text to the engine; the engine's
 events stream through ``engine_event``; its ``turn.finished`` ends the turn
 and the chat goes back to ``idle``. ``turn.stop`` interrupts the engine and
 the finish that follows is reported as ``outcome=stopped`` (synthesised if
@@ -144,6 +145,7 @@ from .messages import (
     TurnFinished,
     TurnStarted,
     TurnStop,
+    UserText,
     dump,
     parse_client,
 )
@@ -1084,6 +1086,9 @@ class GatewayServer:
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
         self._runs[chat.number] = run
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
+        # The person's words go in the ring too, as the engine receives them,
+        # so a replay from this launch reads as a conversation, not a monologue.
+        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text))
         await self.set_state(chat, "working")
         # ``send`` advances the engine's own turn counter; align it so the
         # engine's events carry this turn even after an engine restart.

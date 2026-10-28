@@ -116,8 +116,8 @@ struct TranscriptItemView: View {
 }
 
 /// What the person sent, right-aligned on a tinted background. The text
-/// is as it went to the gateway; attachments appear in the engine's
-/// transcript, not here.
+/// is the gateway's `user.text`: what the engine received, attachments
+/// listed under it.
 struct UserBubble: View {
     let text: String
 
