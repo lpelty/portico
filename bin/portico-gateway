@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Run the gateway from a fresh clone: load the deployment's env file (if any), then the installed CLI.
+#
+# ${PORTICO_HOME:-$HOME/.portico}/env is an optional 0600 file of KEY=value lines the deployment
+# fills with its provider credential. The repo never names a provider; the engine reads the
+# environment. Everything after the script name goes to portico-gateway (run, doctor, ...).
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(dirname "$here")"
+home="${PORTICO_HOME:-$HOME/.portico}"
+env_file="$home/env"
+
+if [ -f "$env_file" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+fi
+
+cli="$repo/gateway/.venv/bin/portico-gateway"
+if [ ! -x "$cli" ]; then
+  echo "portico-gateway: $cli is missing; run $repo/bin/install first" >&2
+  exit 1
+fi
+
+exec "$cli" "$@"

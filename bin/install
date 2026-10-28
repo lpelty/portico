@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# One command from a fresh clone: the gateway's venv (uv) and the app's release build (swift), then the run line.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(dirname "$here")"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "install: uv is not on PATH (https://docs.astral.sh/uv/)" >&2
+  exit 1
+fi
+
+echo "== gateway: uv sync"
+(cd "$repo/gateway" && uv sync)
+
+if command -v swift >/dev/null 2>&1; then
+  echo "== app: swift build -c release"
+  (cd "$repo/app" && swift build -c release)
+else
+  echo "install: swift is not on PATH; the gateway is installed, the app was not built" >&2
+fi
+
+echo
+echo "Run the gateway:  $repo/bin/portico-gateway run"

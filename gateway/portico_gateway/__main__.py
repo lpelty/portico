@@ -1,6 +1,6 @@
 """``portico-gateway`` command line.
 
-Subcommands land task by task; so far: ``run``, ``export-schema``, ``export-examples``. ``run`` holds the
+Subcommands: ``run``, ``doctor``, ``export-schema``, ``export-examples``. ``run`` holds the
 state directory lock, serves until ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``.
 """
 
@@ -62,6 +62,21 @@ async def _run_server(config, state, port: int, engine_factory=None) -> int:  # 
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Print one line per check; exit 1 when any check fails."""
+    from portico_gateway.doctor import doctor, format_check
+    from portico_gateway.state import StateDir
+
+    state = StateDir(Path(args.state).expanduser() if args.state else None)
+    config_path = Path(args.config).expanduser() if args.config else state.config_path
+    checks = doctor(state, config_path)
+    for check in checks:
+        print(format_check(check))
+    failed = sum(1 for c in checks if not c.ok)
+    print(f"{len(checks) - failed} of {len(checks)} checks passed" if failed else f"all {len(checks)} checks passed")
+    return 1 if failed else 0
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +106,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.add_argument("--verbose", action="store_true", help="debug logging on stderr")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("doctor", help="check this machine, the state directory and the config; one line per check")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--config", help="config file (default: <state>/config.toml)")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")

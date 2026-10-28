@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pull the latest main (fast-forward only) and reinstall.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(dirname "$here")"
+(cd "$repo" && git pull --ff-only)
+exec "$here/install"
