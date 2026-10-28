@@ -25392,6 +25392,29 @@
               "height": 1
             },
             {
+              "type": "frame",
+              "id": "zJsAc",
+              "name": "Find a file",
+              "padding": [
+                0,
+                10,
+                0,
+                0
+              ],
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "y0ja62",
+                  "name": "search",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "search",
+                  "library": "lucide",
+                  "fill": "$text-2"
+                }
+              ]
+            },
+            {
               "type": "icon",
               "id": "adIaT",
               "name": "folder-plus",
@@ -26355,6 +26378,29 @@
               "name": "Spacer",
               "width": "fill_container",
               "height": 1
+            },
+            {
+              "type": "frame",
+              "id": "C1IR5z",
+              "name": "Find a file",
+              "padding": [
+                0,
+                10,
+                0,
+                0
+              ],
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "fAeFU",
+                  "name": "search",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "search",
+                  "library": "lucide",
+                  "fill": "$text-2"
+                }
+              ]
             },
             {
               "type": "icon",
@@ -27548,6 +27594,29 @@
                   "name": "Spacer",
                   "width": "fill_container",
                   "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "o8W4RR",
+                  "name": "Find a file",
+                  "padding": [
+                    0,
+                    10,
+                    0,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mQr3x",
+                      "name": "search",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    }
+                  ]
                 },
                 {
                   "type": "icon",
