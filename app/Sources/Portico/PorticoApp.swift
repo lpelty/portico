@@ -47,12 +47,18 @@ struct PorticoApp: App {
     }()
 
     var body: some Scene {
-        WindowGroup(model.hello?.brand.name ?? "Portico") {
+        WindowGroup(model.brand.name) {
             MainWindow()
                 .environmentObject(model)
                 .environmentObject(settings)
                 .environmentObject(supervisor)
                 .preferredColorScheme(settings.appearance.colorScheme)
+                // Brand from hello (spec section 8): the accent on every
+                // control (nil keeps the system accent), the icon in the Dock.
+                .tint(model.brand.accent)
+                .onChange(of: model.hello?.brand, initial: true) { _, _ in
+                    model.brand.applyApplicationIcon()
+                }
                 .task {
                     // Quit honours the setting (spec §5.5, D19): keep the
                     // agent running (detach only) or stop everything.
@@ -63,6 +69,11 @@ struct PorticoApp: App {
                 }
         }
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About \(model.brand.name)") {
+                    model.brand.showAboutPanel(version: Self.version)
+                }
+            }
             CommandMenu("Agent") {
                 Button("Start") { model.startGateway() }
                     .disabled(model.connection == .connected || supervisor.status == .starting)
@@ -77,6 +88,7 @@ struct PorticoApp: App {
                 .environmentObject(settings)
                 .environmentObject(supervisor)
                 .preferredColorScheme(settings.appearance.colorScheme)
+                .tint(model.brand.accent)
         }
     }
 }

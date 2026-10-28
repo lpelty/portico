@@ -18,7 +18,7 @@ struct MainWindow: View {
                 detail
             }
         }
-        .navigationTitle(model.hello?.brand.name ?? "Portico")
+        .navigationTitle(model.brand.name)
         .frame(minWidth: 720, minHeight: 480)
     }
 
@@ -26,16 +26,19 @@ struct MainWindow: View {
     /// when the gateway offers files (`hello.capabilities`).
     @ViewBuilder
     private var sidebar: some View {
-        if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
-            VSplitView {
+        VStack(spacing: 0) {
+            BrandHeader(brand: model.brand)
+            if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
+                VSplitView {
+                    ChatListView()
+                        .frame(minHeight: 120)
+                    FilesView(chat: chat)
+                        .id(chat)
+                        .frame(minHeight: 120)
+                }
+            } else {
                 ChatListView()
-                    .frame(minHeight: 120)
-                FilesView(chat: chat)
-                    .id(chat)
-                    .frame(minHeight: 120)
             }
-        } else {
-            ChatListView()
         }
     }
 

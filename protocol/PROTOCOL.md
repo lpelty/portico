@@ -232,8 +232,13 @@ path. There is no reply frame: the close is the answer.
 ## Messages: gateway → app
 
 ### `hello` — `HelloServer`
-`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?}`,
-`actions: [{label, text}]`, `roots: [{name, path}]`, `commands: [string]`
+`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?}`
+(`name` goes in the title bar and the About panel, `agent_name` is how
+the app refers to the agent, `accent` is a CSS hex colour — `#RRGGBB`,
+`#RGB` or `#RRGGBBAA` — for the app's controls, `icon` an absolute path
+to an image file for the Dock, the About panel and the sidebar header;
+absent or unreadable values fall back to "Portico" and the system
+defaults), `actions: [{label, text}]`, `roots: [{name, path}]`, `commands: [string]`
 (reserved; empty in v0.1), `capabilities: [string]` (v0.1: `cards.form`,
 `files`, `producer`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives.
