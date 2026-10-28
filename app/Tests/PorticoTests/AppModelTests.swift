@@ -625,6 +625,17 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.artifacts[1]?.count, 4)
     }
 
+    func testTheChatFolderIsNotBrowsedTwiceWhenARootIsTheSameFolder() {
+        let (model, _) = model()
+        var hello = hello()
+        hello.roots = [Root(name: "vault", path: "/tmp/demo/"), Root(name: "projects", path: "/Users/someone/projects")]
+        model.apply(.hello(hello))
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+
+        XCTAssertEqual(model.browsableRoots(for: 1).map(\.name), ["vault", "projects"])
+        XCTAssertEqual(model.rootPath(root: "chat", chat: 1), "/tmp/demo", "the chat root still resolves")
+    }
+
     func testFilesListRequestsAndRepliesFillTheTree() {
         let (model, sent) = model()
         var hello = hello()

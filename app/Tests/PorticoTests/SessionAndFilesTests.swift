@@ -398,6 +398,9 @@ final class SessionAndFilesTests: XCTestCase {
     func testTitleFromFirstMessageMatchesTheGatewayRule() {
         XCTAssertEqual(SessionPresentation.title(from: "\n  Pull the themes out  \nsecond line"), "Pull the themes out")
         XCTAssertNil(SessionPresentation.title(from: "  \n \n"))
-        XCTAssertEqual(SessionPresentation.title(from: String(repeating: "a", count: 80))?.count, 60)
+        XCTAssertEqual(SessionPresentation.title(from: String(repeating: "a", count: 80)), String(repeating: "a", count: 60) + "…")
+        XCTAssertEqual(
+            SessionPresentation.title(from: "Plan the interview codebook for the Q3 research synthesis, with themes and quotes"),
+            "Plan the interview codebook for the Q3 research synthesis…")
     }
 }

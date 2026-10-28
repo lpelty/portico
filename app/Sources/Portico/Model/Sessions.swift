@@ -106,8 +106,8 @@ extension AppModel {
 
     /// The model's name from the latest `context.usage`, for the strip.
     func modelName(for chat: Int) -> String? {
-        guard let name = contextUsage[chat]?.model, !name.isEmpty else { return nil }
-        return name
+        if let name = contextUsage[chat]?.model, !name.isEmpty { return name }
+        return latestModel
     }
 
     /// Compactions: the record's count, or the lines in the transcript
@@ -190,11 +190,20 @@ struct SessionPresentation: Equatable {
     static func title(from text: String) -> String? {
         for line in text.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                return String(trimmed.prefix(60)).trimmingCharacters(in: .whitespaces)
-            }
+            if !trimmed.isEmpty { return shortened(trimmed) }
         }
         return nil
+    }
+
+    /// A line at most 60 characters long; a longer one is cut back to a word
+    /// boundary (when one falls in its second half) and ends with "…".
+    static func shortened(_ line: String, limit: Int = 60) -> String {
+        guard line.count > limit else { return line }
+        var cut = String(line.prefix(limit))
+        if let space = cut.lastIndex(of: " "), cut.distance(from: cut.startIndex, to: space) >= limit / 2 {
+            cut = String(cut[..<space])
+        }
+        return cut.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:.-")) + "…"
     }
 
     /// The title, else the alias; `nil` when the session has neither yet.

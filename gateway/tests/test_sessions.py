@@ -168,11 +168,11 @@ async def test_title_is_the_first_line_of_the_first_message(server: GatewayServe
         long_line = "Plan the interview codebook for the Q3 research synthesis, with themes and quotes"
         await send_and_finish(conn, number, f"  \n{long_line}\nmore detail here")
         chat = server.registry.get(number)
-        assert chat.title == long_line[:60]
-        assert server.registry.summaries()[0].title == long_line[:60]
+        assert chat.title == "Plan the interview codebook for the Q3 research synthesis…"
+        assert server.registry.summaries()[0].title == "Plan the interview codebook for the Q3 research synthesis…"
 
         await send_and_finish(conn, number, "second message")
-        assert chat.title == long_line[:60], "only the first message names the session"
+        assert chat.title == "Plan the interview codebook for the Q3 research synthesis…", "only the first message names the session"
     finally:
         await conn.close()
 

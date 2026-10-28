@@ -74,6 +74,7 @@ struct FilesView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
             switch model.filesTab {
@@ -131,7 +132,7 @@ struct FilesView: View {
     private var matchingNodes: [FileNode] {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
         var found: [FileNode] = []
-        for root in model.fileRoots(for: chat) {
+        for root in model.browsableRoots(for: chat) {
             collect(root: root.name, path: "", needle: needle, into: &found)
         }
         return found
@@ -175,7 +176,7 @@ struct FileTree: View {
 
     var body: some View {
         List {
-            ForEach(model.fileRoots(for: chat), id: \.name) { root in
+            ForEach(model.browsableRoots(for: chat), id: \.name) { root in
                 Section {
                     OutlineGroup(nodes(root: root.name, path: ""), children: \.children) { node in
                         row(node)
@@ -188,7 +189,7 @@ struct FileTree: View {
         }
         .listStyle(.sidebar)
         .overlay {
-            if model.fileRoots(for: chat).isEmpty {
+            if model.browsableRoots(for: chat).isEmpty {
                 ContentUnavailableView("No folders", systemImage: "folder", description: Text("The chat's folder appears once the gateway lists the chat."))
             }
         }

@@ -59,11 +59,22 @@ def _now() -> str:
 
 
 def title_from(text: str) -> str | None:
-    """The first non-blank line of ``text``, trimmed to ``TITLE_LIMIT``; ``None`` when there is none."""
+    """The first non-blank line of ``text``, shortened to ``TITLE_LIMIT``; ``None`` when there is none.
+
+    A longer line is cut back to a word boundary when one falls in its second
+    half, and ends with an ellipsis.
+    """
     for line in text.splitlines():
         line = line.strip()
-        if line:
-            return line[:TITLE_LIMIT].rstrip()
+        if not line:
+            continue
+        if len(line) <= TITLE_LIMIT:
+            return line
+        cut = line[:TITLE_LIMIT]
+        space = cut.rfind(" ")
+        if space >= TITLE_LIMIT // 2:
+            cut = cut[:space]
+        return cut.strip(" ,;:.-") + "…"
     return None
 
 

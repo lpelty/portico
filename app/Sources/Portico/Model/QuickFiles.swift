@@ -143,7 +143,7 @@ extension AppModel {
     /// folder with `~` for home.
     func location(of path: String, chat: Int) -> String {
         let parent = (path as NSString).deletingLastPathComponent
-        for root in fileRoots(for: chat) {
+        for root in browsableRoots(for: chat) {
             let base = root.path.hasSuffix("/") ? String(root.path.dropLast()) : root.path
             guard parent == base || parent.hasPrefix(base + "/") else { continue }
             let label = root.name == Self.chatRoot ? URL(fileURLWithPath: base).lastPathComponent : root.name
@@ -204,7 +204,7 @@ extension AppModel {
     /// skipping hidden folders and `node_modules`. Called when quick open
     /// shows and again as listings arrive.
     func prefetchFiles(chat: Int) {
-        for root in fileRoots(for: chat) {
+        for root in browsableRoots(for: chat) {
             prefetch(chat: chat, root: root.name, path: "", level: 0)
         }
     }
@@ -277,7 +277,7 @@ extension AppModel {
         }
         var search = FileSearch(query: trimmed)
         var frames: [ClientMessage] = []
-        for root in fileRoots(for: chat) {
+        for root in browsableRoots(for: chat) {
             let id = Self.requestId()
             search.pending[id] = root.name
             frames.append(.filesSearch(FilesSearch(root: root.name, query: trimmed, chat: chat, id: id)))

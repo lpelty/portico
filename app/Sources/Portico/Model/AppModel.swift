@@ -125,6 +125,9 @@ final class AppModel: ObservableObject {
     /// Per chat, the latest `context.usage`: the percent for the card and
     /// the strip, and the model's name for the strip.
     @Published private(set) var contextUsage: [Int: ContextUsage] = [:]
+    /// The model named by the most recent `context.usage` in any chat: the
+    /// deployment's model does not change when a session is renewed.
+    @Published private(set) var latestModel: String?
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
     @Published var renewing: [Int: String] = [:]
@@ -392,6 +395,7 @@ final class AppModel: ObservableObject {
 
         case .contextUsage(let usage):
             contextUsage[usage.chat] = usage
+            if let name = usage.model, !name.isEmpty { latestModel = name }
             noteSeq(of: message)
 
         case .sessionRenewed(let renewed):
@@ -989,6 +993,17 @@ extension AppModel {
             roots.append(root)
         }
         return roots
+    }
+
+    /// The roots to browse and list: `fileRoots` without the chat's own
+    /// folder when a deployment root is that same folder, so it is not
+    /// shown twice. Paths still resolve through `fileRoots`.
+    func browsableRoots(for chat: Int) -> [Root] {
+        let roots = fileRoots(for: chat)
+        guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
+        let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
+        let shared = roots.contains { $0.name != Self.chatRoot && URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        return shared ? roots.filter { $0.name != Self.chatRoot } : roots
     }
 
     /// The absolute directory a root name stands for, or `nil` for a name
