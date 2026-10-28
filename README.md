@@ -31,7 +31,9 @@ folder's own `.claude/` settings and hooks in force.
 this repo names one. Export the variable the agent engine reads in your
 shell, or put `KEY=value` lines in `~/.portico/env` (mode 0600), which
 `bin/portico-gateway` loads before starting. `bin/doctor` says whether a
-credential is present.
+credential is present, and names (by line number, never by content) any
+line of that file that is not `KEY=value`; such a file is not loaded
+until it is fixed.
 
 ## Where things live
 

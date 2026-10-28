@@ -9,11 +9,13 @@ from __future__ import annotations
 import os
 import socket
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from portico_gateway import REPO_ROOT
 from portico_gateway.config import EMPTY_SETTING_SOURCES_MESSAGE
 from portico_gateway.doctor import CREDENTIAL_PREFIXES, CREDENTIAL_VARS, Check, doctor, format_check, has_credential
 from portico_gateway.state import StateDir
@@ -175,3 +177,59 @@ def test_doctor_cli_exits_nonzero_on_failure(state_dir: StateDir, no_credential:
     *checks, summary = lines
     assert all(line.startswith(("ok  ", "FAIL")) for line in checks)
     assert "checks passed" in summary
+
+
+def test_doctor_reports_an_env_file_line_that_is_not_key_value_by_number_only(
+    state_dir: StateDir, with_credential: None
+) -> None:
+    env_path = state_dir.path / "env"
+    env_path.write_text(
+        "# the deployment's credential\n"
+        "GOOD=1\n"
+        "export ALSO_GOOD='quoted value'\n"
+        'DOUBLE="quoted too" # trailing comment\n'
+        "BAD LINE WITH SPACES=x y\n"
+        "\n"
+        "UNQUOTED=x y\n"
+        "SECRET_VALUE=abc\n",
+        encoding="utf-8",
+    )
+    env_path.chmod(0o600)
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert not got["env"].ok
+    assert "line 5" in got["env"].line and "1 more" in got["env"].line
+    # Never the content: a bad line may hold a credential.
+    for word in ("BAD", "SPACES", "UNQUOTED", "SECRET", "abc"):
+        assert word not in got["env"].line
+    assert "\n" not in got["env"].line
+
+    env_path.write_text("GOOD=1\nexport ALSO_GOOD='v'\n", encoding="utf-8")
+    assert by_name(doctor(state_dir, state_dir.config_path))["env"].ok
+
+
+def test_bin_doctor_survives_a_malformed_env_file(tmp_path: Path) -> None:
+    # bin/doctor goes through bin/portico-gateway, which loads the env file:
+    # a bad line there must not kill the doctor before its first check.
+    cli = REPO_ROOT / "gateway" / ".venv" / "bin" / "portico-gateway"
+    if not os.access(cli, os.X_OK):
+        pytest.skip("bin/install has not been run; the installed CLI is missing")
+    home = tmp_path / "home"
+    home.mkdir()
+    env_path = home / "env"
+    env_path.write_text("GOOD=1\nBAD LINE WITH SPACES=x y\n", encoding="utf-8")
+    env_path.chmod(0o600)
+    proc = subprocess.run(
+        [str(REPO_ROOT / "bin" / "doctor")],
+        env={**os.environ, "PORTICO_HOME": str(home)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 1, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert any(line.startswith("FAIL env") and "line 2" in line for line in lines), proc.stdout
+    assert "command not found" not in proc.stderr
+    assert "BAD" not in proc.stdout + proc.stderr
+    assert "GOOD" not in proc.stdout + proc.stderr

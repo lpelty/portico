@@ -12,10 +12,23 @@ home="${PORTICO_HOME:-$HOME/.portico}"
 env_file="$home/env"
 
 if [ -f "$env_file" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$env_file"
-  set +a
+  # The file is sourced, so a line that is not KEY=value would run as a
+  # command (and, under errexit, kill this script before bin/doctor could
+  # diagnose it). Lines that are plainly not assignments are found first
+  # without running anything; then the file is not loaded and the doctor
+  # names the line. Nothing from the file is ever echoed.
+  bad="$(grep -nEv '^[[:space:]]*(#|$)|^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=' "$env_file" | cut -d: -f1 | head -3 | tr '\n' ' ' || true)"
+  bad="${bad% }"
+  if [ -n "$bad" ]; then
+    echo "portico-gateway: $env_file not loaded: line(s) $bad are not KEY=value; run $repo/bin/doctor" >&2
+  else
+    set -a
+    set +e
+    # shellcheck disable=SC1090
+    . "$env_file" 2>/dev/null
+    set -e
+    set +a
+  fi
 fi
 
 cli="$repo/gateway/.venv/bin/portico-gateway"

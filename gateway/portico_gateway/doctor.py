@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import os
+import re
 import shutil
 import socket
 import stat
@@ -36,6 +37,17 @@ CREDENTIAL_PREFIXES: tuple[str, ...] = ("CLAUDE_CODE_USE_",)
 
 ENV_FILE = "env"
 STALE_LEDGER = "stale ledger, will be rewritten"
+
+# One line of the env file: ``KEY=value``, optionally ``export``ed, with the
+# value bare (no whitespace or shell operators), single-quoted, or
+# double-quoted, and an optional trailing comment. Anything else would run
+# as a command when the file is sourced, so it is a problem to report.
+_ENV_LINE = re.compile(
+    r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*="
+    r"(?:'[^']*'|\"(?:[^\"\\]|\\.)*\"|[^\s'\"`;&|<>()]*)"
+    r"\s*(?:#.*)?$"
+)
+_ENV_RUNS_SOMETHING = re.compile(r"`|\$\(")
 
 
 @dataclass(frozen=True)
@@ -104,6 +116,22 @@ def _mode(path: Path) -> int:
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def env_file_bad_lines(path: Path) -> list[int]:
+    """1-based numbers of the lines in ``path`` that are not ``KEY=value`` lines.
+
+    Blank lines and ``#`` comments are fine. The content of a bad line is
+    never returned: it may hold a credential.
+    """
+    bad: list[int] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not _ENV_LINE.match(line) or _ENV_RUNS_SOMETHING.search(line):
+            bad.append(number)
+    return bad
 
 
 # --- the checks ----------------------------------------------------------------
@@ -189,7 +217,18 @@ def check_env_file(state: StateDir) -> Check:
     mode = _mode(path)
     if mode != 0o600:
         return Check("env", False, f"{path} has mode {mode:04o}; expected 0600 — run: chmod 600 {path}")
-    return Check("env", True, f"{path} mode 0600")
+    try:
+        bad = env_file_bad_lines(path)
+    except OSError as e:
+        return Check("env", False, f"{path} could not be read: {_one_line(str(e))}")
+    if bad:
+        more = f" (and {len(bad) - 1} more)" if len(bad) > 1 else ""
+        return Check(
+            "env",
+            False,
+            f"{path} line {bad[0]} is not a KEY=value line{more}; the file is not loaded until every line is one",
+        )
+    return Check("env", True, f"{path} mode 0600, KEY=value lines")
 
 
 def check_ledger(state: StateDir) -> Check:
