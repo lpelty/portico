@@ -58,6 +58,19 @@ older than the ring — the engine's transcript is read (``read_history``)
 and translated (``history_events``) into ``chat.history``, the chat's
 stored artifacts follow as ``artifact.created open=false``, then
 ``chat.live``. A missing transcript is an empty history, not an error.
+
+Lifecycle (Task 11): the deployment's ``before_first_chat`` command runs
+once per gateway launch, before the first ``chat.new`` is honoured; its
+lines go to the app as chat-less ``status.set`` frames, and a non-zero
+exit or a timeout answers the request with
+``error code=lifecycle.before_first_chat_failed`` (carrying the command's
+last line) and creates no chat, so the next ``chat.new`` tries again.
+``gateway.stop`` from the app, or SIGTERM/SIGINT to the process, takes
+``stop``: every running turn is interrupted and reported
+(``turn.finished outcome=stopped``, ``chat.state idle``), every engine is
+closed, ``on_stop`` runs with its lines as ``status.set``, the index is
+persisted, and ``stopping`` is set for the main loop to ``shutdown`` and
+exit 0. Quitting the app only detaches; stopping is this explicit path.
 """
 
 from __future__ import annotations
@@ -86,6 +99,7 @@ from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat
 from .config import Config, hello_for
 from .engine import Engine, PermissionDecision, history_events, read_history
+from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
     PROTOCOL_VERSION,
     Artifact,
@@ -106,10 +120,12 @@ from .messages import (
     ClientMessage,
     Envelope,
     Error,
+    GatewayStop,
     HelloClient,
     MessageSend,
     ProtocolError,
     ServerMessage,
+    StatusSet,
     TextDelta,
     ToolStarted,
     TurnFinished,
@@ -436,6 +452,13 @@ class GatewayServer:
         self._handlers: dict[str, Handler] = {}
         self._runs: dict[int, TurnRun] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        # Lifecycle: ``before_first_chat`` runs once per launch; ``stop`` runs once.
+        self._preflight_done = False
+        self._preflight_lock = asyncio.Lock()
+        self._stop_lock = asyncio.Lock()
+        self._stopped = False
+        # Set once ``stop`` has run; the main loop waits on it, then calls ``shutdown``.
+        self.stopping = asyncio.Event()
         self.cards = CardBroker(hold_seconds=config.card_hold_seconds)
         # Reads a session's transcript (``engine.read_history``); replaceable for tests.
         self.history_reader: Callable[[str | None, Path], list[dict[str, Any]]] = read_history
@@ -452,6 +475,7 @@ class GatewayServer:
         self.register("chat.remove", self.on_chat_remove)
         self.register("message.send", self.on_message_send)
         self.register("turn.stop", self.on_turn_stop)
+        self.register("gateway.stop", self.on_gateway_stop)
 
     @property
     def attached(self) -> bool:
@@ -504,6 +528,81 @@ class GatewayServer:
             await server.wait_closed()
         self.state.clear_ledger()
         self.registry.persist()
+
+    def request_stop(self, reason: str) -> None:
+        """From a signal handler: run ``stop`` on the loop; the main loop sees ``stopping`` afterwards."""
+        log.info("stop requested: %s", reason)
+        self._spawn(self.stop(reason), name="portico-stop")
+
+    async def stop(self, reason: str) -> None:
+        """Interrupt every running turn, close every engine, run ``on_stop``, persist, set ``stopping``.
+
+        Idempotent: a second call waits for the first and returns. The
+        server keeps listening until ``shutdown``, so the app receives
+        the interruptions and the on-stop lines before it is told goodbye.
+        """
+        async with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            try:
+                await self.interrupt_all("gateway stopping")
+                if self.config.on_stop:
+                    await self._run_on_stop()
+                self.registry.persist()
+            finally:
+                self.stopping.set()
+
+    async def interrupt_all(self, reason: str) -> int:
+        """Stop every running turn (``turn.finished outcome=stopped``, ``chat.state idle``) and close every engine."""
+        running = [chat for chat in self.registry.chats() if chat.number in self._runs]
+        if running:
+            await self.broadcast(
+                StatusSet(ts=_now(), text=f"Stopping: interrupting {len(running)} running turn{'s' if len(running) != 1 else ''}")
+            )
+        for chat in self.registry.chats():
+            run = self._runs.get(chat.number)
+            await self.cards.cancel_all(chat, reason, self.emit)
+            await self._close_engine(chat)
+            if run is not None:
+                await self._report_artifacts(chat, run)
+                await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
+                await self.set_state(chat, "idle")
+        return len(running)
+
+    async def _run_on_stop(self) -> None:
+        """The deployment's ``on_stop`` command; a failure is reported on the strip and never blocks the stop."""
+        assert self.config.on_stop
+        try:
+            await run_lifecycle_command(
+                "on-stop", self.config.on_stop, self._status_line, float(self.config.command_timeout_seconds)
+            )
+        except CommandFailed as e:
+            log.warning("on_stop: %s", e)
+            await self._status_line(f"On-stop command problem: {e}")
+
+    async def _status_line(self, text: str) -> None:
+        """One chat-less ``status.set`` for the strip (lifecycle commands, stop progress)."""
+        await self.broadcast(StatusSet(ts=_now(), text=text))
+
+    async def on_gateway_stop(self, msg: GatewayStop, conn: ServerConnection) -> None:
+        await self.stop("the app asked")
+
+    async def _preflight(self) -> None:
+        """``before_first_chat``, once per launch; raises ``ProtocolError`` (no chat) when it fails."""
+        command = self.config.before_first_chat
+        if not command:
+            return
+        async with self._preflight_lock:
+            if self._preflight_done:
+                return
+            try:
+                await run_lifecycle_command(
+                    "before-first-chat", command, self._status_line, float(self.config.command_timeout_seconds)
+                )
+            except CommandFailed as e:
+                raise ProtocolError("lifecycle.before_first_chat_failed", f"cannot open a chat: {e}") from e
+            self._preflight_done = True
 
     def _spawn(self, coro: Coroutine[Any, Any, None], name: str) -> None:
         """Run ``coro`` in the background; the task is cancelled at ``shutdown``."""
@@ -790,6 +889,7 @@ class GatewayServer:
         folder = Path(msg.folder)
         if not folder.is_absolute() or not folder.is_dir():
             raise ProtocolError("chat.folder_invalid", f"not an absolute path to a directory: {msg.folder}")
+        await self._preflight()
         chat = self.registry.create(folder)
         try:
             await self._start_engine(chat)

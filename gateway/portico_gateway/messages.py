@@ -189,6 +189,15 @@ class ArtifactOpened(Envelope):
     artifact_id: str
 
 
+class GatewayStop(Envelope):
+    """Stop the gateway: interrupt every running turn, run ``on_stop``, exit.
+
+    Distinct from quitting the app, which only detaches.
+    """
+
+    type: Literal["gateway.stop"] = "gateway.stop"
+
+
 # --- gateway -> app (server) -------------------------------------------------
 
 
@@ -356,6 +365,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     CardAnswer,
     FilesListRequest,
     ArtifactOpened,
+    GatewayStop,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -487,6 +497,7 @@ def example_messages() -> dict[str, BaseModel]:
         ),
         FilesListRequest(ts=_TS, chat=1, id="req-3", root="chat", path="src"),
         ArtifactOpened(ts=_TS, chat=1, artifact_id="art-3"),
+        GatewayStop(ts=_TS),
         # gateway -> app
         HelloServer(
             ts=_TS,

@@ -1,6 +1,7 @@
 """``portico-gateway`` command line.
 
-Subcommands land task by task; so far: ``run``, ``export-schema``, ``export-examples``.
+Subcommands land task by task; so far: ``run``, ``export-schema``, ``export-examples``. ``run`` holds the
+state directory lock, serves until ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``.
 """
 
 from __future__ import annotations
@@ -8,7 +9,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import signal
 import sys
 from pathlib import Path
 
@@ -19,19 +19,18 @@ PROTOCOL_DIR = REPO_ROOT / "protocol"
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Run the gateway until SIGINT/SIGTERM. Refuses a second copy on the same state directory."""
+    """Run the gateway until ``gateway.stop`` or SIGINT/SIGTERM. Refuses a second copy on the same state directory."""
     from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.lifecycle import AlreadyRunning, single_instance
     from portico_gateway.state import StateDir, StateError
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         state = StateDir(Path(args.state).expanduser() if args.state else None)
         config = load_config(Path(args.config).expanduser() if args.config else state.config_path)
-    except (ConfigError, StateError, OSError) as e:
+        single_instance(state)
+    except (ConfigError, StateError, AlreadyRunning, OSError) as e:
         print(f"portico-gateway: {e}", file=sys.stderr)
-        return 1
-    if not state.acquire_lock():
-        print(f"portico-gateway: another gateway is already running on {state.path}", file=sys.stderr)
         return 1
     try:
         return asyncio.run(_run_server(config, state, args.port))
@@ -42,20 +41,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         state.release_lock()
 
 
-async def _run_server(config, state, port: int) -> int:  # noqa: ANN001 - types live in the modules below
+async def _run_server(config, state, port: int, engine_factory=None) -> int:  # noqa: ANN001 - types live in the modules below
+    """Serve until ``stop`` has run (``gateway.stop`` from the app, or a stop signal), then shut down; exit 0."""
     from portico_gateway.chats import ChatRegistry
-    from portico_gateway.engine import SDKEngine
+    from portico_gateway.lifecycle import install_stop_signals
     from portico_gateway.server import GatewayServer
 
+    if engine_factory is None:
+        from portico_gateway.engine import SDKEngine
+
+        engine_factory = SDKEngine
     registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=config.history_buffer)
-    server = GatewayServer(config=config, state=state, registry=registry, engine_factory=SDKEngine, version=__version__)
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+    server = GatewayServer(config=config, state=state, registry=registry, engine_factory=engine_factory, version=__version__)
+    install_stop_signals(asyncio.get_running_loop(), server.request_stop)
     await server.serve(port)
     try:
-        await stop.wait()
+        await server.stopping.wait()
     finally:
         await server.shutdown()
     return 0

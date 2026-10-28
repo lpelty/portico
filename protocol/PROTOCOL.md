@@ -91,7 +91,17 @@ the chat, starts its engine in the folder with the configured
 `setting_sources`, records it in the index, and replies `chat.state`
 (`idle`, with the chat number and the request's `id`) followed by an
 updated `chat.list`. If the engine cannot start the chat is dropped again
-and the reply is `error code=engine.start_failed`. *(`before_first_chat` at Task 11)*
+and the reply is `error code=engine.start_failed`.
+
+When the deployment configures `before_first_chat`, the gateway runs that
+command once per launch before honouring the first `chat.new`; each output
+line (stdout and stderr, merged) is sent to the app as a chat-less
+`status.set`. A non-zero exit, or no exit within `command_timeout_seconds`
+(the whole process group is then killed), answers the request with
+`error code=lifecycle.before_first_chat_failed` carrying the exit code or
+the timeout and the command's last line, and no chat is created (no number
+is consumed, no engine starts); the next `chat.new` runs the command again.
+Once it has passed, later `chat.new`s in the same launch skip it.
 
 ### `chat.open` — `ChatOpen`
 `chat`, `since: integer | absent` (the last `seq` the app saw; absent means
@@ -190,6 +200,19 @@ correlate. Reply: `files.list` (server). *(Task 12)*
 ### `artifact.opened` — `ArtifactOpened`
 `chat`, `artifact_id: string`. Optional telemetry: the app showed that
 artifact. The gateway accepts it and answers nothing.
+
+### `gateway.stop` — `GatewayStop`
+No fields beyond the envelope. Stops the gateway: every running turn is
+interrupted and reported (`turn.finished` with `outcome: stopped`, then
+`chat.state idle`), after a chat-less `status.set` saying how many turns
+are being interrupted when there are any; every engine is closed; the
+deployment's `on_stop` command runs, if configured, with its lines as
+chat-less `status.set` frames (a failure or timeout is one more
+`status.set` line and does not block the stop); the index is persisted;
+then the gateway closes the app's connection (close code 1001), removes
+the ledger and exits 0. Quitting the app only detaches; this is the
+explicit stop. SIGTERM or SIGINT to the gateway process takes the same
+path. There is no reply frame: the close is the answer.
 
 ## Messages: gateway → app
 
@@ -317,7 +340,10 @@ chat in the index, so a later launch still lists them.
 `root`, `path`, `entries: [{name, dir, size?}]`, `id` echoing the request. *(Task 12)*
 
 ### `status.set` — `StatusSet`
-`chat?`, `seq?`, `text`. One line for the status strip. *(Task 11)*
+`chat?`, `seq?`, `text`. One line for the status strip, shown verbatim.
+Without `chat` and `seq` it is gateway-wide and not part of any history:
+the output lines of the deployment's `before_first_chat` and `on_stop`
+commands arrive this way, as does the gateway's own "stopping" line.
 
 ### `error` — `Error`
 `chat?`, `id?` (the request it answers), `code`, `message`. Codes so far:
@@ -329,7 +355,8 @@ directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
 `card.stale`, `card.invalid_answer`, `files.outside_root`,
-`lifecycle.before_first_chat_failed`,
+`lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
+carries its last line and no chat was created),
 `gateway.error` (a handler failed; the message says which).
 
 An `error` that answers a request carries the request's `id` and `chat`

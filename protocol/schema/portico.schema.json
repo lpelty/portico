@@ -1112,6 +1112,9 @@
         },
         {
           "$ref": "#/$defs/ArtifactOpened"
+        },
+        {
+          "$ref": "#/$defs/GatewayStop"
         }
       ]
     },
@@ -1394,6 +1397,63 @@
         "kind"
       ],
       "title": "FormField",
+      "type": "object"
+    },
+    "GatewayStop": {
+      "additionalProperties": false,
+      "description": "Stop the gateway: interrupt every running turn, run ``on_stop``, exit.\n\nDistinct from quitting the app, which only detaches.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "gateway.stop",
+          "default": "gateway.stop",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "GatewayStop",
       "type": "object"
     },
     "HelloClient": {
