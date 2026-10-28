@@ -15,7 +15,7 @@ from portico_gateway.messages import (
     TurnFinished,
     TurnStarted,
 )
-from portico_gateway.state import ChatRecord, Index, StateDir
+from portico_gateway.state import ChatRecord, Index, StateDir, StateError
 
 FOLDER_A = "/Users/someone/projects/demo"
 FOLDER_B = "/Users/someone/projects/other"
@@ -210,6 +210,17 @@ def test_registry_persists_to_index(state: StateDir) -> None:
     again.remove(1)
     assert [c.chat for c in state.load_index().chats] == [2]
     assert state.load_index().next_chat == 3
+
+
+def test_registry_never_sees_a_bad_state_word_from_disk(state: StateDir) -> None:
+    # The gateway builds its registry from ``load_index``; an index carrying a
+    # word outside the four is refused there as a StateError, so the
+    # registry's own check is never the first thing a person sees.
+    state.index_path.write_text(
+        '{"chats": [{"chat": 1, "folder": "/x", "state": "running", "created": "2026-10-27T12:00:00Z"}], "next_chat": 2}'
+    )
+    with pytest.raises(StateError):
+        registry_for(state)
 
 
 def test_registry_starts_from_an_index_with_a_high_next_chat(state: StateDir) -> None:

@@ -122,6 +122,31 @@ def test_corrupt_index_is_an_error_not_a_silent_reset(state: StateDir) -> None:
     assert "index.json" in str(e.value)
 
 
+def test_index_with_an_unknown_state_word_is_a_state_error(state: StateDir) -> None:
+    # A hand-edited index ("Idle", "running") must refuse to start with the
+    # same plain line as corrupt JSON, not a traceback from the registry.
+    state.index_path.write_text(
+        json.dumps(
+            {
+                "chats": [
+                    {"chat": 1, "folder": "/Users/someone/projects/demo", "state": "Idle", "created": "2026-10-27T12:00:00Z"}
+                ],
+                "next_chat": 2,
+            }
+        )
+    )
+    with pytest.raises(StateError) as e:
+        state.load_index()
+    assert "index.json" in str(e.value) and "Move it aside" in str(e.value)
+
+    # The record itself refuses any word outside the protocol's four.
+    for bad in ("Idle", "running", "", "waiting_on_you"):
+        with pytest.raises(ValueError):
+            ChatRecord(chat=1, folder="/x", state=bad, created="2026-10-27T12:00:00Z")  # type: ignore[arg-type]
+    for word in ("idle", "working", "waiting on you", "stopped"):
+        assert ChatRecord(chat=1, folder="/x", state=word, created="2026-10-27T12:00:00Z").state == word
+
+
 def test_second_lock_fails(tmp_path: Path) -> None:
     home = tmp_path / "portico-home"
     first = StateDir(home)

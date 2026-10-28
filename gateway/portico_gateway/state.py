@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .messages import Artifact
+from .messages import Artifact, ChatStateWord
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
@@ -43,13 +43,18 @@ class Ledger(BaseModel):
 
 
 class ChatRecord(BaseModel):
-    """One chat as the gateway remembers it across launches."""
+    """One chat as the gateway remembers it across launches.
+
+    ``state`` is one of the protocol's exact words, so a hand-edited or
+    foreign-written index with any other word fails in ``load_index`` as a
+    ``StateError`` (one plain line) rather than deep inside the registry.
+    """
 
     chat: int
     folder: str
     session_id: str | None = None
     alias: str | None = None
-    state: str
+    state: ChatStateWord
     created: str
     artifacts: list[Artifact] = []
 
