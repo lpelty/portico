@@ -189,8 +189,13 @@ final class AppModel: ObservableObject {
     /// loop (or after it closed).
     weak var supervisor: GatewaySupervisor?
 
-    /// The auto-open settings the reducer consults (spec §5.3).
+    /// The auto-open settings the reducer consults (spec §5.3), and the
+    /// gateway address override a stop without a socket looks at.
     let settings: Settings
+
+    /// What the app says it is in `hello`; the app sets it at launch, and
+    /// `run` again, so a stop without the loop's socket can attach too.
+    var appVersion: String = "0.0.0-dev"
 
     init(settings: Settings = Settings()) {
         self.settings = settings
@@ -902,6 +907,7 @@ extension AppModel {
         let client = GatewayClient()
         self.client = client
         self.supervisor = supervisor
+        self.appVersion = appVersion
         loopRunning = true
         outbound = { message in
             Task { try? await client.send(message) }
@@ -979,17 +985,58 @@ extension AppModel {
     /// the socket and exits), then wait up to `timeout` for the socket to
     /// close. Returns whether it did. Automatic start is off afterwards,
     /// so the loop does not bring the gateway straight back; Start turns
-    /// it on again. Not connected: nothing to tell, nothing to wait for.
+    /// it on again. Without a socket of its own (the window is closed, so
+    /// the loop is not running; or it is between attempts) the gateway may
+    /// still be up: it is found the way the loop finds it and told through
+    /// a socket opened for just that.
     @discardableResult
     func stopGateway(timeout: Duration = .seconds(10)) async -> Bool {
         autoStartGateway = false
         guard connection == .connected else {
-            supervisor?.noteStopped()
-            return true
+            return await stopDetachedGateway(timeout: timeout)
         }
         send(.gatewayStop(GatewayStop()))
         let closed = await waitForDisconnect(timeout)
         if closed { supervisor?.noteStopped() }
+        return closed
+    }
+
+    /// Stop a gateway this app is not attached to. Closing the main window
+    /// ends the connection loop, so a quit with "stop everything" after
+    /// that has no socket to speak through — and `send` would drop the
+    /// frame on the floor while the gateway ran on. Find the gateway (the
+    /// settings override, else the ledger; automatic start is already
+    /// off, so nothing is started to be stopped), attach, say
+    /// `gateway.stop`, and wait for it to close the socket, which is its
+    /// answer. Nothing found: nothing to stop.
+    private func stopDetachedGateway(timeout: Duration) async -> Bool {
+        guard let supervisor, let endpoint = await endpoint(supervisor: supervisor, settings: settings) else {
+            self.supervisor?.noteStopped()
+            return true
+        }
+        let client = GatewayClient()
+        defer { Task { await client.disconnect() } }
+        do {
+            _ = try await client.connect(url: endpoint.url, token: endpoint.token, appVersion: appVersion)
+            try await client.send(.gatewayStop(GatewayStop()))
+        } catch {
+            return false
+        }
+        let stream = await client.messages
+        let closed = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in stream {}
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        if closed { supervisor.noteStopped() }
         return closed
     }
 

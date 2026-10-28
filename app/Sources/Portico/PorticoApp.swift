@@ -18,8 +18,10 @@ struct PorticoApp: App {
         let supervisor = GatewaySupervisor()
         let model = AppModel(settings: settings)
         // So Start from the settings window works before the main window's
-        // loop has run (or after it closed).
+        // loop has run (or after it closed), and a quit with "stop
+        // everything" after the window closed can still reach the gateway.
         model.supervisor = supervisor
+        model.appVersion = Self.version
         _settings = StateObject(wrappedValue: settings)
         _supervisor = StateObject(wrappedValue: supervisor)
         _model = StateObject(wrappedValue: model)

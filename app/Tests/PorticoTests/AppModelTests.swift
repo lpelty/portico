@@ -863,10 +863,60 @@ final class AppModelTests: XCTestCase {
         await model.prepareToQuit(behaviour: .stopEverything, timeout: .seconds(5))
         XCTAssertEqual(sent.types(), ["gateway.stop"])
 
-        // Not connected at all: nothing to stop, nothing sent, no waiting.
+        // Not connected and no gateway to find (no supervisor here): nothing
+        // to stop, nothing sent, no waiting.
         sent.frames.removeAll()
         await model.prepareToQuit(behaviour: .stopEverything, timeout: .seconds(1))
         XCTAssertTrue(sent.frames.isEmpty)
+    }
+
+    func testStopEverythingAfterTheWindowClosedStillReachesTheGateway() async throws {
+        // The main window was closed, so the connection loop ended: no
+        // socket, `connection` is `.disconnected`. The gateway is still up.
+        // Quit with "stop everything" must find it and tell it to stop,
+        // not report success while it runs on.
+        let gateway = FakeGateway()
+        try await gateway.start()
+        defer { gateway.stop() }
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-quit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "tok\n".write(to: dir.appendingPathComponent("token"), atomically: true, encoding: .utf8)
+        let suite = "portico-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = Settings(defaults: defaults)
+        settings.gatewayURL = gateway.url.absoluteString
+        let supervisor = GatewaySupervisor(stateDir: dir)
+        let model = AppModel(settings: settings)
+        model.supervisor = supervisor
+        model.appVersion = "0.1.0-test"
+        XCTAssertEqual(model.connection, .disconnected)
+
+        // The gateway closes the socket once it has been told to stop: that is its answer.
+        Task {
+            if await gateway.waitForFrame(type: "gateway.stop", seconds: 5) != nil {
+                gateway.dropConnection()
+            }
+        }
+        let began = ContinuousClock.now
+        let closed = await model.stopGateway(timeout: .seconds(5))
+        XCTAssertTrue(closed, "the gateway closed the socket after gateway.stop")
+        XCTAssertLessThan(ContinuousClock.now - began, .seconds(4), "no waiting out the timeout once the socket closed")
+        XCTAssertEqual(gateway.received.map { $0["type"] as? String }, ["hello", "gateway.stop"])
+        XCTAssertEqual(gateway.received.first?["app_version"] as? String, "0.1.0-test")
+        XCTAssertEqual(supervisor.status, .stopped)
+        XCTAssertFalse(model.autoStartGateway)
+
+        // A gateway that takes the frame and never closes does not hold the quit forever.
+        let silent = FakeGateway()
+        try await silent.start()
+        defer { silent.stop() }
+        settings.gatewayURL = silent.url.absoluteString
+        let gaveUp = await model.stopGateway(timeout: .milliseconds(300))
+        XCTAssertFalse(gaveUp)
+        XCTAssertEqual(silent.received.map { $0["type"] as? String }, ["hello", "gateway.stop"])
     }
 
     func testSupervisorTokenFileOverride() throws {
