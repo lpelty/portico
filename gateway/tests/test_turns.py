@@ -54,11 +54,12 @@ TS = "2026-10-27T12:00:00Z"
 class EngineFactory:
     """Hands out ``FakeEngine``s and remembers them in creation order."""
 
-    def __init__(self) -> None:
+    def __init__(self, late_session: bool = False) -> None:
         self.engines: list[FakeEngine] = []
+        self.late_session = late_session
 
     def __call__(self) -> FakeEngine:
-        engine = FakeEngine()
+        engine = FakeEngine(late_session=self.late_session)
         self.engines.append(engine)
         return engine
 
@@ -162,6 +163,43 @@ async def test_new_chat_starts_engine_in_folder_with_project_setting_sources(
         assert [(r.chat, r.folder, r.session_id) for r in records] == [(1, str(folder), "fake-session")]
     finally:
         await conn.close()
+
+
+async def test_session_id_learned_after_start_is_persisted(state_dir: StateDir, folder: Path) -> None:
+    # The real engine names its session with the first turn, not at start:
+    # the chat must learn it then, keep it in the index, and resume with it.
+    factory = EngineFactory(late_session=True)
+    config: Config = make_config(setting_sources=["project"])
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        chat = srv.registry.get(number)
+        assert chat.session_id is None, "start named no session"
+        assert state_dir.load_index().chats[0].session_id is None
+
+        engine = factory.last
+        engine._session_id = "real-session-abc"
+        engine.script(text_delta("hi"), fake_result(session_id="real-session-abc"))
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)  # idle
+
+        assert chat.session_id == "real-session-abc"
+        assert state_dir.load_index().chats[0].session_id == "real-session-abc"
+
+        # After chat.stop the next send starts a fresh engine on the learned session.
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        await recv_until(conn, ChatState)
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="back")))
+        await recv_until(conn, TurnFinished)
+        assert factory.last is not engine
+        assert factory.last.calls[0] == ("start", (folder, "real-session-abc", ["project"]))
+    finally:
+        await conn.close()
+        await srv.shutdown()
 
 
 async def test_new_chat_refuses_a_folder_that_is_not_a_directory(

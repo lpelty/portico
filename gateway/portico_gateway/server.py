@@ -800,7 +800,12 @@ class GatewayServer:
     # --- engines --------------------------------------------------------------
 
     async def _start_engine(self, chat: Chat) -> Engine:
-        """A fresh engine for ``chat`` in its folder, resuming its session when it has one."""
+        """A fresh engine for ``chat`` in its folder, resuming its session when it has one.
+
+        The real engine often names its session only with the first turn's
+        messages (``start`` then returns ``""``); ``_sync_session`` picks
+        the id up from the engine as its events arrive.
+        """
         engine = self.engine_factory()
         engine.chat = chat.number
         session = await engine.start(
@@ -811,6 +816,16 @@ class GatewayServer:
             chat.session_id = session
         self.registry.persist()
         return engine
+
+    def _sync_session(self, chat: Chat) -> None:
+        """Copy a session id the engine learned after ``start`` into the chat and the index."""
+        engine = chat.engine
+        if engine is None:
+            return
+        session = engine.session_id
+        if session and session != chat.session_id:
+            chat.session_id = session
+            self.registry.persist()
 
     async def _close_engine(self, chat: Chat) -> None:
         """Interrupt and close the chat's engine; any turn in flight is forgotten (the caller reports it)."""
@@ -830,6 +845,7 @@ class GatewayServer:
 
     async def engine_event(self, chat: Chat, event: ServerMessage) -> None:
         """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn."""
+        self._sync_session(chat)
         run = self._runs.get(chat.number)
         if not isinstance(event, TurnFinished):
             if run is not None:
@@ -852,6 +868,7 @@ class GatewayServer:
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
             del self._runs[chat.number]
+        self._sync_session(chat)
         await self.set_state(chat, "idle")
         run.finished.set()
 

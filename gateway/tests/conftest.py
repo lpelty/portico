@@ -97,11 +97,14 @@ class FakeEngine:
     ``wait_blocked()`` returns once a ``Block`` item is reached.
     """
 
-    def __init__(self, chat: int = 0, session_id: str = "fake-session") -> None:
+    def __init__(self, chat: int = 0, session_id: str = "fake-session", late_session: bool = False) -> None:
         self.chat = chat
         self.turn = 0
         self.session_id: str | None = None
         self._session_id = session_id
+        # Like the real engine: ``start`` names no session; the id arrives
+        # with the first turn's messages.
+        self.late_session = late_session
         self.callbacks: EngineCallbacks | None = None
         self.scripts: deque[list[Any]] = deque()
         self.calls: list[tuple[str, Any]] = []
@@ -120,14 +123,16 @@ class FakeEngine:
         self.calls.append(("start", (folder, resume, list(setting_sources))))
         self.callbacks = callbacks
         self.started = True
-        self.session_id = resume or self._session_id
-        return self.session_id
+        self.session_id = resume or (None if self.late_session else self._session_id)
+        return self.session_id or ""
 
     async def send(self, text: str) -> None:
         self.calls.append(("send", text))
         if self.callbacks is None:
             raise RuntimeError("FakeEngine.send before start")
         self.turn += 1
+        if self.session_id is None:
+            self.session_id = self._session_id
         self._interrupted.clear()
         self._blocked.clear()
         items = self.scripts.popleft() if self.scripts else [fake_result(session_id=self.session_id or "fake")]
