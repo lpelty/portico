@@ -90,6 +90,9 @@ _URL_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
 # Characters that wrap or trail a path or URL in prose and markdown.
 _WRAP = "`'\"()[]{}<>*_"
 _TRAIL = ".,;:!?"
+# The target of a markdown link, ``[label](target "title")``: a whitespace
+# split sees ``label](target`` and never finds the file.
+_LINK_TARGET = re.compile(r"\]\(\s*([^\s)]+)")
 
 _ID_LENGTH = 12
 
@@ -165,22 +168,33 @@ def _urls_at(text: str) -> list[tuple[int, str]]:
     return found
 
 
+def _existing_viewable(token: str, folder: Path) -> Path | None:
+    """``token`` as a viewable file that exists (relative to ``folder``), or ``None``."""
+    token = _strip(token)
+    if not token or Path(token).suffix.lower() not in _VIEWABLE_EXTENSIONS or is_url(token):
+        return None
+    candidate = Path(token)
+    if not candidate.is_absolute():
+        candidate = folder / candidate
+    return candidate if candidate.is_file() else None
+
+
 def _paths_at(text: str, folder: Path) -> list[tuple[int, Path]]:
-    """``(offset, path)`` for every viewable file named in ``text`` that exists, in order of appearance."""
+    """``(offset, path)`` for every viewable file named in ``text`` that exists, in order of appearance.
+
+    Whitespace-separated tokens first, then the targets of markdown links.
+    """
     folder = Path(folder)
     found: list[tuple[int, Path]] = []
     for match in re.finditer(r"\S+", text):
-        token = _strip(match.group(0))
-        if not token or Path(token).suffix.lower() not in _VIEWABLE_EXTENSIONS:
-            continue
-        if is_url(token):
-            continue
-        candidate = Path(token)
-        if not candidate.is_absolute():
-            candidate = folder / candidate
-        if candidate.is_file():
+        candidate = _existing_viewable(match.group(0), folder)
+        if candidate is not None:
             found.append((match.start(), candidate))
-    return found
+    for match in _LINK_TARGET.finditer(text):
+        candidate = _existing_viewable(match.group(1), folder)
+        if candidate is not None:
+            found.append((match.start(1), candidate))
+    return sorted(found, key=lambda item: item[0])
 
 
 def urls_in(text: str) -> list[str]:

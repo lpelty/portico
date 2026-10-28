@@ -162,6 +162,19 @@ def test_paths_in_names_viewable_files_that_exist(tmp_path: Path) -> None:
     assert paths_in("plain prose, no paths", folder) == []
 
 
+def test_paths_in_finds_markdown_link_targets(tmp_path: Path) -> None:
+    # A report written through the shell and named as a markdown link is
+    # the common case for a Bash-produced artifact.
+    folder = tmp_path / "proj"
+    report = touch(folder / "reports" / "summary.md")
+    assert paths_in("See [the report](reports/summary.md) for details.", folder) == [report]
+    assert paths_in(f"See [the report]({report}) for details.", folder) == [report]
+    assert paths_in('[the report](reports/summary.md "Summary") and [again](reports/summary.md)', folder) == [report]
+    # A link to a URL is a URL, and a missing target is nothing.
+    assert paths_in("Open [the app](http://localhost:3000/app).", folder) == []
+    assert paths_in("See [the report](reports/nope.md).", folder) == []
+
+
 # --- the collector ------------------------------------------------------------
 
 
@@ -244,6 +257,20 @@ def test_named_existing_markdown_path_in_text_is_collected(tmp_path: Path) -> No
     collector.note_text("Done — the report is at reports/summary.md, and reports/missing.md was skipped.")
     artifacts = collector.finish(folder)
     assert [(a.location, a.media, a.source, a.open) for a in artifacts] == [(str(report), "markdown", "text", True)]
+
+
+def test_markdown_link_in_text_is_collected_and_opens(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    report = touch(folder / "reports" / "summary.md")
+    collector = TurnCollector(make_chat(folder))
+    collector.note_tool("Bash", {"command": "python make_report.py"})
+    collector.note_text("Done — see [the report](reports/summary.md) and the [app](http://localhost:3000/app).")
+    artifacts = collector.finish(folder)
+    assert [(a.location, a.media, a.source, a.open) for a in artifacts] == [
+        (str(report), "markdown", "text", False),
+        ("http://localhost:3000/app", "url", "text", True),
+    ]
 
 
 def test_text_mention_of_a_tool_written_file_keeps_tool_source(tmp_path: Path) -> None:
