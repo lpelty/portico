@@ -353,6 +353,45 @@ async def test_gateway_stop_runs_on_stop_and_interrupts(
     assert state_dir.read_ledger() is None
 
 
+async def test_gateway_stop_during_a_hung_preflight_is_honoured_at_once(
+    served: Served, factory: EngineFactory, folder: Path, tmp_path: Path
+) -> None:
+    # A person who hits Stop while before_first_chat hangs must not wait for
+    # the command's timeout: the stop (gateway.stop here; SIGTERM takes the
+    # same stop()) kills the command, the waiting chat.new is refused in
+    # plain words, and shutdown does not wait on the command either.
+    pid_file = tmp_path / "sleep.pid"
+    server = await served(
+        before_first_chat=f"sleep 30 & echo $! > {pid_file}; echo preflight; wait",
+        command_timeout_seconds=60,
+    )
+    conn = await attach(server)
+    try:
+        await conn.send(dump(ChatNew(ts=TS, id="req-1", folder=str(folder))))
+        first = await recv(conn)
+        assert isinstance(first, StatusSet) and first.text == "preflight"
+        sleep_pid = int(pid_file.read_text().strip())
+
+        started = time.monotonic()
+        await conn.send(dump(GatewayStop(ts=TS)))
+        await asyncio.wait_for(server.stopping.wait(), 5)
+        assert time.monotonic() - started < 5
+
+        frames = await recv_until(conn, Error, timeout=5)
+        err = frames[-1]
+        assert isinstance(err, Error)
+        assert err.code == "lifecycle.before_first_chat_failed" and err.id == "req-1"
+        assert "stopping" in err.message
+        assert len(server.registry) == 0 and factory.engines == []
+        assert await _wait_gone(sleep_pid)
+
+        started = time.monotonic()
+        await asyncio.wait_for(server.shutdown(), 5)
+        assert time.monotonic() - started < 5
+    finally:
+        await conn.close()
+
+
 async def test_gateway_stop_without_on_stop_still_stops(served: Served, factory: EngineFactory, folder: Path) -> None:
     server = await served()
     conn = await attach(server)

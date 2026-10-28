@@ -111,7 +111,10 @@ same preflight guards a `message.send` that starts an engine for a chat
 restored from a previous launch (the first thing a person does after a
 gateway restart is usually to continue a chat, not open one): it is
 refused with the same `error code=lifecycle.before_first_chat_failed`,
-carrying the send's `id`, and no turn starts.
+carrying the send's `id`, and no turn starts. A `gateway.stop` (or a stop
+signal) while the command is still running does not wait for it: the
+command's process group is killed and the request waiting on it is
+refused with the same error.
 
 ### `chat.open` — `ChatOpen`
 `chat`, `since: integer | absent` (the last `seq` the app saw; absent, or

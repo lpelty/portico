@@ -185,6 +185,18 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _frame_type(raw: str | bytes) -> str | None:
+    """The ``type`` of a frame without parsing it fully; ``None`` when it has none."""
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    kind = obj.get("type")
+    return kind if isinstance(kind, str) else None
+
+
 # --- turns: helpers ----------------------------------------------------------
 
 
@@ -526,6 +538,8 @@ class GatewayServer:
         # Lifecycle: ``before_first_chat`` runs once per launch; ``stop`` runs once.
         self._preflight_done = False
         self._preflight_lock = asyncio.Lock()
+        # The preflight command while it runs: ``stop`` and ``shutdown`` cancel it.
+        self._preflight_task: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
         self._stopped = False
         # Set once ``stop`` has run; the main loop waits on it, then calls ``shutdown``.
@@ -590,6 +604,7 @@ class GatewayServer:
         self.cards.set_attached(False)
         if app is not None:
             await app.close(CLOSE_GOING_AWAY, "gateway stopping")
+        self._cancel_preflight()
         for task in list(self._tasks):
             task.cancel()
         for chat in self.registry.chats():
@@ -626,6 +641,9 @@ class GatewayServer:
                 return
             self._stopped = True
             try:
+                # A preflight still running is killed, not waited for: the
+                # chat.new (or send) waiting on it is refused at once.
+                self._cancel_preflight()
                 await self.interrupt_all("gateway stopping")
                 if self.config.on_stop:
                     await self._run_on_stop()
@@ -669,20 +687,47 @@ class GatewayServer:
         await self.stop("the app asked")
 
     async def _preflight(self) -> None:
-        """``before_first_chat``, once per launch; raises ``ProtocolError`` (no chat) when it fails."""
+        """``before_first_chat``, once per launch; raises ``ProtocolError`` (no chat) when it fails.
+
+        The command runs as its own task so ``stop`` can cancel it (which
+        kills the process group) while the handler waits; that handler then
+        answers ``lifecycle.before_first_chat_failed`` like any other failure.
+        """
         command = self.config.before_first_chat
         if not command:
             return
         async with self._preflight_lock:
             if self._preflight_done:
                 return
-            try:
-                await run_lifecycle_command(
+            if self._stopped:
+                raise ProtocolError("lifecycle.before_first_chat_failed", "cannot open a chat: the gateway is stopping")
+            task = asyncio.create_task(
+                run_lifecycle_command(
                     "before-first-chat", command, self._status_line, float(self.config.command_timeout_seconds)
-                )
+                ),
+                name="portico-preflight",
+            )
+            self._preflight_task = task
+            try:
+                await task
             except CommandFailed as e:
                 raise ProtocolError("lifecycle.before_first_chat_failed", f"cannot open a chat: {e}") from e
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise  # this handler itself is being cancelled (shutdown)
+                raise ProtocolError(
+                    "lifecycle.before_first_chat_failed", "cannot open a chat: the gateway is stopping"
+                ) from None
+            finally:
+                if self._preflight_task is task:
+                    self._preflight_task = None
             self._preflight_done = True
+
+    def _cancel_preflight(self) -> None:
+        task = self._preflight_task
+        if task is not None and not task.done():
+            task.cancel()
 
     def _spawn(self, coro: Coroutine[Any, Any, None], name: str) -> None:
         """Run ``coro`` in the background; the task is cancelled at ``shutdown``."""
@@ -728,15 +773,32 @@ class GatewayServer:
         await self._attach(conn)
         await self._send(conn, hello_for(self.config, self.epoch, self.version))
         await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
+        # Frames are handled one at a time, in order, by a worker; this loop
+        # only reads. So a ``gateway.stop`` is acted on at once even while
+        # the worker is inside a slow handler (a hung ``before_first_chat``).
+        frames: asyncio.Queue[str | bytes | None] = asyncio.Queue()
+        self._spawn(self._handle_frames(conn, frames), name="portico-app-frames")
         try:
             async for raw in conn:
-                await self._handle_frame(conn, raw)
+                if _frame_type(raw) == "gateway.stop":
+                    await self._handle_frame(conn, raw)
+                else:
+                    frames.put_nowait(raw)
         except ConnectionClosed:
             pass
         finally:
+            frames.put_nowait(None)
             if self._app is conn:
                 self._app = None
                 self.cards.set_attached(False)
+
+    async def _handle_frames(self, conn: ServerConnection, frames: asyncio.Queue[str | bytes | None]) -> None:
+        """The app's frames in order, one handler at a time; ``None`` ends it."""
+        while True:
+            raw = await frames.get()
+            if raw is None:
+                return
+            await self._handle_frame(conn, raw)
 
     @staticmethod
     def _check_protocol_version(raw: str | bytes) -> None:
