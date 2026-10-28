@@ -32,6 +32,7 @@ from portico_gateway.messages import (
     ChatList,
     ChatNew,
     ChatState,
+    Error,
     MessageSend,
     ServerMessage,
     TextDelta,
@@ -121,7 +122,15 @@ async def new_chat(conn: ClientConnection, folder: Path) -> int:
 
 
 async def run_turn(conn: ClientConnection, chat: int, text: str) -> list[ServerMessage]:
-    """Send ``text`` and collect every event up to ``turn.finished``, allowing any permission card once."""
+    """Send ``text`` and collect every event up to ``turn.finished``, allowing any permission card once.
+
+    An ``error`` frame during the turn fails at once: the gateway refuses a
+    card answer in the wrong shape and keeps the card open, so the turn
+    would otherwise sit until ``TURN_TIMEOUT`` with a misleading message.
+    ``tests/test_cards.py`` drives this helper against the fake engine, so
+    its card branch is checked without a model even though the smoke's own
+    deny hook keeps a permission card from ever being asked.
+    """
     await conn.send(dump(MessageSend(ts=TS, chat=chat, text=text)))
     got: list[ServerMessage] = []
     deadline = asyncio.get_running_loop().time() + TURN_TIMEOUT
@@ -130,10 +139,14 @@ async def run_turn(conn: ClientConnection, chat: int, text: str) -> list[ServerM
         assert remaining > 0, f"turn did not finish within {TURN_TIMEOUT}s: {got}"
         msg = await recv(conn, remaining)
         got.append(msg)
+        assert not isinstance(msg, Error), f"the gateway refused something mid-turn: {msg}"
         if isinstance(msg, CardAsk) and msg.kind == "permission":
             # The hook, not the person, is what this test exercises: let the
-            # tool through so the hook's own denial is the one observed.
-            await conn.send(dump(CardAnswer(ts=TS, chat=chat, id=msg.id, answer={"permission": "once"})))
+            # tool through so the hook's own denial is the one observed. The
+            # answer is the protocol's: {"decision": "allow"} with scope once.
+            await conn.send(
+                dump(CardAnswer(ts=TS, chat=chat, id=msg.id, answer={"decision": "allow"}, scope="once"))
+            )
         if isinstance(msg, TurnFinished) and msg.chat == chat:
             return got
 

@@ -43,6 +43,7 @@ from portico_gateway.server import GatewayServer
 from portico_gateway.state import StateDir
 from tests.conftest import AskPermission, AskQuestion, FakeEngine, fake_result, make_config
 from tests.test_server import attach
+from tests.test_live_smoke import run_turn as smoke_run_turn
 from tests.test_turns import EngineFactory, new_chat, recv, recv_until, text_delta
 
 TS = "2026-10-27T12:00:00Z"
@@ -158,6 +159,32 @@ async def test_permission_card_round_trip_allow_once(server: GatewayServer, fact
         chat = server.registry.get(number)
         assert [m.seq for m in chat.ring] == list(range(1, chat.seq + 1))
         assert any(isinstance(m, CardAsk) and m.id == card.id for m in chat.ring)
+    finally:
+        await conn.close()
+
+
+async def test_live_smoke_helper_answers_a_permission_card_in_protocol_form(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    """The opt-in smoke's ``run_turn`` must speak the protocol it exercises.
+
+    Its card branch never runs under the smoke's own Bash-deny hook, so it is
+    driven here against the fake engine: an allow in any other shape is
+    refused with ``card.invalid_answer``, the card stays open, and the turn
+    hangs until the smoke's timeout.
+    """
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.script(write_ask(folder), text_delta("written"), fake_result())
+        events = await smoke_run_turn(conn, number, "write the summary")
+        assert [e for e in events if isinstance(e, Error)] == []
+        assert isinstance(events[-1], TurnFinished) and events[-1].outcome == "done"
+        assert any(isinstance(e, CardAsk) and e.kind == "permission" for e in events)
+        assert any(isinstance(e, CardAnswered) for e in events)
+        assert engine.decisions == ["allow"]
+        assert server.cards.open_cards(server.registry.get(number)) == []
     finally:
         await conn.close()
 
