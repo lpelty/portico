@@ -1,0 +1,7 @@
+{
+  "id": "req-5",
+  "query": "synthesis",
+  "root": "projects",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "files.search"
+}

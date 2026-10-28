@@ -1,0 +1,13 @@
+{
+  "hits": [
+    {
+      "path": "demo/Q3-synthesis.md",
+      "snippet": "Across twelve customer interviews…"
+    }
+  ],
+  "id": "req-5",
+  "query": "synthesis",
+  "root": "projects",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "files.results"
+}

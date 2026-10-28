@@ -564,6 +564,65 @@
       "title": "ChatAlias",
       "type": "object"
     },
+    "ChatCompacted": {
+      "additionalProperties": false,
+      "description": "The engine summarized earlier conversation to make room.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "trigger": {
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.compacted",
+          "default": "chat.compacted",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "trigger"
+      ],
+      "title": "ChatCompacted",
+      "type": "object"
+    },
     "ChatHistory": {
       "additionalProperties": false,
       "properties": {
@@ -580,6 +639,7 @@
                 "card.answered": "#/$defs/CardAnswered",
                 "card.ask": "#/$defs/CardAsk",
                 "card.cancel": "#/$defs/CardCancel",
+                "chat.compacted": "#/$defs/ChatCompacted",
                 "chat.state": "#/$defs/ChatState",
                 "error": "#/$defs/Error",
                 "status.set": "#/$defs/StatusSet",
@@ -628,6 +688,9 @@
               },
               {
                 "$ref": "#/$defs/StatusSet"
+              },
+              {
+                "$ref": "#/$defs/ChatCompacted"
               },
               {
                 "$ref": "#/$defs/Error"
@@ -1096,13 +1159,66 @@
           "title": "Chat",
           "type": "integer"
         },
+        "compactions": {
+          "default": 0,
+          "title": "Compactions",
+          "type": "integer"
+        },
+        "context_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Percent"
+        },
         "created": {
           "title": "Created",
           "type": "string"
         },
+        "ended": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ended"
+        },
         "folder": {
           "title": "Folder",
           "type": "string"
+        },
+        "logged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Logged"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
         },
         "state": {
           "enum": [
@@ -1113,6 +1229,18 @@
           ],
           "title": "State",
           "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
         }
       },
       "required": [
@@ -1162,8 +1290,81 @@
         },
         {
           "$ref": "#/$defs/GatewayStop"
+        },
+        {
+          "$ref": "#/$defs/SessionRenew"
+        },
+        {
+          "$ref": "#/$defs/FilesSearch"
         }
       ]
+    },
+    "ContextUsage": {
+      "additionalProperties": false,
+      "description": "How full the session's context window is, after each turn.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "percent": {
+          "title": "Percent",
+          "type": "number"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "context.usage",
+          "default": "context.usage",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "percent"
+      ],
+      "title": "ContextUsage",
+      "type": "object"
     },
     "Entry": {
       "additionalProperties": false,
@@ -1402,6 +1603,147 @@
       "title": "FilesListRequest",
       "type": "object"
     },
+    "FilesResults": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "hits": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Hit"
+          },
+          "title": "Hits",
+          "type": "array"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "root": {
+          "title": "Root",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "files.results",
+          "default": "files.results",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "root",
+        "query"
+      ],
+      "title": "FilesResults",
+      "type": "object"
+    },
+    "FilesSearch": {
+      "additionalProperties": false,
+      "description": "Search names and text under a root; answered with ``files.results``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "root": {
+          "title": "Root",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "files.search",
+          "default": "files.search",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "root",
+        "query"
+      ],
+      "title": "FilesSearch",
+      "type": "object"
+    },
     "FormField": {
       "additionalProperties": false,
       "properties": {
@@ -1584,6 +1926,11 @@
         "brand": {
           "$ref": "#/$defs/Brand"
         },
+        "can_log": {
+          "default": false,
+          "title": "Can Log",
+          "type": "boolean"
+        },
         "capabilities": {
           "default": [],
           "items": {
@@ -1632,6 +1979,15 @@
           "default": null,
           "title": "Id"
         },
+        "presentation": {
+          "default": "multiple",
+          "enum": [
+            "single",
+            "multiple"
+          ],
+          "title": "Presentation",
+          "type": "string"
+        },
         "protocol": {
           "const": 1,
           "default": 1,
@@ -1676,6 +2032,33 @@
         "brand"
       ],
       "title": "HelloServer",
+      "type": "object"
+    },
+    "Hit": {
+      "additionalProperties": false,
+      "description": "One search result: ``path`` is relative to the searched root.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "snippet": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snippet"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "Hit",
       "type": "object"
     },
     "MessageSend": {
@@ -1890,9 +2273,141 @@
           "$ref": "#/$defs/StatusSet"
         },
         {
+          "$ref": "#/$defs/ContextUsage"
+        },
+        {
+          "$ref": "#/$defs/ChatCompacted"
+        },
+        {
+          "$ref": "#/$defs/SessionRenewed"
+        },
+        {
+          "$ref": "#/$defs/FilesResults"
+        },
+        {
           "$ref": "#/$defs/Error"
         }
       ]
+    },
+    "SessionRenew": {
+      "additionalProperties": false,
+      "description": "End the session ``chat`` and start the next one in the same folder.\n\nWith ``log`` the gateway first runs the deployment's log step in the\nending session and waits for it. Answered with ``session.renewed``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "log": {
+          "default": true,
+          "title": "Log",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "session.renew",
+          "default": "session.renew",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "SessionRenew",
+      "type": "object"
+    },
+    "SessionRenewed": {
+      "additionalProperties": false,
+      "description": "The session ``ended`` was closed and ``next`` is the live one now.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "ended": {
+          "$ref": "#/$defs/ChatSummary"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "next": {
+          "$ref": "#/$defs/ChatSummary"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "session.renewed",
+          "default": "session.renewed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "ended",
+        "next"
+      ],
+      "title": "SessionRenewed",
+      "type": "object"
     },
     "StatusSet": {
       "additionalProperties": false,
