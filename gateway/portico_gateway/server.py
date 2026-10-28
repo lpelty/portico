@@ -1081,6 +1081,13 @@ class GatewayServer:
 
     async def on_card_answer(self, msg: CardAnswer, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
+        # Said at INFO so the log shows which answer a card got; the ring's
+        # card.answered carries none of it, and a review this week spent an
+        # hour working out who had pressed Allow.
+        log.info(
+            "chat %d: card %s answered %s%s", chat.number, msg.id,
+            msg.answer.get("decision", "submit") if isinstance(msg.answer, dict) else "submit",
+            f" scope={msg.scope}" if msg.scope else "")
         self.cards.answer(chat.number, msg.id, msg)
         # The closing goes in the ring before the engine resumes (and the
         # state goes back to working): a replay closes what it opened.
