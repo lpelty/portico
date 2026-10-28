@@ -703,6 +703,7 @@ class GatewayServer:
         except ConnectionClosed:
             return
         try:
+            self._check_protocol_version(raw)
             first = parse_client(raw)
         except ProtocolError as e:
             await self._send(conn, Error(ts=_now(), code=e.code, message=e.message))
@@ -728,6 +729,26 @@ class GatewayServer:
             if self._app is conn:
                 self._app = None
                 self.cards.set_attached(False)
+
+    @staticmethod
+    def _check_protocol_version(raw: str | bytes) -> None:
+        """A ``hello`` from an app speaking another protocol version is refused in plain words.
+
+        Checked before the strict parse, whose refusal would only say the
+        field is not ``1``; a mismatch is reported, never silently tolerated.
+        """
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            return  # parse_client reports it
+        if not isinstance(obj, dict) or obj.get("type") != "hello":
+            return
+        version = obj.get("protocol")
+        if isinstance(version, int) and not isinstance(version, bool) and version != PROTOCOL_VERSION:
+            raise ProtocolError(
+                "protocol.version",
+                f"the app speaks protocol {version}; this gateway speaks protocol {PROTOCOL_VERSION}",
+            )
 
     async def _attach(self, conn: ServerConnection) -> None:
         previous, self._app = self._app, conn

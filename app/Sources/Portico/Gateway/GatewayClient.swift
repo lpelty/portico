@@ -3,7 +3,8 @@ import Foundation
 /// The app's one WebSocket to the gateway.
 ///
 /// `connect` opens `ws://host:port/v1?token=…`, sends `hello` and returns the
-/// gateway's `hello`. Every frame after that is decoded in arrival order and
+/// gateway's `hello`, refusing one that names another protocol version (the
+/// status strip then says so). Every frame after that is decoded in arrival order and
 /// delivered through `messages`; the stream finishes when the connection
 /// drops, which is how the model learns it must reconnect. Reconnect policy
 /// (what to re-open, with which `since`) is not here: it lives in
@@ -13,6 +14,10 @@ actor GatewayClient {
         case notConnected
         case badURL(String)
         case unexpectedFirstFrame(String)
+        /// The gateway answered `hello` with an `error` (its message is kept).
+        case refused(String)
+        /// The gateway's `hello` names another protocol version.
+        case protocolMismatch(Int)
         case notText
         case timeout(String)
 
@@ -21,6 +26,8 @@ actor GatewayClient {
             case .notConnected: "not connected to the gateway"
             case .badURL(let s): "cannot build the gateway URL from \(s)"
             case .unexpectedFirstFrame(let t): "the gateway's first frame was \(t), not hello"
+            case .refused(let message): "the gateway refused the connection: \(message)"
+            case .protocolMismatch(let version): GatewayClient.protocolMismatchText(version)
             case .notText: "the gateway sent a binary frame"
             case .timeout(let what): "timed out waiting for \(what)"
             }
@@ -29,6 +36,12 @@ actor GatewayClient {
 
     /// How long `connect` waits for the gateway's `hello`.
     var helloTimeout: Duration = .seconds(10)
+
+    /// The one line shown for a gateway speaking another protocol version
+    /// (PROTOCOL.md, Version: a mismatch is shown, not silently tolerated).
+    static func protocolMismatchText(_ version: Int) -> String {
+        "the gateway speaks protocol \(version), this app speaks \(protocolVersion)"
+    }
 
     private let session: URLSession
     private var task: URLSessionWebSocketTask?
@@ -83,8 +96,14 @@ actor GatewayClient {
                 try await socket.receive()
             }
             let message = try decode(first)
+            if case .error(let refusal) = message {
+                throw ClientError.refused(refusal.message)
+            }
             guard case .hello(let hello) = message else {
                 throw ClientError.unexpectedFirstFrame(message.type)
+            }
+            guard hello.protocol == protocolVersion else {
+                throw ClientError.protocolMismatch(hello.protocol)
             }
             startReceiving(on: socket)
             return hello

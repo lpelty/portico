@@ -164,6 +164,18 @@ async def test_unparseable_first_frame_is_error_and_close(server: GatewayServer)
         await asyncio.wait_for(conn.recv(), 5)
 
 
+async def test_hello_with_another_protocol_version_is_refused_in_plain_words(server: GatewayServer) -> None:
+    conn = await connect(ws_url(server, server.token))
+    await conn.send(json.dumps({"type": "hello", "protocol": 2, "app_version": "9.0.0", "ts": TS}))
+    err = parse_server(await conn.recv())
+    assert isinstance(err, Error)
+    assert err.code == "protocol.version"
+    assert "protocol 2" in err.message and "protocol 1" in err.message
+    with pytest.raises(ConnectionClosed):
+        await asyncio.wait_for(conn.recv(), 5)
+    assert not server.attached
+
+
 async def test_second_connection_replaces_first(server: GatewayServer) -> None:
     first = await attach(server)
     second = await attach(server)

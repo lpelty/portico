@@ -52,6 +52,35 @@ final class GatewayClientTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testProtocolMismatchIsShownNotTolerated() async throws {
+        // A gateway speaking protocol 2: connect refuses it with the line the
+        // status strip shows, and no socket is kept.
+        let gateway = FakeGateway(protocol: 2)
+        try await gateway.start()
+        defer { gateway.stop() }
+
+        let client = GatewayClient()
+        do {
+            _ = try await client.connect(url: gateway.url, token: "tok", appVersion: "0.1.0-test")
+            XCTFail("a protocol mismatch must not connect")
+        } catch {
+            XCTAssertEqual("\(error)", "the gateway speaks protocol 2, this app speaks 1")
+        }
+        let connected = await client.isConnected
+        XCTAssertFalse(connected)
+
+        // The reducer refuses it too: no chats are opened, the strip says why.
+        await MainActor.run {
+            let model = AppModel()
+            model.noteOpened(chat: 1)
+            var hello = Self.hello(epoch: "epoch-A")
+            hello.protocol = 2
+            XCTAssertEqual(model.handleHello(hello), [], "no chat.open on a mismatch")
+            XCTAssertNil(model.hello)
+            XCTAssertEqual(model.connection, .failed("the gateway speaks protocol 2, this app speaks 1"))
+        }
+    }
+
     func testMessagesStreamDeliversInOrder() async throws {
         let gateway = FakeGateway()
         try await gateway.start()

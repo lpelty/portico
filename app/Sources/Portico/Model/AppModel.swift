@@ -196,6 +196,12 @@ final class AppModel: ObservableObject {
     /// watermark and open from the beginning so the transcript is replayed
     /// exactly once (Review Focus 2).
     func handleHello(_ incoming: HelloServer) -> [ClientMessage] {
+        guard incoming.protocol == protocolVersion else {
+            // The connection layer refuses this before it gets here; the
+            // reducer refuses it too so no path opens chats on a mismatch.
+            connection = .failed(GatewayClient.protocolMismatchText(incoming.protocol))
+            return []
+        }
         if let previous = hello, previous.epoch != incoming.epoch {
             lastSeq = [:]
             // A restarted gateway never saw (or will never answer) a send in

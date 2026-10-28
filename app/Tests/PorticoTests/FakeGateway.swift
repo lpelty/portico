@@ -12,6 +12,9 @@ import Network
 /// is what the real gateway allows too.
 final class FakeGateway: @unchecked Sendable {
     let epoch: String
+    /// The protocol version the fake's `hello` claims; a test sets another to
+    /// stand in for a newer gateway.
+    let protocolVersionSent: Int
     private let queue = DispatchQueue(label: "fake-gateway")
     private let lock = NSLock()
     private var listener: NWListener?
@@ -19,8 +22,9 @@ final class FakeGateway: @unchecked Sendable {
     private var _received: [[String: Any]] = []
     private var _port: UInt16 = 0
 
-    init(epoch: String = "epoch-1") {
+    init(epoch: String = "epoch-1", protocol protocolVersionSent: Int = protocolVersion) {
         self.epoch = epoch
+        self.protocolVersionSent = protocolVersionSent
     }
 
     /// Every frame received so far, decoded as JSON objects, oldest first.
@@ -133,7 +137,7 @@ final class FakeGateway: @unchecked Sendable {
 
     private func replyHello() {
         let hello = HelloServer(
-            protocol: protocolVersion,
+            protocol: protocolVersionSent,
             gatewayVersion: "0.0-fake",
             epoch: epoch,
             brand: Brand(name: "Portico", agentName: "Agent"),

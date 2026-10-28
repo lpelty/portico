@@ -64,7 +64,12 @@ inventory of what each side may send.
 ## Version
 
 `protocol` is the integer `1`. Both sides send it in `hello`; a mismatch is
-shown in the app, not silently tolerated. `epoch` in the gateway's `hello`
+shown in the app, not silently tolerated: the gateway answers an app's
+`hello` with another version with `error code=protocol.version` ("the app
+speaks protocol N; this gateway speaks protocol 1") and closes, and the
+app refuses a gateway `hello` with another version and says so in its
+status strip ("the gateway speaks protocol N, this app speaks 1") rather
+than opening chats. `epoch` in the gateway's `hello`
 is a UUID minted per gateway launch; a changed epoch tells the app its
 sequence numbers are stale and it must re-fetch history.
 
@@ -374,6 +379,8 @@ commands arrive this way, as does the gateway's own "stopping" line.
 ### `error` — `Error`
 `chat?`, `id?` (the request it answers), `code`, `message`. Codes so far:
 `protocol.invalid`, `protocol.unknown_type`, `protocol.hello_required`,
+`protocol.version` (the app's `hello` names another protocol version;
+the socket is closed),
 `protocol.unsupported` (a known type this gateway has no handler for),
 `session.replaced`, `chat.unknown` (no chat with that number),
 `chat.folder_invalid` (`chat.new` on a path that is not an existing
