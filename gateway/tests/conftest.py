@@ -44,7 +44,13 @@ class AskQuestion:
 
 @dataclass
 class Block:
-    """Mid-turn: the engine hangs until ``interrupt()``; then the turn ends."""
+    """Mid-turn: the engine hangs until ``interrupt()``; then the turn ends.
+
+    A ``stubborn`` block ignores ``interrupt()`` and never ends on its own
+    (only ``close()`` ends it): a wedged engine, for the stop watchdog.
+    """
+
+    stubborn: bool = False
 
 
 def fake_result(is_error: bool = False, session_id: str = "fake-session") -> ResultMessage:
@@ -152,6 +158,8 @@ class FakeEngine:
                     self.answers.append(("declined", str(e)))
             elif isinstance(item, Block):
                 self._blocked.set()
+                if item.stubborn:
+                    await asyncio.Event().wait()
                 await self._interrupted.wait()
                 for ev in translate(fake_result(session_id=self.session_id or "fake"), self.chat, self.turn):
                     await cb.on_event(ev)

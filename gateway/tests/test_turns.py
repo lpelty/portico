@@ -635,3 +635,72 @@ async def test_chat_remove_closes_engine_and_drops_from_list(
         assert isinstance(err, Error) and err.code == "chat.unknown"
     finally:
         await conn.close()
+
+
+async def test_stop_watchdog_closes_a_wedged_engine_so_no_late_finish_can_arrive(
+    server: GatewayServer, factory: EngineFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The engine ignores the interrupt. After the stop grace the gateway ends
+    # the turn itself and closes that engine: its late finish for turn 1 can
+    # then never arrive during turn 2 (the real adapter would stamp it with
+    # the current turn and end turn 2 early). The next send starts a fresh
+    # engine on the same session, as after chat.stop.
+    from portico_gateway import server as server_module
+
+    monkeypatch.setattr(server_module, "STOP_GRACE_SECONDS", 0.1)
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.script(Block(stubborn=True))
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="one")))
+        await recv_until(conn, ChatState)
+        await engine.wait_blocked()
+
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, TurnFinished)
+        finished = frames[-1]
+        assert isinstance(finished, TurnFinished) and finished.outcome == "stopped" and finished.turn == 1
+        idle = await recv(conn)
+        assert isinstance(idle, ChatState) and idle.state == "idle"
+        assert engine.closed and server.registry.get(number).engine is None
+
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="two")))
+        frames = await recv_until(conn, TurnFinished)
+        assert factory.last is not engine
+        assert factory.last.calls[0] == ("start", (folder, "fake-session", ["project"]))
+        assert isinstance(frames[0], TurnStarted) and frames[0].turn == 2
+        finished = frames[-1]
+        assert isinstance(finished, TurnFinished) and finished.turn == 2 and finished.outcome == "done"
+        idle = await recv(conn)
+        assert isinstance(idle, ChatState) and idle.state == "idle"
+        assert number not in server._runs
+    finally:
+        await conn.close()
+
+
+async def test_engine_event_for_another_turn_is_dropped(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    # Belt and braces for any Engine implementation: an event stamped with a
+    # turn other than the running one never touches the running turn.
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.script(Block())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+        await recv_until(conn, ChatState)
+        await engine.wait_blocked()
+        chat = server.registry.get(number)
+        seq = chat.seq
+
+        await server.engine_event(chat, TurnFinished(ts=TS, chat=number, turn=7, outcome="done"))
+        await server.engine_event(chat, TextDelta(ts=TS, chat=number, turn=7, text="stale"))
+        assert chat.seq == seq and chat.state == "working" and number in server._runs
+        with pytest.raises(TimeoutError):
+            await recv(conn, timeout=0.2)
+
+        await engine.interrupt()
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[-1], TurnFinished) and frames[-1].turn == 1
+    finally:
+        await conn.close()

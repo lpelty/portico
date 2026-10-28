@@ -188,9 +188,12 @@ Attached files:
 ### `turn.stop` — `TurnStop`
 `chat`. Interrupts the running turn; it finishes with `outcome: stopped`
 (the engine's own finish is reported as `stopped`; if none arrives within
-the gateway's grace period, 15 seconds, the gateway ends the turn itself)
-and the chat returns to `idle`. The engine stays up for the next send. A
-stop when nothing is running does nothing and answers nothing.
+the gateway's grace period, 15 seconds, the gateway ends the turn itself
+and closes that engine, since one that ignored an interrupt is in no known
+state; the next send then starts a fresh engine on the same session, as
+after `chat.stop`) and the chat returns to `idle`. When the engine did
+finish in time it stays up for the next send. A stop when nothing is
+running does nothing and answers nothing.
 
 ### `card.answer` — `CardAnswer`
 `chat`, `id` (the card's id), `answer: object`, `scope: once | chat | always | absent`,

@@ -27,10 +27,10 @@ A turn, as the gateway runs it: ``message.send`` emits ``turn.started``,
 working``, then hands the text to the engine; the engine's
 events stream through ``engine_event``; its ``turn.finished`` ends the turn
 and the chat goes back to ``idle``. ``turn.stop`` interrupts the engine and
-the finish that follows is reported as ``outcome=stopped`` (synthesised if
-the engine never sends one within a grace period). ``chat.stop`` closes the
-engine outright; a later send starts a fresh engine resuming the same
-session.
+the finish that follows is reported as ``outcome=stopped`` (synthesised,
+and the wedged engine closed, if it never sends one within a grace
+period). ``chat.stop`` closes the engine outright; a later send starts a
+fresh engine resuming the same session.
 
 Cards (Task 8): a permission or question from the engine goes through the
 ``CardBroker`` (``cards.py``). The chat is ``waiting on you`` while a card
@@ -172,8 +172,8 @@ CLOSE_PROTOCOL_ERROR = 1002
 CLOSE_POLICY = 1008
 
 # After ``turn.stop`` the engine is given this long to send its own
-# ``turn.finished``; then the gateway ends the turn itself so the app is
-# never left on a turn that cannot finish.
+# ``turn.finished``; then the gateway ends the turn itself, and closes the
+# engine, so the app is never left on a turn that cannot finish.
 STOP_GRACE_SECONDS = 15.0
 
 # The exact form attachments take in the text the engine receives
@@ -886,6 +886,13 @@ class GatewayServer:
         """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn."""
         self._sync_session(chat)
         run = self._runs.get(chat.number)
+        turn = getattr(event, "turn", None)
+        if run is not None and turn is not None and turn != run.turn:
+            # The gateway ended an earlier turn itself (the stop grace ran out)
+            # and the engine is only now finishing it: that must not touch
+            # the turn that is running now.
+            log.warning("chat %d: engine event for turn %s during turn %d; dropped", chat.number, turn, run.turn)
+            return
         if not isinstance(event, TurnFinished):
             if run is not None:
                 if isinstance(event, ToolStarted):
@@ -920,7 +927,15 @@ class GatewayServer:
             pass
         if self._runs.get(chat.number) is not run:
             return
-        log.warning("chat %d: engine did not finish turn %d within %.0fs of stop; ending it", chat.number, run.turn, STOP_GRACE_SECONDS)
+        log.warning(
+            "chat %d: engine did not finish turn %d within %.0fs of stop; ending it and closing the engine",
+            chat.number, run.turn, STOP_GRACE_SECONDS,
+        )
+        # An engine that ignored the interrupt is in an unknown state: close
+        # it, as chat.stop does, so its finish for this turn can never arrive
+        # during a later one (the adapter stamps events with the current
+        # turn). The next send resumes the session on a fresh engine.
+        await self._close_engine(chat)
         await self._report_artifacts(chat, run)
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self._finish_run(chat, run)
