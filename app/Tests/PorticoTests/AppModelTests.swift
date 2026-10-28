@@ -192,10 +192,72 @@ final class AppModelTests: XCTestCase {
         model.answerCard(CardAnswer(chat: 2, id: "card-3", answer: ["decision": .string("deny")]))
         XCTAssertEqual(sent.frames.count, before)
 
-        // The same card re-sent later (a chat.open replay of a card the gateway still
-        // holds) does not come back as open: the app already answered it.
-        model.apply(.cardAsk(card))
+        // The gateway confirms: the card stays closed, and the inline copy is still one.
+        model.apply(.cardAnswered(CardAnswered(chat: 2, id: "card-3", seq: 2)))
         XCTAssertEqual(model.pinnedCards(for: 2), [])
+        XCTAssertEqual(model.cardStatus(chat: 2, id: "card-3"), .answered)
+        XCTAssertEqual((model.transcripts[2] ?? []).count, 1)
+    }
+
+    func testCardReSentAfterAnUnconfirmedAnswerIsOpenAgain() {
+        // The person answers; the frame never reaches the gateway (the socket
+        // was already dead). The gateway still holds the card open, so on the
+        // reattach it re-sends it after chat.live. The app must not hide it
+        // behind its own "answered" mark: nothing was answered, and with no
+        // card to answer the chat would sit at "waiting on you" until the
+        // gateway restarts.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        _ = model.handleHello(hello(epoch: "epoch-A"))
+        model.open(chat: 1)
+        model.apply(.chatLive(ChatLive(chat: 1, seq: 0)))
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        let card = CardAsk(
+            chat: 1, id: "card-1", kind: .permission, title: "Write a file",
+            permission: Permission(tool: "Write", summary: "/tmp/demo/a.md", input: [:]),
+            questions: nil, form: nil, seq: 2)
+        model.apply(.cardAsk(card))
+        model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
+        model.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")], scope: .once))
+        XCTAssertEqual(sent.types().last, "card.answer")
+        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .answered)
+
+        // The socket drops and comes back to the same gateway: chat.open
+        // with our watermark, an empty catch-up, chat.live, then the open
+        // card again exactly as first sent.
+        model.apply(.hello(hello(epoch: "epoch-A")))
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open, got \(sent.types())") }
+        XCTAssertEqual(open.since, 3)
+        model.apply(.chatHistory(ChatHistory(chat: 1, events: [], truncated: false, id: open.id)))
+        model.apply(.chatLive(ChatLive(chat: 1, id: open.id, seq: 3)))
+        model.apply(.cardAsk(card))
+
+        XCTAssertEqual(model.pinnedCards(for: 1).map(\.id), ["card-1"], "the card the gateway still holds is open again")
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .open)
+        let inline = (model.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }
+        XCTAssertEqual(inline.count, 1, "the inline copy is not duplicated")
+
+        // The person answers again; this time the gateway confirms and the card closes for good.
+        let before = sent.frames.count
+        model.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")], scope: .once))
+        XCTAssertEqual(sent.frames.count, before + 1)
+        XCTAssertEqual(sent.types().last, "card.answer")
+        model.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-1", seq: 4)))
+        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .answered)
+
+        // A card the gateway cancelled stays cancelled if its ask ever comes
+        // back: the cancel was the gateway's word, not this app's guess.
+        let other = CardAsk(
+            chat: 1, id: "card-2", kind: .permission, title: "Run a command",
+            permission: Permission(tool: "Bash", summary: "ls", input: [:]),
+            questions: nil, form: nil, seq: 5)
+        model.apply(.cardAsk(other))
+        model.apply(.cardCancel(CardCancel(chat: 1, id: "card-2", reason: "turn stopped", seq: 6)))
+        model.apply(.cardAsk(other))
+        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "card-2"), .cancelled("turn stopped"))
     }
 
     func testAnsweredCardIsNotReopenedByARelaunchReplay() {

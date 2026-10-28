@@ -434,11 +434,21 @@ final class AppModel: ObservableObject {
 
         case .cardAsk(let card):
             var open = openCards[chat] ?? []
-            let known = open.contains { $0.id == card.id } || closedCards[chat]?[card.id] != nil
-            if !known {
-                open.append(card)
-                openCards[chat] = open
-                items.append(.card(card))
+            if open.contains(where: { $0.id == card.id }) { break }
+            // The gateway sends a card only while it holds it open, and
+            // re-sends every open card on chat.open. A card this app marked
+            // answered that comes back can only mean the answer never
+            // reached the gateway (a send is fire-and-forget, and the
+            // gateway forgets a card the moment it accepts an answer): the
+            // card is open again, pinned again, for the person to answer
+            // once more. A cancel is the gateway's own word and stands.
+            if let why = closedCards[chat]?[card.id], why != Self.answeredMarker { break }
+            closedCards[chat]?[card.id] = nil
+            open.append(card)
+            openCards[chat] = open
+            let inline = TranscriptItem.card(card)
+            if !items.contains(where: { $0.id == inline.id }) {
+                items.append(inline)
             }
 
         case .cardAnswered(let answered):
