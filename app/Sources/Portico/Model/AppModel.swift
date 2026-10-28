@@ -79,6 +79,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var live: Set<Int> = []
     /// The socket's state, for the status strip.
     @Published private(set) var connection: ConnectionState = .disconnected
+    /// Per chat, the attachment paths queued in the input bar: the Files
+    /// pane and drag-and-drop add here; a send clears the chat's list.
+    @Published private(set) var draftAttachments: [Int: [String]] = [:]
 
     enum ConnectionState: Equatable, Sendable {
         case disconnected
@@ -386,8 +389,55 @@ final class AppModel: ObservableObject {
         send(.chatAlias(ChatAlias(chat: chat, alias: trimmed.isEmpty ? nil : trimmed, id: Self.requestId())))
     }
 
+    // MARK: - conversation actions
+
+    /// Send `text` (trimmed) with the chat's draft attachments as one
+    /// `message.send`, then clear the draft. Blank text sends nothing: the
+    /// gateway would have nothing to give the engine.
+    func sendMessage(chat: Int, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let attachments = draftAttachments[chat] ?? []
+        send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: Self.requestId())))
+        draftAttachments[chat] = nil
+    }
+
+    /// Interrupt the running turn; the gateway answers with
+    /// `turn.finished outcome=stopped` (nothing, when nothing is running).
+    func stopTurn(chat: Int) {
+        send(.turnStop(TurnStop(chat: chat, id: Self.requestId())))
+    }
+
+    /// Queue attachment paths for the chat's next send, de-duplicated, in order.
+    func attach(_ paths: [String], to chat: Int) {
+        var list = draftAttachments[chat] ?? []
+        for path in paths where !list.contains(path) {
+            list.append(path)
+        }
+        draftAttachments[chat] = list
+    }
+
+    func detach(_ path: String, from chat: Int) {
+        draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
+    }
+
+    /// The chat's state word as the sidebar last heard it.
+    func state(of chat: Int) -> ChatStateWord? {
+        chats.first { $0.chat == chat }?.state
+    }
+
+    /// A turn is running or a card is waiting: a send would be refused
+    /// (`chat.busy`), so the input bar offers Stop instead.
+    func isBusy(chat: Int) -> Bool {
+        switch state(of: chat) {
+        case .working, .waitingOnYou: true
+        case .idle, .stopped, nil: false
+        }
+    }
+
     private func forget(chat: Int) {
         noteClosed(chat: chat)
+        draftAttachments[chat] = nil
         transcripts[chat] = nil
         openCards[chat] = nil
         artifacts[chat] = nil

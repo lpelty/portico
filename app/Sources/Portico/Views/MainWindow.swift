@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The window: sidebar of chats on the left, the conversation in the
-/// centre (a placeholder until Task 17), the viewer on the right (Task 19).
+/// centre, the viewer on the right (Task 19).
 /// A one-line strip under the toolbar says what the connection is doing
 /// until the status strip (Task 21) replaces it.
 struct MainWindow: View {
@@ -26,15 +26,8 @@ struct MainWindow: View {
     @ViewBuilder
     private var detail: some View {
         if let chat = model.selected {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Chat #\(chat)")
-                    .font(.title2)
-                Text("\((model.transcripts[chat] ?? []).count) items in the transcript")
-                    .foregroundStyle(.secondary)
-                Text("The conversation pane lands with the next task.")
-                    .foregroundStyle(.tertiary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ConversationView(chat: chat)
+                .id(chat)
         } else {
             ContentUnavailableView(
                 "No chat selected", systemImage: "sidebar.left",
