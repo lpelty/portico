@@ -88,6 +88,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var gatewayStatus: String?
     /// The last `error` frame, for the status strip.
     @Published private(set) var lastError: ErrorMessage?
+    /// Whether the connection loop may start a gateway when it finds none.
+    /// `true` until the person stops the gateway (menu, settings, or a quit
+    /// with "stop everything"); Start puts it back.
+    @Published private(set) var autoStartGateway: Bool = true
     /// Per chat, cards that were answered or cancelled: id → why (`answered`, or the cancel reason).
     @Published private(set) var closedCards: [Int: [String: String]] = [:]
     /// Per chat, whether `chat.live` has arrived since the last `chat.open`.
@@ -157,6 +161,22 @@ final class AppModel: ObservableObject {
     /// Directories with a `files.list` in flight, so an expand asks once.
     private var pendingFileLists: Set<FilesKey> = []
     private var nextItemId = 0
+    /// Ordering for status lines: per chat and chat-less, the strip shows
+    /// whichever `status.set` (or error) came last.
+    private var statusStamps: [Int: Int] = [:]
+    private var gatewayStatusStamp = 0
+    private var statusClock = 0
+    /// The connection loop's pause between attempts; `startGateway` cancels it.
+    private var reconnectWait: Task<Void, Never>?
+    /// The loop's socket, while `run` is going; `stopGateway` closes it.
+    private var client: GatewayClient?
+    /// Whether `run` is going (the window is open).
+    private var loopRunning = false
+
+    /// The supervisor the app uses: set by `run`, and by the app at launch
+    /// so Start works from the settings window before the main window's
+    /// loop (or after it closed).
+    weak var supervisor: GatewaySupervisor?
 
     /// The auto-open settings the reducer consults (spec §5.3).
     let settings: Settings
@@ -270,16 +290,17 @@ final class AppModel: ObservableObject {
 
         case .statusSet(let status):
             if let chat = status.chat {
-                self.status[chat] = status.text
+                setStatus(status.text, for: chat)
             } else {
                 gatewayStatus = status.text
+                gatewayStatusStamp = nextStatusStamp()
             }
             noteSeq(of: message)
 
         case .error(let error):
             lastError = error
             if let chat = error.chat {
-                status[chat] = error.message
+                setStatus(error.message, for: chat)
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
                     restore(pending, to: chat)
                 }
@@ -612,6 +633,7 @@ final class AppModel: ObservableObject {
         current[chat] = nil
         restoreCurrent[chat] = nil
         status[chat] = nil
+        statusStamps[chat] = nil
         closedCards[chat] = nil
         live.remove(chat)
         pendingOpenSince[chat] = nil
@@ -619,6 +641,25 @@ final class AppModel: ObservableObject {
         fileTree = fileTree.filter { $0.key.chat != chat }
         pendingFileLists = pendingFileLists.filter { $0.chat != chat }
         if selected == chat { selected = nil }
+    }
+
+    private func setStatus(_ text: String, for chat: Int) {
+        status[chat] = text
+        statusStamps[chat] = nextStatusStamp()
+    }
+
+    private func nextStatusStamp() -> Int {
+        statusClock += 1
+        return statusClock
+    }
+
+    /// The newest status line that concerns `chat`: its own `status.set`
+    /// (or last error) or a chat-less one (a lifecycle command's output,
+    /// "stopping"), whichever the gateway sent last. No chat: the chat-less one.
+    func latestStatusLine(for chat: Int?) -> String? {
+        guard let chat, let own = status[chat] else { return gatewayStatus }
+        guard gatewayStatus != nil else { return own }
+        return (statusStamps[chat] ?? 0) >= gatewayStatusStamp ? own : gatewayStatus
     }
 
     // MARK: - outbound
@@ -754,19 +795,27 @@ extension AppModel {
     /// Runs until the task is cancelled (the window closed).
     func run(supervisor: GatewaySupervisor, settings: Settings, appVersion: String) async {
         let client = GatewayClient()
+        self.client = client
+        self.supervisor = supervisor
+        loopRunning = true
         outbound = { message in
             Task { try? await client.send(message) }
         }
         defer {
             outbound = nil
+            loopRunning = false
+            self.client = nil
             Task { await client.disconnect() }
         }
         var backoff: Duration = .seconds(1)
         while !Task.isCancelled {
+            supervisor.tokenOverride = Self.tokenOverride(settings.tokenFile)
             connection = .connecting
             guard let endpoint = await endpoint(supervisor: supervisor, settings: settings) else {
-                connection = .failed(supervisor.statusText)
-                try? await Task.sleep(for: backoff)
+                // Nothing to attach to. With automatic start off this is
+                // the quiet state after Stop, not a failure.
+                connection = autoStartGateway ? .failed(supervisor.statusText) : .disconnected
+                await pause(backoff)
                 backoff = min(backoff * 2, .seconds(10))
                 continue
             }
@@ -783,9 +832,23 @@ extension AppModel {
                 connection = .failed("\(error)")
             }
             if Task.isCancelled { break }
-            try? await Task.sleep(for: backoff)
+            await pause(backoff)
             backoff = min(backoff * 2, .seconds(10))
         }
+    }
+
+    /// Sleep between attempts, early-out on `startGateway`.
+    private func pause(_ duration: Duration) async {
+        let waiter: Task<Void, Never> = Task { try? await Task.sleep(for: duration) }
+        reconnectWait = waiter
+        await waiter.value
+        if reconnectWait == waiter { reconnectWait = nil }
+    }
+
+    /// The token file the settings name, as a URL; `nil` for the default.
+    static func tokenOverride(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
     }
 
     /// Where to connect: the settings override when set, else a running
@@ -798,19 +861,70 @@ extension AppModel {
         if let found = await supervisor.discover() {
             return (URL(string: "ws://127.0.0.1:\(found.port)")!, found.token)
         }
-        guard let started = try? await supervisor.start() else { return nil }
+        guard autoStartGateway, let started = try? await supervisor.start() else { return nil }
         return (URL(string: "ws://127.0.0.1:\(started.port)")!, started.token)
+    }
+}
+
+// MARK: - Gateway lifecycle from the app
+
+extension AppModel {
+    /// Stop the gateway: `gateway.stop` through the socket (the gateway
+    /// interrupts every turn, runs the deployment's stop command, closes
+    /// the socket and exits), then wait up to `timeout` for the socket to
+    /// close. Returns whether it did. Automatic start is off afterwards,
+    /// so the loop does not bring the gateway straight back; Start turns
+    /// it on again. Not connected: nothing to tell, nothing to wait for.
+    @discardableResult
+    func stopGateway(timeout: Duration = .seconds(10)) async -> Bool {
+        autoStartGateway = false
+        guard connection == .connected else {
+            supervisor?.noteStopped()
+            return true
+        }
+        send(.gatewayStop(GatewayStop()))
+        let closed = await waitForDisconnect(timeout)
+        if closed { supervisor?.noteStopped() }
+        return closed
+    }
+
+    /// Start (or attach to) a gateway: automatic start goes back on and
+    /// the connection loop is woken; without a loop (no window open) the
+    /// supervisor is started directly and the next loop attaches to it.
+    func startGateway() {
+        autoStartGateway = true
+        if loopRunning {
+            reconnectWait?.cancel()
+        } else if let supervisor {
+            Task { _ = try? await supervisor.start() }
+        }
+    }
+
+    /// What quitting does to the gateway (spec §5.5, D19): keep it running
+    /// (the default: the app only detaches) or stop everything and wait
+    /// for the socket to close, up to `timeout`.
+    func prepareToQuit(behaviour: Settings.QuitBehaviour, timeout: Duration = .seconds(10)) async {
+        switch behaviour {
+        case .keepRunning:
+            return
+        case .stopEverything:
+            await stopGateway(timeout: timeout)
+        }
+    }
+
+    private func waitForDisconnect(_ timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while connection == .connected {
+            if ContinuousClock.now >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return true
     }
 }
 
 extension GatewaySupervisor {
     /// One line for the status strip.
     var statusText: String {
-        switch status {
-        case .stopped: "gateway stopped"
-        case .starting: "starting the gateway"
-        case .running(let port): "gateway on port \(port)"
-        case .failed(let reason): reason
-        }
+        StatusStripPresentation.gatewayText(status)
     }
 }

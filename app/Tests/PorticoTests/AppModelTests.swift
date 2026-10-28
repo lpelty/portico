@@ -487,4 +487,139 @@ final class AppModelTests: XCTestCase {
         model.listFiles(chat: 1, root: "chat", path: "")
         XCTAssertEqual(sent.types().filter { $0 == "files.list" }.count, 3)
     }
+
+    // MARK: - Status strip, settings and quit (Task 21)
+
+    func testStatusStripTextComposition() {
+        let (model, _) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1), summary(2, state: .working, alias: "notes")])))
+
+        // Nothing selected, no gateway: the strip still says where things stand.
+        XCTAssertEqual(model.statusStrip(gateway: .stopped).text, "no chat · gateway stopped")
+
+        // A selected chat: its state word, its folder's name, the gateway with its port.
+        model.selected = 2
+        model.setConnection(.connected)
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "working · demo · gateway running :4321")
+
+        // The chat's last status.set line comes last, verbatim.
+        model.apply(.statusSet(StatusSet(text: "thinking", chat: 2, seq: 3)))
+        XCTAssertEqual(
+            model.statusStrip(gateway: .running(port: 4321)).text,
+            "working · demo · gateway running :4321 · thinking")
+
+        // A later chat-less status.set (a lifecycle command's output line) replaces it: the newest line shows.
+        model.apply(.statusSet(StatusSet(text: "checking memory services")))
+        XCTAssertEqual(
+            model.statusStrip(gateway: .running(port: 4321)).text,
+            "working · demo · gateway running :4321 · checking memory services")
+        model.apply(.statusSet(StatusSet(text: "still thinking", chat: 2, seq: 4)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).statusText, "still thinking")
+
+        // The state word follows chat.state, in exactly the protocol's words.
+        model.apply(.chatState(ChatState(chat: 2, state: .waitingOnYou, seq: 5)))
+        XCTAssertTrue(model.statusStrip(gateway: .running(port: 4321)).text.hasPrefix("waiting on you · demo · "))
+
+        // The gateway indicator: stopped / starting / running :port / failed.
+        XCTAssertEqual(model.statusStrip(gateway: .starting).gatewayText, "gateway starting")
+        XCTAssertEqual(model.statusStrip(gateway: .stopped).gatewayText, "gateway stopped")
+        XCTAssertEqual(model.statusStrip(gateway: .failed("no gateway command found")).gatewayText,
+                       "gateway failed: no gateway command found")
+
+        // The socket's state is only mentioned when it is not simply connected.
+        XCTAssertNil(model.statusStrip(gateway: .running(port: 4321)).connectionText)
+        model.setConnection(.connecting)
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText, "connecting")
+        XCTAssertEqual(
+            model.statusStrip(gateway: .running(port: 4321)).text,
+            "waiting on you · demo · gateway running :4321 · connecting · still thinking")
+        model.setConnection(.disconnected)
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText, "not connected")
+        XCTAssertNil(model.statusStrip(gateway: .stopped).connectionText, "a stopped gateway already says why there is no socket")
+        model.setConnection(.failed("connection refused"))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText,
+                       "cannot reach the gateway: connection refused")
+        // ... but not twice when the gateway itself failed with the same reason.
+        model.setConnection(.failed("no gateway command found"))
+        XCTAssertNil(model.statusStrip(gateway: .failed("no gateway command found")).connectionText)
+    }
+
+    func testStopGatewaySendsGatewayStopAndWaitsForTheSocketToClose() async {
+        let (model, sent) = model()
+        model.setConnection(.connected)
+        XCTAssertTrue(model.autoStartGateway)
+
+        // The socket closes a moment after the gateway is asked to stop.
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            model.setConnection(.disconnected)
+        }
+        let closed = await model.stopGateway(timeout: .seconds(5))
+        XCTAssertTrue(closed, "stopGateway returns once the socket is gone")
+        XCTAssertEqual(sent.types(), ["gateway.stop"])
+        XCTAssertFalse(model.autoStartGateway, "after an explicit stop the app does not start a gateway on its own")
+
+        // Start puts the automatic policy back.
+        model.startGateway()
+        XCTAssertTrue(model.autoStartGateway)
+    }
+
+    func testStopGatewayGivesUpWhenTheSocketStaysOpen() async {
+        let (model, sent) = model()
+        model.setConnection(.connected)
+        let closed = await model.stopGateway(timeout: .milliseconds(200))
+        XCTAssertFalse(closed, "a gateway that never closes the socket does not hold the app forever")
+        XCTAssertEqual(sent.types(), ["gateway.stop"])
+    }
+
+    func testQuitBehaviourDecidesWhetherTheGatewayIsStopped() async {
+        let (model, sent) = model()
+        model.setConnection(.connected)
+
+        // Keep the agent running (the default): quitting only detaches, nothing is sent.
+        await model.prepareToQuit(behaviour: .keepRunning, timeout: .seconds(1))
+        XCTAssertTrue(sent.frames.isEmpty, "keep running sends nothing, got \(sent.types())")
+
+        // Stop everything: gateway.stop goes out and the app waits for the socket.
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            model.setConnection(.disconnected)
+        }
+        await model.prepareToQuit(behaviour: .stopEverything, timeout: .seconds(5))
+        XCTAssertEqual(sent.types(), ["gateway.stop"])
+
+        // Not connected at all: nothing to stop, nothing sent, no waiting.
+        sent.frames.removeAll()
+        await model.prepareToQuit(behaviour: .stopEverything, timeout: .seconds(1))
+        XCTAssertTrue(sent.frames.isEmpty)
+    }
+
+    func testSupervisorTokenFileOverride() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-task21-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let override = dir.appendingPathComponent("elsewhere.token")
+        try "  secret-token\n".write(to: override, atomically: true, encoding: .utf8)
+
+        let supervisor = GatewaySupervisor(stateDir: dir)
+        XCTAssertNil(supervisor.readToken(), "no token in the state dir")
+        supervisor.tokenOverride = override
+        XCTAssertEqual(supervisor.tokenURL, override)
+        XCTAssertEqual(supervisor.readToken(), "secret-token")
+        supervisor.tokenOverride = nil
+        XCTAssertEqual(supervisor.tokenURL, dir.appendingPathComponent("token"))
+    }
+
+    func testDoctorRunnerCapturesLinesAndExitCode() {
+        let lines = GatewaySupervisor.runCapturing(
+            URL(fileURLWithPath: "/bin/sh"), ["-c", "echo ok: python; echo FAIL: a provider credential >&2; exit 3"],
+            environment: [:])
+        XCTAssertEqual(lines, ["ok: python", "FAIL: a provider credential", "doctor exited with code 3"])
+        XCTAssertEqual(
+            GatewaySupervisor.runCapturing(URL(fileURLWithPath: "/bin/sh"), ["-c", "printf 'one\\ntwo\\n\\n'"], environment: [:]),
+            ["one", "two"], "trailing blank lines are dropped; a clean exit adds nothing")
+        XCTAssertEqual(
+            GatewaySupervisor.runCapturing(URL(fileURLWithPath: "/nonexistent/doctor"), [], environment: [:]).count, 1,
+            "a doctor that cannot run is one line, not a crash")
+    }
 }

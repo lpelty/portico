@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The app entry point: one window, the model, the settings and the
@@ -5,16 +6,23 @@ import SwiftUI
 /// gateway for as long as the window is open.
 @main
 struct PorticoApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model: AppModel
     @StateObject private var settings: Settings
-    @StateObject private var supervisor = GatewaySupervisor()
+    @StateObject private var supervisor: GatewaySupervisor
 
     init() {
         // The model reads the auto-open settings (spec §5.3), so it holds the
         // same `Settings` object the settings scene edits.
         let settings = Settings()
+        let supervisor = GatewaySupervisor()
+        let model = AppModel(settings: settings)
+        // So Start from the settings window works before the main window's
+        // loop has run (or after it closed).
+        model.supervisor = supervisor
         _settings = StateObject(wrappedValue: settings)
-        _model = StateObject(wrappedValue: AppModel(settings: settings))
+        _supervisor = StateObject(wrappedValue: supervisor)
+        _model = StateObject(wrappedValue: model)
     }
 
     /// The app's version, sent in `hello`: the repo's VERSION file when the
@@ -46,8 +54,47 @@ struct PorticoApp: App {
                 .environmentObject(supervisor)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 .task {
+                    // Quit honours the setting (spec §5.5, D19): keep the
+                    // agent running (detach only) or stop everything.
+                    delegate.quitHandler = { [model, settings] in
+                        await model.prepareToQuit(behaviour: settings.quitBehaviour)
+                    }
                     await model.run(supervisor: supervisor, settings: settings, appVersion: Self.version)
                 }
         }
+        .commands {
+            CommandMenu("Agent") {
+                Button("Start") { model.startGateway() }
+                    .disabled(model.connection == .connected || supervisor.status == .starting)
+                Button("Stop") { Task { await model.stopGateway() } }
+                    .disabled(model.connection != .connected)
+            }
+        }
+
+        SwiftUI.Settings {
+            SettingsView()
+                .environmentObject(model)
+                .environmentObject(settings)
+                .environmentObject(supervisor)
+                .preferredColorScheme(settings.appearance.colorScheme)
+        }
+    }
+}
+
+/// Holds quit until the gateway has been dealt with the way the setting
+/// says. With "keep the agent running" the handler returns at once; with
+/// "stop everything" it sends `gateway.stop` and waits up to ten seconds
+/// for the socket to close, then the app terminates either way.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var quitHandler: (() async -> Void)?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let quitHandler else { return .terminateNow }
+        Task { @MainActor in
+            await quitHandler()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

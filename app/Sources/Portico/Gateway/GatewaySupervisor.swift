@@ -66,6 +66,10 @@ final class GatewaySupervisor: ObservableObject {
     private let explicitCommand: URL?
     private var stdoutDrain: Task<Void, Never>?
 
+    /// A token file to read instead of the state directory's (Settings ›
+    /// Gateway, for a gateway that keeps its state elsewhere). `nil`: the default.
+    var tokenOverride: URL?
+
     /// - Parameters:
     ///   - stateDir: the gateway's state directory; default `$PORTICO_HOME` or `~/.portico`.
     ///   - gatewayCommand: the gateway command; default is resolved by `resolveCommand()`.
@@ -82,7 +86,7 @@ final class GatewaySupervisor: ObservableObject {
     }
 
     var ledgerURL: URL { stateDir.appendingPathComponent("ledger.json") }
-    var tokenURL: URL { stateDir.appendingPathComponent("token") }
+    var tokenURL: URL { tokenOverride ?? stateDir.appendingPathComponent("token") }
     /// Where a gateway this app started writes its stderr.
     var logURL: URL { stateDir.appendingPathComponent("gateway.log") }
 
@@ -255,10 +259,66 @@ final class GatewaySupervisor: ObservableObject {
     /// every running turn, runs the deployment's stop command and exits.
     func stop(using client: GatewayClient) async {
         try? await client.send(.gatewayStop(GatewayStop()))
+        noteStopped()
+    }
+
+    /// The gateway has gone (the app asked it to and the socket closed):
+    /// forget the process and show `stopped`.
+    func noteStopped() {
         stdoutDrain?.cancel()
         stdoutDrain = nil
         pid = nil
         status = .stopped
+    }
+
+    // MARK: - doctor
+
+    /// Run the deployment's doctor and return its lines: `bin/doctor`
+    /// beside the gateway command when it is there, else the gateway
+    /// command's own `doctor`. stdout and stderr in order; when the
+    /// checks fail, the exit code is the last line. Never throws: a doctor
+    /// that cannot run says so in its one line.
+    func runDoctor() async -> [String] {
+        let command: URL
+        do {
+            command = try resolveCommand()
+        } catch {
+            return ["\(error)"]
+        }
+        let sibling = command.deletingLastPathComponent().appendingPathComponent("doctor")
+        let (executable, arguments): (URL, [String]) =
+            FileManager.default.isExecutableFile(atPath: sibling.path) ? (sibling, []) : (command, ["doctor"])
+        var environment = ProcessInfo.processInfo.environment
+        environment[Self.homeEnvironmentVariable] = stateDir.path
+        let env = environment
+        return await Task.detached {
+            Self.runCapturing(executable, arguments, environment: env)
+        }.value
+    }
+
+    nonisolated static func runCapturing(_ executable: URL, _ arguments: [String], environment: [String: String]) -> [String] {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = arguments
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+        } catch {
+            return ["could not run \(executable.path): \(error.localizedDescription)"]
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        var lines = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+        if process.terminationStatus != 0 {
+            lines.append("doctor exited with code \(process.terminationStatus)")
+        }
+        return lines
     }
 
     /// Kill a gateway this supervisor started (its whole session). Tests only;
