@@ -136,9 +136,10 @@ final class GatewaySupervisor: ObservableObject {
     // MARK: - start
 
     /// Where the gateway command is looked for, in order: `$PORTICO_GATEWAY_BIN`,
-    /// `../bin/portico-gateway` next to the executable, `bin/portico-gateway`
-    /// in any ancestor of the executable (a `swift run` build inside the repo),
-    /// then `~/portico/bin/portico-gateway`.
+    /// `../bin/portico-gateway` next to the executable, then `bin/portico-gateway`
+    /// in any ancestor of the executable (a `swift run` build inside the repo).
+    /// Nothing is tied to where the checkout lives: a deployment that bundles
+    /// the app sets the variable or ships `bin/` beside it.
     static func candidateCommands(environment: [String: String] = ProcessInfo.processInfo.environment) -> [URL] {
         var candidates: [URL] = []
         if let explicit = environment[commandEnvironmentVariable], !explicit.isEmpty {
@@ -154,8 +155,6 @@ final class GatewaySupervisor: ObservableObject {
                 if ancestor.path == "/" { break }
             }
         }
-        candidates.append(
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("portico/bin/portico-gateway"))
         return candidates
     }
 

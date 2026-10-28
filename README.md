@@ -15,7 +15,7 @@ Requirements: macOS 15, `uv` (brings Python 3.13), Swift 6 (Xcode or the
 Command Line Tools), and a provider credential for the agent.
 
 ```sh
-git clone <this repo> ~/portico && cd ~/portico
+git clone <this repo> ~/dev-projects/portico && cd ~/dev-projects/portico
 bin/install                      # gateway: uv sync; app: swift build -c release
 bin/doctor                       # one line per check; tells you if a credential is missing
 bin/portico-gateway run          # prints PORTICO_READY port=<n>; leave it running
