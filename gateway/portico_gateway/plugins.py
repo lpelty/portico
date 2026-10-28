@@ -2,7 +2,7 @@
 
 A plug-in is a Python module named in ``config.plugins`` and kept outside
 the checkout (``config.plugin_paths`` puts its directory on ``sys.path``),
-so updating Portico never touches it. Each module declares
+so updating Portico never touches it. Each module sets
 ``PORTICO_PLUGIN_API = 1`` and defines any of:
 
 - ``on_hello(hello) -> hello`` — adjust the ``hello`` the app receives.
@@ -17,7 +17,7 @@ so updating Portico never touches it. Each module declares
 
 For ``on_renew`` and ``search`` the last plug-in in the list that names
 the hook is the one used. A module that is missing, raises on import, or
-declares a different API number stops the gateway at start with one line
+sets a different API number stops the gateway at start with one line
 saying which and why; the doctor reports the same.
 """
 

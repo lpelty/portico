@@ -57,6 +57,10 @@ command_timeout_seconds = 120       # at least 1
 default_folder = "/Users/me/work"
 card_hold_seconds = 600             # a card with no app attached waits this long, then is denied; 0 = deny at once
 history_buffer = 2000               # events kept per chat for reattach; at least 1
+presentation = "multiple"           # "single": one live session at a time (see below)
+log_prompt = "/session-close"       # the log step a renewal runs first; unset = no log step
+plugins = ["my_deployment_plugin"]  # plug-in modules, imported at start (see Plug-ins)
+plugin_paths = ["~/portico-plugins"] # absolute directories put on the import path for them
 
 [brand]
 name = "Portico"
@@ -72,6 +76,79 @@ text = "/review"
 name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
 ```
+
+## One session at a time
+
+With `presentation = "single"` the app shows one live session instead of a
+list of chats. A session is a chat: numbered, in one folder, with its
+history and artifacts. **Log and start new** (or `/new` in the composer)
+sends `session.renew`: the gateway runs the deployment's log step in the
+ending session as an ordinary turn (its cards come to the app as usual),
+marks the session ended (and logged when that turn finished cleanly),
+then opens the next number in the same folder with the ended one as its
+parent. Ended sessions stay listed, read-only.
+
+The log step is `log_prompt`, sent to the agent as a message — so the
+agent logs itself with the command or skill its folder already has. A
+plug-in's `on_renew` replaces it. With neither, renewing just ends the
+session and opens the next. In single mode `chat.new` is refused while a
+session is live; nothing renews on its own, ever.
+
+After every turn the gateway reports how full the agent's context is
+(`context.usage`); when the agent summarizes earlier conversation to make
+room, the app is told (`chat.compacted`) and the record counts it.
+
+## Plug-ins
+
+A deployment changes what Portico *does* through plug-ins, never by
+editing the checkout (`bin/update` refuses to update over local changes,
+and `bin/doctor` warns about them). A plug-in is a Python module kept
+**outside** the checkout, named in `config.toml`:
+
+```toml
+plugins = ["my_deployment_plugin"]
+plugin_paths = ["~/portico-plugins"]    # the directory that holds my_deployment_plugin.py
+```
+
+The module names the plug-in API it speaks and defines any of the hooks;
+Portico's default runs for every hook it leaves out.
+
+```python
+PORTICO_PLUGIN_API = 1
+
+def on_hello(hello):                 # adjust the hello the app receives; every plug-in's runs, in order
+    return hello
+
+async def on_renew(ctx, chat):       # the log step; replaces log_prompt; return True when logged
+    outcome = await ctx.send("/my-log-command")   # a turn in the ending session: "done", "stopped" or "error"
+    return outcome == "done"
+
+def search(root, query):             # files.search instead of Spotlight; sync or async
+    return [{"path": "relative/to/root.md", "snippet": None}]
+```
+
+`ctx` carries `chat` (the number), `folder`, `log_prompt` and `send`;
+`chat` is the session's `ChatSummary` (title, created, compactions, ...).
+For `on_renew` and `search` the last plug-in listed that defines one wins.
+A module that is missing, fails to import, or names another API number
+stops the gateway at start with one line saying which; `bin/doctor` checks
+each configured plug-in the same way. `examples/plugin/` holds a complete
+example. The app takes no plug-ins: a new kind of screen is a request
+upstream.
+
+## Updating
+
+Releases are tags `vX.Y.Z`; `CHANGELOG.md` says what changed, with a "For
+plug-in authors" part when the plug-in API or its hooks move.
+
+```sh
+bin/update                  # newest release tag: check it out, bin/install (gateway + app), bin/doctor
+bin/update --channel main   # follow main instead (fast-forward pull), then the same
+```
+
+`bin/update` refuses to run over local changes in the checkout and says
+so; move the change into a plug-in, or ask upstream for it. `bin/doctor`
+prints the tag or commit the checkout is on.
 
 ## The producer endpoint
 
@@ -99,6 +176,7 @@ protocol/   PROTOCOL.md (the contract), schema/portico.schema.json, examples/*.j
 gateway/    Python package portico_gateway; tests against a fake engine
 app/        SwiftPM package Portico; tests decode every protocol example
 bin/        install, doctor, update, portico-gateway
+examples/   plugin/: an example plug-in (copy it outside the checkout to use it)
 docs/       done-when.md: the release checklist and what each test covers
 tests/      test_distribution.py: no deployment names in the repo
 ```
@@ -113,6 +191,6 @@ cd gateway && PORTICO_LIVE=1 uv run pytest tests/test_live_smoke.py -v   # opt-i
 cd gateway && PORTICO_LIVE=1 uv run pytest tests/test_live_*.py -v        # the smoke plus done-when checks 1-5 and 9 live; about five minutes
 ```
 
-Other commands: `bin/update` (fast-forward pull, then install);
+Other commands: `bin/update` (newest release tag, then install; see Updating);
 `bin/portico-gateway export-schema` and `export-examples` regenerate
 `protocol/` from the gateway's models.

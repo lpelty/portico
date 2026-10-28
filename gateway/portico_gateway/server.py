@@ -84,6 +84,19 @@ last line) and creates no chat, so the next ``chat.new`` tries again.
 closed, ``on_stop`` runs with its lines as ``status.set``, the index is
 persisted, and ``stopping`` is set for the main loop to ``shutdown`` and
 exit 0. Quitting the app only detaches; stopping is this explicit path.
+
+Sessions (v0.2): a session is a chat. ``session.renew`` is checked in its
+handler and run as a task (its log step is a whole turn, and the frames
+that answer that turn's cards must still be read): the log step —
+a plug-in's ``on_renew``, else ``log_prompt`` sent as a message — runs as
+an ordinary turn, then the chat is ended and the next one created in the
+same folder with ``parent`` set; ``chat.state`` for both, then
+``session.renewed``, then ``chat.list``. In ``single`` presentation
+``chat.new`` is refused while a session is live. After every turn the
+engine's context reading goes out as ``context.usage`` (from its own task:
+a failure is logged and skipped); its ``PreCompact`` hook becomes a stamped
+``chat.compacted``. ``files.search`` answers from Spotlight under a root
+(``search.py``) or from a plug-in's ``search``.
 """
 
 from __future__ import annotations

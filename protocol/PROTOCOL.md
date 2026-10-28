@@ -250,6 +250,30 @@ the ledger and exits 0. Quitting the app only detaches; this is the
 explicit stop. SIGTERM or SIGINT to the gateway process takes the same
 path. There is no reply frame: the close is the answer.
 
+### `session.renew` — `SessionRenew`
+`chat`, `log: bool` (default `true`), `id`. Ends session `chat` and opens
+the next one in the same folder. With `log` and a log step configured
+(`hello.can_log`), the gateway first runs it in the ending session as an
+ordinary turn — `turn.started`, `user.text`, its events, any cards, and
+`turn.finished` — and waits for it; the session is `logged` only when that
+turn finished `done`. A failed or stopped log step still renews (`logged:
+false`). Then the engine is closed, the session gets `ended` and `chat.state
+stopped`, the next session (a new number, `parent` = the ended one) gets
+`chat.state idle`, and the gateway answers `session.renewed` (with the
+`id`) followed by `chat.list`. The next session's engine starts with its
+first `message.send`. Errors: `chat.unknown`, `chat.busy` (a turn or another
+renew is running), `session.ended` (already ended). While a renew runs,
+`message.send` to that session is `chat.busy`; `turn.stop` stops the log
+turn; `card.answer` answers its cards.
+
+### `files.search` — `FilesSearch`
+`root` (named as for `files.list`; `chat` with `chat` set), `query`, `id`.
+Reply: `files.results`, or `error` with the `files.list` root codes or
+`files.search_failed`. The reference gateway asks Spotlight (`mdfind
+-onlyin`): at most 50 hits, 5 seconds, names matching the query first,
+hidden entries and anything outside the root dropped; a blank query has no
+hits. A deployment plug-in may search instead.
+
 ## Messages: gateway → app
 
 ### `hello` — `HelloServer`
@@ -405,6 +429,26 @@ Without `chat` and `seq` it is gateway-wide and not part of any history:
 the output lines of the deployment's `before_first_chat` and `on_stop`
 commands arrive this way, as does the gateway's own "stopping" line.
 
+### `session.renewed` — `SessionRenewed`
+`id` (the `session.renew`'s), `ended: ChatSummary`, `next: ChatSummary`.
+Not stamped. Sent after `chat.state` for both sessions and before the
+`chat.list` that includes the new one.
+
+### `context.usage` — `ContextUsage`
+`chat`, `percent` (0–100), `model?`. After a turn ends, how full the
+session's context window is. Not stamped (a reading, not history); the
+last value is the chat's `context_percent` in `chat.list`. Absent when the
+engine cannot say.
+
+### `chat.compacted` — `ChatCompacted`
+`chat`, `trigger: "auto" | "manual"`, `seq`. The engine is summarizing
+earlier conversation to make room. Stamped and replayed with the history;
+counted in the chat's `compactions`.
+
+### `files.results` — `FilesResults`
+`id`, `root`, `query`, `hits: [{path, snippet?}]` with `path` relative to
+the root. A direct reply: no `seq`.
+
 ### `error` — `Error`
 `chat?`, `id?` (the request it answers), `code`, `message`. Codes so far:
 `protocol.invalid`, `protocol.unknown_type`, `protocol.hello_required`,
@@ -417,7 +461,10 @@ directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
 `card.stale`, `card.invalid_answer`, `files.unknown_root`, `files.outside_root`,
-`files.not_found`,
+`files.not_found`, `files.search_failed` (Spotlight failed or timed out),
+`session.ended` (`session.renew` or `message.send` on a session that has
+ended), `session.live` (`chat.new` in single presentation while a session
+is live; renew it instead),
 `lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
 carries its last line and no chat was created),
 `gateway.error` (a handler failed; the message says which).

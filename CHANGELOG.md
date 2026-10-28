@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.2.0 (unreleased)
+
+### What a person gets
+
+- **One session at a time** (`presentation = "single"`): one live session;
+  **Log and start new** (or `/new`) runs the deployment's log step in the
+  ending session, marks it ended and logged, and opens the next number in
+  the same folder. Ended sessions keep their number, title, and whether
+  they were logged. Multiple-chat mode is unchanged.
+- **Session facts on every chat**: a title (the first line of the first
+  message, up to 60 characters), ended, logged, the session it followed,
+  how many times the agent compacted it, and the last context reading.
+  A v0.1 `index.json` loads unchanged.
+- **Context and compaction**: after every turn the gateway reports how full
+  the context is and the model (`context.usage`); a compaction is
+  reported (`chat.compacted`) and counted, never hidden.
+- **Full-text file search** under any root (`files.search`), through
+  Spotlight: no index of Portico's own. At most 50 hits, 5 seconds.
+- **Releases by tag**: `bin/update` moves to the newest `vX.Y.Z` tag,
+  reinstalls, rebuilds the app and runs the doctor (`--channel main`
+  follows main). It refuses to update over local changes; the doctor warns
+  about them and prints the tag or commit.
+
+### Protocol (still version 1; additions only)
+
+- App → gateway: `session.renew {chat, log}`, `files.search {root, query}`.
+- Gateway → app: `session.renewed {ended, next}` (answers the renew's `id`,
+  after `chat.state` for both sessions and before `chat.list`),
+  `context.usage {chat, percent, model}` (not stamped), `chat.compacted
+  {chat, trigger}` (stamped, replayed), `files.results {root, query, hits}`.
+- `hello` gains `presentation` and `can_log`, and the capabilities
+  `sessions`, `files.search`, `context`. `ChatSummary` gains `title`,
+  `ended`, `logged`, `parent`, `compactions`, `context_percent`.
+- New error codes: `session.ended` (renewing, or sending to, a session that
+  has ended), `session.live` (`chat.new` in single mode while a session is
+  live), `files.search_failed` (Spotlight failed or timed out).
+
+### Configuration
+
+New keys, all optional: `presentation` (`"multiple"` or `"single"`,
+default `"multiple"`), `log_prompt`, `plugins`, `plugin_paths`.
+
+### For plug-in authors
+
+- Plug-in API **1**. A plug-in is a module outside the checkout, named in
+  `plugins`, with its directory in `plugin_paths`; it must define
+  `PORTICO_PLUGIN_API = 1`.
+- Hooks, each optional: `on_hello(hello) -> hello`;
+  `async on_renew(ctx, chat) -> bool` (the log step; `ctx.send(text)` runs a
+  turn in the ending session and returns `"done"`, `"stopped"` or
+  `"error"`; `ctx.folder`, `ctx.chat`, `ctx.log_prompt`); `search(root,
+  query) -> list[Hit]` (sync or async; dicts with `path` and `snippet` are
+  accepted; paths relative to `root`, anything outside it is dropped).
+- A missing module, an import error or another API number stops the
+  gateway at start with one line; `bin/doctor` reports each plug-in.
+- `examples/plugin/portico_example_plugin.py` overrides `on_renew` and
+  `on_hello`.
+
 ## v0.1.0
 
 First hand-off. One repo holding a versioned app-to-gateway protocol, a
