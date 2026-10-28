@@ -90,6 +90,18 @@ def test_malformed_json_is_invalid():
     assert e.value.code == "protocol.invalid"
 
 
+def test_deeply_nested_frame_is_invalid_not_a_crash():
+    # ~200 KB of nested arrays fits under the WebSocket frame limit but blows
+    # the JSON decoder's recursion; it must surface as protocol.invalid on
+    # both parsers, never as a RecursionError escaping the dispatch loop.
+    frame = "[" * 100_000 + "]" * 100_000
+    for parser in (parse_client, parse_server):
+        with pytest.raises(ProtocolError) as e:
+            parser(frame)
+        assert e.value.code == "protocol.invalid"
+        assert "nested too deeply" in e.value.message
+
+
 def test_server_type_is_not_a_client_type():
     # text.delta only flows gateway -> app; the client parser must refuse it.
     with pytest.raises(ProtocolError) as e:

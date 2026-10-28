@@ -421,6 +421,11 @@ SERVER_TYPE_NAMES: frozenset[str] = frozenset(_type_of(m) for m in SERVER_TYPES)
 def _parse(raw: str | bytes, adapter: TypeAdapter[Any], known: frozenset[str]) -> Any:
     try:
         obj = json.loads(raw)
+    except RecursionError:
+        # A frame nested deeper than the interpreter's stack is still just a
+        # bad frame: the dispatch loop relies on every bad frame being a
+        # ``ProtocolError``, never an escaping exception.
+        raise ProtocolError("protocol.invalid", "not valid JSON: nested too deeply") from None
     except (ValueError, TypeError) as e:
         raise ProtocolError("protocol.invalid", f"not valid JSON: {e}") from e
     if not isinstance(obj, dict):
