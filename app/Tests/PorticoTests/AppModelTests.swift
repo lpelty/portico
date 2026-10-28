@@ -132,6 +132,72 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.closedCards[1]?["card-7"], "turn stopped")
     }
 
+    func testCardCancelRemovesPinned() {
+        let (model, sent) = model()
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        let card = CardAsk(
+            chat: 1, id: "card-9", kind: .permission, title: "Run a command",
+            permission: Permission(tool: "Bash", summary: "ls", input: ["command": .string("ls")]),
+            questions: nil, form: nil, seq: 2)
+        model.apply(.cardAsk(card))
+        model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
+
+        // While open the card is pinned above the input and inline in the transcript.
+        XCTAssertEqual(model.pinnedCards(for: 1).map(\.id), ["card-9"])
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "card-9"), .open)
+        XCTAssertEqual((model.transcripts[1] ?? []).last, .card(card))
+
+        // card.cancel: the pinned copy goes; the inline one stays, marked cancelled with the reason.
+        model.apply(.cardCancel(CardCancel(chat: 1, id: "card-9", reason: "turn stopped", seq: 4)))
+        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertEqual((model.transcripts[1] ?? []).last, .card(card), "the inline card is not removed")
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "card-9"), .cancelled("turn stopped"))
+        XCTAssertEqual(CardStatusPresentation(status: model.cardStatus(chat: 1, id: "card-9")).label, "cancelled: turn stopped")
+
+        // A cancel without a reason, or for a card never seen, is harmless.
+        model.apply(.cardCancel(CardCancel(chat: 1, id: "card-9", reason: nil, seq: 5)))
+        model.apply(.cardCancel(CardCancel(chat: 1, id: "ghost", reason: nil, seq: 6)))
+        XCTAssertEqual(model.cardStatus(chat: 1, id: "ghost"), .cancelled("cancelled"))
+        XCTAssertEqual(model.pinnedCards(for: 1), [])
+
+        // Answering a cancelled card sends nothing: there is no open card to answer.
+        model.answerCard(CardAnswer(chat: 1, id: "card-9", answer: ["decision": .string("allow")], scope: .once))
+        XCTAssertFalse(sent.frames.contains { if case .cardAnswer = $0 { return true } else { return false } })
+    }
+
+    func testAnswerCardSendsCardAnswerAndUnpins() {
+        let (model, sent) = model()
+        let card = CardAsk(
+            chat: 2, id: "card-3", kind: .permission, title: "Write a file",
+            permission: Permission(tool: "Write", summary: "/tmp/demo/a.md", input: [:]),
+            questions: nil, form: nil, seq: 1)
+        model.apply(.cardAsk(card))
+        XCTAssertEqual(model.pinnedCards(for: 2).map(\.id), ["card-3"])
+
+        model.answerCard(CardAnswer(chat: 2, id: "card-3", answer: ["decision": .string("allow")], scope: .chat, note: "fine here"))
+        guard case .cardAnswer(let sentAnswer)? = sent.frames.last else { return XCTFail("expected card.answer, got \(sent.frames)") }
+        XCTAssertEqual(sentAnswer.chat, 2)
+        XCTAssertEqual(sentAnswer.id, "card-3")
+        XCTAssertEqual(sentAnswer.answer, ["decision": .string("allow")])
+        XCTAssertEqual(sentAnswer.scope, .chat)
+        XCTAssertEqual(sentAnswer.note, "fine here")
+
+        XCTAssertEqual(model.pinnedCards(for: 2), [], "an answered card is no longer pinned")
+        XCTAssertEqual(model.cardStatus(chat: 2, id: "card-3"), .answered)
+        XCTAssertEqual(CardStatusPresentation(status: .answered).label, "answered")
+        XCTAssertEqual((model.transcripts[2] ?? []).count, 1, "the inline copy stays")
+
+        // A second answer for the same card is a stale one: nothing is sent.
+        let before = sent.frames.count
+        model.answerCard(CardAnswer(chat: 2, id: "card-3", answer: ["decision": .string("deny")]))
+        XCTAssertEqual(sent.frames.count, before)
+
+        // The same card re-sent later (a chat.open replay of a card the gateway still
+        // holds) does not come back as open: the app already answered it.
+        model.apply(.cardAsk(card))
+        XCTAssertEqual(model.pinnedCards(for: 2), [])
+    }
+
     func testHistoryThenLiveReplacesTranscript() {
         let (model, sent) = model()
         // Before a restart the app held a live transcript for chat 1.

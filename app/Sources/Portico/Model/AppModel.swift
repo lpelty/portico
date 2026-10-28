@@ -44,6 +44,14 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     }
 }
 
+/// Where a card stands from the app's side: still waiting, answered from
+/// this app, or cancelled by the gateway (with the reason it gave).
+enum CardStatus: Equatable, Sendable {
+    case open
+    case answered
+    case cancelled(String)
+}
+
 // MARK: - AppModel
 
 /// The app's state and the one reducer for gateway messages.
@@ -375,12 +383,39 @@ final class AppModel: ObservableObject {
     }
 
     /// Take a card out of the open set and record why. Called on
-    /// `card.cancel`, and by the cards module once an answer is sent.
+    /// `card.cancel`, and by `answerCard` once an answer is sent.
     func closeCard(chat: Int, id: String, why: String) {
         openCards[chat] = (openCards[chat] ?? []).filter { $0.id != id }
         var closed = closedCards[chat] ?? [:]
         closed[id] = why
         closedCards[chat] = closed
+    }
+
+    // MARK: - cards
+
+    /// The `closedCards` reason that means "answered from this app".
+    static let answeredMarker = "answered"
+
+    /// The cards pinned above the input: the chat's open cards, oldest first.
+    func pinnedCards(for chat: Int) -> [CardAsk] {
+        openCards[chat] ?? []
+    }
+
+    /// How the transcript's inline copy of a card reads: open while the
+    /// gateway waits, `answered` once this app answered, `cancelled` with
+    /// the gateway's reason after a `card.cancel`.
+    func cardStatus(chat: Int, id: String) -> CardStatus {
+        guard let why = closedCards[chat]?[id] else { return .open }
+        return why == Self.answeredMarker ? .answered : .cancelled(why)
+    }
+
+    /// Send a card's answer and unpin it. A card that is not open (answered
+    /// already, cancelled, never seen) gets nothing: the gateway would only
+    /// refuse it as `card.stale`, and there is nothing to show for it.
+    func answerCard(_ answer: CardAnswer) {
+        guard pinnedCards(for: answer.chat).contains(where: { $0.id == answer.id }) else { return }
+        send(.cardAnswer(answer))
+        closeCard(chat: answer.chat, id: answer.id, why: Self.answeredMarker)
     }
 
     // MARK: - sidebar actions

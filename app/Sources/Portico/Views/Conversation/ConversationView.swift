@@ -12,6 +12,10 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             transcript
+            if !model.pinnedCards(for: chat).isEmpty {
+                Divider()
+                pinnedCards
+            }
             if let status = model.status[chat], !status.isEmpty {
                 Divider()
                 Text(status)
@@ -52,6 +56,23 @@ struct ConversationView: View {
         }
     }
 
+    /// The chat's open cards, pinned above the input until answered or
+    /// cancelled. The answer goes through the model, which unpins the card
+    /// and marks the inline copy.
+    private var pinnedCards: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                ForEach(model.pinnedCards(for: chat)) { card in
+                    CardView(card: card, onAnswer: { model.answerCard($0) })
+                        .id(card.id)
+                }
+            }
+            .padding(12)
+        }
+        .frame(maxHeight: 320)
+        .background(.bar)
+    }
+
     /// Changes whenever an item is added or the streaming tail grows.
     private var scrollKey: String {
         guard let last = items.last else { return "" }
@@ -73,6 +94,7 @@ struct ConversationView: View {
 /// One transcript item, by kind.
 struct TranscriptItemView: View {
     let item: TranscriptItem
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
         switch item {
@@ -86,7 +108,7 @@ struct TranscriptItemView: View {
         case .tool(let row):
             ToolRowView(row: row)
         case .card(let card):
-            CardPlaceholder(card: card)
+            CardInlineView(card: card, status: model.cardStatus(chat: card.chat, id: card.id))
         case .turnMarker(let marker):
             TurnMarkerView(marker: marker)
         }
@@ -134,29 +156,5 @@ struct TurnMarkerView: View {
         case .stopped: "turn \(marker.turn) stopped"
         case .error: "turn \(marker.turn) ended with an error"
         }
-    }
-}
-
-/// A card's place in the transcript until the cards module (Task 18)
-/// renders it: the kind, the title, and that it is waiting.
-struct CardPlaceholder: View {
-    let card: CardAsk
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "rectangle.on.rectangle.angled")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(card.title)
-                    .fontWeight(.medium)
-                Text(card.kind.rawValue)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(10)
-        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.orange.opacity(0.4)))
     }
 }

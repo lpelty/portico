@@ -38,12 +38,7 @@ struct ToolRowPresentation: Equatable {
 
     /// The tool's input, keys sorted, two-space indented.
     var prettyInput: String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(row.input), let text = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return text
+        PrettyJSON.render(row.input)
     }
 }
 
