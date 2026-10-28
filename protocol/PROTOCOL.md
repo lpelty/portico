@@ -14,12 +14,21 @@ their behaviour notes when that task lands.
 
 - One WebSocket from the app to the gateway: `ws://127.0.0.1:<port>/v1?token=<token>`.
   The gateway binds loopback only and refuses a connect without the
-  per-launch token with HTTP 401. *(Task 6)*
+  per-launch token (missing or wrong) with HTTP 401 before the upgrade; a
+  path other than `/v1` is 404. The token is the content of the `token`
+  file in the state directory, rewritten on every gateway launch.
+- One app at a time: a second connection that completes `hello` replaces
+  the first, which receives `error code=session.replaced` and is closed
+  (close code 1008). Events sent while no app is attached are not queued
+  on the socket; the app catches up through `chat.open` with `since`.
 - One HTTP endpoint for artifact producers, `POST /v1/artifact`, with
   `Authorization: Bearer <token>`. *(Task 9)*
 - `GET /v1/health` answers `{"epoch": "...", "protocol": 1}` without a token,
-  so the app can tell a live gateway from a stale ledger. *(Task 6)*
-- The gateway prints `PORTICO_READY port=<n>` on stdout once it is listening. *(Task 6)*
+  so the app can tell a live gateway from a stale ledger. Plain HTTP shares
+  the WebSocket port; an unknown route is 404 with `{"error": "..."}`.
+- The gateway prints `PORTICO_READY port=<n>` on stdout once it is listening
+  and writes `ledger.json` (`host`, `port`, `pid`, `epoch`) in the state
+  directory; the ledger is removed on a clean stop (close code 1001 to the app).
 
 ## Envelope
 
@@ -61,7 +70,9 @@ sequence numbers are stale and it must re-fetch history.
 ### `hello` — `HelloClient`
 First frame on every connection. `protocol: 1`, `app_version: string`.
 Anything else first is answered with `error code=protocol.hello_required` and
-the socket is closed. *(Task 6)*
+the socket is closed (close code 1002); a first frame that does not parse
+gets its `protocol.*` error and the same close. A second `hello` on an
+open connection is `error code=protocol.invalid` and otherwise ignored.
 
 ### `chat.new` — `ChatNew`
 `folder: string` (absolute path). Reply: `chat.state` (`idle`) then an
@@ -118,7 +129,8 @@ nothing. *(Task 9)*
 `protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?}`,
 `actions: [{label, text}]`, `roots: [{name, path}]`, `commands: [string]`
 (reserved; empty in v0.1), `capabilities: [string]` (v0.1: `cards.form`,
-`files`, `producer`). Followed by `chat.list`. *(Tasks 3, 6)*
+`files`, `producer`). Always followed by `chat.list`, so the app has the
+sidebar before anything else arrives.
 
 ### `chat.list` — `ChatList`
 `chats: [{chat, folder, alias?, state, created}]`. *(Tasks 5, 7)*
@@ -176,5 +188,12 @@ app should show now. *(Task 9)*
 ### `error` — `Error`
 `chat?`, `id?` (the request it answers), `code`, `message`. Codes so far:
 `protocol.invalid`, `protocol.unknown_type`, `protocol.hello_required`,
-`session.replaced`, `chat.busy`, `attachment.missing`, `card.stale`,
-`files.outside_root`, `lifecycle.before_first_chat_failed`.
+`protocol.unsupported` (a known type this gateway has no handler for),
+`session.replaced`, `chat.unknown` (no chat with that number), `chat.busy`,
+`attachment.missing`, `card.stale`, `files.outside_root`,
+`lifecycle.before_first_chat_failed`, `gateway.error` (a handler failed;
+the message says which).
+
+A bad frame after `hello` (unknown type, unknown field, not JSON) is
+answered with an `error` and the connection stays open; only the first
+frame is fatal.
