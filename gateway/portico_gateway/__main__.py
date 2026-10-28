@@ -77,7 +77,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for check in checks:
         print(format_check(check))
     failed = sum(1 for c in checks if not c.ok)
-    print(f"{len(checks) - failed} of {len(checks)} checks passed" if failed else f"all {len(checks)} checks passed")
+    warned = sum(1 for c in checks if c.ok and c.warn)
+    note = f" ({warned} warning{'s' if warned != 1 else ''})" if warned else ""
+    print((f"{len(checks) - failed} of {len(checks)} checks passed" if failed else f"all {len(checks)} checks passed") + note)
     return 1 if failed else 0
 
 
