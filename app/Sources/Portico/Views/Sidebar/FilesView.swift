@@ -68,15 +68,9 @@ struct FilesView: View {
             .padding(.top, 18)
             .padding(.bottom, 6)
             .padding(.horizontal, 16)
-            Picker("Files", selection: $model.filesTab) {
-                Text("Folder").tag(AppModel.FilesTab.folder)
-                Text("Quick").tag(AppModel.FilesTab.quick)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+            FilesTabSwitch(selection: $model.filesTab)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             switch model.filesTab {
             case .folder:
                 header
@@ -541,5 +535,39 @@ enum FileIcon {
         case .url: "link"
         case .other: URL(fileURLWithPath: name).pathExtension.lowercased() == "csv" ? "tablecells" : "doc"
         }
+    }
+}
+
+
+/// The Folder | Quick switch under the FILES header (F1/F2): two halves
+/// spanning the sidebar. A segmented `Picker` keeps its own narrow width on
+/// macOS, so this is drawn by hand.
+struct FilesTabSwitch: View {
+    @Binding var selection: AppModel.FilesTab
+
+    var body: some View {
+        HStack(spacing: 2) {
+            item("Folder", .folder)
+            item("Quick", .quick)
+        }
+        .padding(2)
+        .background(Theme.control, in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Files view")
+    }
+
+    private func item(_ title: String, _ tab: AppModel.FilesTab) -> some View {
+        let on = selection == tab
+        return Button { selection = tab } label: {
+            Text(title)
+                .font(.system(size: 11, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Theme.text : Theme.text2)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .background(on ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
