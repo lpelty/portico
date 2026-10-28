@@ -39,6 +39,17 @@ running; ``card.answer`` resolves it, ``turn.stop`` / ``chat.stop`` /
 and a card held while no app is attached is denied after the hold with
 ``nobody was there to answer``. ``chat.open`` re-sends the chat's open
 cards after ``chat.live``. Nothing is ever allowed by default.
+
+Artifacts (Task 9): every turn has a ``TurnCollector`` (``artifacts.py``)
+fed from the engine's ``tool.started`` and ``text.delta`` events. When the
+turn ends — the engine's own finish, or the one the gateway synthesises on
+``turn.stop`` / ``chat.stop`` — the collector settles, each artifact is
+sent as ``artifact.created`` (stamped, in the ring, in the index) just
+before ``turn.finished``, with ``open`` on the newest viewable one only.
+``POST /v1/artifact`` (``Authorization: Bearer <token>``, body ``{chat,
+location, title?}``) is the producer seam: its artifact is reported at
+once with ``open=true``. ``artifact.opened`` from the app is telemetry
+and is acknowledged with nothing.
 """
 
 from __future__ import annotations
@@ -62,12 +73,15 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
+from .artifacts import TurnCollector, artifact_for_location
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat
 from .config import Config, hello_for
 from .engine import Engine, PermissionDecision
 from .messages import (
     PROTOCOL_VERSION,
+    ArtifactCreated,
+    ArtifactOpened,
     CardAnswer,
     CardAsk,
     ChatAlias,
@@ -87,6 +101,8 @@ from .messages import (
     MessageSend,
     ProtocolError,
     ServerMessage,
+    TextDelta,
+    ToolStarted,
     TurnFinished,
     TurnStarted,
     TurnStop,
@@ -156,6 +172,7 @@ class TurnRun:
     """One turn in flight on a chat."""
 
     turn: int
+    collector: TurnCollector
     stop_requested: bool = False
     finished: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -411,7 +428,11 @@ class GatewayServer:
         self._runs: dict[int, TurnRun] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self.cards = CardBroker(hold_seconds=config.card_hold_seconds)
-        self.http_routes: dict[tuple[str, str], HttpHandler] = {("GET", "/v1/health"): self._health}
+        self.http_routes: dict[tuple[str, str], HttpHandler] = {
+            ("GET", "/v1/health"): self._health,
+            ("POST", "/v1/artifact"): self._producer,
+        }
+        self.register("artifact.opened", self.on_artifact_opened)
         self.register("card.answer", self.on_card_answer)
         self.register("chat.new", self.on_chat_new)
         self.register("chat.open", self.on_chat_open)
@@ -632,16 +653,22 @@ class GatewayServer:
 
     async def engine_event(self, chat: Chat, event: ServerMessage) -> None:
         """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn."""
+        run = self._runs.get(chat.number)
         if not isinstance(event, TurnFinished):
+            if run is not None:
+                if isinstance(event, ToolStarted):
+                    run.collector.note_tool(event.tool, event.input)
+                elif isinstance(event, TextDelta):
+                    run.collector.note_text(event.text)
             await self.emit(chat, event)
             return
-        run = self._runs.get(chat.number)
         if run is None:
             # The turn was already ended by the gateway (chat.stop, or the stop grace ran out).
             log.debug("chat %d: engine finish for turn %d after the turn ended; dropped", chat.number, event.turn)
             return
         if run.stop_requested:
             event = event.model_copy(update={"outcome": "stopped"})
+        await self._report_artifacts(chat, run)
         await self.emit(chat, event)
         await self._finish_run(chat, run)
 
@@ -661,8 +688,52 @@ class GatewayServer:
         if self._runs.get(chat.number) is not run:
             return
         log.warning("chat %d: engine did not finish turn %d within %.0fs of stop; ending it", chat.number, run.turn, STOP_GRACE_SECONDS)
+        await self._report_artifacts(chat, run)
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self._finish_run(chat, run)
+
+    # --- artifacts ----------------------------------------------------------------
+
+    async def _report_artifacts(self, chat: Chat, run: TurnRun) -> None:
+        """Settle the turn's collector and send one ``artifact.created`` per artifact (newest viewable opens)."""
+        artifacts = run.collector.finish(chat.folder)
+        if not artifacts:
+            return
+        for artifact in artifacts:
+            chat.artifacts.append(artifact)
+            await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
+        self.registry.persist()
+
+    async def _producer(self, request: HttpRequest) -> HttpResponse:
+        """``POST /v1/artifact`` ``{chat, location, title?}``: report an artifact now, ``open=true``."""
+        self.require_token(request)
+        body = request.json()
+        if not isinstance(body, dict):
+            raise HttpError(http.HTTPStatus.BAD_REQUEST, "body must be a JSON object with chat and location")
+        number = body.get("chat")
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise HttpError(http.HTTPStatus.BAD_REQUEST, "chat is required: the chat number (an integer)")
+        location = body.get("location")
+        if not isinstance(location, str) or not location.strip():
+            raise HttpError(http.HTTPStatus.BAD_REQUEST, "location is required: a file path or a URL")
+        title = body.get("title")
+        if title is not None and not isinstance(title, str):
+            raise HttpError(http.HTTPStatus.BAD_REQUEST, "title must be a string")
+        try:
+            chat = self.registry.get(number)
+        except UnknownChat as e:
+            raise HttpError(http.HTTPStatus.NOT_FOUND, str(e)) from None
+        artifact = artifact_for_location(
+            location.strip(), source="producer", title=(title or "").strip() or None, open=True, folder=chat.folder
+        )
+        chat.artifacts.append(artifact)
+        await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
+        self.registry.persist()
+        return HttpResponse.json(http.HTTPStatus.CREATED, {"artifact": artifact.model_dump(mode="json")})
+
+    async def on_artifact_opened(self, msg: ArtifactOpened, conn: ServerConnection) -> None:
+        """Telemetry from the app; nothing to do and nothing to answer."""
+        log.debug("chat %d: app opened artifact %s", msg.chat, msg.artifact_id)
 
     # --- cards ------------------------------------------------------------------
 
@@ -736,6 +807,7 @@ class GatewayServer:
         await self.cards.cancel_all(chat, "chat stopped", self.emit)
         await self._close_engine(chat)
         if run is not None:
+            await self._report_artifacts(chat, run)
             await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self.set_state(chat, "stopped")
 
@@ -769,7 +841,7 @@ class GatewayServer:
         text = with_attachments(msg.text, attachments)
 
         chat.turn += 1
-        run = TurnRun(turn=chat.turn)
+        run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
         self._runs[chat.number] = run
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
         await self.set_state(chat, "working")

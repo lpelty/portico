@@ -22,7 +22,17 @@ their behaviour notes when that task lands.
   (close code 1008). Events sent while no app is attached are not queued
   on the socket; the app catches up through `chat.open` with `since`.
 - One HTTP endpoint for artifact producers, `POST /v1/artifact`, with
-  `Authorization: Bearer <token>`. *(Task 9)*
+  `Authorization: Bearer <token>` (the same token file) and a JSON body
+  `{"chat": <number>, "location": "<path or URL>", "title": "<optional>"}`.
+  Any hook, skill, or script on the agent side can call it to say "show
+  this". The gateway reports the artifact to the app at once as
+  `artifact.created` with `source: producer` and `open: true`, records it
+  in the chat's history, and answers `201` with `{"artifact": {...}}`.
+  A relative `location` is resolved against the chat's folder; `http://`
+  and `https://` locations are URLs. Refusals: `401` without the token,
+  `404` for an unknown chat, `400` when `chat` or `location` is missing
+  or the body is not JSON — each as `{"error": "..."}`. The call works
+  while no app is attached; the artifact waits in the ring for `chat.open`.
 - `GET /v1/health` answers `{"epoch": "...", "protocol": 1}` without a token,
   so the app can tell a live gateway from a stale ledger. Plain HTTP shares
   the WebSocket port; an unknown route is 404 with `{"error": "..."}`.
@@ -166,8 +176,8 @@ folder, with `chat` set), `path: string` (relative, default `""`), `id` to
 correlate. Reply: `files.list` (server). *(Task 12)*
 
 ### `artifact.opened` — `ArtifactOpened`
-`chat`, `artifact_id: string`. Informational; the gateway acknowledges
-nothing. *(Task 9)*
+`chat`, `artifact_id: string`. Optional telemetry: the app showed that
+artifact. The gateway accepts it and answers nothing.
 
 ## Messages: gateway → app
 
@@ -259,9 +269,25 @@ to answer`). A `card.answer` that arrives afterwards is `card.stale`.
 
 ### `artifact.created` — `ArtifactCreated`
 `chat`, `seq`, `artifact {id, kind: file | url, location, media, title, source, open}`.
-`media` is one of `markdown`, `image`, `html`, `pdf`, `text`, `url`, `other`;
-`source` is `tool`, `text`, or `producer`; `open` is true on the artifact the
-app should show now. *(Task 9)*
+`media` is one of `markdown`, `image`, `html`, `pdf`, `text`, `url`, `other`
+(by file extension: `.md .markdown`, `.png .jpg .jpeg .gif .webp .svg`,
+`.html .htm`, `.pdf`, `.txt`; a URL is `url`; anything else `other`).
+`source` says where the gateway found it: `tool` (a file-writing tool —
+`Write`, `Edit`, `MultiEdit`, `NotebookEdit` — named the path), `text`
+(the agent's text printed a `http://localhost` / `http://127.0.0.1`
+address, or named a viewable file that exists when the turn ends), or
+`producer` (the HTTP endpoint). `title` is the file name or the URL
+unless a producer gave one. A file is reported wherever it lives — a
+scratch directory outside the chat's folder opens like any other.
+
+Every artifact goes in the history. `open` is true on the artifact the
+app should show now: the turn's artifacts are sent together just before
+`turn.finished` (including a `stopped` finish), one per location, and
+only the newest *viewable* one — `markdown`, `image`, `html`, `pdf`,
+`url` — carries `open: true`; `text` and `other` are listed and never
+auto-open, so scaffolding a project does not flap the viewer. A producer
+artifact is sent at once with `open: true`. Artifacts are kept with the
+chat in the index, so a later launch still lists them.
 
 ### `files.list` — `FilesList`
 `root`, `path`, `entries: [{name, dir, size?}]`, `id` echoing the request. *(Task 12)*

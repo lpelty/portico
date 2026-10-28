@@ -20,10 +20,10 @@ from portico_gateway import __version__
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config
 from portico_gateway.messages import (
-    ArtifactOpened,
     ChatList,
     ChatOpen,
     Error,
+    FilesListRequest,
     HelloClient,
     HelloServer,
     StatusSet,
@@ -203,10 +203,10 @@ async def test_bad_frame_after_hello_is_error_not_close(server: GatewayServer) -
 
 
 async def test_unhandled_known_type_answers_with_error_and_id(server: GatewayServer) -> None:
-    # Dispatch exists; the artifact handlers land at Task 9, so artifact.opened is unhandled here.
+    # Dispatch exists; the files handler lands at Task 12, so files.list is unhandled here.
     conn = await attach(server)
     try:
-        await conn.send(dump(ArtifactOpened(ts=TS, chat=1, id="req-9", artifact_id="art-1")))
+        await conn.send(dump(FilesListRequest(ts=TS, chat=1, id="req-9", root="chat", path="")))
         err = parse_server(await asyncio.wait_for(conn.recv(), 5))
         assert isinstance(err, Error)
         assert err.id == "req-9"
