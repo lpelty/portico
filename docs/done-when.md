@@ -5,15 +5,20 @@ when an automated test or probe in this repo demonstrably covers it, and
 the test is cited. The rest are marked **manual** for a person at the
 screen; where a check cannot run without a provider credential, it says so.
 
-Baseline on 2026-10-28, before this closing commit:
+Baseline on 2026-10-28, with the live checks folded in:
 
-- `cd gateway && uv run pytest -q`: 163 passed, 1 skipped (the opt-in live smoke)
+- `cd gateway && uv run pytest -q`: 195 passed, 25 skipped (the opt-in live
+  smoke and the six opt-in live check files below)
 - `cd app && swift test`: 77 tests, 1 skipped (the opt-in live hello handshake), 0 failures
 - `tests/test_distribution.py`: 2 passed
 
 Opt-in live tests, when a credential is in the environment:
 
 - `cd gateway && PORTICO_LIVE=1 uv run pytest tests/test_live_smoke.py -v`
+- `cd gateway && PORTICO_LIVE=1 uv run pytest tests/test_live_check1.py tests/test_live_check2.py tests/test_live_check3.py tests/test_live_check4.py tests/test_live_check5.py tests/test_live_check9.py -v`
+  — the gateway half of checks 1, 2, 3, 4, 5 and 9 against the real model
+  (24 tests; every one passed on this machine on 2026-10-28). Each file
+  says in its docstring what it leaves to a person at the screen.
 - `cd app && PORTICO_GATEWAY_URL=ws://127.0.0.1:<port> PORTICO_GATEWAY_TOKEN=<token> swift test --filter testLiveHelloHandshake`
 
 ## The checks
@@ -31,8 +36,18 @@ Opt-in live tests, when a credential is in the environment:
     (`gateway/tests/test_turns.py::test_send_streams_text_and_tool_events_with_seq`)
     and text deltas coalescing in the app
     (`app/Tests/PorticoTests/AppModelTests.swift::testApplyTextDeltasCoalesce`).
-  - Not automated: a fresh clone through `bin/install`, the real window,
-    the reply from a real model.
+  - Live, opt-in (`gateway/tests/test_live_check1.py`): a `git clone` of
+    HEAD through `bin/install` (gateway venv and `swift build -c release`),
+    `bin/doctor` passing from the clone and naming a missing credential, the
+    clone's `bin/portico-gateway run` detached with its ready line and
+    ledger, health without a token and websocket 401 without one, a real
+    reply streamed over the protocol, and `gateway.stop` closing 1001,
+    exiting 0 and clearing the ledger
+    (`::test_a_doctor_passes_from_the_clone_and_names_a_missing_credential`,
+    `::test_b_ready_line_ledger_health_and_token_gate`,
+    `::test_c_conversation_streams_a_reply`,
+    `::test_d_gateway_stop_exits_and_clears_the_ledger`).
+  - Not automated: the real window (`swift run`) and picking a folder in it.
 
 ### 2. Ask for a file write: a permission card appears; deny leaves no file and the agent says it was denied; allow writes it, and the file opens in the viewer on its own.
 
@@ -50,7 +65,15 @@ Opt-in live tests, when a credential is in the environment:
     (`app/Tests/PorticoTests/CardTests.swift::testPermissionChoicesMapToDecisionAndScope`)
     and auto-open in the app
     (`app/Tests/PorticoTests/ArtifactOpenTests.swift::testAutoOpenRespectsSettingAndOpenFlag`).
-  - Not automated: a real model asking, and the agent's own words after a deny.
+  - Live, opt-in (`gateway/tests/test_live_check2.py`): the real model
+    asking a Write card, `waiting on you` after it, a deny leaving no file
+    with the agent saying so, an allow writing the file and one markdown
+    artifact `open=true` before `turn.finished`, and a chat-scoped allow on
+    Write covering the next write in that chat with no card (D16)
+    (`::test_a_deny_leaves_no_file_and_the_agent_says_so`,
+    `::test_b_allow_once_writes_and_the_markdown_artifact_opens`,
+    `::test_c_chat_scoped_allow_covers_the_next_write_in_the_chat`).
+  - Not automated: the card in the window and the file opening in the viewer.
 
 ### 3. Ask a question the agent must put back to the user: a question card appears; the chosen answer reaches the agent.
 
@@ -61,7 +84,14 @@ Opt-in live tests, when a credential is in the environment:
     `gateway/tests/test_engine_translate.py::test_question_routes_to_on_question_and_returns_updated_input`)
     and the app's answer builder
     (`app/Tests/PorticoTests/CardTests.swift::testQuestionAnswersMapLabelsAndOther`).
-  - Not automated: a real model choosing to ask.
+  - Live, opt-in (`gateway/tests/test_live_check3.py`): the real model
+    calling its question tool, the question card's shape and lifecycle, and
+    the chosen answer reaching the agent for single-select, multi-select
+    and "Other" free text
+    (`::test_single_select_answer_reaches_the_agent`,
+    `::test_multi_select_answers_reach_the_agent`,
+    `::test_other_free_text_reaches_the_agent`).
+  - Not automated: the card in the window.
 
 ### 4. Ask for a markdown report: it opens rendered in the viewer. Ask for a small HTML page served from a local port: the URL opens in the viewer. Turn auto-open off in settings: the next artifact appears in the history only.
 
@@ -73,7 +103,18 @@ Opt-in live tests, when a credential is in the environment:
     auto-open off keeping the artifact in the history only
     (`app/Tests/PorticoTests/ArtifactOpenTests.swift::testAutoOpenRespectsSettingAndOpenFlag`,
     `::testNonViewableNeverAutoOpens`).
-  - Not automated: a real model writing the report and serving the page.
+  - Live, opt-in (`gateway/tests/test_live_check4.py`): the real model
+    writing `report.md` (one markdown artifact `open=true` at turn end,
+    replayed by `chat.open`), writing and serving an HTML page on a local
+    port (the URL artifact opens, the HTML file is listed only), the
+    producer endpoint mid-turn opening at once, and a reply that merely
+    names an existing viewable path (D15)
+    (`::test_a_markdown_report_opens_at_turn_end_and_replays`,
+    `::test_b_html_page_and_local_url_open`,
+    `::test_c_producer_mid_turn_opens_immediately`,
+    `::test_d_prose_naming_an_existing_viewable_path_reports_it`).
+  - Not automated: the viewer rendering, and auto-open off in settings (an
+    app setting; the gateway reports `open` the same either way).
 
 ### 5. Stop interrupts a running turn. Quit the app while a turn is running; the gateway keeps going; reopen, pick the chat, see the prior conversation and its artifacts, and continue it. A permission asked while the app was closed is waiting as a card on reopen. Two chats open at once, each with its own state word.
 
@@ -101,8 +142,21 @@ Opt-in live tests, when a credential is in the environment:
     the state words exact and per chat
     (`gateway/tests/test_chats.py::test_state_words_exact`,
     `app/Tests/PorticoTests/AppModelTests.swift::testChatStateWordShown`).
-  - Not automated: the real quit and relaunch with a turn running on a real
-    model, and two live chats side by side.
+  - Live, opt-in (`gateway/tests/test_live_check5.py`), against a real
+    detached `bin/portico-gateway run` process and the real model: `turn.stop`
+    interrupting a running turn, `chat.stop` giving `stopped` and the next
+    send resuming, a detach mid-turn with the gateway finishing the writes
+    and a gapless `since` replay with the artifacts, a permission asked
+    while detached waiting as a card on reopen, two chats with their own
+    state words, and `gateway.stop` then a restart replaying the transcript
+    and resuming the session
+    (`::test_a_turn_stop_interrupts_a_running_turn`,
+    `::test_a2_chat_stop_gives_stopped_then_the_next_send_resumes`,
+    `::test_b_detach_mid_turn_then_reattach_replays_gaplessly`,
+    `::test_c_a_card_asked_while_detached_is_replayed_on_reopen`,
+    `::test_d_two_chats_each_with_their_own_state_word`,
+    `::test_e_a_restart_replays_the_transcript_and_resumes_the_session`).
+  - Not automated: quitting and reopening the real window with a turn running.
 
 ### 6. A folder whose `.claude/settings.json` has a deny hook (the probe's fixture) still has it fire through the app.
 
@@ -175,10 +229,21 @@ Opt-in live tests, when a credential is in the environment:
     an attachment appended to the message in the exact protocol form
     (`gateway/tests/test_turns.py::test_attachment_appended_in_exact_form`,
     `app/Tests/PorticoTests/ConversationTests.swift::testSendMessageEmitsMessageSendWithAttachmentsAndClearsDraft`).
-  - Not automated: the agent's reply showing it read the file.
+  - Live, opt-in (`gateway/tests/test_live_check9.py`): a root from a
+    `config.toml` carried in `hello`, `files.list` in the documented shape
+    with escapes and unknowns refused, an attached file read by the real
+    model with the reply showing it, a missing attachment refused before
+    any turn, and spaced and unicode paths both read
+    (`::test_a_hello_carries_the_root_and_files_list_has_the_documented_shape`,
+    `::test_b_an_attached_file_is_read_by_the_agent`,
+    `::test_c_a_missing_attachment_is_refused_before_any_turn`,
+    `::test_d_a_spaced_path_and_a_unicode_path_are_both_read`).
+  - Not automated: browsing the tree, the file in the viewer and "Add to
+    chat" in the window.
 
 ## Left for a person at the screen
 
-Checks 1, 2, 3, 4, 5 and 9 in full, the app-window half of 6, and the
-"busy port" reading of 8. All but the busy-port question need a provider
-credential in the environment (`~/.portico/env` or the shell).
+The app-window half of checks 1, 2, 3, 4, 5, 6 and 9 (the gateway half of
+each runs live, opt-in, as listed above), and the "busy port" reading of 8.
+All but the busy-port question need a provider credential in the
+environment (`~/.portico/env` or the shell).
