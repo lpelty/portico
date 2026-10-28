@@ -144,6 +144,15 @@ def test_doctor_config_error_is_one_line(state_dir: StateDir, with_credential: N
     assert got["setting_sources"].ok  # the key is absent, so the default applies
 
 
+def test_has_credential_recognises_a_login_token(no_credential: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The engine accepts a login token as well as an API credential; a person
+    # on one must not read "FAIL credential" (and the live smoke must not skip).
+    assert not has_credential(os.environ)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "not-a-real-value")
+    assert has_credential(os.environ)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in CREDENTIAL_VARS
+
+
 def test_has_credential_recognises_provider_switch_prefix(no_credential: None, monkeypatch: pytest.MonkeyPatch) -> None:
     assert not has_credential(os.environ)
     monkeypatch.setenv(CREDENTIAL_PREFIXES[0] + "SOMEPROVIDER", "1")

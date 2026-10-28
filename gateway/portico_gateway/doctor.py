@@ -27,9 +27,11 @@ MIN_SDK = (0, 2, 174)
 SDK_DIST = "claude-agent-sdk"
 
 # How the engine learns its credential, from the environment only. The
-# exact variables are the engine's: a direct API credential, or a switch
-# that routes to a third-party provider (whose own variables then apply).
-CREDENTIAL_VARS: tuple[str, ...] = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+# exact variables are the engine's: a direct API credential, a login token
+# (what the engine's own ``setup-token`` issues), or a switch that routes
+# to a third-party provider (whose own variables then apply). A login kept
+# in the keychain is not visible here and is not checked.
+CREDENTIAL_VARS: tuple[str, ...] = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 CREDENTIAL_PREFIXES: tuple[str, ...] = ("CLAUDE_CODE_USE_",)
 
 ENV_FILE = "env"
