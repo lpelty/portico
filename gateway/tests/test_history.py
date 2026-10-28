@@ -456,3 +456,62 @@ async def test_restored_chat_without_session_opens_empty(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+@pytest.mark.parametrize("since", [42, 0])
+async def test_open_with_a_stale_or_zero_since_on_a_restored_chat_replays_the_transcript(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, config_dir: Path, since: int
+) -> None:
+    # An app that reconnects after a gateway restart with the old launch's
+    # seq (42), or sends 0 for "from the beginning", must get the
+    # conversation, not an empty history marked up to date.
+    restored_index(state_dir, folder, SESSION)
+    write_transcript(config_dir, folder, SESSION, two_turn_session(folder))
+    srv = await start_server(state_dir, factory)
+    conn = await attach(srv)
+    try:
+        await conn.send(dump(ChatOpen(ts=TS, chat=1, id="req-open", since=since)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and not history.truncated
+        assert len(history.events) == 11
+        assert [type(e) for e in history.events][:2] == [TurnStarted, UserText]
+        live = await recv(conn)
+        assert isinstance(live, ChatLive) and live.seq == 0
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_stale_since_without_a_transcript_is_truncated_once_then_final(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, config_dir: Path
+) -> None:
+    restored_index(state_dir, folder, SESSION)  # a session id, but no transcript on disk
+    srv = await start_server(state_dir, factory)
+    conn = await attach(srv)
+    try:
+        # A seq from another launch: the ring cannot serve it, so the app is told to refetch ...
+        await conn.send(dump(ChatOpen(ts=TS, chat=1, since=42)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and history.truncated and history.events == []
+        assert isinstance(await recv(conn), ChatLive)
+        # ... and the refetch from the beginning is final.
+        await conn.send(dump(ChatOpen(ts=TS, chat=1)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and not history.truncated and history.events == []
+        assert isinstance(await recv(conn), ChatLive)
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_since_equal_to_the_current_seq_is_up_to_date(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        await conn.send(dump(ChatOpen(ts=TS, chat=number, since=chat.seq)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and history.events == [] and not history.truncated
+        assert isinstance(await recv(conn), ChatLive)
+    finally:
+        await conn.close()

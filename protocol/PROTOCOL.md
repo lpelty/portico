@@ -114,8 +114,8 @@ refused with the same `error code=lifecycle.before_first_chat_failed`,
 carrying the send's `id`, and no turn starts.
 
 ### `chat.open` — `ChatOpen`
-`chat`, `since: integer | absent` (the last `seq` the app saw; absent means
-from the beginning), `id` to correlate. Reply: `chat.history` carrying the
+`chat`, `since: integer | absent` (the last `seq` the app saw; absent, or
+0, means from the beginning), `id` to correlate. Reply: `chat.history` carrying the
 chat's events, then (after a transcript replay) the chat's stored
 artifacts as `artifact.created` frames with `open: false` and no `seq`,
 then `chat.live` with the chat's current `seq`, then the chat's open cards
@@ -127,8 +127,10 @@ can be repeated at any time, including while a turn is running.
 Where the history comes from: the gateway's ring buffer when it can serve
 the request — `since` is inside the ring, or the chat was created in this
 gateway launch and nothing has fallen off the ring yet. Otherwise — the
-first open after a gateway restart (a new `epoch`), or `since` older than
-the ring — the gateway reads the engine's transcript for the chat's
+first open after a gateway restart (a new `epoch`), `since` older than
+the ring, or a `since` beyond the chat's current `seq` (a number from an
+earlier launch, which the ring cannot serve) — the gateway reads the
+engine's transcript for the chat's
 session and translates it into the same events a live turn produces,
 with `user.text` for what the person sent; those events carry no `seq`
 and `truncated` is false. User-role entries the engine writes for itself

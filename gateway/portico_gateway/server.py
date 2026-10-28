@@ -1067,8 +1067,17 @@ class GatewayServer:
         sent ``truncated`` only for a ``since`` request (the app then asks
         from the beginning), never for a from-the-beginning one, which no
         refetch could serve better.
+
+        A ``since`` of 0 is from the beginning. A ``since`` beyond the
+        chat's current ``seq`` is a number from an earlier launch: the ring
+        cannot serve it, so it is treated like one the ring no longer reaches.
         """
-        ring, truncated = chat.events_since(since)
+        if since is not None and since <= 0:
+            since = None
+        if since is not None and since > chat.seq:
+            ring, truncated = chat.events_since(None)[0], True
+        else:
+            ring, truncated = chat.events_since(since)
         if not truncated and (since is not None or not chat.restored):
             return ring, truncated, []
         transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
