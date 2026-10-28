@@ -538,11 +538,19 @@ final class AppModel: ObservableObject {
         send(.chatNew(ChatNew(folder: folder.path, id: id)))
     }
 
-    /// Show a chat and ask the gateway for its events (since our watermark).
+    /// Show a chat and ask the gateway for its events: since our watermark
+    /// for a chat this app opened before, from the beginning otherwise.
+    ///
+    /// `since` means "I hold everything up to here", which is true only of
+    /// a chat opened in this run. The gateway sends every chat's frames to
+    /// the attached app, opened or not, so a never-opened chat's watermark
+    /// names a point mid-stream: opening from there would show the tail
+    /// alone, and (`since` suppresses the transcript read) never the
+    /// conversation before it.
     func open(chat: Int) {
         selected = chat
+        let since = openedChats.contains(chat) ? lastSeq[chat] : nil
         noteOpened(chat: chat)
-        let since = lastSeq[chat]
         pendingOpenSince[chat] = since
         live.remove(chat)
         send(.chatOpen(ChatOpen(chat: chat, since: since, id: Self.requestId())))

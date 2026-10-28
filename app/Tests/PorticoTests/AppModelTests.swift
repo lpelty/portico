@@ -245,6 +245,52 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(sent.frames.count, before)
     }
 
+    func testFirstOpenOfAChatHeardOnlyThroughBroadcastsAsksFromTheBeginning() {
+        // Chat 2 is working; the gateway sends its frames to the attached app
+        // although this app never opened it. The first open must still ask
+        // from the beginning: a watermark from broadcasts alone names a point
+        // mid-turn, and `since` would make the gateway replay only the tail.
+        let (model, sent) = model()
+        model.apply(.chatList(ChatList(chats: [summary(1), summary(2, state: .working)])))
+        _ = model.handleHello(hello())
+        model.apply(.chatState(ChatState(chat: 2, state: .working, seq: 40)))
+        model.apply(delta(2, turn: 3, "…and so the answer is", seq: 41))
+
+        model.open(chat: 2)
+        guard case .chatOpen(let open)? = sent.frames.last else { return XCTFail("expected chat.open, got \(sent.frames)") }
+        XCTAssertEqual(open.chat, 2)
+        XCTAssertNil(open.since, "a chat never opened in this run is asked for from the beginning")
+
+        // The replay from the beginning is the whole conversation, not the tail.
+        model.apply(.chatHistory(ChatHistory(
+            chat: 2,
+            events: [
+                .turnStarted(TurnStarted(chat: 2, turn: 3, seq: 38)),
+                .userText(UserText(chat: 2, turn: 3, text: "what is the answer?", seq: 39)),
+                .chatState(ChatState(chat: 2, state: .working, seq: 40)),
+                delta(2, turn: 3, "…and so the answer is", seq: 41),
+            ],
+            truncated: false, id: open.id)))
+        model.apply(.chatLive(ChatLive(chat: 2, id: open.id, seq: 41)))
+        let items = model.transcripts[2] ?? []
+        guard case .userText(let user)? = items.first else { return XCTFail("expected the user bubble first, got \(items)") }
+        XCTAssertEqual(user.text, "what is the answer?")
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(model.lastSeq[2], 41)
+
+        // Opened once, the chat catches up from its watermark: a later open
+        // and a same-epoch reattach both carry `since`.
+        model.apply(delta(2, turn: 3, " forty-two.", seq: 42))
+        model.open(chat: 2)
+        guard case .chatOpen(let again)? = sent.frames.last else { return XCTFail("expected chat.open") }
+        XCTAssertEqual(again.since, 42)
+        let reattach = model.handleHello(hello())
+        guard case .chatOpen(let reopened)? = reattach.first(where: { if case .chatOpen(let o) = $0 { return o.chat == 2 } else { return false } }) else {
+            return XCTFail("expected chat 2 re-opened on reattach, got \(reattach)")
+        }
+        XCTAssertEqual(reopened.since, 42)
+    }
+
     func testHistoryThenLiveReplacesTranscript() {
         let (model, sent) = model()
         // Before a restart the app held a live transcript for chat 1.
