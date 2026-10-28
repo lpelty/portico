@@ -122,6 +122,7 @@ from .messages import (
     CardAnswered,
     CardAsk,
     ChatAlias,
+    ChatCompacted,
     ChatHistory,
     ChatList,
     ChatLive,
@@ -132,6 +133,7 @@ from .messages import (
     ChatStateWord,
     ChatStop,
     ClientMessage,
+    ContextUsage,
     Entry,
     Envelope,
     Error,
@@ -309,6 +311,9 @@ class ChatCallbacks:
 
     async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
         return await self.server.ask_question(self.chat, questions)
+
+    async def on_compacted(self, trigger: str) -> None:
+        await self.server.compacted(self.chat, trigger)
 
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
@@ -985,6 +990,9 @@ class GatewayServer:
         await self._report_artifacts(chat, run)
         await self.emit(chat, event)
         await self._finish_run(chat, run)
+        # Its own task: the engine is asked from inside its own event stream.
+        if chat.engine is not None:
+            self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
 
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
@@ -992,6 +1000,31 @@ class GatewayServer:
         self._sync_session(chat)
         await self.set_state(chat, "idle")
         run.finished.set()
+
+    async def _report_context(self, chat: Chat, engine: Engine) -> None:
+        """After a turn: how full the context is, as ``context.usage``; kept on the record.
+
+        Never breaks anything: an engine that cannot say is logged at
+        WARNING and skipped, and ``None`` (unavailable) sends nothing.
+        """
+        try:
+            usage = await engine.context_usage()
+        except Exception as e:
+            log.warning("chat %d: could not read the context usage: %s", chat.number, e)
+            return
+        if usage is None or chat.engine is not engine:
+            return
+        percent, model = usage
+        chat.context_percent = percent
+        self.registry.persist()
+        await self.broadcast(ContextUsage(ts=_now(), chat=chat.number, percent=percent, model=model))
+
+    async def compacted(self, chat: Chat, trigger: str) -> None:
+        """The engine is summarizing earlier conversation: ``chat.compacted`` (stamped), counted on the record."""
+        chat.compactions += 1
+        self.registry.persist()
+        word = trigger if trigger in ("auto", "manual") else "auto"
+        await self.emit(chat, ChatCompacted(ts=_now(), chat=chat.number, trigger=word))  # type: ignore[arg-type]
 
     async def _await_stop(self, chat: Chat, run: TurnRun) -> None:
         """After ``turn.stop``: give the engine its grace, then end the turn on its behalf."""
