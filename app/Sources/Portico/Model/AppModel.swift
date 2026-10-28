@@ -126,6 +126,10 @@ final class AppModel: ObservableObject {
         var id: String
         var text: String
         var attachments: [String]
+        /// Whether the text and chips came out of the composer (a typed
+        /// message) and go back there on a refusal. An action button's
+        /// send never touched the composer, so a refusal restores nothing.
+        var fromComposer: Bool = true
     }
 
     enum ConnectionState: Equatable, Sendable {
@@ -587,21 +591,36 @@ final class AppModel: ObservableObject {
     /// `turn.started` the engine may take seconds to start, with the state
     /// word still `idle`, so the state word alone cannot gate the composer.
     func sendMessage(chat: Int, text: String) {
+        dispatch(chat: chat, text: text, attachments: draftAttachments[chat] ?? [], fromComposer: true)
+    }
+
+    /// Send an action button's text (`hello.actions`) on its own. The
+    /// composer is not involved: whatever is typed stays typed, and the
+    /// chips stay queued for the message they were attached to. Same
+    /// one-in-flight rule as `sendMessage`.
+    func sendAction(chat: Int, text: String) {
+        dispatch(chat: chat, text: text, attachments: [], fromComposer: false)
+    }
+
+    private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isSending(chat: chat) else { return }
-        let attachments = draftAttachments[chat] ?? []
         let id = Self.requestId()
-        pendingSends[chat] = PendingSend(id: id, text: trimmed, attachments: attachments)
+        pendingSends[chat] = PendingSend(id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer)
         send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: id)))
-        draftAttachments[chat] = nil
-        drafts[chat] = nil
+        if fromComposer {
+            draftAttachments[chat] = nil
+            drafts[chat] = nil
+        }
     }
 
     /// Put a refused send back where it was composed. Text typed since the
     /// send stays, after the returned text; chips are re-added ahead of any
-    /// attached since.
+    /// attached since. An action's send was never in the composer: its
+    /// refusal is forgotten (the status line carries the message).
     private func restore(_ pending: PendingSend, to chat: Int) {
         pendingSends[chat] = nil
+        guard pending.fromComposer else { return }
         let typedSince = draft(for: chat)
         drafts[chat] = typedSince.isEmpty ? pending.text : pending.text + "\n" + typedSince
         let attachedSince = draftAttachments[chat] ?? []

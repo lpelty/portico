@@ -134,7 +134,9 @@ struct InputBar: View {
             HStack(spacing: 6) {
                 ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
                     Button(action.label) {
-                        model.sendMessage(chat: chat, text: action.text)
+                        // On its own: the typed text and the chips stay for the
+                        // message they belong to.
+                        model.sendAction(chat: chat, text: action.text)
                     }
                     .controlSize(.small)
                     .help(action.text)

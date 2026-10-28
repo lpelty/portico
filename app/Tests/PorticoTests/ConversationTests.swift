@@ -59,10 +59,44 @@ final class ConversationTests: XCTestCase {
     func testActionTextIsSentAsMessageSend() {
         let (model, sent) = model()
         let action = Action(label: "Review", text: "/review")
-        model.sendMessage(chat: 2, text: action.text)
+        model.sendAction(chat: 2, text: action.text)
         guard case .messageSend(let send)? = sent.frames.first else { return XCTFail("expected message.send, got \(sent.frames)") }
         XCTAssertEqual(send.text, "/review")
         XCTAssertEqual(send.attachments, [])
+        XCTAssertNotNil(send.id)
+    }
+
+    func testAnActionSendLeavesTheComposerAlone() {
+        // Half a message typed and a file attached, then an action button:
+        // the action goes on its own; the text and the chips stay for the
+        // message they belong to, and a refusal of the action restores
+        // nothing (there is nothing of the composer's in it).
+        let (model, sent) = model()
+        model.setDraft("half a thought", for: 1)
+        model.attach(["/tmp/demo/notes.md"], to: 1)
+        model.sendAction(chat: 1, text: "/review")
+
+        guard case .messageSend(let send)? = sent.frames.first else { return XCTFail("expected message.send, got \(sent.frames)") }
+        XCTAssertEqual(send.text, "/review")
+        XCTAssertEqual(send.attachments, [], "the chips belong to the typed message")
+        XCTAssertEqual(model.draft(for: 1), "half a thought")
+        XCTAssertEqual(model.draftAttachments[1], ["/tmp/demo/notes.md"])
+        XCTAssertTrue(model.isSending(chat: 1))
+
+        model.apply(.error(ErrorMessage(code: "chat.busy", message: "a turn is already running in chat 1", chat: 1, id: send.id)))
+        XCTAssertEqual(model.draft(for: 1), "half a thought", "the action's text is not put into the editor")
+        XCTAssertEqual(model.draftAttachments[1], ["/tmp/demo/notes.md"])
+        XCTAssertEqual(model.status[1], "a turn is already running in chat 1")
+        XCTAssertFalse(model.isSending(chat: 1))
+
+        // Accepted instead: the bubble is the gateway's echo, the composer still untouched.
+        model.sendAction(chat: 1, text: "/review")
+        model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        model.apply(.userText(UserText(chat: 1, turn: 1, text: "/review", seq: 2)))
+        guard case .userText(let user)? = (model.transcripts[1] ?? []).first else { return XCTFail("expected the bubble") }
+        XCTAssertEqual(user.text, "/review")
+        XCTAssertEqual(model.draft(for: 1), "half a thought")
+        XCTAssertEqual(model.draftAttachments[1], ["/tmp/demo/notes.md"])
     }
 
     func testStopTurnEmitsTurnStop() {
