@@ -35,7 +35,7 @@ actor GatewayClient {
     }
 
     /// How long `connect` waits for the gateway's `hello`.
-    var helloTimeout: Duration = .seconds(10)
+    let helloTimeout: Duration
 
     /// The one line shown for a gateway speaking another protocol version
     /// (PROTOCOL.md, Version: a mismatch is shown, not silently tolerated).
@@ -51,7 +51,8 @@ actor GatewayClient {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    init() {
+    init(helloTimeout: Duration = .seconds(10)) {
+        self.helloTimeout = helloTimeout
         let config = URLSessionConfiguration.ephemeral
         config.waitsForConnectivity = false
         config.timeoutIntervalForRequest = 30
@@ -93,7 +94,7 @@ actor GatewayClient {
         do {
             try await sendRaw(.hello(HelloClient(appVersion: appVersion)), on: socket)
             let first = try await withDeadline(helloTimeout, what: "hello") {
-                try await socket.receive()
+                try await Self.receiveOrCancel(socket)
             }
             let message = try decode(first)
             if case .error(let refusal) = message {
@@ -189,6 +190,22 @@ actor GatewayClient {
         }
     }
 
+    /// `receive()` honours no task cancellation: a gateway that accepts the
+    /// socket and never writes would hold it (and any deadline raced
+    /// against it) until it closes. Closing the socket when the task is
+    /// cancelled makes the receive throw, so the deadline can win.
+    private static func receiveOrCancel(_ socket: URLSessionWebSocketTask) async throws
+        -> URLSessionWebSocketTask.Message
+    {
+        try await withTaskCancellationHandler {
+            try await socket.receive()
+        } onCancel: {
+            socket.cancel(with: .goingAway, reason: nil)
+        }
+    }
+
+    /// `body` or, when `limit` passes first, `ClientError.timeout(what)`.
+    /// `body` must honour cancellation for the timer to win.
     private func withDeadline<T: Sendable>(
         _ limit: Duration, what: String, _ body: @escaping @Sendable () async throws -> T
     ) async throws -> T {

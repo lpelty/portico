@@ -203,29 +203,29 @@ final class GatewaySupervisor: ObservableObject {
         close(writeEnd)
         pid = child
 
-        let stdout = FileHandle(fileDescriptor: readEnd, closeOnDealloc: true)
         let limit = readyTimeout
-        let port: Int?
-        do {
-            port = try await Self.withDeadline(limit) {
-                for try await line in stdout.bytes.lines {
-                    if let port = Self.readyPort(in: line) { return port }
-                }
-                return nil
-            }
-        } catch {
+        let port: Int
+        switch await Self.awaitReadyLine(fd: readEnd, within: limit) {
+        case .timeout:
+            // The command is up but silent (wedged before it could listen):
+            // it is no gateway, so it goes, and the app says why.
             Self.terminate(child)
+            _ = Self.reap(child)
             pid = nil
+            close(readEnd)
             throw SupervisorError.readyTimeout(limit)
-        }
-        guard let port else {
+        case .closed:
             // stdout closed before the ready line: the command exited.
             let code = Self.reap(child)
             pid = nil
+            close(readEnd)
             throw SupervisorError.exitedBeforeReady(lastLogLine() ?? code.map { "exit code \($0)" })
+        case .ready(let found):
+            port = found
         }
 
         // Keep draining stdout so a later write there never SIGPIPEs the gateway.
+        let stdout = FileHandle(fileDescriptor: readEnd, closeOnDealloc: true)
         stdoutDrain = Task.detached {
             do { for try await _ in stdout.bytes.lines {} } catch {}
         }
@@ -234,6 +234,61 @@ final class GatewaySupervisor: ObservableObject {
             throw SupervisorError.tokenUnreadable(tokenURL.path)
         }
         return (port, token)
+    }
+
+    /// What reading the command's stdout for the ready line came to.
+    enum ReadyOutcome: Equatable, Sendable {
+        case ready(port: Int)
+        /// stdout closed first: the command exited.
+        case closed
+        /// The deadline passed with the command still silent.
+        case timeout
+    }
+
+    /// Read the command's stdout for the ready line on a thread of its own,
+    /// with `poll()` so the deadline holds even when the child never writes
+    /// and never exits. A blocked `read` (and `FileHandle.bytes.lines`,
+    /// which is one) honours no task cancellation, so a deadline raced
+    /// against it in a task group could only fire once stdout closed.
+    nonisolated static func awaitReadyLine(fd: Int32, within limit: Duration) async -> ReadyOutcome {
+        await withCheckedContinuation { continuation in
+            Thread.detachNewThread {
+                continuation.resume(returning: readReadyLine(fd: fd, within: limit))
+            }
+        }
+    }
+
+    /// `awaitReadyLine`'s blocking half: lines before the deadline, until
+    /// one carries the port or the pipe closes.
+    nonisolated static func readReadyLine(fd: Int32, within limit: Duration) -> ReadyOutcome {
+        let deadline = ContinuousClock.now + limit
+        var buffer: [UInt8] = []
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let remaining = ContinuousClock.now.duration(to: deadline)
+            guard remaining > .zero else { return .timeout }
+            let (seconds, attoseconds) = remaining.components
+            let milliseconds = Int32(clamping: seconds * 1000 + attoseconds / 1_000_000_000_000_000)
+            var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&descriptor, 1, max(milliseconds, 1))
+            if ready == 0 { continue }  // the loop re-checks the deadline
+            if ready < 0 {
+                if errno == EINTR { continue }
+                return .closed
+            }
+            let count = read(fd, &chunk, chunk.count)
+            if count < 0 {
+                if errno == EINTR { continue }
+                return .closed
+            }
+            if count == 0 { return .closed }
+            buffer.append(contentsOf: chunk[0..<count])
+            while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                let line = String(decoding: buffer[..<newline], as: UTF8.self)
+                buffer.removeSubrange(...newline)
+                if let port = readyPort(in: line) { return .ready(port: port) }
+            }
+        }
     }
 
     /// The port from `PORTICO_READY port=<n>`, or `nil` for any other line.
@@ -385,20 +440,5 @@ final class GatewaySupervisor: ObservableObject {
             usleep(20_000)
         }
         return nil
-    }
-
-    private static func withDeadline<T: Sendable>(
-        _ limit: Duration, _ body: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await body() }
-            group.addTask {
-                try await Task.sleep(for: limit)
-                throw SupervisorError.readyTimeout(limit)
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
-        }
     }
 }

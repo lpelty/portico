@@ -81,6 +81,33 @@ final class GatewayClientTests: XCTestCase {
         }
     }
 
+    func testHelloDeadlineFiresWhenTheGatewayNeverAnswers() async throws {
+        // A gateway that completes the upgrade and then says nothing: connect
+        // gives up at the deadline with the line the strip shows, and keeps
+        // no socket, rather than parking the attach until the socket closes.
+        let gateway = FakeGateway(answersHello: false)
+        try await gateway.start()
+        defer { gateway.stop() }
+
+        let client = GatewayClient(helloTimeout: .seconds(1))
+        let began = ContinuousClock.now
+        let failure: String? = try await withTimeout(seconds: 8) {
+            do {
+                _ = try await client.connect(url: gateway.url, token: "tok", appVersion: "0.1.0-test")
+                return nil
+            } catch {
+                return "\(error)"
+            }
+        }
+        let elapsed = ContinuousClock.now - began
+        XCTAssertEqual(failure, "timed out waiting for hello")
+        XCTAssertLessThan(elapsed, .seconds(5), "the deadline fired late: \(elapsed)")
+        let connected = await client.isConnected
+        XCTAssertFalse(connected)
+        // The app did say hello first; the silence was the gateway's.
+        XCTAssertEqual(gateway.received.first?["type"] as? String, "hello")
+    }
+
     func testMessagesStreamDeliversInOrder() async throws {
         let gateway = FakeGateway()
         try await gateway.start()
@@ -320,6 +347,58 @@ final class GatewayClientTests: XCTestCase {
         let status = await supervisor.status
         guard case .failed(let reason) = status else { return XCTFail("expected .failed, got \(status)") }
         XCTAssertTrue(reason.contains("another gateway is already running"))
+    }
+
+    func testStartGivesUpWhenTheReadyLineNeverComes() async throws {
+        // A command that comes up but never prints the ready line (wedged
+        // before it could listen): start fails at the deadline and the
+        // process is gone, rather than the app sitting at `starting` until
+        // the command happens to exit.
+        let dir = try tempStateDir()
+        let script = try fakeGatewayScript(
+            in: dir,
+            """
+            #!/bin/sh
+            sleep 120
+            """)
+        let supervisor = await GatewaySupervisor(stateDir: dir, gatewayCommand: script)
+        await MainActor.run { supervisor.readyTimeout = .seconds(1) }
+        addTeardownBlock { await supervisor.killForTests() }
+
+        let began = ContinuousClock.now
+        let failure: String? = try await withTimeout(seconds: 8) {
+            do {
+                _ = try await supervisor.start()
+                return nil
+            } catch {
+                return "\(error)"
+            }
+        }
+        let elapsed = ContinuousClock.now - began
+        XCTAssertEqual(failure, "the gateway did not report ready within 1.0 seconds")
+        XCTAssertLessThan(elapsed, .seconds(5), "the deadline fired late: \(elapsed)")
+        let status = await supervisor.status
+        XCTAssertEqual(status, .failed("the gateway did not report ready within 1.0 seconds"))
+        let pid = await supervisor.pid
+        XCTAssertNil(pid, "the silent command was terminated and forgotten")
+    }
+
+    func testReadReadyLineStopsAtTheLineTheEndOrTheDeadline() throws {
+        // The reader behind `start`: the port from the ready line among noise,
+        // `closed` when the writer goes away first, `timeout` when nothing comes.
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(pipe(&fds), 0)
+        let (readEnd, writeEnd) = (fds[0], fds[1])
+        defer { close(readEnd) }
+        let text = "starting up\nPORTICO_READY port=4242 epoch=abc\nmore\n"
+        _ = text.withCString { write(writeEnd, $0, strlen($0)) }
+        XCTAssertEqual(GatewaySupervisor.readReadyLine(fd: readEnd, within: .seconds(2)), .ready(port: 4242))
+
+        _ = "no port here\n".withCString { write(writeEnd, $0, strlen($0)) }
+        XCTAssertEqual(GatewaySupervisor.readReadyLine(fd: readEnd, within: .milliseconds(200)), .timeout)
+
+        close(writeEnd)
+        XCTAssertEqual(GatewaySupervisor.readReadyLine(fd: readEnd, within: .seconds(2)), .closed)
     }
 
     func testStartFailsWhenCommandMissing() async throws {

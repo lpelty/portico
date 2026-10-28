@@ -15,6 +15,9 @@ final class FakeGateway: @unchecked Sendable {
     /// The protocol version the fake's `hello` claims; a test sets another to
     /// stand in for a newer gateway.
     let protocolVersionSent: Int
+    /// Whether the fake answers the app's `hello` at all; `false` stands in
+    /// for a gateway that accepts the socket and then says nothing.
+    let answersHello: Bool
     private let queue = DispatchQueue(label: "fake-gateway")
     private let lock = NSLock()
     private var listener: NWListener?
@@ -22,9 +25,10 @@ final class FakeGateway: @unchecked Sendable {
     private var _received: [[String: Any]] = []
     private var _port: UInt16 = 0
 
-    init(epoch: String = "epoch-1", protocol protocolVersionSent: Int = protocolVersion) {
+    init(epoch: String = "epoch-1", protocol protocolVersionSent: Int = protocolVersion, answersHello: Bool = true) {
         self.epoch = epoch
         self.protocolVersionSent = protocolVersionSent
+        self.answersHello = answersHello
     }
 
     /// Every frame received so far, decoded as JSON objects, oldest first.
@@ -127,7 +131,7 @@ final class FakeGateway: @unchecked Sendable {
                 self.lock.lock()
                 self._received.append(obj)
                 self.lock.unlock()
-                if obj["type"] as? String == "hello" {
+                if obj["type"] as? String == "hello", self.answersHello {
                     self.replyHello()
                 }
             }
