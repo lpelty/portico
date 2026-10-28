@@ -32,6 +32,8 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     case tool(ToolRow)
     case card(CardAsk)
     case turnMarker(TurnMarker)
+    /// The engine summarized earlier conversation to make room (`chat.compacted`).
+    case compacted(id: String, trigger: String)
 
     var id: String {
         switch self {
@@ -40,6 +42,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
         case .tool(let row): "tool:\(row.toolUseId)"
         case .card(let card): "card:\(card.id)"
         case .turnMarker(let marker): "turn:\(marker.turn)"
+        case .compacted(let id, _): "compacted:\(id)"
         }
     }
 }
@@ -116,6 +119,35 @@ final class AppModel: ObservableObject {
     /// (`files.outside_root` for a link that leaves the root, say), shown
     /// in the directory's row instead of a listing; cleared when it is asked for again.
     @Published private(set) var fileListErrors: [FilesKey: String] = [:]
+
+    // MARK: v0.2 — sessions, context, files
+
+    /// Per chat, the latest `context.usage`: the percent for the card and
+    /// the strip, and the model's name for the strip.
+    @Published private(set) var contextUsage: [Int: ContextUsage] = [:]
+    /// The model named by the most recent `context.usage` in any chat: the
+    /// deployment's model does not change when a session is renewed.
+    @Published private(set) var latestModel: String?
+    /// Per chat, the id of a `session.renew` the gateway has not answered:
+    /// the card shows it busy and the composer waits.
+    @Published var renewing: [Int: String] = [:]
+    /// Chats whose nudge (S2) the person put off with "Not now".
+    @Published var nudgeDismissed: Set<Int> = []
+    /// The Files pane's switch (F1 Folder, F2 Quick).
+    @Published var filesTab: FilesTab = .folder
+    /// The quick-open palette (F4) is showing.
+    @Published var quickOpenShown = false
+    /// The document view (F3) replaces the conversation and the viewer.
+    @Published var documentMode = false
+    /// The file the document view shows (absolute path).
+    @Published var documentFile: String?
+    /// The document view's text search: the query, the hits so far, and
+    /// the `files.search` requests (one per root) still out.
+    @Published var fileSearch: FileSearch?
+    /// The tab to go back to when the document view closes.
+    var filesTabBeforeDocument: FilesTab?
+
+    enum FilesTab: String, Sendable { case folder, quick }
 
     /// One directory in one root of one chat's Files pane.
     struct FilesKey: Hashable, Sendable {
@@ -194,7 +226,7 @@ final class AppModel: ObservableObject {
     /// each asked for, so an expand asks once and the reply (or the error)
     /// lands on the directory as requested, whatever path the gateway
     /// echoes (a symlinked directory comes back under its resolved path).
-    private var pendingFileLists: [String: FilesKey] = [:]
+    private(set) var pendingFileLists: [String: FilesKey] = [:]
     private var nextItemId = 0
     /// Ordering for status lines: per chat and chat-less, the strip shows
     /// whichever `status.set` (or error) came last.
@@ -311,6 +343,7 @@ final class AppModel: ObservableObject {
             for chat in Array(openedChats) where !list.chats.contains(where: { $0.chat == chat }) {
                 forget(chat: chat)
             }
+            openLiveSessionIfNeeded()
 
         case .chatState(let state):
             if let index = chats.firstIndex(where: { $0.chat == state.chat }) {
@@ -360,8 +393,27 @@ final class AppModel: ObservableObject {
             }
             noteSeq(of: message)
 
+        case .contextUsage(let usage):
+            contextUsage[usage.chat] = usage
+            if let name = usage.model, !name.isEmpty { latestModel = name }
+            noteSeq(of: message)
+
+        case .sessionRenewed(let renewed):
+            applyRenewed(renewed)
+
+        case .filesResults(let results):
+            applySearchResults(results)
+
         case .error(let error):
             lastError = error
+            // A refused renew: the card is no longer busy; the status line
+            // (below) carries the gateway's reason like any other error.
+            if let id = error.id, let chat = renewing.first(where: { $0.value == id })?.key {
+                renewing[chat] = nil
+            }
+            if let id = error.id, fileSearch?.pending[id] != nil {
+                fileSearch?.pending[id] = nil
+            }
             // A refused start: the chat was never made, so the words and
             // files go back on the start screen with the gateway's reason.
             if let id = error.id, let start = pendingStarts.removeValue(forKey: id) {
@@ -382,7 +434,8 @@ final class AppModel: ObservableObject {
                 fileListErrors[key] = error.message
             }
 
-        case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel:
+        case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
+            .chatCompacted:
             guard let chat = message.envelope.chat else { return }
             // A sequenced event we already hold (a re-sent card, a ring
             // overlap) is not applied twice; the card case de-duplicates by
@@ -459,6 +512,11 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = user.turn
             items.append(.userText(user))
             pendingSends[chat] = nil
+            // The gateway records a session's title from its first message but
+            // only says so in the next chat.list; take it from the echo now.
+            if let index = chats.firstIndex(where: { $0.chat == chat }), chats[index].title == nil {
+                chats[index].title = SessionPresentation.title(from: user.text)
+            }
 
         case .textDelta(let delta):
             if case .assistantText(let id, let text)? = items.last, currentTurn[chat] == delta.turn {
@@ -545,7 +603,11 @@ final class AppModel: ObservableObject {
             }
             if restoreCurrent[chat] == artifact.id { restoreCurrent[chat] = nil }
 
-        case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error:
+        case .chatCompacted(let compacted):
+            items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
+
+        case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
+            .contextUsage, .sessionRenewed, .filesResults:
             break
         }
     }
@@ -737,8 +799,20 @@ final class AppModel: ObservableObject {
     /// it has started the first turn — and between a send and its
     /// `turn.started` the engine may take seconds to start, with the state
     /// word still `idle`, so the state word alone cannot gate the composer.
-    func sendMessage(chat: Int, text: String) {
-        dispatch(chat: chat, text: text, attachments: draftAttachments[chat] ?? [], fromComposer: true)
+    ///
+    /// In single presentation, `/new` alone is not sent: it renews the
+    /// session (S1's "Same as typing /new"). `about` is the document view's
+    /// open file, attached to the message along with the chips.
+    func sendMessage(chat: Int, text: String, about: String? = nil) {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == Self.renewCommand, canRenew(chat: chat) {
+            guard !isRenewing(chat: chat) else { return }
+            drafts[chat] = nil
+            renew(chat: chat)
+            return
+        }
+        var attachments = draftAttachments[chat] ?? []
+        if let about, !attachments.contains(about) { attachments.append(about) }
+        dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
     }
 
     /// Send an action button's text (`hello.actions`) on its own. The
@@ -843,6 +917,9 @@ final class AppModel: ObservableObject {
         fileTree = fileTree.filter { $0.key.chat != chat }
         fileListErrors = fileListErrors.filter { $0.key.chat != chat }
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
+        contextUsage[chat] = nil
+        renewing[chat] = nil
+        nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
     }
 
@@ -873,6 +950,16 @@ final class AppModel: ObservableObject {
 
     static func requestId() -> String {
         UUID().uuidString.lowercased()
+    }
+
+    /// Upsert one chat's record, keeping the list in chat order.
+    func upsertSummary(_ summary: ChatSummary) {
+        if let index = chats.firstIndex(where: { $0.chat == summary.chat }) {
+            chats[index] = summary
+        } else {
+            chats.append(summary)
+            chats.sort { $0.chat < $1.chat }
+        }
     }
 
     private static func itemId(_ counter: inout Int) -> String {
@@ -906,6 +993,17 @@ extension AppModel {
             roots.append(root)
         }
         return roots
+    }
+
+    /// The roots to browse and list: `fileRoots` without the chat's own
+    /// folder when a deployment root is that same folder, so it is not
+    /// shown twice. Paths still resolve through `fileRoots`.
+    func browsableRoots(for chat: Int) -> [Root] {
+        let roots = fileRoots(for: chat)
+        guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
+        let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
+        let shared = roots.contains { $0.name != Self.chatRoot && URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        return shared ? roots.filter { $0.name != Self.chatRoot } : roots
     }
 
     /// The absolute directory a root name stands for, or `nil` for a name

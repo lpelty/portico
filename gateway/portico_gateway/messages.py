@@ -23,6 +23,7 @@ ChatStateWord = Literal["idle", "working", "waiting on you", "stopped"]
 Scope = Literal["once", "chat", "always"]
 Media = Literal["markdown", "image", "html", "pdf", "text", "url", "other"]
 Outcome = Literal["done", "stopped", "error"]
+Presentation = Literal["single", "multiple"]
 
 
 class ProtocolError(Exception):
@@ -64,6 +65,16 @@ class ChatSummary(Strict):
     alias: str | None = None
     state: ChatStateWord
     created: str
+    # Session facts (v0.2). ``title`` is the first line of the first message
+    # until something better is known; ``ended`` is set when the session was
+    # renewed; ``logged`` says whether its log step finished cleanly (absent
+    # when none ran); ``parent`` is the session this one followed.
+    title: str | None = None
+    ended: str | None = None
+    logged: bool | None = None
+    parent: int | None = None
+    compactions: int = 0
+    context_percent: float | None = None
 
 
 class Permission(Strict):
@@ -105,6 +116,13 @@ class Entry(Strict):
     name: str
     dir: bool
     size: int | None = None
+
+
+class Hit(Strict):
+    """One search result: ``path`` is relative to the searched root."""
+
+    path: str
+    snippet: str | None = None
 
 
 # --- envelope ----------------------------------------------------------------
@@ -189,6 +207,26 @@ class ArtifactOpened(Envelope):
     artifact_id: str
 
 
+class SessionRenew(Envelope):
+    """End the session ``chat`` and start the next one in the same folder.
+
+    With ``log`` the gateway first runs the deployment's log step in the
+    ending session and waits for it. Answered with ``session.renewed``.
+    """
+
+    type: Literal["session.renew"] = "session.renew"
+    chat: int
+    log: bool = True
+
+
+class FilesSearch(Envelope):
+    """Search names and text under a root; answered with ``files.results``."""
+
+    type: Literal["files.search"] = "files.search"
+    root: str
+    query: str
+
+
 class GatewayStop(Envelope):
     """Stop the gateway: interrupt every running turn, run ``on_stop``, exit.
 
@@ -211,6 +249,10 @@ class HelloServer(Envelope):
     roots: list[Root] = []
     commands: list[str] = []
     capabilities: list[str] = []
+    # How the app presents chats: one live session at a time, or a list.
+    presentation: Presentation = "multiple"
+    # Whether renewing can log the ending session first.
+    can_log: bool = False
 
 
 class ChatList(Envelope):
@@ -330,6 +372,38 @@ class StatusSet(Envelope):
     text: str
 
 
+class ContextUsage(Envelope):
+    """How full the session's context window is, after each turn."""
+
+    type: Literal["context.usage"] = "context.usage"
+    chat: int
+    percent: float
+    model: str | None = None
+
+
+class ChatCompacted(Envelope):
+    """The engine summarized earlier conversation to make room."""
+
+    type: Literal["chat.compacted"] = "chat.compacted"
+    chat: int
+    trigger: Literal["auto", "manual"]
+
+
+class SessionRenewed(Envelope):
+    """The session ``ended`` was closed and ``next`` is the live one now."""
+
+    type: Literal["session.renewed"] = "session.renewed"
+    ended: ChatSummary
+    next: ChatSummary
+
+
+class FilesResults(Envelope):
+    type: Literal["files.results"] = "files.results"
+    root: str
+    query: str
+    hits: list[Hit] = []
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -352,6 +426,7 @@ HistoryEvent = Annotated[
         CardCancel,
         ArtifactCreated,
         StatusSet,
+        ChatCompacted,
         Error,
     ],
     Field(discriminator="type"),
@@ -380,6 +455,8 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     FilesListRequest,
     ArtifactOpened,
     GatewayStop,
+    SessionRenew,
+    FilesSearch,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -400,6 +477,10 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ArtifactCreated,
     FilesList,
     StatusSet,
+    ContextUsage,
+    ChatCompacted,
+    SessionRenewed,
+    FilesResults,
     Error,
 )
 
@@ -518,6 +599,8 @@ def example_messages() -> dict[str, BaseModel]:
         FilesListRequest(ts=_TS, chat=1, id="req-3", root="chat", path="src"),
         ArtifactOpened(ts=_TS, chat=1, artifact_id="art-3"),
         GatewayStop(ts=_TS),
+        SessionRenew(ts=_TS, id="req-4", chat=14, log=True),
+        FilesSearch(ts=_TS, id="req-5", root="projects", query="synthesis"),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -527,7 +610,9 @@ def example_messages() -> dict[str, BaseModel]:
             actions=[Action(label="Review", text="/review")],
             roots=[Root(name="projects", path="/Users/someone/projects")],
             commands=[],
-            capabilities=["cards.form", "files", "producer"],
+            capabilities=["cards.form", "files", "producer", "sessions", "files.search", "context"],
+            presentation="single",
+            can_log=True,
         ),
         ChatList(
             ts=_TS,
@@ -603,6 +688,24 @@ def example_messages() -> dict[str, BaseModel]:
             entries=[Entry(name="lib", dir=True, size=None), Entry(name="main.py", dir=False, size=1204)],
         ),
         StatusSet(ts=_TS, chat=1, seq=51, text="Preparing the workspace..."),
+        ContextUsage(ts=_TS, chat=1, percent=62.4, model="claude-sonnet-5-5"),
+        ChatCompacted(ts=_TS, chat=1, seq=52, trigger="auto"),
+        SessionRenewed(
+            ts=_TS,
+            id="req-4",
+            ended=ChatSummary(
+                chat=13, folder=_FOLDER, state="stopped", created=_TS, title="Interview codebook",
+                ended=_TS, logged=True, parent=12, compactions=1, context_percent=71.0,
+            ),
+            next=ChatSummary(chat=14, folder=_FOLDER, state="idle", created=_TS, parent=13),
+        ),
+        FilesResults(
+            ts=_TS,
+            id="req-5",
+            root="projects",
+            query="synthesis",
+            hits=[Hit(path="demo/Q3-synthesis.md", snippet="Across twelve customer interviews…")],
+        ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

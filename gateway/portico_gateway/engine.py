@@ -51,6 +51,8 @@ from .messages import ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnF
 log = logging.getLogger(__name__)
 
 QUESTION_TOOL = "AskUserQuestion"
+# The longest the adapter waits for the engine's context reading.
+CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
 SUMMARY_LIMIT = 80
 
@@ -81,6 +83,8 @@ class EngineCallbacks(Protocol):
 
     async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]: ...
 
+    async def on_compacted(self, trigger: str) -> None: ...
+
 
 @runtime_checkable
 class Engine(Protocol):
@@ -101,6 +105,10 @@ class Engine(Protocol):
     async def interrupt(self) -> None: ...
 
     async def close(self) -> None: ...
+
+    async def context_usage(self) -> tuple[float, str | None] | None:
+        """How full the context window is, as ``(percent 0-100, model)``; ``None`` when unavailable."""
+        ...
 
 
 # --- translation (pure) --------------------------------------------------------
@@ -242,6 +250,23 @@ async def noop_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[s
     return {"continue_": True}
 
 
+def build_compact_hook(callbacks: EngineCallbacks):
+    """The ``PreCompact`` hook: tell the owner the engine is summarizing, then let it.
+
+    A failure to report is logged and never stops the compaction.
+    """
+
+    async def pre_compact(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        trigger = input.get("trigger") if isinstance(input, Mapping) else None
+        try:
+            await callbacks.on_compacted(trigger if isinstance(trigger, str) else "auto")
+        except Exception:
+            log.exception("reporting a compaction failed")
+        return {"continue_": True}
+
+    return pre_compact
+
+
 def build_options(
     folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks
 ) -> ClaudeAgentOptions:
@@ -252,7 +277,10 @@ def build_options(
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
-        hooks={"PreToolUse": [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]},
+        hooks={
+            "PreToolUse": [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])],
+            "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
+        },
     )
 
 
@@ -350,6 +378,18 @@ class SDKEngine:
     async def interrupt(self) -> None:
         if self._client is not None:
             await self._client.interrupt()
+
+    async def context_usage(self) -> tuple[float, str | None] | None:
+        """The SDK's ``get_context_usage``: ``percentage`` and ``model``; ``None`` before ``start``."""
+        client = self._client
+        if client is None:
+            return None
+        usage = await asyncio.wait_for(client.get_context_usage(), CONTEXT_USAGE_TIMEOUT)
+        percent = usage.get("percentage")
+        if not isinstance(percent, (int, float)) or isinstance(percent, bool):
+            return None
+        model = usage.get("model")
+        return float(percent), model if isinstance(model, str) and model else None
 
     async def close(self) -> None:
         self._closing = True

@@ -49,7 +49,8 @@ struct PorticoApp: App {
     }()
 
     private var viewerShown: Bool {
-        model.selected.map { model.isViewerShown(for: $0) } ?? false
+        guard !model.documentMode else { return false }
+        return model.selected.map { model.isViewerShown(for: $0) } ?? false
     }
 
     var body: some Scene {
@@ -88,7 +89,14 @@ struct PorticoApp: App {
                     if let chat = model.selected { model.setViewer(visible: !viewerShown, for: chat) }
                 }
                 .keyboardShortcut("v", modifiers: [.command, .control])
-                .disabled(model.selected == nil)
+                .disabled(model.selected == nil || model.documentMode)
+                Divider()
+                Button("Quick Open…") { model.quickOpenShown = true }
+                    .keyboardShortcut("p", modifiers: .command)
+                    .disabled(model.filesChat == nil)
+                Button(model.documentMode ? "Back to Conversation" : "Document View") { model.toggleDocumentView() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                    .disabled(model.filesChat == nil)
             }
             CommandGroup(replacing: .appInfo) {
                 Button("About \(model.brand.name)") {

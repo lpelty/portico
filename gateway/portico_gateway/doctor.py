@@ -15,13 +15,16 @@ from collections.abc import MutableMapping
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import REPO_ROOT
 from .config import EMPTY_SETTING_SOURCES_MESSAGE, ConfigError, load_config
+from .plugins import check_plugin
 from .state import StateDir
 
 MIN_PYTHON = (3, 13)
@@ -127,15 +130,21 @@ def apply_env_file(path: Path, environ: MutableMapping[str, str]) -> list[str]:
 
 @dataclass(frozen=True)
 class Check:
-    """One check: its short name, whether it passed, and one line saying why."""
+    """One check: its short name, whether it passed, and one line saying why.
+
+    A ``warn`` check passes (the exit code stays 0) but is printed as a
+    warning: something a person should know, nothing that stops the gateway.
+    """
 
     name: str
     ok: bool
     line: str
+    warn: bool = False
 
 
 def format_check(check: Check) -> str:
-    return f"{'ok  ' if check.ok else 'FAIL'} {check.name}: {check.line}"
+    word = ("warn" if check.warn else "ok  ") if check.ok else "FAIL"
+    return f"{word} {check.name}: {check.line}"
 
 
 # --- helpers -------------------------------------------------------------------
@@ -318,18 +327,69 @@ def check_swift() -> Check:
     return Check("swift", False, "swift is not on PATH; install Xcode or the Command Line Tools to build the app")
 
 
+def check_plugins(config_path: Path) -> list[Check]:
+    """One check per configured plug-in: it imports and speaks this API, or why not. Prints no config values."""
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return [Check("plugins", True, "not checked: the config does not load (see the config check)")]
+    if not config.plugins:
+        return [Check("plugins", True, "none configured")]
+    checks: list[Check] = []
+    for name in config.plugins:
+        ok, line = check_plugin(name, config.plugin_paths)
+        checks.append(Check(f"plugin {name}", ok, _one_line(line)))
+    return checks
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+
+
+def check_checkout(repo: Path = REPO_ROOT) -> Check:
+    """Which release this checkout is on, and a warning (never a failure) when it has local changes."""
+    if shutil.which("git") is None:
+        return Check("checkout", True, "git is not on PATH; the release was not checked")
+    try:
+        inside = _git(repo, "rev-parse", "--show-toplevel")
+        if inside.returncode != 0 or Path(inside.stdout.strip()).resolve() != Path(repo).resolve():
+            return Check("checkout", True, f"{repo} is not a git checkout; the release was not checked")
+        tag = _git(repo, "describe", "--tags", "--exact-match", "HEAD")
+        if tag.returncode == 0 and tag.stdout.strip():
+            where = f"tag {tag.stdout.strip()}"
+        else:
+            branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            head = _git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
+            where = f"commit {head}" + (f" on {branch}" if branch and branch != "HEAD" else "")
+        status = _git(repo, "status", "--porcelain")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return Check("checkout", True, f"git could not be asked about {repo}: {_one_line(str(e))}")
+    changed = [line for line in status.stdout.splitlines() if line.strip()]
+    if changed:
+        return Check(
+            "checkout",
+            True,
+            f"{where}; {len(changed)} local change(s) in the checkout: move the change into a plug-in "
+            "or ask upstream for it (bin/update will not update over local changes)",
+            warn=True,
+        )
+    return Check("checkout", True, f"{where}, no local changes")
+
+
 # --- the whole run ------------------------------------------------------------
 
 
-def doctor(state: StateDir, config_path: Path) -> list[Check]:
+def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[Check]:
     """Every check, in the order a person reads them. Never raises for a bad machine; it reports."""
     config_path = Path(config_path)
     return [
+        check_checkout(repo),
         check_python(),
         check_sdk(),
         check_credential(),
         check_config(config_path),
         check_setting_sources(config_path),
+        *check_plugins(config_path),
         check_token(state),
         check_env_file(state),
         check_ledger(state),

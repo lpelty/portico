@@ -53,6 +53,13 @@ class Block:
     stubborn: bool = False
 
 
+@dataclass
+class Compact:
+    """Mid-turn: the engine is about to summarize earlier conversation (its ``PreCompact`` hook fires)."""
+
+    trigger: str = "auto"
+
+
 def fake_result(is_error: bool = False, session_id: str = "fake-session") -> ResultMessage:
     return ResultMessage(
         subtype="error_during_execution" if is_error else "success",
@@ -80,6 +87,10 @@ class RecordingCallbacks:
         self.events: list[ServerMessage] = []
         self.permissions: list[tuple[str, dict[str, Any], list[dict[str, Any]], str]] = []
         self.questions: list[list[dict[str, Any]]] = []
+        self.compactions: list[str] = []
+
+    async def on_compacted(self, trigger: str) -> None:
+        self.compactions.append(trigger)
 
     async def on_event(self, event: ServerMessage) -> None:
         self.events.append(event)
@@ -121,6 +132,11 @@ class FakeEngine:
         self._task: asyncio.Task[None] | None = None
         self._interrupted = asyncio.Event()
         self._blocked = asyncio.Event()
+        # What ``context_usage`` answers: ``(percent, model)``, ``None`` for
+        # unavailable; ``context_error`` makes it raise instead.
+        self.context: tuple[float, str | None] | None = None
+        self.context_error: Exception | None = None
+        self.context_reads = 0
 
     def script(self, *items: Any) -> None:
         self.scripts.append(list(items))
@@ -156,6 +172,8 @@ class FakeEngine:
                     self.answers.append(await cb.on_question(item.questions))
                 except QuestionDeclined as e:
                     self.answers.append(("declined", str(e)))
+            elif isinstance(item, Compact):
+                await cb.on_compacted(item.trigger)
             elif isinstance(item, Block):
                 self._blocked.set()
                 if item.stubborn:
@@ -167,6 +185,12 @@ class FakeEngine:
             else:
                 for ev in translate(item, self.chat, self.turn):
                     await cb.on_event(ev)
+
+    async def context_usage(self) -> tuple[float, str | None] | None:
+        self.context_reads += 1  # not in ``calls``: tests read ``calls[-1]`` as the last send
+        if self.context_error is not None:
+            raise self.context_error
+        return self.context
 
     async def interrupt(self) -> None:
         self.calls.append(("interrupt", None))

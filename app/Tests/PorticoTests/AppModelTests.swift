@@ -625,6 +625,17 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.artifacts[1]?.count, 4)
     }
 
+    func testTheChatFolderIsNotBrowsedTwiceWhenARootIsTheSameFolder() {
+        let (model, _) = model()
+        var hello = hello()
+        hello.roots = [Root(name: "vault", path: "/tmp/demo/"), Root(name: "projects", path: "/Users/someone/projects")]
+        model.apply(.hello(hello))
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+
+        XCTAssertEqual(model.browsableRoots(for: 1).map(\.name), ["vault", "projects"])
+        XCTAssertEqual(model.rootPath(root: "chat", chat: 1), "/tmp/demo", "the chat root still resolves")
+    }
+
     func testFilesListRequestsAndRepliesFillTheTree() {
         let (model, sent) = model()
         var hello = hello()
@@ -960,8 +971,8 @@ final class AppModelTests: XCTestCase {
 
     func testThemeMeasuresMatchTheFrame() {
         XCTAssertEqual(Theme.defaultWindowSize, CGSize(width: 1440, height: 900))
-        XCTAssertEqual(Theme.sidebarWidth, 260)
-        XCTAssertEqual(Theme.viewerWidth, 440)
+        XCTAssertEqual(ColumnWidths.sidebarDefault, 260)
+        XCTAssertEqual(ColumnWidths.viewerDefault, 440)
         XCTAssertEqual(Theme.toolbarHeight, 52)
         XCTAssertEqual(Theme.statusStripHeight, 30)
         // The pen variables, dark and light, read back exactly.

@@ -26,6 +26,10 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
     assert config.default_folder is None
     assert config.card_hold_seconds == 600
     assert config.history_buffer == 2000
+    assert config.presentation == "multiple"
+    assert config.log_prompt is None
+    assert config.plugins == []
+    assert config.plugin_paths == []
     # Loading defaults never creates the file.
     assert not (tmp_path / "config.toml").exists()
 
@@ -169,7 +173,9 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     assert hello.actions == config.actions
     assert hello.roots == config.roots
     assert hello.commands == []
-    assert hello.capabilities == ["cards.form", "files", "producer"]
+    assert hello.capabilities == ["cards.form", "files", "producer", "sessions", "files.search", "context"]
+    assert hello.presentation == "multiple"
+    assert hello.can_log is False
     assert hello.chat is None and hello.seq is None
     assert hello.ts
 
@@ -201,3 +207,50 @@ def test_relative_root_path_is_refused_naming_the_root(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as e:
         load_config(path)
     assert "vault" in str(e.value) and "absolute" in str(e.value)
+
+
+# --- v0.2: sessions and plug-ins ----------------------------------------------
+
+
+def test_session_keys_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'presentation = "single"\n'
+        'log_prompt = "/session-close"\n'
+        'plugins = ["my_plugin"]\n'
+        'plugin_paths = ["~/portico-plugins"]\n'
+    )
+    config = load_config(path)
+    assert config.presentation == "single"
+    assert config.log_prompt == "/session-close"
+    assert config.plugins == ["my_plugin"]
+    assert config.plugin_paths == [str(tmp_path / "portico-plugins")]
+
+
+def test_unknown_presentation_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('presentation = "tabs"\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "presentation" in str(e.value)
+
+
+def test_relative_plugin_path_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('plugin_paths = ["plugins"]\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "plugin_paths" in str(e.value) and "absolute" in str(e.value)
+
+
+def test_hello_carries_presentation_and_can_log_from_log_prompt() -> None:
+    hello = hello_for(Config(presentation="single", log_prompt="/session-close"), epoch="e", gateway_version="0.2.0")
+    assert hello.presentation == "single"
+    assert hello.can_log is True
+    assert parse_server(dump(hello)) == hello
+
+
+def test_hello_without_a_log_step_cannot_log() -> None:
+    hello = hello_for(Config(presentation="single"), epoch="e", gateway_version="0.2.0")
+    assert hello.can_log is False

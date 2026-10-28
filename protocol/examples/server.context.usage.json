@@ -1,0 +1,7 @@
+{
+  "chat": 1,
+  "model": "claude-sonnet-5-5",
+  "percent": 62.4,
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "context.usage"
+}

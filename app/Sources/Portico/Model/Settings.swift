@@ -52,6 +52,11 @@ final class Settings: ObservableObject {
         static let gatewayURL = "gatewayURL"
         static let tokenFile = "tokenFile"
         static let lastFolder = "lastFolder"
+        static let pinnedFiles = "pinnedFiles"
+        static let sidebarWidth = "sidebarWidth"
+        static let readingWidth = "viewerWidth.reading"
+        static let canvasWidth = "viewerWidth.canvas"
+        static let earlierHeight = "earlierHeight"
     }
 
     private let defaults: UserDefaults
@@ -80,6 +85,41 @@ final class Settings: ObservableObject {
         didSet { Self.store(lastFolder, forKey: Key.lastFolder, in: defaults) }
     }
 
+    /// Files pinned in the Files pane's Quick tab (F2), by absolute path,
+    /// in the order they were pinned.
+    @Published var pinnedFiles: [String] {
+        didSet { defaults.set(pinnedFiles, forKey: Key.pinnedFiles) }
+    }
+
+    /// The sidebar's width as last dragged.
+    @Published var sidebarWidth: CGFloat {
+        didSet { defaults.set(Double(sidebarWidth), forKey: Key.sidebarWidth) }
+    }
+    /// The viewer's width as last dragged, one per fit (documents, web).
+    @Published var readingWidth: CGFloat {
+        didSet { defaults.set(Double(readingWidth), forKey: Key.readingWidth) }
+    }
+    @Published var canvasWidth: CGFloat {
+        didSet { defaults.set(Double(canvasWidth), forKey: Key.canvasWidth) }
+    }
+
+    /// The single-session sidebar's EARLIER list height as last dragged;
+    /// `nil` until the person drags it (the list then fits its sessions).
+    @Published var earlierHeight: CGFloat? {
+        didSet {
+            if let earlierHeight { defaults.set(Double(earlierHeight), forKey: Key.earlierHeight) }
+            else { defaults.removeObject(forKey: Key.earlierHeight) }
+        }
+    }
+
+    func viewerWidth(for fit: ColumnWidths.Fit) -> CGFloat {
+        fit == .canvas ? canvasWidth : readingWidth
+    }
+
+    func setViewerWidth(_ width: CGFloat, for fit: ColumnWidths.Fit) {
+        if fit == .canvas { canvasWidth = width } else { readingWidth = width }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         autoOpen = defaults.object(forKey: Key.autoOpen) as? Bool ?? true
@@ -93,11 +133,21 @@ final class Settings: ObservableObject {
         gatewayURL = Self.read(Key.gatewayURL, in: defaults)
         tokenFile = Self.read(Key.tokenFile, in: defaults)
         lastFolder = Self.read(Key.lastFolder, in: defaults)
+        pinnedFiles = defaults.stringArray(forKey: Key.pinnedFiles) ?? []
+        sidebarWidth = Self.width(Key.sidebarWidth, in: defaults) ?? ColumnWidths.sidebarDefault
+        readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
+        canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
+        earlierHeight = Self.width(Key.earlierHeight, in: defaults)
     }
 
     /// Whether an artifact of `media` should open on its own.
     func shouldAutoOpen(media: String) -> Bool {
         autoOpen && Self.viewableKinds.contains(media) && autoOpenKinds.contains(media)
+    }
+
+    private static func width(_ key: String, in defaults: UserDefaults) -> CGFloat? {
+        guard let value = defaults.object(forKey: key) as? Double, value > 0 else { return nil }
+        return CGFloat(value)
     }
 
     private static func read(_ key: String, in defaults: UserDefaults) -> String? {

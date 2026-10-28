@@ -57,6 +57,13 @@ class ChatRecord(BaseModel):
     state: ChatStateWord
     created: str
     artifacts: list[Artifact] = []
+    # Session facts (v0.2). Defaults so a v0.1 index loads unchanged.
+    title: str | None = None
+    ended: str | None = None
+    logged: bool | None = None
+    parent: int | None = None
+    compactions: int = 0
+    context_percent: float | None = None
 
 
 class Index(BaseModel):

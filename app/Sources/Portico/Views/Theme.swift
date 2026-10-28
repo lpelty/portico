@@ -26,19 +26,27 @@ enum Theme {
     static let working = dynamic("#2DA44E", "#4CC86A")
     static let idle = dynamic("#B5B5BB", "#6A6A70")
     static let stopped = dynamic("#8E8E93", "#8E8E93")
+    /// The context meter's empty track (S1) and its fill below the nudge.
+    static let meterTrack = dynamic("#E4E4E7", "#3A3A3E")
+    static let meterFill = dynamic("#A3A3A8", "#A3A3A9")
 
     // MARK: measures
 
-    /// The frame is 1440 x 900: a 260 sidebar, the conversation, a 440 viewer.
+    /// The frame is 1440 x 900. The column widths are `ColumnWidths`.
     static let defaultWindowSize = CGSize(width: 1440, height: 900)
     static let minimumWindowSize = CGSize(width: 960, height: 600)
-    static let sidebarWidth: CGFloat = 260
-    static let viewerWidth: CGFloat = 440
     static let toolbarHeight: CGFloat = 52
     static let statusStripHeight: CGFloat = 30
     /// Room for the traffic lights when the sidebar (which normally holds
     /// them in its own top band) is collapsed.
     static let trafficLightsInset: CGFloat = 78
+    /// F3: the document view's folder tree.
+    static let documentTreeWidth: CGFloat = 280
+    /// F4: the quick-open palette.
+    static let quickOpenWidth: CGFloat = 580
+    /// S1: the session card's corner and the meter's height.
+    static let cardRadius: CGFloat = 8
+    static let meterHeight: CGFloat = 4
 
     /// A colour with one value in light appearance and another in dark.
     static func dynamic(_ light: String, _ dark: String) -> Color {

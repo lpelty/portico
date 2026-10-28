@@ -1,42 +1,96 @@
 import SwiftUI
 
 /// The window as the A1 frame lays it out (`design/portico.pen`,
-/// "A1 · Classic three-column"): a 260-wide sidebar of chats and files on
-/// the left, the conversation in the middle under a 52-high toolbar and a
-/// 30-high status strip, and a 440-wide viewer on the right. The toolbar's
-/// two end buttons collapse the side columns; the sidebar's top band is
+/// "A1 · Classic three-column"): a sidebar of chats and files on the left
+/// (260 until dragged), the conversation in the middle under a 52-high
+/// toolbar and a 30-high status strip, and the viewer on the right (440
+/// for documents, 640 for web pages, until dragged; `ColumnWidths`). The
+/// toolbar's two end buttons collapse the side columns; the sidebar's top band is
 /// where the traffic lights sit, so the window has no title bar of its own.
 struct MainWindow: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var settings: Settings
+    /// The width a column had when its divider drag began.
+    @State private var dragStart: CGFloat?
 
     var body: some View {
-        HStack(spacing: 0) {
-            if model.sidebarVisible {
-                SidebarColumn()
-                    .frame(width: Theme.sidebarWidth)
-                    .transition(.move(edge: .leading))
-                Rectangle().fill(Theme.border).frame(width: 1)
-            }
-            MainColumn()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if let chat = model.selected, model.isViewerShown(for: chat) {
-                Rectangle().fill(Theme.border).frame(width: 1)
-                ViewerView(chat: chat)
-                    .frame(width: Theme.viewerWidth)
-                    .transition(.move(edge: .trailing))
+        GeometryReader { geometry in
+            let widths = columnWidths(window: geometry.size.width)
+            HStack(spacing: 0) {
+                if let sidebar = widths.sidebar {
+                    SidebarColumn()
+                        .frame(width: sidebar)
+                        .transition(.move(edge: .leading))
+                    ColumnDivider(
+                        onDrag: { dx in
+                            let start = dragStart ?? sidebar
+                            dragStart = start
+                            settings.sidebarWidth = ColumnWidths.clampSidebar(start + dx)
+                        },
+                        onEnd: { dragStart = nil },
+                        onReset: { settings.sidebarWidth = ColumnWidths.sidebarDefault })
+                }
+                MainColumn()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let chat = model.selected, let viewer = widths.viewer {
+                    ColumnDivider(
+                        onDrag: { dx in
+                            let start = dragStart ?? viewer
+                            dragStart = start
+                            settings.setViewerWidth(
+                                ColumnWidths.clampViewer(start - dx, sidebar: widths.sidebar ?? 0, window: geometry.size.width),
+                                for: viewerFit)
+                        },
+                        onEnd: { dragStart = nil },
+                        onReset: { settings.setViewerWidth(ColumnWidths.viewerDefault(for: viewerFit), for: viewerFit) })
+                    ViewerView(chat: chat)
+                        .frame(width: viewer)
+                        .transition(.move(edge: .trailing))
+                }
             }
         }
         .background(Theme.window)
+        .overlay {
+            if model.quickOpenShown, let chat = model.filesChat {
+                QuickOpenView(chat: chat)
+            }
+        }
         // No title bar: the columns run to the top edge, and the sidebar's
         // first band is where the traffic lights sit.
         .ignoresSafeArea(.container, edges: .top)
         .animation(.easeInOut(duration: 0.18), value: model.sidebarVisible)
         .animation(.easeInOut(duration: 0.18), value: viewerShown)
+        // A prototype after a document: the viewer moves to the width
+        // remembered for that fit (not while a divider is being dragged).
+        .animation(dragStart == nil ? .easeInOut(duration: 0.18) : nil, value: viewerFit)
         .frame(minWidth: Theme.minimumWindowSize.width, minHeight: Theme.minimumWindowSize.height)
     }
 
     private var viewerShown: Bool {
-        model.selected.map { model.isViewerShown(for: $0) } ?? false
+        guard !model.documentMode else { return false }
+        return model.selected.map { model.isViewerShown(for: $0) } ?? false
+    }
+
+    /// The viewer's fit: the current artifact's, reading when nothing is shown.
+    private var viewerFit: ColumnWidths.Fit {
+        ColumnWidths.Fit(media: model.selected.flatMap { model.current[$0]?.media })
+    }
+
+    /// The remembered widths of the columns that are shown, fitted to the window.
+    private func columnWidths(window: CGFloat) -> (sidebar: CGFloat?, viewer: CGFloat?) {
+        ColumnWidths.fit(
+            sidebar: model.sidebarVisible ? settings.sidebarWidth : nil,
+            viewer: viewerShown ? settings.viewerWidth(for: viewerFit) : nil,
+            window: window)
+    }
+}
+
+extension AppModel {
+    /// The chat whose files the sidebar, quick open and the document view
+    /// use: the one shown, else (single presentation) the live session.
+    var filesChat: Int? {
+        guard hello?.capabilities.contains("files") == true else { return nil }
+        return selected ?? liveSession?.chat
     }
 }
 
@@ -51,7 +105,20 @@ struct SidebarColumn: View {
                 .frame(height: Theme.toolbarHeight)
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
-            if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
+            if model.isSinglePresentation {
+                // S1: the session card and Earlier, then the files. Earlier
+                // is drawn above the files so all of the line between them
+                // can be grabbed.
+                SessionSidebar()
+                    .zIndex(1)
+                if let chat = model.filesChat {
+                    FilesView(chat: chat)
+                        .id(chat)
+                        .frame(maxHeight: .infinity)
+                } else {
+                    Spacer(minLength: 0)
+                }
+            } else if let chat = model.selected, model.hello?.capabilities.contains("files") == true {
                 VSplitView {
                     ChatListView()
                         .frame(minHeight: 120)
@@ -85,7 +152,9 @@ struct MainColumn: View {
 
     @ViewBuilder
     private var content: some View {
-        if let chat = model.selected {
+        if model.documentMode, let chat = model.filesChat {
+            DocumentView(chat: chat)
+        } else if let chat = model.selected {
             ConversationView(chat: chat)
                 .id(chat)
         } else {
@@ -123,7 +192,7 @@ struct MainToolbar: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 0)
-            if let chat = model.selected {
+            if let chat = model.selected, !model.documentMode {
                 let shown = model.isViewerShown(for: chat)
                 PanelToggle(shown: shown, side: .trailing, help: shown ? "Hide the viewer" : "Show the viewer") {
                     model.setViewer(visible: !shown, for: chat)
@@ -138,8 +207,19 @@ struct MainToolbar: View {
         .gesture(WindowDragGesture())
     }
 
-    /// `Chat #3`, or the alias when the chat has one.
+    /// `Chat #3`, or the alias when the chat has one; `Session 14` in
+    /// single presentation; `Files · Research vault` in the document view.
     private var chatTitle: String? {
+        if model.documentMode, let chat = model.filesChat {
+            let roots = model.fileRoots(for: chat)
+            let root = roots.first { $0.name != AppModel.chatRoot } ?? roots.first
+            guard let root else { return "Files" }
+            return "Files · " + (root.name == AppModel.chatRoot ? URL(fileURLWithPath: root.path).lastPathComponent : root.name)
+        }
+        if model.isSinglePresentation {
+            guard let id = model.selected else { return "New session" }
+            return "Session \(id)"
+        }
         guard let id = model.selected else { return "New chat" }
         let summary = model.chats.first { $0.chat == id }
         if let alias = summary?.alias, !alias.isEmpty { return alias }
@@ -183,7 +263,7 @@ struct PanelToggle: View {
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .help(help)
         .accessibilityLabel(help)
     }

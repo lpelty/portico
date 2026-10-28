@@ -1,0 +1,25 @@
+{
+  "ended": {
+    "chat": 13,
+    "compactions": 1,
+    "context_percent": 71.0,
+    "created": "2026-10-27T12:00:00Z",
+    "ended": "2026-10-27T12:00:00Z",
+    "folder": "/Users/someone/projects/demo",
+    "logged": true,
+    "parent": 12,
+    "state": "stopped",
+    "title": "Interview codebook"
+  },
+  "id": "req-4",
+  "next": {
+    "chat": 14,
+    "compactions": 0,
+    "created": "2026-10-27T12:00:00Z",
+    "folder": "/Users/someone/projects/demo",
+    "parent": 13,
+    "state": "idle"
+  },
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "session.renewed"
+}

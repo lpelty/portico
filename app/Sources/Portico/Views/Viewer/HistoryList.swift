@@ -19,7 +19,7 @@ struct HistoryList: View {
                         } label: {
                             HistoryRow(presentation: ArtifactPresentation(artifact: artifact))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hover)
                         .background(
                             model.current[chat]?.id == artifact.id ? Theme.selected : .clear,
                             in: RoundedRectangle(cornerRadius: 5, style: .continuous))

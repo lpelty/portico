@@ -1,7 +1,72 @@
 #!/usr/bin/env bash
-# Pull the latest main (fast-forward only) and reinstall.
+# Move this checkout to the newest release tag (vX.Y.Z), reinstall the gateway, rebuild the app, run the doctor.
+#   bin/update                  newest release tag (the default)
+#   bin/update --channel main   follow main instead: fast-forward pull
+# Refuses to update over local changes: deployment code belongs in a plug-in, outside the checkout.
 set -euo pipefail
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(dirname "$here")"
-(cd "$repo" && git pull --ff-only)
-exec "$here/install"
+
+usage() {
+  echo "usage: bin/update [--channel tags|main]" >&2
+}
+
+main() {
+  local here repo channel
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  repo="$(dirname "$here")"
+  channel="tags"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) channel="${2:-}"; shift 2 || { usage; exit 2; } ;;
+      --channel=*) channel="${1#--channel=}"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage; exit 2 ;;
+    esac
+  done
+  case "$channel" in
+    tags|main) ;;
+    *) echo "update: unknown channel '$channel' (tags or main)" >&2; exit 2 ;;
+  esac
+  cd "$repo"
+
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "update: this checkout has local changes:" >&2
+    git status --short >&2
+    echo "update: not updating over them. Move the change into a plug-in (README, \"Plug-ins\"), outside this" >&2
+    echo "update: checkout, or ask upstream for it; run bin/update again once the checkout is clean." >&2
+    exit 1
+  fi
+
+  if [ "$channel" = "main" ]; then
+    echo "== update: following main"
+    if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then
+      git -c advice.detachedHead=false checkout --quiet main
+    fi
+    git pull --ff-only
+  else
+    echo "== update: fetching release tags"
+    git fetch --quiet --tags origin
+    local newest current
+    newest="$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+    if [ -z "$newest" ]; then
+      echo "update: no release tags (vX.Y.Z) found; try bin/update --channel main" >&2
+      exit 1
+    fi
+    current="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+    if [ "$current" = "$newest" ]; then
+      echo "== update: already on $newest; nothing to install"
+      exec "$here/doctor"
+    fi
+    echo "== update: ${current:-$(git rev-parse --short HEAD)} -> $newest"
+    git -c advice.detachedHead=false checkout --quiet "$newest"
+  fi
+
+  "$here/install"
+  echo
+  echo "== update: doctor"
+  exec "$here/doctor"
+}
+
+# The whole script is read before it runs: a checkout that rewrites this
+# file mid-update cannot change what the running copy does next.
+main "$@"
+exit

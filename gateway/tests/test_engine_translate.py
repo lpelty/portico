@@ -487,3 +487,45 @@ async def test_fake_engine_blocks_until_interrupted(tmp_path: Path) -> None:
     assert [type(e).__name__ for e in cb.events] == ["TextDelta", "TurnFinished"]
     await fake.close()
     assert fake.closed
+
+
+# --- v0.2: compaction hook and context usage -------------------------------------
+
+
+def test_build_options_registers_a_pre_compact_hook(tmp_path: Path) -> None:
+    cb = RecordingCallbacks()
+    options = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=cb)
+    matchers = (options.hooks or {}).get("PreCompact") or []
+    assert matchers and matchers[0].hooks
+
+
+async def test_pre_compact_hook_reports_the_trigger_and_continues(tmp_path: Path) -> None:
+    cb = RecordingCallbacks()
+    options = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=cb)
+    hook = (options.hooks or {})["PreCompact"][0].hooks[0]
+    out = await hook({"hook_event_name": "PreCompact", "trigger": "manual", "custom_instructions": None}, None, {"signal": None})  # type: ignore[arg-type]
+    assert out == {"continue_": True}
+    out = await hook({"hook_event_name": "PreCompact", "trigger": "auto", "custom_instructions": None}, None, {"signal": None})  # type: ignore[arg-type]
+    assert cb.compactions == ["manual", "auto"]
+
+
+async def test_pre_compact_hook_never_blocks_compaction_when_reporting_fails(tmp_path: Path) -> None:
+    class Failing(RecordingCallbacks):
+        async def on_compacted(self, trigger: str) -> None:
+            raise RuntimeError("app gone")
+
+    options = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=Failing())
+    hook = (options.hooks or {})["PreCompact"][0].hooks[0]
+    out = await hook({"hook_event_name": "PreCompact", "trigger": "auto", "custom_instructions": None}, None, {"signal": None})  # type: ignore[arg-type]
+    assert out == {"continue_": True}
+
+
+async def test_sdk_engine_context_usage_reads_percentage_and_model() -> None:
+    class Client:
+        async def get_context_usage(self) -> dict:
+            return {"percentage": 62.4, "model": "some-model", "totalTokens": 1}
+
+    engine = SDKEngine()
+    assert await engine.context_usage() is None, "no client yet: unavailable"
+    engine._client = Client()  # type: ignore[assignment]
+    assert await engine.context_usage() == (62.4, "some-model")

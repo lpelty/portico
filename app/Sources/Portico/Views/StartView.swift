@@ -101,7 +101,7 @@ struct StartView: View {
                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.border, lineWidth: 1))
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
                 .help("Attach files to the first message")
                 folderChip
                 Spacer(minLength: 0)
@@ -114,7 +114,7 @@ struct StartView: View {
                         .opacity(canSend ? 1 : 0.5)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help(model.startFolder == nil ? "Choose a folder first" : "Start the chat and send (⌘↩)")
                 .disabled(!canSend)
@@ -164,7 +164,7 @@ struct StartView: View {
             .contentShape(Rectangle())
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .menuIndicator(.hidden)
         .fixedSize()
         .help(model.startFolder?.path ?? "The folder the agent works in")
@@ -180,7 +180,7 @@ struct StartView: View {
                         Button { model.detachFromStart(path) } label: {
                             Image(systemName: "xmark.circle.fill")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hover)
                         .foregroundStyle(Theme.text3)
                     }
                     .font(.system(size: 12))
@@ -216,7 +216,7 @@ struct StartView: View {
                     .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
                     .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverCapsule)
                 .help(action.text)
                 .disabled(!connected || model.startFolder == nil || model.isStarting)
             }

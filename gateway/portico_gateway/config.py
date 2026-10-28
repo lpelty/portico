@@ -13,11 +13,14 @@ from __future__ import annotations
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .messages import Action, Brand, HelloServer, Root
+from .messages import Action, Brand, HelloServer, Presentation, Root
+
+if TYPE_CHECKING:
+    from .plugins import Plugins
 
 EMPTY_SETTING_SOURCES_MESSAGE = (
     "setting_sources must not be empty: an empty list drops the folder's instructions and hooks"
@@ -25,7 +28,7 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 
 # What this gateway can do beyond the protocol's baseline; the app keys
 # optional UI on these.
-CAPABILITIES: list[str] = ["cards.form", "files", "producer"]
+CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context"]
 
 
 class ConfigError(ValueError):
@@ -49,6 +52,16 @@ class Config(BaseModel):
     default_folder: str | None = None
     card_hold_seconds: int = Field(default=600, ge=0)
     history_buffer: int = Field(default=2000, ge=1)
+    # Sessions (v0.2): ``single`` shows one live session at a time and
+    # renews it; ``multiple`` is the v0.1 list of chats. ``log_prompt`` is
+    # the default log step a renewal runs in the ending session, sent as a
+    # message (a slash command the folder already has, typically).
+    presentation: Presentation = "multiple"
+    log_prompt: str | None = None
+    # Plug-ins: module names, imported at start; ``plugin_paths`` are the
+    # directories (outside the checkout) put on ``sys.path`` first.
+    plugins: list[str] = []
+    plugin_paths: list[str] = []
 
     @field_validator("setting_sources")
     @classmethod
@@ -72,6 +85,20 @@ class Config(BaseModel):
                     f"roots: {root.name!r} has the relative path {root.path!r}; a root must be an absolute path (~ is expanded)"
                 )
             out.append(Root(name=root.name, path=str(path)))
+        return out
+
+
+    @field_validator("plugin_paths")
+    @classmethod
+    def _plugin_paths_absolute(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in value:
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                raise ConfigError(
+                    f"plugin_paths: {raw!r} is relative; a plug-in directory must be an absolute path (~ is expanded)"
+                )
+            out.append(str(path))
         return out
 
 
@@ -117,9 +144,14 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def hello_for(config: Config, epoch: str, gateway_version: str) -> HelloServer:
-    """The ``hello`` the gateway sends first on every connection."""
-    return HelloServer(
+def hello_for(config: Config, epoch: str, gateway_version: str, plugins: Plugins | None = None) -> HelloServer:
+    """The ``hello`` the gateway sends first on every connection.
+
+    ``can_log`` is true when renewing has a log step to run: ``log_prompt``
+    is set or a plug-in provides ``on_renew``. Each plug-in's ``on_hello``
+    then sees the result, in list order.
+    """
+    hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,
         epoch=epoch,
@@ -128,4 +160,7 @@ def hello_for(config: Config, epoch: str, gateway_version: str) -> HelloServer:
         roots=list(config.roots),
         commands=[],
         capabilities=list(CAPABILITIES),
+        presentation=config.presentation,
+        can_log=bool(config.log_prompt) or (plugins is not None and plugins.renew is not None),
     )
+    return plugins.on_hello(hello) if plugins is not None else hello

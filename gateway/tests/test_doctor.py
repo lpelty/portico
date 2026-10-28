@@ -17,7 +17,15 @@ import pytest
 
 from portico_gateway import REPO_ROOT
 from portico_gateway.config import EMPTY_SETTING_SOURCES_MESSAGE
-from portico_gateway.doctor import CREDENTIAL_PREFIXES, CREDENTIAL_VARS, Check, doctor, format_check, has_credential
+from portico_gateway.doctor import (
+    CREDENTIAL_PREFIXES,
+    CREDENTIAL_VARS,
+    Check,
+    check_checkout,
+    doctor,
+    format_check,
+    has_credential,
+)
 from portico_gateway.state import StateDir
 
 # --- fixtures -----------------------------------------------------------------
@@ -93,7 +101,7 @@ def test_doctor_reports_each_failure_in_one_line(state_dir: StateDir, no_credent
         rendered = format_check(check)
         assert rendered.count("\n") == 0
         assert check.name in rendered
-        assert rendered.startswith("ok  " if check.ok else "FAIL")
+        assert rendered.startswith(("warn" if check.warn else "ok  ") if check.ok else "FAIL")
 
 
 def test_doctor_is_green_on_a_clean_state_dir(state_dir: StateDir, with_credential: None) -> None:
@@ -175,7 +183,7 @@ def test_doctor_cli_exits_nonzero_on_failure(state_dir: StateDir, no_credential:
     lines = [line for line in out.splitlines() if line.strip()]
     assert any(line.startswith("FAIL") and "credential" in line for line in lines)
     *checks, summary = lines
-    assert all(line.startswith(("ok  ", "FAIL")) for line in checks)
+    assert all(line.startswith(("ok  ", "warn", "FAIL")) for line in checks)
     assert "checks passed" in summary
 
 
@@ -350,3 +358,85 @@ def test_parse_env_file_is_literal_and_shell_free(tmp_path: Path) -> None:
         apply_env_file(env_path, environ)
     assert environ == {}
     assert apply_env_file(tmp_path / "missing", environ) == []
+
+
+# --- v0.2: plug-ins and the checkout ---------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        cwd=repo, env=env, check=True, capture_output=True, text=True,
+    ).stdout
+
+
+@pytest.fixture
+def checkout(tmp_path: Path) -> Path:
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("hi\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "first")
+    _git(repo, "tag", "v0.1.0")
+    return repo
+
+
+def test_checkout_on_a_tag_with_no_changes_is_ok(checkout: Path) -> None:
+    check = check_checkout(checkout)
+    assert check.ok and not check.warn
+    assert "v0.1.0" in check.line
+
+
+def test_checkout_with_local_changes_warns_and_never_fails(checkout: Path) -> None:
+    (checkout / "README.md").write_text("changed\n")
+    check = check_checkout(checkout)
+    assert check.ok and check.warn
+    assert "plug-in" in check.line and "upstream" in check.line
+    assert format_check(check).startswith("warn")
+
+
+def test_checkout_off_a_tag_names_the_commit(checkout: Path) -> None:
+    (checkout / "b.txt").write_text("b\n")
+    _git(checkout, "add", "b.txt")
+    _git(checkout, "commit", "-q", "-m", "second")
+    check = check_checkout(checkout)
+    head = _git(checkout, "rev-parse", "--short", "HEAD").strip()
+    assert check.ok and head in check.line
+
+
+def test_not_a_git_checkout_is_ok(tmp_path: Path) -> None:
+    check = check_checkout(tmp_path)
+    assert check.ok and not check.warn and "not a git checkout" in check.line
+
+
+@pytest.fixture
+def isolated_imports(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "modules", dict(sys.modules))
+
+
+def test_doctor_reports_each_configured_plugin(state_dir: StateDir, with_credential: None, tmp_path: Path, isolated_imports: None) -> None:
+    plugdir = tmp_path / "plugs"
+    plugdir.mkdir()
+    (plugdir / "pp_old_api.py").write_text("PORTICO_PLUGIN_API = 0\n")
+    example = REPO_ROOT / "examples" / "plugin"
+    state_dir.config_path.write_text(
+        'log_prompt = "SECRET-DO-NOT-PRINT"\n'
+        'plugins = ["portico_example_plugin", "pp_missing", "pp_old_api"]\n'
+        f'plugin_paths = ["{example}", "{plugdir}"]\n'
+    )
+    checks = doctor(state_dir, state_dir.config_path)
+    got = by_name(checks)
+    assert got["plugin portico_example_plugin"].ok
+    assert "on_renew" in got["plugin portico_example_plugin"].line
+    assert not got["plugin pp_missing"].ok and "not found" in got["plugin pp_missing"].line
+    assert not got["plugin pp_old_api"].ok and "PORTICO_PLUGIN_API" in got["plugin pp_old_api"].line
+    assert not any("SECRET-DO-NOT-PRINT" in format_check(c) for c in checks)
+
+
+def test_doctor_with_no_plugins_says_so(state_dir: StateDir, with_credential: None) -> None:
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert got["plugins"].ok and "none" in got["plugins"].line
+    assert "checkout" in got

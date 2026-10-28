@@ -9,6 +9,9 @@ import UniformTypeIdentifiers
 /// the Files pane adds chips through `AppModel.attach`.
 struct InputBar: View {
     let chat: Int
+    /// The document view's open file (F3): the placeholder asks about it
+    /// and the message carries it as an attachment.
+    var about: String? = nil
     @EnvironmentObject private var model: AppModel
     @FocusState private var editorFocused: Bool
 
@@ -23,8 +26,11 @@ struct InputBar: View {
     /// engine (seconds) before `turn.started` makes the chat `working`.
     private var sending: Bool { model.isSending(chat: chat) }
     private var connected: Bool { model.connection == .connected }
+    /// A `session.renew` is out: the session is logging and the next one
+    /// is not there yet, so nothing is sent until it is.
+    private var renewing: Bool { model.isRenewing(chat: chat) }
     private var canSend: Bool {
-        connected && !busy && !sending
+        connected && !busy && !sending && !renewing
             && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -60,7 +66,7 @@ struct InputBar: View {
                         .frame(width: 20, height: 20)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
                 .help("Attach files to the next message")
                 .disabled(!connected)
                 Spacer(minLength: 0)
@@ -101,13 +107,16 @@ struct InputBar: View {
                 .frame(minHeight: 20, maxHeight: 160)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
+                .disabled(renewing)
         }
     }
 
     private var placeholder: String {
         if !connected { return "Not connected" }
+        if renewing { return "Starting the next session…" }
         if busy { return "Working — Stop to interrupt" }
         if sending { return "Sending…" }
+        if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
         return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
     }
 
@@ -122,7 +131,7 @@ struct InputBar: View {
                         Button(action: { model.detach(path, from: chat) }) {
                             Image(systemName: "xmark.circle.fill")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hover)
                         .foregroundStyle(.secondary)
                         .help("Remove \(path)")
                     }
@@ -162,9 +171,9 @@ struct InputBar: View {
                         .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
                         .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverCapsule)
                     .help(action.text)
-                    .disabled(!connected || busy || sending)
+                    .disabled(!connected || busy || sending || renewing)
                 }
             }
         }
@@ -174,7 +183,7 @@ struct InputBar: View {
     /// refuses (`attachment.missing`, `chat.busy`).
     private func send() {
         guard canSend else { return }
-        model.sendMessage(chat: chat, text: draft.wrappedValue)
+        model.sendMessage(chat: chat, text: draft.wrappedValue, about: about)
         editorFocused = true
     }
 
@@ -202,9 +211,19 @@ struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary(Color), quiet }
 
     let kind: Kind
-    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
+        Pill(kind: kind, configuration: configuration)
+    }
+
+    /// The drawn pill; a view of its own so it can track the pointer.
+    private struct Pill: View {
+        let kind: Kind
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+    var body: some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(foreground)
@@ -216,8 +235,15 @@ struct PillButtonStyle: ButtonStyle {
                     RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1)
                 }
             }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(!isEnabled ? .clear : configuration.isPressed ? Theme.pressTint : hovering ? Theme.hoverTint : .clear)
+                    .allowsHitTesting(false)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .onHover { hovering = $0 }
+            .pointerStyle(isEnabled ? .link : nil)
     }
 
     private var foreground: Color {
@@ -228,5 +254,6 @@ struct PillButtonStyle: ButtonStyle {
     private var background: Color {
         if case .primary(let accent) = kind { return accent }
         return Theme.control
+    }
     }
 }

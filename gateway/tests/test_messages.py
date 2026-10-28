@@ -29,6 +29,8 @@ EXPECTED_KEYS = {
     "client.files.list",
     "client.artifact.opened",
     "client.gateway.stop",
+    "client.session.renew",
+    "client.files.search",
     "server.hello",
     "server.chat.list",
     "server.chat.state",
@@ -46,6 +48,10 @@ EXPECTED_KEYS = {
     "server.artifact.created",
     "server.files.list",
     "server.status.set",
+    "server.context.usage",
+    "server.chat.compacted",
+    "server.session.renewed",
+    "server.files.results",
     "server.error",
 }
 
@@ -55,7 +61,7 @@ def test_every_type_has_schema_def_and_example():
     ex = example_messages()
     for key, msg in ex.items():
         assert type(msg).__name__ in schema["$defs"], key
-    assert len(ex) == 30  # Task 1's 27 plus user.text (Task 10), gateway.stop (Task 11), card.answered (review fix)
+    assert len(ex) == 36  # v0.1's 30 plus v0.2's session.renew, files.search, context.usage, chat.compacted, session.renewed, files.results
     assert set(ex) == EXPECTED_KEYS
 
 

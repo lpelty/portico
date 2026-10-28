@@ -116,7 +116,7 @@ struct ViewerView: View {
                     .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hover)
             }
             Button {
                 withAnimation { historyShown.toggle() }
@@ -127,7 +127,7 @@ struct ViewerView: View {
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hover)
             .help(historyShown ? "Hide the history" : "Show the history")
             Button {
                 model.setViewer(visible: false, for: chat)
@@ -138,7 +138,7 @@ struct ViewerView: View {
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hover)
             .help("Collapse the viewer")
         }
         .padding(.horizontal, 16)
@@ -271,6 +271,7 @@ struct OtherPane: View {
                     .foregroundStyle(.secondary)
             }
             Button("Open externally") { shown.openExternally() }
+                .pointerStyle(.link)
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
