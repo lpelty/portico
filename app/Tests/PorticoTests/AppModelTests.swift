@@ -971,8 +971,8 @@ final class AppModelTests: XCTestCase {
 
     func testThemeMeasuresMatchTheFrame() {
         XCTAssertEqual(Theme.defaultWindowSize, CGSize(width: 1440, height: 900))
-        XCTAssertEqual(Theme.sidebarWidth, 260)
-        XCTAssertEqual(Theme.viewerWidth, 440)
+        XCTAssertEqual(ColumnWidths.sidebarDefault, 260)
+        XCTAssertEqual(ColumnWidths.viewerDefault, 440)
         XCTAssertEqual(Theme.toolbarHeight, 52)
         XCTAssertEqual(Theme.statusStripHeight, 30)
         // The pen variables, dark and light, read back exactly.

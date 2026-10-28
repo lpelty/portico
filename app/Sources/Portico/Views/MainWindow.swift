@@ -1,29 +1,52 @@
 import SwiftUI
 
 /// The window as the A1 frame lays it out (`design/portico.pen`,
-/// "A1 · Classic three-column"): a 260-wide sidebar of chats and files on
-/// the left, the conversation in the middle under a 52-high toolbar and a
-/// 30-high status strip, and a 440-wide viewer on the right. The toolbar's
-/// two end buttons collapse the side columns; the sidebar's top band is
+/// "A1 · Classic three-column"): a sidebar of chats and files on the left
+/// (260 until dragged), the conversation in the middle under a 52-high
+/// toolbar and a 30-high status strip, and the viewer on the right (440
+/// for documents, 640 for web pages, until dragged; `ColumnWidths`). The
+/// toolbar's two end buttons collapse the side columns; the sidebar's top band is
 /// where the traffic lights sit, so the window has no title bar of its own.
 struct MainWindow: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var settings: Settings
+    /// The width a column had when its divider drag began.
+    @State private var dragStart: CGFloat?
 
     var body: some View {
-        HStack(spacing: 0) {
-            if model.sidebarVisible {
-                SidebarColumn()
-                    .frame(width: Theme.sidebarWidth)
-                    .transition(.move(edge: .leading))
-                Rectangle().fill(Theme.border).frame(width: 1)
-            }
-            MainColumn()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if let chat = model.selected, model.isViewerShown(for: chat), !model.documentMode {
-                Rectangle().fill(Theme.border).frame(width: 1)
-                ViewerView(chat: chat)
-                    .frame(width: Theme.viewerWidth)
-                    .transition(.move(edge: .trailing))
+        GeometryReader { geometry in
+            let widths = columnWidths(window: geometry.size.width)
+            HStack(spacing: 0) {
+                if let sidebar = widths.sidebar {
+                    SidebarColumn()
+                        .frame(width: sidebar)
+                        .transition(.move(edge: .leading))
+                    ColumnDivider(
+                        onDrag: { dx in
+                            let start = dragStart ?? sidebar
+                            dragStart = start
+                            settings.sidebarWidth = ColumnWidths.clampSidebar(start + dx)
+                        },
+                        onEnd: { dragStart = nil },
+                        onReset: { settings.sidebarWidth = ColumnWidths.sidebarDefault })
+                }
+                MainColumn()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let chat = model.selected, let viewer = widths.viewer {
+                    ColumnDivider(
+                        onDrag: { dx in
+                            let start = dragStart ?? viewer
+                            dragStart = start
+                            settings.setViewerWidth(
+                                ColumnWidths.clampViewer(start - dx, sidebar: widths.sidebar ?? 0, window: geometry.size.width),
+                                for: viewerFit)
+                        },
+                        onEnd: { dragStart = nil },
+                        onReset: { settings.setViewerWidth(ColumnWidths.viewerDefault(for: viewerFit), for: viewerFit) })
+                    ViewerView(chat: chat)
+                        .frame(width: viewer)
+                        .transition(.move(edge: .trailing))
+                }
             }
         }
         .background(Theme.window)
@@ -37,12 +60,28 @@ struct MainWindow: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(.easeInOut(duration: 0.18), value: model.sidebarVisible)
         .animation(.easeInOut(duration: 0.18), value: viewerShown)
+        // A prototype after a document: the viewer moves to the width
+        // remembered for that fit (not while a divider is being dragged).
+        .animation(dragStart == nil ? .easeInOut(duration: 0.18) : nil, value: viewerFit)
         .frame(minWidth: Theme.minimumWindowSize.width, minHeight: Theme.minimumWindowSize.height)
     }
 
     private var viewerShown: Bool {
         guard !model.documentMode else { return false }
         return model.selected.map { model.isViewerShown(for: $0) } ?? false
+    }
+
+    /// The viewer's fit: the current artifact's, reading when nothing is shown.
+    private var viewerFit: ColumnWidths.Fit {
+        ColumnWidths.Fit(media: model.selected.flatMap { model.current[$0]?.media })
+    }
+
+    /// The remembered widths of the columns that are shown, fitted to the window.
+    private func columnWidths(window: CGFloat) -> (sidebar: CGFloat?, viewer: CGFloat?) {
+        ColumnWidths.fit(
+            sidebar: model.sidebarVisible ? settings.sidebarWidth : nil,
+            viewer: viewerShown ? settings.viewerWidth(for: viewerFit) : nil,
+            window: window)
     }
 }
 

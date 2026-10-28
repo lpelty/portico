@@ -19,9 +19,6 @@ struct FileNode: Identifiable, Equatable {
     /// `true` for the loading row under an unlisted directory; `path` is
     /// then the directory to list.
     var placeholder: Bool = false
-    /// `nil` for a file (no disclosure); the listed entries, or one
-    /// placeholder, for a directory.
-    var children: [FileNode]?
 
     var id: String { "\(chat)|\(root)|\(path)|\(placeholder ? "loading" : "entry")" }
 
@@ -163,17 +160,35 @@ struct FilesView: View {
 /// The chat's roots as outlines, each directory listed lazily the first
 /// time it opens. Shared by the sidebar's Folder tab (F1) and the
 /// document view's tree (F3); a file's click goes where the person is
-/// looking (`AppModel.reveal`).
+/// looking (`AppModel.reveal`). Drawn as a flat list rather than an
+/// `OutlineGroup` so deep folders can indent less (`indent(depth:)`) and
+/// keep their names on screen; a name that still does not fit is cut in
+/// the middle, and hovering shows the whole path.
 struct FileTree: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
+    /// Open directories, as `root|path`.
+    @State private var expanded: Set<String> = []
+
+    /// One drawn line: an entry or a directory's placeholder, and how deep it sits.
+    struct Line: Identifiable {
+        let node: FileNode
+        let depth: Int
+        var id: String { node.id }
+    }
+
+    /// Full steps for the first four levels, then small ones, so a file
+    /// eight folders down still has room for its name.
+    static func indent(depth: Int) -> CGFloat {
+        CGFloat(min(depth, 4)) * 14 + CGFloat(max(0, depth - 4)) * 6
+    }
 
     var body: some View {
         List {
             ForEach(model.browsableRoots(for: chat), id: \.name) { root in
                 Section {
-                    OutlineGroup(nodes(root: root.name, path: ""), children: \.children) { node in
-                        row(node)
+                    ForEach(lines(root: root.name, path: "", depth: 0)) { line in
+                        row(line)
                     }
                 } header: {
                     Label(root.name, systemImage: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
@@ -189,54 +204,80 @@ struct FileTree: View {
         }
     }
 
-    /// The entries of one directory as nodes, recursing into the
-    /// directories already listed; a directory not listed yet gets one
-    /// placeholder whose appearance asks for it.
-    private func nodes(root: String, path: String) -> [FileNode] {
+    private func key(_ root: String, _ path: String) -> String { "\(root)|\(path)" }
+
+    /// The entries of one directory, followed by the contents of each open
+    /// directory; a directory not listed yet gets one placeholder whose
+    /// appearance asks for it.
+    private func lines(root: String, path: String, depth: Int) -> [Line] {
         guard let entries = model.fileEntries(chat: chat, root: root, path: path) else {
-            return [FileNode(chat: chat, root: root, path: path, name: "", dir: true, placeholder: true)]
+            return [Line(node: FileNode(chat: chat, root: root, path: path, name: "", dir: true, placeholder: true), depth: depth)]
         }
-        return entries.map { entry in
+        var out: [Line] = []
+        for entry in entries {
             let childPath = AppModel.childPath(path, entry.name)
-            return FileNode(
-                chat: chat, root: root, path: childPath, name: entry.name, dir: entry.dir, size: entry.size,
-                children: entry.dir ? nodes(root: root, path: childPath) : nil)
+            out.append(Line(node: FileNode(chat: chat, root: root, path: childPath, name: entry.name, dir: entry.dir, size: entry.size), depth: depth))
+            if entry.dir, expanded.contains(key(root, childPath)) {
+                out += lines(root: root, path: childPath, depth: depth + 1)
+            }
+        }
+        return out
+    }
+
+    private func toggle(_ node: FileNode) {
+        let k = key(node.root, node.path)
+        if expanded.contains(k) { expanded.remove(k) } else { expanded.insert(k) }
+    }
+
+    @ViewBuilder
+    private func row(_ line: Line) -> some View {
+        let node = line.node
+        HStack(spacing: 2) {
+            Color.clear.frame(width: Self.indent(depth: line.depth), height: 1)
+            if node.dir && !node.placeholder {
+                Image(systemName: expanded.contains(key(node.root, node.path)) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.text3)
+                    .frame(width: 12)
+            } else {
+                Color.clear.frame(width: 12, height: 1)
+            }
+            if node.placeholder {
+                placeholder(node)
+            } else {
+                FileRow(node: node, subtitle: nil, toggle: { toggle(node) })
+            }
         }
     }
 
     @ViewBuilder
-    private func row(_ node: FileNode) -> some View {
-        if node.placeholder {
-            if let refusal = model.fileListError(chat: chat, root: node.root, path: node.path) {
-                // The gateway refused the listing (a link that leaves the
-                // root, a directory gone): say so where the entries would
-                // be; a click asks again.
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.secondary)
-                    Text(refusal)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                .contentShape(Rectangle())
-                .help("Click to ask again")
-                .onTapGesture { model.listFiles(chat: chat, root: node.root, path: node.path) }
-            } else {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text(model.connection == .connected ? "Listing…" : "Not connected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .onAppear { model.listFiles(chat: chat, root: node.root, path: node.path) }
+    private func placeholder(_ node: FileNode) -> some View {
+        if let refusal = model.fileListError(chat: chat, root: node.root, path: node.path) {
+            // The gateway refused the listing (a link that leaves the
+            // root, a directory gone): say so where the entries would
+            // be; a click asks again.
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+                Text(refusal)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
+            .contentShape(Rectangle())
+            .help("Click to ask again")
+            .onTapGesture { model.listFiles(chat: chat, root: node.root, path: node.path) }
         } else {
-            FileRow(node: node, subtitle: nil)
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text(model.connection == .connected ? "Listing…" : "Not connected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onAppear { model.listFiles(chat: chat, root: node.root, path: node.path) }
         }
     }
-
 }
 
 // MARK: - FileRow
@@ -248,6 +289,8 @@ struct FileRow: View {
     let node: FileNode
     /// Shown under the name in the filter's flat list (root and path).
     let subtitle: String?
+    /// Opens or closes a directory in the tree; `nil` in the flat list.
+    var toggle: (() -> Void)? = nil
     @EnvironmentObject private var model: AppModel
 
     private var absolutePath: String? {
@@ -291,7 +334,8 @@ struct FileRow: View {
         .contentShape(Rectangle())
         .help(absolutePath ?? node.name)
         .onTapGesture {
-            guard !node.dir, let path = absolutePath else { return }
+            if node.dir { toggle?(); return }
+            guard let path = absolutePath else { return }
             model.reveal(file: path, in: node.chat)
         }
         .contextMenu { menu }

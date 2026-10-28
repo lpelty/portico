@@ -32,11 +32,9 @@ enum Theme {
 
     // MARK: measures
 
-    /// The frame is 1440 x 900: a 260 sidebar, the conversation, a 440 viewer.
+    /// The frame is 1440 x 900. The column widths are `ColumnWidths`.
     static let defaultWindowSize = CGSize(width: 1440, height: 900)
     static let minimumWindowSize = CGSize(width: 960, height: 600)
-    static let sidebarWidth: CGFloat = 260
-    static let viewerWidth: CGFloat = 440
     static let toolbarHeight: CGFloat = 52
     static let statusStripHeight: CGFloat = 30
     /// Room for the traffic lights when the sidebar (which normally holds

@@ -404,3 +404,72 @@ final class SessionAndFilesTests: XCTestCase {
             "Plan the interview codebook for the Q3 research synthesis…")
     }
 }
+
+// MARK: - column widths
+
+@MainActor
+final class ColumnWidthTests: XCTestCase {
+    func testWebPagesAndPrototypesGetTheCanvasWidthEverythingElseReads() {
+        XCTAssertEqual(ColumnWidths.Fit(media: .html), .canvas)
+        XCTAssertEqual(ColumnWidths.Fit(media: .url), .canvas)
+        for media in [Media.markdown, .text, .pdf, .image, .other] {
+            XCTAssertEqual(ColumnWidths.Fit(media: media), .reading, "\(media)")
+        }
+        XCTAssertEqual(ColumnWidths.Fit(media: nil), .reading)
+    }
+
+    func testEachFitRemembersItsOwnWidthAcrossLaunches() throws {
+        let suite = "portico-widths-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = Settings(defaults: defaults)
+        XCTAssertEqual(first.viewerWidth(for: .reading), 440)
+        XCTAssertEqual(first.viewerWidth(for: .canvas), 640)
+        XCTAssertEqual(first.sidebarWidth, 260)
+        first.setViewerWidth(900, for: .canvas)
+        first.sidebarWidth = 330
+        let again = Settings(defaults: defaults)
+        XCTAssertEqual(again.viewerWidth(for: .canvas), 900)
+        XCTAssertEqual(again.viewerWidth(for: .reading), 440, "widening a prototype leaves documents alone")
+        XCTAssertEqual(again.sidebarWidth, 330)
+    }
+
+    func testAWideWindowKeepsTheRememberedWidthsAndTheConversationTakesTheRest() {
+        let w = ColumnWidths.fit(sidebar: 300, viewer: 700, window: 2000)
+        XCTAssertEqual(w.sidebar, 300)
+        XCTAssertEqual(w.viewer, 700)
+    }
+
+    func testANarrowWindowNarrowsTheViewerFirstThenTheSidebar() {
+        // 300 + 700 + 420 = 1420: 220 too wide, all of it from the viewer.
+        var w = ColumnWidths.fit(sidebar: 300, viewer: 700, window: 1200)
+        XCTAssertEqual(w.sidebar, 300)
+        XCTAssertEqual(w.viewer, 480)
+        // The viewer stops at 320, then the sidebar gives, down to 200.
+        w = ColumnWidths.fit(sidebar: 300, viewer: 700, window: 960)
+        XCTAssertEqual(w.viewer, 320)
+        XCTAssertEqual(w.sidebar, 220)
+        w = ColumnWidths.fit(sidebar: 300, viewer: 700, window: 700)
+        XCTAssertEqual(w.viewer, 320)
+        XCTAssertEqual(w.sidebar, 200)
+        // A hidden column stays hidden and gives the space to the others.
+        w = ColumnWidths.fit(sidebar: nil, viewer: 700, window: 1000)
+        XCTAssertNil(w.sidebar)
+        XCTAssertEqual(w.viewer, 580)
+    }
+
+    func testDraggingClampsToTheMinimumsAndLeavesTheConversationItsShare() {
+        XCTAssertEqual(ColumnWidths.clampSidebar(50), 200)
+        XCTAssertEqual(ColumnWidths.clampSidebar(900), 480)
+        XCTAssertEqual(ColumnWidths.clampViewer(100, sidebar: 260, window: 1440), 320)
+        XCTAssertEqual(ColumnWidths.clampViewer(2000, sidebar: 260, window: 1440), 760)
+        XCTAssertEqual(ColumnWidths.clampViewer(2000, sidebar: 0, window: 1440), 1020)
+    }
+
+    func testDeepFoldersIndentLessPastFourLevels() {
+        XCTAssertEqual(FileTree.indent(depth: 0), 0)
+        XCTAssertEqual(FileTree.indent(depth: 4), 56)
+        XCTAssertEqual(FileTree.indent(depth: 5), 62)
+        XCTAssertEqual(FileTree.indent(depth: 9), 86)
+    }
+}

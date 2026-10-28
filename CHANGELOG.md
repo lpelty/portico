@@ -18,6 +18,16 @@
   reported (`chat.compacted`) and counted, never hidden.
 - **Full-text file search** under any root (`files.search`), through
   Spotlight: no index of Portico's own. At most 50 hits, 5 seconds.
+- **Resizable columns**: drag the line beside the sidebar or the viewer;
+  double-click it for the default width. Widths are remembered. The viewer
+  remembers two: one for documents (markdown, text, PDF, images; 440 to
+  start) and one for web pages and prototypes (640 to start), so widening
+  a prototype leaves documents alone. A bigger window widens the
+  conversation; a smaller one narrows the viewer, then the sidebar, before
+  the conversation goes below 420. The window's own size is remembered by
+  macOS.
+- **Deep folders stay readable**: the file tree indents less past four
+  levels, cuts long names in the middle, and shows the full path on hover.
 - **Releases by tag**: `bin/update` moves to the newest `vX.Y.Z` tag,
   reinstalls, rebuilds the app and runs the doctor (`--channel main`
   follows main). It refuses to update over local changes; the doctor warns
