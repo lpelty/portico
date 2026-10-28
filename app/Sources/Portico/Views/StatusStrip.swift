@@ -67,17 +67,47 @@ struct StatusStrip: View {
 
     var body: some View {
         let strip = model.statusStrip(gateway: supervisor.status)
-        HStack(spacing: 8) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
-            Text(strip.text)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 16) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(stateColor)
+                    .frame(width: 8, height: 8)
+                Text(strip.chatText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+            }
+            if let folder = strip.folderName {
+                HStack(spacing: 5) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 11))
+                    Text(folder)
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(Theme.text2)
                 .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-            Spacer(minLength: 0)
+            }
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(gatewayColor)
+                    .frame(width: 6, height: 6)
+                Text(strip.gatewayText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text2)
+            }
+            if let connection = strip.connectionText {
+                Text(connection)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.wait)
+            }
+            Spacer(minLength: 8)
+            if let status = strip.statusText {
+                Text(status)
+                    .font(.system(size: 12))
+                    .italic()
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.statusStripHeight)
@@ -88,11 +118,23 @@ struct StatusStrip: View {
         .accessibilityLabel("Status: \(strip.text)")
     }
 
-    private var dotColor: Color {
-        switch model.connection {
-        case .connected: .green
-        case .connecting: .yellow
-        case .disconnected: .secondary
+    /// The chat's state in the frame's colours; the socket's trouble shows red.
+    private var stateColor: Color {
+        if case .failed = model.connection { return .red }
+        guard let id = model.selected, let summary = model.chats.first(where: { $0.chat == id }) else { return Theme.idle }
+        switch summary.state {
+        case .idle: return Theme.idle
+        case .working: return Theme.working
+        case .waitingOnYou: return Theme.wait
+        case .stopped: return Theme.stopped
+        }
+    }
+
+    private var gatewayColor: Color {
+        switch supervisor.status {
+        case .running: model.connection == .connected ? Theme.working : Theme.wait
+        case .starting: Theme.wait
+        case .stopped: Theme.idle
         case .failed: .red
         }
     }

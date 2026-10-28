@@ -34,65 +34,86 @@ struct ToolRowPresentation: Equatable {
     }
 }
 
-/// One tool call, folded: icon, tool name, what it touched, and its state
-/// at the trailing edge. Disclosing it shows the input as JSON and, once
-/// finished, the result line.
+/// One tool call, folded, as the frame's ToolLine: a state icon, the
+/// tool's name, what it touched (relative to the chat's folder when it is
+/// inside it), and a chevron. Disclosing it shows the input as JSON and,
+/// once finished, the result line.
 struct ToolRowView: View {
     let row: ToolRow
+    var folder: String? = nil
     @State private var expanded = false
 
     private var shown: ToolRowPresentation { ToolRowPresentation(row: row) }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.12)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    stateIcon
+                        .frame(width: 14, height: 14)
+                    Text(row.tool)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                    Text(Self.display(row.summary, in: folder))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.text3)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
                 Text(shown.prettyInput)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.text)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Theme.window, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 if row.finished {
-                    Label(shown.stateText, systemImage: row.ok == false ? "xmark.circle" : "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(row.ok == false ? .red : .secondary)
+                    Text(shown.stateText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(row.ok == false ? .red : Theme.text2)
                         .textSelection(.enabled)
                 }
             }
-            .padding(.top, 4)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: shown.icon)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-                Text(row.tool)
-                    .fontWeight(.medium)
-                Text(row.summary)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 8)
-                trailing
-            }
-            .font(.callout)
         }
-        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 10)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .help(shown.stateText)
     }
 
     @ViewBuilder
-    private var trailing: some View {
+    private var stateIcon: some View {
         if !row.finished {
             ProgressView()
                 .controlSize(.mini)
         } else if row.ok == false {
-            Image(systemName: "xmark.circle.fill")
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.red)
         } else {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.working)
         }
+    }
+
+    /// `summary` with the chat's folder stripped when it names a path inside
+    /// it (`/a/b/notes/x.md` in `/a/b` reads `notes/x.md`); display only.
+    static func display(_ summary: String, in folder: String?) -> String {
+        guard let folder, !folder.isEmpty else { return summary }
+        let prefix = folder.hasSuffix("/") ? folder : folder + "/"
+        if summary.hasPrefix(prefix) { return String(summary.dropFirst(prefix.count)) }
+        return summary.replacingOccurrences(of: prefix, with: "")
     }
 }

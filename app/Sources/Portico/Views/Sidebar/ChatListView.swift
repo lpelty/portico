@@ -40,15 +40,24 @@ struct ChatListView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            List(selection: selectionBinding) {
-                ForEach(model.chats, id: \.chat) { summary in
-                    row(for: ChatRow(summary: summary))
-                        .tag(summary.chat)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(model.chats, id: \.chat) { summary in
+                        Button {
+                            if model.selected != summary.chat { model.open(chat: summary.chat) }
+                        } label: {
+                            row(for: ChatRow(summary: summary))
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            model.selected == summary.chat ? Theme.selected : .clear,
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .contextMenu { menu(for: summary) }
+                        .accessibilityAddTraits(model.selected == summary.chat ? .isSelected : [])
+                    }
                 }
+                .padding(.horizontal, 8)
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
             .overlay {
                 if model.chats.isEmpty {
                     ContentUnavailableView("No chats yet", systemImage: "bubble.left", description: Text("New Chat picks a folder to work in."))
@@ -67,49 +76,45 @@ struct ChatListView: View {
         }
     }
 
-    private var selectionBinding: Binding<Int?> {
-        Binding(
-            get: { model.selected },
-            set: { chat in
-                guard let chat, chat != model.selected else { return }
-                model.open(chat: chat)
-            })
-    }
-
     private var aliasPresented: Binding<Bool> {
         Binding(get: { aliasTarget != nil }, set: { if !$0 { aliasTarget = nil } })
     }
 
+    /// The frame's ChatRow: number, alias, and the state as a dot and word.
     @ViewBuilder
     private func row(for row: ChatRow) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(row.number)
-                    .font(.body.monospacedDigit())
-                    .fontWeight(.medium)
-                if let alias = row.alias {
-                    Text(alias)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Text(row.stateWord)
-                    .font(.caption)
-                    .foregroundStyle(stateColor(row.summary.state))
-            }
-            Text(row.folderName)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        let waiting = row.summary.state == .waitingOnYou
+        HStack(spacing: 8) {
+            Text(row.number)
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Theme.text)
+            Text(row.alias ?? "")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text2)
                 .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(stateColor(row.summary.state))
+                    .frame(width: 7, height: 7)
+                Text(row.stateWord)
+                    .font(.system(size: 11, weight: waiting ? .semibold : .regular))
+                    .foregroundStyle(waiting ? Theme.wait : Theme.text2)
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .contentShape(Rectangle())
+        .help(row.folderName)
     }
 
     private func stateColor(_ state: ChatStateWord) -> Color {
         switch state {
-        case .idle: .secondary
-        case .working: .accentColor
-        case .waitingOnYou: .orange
-        case .stopped: .secondary
+        case .idle: Theme.idle
+        case .working: Theme.working
+        case .waitingOnYou: Theme.wait
+        case .stopped: Theme.stopped
         }
     }
 

@@ -69,13 +69,12 @@ struct ViewerView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Rectangle().fill(Theme.border).frame(height: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if historyShown {
-                Divider()
                 HistoryList(chat: chat)
-                    .frame(minHeight: 80, idealHeight: 140, maxHeight: 220)
+                    .frame(minHeight: 80, idealHeight: 150, maxHeight: 220)
             }
         }
         .background(Theme.panel)
@@ -86,41 +85,60 @@ struct ViewerView: View {
             if let current = model.current[chat] {
                 let shown = ArtifactPresentation(artifact: current)
                 Image(systemName: shown.systemImage)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text2)
                 Text(shown.title)
-                    .font(.headline)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .help(shown.subtitle)
-                Text(shown.kindLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
+                    .help("\(shown.kindLabel) · \(shown.subtitle)")
             } else {
                 Text("Viewer")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text2)
             }
             Spacer()
             if let current = model.current[chat] {
-                Button("Open externally") { ArtifactPresentation(artifact: current).openExternally() }
-                    .controlSize(.small)
+                Button {
+                    ArtifactPresentation(artifact: current).openExternally()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Open externally")
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(Theme.text)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 9)
+                    .background(Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             Button {
                 withAnimation { historyShown.toggle() }
             } label: {
-                Image(systemName: historyShown ? "list.bullet.rectangle" : "list.bullet.rectangle.fill")
+                Image(systemName: "list.bullet.rectangle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(historyShown ? Theme.text2 : Theme.text)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help(historyShown ? "Hide the history" : "Show the history")
             Button {
                 model.setViewer(visible: false, for: chat)
             } label: {
                 Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.text2)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Collapse the viewer")
         }
         .padding(.horizontal, 16)

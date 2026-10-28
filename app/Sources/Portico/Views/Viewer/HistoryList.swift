@@ -8,25 +8,30 @@ struct HistoryList: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        List(selection: selection) {
-            ForEach(model.history(for: chat), id: \.id) { artifact in
-                HistoryRow(presentation: ArtifactPresentation(artifact: artifact))
-                    .tag(artifact.id)
-                    .contextMenu {
-                        Button("Open externally") { ArtifactPresentation(artifact: artifact).openExternally() }
+        VStack(alignment: .leading, spacing: 6) {
+            SidebarSectionLabel("Made in this chat")
+                .padding(.horizontal, 8)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(model.history(for: chat), id: \.id) { artifact in
+                        Button {
+                            model.show(artifact, in: chat)
+                        } label: {
+                            HistoryRow(presentation: ArtifactPresentation(artifact: artifact))
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            model.current[chat]?.id == artifact.id ? Theme.selected : .clear,
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .contextMenu {
+                            Button("Open externally") { ArtifactPresentation(artifact: artifact).openExternally() }
+                        }
                     }
+                }
             }
         }
-        .listStyle(.inset)
-    }
-
-    private var selection: Binding<String?> {
-        Binding(
-            get: { model.current[chat]?.id },
-            set: { id in
-                guard let id, let artifact = model.artifacts[chat]?.first(where: { $0.id == id }) else { return }
-                model.show(artifact, in: chat)
-            })
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
     }
 }
 
@@ -38,26 +43,22 @@ struct HistoryRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: presentation.systemImage)
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(presentation.title)
-                    .lineLimit(1)
-                Text(presentation.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.text2)
+                .frame(width: 13)
+            Text(presentation.title)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
             Spacer(minLength: 4)
-            Button {
-                presentation.openExternally()
-            } label: {
-                Image(systemName: "arrow.up.forward.square")
-            }
-            .buttonStyle(.borderless)
-            .help("Open externally")
+            Text(presentation.kindLabel)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.text3)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .contentShape(Rectangle())
+        .help(presentation.subtitle)
     }
 }

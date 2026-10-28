@@ -48,8 +48,26 @@ struct FilesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                SidebarSectionLabel("Files")
+                Spacer(minLength: 0)
+                Button {
+                    model.refreshFiles(chat: chat)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text2)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("List the open folders again")
+                .disabled(model.connection != .connected)
+            }
+            .padding(.top, 18)
+            .padding(.bottom, 6)
+            .padding(.horizontal, 16)
             header
-            Divider()
             if filter.trimmingCharacters(in: .whitespaces).isEmpty {
                 tree
             } else {
@@ -76,19 +94,15 @@ struct FilesView: View {
                 .foregroundStyle(.secondary)
                 .help("Clear the filter")
             }
-            Button {
-                model.refreshFiles(chat: chat)
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("List the open folders again")
-            .disabled(model.connection != .connected)
         }
-        .font(.callout)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.text2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
     }
 
     // MARK: the outline

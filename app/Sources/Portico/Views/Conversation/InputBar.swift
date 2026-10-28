@@ -29,44 +29,12 @@ struct InputBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !attachments.isEmpty {
-                chips
-            }
-            HStack(alignment: .bottom, spacing: 8) {
-                editor
-                VStack(spacing: 6) {
-                    if busy {
-                        Button(action: { model.stopTurn(chat: chat) }) {
-                            Label("Stop", systemImage: "stop.fill")
-                        }
-                        .keyboardShortcut(".", modifiers: .command)
-                        .help("Stop the running turn (⌘.)")
-                        .disabled(!connected)
-                    } else {
-                        Button(action: send) {
-                            Label("Send", systemImage: "paperplane.fill")
-                        }
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .buttonStyle(.borderedProminent)
-                        .help("Send (⌘↩)")
-                        .disabled(!canSend)
-                    }
-                    Button(action: pickAttachments) {
-                        Label("Attach", systemImage: "paperclip")
-                    }
-                    .help("Attach files to the next message")
-                    .disabled(!connected)
-                }
-                .labelStyle(.iconOnly)
-                .controlSize(.regular)
-            }
+        VStack(alignment: .leading, spacing: 12) {
             if let actions = model.hello?.actions, !actions.isEmpty {
-                actionButtons(actions)
+                actionChips(actions)
             }
+            composer
         }
-        .padding(10)
-        .background(.bar)
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter { $0.isFileURL && !isDirectory($0) }.map(\.path)
             guard !files.isEmpty else { return false }
@@ -76,32 +44,71 @@ struct InputBar: View {
         .onAppear { editorFocused = true }
     }
 
+    /// The frame's Input: one bordered box in the control colour holding the
+    /// editor, then a row with Attach at the left and Stop and Send at the right.
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !attachments.isEmpty {
+                chips
+            }
+            editor
+            HStack(spacing: 8) {
+                Button(action: pickAttachments) {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.text2)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Attach files to the next message")
+                .disabled(!connected)
+                Spacer(minLength: 0)
+                Button(action: { model.stopTurn(chat: chat) }) {
+                    Text("Stop")
+                }
+                .buttonStyle(PillButtonStyle(kind: .quiet))
+                .keyboardShortcut(".", modifiers: .command)
+                .help("Stop the running turn (⌘.)")
+                .disabled(!busy || !connected)
+                Button(action: send) {
+                    Text("Send")
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("Send (⌘↩)")
+                .disabled(!canSend)
+            }
+        }
+        .padding(EdgeInsets(top: 12, leading: 14, bottom: 10, trailing: 14))
+        .background(Theme.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.border, lineWidth: 1))
+    }
+
     private var editor: some View {
         ZStack(alignment: .topLeading) {
             if draft.wrappedValue.isEmpty {
                 Text(placeholder)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 5)
-                    .padding(.vertical, 8)
                     .allowsHitTesting(false)
             }
             TextEditor(text: draft)
-                .font(.body)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 36, maxHeight: 160)
+                .frame(minHeight: 20, maxHeight: 160)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
         }
-        .padding(2)
-        .background(.background, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
     }
 
     private var placeholder: String {
         if !connected { return "Not connected" }
         if busy { return "Working — Stop to interrupt" }
         if sending { return "Sending…" }
-        return "Message \(model.hello?.brand.agentName ?? "the agent") (⌘↩ to send)"
+        return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
     }
 
     private var chips: some View {
@@ -119,26 +126,43 @@ struct InputBar: View {
                         .foregroundStyle(.secondary)
                         .help("Remove \(path)")
                     }
-                    .font(.caption)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(.quaternary.opacity(0.6), in: Capsule())
+                    .background(Theme.surface, in: Capsule())
                     .help(path)
                 }
             }
         }
     }
 
-    private func actionButtons(_ actions: [Action]) -> some View {
+    /// The deployment's actions as the frame's chips: a capsule in the
+    /// control colour with a sparkle and the label.
+    private func actionChips(_ actions: [Action]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
-                    Button(action.label) {
+                    Button {
                         // On its own: the typed text and the chips stay for the
                         // message they belong to.
                         model.sendAction(chat: chat, text: action.text)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.text2)
+                            Text(action.label)
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.text)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .background(Theme.control, in: Capsule())
+                        .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
+                        .contentShape(Capsule())
                     }
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .help(action.text)
                     .disabled(!connected || busy || sending)
                 }
@@ -167,5 +191,42 @@ struct InputBar: View {
 
     private func isDirectory(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+    }
+}
+
+
+/// The frame's Button: 13-point medium label, 6 by 14 padding, radius 6.
+/// `primary` fills with the accent; `quiet` is the control colour with a
+/// border, and reads dimmed when disabled (the frame's inactive Stop).
+struct PillButtonStyle: ButtonStyle {
+    enum Kind { case primary(Color), quiet }
+
+    let kind: Kind
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(foreground)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 14)
+            .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                if case .quiet = kind {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1)
+                }
+            }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private var foreground: Color {
+        if case .primary = kind { return .white }
+        return Theme.text
+    }
+
+    private var background: Color {
+        if case .primary(let accent) = kind { return accent }
+        return Theme.control
     }
 }
