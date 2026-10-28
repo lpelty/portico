@@ -596,7 +596,15 @@ class GatewayServer:
             await self.cards.cancel_all(chat, "gateway stopping", self.emit)
             await self._close_engine(chat)
         if server is not None:
-            server.close()
+            # ``Server.close`` already ran once above and is idempotent, so it
+            # cannot be asked to close connections now: a connection that was
+            # accepted but never completed ``hello`` (not ``self._app``) is
+            # closed here by hand, or ``wait_closed`` would wait on it forever.
+            stragglers = [
+                asyncio.create_task(conn.close(CLOSE_GOING_AWAY, "gateway stopping")) for conn in server.connections
+            ]
+            if stragglers:
+                await asyncio.wait(stragglers)
             await server.wait_closed()
         self.state.clear_ledger()
         self.registry.persist()

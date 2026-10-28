@@ -251,3 +251,18 @@ async def test_shutdown_closes_app_and_clears_ledger(state_dir: StateDir, config
         await asyncio.wait_for(conn.recv(), 5)
     assert state_dir.read_ledger() is None
     assert not srv.attached
+
+
+async def test_shutdown_completes_with_a_client_that_never_said_hello(state_dir: StateDir, config: Config) -> None:
+    # A connection with a valid token that sends nothing: shutdown must close
+    # it and return, not wait on it forever (and leave the ledger behind).
+    srv = make_server(state_dir, config)
+    await srv.serve(0)
+    conn = await connect(ws_url(srv, srv.token))
+    try:
+        await asyncio.wait_for(srv.shutdown(), 5)
+        with pytest.raises(ConnectionClosed):
+            await asyncio.wait_for(conn.recv(), 5)
+        assert state_dir.read_ledger() is None
+    finally:
+        await conn.close()
