@@ -195,7 +195,10 @@ gateway keeps no permanent allow store. `deny` refuses the use, and
 ### `files.list` — `FilesListRequest`
 `root: string` (a root name from `hello.roots`, or `chat` for the chat's
 folder, with `chat` set), `path: string` (relative, default `""`), `id` to
-correlate. Reply: `files.list` (server). *(Task 12)*
+correlate. Reply: `files.list` (server), or `error` with `files.unknown_root`
+(no such root, or `chat` without a chat number), `files.outside_root` (the
+path leaves the root once `..` and symlinks are resolved, or is absolute),
+`files.not_found` (the path is not an existing directory under the root).
 
 ### `artifact.opened` — `ArtifactOpened`
 `chat`, `artifact_id: string`. Optional telemetry: the app showed that
@@ -337,7 +340,12 @@ artifact is sent at once with `open: true`. Artifacts are kept with the
 chat in the index, so a later launch still lists them.
 
 ### `files.list` — `FilesList`
-`root`, `path`, `entries: [{name, dir, size?}]`, `id` echoing the request. *(Task 12)*
+`root`, `path` (normalised relative path, `""` for the root itself),
+`entries: [{name, dir, size?}]`, `id` and `chat` echoing the request.
+Entries: directories first, then files, each group in case-insensitive
+name order; names starting with `.` are skipped; `size` is bytes for a
+file and absent for a directory. A direct reply, not a history event: no
+`seq`.
 
 ### `status.set` — `StatusSet`
 `chat?`, `seq?`, `text`. One line for the status strip, shown verbatim.
@@ -354,7 +362,8 @@ commands arrive this way, as does the gateway's own "stopping" line.
 directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
-`card.stale`, `card.invalid_answer`, `files.outside_root`,
+`card.stale`, `card.invalid_answer`, `files.unknown_root`, `files.outside_root`,
+`files.not_found`,
 `lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
 carries its last line and no chat was created),
 `gateway.error` (a handler failed; the message says which).

@@ -59,6 +59,16 @@ and translated (``history_events``) into ``chat.history``, the chat's
 stored artifacts follow as ``artifact.created open=false``, then
 ``chat.live``. A missing transcript is an empty history, not an error.
 
+Files (Task 12): ``files.list {root, path}`` answers with the entries of
+one directory — directories first, names in case-insensitive order,
+hidden entries skipped. ``root`` is a name from ``hello.roots`` or
+``chat`` (the chat's own folder, with ``chat`` set); ``path`` is relative
+to it. A path that leaves the root once ``..`` and symlinks are resolved
+is ``error code=files.outside_root``; a root name the gateway does not
+offer is ``files.unknown_root``; a path that is not an existing directory
+is ``files.not_found``. The reply is a direct answer (``id``), not a
+history event: it carries no ``seq``.
+
 Lifecycle (Task 11): the deployment's ``before_first_chat`` command runs
 once per gateway launch, before the first ``chat.new`` is honoured; its
 lines go to the app as chat-less ``status.set`` frames, and a non-zero
@@ -118,8 +128,11 @@ from .messages import (
     ChatStateWord,
     ChatStop,
     ClientMessage,
+    Entry,
     Envelope,
     Error,
+    FilesList,
+    FilesListRequest,
     GatewayStop,
     HelloClient,
     MessageSend,
@@ -190,6 +203,59 @@ def check_attachments(paths: list[str]) -> list[str]:
             raise ProtocolError("attachment.missing", f"attachment does not exist: {raw}")
         checked.append(str(path))
     return checked
+
+
+# --- files: helpers -----------------------------------------------------------
+
+# The chat's own folder is always offered under this root name, next to the
+# deployment's ``roots`` from config.
+CHAT_ROOT = "chat"
+
+
+def list_directory(root: Path, rel: str) -> tuple[str, list[Entry]]:
+    """List ``rel`` under ``root``: dirs first, names case-insensitive, hidden skipped.
+
+    Returns the normalised relative path (``""`` for the root itself) and
+    the entries. ``rel`` must stay inside ``root`` once ``..`` and symlinks
+    are resolved, or ``files.outside_root`` is raised; a path that is not an
+    existing directory is ``files.not_found``. The root itself may be a
+    symlink (a config root often is); only a path that leaves it is refused.
+    """
+    base = Path(root).resolve()
+    requested = Path(rel)
+    if requested.is_absolute():
+        raise ProtocolError("files.outside_root", f"path must be relative to the root: {rel}")
+    target = (base / requested).resolve()
+    try:
+        relative = target.relative_to(base)
+    except ValueError:
+        raise ProtocolError("files.outside_root", f"path leaves the root: {rel}") from None
+    if not target.is_dir():
+        raise ProtocolError("files.not_found", f"not a directory under the root: {rel}")
+    dirs: list[Entry] = []
+    files: list[Entry] = []
+    with os.scandir(target) as it:
+        for item in it:
+            if item.name.startswith("."):
+                continue
+            try:
+                is_dir = item.is_dir()
+            except OSError:
+                is_dir = False
+            if is_dir:
+                dirs.append(Entry(name=item.name, dir=True))
+                continue
+            try:
+                size: int | None = item.stat().st_size
+            except OSError:
+                size = None
+            files.append(Entry(name=item.name, dir=False, size=size))
+    return relative.as_posix() if relative.parts else "", sorted(dirs, key=_entry_key) + sorted(files, key=_entry_key)
+
+
+def _entry_key(entry: Entry) -> tuple[str, str]:
+    """Case-insensitive order; the exact name breaks ties so the order is stable."""
+    return (entry.name.casefold(), entry.name)
 
 
 @dataclass
@@ -476,6 +542,7 @@ class GatewayServer:
         self.register("message.send", self.on_message_send)
         self.register("turn.stop", self.on_turn_stop)
         self.register("gateway.stop", self.on_gateway_stop)
+        self.register("files.list", self.on_files_list)
 
     @property
     def attached(self) -> bool:
@@ -961,6 +1028,24 @@ class GatewayServer:
         await self._close_engine(chat)
         self.registry.remove(chat.number)
         await self.send_chat_list()
+
+    # --- handlers: files --------------------------------------------------------
+
+    def root_path(self, name: str, chat: int | None) -> Path:
+        """The directory a root name stands for: the chat's folder, or a config root."""
+        if name == CHAT_ROOT:
+            if chat is None:
+                raise ProtocolError("files.unknown_root", "root 'chat' needs a chat number")
+            return self.registry.get(chat).folder
+        for root in self.config.roots:
+            if root.name == name:
+                return Path(root.path)
+        raise ProtocolError("files.unknown_root", f"no root named {name!r}")
+
+    async def on_files_list(self, msg: FilesListRequest, conn: ServerConnection) -> None:
+        root = self.root_path(msg.root, msg.chat)
+        rel, entries = await asyncio.to_thread(list_directory, root, msg.path)
+        await self._send(conn, FilesList(ts=_now(), chat=msg.chat, id=msg.id, root=msg.root, path=rel, entries=entries))
 
     # --- handlers: turns --------------------------------------------------------
 

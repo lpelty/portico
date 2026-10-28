@@ -203,7 +203,8 @@ async def test_bad_frame_after_hello_is_error_not_close(server: GatewayServer) -
 
 
 async def test_unhandled_known_type_answers_with_error_and_id(server: GatewayServer) -> None:
-    # Dispatch exists; the files handler lands at Task 12, so files.list is unhandled here.
+    # Every client type has a handler since Task 12; unregister one to exercise the dispatch fallback.
+    del server._handlers["files.list"]
     conn = await attach(server)
     try:
         await conn.send(dump(FilesListRequest(ts=TS, chat=1, id="req-9", root="chat", path="")))
