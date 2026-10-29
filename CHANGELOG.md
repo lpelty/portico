@@ -25,6 +25,10 @@
   ends `error` before the agent said or did anything leaves the welcome's
   "last reply" where it was.
 
+- **A Log session before New counts.** The divider over the next session
+  said "not logged" when the session had been logged with Log session and
+  then ended with New; it now says "logged" with the time of that log.
+
 ### What a person gets (gateway)
 
 - **The first send shows at once.** The gateway sends `turn.started`, the

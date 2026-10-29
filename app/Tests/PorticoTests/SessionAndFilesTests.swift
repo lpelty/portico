@@ -243,6 +243,12 @@ final class SessionAndFilesTests: XCTestCase {
             "Session 13 · Interview codebook · logged yesterday, 11:40 AM")
         let unlogged = SessionPresentation(summary: session(13, ended: "2026-10-27T11:40:00Z", logged: false))
         XCTAssertEqual(unlogged.parentLine(now: sameDay, calendar: utc, locale: us), "Session 13 · not logged")
+        // Log session, then New without logging again: logged, at the log's time.
+        var loggedEarlier = session(13, ended: "2026-10-27T11:40:00Z")
+        loggedEarlier.loggedAt = "2026-10-27T11:10:00Z"
+        XCTAssertEqual(
+            SessionPresentation(summary: loggedEarlier).parentLine(now: sameDay, calendar: utc, locale: us),
+            "Session 13 · logged today, 11:10 AM")
         let current = SessionPresentation(summary: session(14, title: "Q3 synthesis"))
         XCTAssertEqual(current.startedLine(now: sameDay, calendar: utc, locale: us), "Started today, 11:42 AM · Q3 synthesis")
         XCTAssertEqual(current.startedSecondLine(now: sameDay, calendar: utc, locale: us), "Session 14 · started today, 11:42 AM")

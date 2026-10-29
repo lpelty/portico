@@ -476,13 +476,14 @@ struct SessionPresentation: Equatable {
 
     /// The S5 divider's first line for the session this one followed:
     /// `Session 13 · Interview codebook · logged yesterday, 1:19 PM`, or
-    /// `· not logged`.
+    /// `· not logged`. A Log session before New counts (v0.7): the time is
+    /// the last log (`logged_at`), else when the session ended.
     func parentLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         var parts = [number]
         if let title { parts.append(title) }
-        if summary.logged == true {
-            if let ended = SessionTime.parse(summary.ended) {
-                parts.append("logged \(SessionTime.full(ended, now: now, calendar: calendar, locale: locale))")
+        if summary.logged == true || summary.loggedAt != nil {
+            if let when = SessionTime.parse(summary.loggedAt) ?? SessionTime.parse(summary.ended) {
+                parts.append("logged \(SessionTime.full(when, now: now, calendar: calendar, locale: locale))")
             } else {
                 parts.append("logged")
             }
