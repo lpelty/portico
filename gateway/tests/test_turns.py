@@ -18,6 +18,7 @@ from websockets.asyncio.client import ClientConnection
 from portico_gateway import __version__
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config
+from portico_gateway.engine import EngineCallbacks
 from portico_gateway.messages import (
     ChatAlias,
     ChatHistory,
@@ -31,6 +32,8 @@ from portico_gateway.messages import (
     Error,
     MessageSend,
     ServerMessage,
+    SessionLog,
+    SessionLogged,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -766,5 +769,177 @@ async def test_unknown_slash_command_check_starts_the_engine_first_and_trusts_on
         await recv(conn)
         assert not any(isinstance(m, ChatNotice) for m in frames)
         assert factory.last.calls[-1] == ("send", "/whatever")
+    finally:
+        await conn.close()
+
+
+# --- v0.7: the echo before the engine ---------------------------------------------
+
+
+class GatedEngine(FakeEngine):
+    """A ``FakeEngine`` whose ``start`` waits for ``gate`` (a cold engine), or raises ``fail``."""
+
+    def __init__(self, gate: asyncio.Event, fail: Exception | None = None) -> None:
+        super().__init__()
+        self.gate = gate
+        self.fail = fail
+
+    async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
+        await self.gate.wait()
+        if self.fail is not None:
+            raise self.fail
+        return await super().start(folder, resume, setting_sources, callbacks)
+
+
+class GatedFactory(EngineFactory):
+    """Hands out ``GatedEngine``s once ``gated`` is set; plain ``FakeEngine``s before (for ``chat.new``)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gated = False
+        self.gate = asyncio.Event()
+        self.fail: Exception | None = None
+
+    def __call__(self) -> FakeEngine:
+        engine = GatedEngine(self.gate, self.fail) if self.gated else FakeEngine()
+        self.engines.append(engine)
+        return engine
+
+
+@pytest.fixture
+async def gated(state_dir: StateDir) -> AsyncIterator[tuple[GatewayServer, GatedFactory]]:
+    factory = GatedFactory()
+    config: Config = make_config(setting_sources=["project"], log_prompt="/log-it")
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    try:
+        yield srv, factory
+    finally:
+        await srv.shutdown()
+
+
+async def cold_chat(conn: ClientConnection, factory: GatedFactory, folder: Path) -> int:
+    """A chat whose engine is gone (``chat.stop``): its next send starts a ``GatedEngine``."""
+    number = await new_chat(conn, folder)
+    await conn.send(dump(ChatStop(ts=TS, chat=number)))
+    await recv(conn)
+    factory.gated = True
+    return number
+
+
+async def test_the_echo_precedes_the_engine_start(gated: tuple[GatewayServer, GatedFactory], folder: Path) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="hello again")))
+        frames = [await recv(conn) for _ in range(3)]
+        assert [type(m) for m in frames] == [TurnStarted, UserText, ChatState]
+        assert isinstance(frames[1], UserText) and frames[1].text == "hello again"
+        assert isinstance(frames[2], ChatState) and frames[2].state == "working"
+        engine = factory.last
+        assert not engine.started and engine.calls == [], "the echo went out before the engine started"
+
+        factory.gate.set()
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[-1], TurnFinished) and frames[-1].outcome == "done" and frames[-1].turn == 1
+        assert engine.calls[0][0] == "start" and engine.calls[1] == ("send", "hello again")
+        assert len(factory.engines) == 2, "one engine started for the turn"
+    finally:
+        await conn.close()
+
+
+async def test_an_engine_that_cannot_start_ends_the_turn_with_an_error(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        factory.fail = RuntimeError("no such binary")
+        factory.gate.set()
+        await conn.send(dump(MessageSend(ts=TS, id="req-m", chat=number, text="hello again")))
+        frames = await recv_until(conn, Error)
+        assert [type(m) for m in frames] == [TurnStarted, UserText, ChatState, TurnFinished, ChatState, Error]
+        assert isinstance(frames[3], TurnFinished) and frames[3].outcome == "error" and frames[3].turn == frames[0].turn
+        assert isinstance(frames[4], ChatState) and frames[4].state == "idle"
+        err = frames[-1]
+        assert isinstance(err, Error) and err.code == "engine.start_failed" and err.id == "req-m" and err.chat == number
+        assert "no such binary" in err.message
+        assert server.registry.get(number).engine is None
+
+        # Not busy afterwards: the next send starts an engine that works.
+        factory.fail = None
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="and now?")))
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[-1], TurnFinished) and frames[-1].outcome == "done"
+        assert factory.last.calls[-1] == ("send", "and now?")
+    finally:
+        await conn.close()
+
+
+# The app's frames are handled one at a time, so a stop can only meet a
+# starting engine when the turn runs from a task: the log step's.
+
+
+async def test_a_stop_while_the_engine_starts_ends_the_turn_without_sending(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=number)))
+        await recv_until(conn, ChatState)  # working
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        await asyncio.sleep(0.05)
+        factory.gate.set()
+        frames = await recv_until(conn, SessionLogged)
+        assert [m.outcome for m in frames if isinstance(m, TurnFinished)] == ["stopped"]
+        assert ("send", "/log-it") not in factory.last.calls
+    finally:
+        await conn.close()
+
+
+async def test_chat_stop_while_the_engine_starts_closes_the_fresh_engine(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=number)))
+        await recv_until(conn, ChatState)  # working
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[-1], TurnFinished) and frames[-1].outcome == "stopped"
+        factory.gate.set()
+        await recv_until(conn, SessionLogged)
+        engine = factory.last
+        assert engine.closed and ("send", "/log-it") not in engine.calls
+        assert server.registry.get(number).engine is None
+    finally:
+        await conn.close()
+
+
+async def test_a_log_step_whose_engine_cannot_start_says_so(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    from portico_gateway.messages import ChatNotice
+    from portico_gateway.server import LOG_STEP_UNFINISHED
+
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        factory.fail = RuntimeError("no such binary")
+        factory.gate.set()
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=number)))
+        frames = await recv_until(conn, Error)
+        assert [m.outcome for m in frames if isinstance(m, TurnFinished)] == ["error"]
+        assert [m.text for m in frames if isinstance(m, ChatNotice)] == ["Log session — running the log step", LOG_STEP_UNFINISHED]
+        err = frames[-1]
+        assert isinstance(err, Error) and err.code == "engine.start_failed" and err.id == "req-l"
     finally:
         await conn.close()
