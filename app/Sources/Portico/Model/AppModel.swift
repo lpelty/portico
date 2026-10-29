@@ -1089,7 +1089,8 @@ final class AppModel: ObservableObject {
     /// In single presentation, `/new` alone is not sent: it does what the
     /// card's New does (S1's "Same as typing /new"), asking to log first
     /// when that would lose something (W2); `/log` alone logs the session
-    /// without ending it, when the deployment can. `about` is the document
+    /// without ending it, when the deployment can, and otherwise says why
+    /// it cannot in a notice. `about` is the document
     /// view's open file, attached to the message along with the chips.
     func sendMessage(chat: Int, text: String, about: String? = nil) {
         let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1105,9 +1106,24 @@ final class AppModel: ObservableObject {
             logSession(chat: chat)
             return
         }
+        // `/log` where the session cannot be logged is not sent to the
+        // agent as text: it gets the card's reason, as a notice.
+        if command == Self.logCommand, let reason = logSessionOffReason(chat: chat) {
+            drafts[chat] = nil
+            appendNotice(reason, to: chat)
+            return
+        }
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
         dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
+    }
+
+    /// A notice the app itself puts in the transcript (not from the
+    /// gateway, so a history replay from the beginning drops it).
+    func appendNotice(_ text: String, to chat: Int) {
+        var items = transcripts[chat] ?? []
+        items.append(.notice(id: Self.itemId(&nextItemId), text: text))
+        transcripts[chat] = items
     }
 
     /// Send an action button's text (`hello.actions`) on its own. The
