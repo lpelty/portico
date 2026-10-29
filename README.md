@@ -271,6 +271,43 @@ to files in that folder; outside the folder, that one file; given on a
 command, that command (or the prefix the engine suggests, never with a
 second command, a substitution or a redirection appended).
 
+## Voice
+
+Voice is all in the app and all on the Mac (macOS 26 or later): nothing
+said or read goes to a server, and the gateway and protocol stay text.
+Settings › Voice turns each half on or off.
+
+**Talk.** The mic in the message box (the conversation's and the
+welcome's) starts listening; your words land in the box as they are
+recognised, after anything already typed. Press the mic again, or Esc, to
+stop; the text stays for you to glance at and send. With "Send when I stop
+talking" a stop by the mic sends it at once (Esc only stops). A
+hold-to-talk key is off by default; Hold Right Option is offered. The
+first press asks macOS for the microphone and speech recognition. The
+transcription is the Speech framework's on-device `SpeechAnalyzer`
+(`SpeechTranscriber`, or `DictationTranscriber` where the Mac does not
+support it); the first time, macOS fetches its speech model for your
+language. A build run with `swift run` has no Info.plist and cannot ask for
+the microphone: voice input says it needs the installed app (`bin/install`).
+
+**Read aloud.** Each reply has Read aloud beside Copy; while it reads it
+is Stop reading, and Esc stops too. It uses the voice and speed chosen in
+Settings › Voice (the system voices, and your Personal Voice once you
+allow it there). Code is never read: a code block is "See the code below.",
+a table "See the table below."; links are read as their text.
+
+**Spoken parts.** When a reply holds `[TTS]…[/TTS]` parts, Read aloud
+speaks only those, in order. The tags are never shown; the text inside
+them reads as part of the reply. Portico only honours the tags: asking the
+agent to write them is the deployment's, in its system prompt or the
+folder's agent instructions. A suggested instruction:
+
+> When a reply is longer than a few sentences, or holds code, tables or
+> long lists, begin it with one to three plain sentences that say what
+> you did or found, as you would say it aloud, wrapped in `[TTS]` and
+> `[/TTS]`. Write those sentences for the ear: no Markdown, no code, no
+> file paths or links. Short conversational replies need no tags.
+
 ## Command line
 
 `bin/portico-gateway <command>`, each with `--state` (default

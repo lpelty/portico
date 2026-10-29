@@ -4,6 +4,32 @@
 
 ### What a person gets (app)
 
+- **Talk to the message box.** A mic in the conversation's and the
+  welcome's message box: press it and speak, and your words appear as
+  they are recognised, after what you had typed; press again or Esc to
+  stop. Transcription is on-device (`SpeechAnalyzer`, macOS 26). The first
+  press asks for the microphone and speech recognition. "Send when I stop
+  talking" sends on stop (off by default); an optional hold-to-talk key
+  (Hold Right Option; none by default).
+- **Read aloud.** Every reply has Read aloud beside Copy, on hover; Stop
+  reading while it speaks, and Esc stops. Code blocks and tables are never
+  read ("See the code below.", "See the table below."); links are read as
+  their text. When the reply has `[TTS]…[/TTS]` parts, only they are read.
+- **`[TTS]` tags never show.** The text inside them reads as part of the
+  reply, and Copy leaves the tags out.
+- **Settings › Voice** (between Gateway and Appearance): Talk (voice input,
+  send when I stop talking, hold-to-talk key) and Listen (Read aloud, the
+  voice, including your Personal Voice once allowed there, and the speed,
+  with a sample).
+
+### For deployments
+
+- The app bundle's Info.plist carries `NSMicrophoneUsageDescription` and
+  `NSSpeechRecognitionUsageDescription`. A `swift run` build has neither, so
+  voice input there says it needs the installed app instead of asking.
+- The README's Voice section has a suggested system-prompt instruction for
+  `[TTS]` parts. No protocol or gateway change.
+
 - **Settings from the sidebar.** The bottom of the sidebar shows a round
   initial and your first name (from the account's full name, as the
   welcome greeting), with a gear on the right that opens Settings, the

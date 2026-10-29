@@ -213,6 +213,9 @@ def test_app_bundle_has_the_info_plist_keys(products: Path, tmp_path: Path) -> N
     assert info["NSHighResolutionCapable"] is True
     assert info["CFBundleShortVersionString"] == "0.3.0"
     assert info["PorticoGatewayBin"] == "/opt/portico/bin/portico-gateway"
+    # Voice input (v0.9): the usage strings the microphone and speech prompts show.
+    assert info["NSMicrophoneUsageDescription"].startswith("Acme Agent listens only while you hold or press the mic")
+    assert "on this Mac" in info["NSSpeechRecognitionUsageDescription"]
     assert os.access(app / "Contents" / "MacOS" / "Acme Agent", os.X_OK)
     assert (app / "Contents" / "Resources" / "Portico_Portico.bundle" / "Resources" / "viewer.html").is_file()
     assert run(["plutil", "-lint", app / "Contents" / "Info.plist"]).returncode == 0

@@ -10,10 +10,12 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsTab()
                 .tabItem { Label("General", systemImage: "gearshape") }
-            AppearanceSettingsTab()
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
             GatewaySettingsTab()
                 .tabItem { Label("Gateway", systemImage: "server.rack") }
+            VoiceSettingsTab()
+                .tabItem { Label("Voice", systemImage: "waveform") }
+            AppearanceSettingsTab()
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
         .frame(width: 520)
         .padding(20)
