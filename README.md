@@ -77,7 +77,9 @@ command_timeout_seconds = 120       # at least 1
 default_folder = "/Users/me/work"
 card_hold_seconds = 600             # a card with no app attached waits this long, then is denied; 0 = deny at once
 history_buffer = 2000               # events kept per chat for reattach; at least 1
-presentation = "multiple"           # "single": one live session at a time (see below)
+presentation = "single"             # the default: one live session at a time; "multiple": a list of chats
+permission_mode = "auto"            # a new session's mode: "auto" (the engine's classifier decides),
+                                    # "acceptEdits" (file edits allowed), "default" (ask each time)
 log_prompt = "/session-close"       # the log step a renewal runs first; unset = no log step
 plugins = ["my_deployment_plugin"]  # plug-in modules, imported at start (see Plug-ins)
 plugin_paths = ["~/portico-plugins"] # absolute directories put on the import path for them
@@ -87,7 +89,11 @@ name = "Portico"
 agent_name = "Agent"
 accent = "#3B6EF5"                  # optional CSS hex
 icon = "/path/to/icon.png"          # optional
-app_icon = "/path/to/AppIcon.png"   # optional: 1024x1024 PNG for the .app (bin/install)
+app_icon = "~/icons/app.png"        # optional 1024x1024 PNG for the .app bundle (bin/install); never sent to the app
+
+[update]                            # optional: the deployment's own update commands, run with /bin/sh -c
+check = "my-tool update --check"    # exit 0 and print the version when an update is available
+run = "my-tool update"              # performs it; the app's "Update available" runs it through portico-gateway update
 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
@@ -98,10 +104,14 @@ name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
 ```
 
+The gateway reads `config.toml` once, at start. Change it, and the app's
+Settings and `bin/doctor` say "restart the gateway to apply":
+`bin/portico-gateway stop`, and the app starts a fresh one.
+
 ## One session at a time
 
-With `presentation = "single"` the app shows one live session instead of a
-list of chats. A session is a chat: numbered, in one folder, with its
+By default (`presentation = "single"`) the app shows one live session
+instead of a list of chats. A session is a chat: numbered, in one folder, with its
 history and artifacts. **Log and start new** (or `/new` in the composer)
 sends `session.renew`: the gateway runs the deployment's log step in the
 ending session as an ordinary turn (its cards come to the app as usual),
@@ -156,6 +166,40 @@ stops the gateway at start with one line saying which; `bin/doctor` checks
 each configured plug-in the same way. `examples/plugin/` holds a complete
 example. The app takes no plug-ins: a new kind of screen is a request
 upstream.
+
+## Permissions
+
+Each session has a permission mode, shown on the composer and changeable
+there at any time (`session.mode`): **Auto** (`auto`, the default) lets the
+agent engine's classifier allow or block each step and asks only when it
+escalates; **Edits allowed** (`acceptEdits`) allows file edits and asks for
+the rest; **Ask each time** (`default`) asks for every step the folder's
+own rules do not allow. A new session starts with `permission_mode`.
+
+A request is one card with a plain question ("Save changes to
+notes.md?"). Its outcome is drawn on the tool row: allowed once, allowed
+for this session, auto, declined (with your note), blocked by auto mode.
+"Allow for this session" lasts as long as the session, across gateway
+restarts; the next session starts with none. Given on a file edit it
+covers every file edit; given on a command it covers that command.
+
+## Command line
+
+`bin/portico-gateway <command>`, each with `--state` (default
+`$PORTICO_HOME` or `~/.portico`):
+
+```sh
+bin/portico-gateway status --json      # {"version": 1, "running": true, "pid", "port", "folder", "session",
+                                       #  "state", "mode", "started_at", "config_stale"}; exit 0 running, 3 not
+bin/portico-gateway stop               # stop the running gateway (its own stop path); exit 3 when none runs
+bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured
+bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
+bin/portico-gateway config-value brand.name   # one config value, or nothing
+```
+
+`status --json` is the supported way for other tools to see that the app
+holds a live session in a folder; the lock and ledger files in the state
+directory are internal. Keys whose value is unknown are left out.
 
 ## Updating
 

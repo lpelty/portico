@@ -7,15 +7,17 @@ nobody was there to answer. The ``CardBroker`` holds the open cards and
 turns the app's ``card.answer`` into the decision the engine callbacks
 expect:
 
-- permission ``allow`` with scope ``once`` → ``"allow"``; scope ``chat`` →
+- permission ``allow`` with scope ``once`` → ``"allow"``; scope ``chat`` (the
+  app's "Allow for this session") →
   an allow key joins ``chat.chat_allows`` and later asks it covers in that
-  chat answer ``"allow"`` without a card — the bare tool name for a path
-  tool, but for a command tool (``Bash``) the engine's own suggested rule
+  chat answer ``"allow"`` without a card — the tool name (all four
+  file-editing tools at once: their cards ask the same question), but for a command tool (``Bash``) the engine's own suggested rule
   (``Bash(git status:*)``) or, without one, the exact command, so one
   harmless command never allows every later one; scope ``always`` →
   ``("allow", "always")``, which the engine adapter hands to the engine's
   own settings (the gateway keeps no permanent allow store of its own);
-  ``deny`` → ``("deny", note)``.
+  ``deny`` → ``("deny", note)``. The keys are kept on the chat record, so
+  they last for the session, across gateway restarts (v0.3).
 - question → ``{<question text>: <label> | [labels]}``, the answers the
   engine's question tool expects.
 
@@ -40,11 +42,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shlex
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .chats import Chat
 from .engine import PermissionDecision, QuestionDeclined, summarize_tool
@@ -70,16 +75,8 @@ NOBODY_ANSWERED = "nobody was there to answer"
 # stamped copy (the server's ``emit``).
 Send = Callable[[Chat, ServerMessage], Awaitable[ServerMessage]]
 
-_TITLES: dict[str, str] = {
-    "Write": "Write a file",
-    "Edit": "Edit a file",
-    "MultiEdit": "Edit a file",
-    "NotebookEdit": "Edit a notebook",
-    "Read": "Read a file",
-    "Bash": "Run a command",
-    "WebFetch": "Fetch a web page",
-    "WebSearch": "Search the web",
-}
+# The longest a command may be in a card's question before it is cut.
+TITLE_COMMAND_LIMIT = 60
 
 
 # Tools whose input is a shell command: a chat-scoped allow for one of these
@@ -87,8 +84,14 @@ _TITLES: dict[str, str] = {
 # command), never on the bare tool name.
 COMMAND_TOOLS: frozenset[str] = frozenset({"Bash"})
 
-# Shell operators that join commands; every part must be covered on its own.
-_COMMAND_JOINERS = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+# Shell operators (and line breaks) that join commands; every part must be covered on its own.
+_COMMAND_JOINERS = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
+
+# Tools that change a file. They share one chat-scoped allow: every one of
+# their cards reads "Save changes to <file>?" (or "Create <file>?"), so an
+# allow for this session given on one must cover the others, or the next
+# identical-looking question still shows a card.
+EDIT_TOOLS: frozenset[str] = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
 
 def _now() -> str:
@@ -102,19 +105,47 @@ def _new_id() -> str:
 # --- building cards --------------------------------------------------------------
 
 
-def title_for(tool: str) -> str:
-    """The card title for a permission request: a plain verb phrase, or ``Use <tool>``."""
-    return _TITLES.get(tool, f"Use {tool}")
+def title_for(tool: str, input: dict[str, Any] | None = None) -> str:
+    """The card title for a permission request: a plain question about the step (v0.3).
+
+    ``Create notes.md?`` (a ``Write`` to a file that does not exist yet),
+    ``Save changes to notes.md?`` (any other file edit), ``Run git status?``
+    (a command's first line, cut at ``TITLE_COMMAND_LIMIT``), ``Open
+    example.com?`` (a fetch), else ``Use <tool>?``. The app shows the tool
+    name beside it as a tag.
+    """
+    input = input or {}
+    if tool in EDIT_TOOLS:
+        path = input.get("file_path") or input.get("notebook_path")
+        if isinstance(path, str) and path.strip():
+            name = Path(path).name or path
+            if tool == "Write" and not Path(path).expanduser().exists():
+                return f"Create {name}?"
+            return f"Save changes to {name}?"
+    elif tool in COMMAND_TOOLS:
+        command = input.get("command")
+        if isinstance(command, str) and command.strip():
+            line = command.strip().split("\n", 1)[0].strip()
+            if len(line) > TITLE_COMMAND_LIMIT:
+                line = line[: TITLE_COMMAND_LIMIT - 1].rstrip() + "…"
+            return f"Run {line}?"
+    elif tool == "WebFetch":
+        url = input.get("url")
+        host = urlsplit(url).hostname if isinstance(url, str) else None
+        if host:
+            return f"Open {host}?"
+    return f"Use {tool}?"
 
 
-def permission_card(chat: int, tool: str, input: dict[str, Any]) -> CardAsk:
+def permission_card(chat: int, tool: str, input: dict[str, Any], tool_use_id: str | None = None) -> CardAsk:
     return CardAsk(
         ts=_now(),
         chat=chat,
         id=_new_id(),
         kind="permission",
-        title=title_for(tool),
+        title=title_for(tool, input),
         permission=Permission(tool=tool, summary=summarize_tool(tool, input), input=dict(input)),
+        tool_use_id=tool_use_id or None,
     )
 
 
@@ -145,6 +176,24 @@ def _rule_covers(rule: str, command: str) -> bool:
         prefix = rule[:-2].strip()
         return bool(prefix) and (command == prefix or command.startswith(prefix + " "))
     return command == rule
+
+
+def _cd_inside(part: str, folder: Path) -> bool:
+    """``cd <dir>`` where ``<dir>`` is the folder or below it (quotes and ``~`` allowed)."""
+    try:
+        words = shlex.split(part)
+    except ValueError:
+        return False
+    if len(words) != 2 or words[0] != "cd":
+        return False
+    target = Path(words[1]).expanduser()
+    if not target.is_absolute():
+        target = folder / target
+    try:
+        target.resolve().relative_to(Path(folder).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
 
 
 # --- validating answers ----------------------------------------------------------
@@ -229,9 +278,11 @@ class CardBroker:
         """``True`` when a person's earlier chat-scoped allow covers this use of ``tool``.
 
         A bare tool name covers every use. A command tool is covered only
-        when every part of its command (split on ``&&``, ``||``, ``;``, ``|``)
-        matches one of the chat's ``Tool(rule)`` keys: ``prefix:*`` matches
-        the prefix as whole words, anything else the exact command.
+        when every part of its command (split on ``&&``, ``||``, ``;``, ``|``
+        and line breaks) matches one of the chat's ``Tool(rule)`` keys:
+        ``prefix:*`` matches the prefix as whole words, anything else the
+        exact command. A ``cd`` into the chat's own folder (or below it) is
+        covered by any such key: it changes nothing a person is asked about.
         """
         if tool in chat.chat_allows:
             return True
@@ -244,11 +295,15 @@ class CardBroker:
         if not rules:
             return False
         parts = [part for part in _COMMAND_JOINERS.split(command.strip()) if part]
-        return bool(parts) and all(any(_rule_covers(rule, part) for rule in rules) for part in parts)
+        return bool(parts) and all(
+            _cd_inside(part, chat.folder) or any(_rule_covers(rule, part) for rule in rules) for part in parts
+        )
 
     @staticmethod
     def chat_allow_keys(tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]]) -> set[str]:
         """What a scope ``chat`` allow records for this use: the tool name, or ``Tool(rule)`` keys for a command tool."""
+        if tool in EDIT_TOOLS:
+            return set(EDIT_TOOLS)
         if tool not in COMMAND_TOOLS:
             return {tool}
         rules: list[str] = []
@@ -318,7 +373,7 @@ class CardBroker:
         """A permission card for ``tool``, unless the chat already allows it; returns the engine's decision."""
         if self.allowed(chat, tool, input):
             return "allow"
-        answer = await self.ask(chat, permission_card(chat.number, tool, input), send)
+        answer = await self.ask(chat, permission_card(chat.number, tool, input, tool_use_id), send)
         if _is_cancelled(answer) or answer.answer.get("decision") != "allow":
             return ("deny", answer.note)
         if answer.scope == "chat":

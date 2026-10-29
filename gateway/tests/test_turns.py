@@ -481,6 +481,7 @@ async def test_chat_open_since_replays_ring_then_live(server: GatewayServer, fac
         ]
         live = await recv(conn)
         assert isinstance(live, ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         assert live.chat == number and live.seq == last_seq and live.id == "req-open"
 
         # Since the turn.started (seq 2): only what came after it.
@@ -490,12 +491,14 @@ async def test_chat_open_since_replays_ring_then_live(server: GatewayServer, fac
         assert [m.seq for m in history.events] == list(range(3, last_seq + 1))
         live = await recv(conn)
         assert isinstance(live, ChatLive) and live.seq == last_seq
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # Up to date: empty history, still followed by live.
         await conn.send(dump(ChatOpen(ts=TS, chat=number, since=last_seq)))
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and history.events == []
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # chat.open neither stamps nor advances the sequence.
         assert server.registry.get(number).seq == last_seq
@@ -531,6 +534,7 @@ async def test_same_launch_replay_carries_user_text(server: GatewayServer, facto
         assert [m.text for m in replayed] == [live_text.text]
         assert replayed[0].seq == live_text.seq
         assert isinstance(await recv(again), ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
     finally:
         await again.close()
 
@@ -556,6 +560,7 @@ async def test_chat_open_reports_truncation_when_since_fell_off_the_ring(
         assert history.truncated
         assert len(history.events) == 3
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -589,6 +594,7 @@ async def test_events_while_detached_are_kept_for_reattach(
         assert [type(m) for m in history.events] == [TurnFinished, ChatState]
         assert isinstance(history.events[0], TurnFinished) and history.events[0].outcome == "done"
         assert isinstance(await recv(again), ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
     finally:
         await again.close()
 
@@ -702,5 +708,62 @@ async def test_engine_event_for_another_turn_is_dropped(server: GatewayServer, f
         await engine.interrupt()
         frames = await recv_until(conn, TurnFinished)
         assert isinstance(frames[-1], TurnFinished) and frames[-1].turn == 1
+    finally:
+        await conn.close()
+
+
+# --- v0.3: a slash command nobody knows ------------------------------------------
+
+
+async def test_unknown_slash_command_is_an_empty_turn_with_a_notice(
+    server: GatewayServer, factory: EngineFactory, folder: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from portico_gateway.messages import ChatNotice
+
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.commands = {"compact", "plug:do"}
+        caplog.set_level("INFO", logger="portico_gateway.server")
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="/foo bar")))
+        frames = await recv_until(conn, TurnFinished)
+        idle = await recv(conn)
+        assert [type(m) for m in frames] == [TurnStarted, UserText, ChatNotice, TurnFinished]
+        notice = frames[2]
+        assert isinstance(notice, ChatNotice) and notice.text == "No command /foo here" and notice.seq is not None
+        assert isinstance(frames[3], TurnFinished) and frames[3].outcome == "done"
+        assert isinstance(idle, ChatState) and idle.state == "idle"
+        assert [c for c in engine.calls if c[0] == "send"] == [], "never sent to the agent"
+        assert "No command /foo here" not in caplog.text and "no command /foo here" in caplog.text
+
+        # What the engine, the deployment (an action's text) or Portico knows goes through as typed.
+        for text in ("/compact", "/plug:do now", "/review", "/new", "/Users/me/file.md is a path", "plain text"):
+            await conn.send(dump(MessageSend(ts=TS, chat=number, text=text)))
+            frames = await recv_until(conn, TurnFinished)
+            await recv(conn)
+            assert not any(isinstance(m, ChatNotice) for m in frames), text
+            assert engine.calls[-1] == ("send", text)
+    finally:
+        await conn.close()
+
+
+async def test_unknown_slash_command_check_starts_the_engine_first_and_trusts_one_that_cannot_say(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    from portico_gateway.messages import ChatNotice
+
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        await recv(conn)
+        assert server.registry.get(number).engine is None
+        # The next engine cannot say what it knows (commands None): the message goes to it.
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="/whatever")))
+        frames = await recv_until(conn, TurnFinished)
+        await recv(conn)
+        assert not any(isinstance(m, ChatNotice) for m in frames)
+        assert factory.last.calls[-1] == ("send", "/whatever")
     finally:
         await conn.close()

@@ -180,7 +180,7 @@ async def test_a_deny_leaves_no_file_and_the_agent_says_so(server: GatewayServer
         assert cards, f"no permission card arrived; events: {turn.kinds()}; text: {turn.text!r}"
         first = cards[0]
         assert first.permission is not None and first.permission.tool in WRITE_TOOLS, first.permission
-        assert first.title == "Write a file", first.title
+        assert first.title == "Create denied.md?", first.title
         assert "denied.md" in first.permission.summary, first.permission.summary
         assert turn.state_after_card.get(first.id) == "waiting on you", turn.state_after_card
         assert any(isinstance(e, CardAnswered) and e.id == first.id for e in turn.events), turn.kinds()

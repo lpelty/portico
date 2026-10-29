@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .messages import Artifact, ChatStateWord
+from .messages import Artifact, ChatStateWord, PermissionMode, PermissionOutcome
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
@@ -40,6 +40,15 @@ class Ledger(BaseModel):
     port: int
     pid: int
     epoch: str
+
+
+class ToolPermission(BaseModel):
+    """What became of one tool use's permission (v0.3), drawn on its tool row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: PermissionOutcome
+    note: str | None = None
 
 
 class ChatRecord(BaseModel):
@@ -64,6 +73,16 @@ class ChatRecord(BaseModel):
     parent: int | None = None
     compactions: int = 0
     context_percent: float | None = None
+    # v0.3: the session's permission mode (``None`` in a v0.2 index: the
+    # deployment's ``permission_mode`` applies).
+    mode: PermissionMode | None = None
+    # v0.3: the session's chat-scoped allows ("Allow for this session"), so
+    # a gateway restart keeps them; a new session starts with none.
+    allows: list[str] = []
+    # v0.3: the permission outcome of each tool use that had one, by
+    # ``tool_use_id`` (newest ``TOOL_PERMISSIONS_KEPT``), so rows replayed
+    # from the transcript after a restart read as they did live.
+    permissions: dict[str, ToolPermission] = {}
 
 
 class Index(BaseModel):

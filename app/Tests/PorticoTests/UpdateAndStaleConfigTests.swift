@@ -58,8 +58,8 @@ final class UpdateAndStaleConfigTests: XCTestCase {
         XCTAssertFalse(Updater.isUpdaterLaunch(["--update"]), "the program's own name does not count")
         XCTAssertEqual(Updater.relaunchArguments(["/x/Portico", "-psn_0_123", "--verbose"], updating: true), ["--verbose", "--update"])
         XCTAssertEqual(Updater.relaunchArguments(["/x/Portico", "--update", "--verbose"], updating: false), ["--verbose"])
-        XCTAssertEqual(Updater.brandName(info: ["CFBundleName": "ethOS"]), "ethOS")
-        XCTAssertEqual(Updater.brandName(info: ["CFBundleDisplayName": "Ethos", "CFBundleName": "ethos"]), "Ethos")
+        XCTAssertEqual(Updater.brandName(info: ["CFBundleName": "Acme Agent"]), "Acme Agent")
+        XCTAssertEqual(Updater.brandName(info: ["CFBundleDisplayName": "Acme", "CFBundleName": "acme"]), "Acme")
         XCTAssertEqual(Updater.brandName(info: [:]), "Portico")
     }
 

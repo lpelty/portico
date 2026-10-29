@@ -253,7 +253,9 @@ def test_options_pin_the_sdk_facts(tmp_path: Path) -> None:
     assert options.include_partial_messages is True
     assert options.verbatim_prompts is False  # slash text must keep dispatching
     assert options.can_use_tool is not None
-    assert options.permission_mode is None  # never allow anything by default
+    assert options.permission_mode == "default"  # asks unless the session's mode says otherwise
+    auto = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=cb, permission_mode="auto")
+    assert auto.permission_mode == "auto" and auto.can_use_tool is not None  # escalations still ask
     hooks = options.hooks or {}
     matchers = hooks.get("PreToolUse") or []
     assert any(m.matcher == "AskUserQuestion" and m.hooks for m in matchers)
@@ -284,11 +286,14 @@ class _FakeSDKClient:
     """
 
     instances: list[_FakeSDKClient] = []
+    next_server_info: dict[str, Any] | None = None
 
     def __init__(self, options: Any) -> None:
         self.options = options
         self.disconnected = False
         self.script: list[Any] = []
+        self.modes: list[str] = []
+        self.server_info: dict[str, Any] | None = _FakeSDKClient.next_server_info
         self._queue: asyncio.Queue[Any] = asyncio.Queue()
         _FakeSDKClient.instances.append(self)
 
@@ -301,6 +306,12 @@ class _FakeSDKClient:
 
     async def interrupt(self) -> None:
         pass
+
+    async def set_permission_mode(self, mode: str) -> None:
+        self.modes.append(mode)
+
+    async def get_server_info(self) -> dict[str, Any] | None:
+        return self.server_info
 
     async def disconnect(self) -> None:
         self.disconnected = True
@@ -342,6 +353,21 @@ async def _started_engine(tmp_path: Path, cb: RecordingCallbacks) -> tuple[SDKEn
     assert sid == "sess-live"
     (client,) = _FakeSDKClient.instances
     return eng, client
+
+
+async def test_permission_mode_goes_into_the_options_and_changes_live(tmp_path: Path, sdk_client: Any) -> None:
+    cb = RecordingCallbacks()
+    eng = SDKEngine(chat=3)
+    eng.permission_mode = "auto"
+    await eng.start(tmp_path, None, ["project"], cb)
+    (client,) = _FakeSDKClient.instances
+    assert client.options.permission_mode == "auto"
+    await eng.set_permission_mode("default")
+    assert client.modes == ["default"] and eng.permission_mode == "default"
+    await eng.close()
+    # Not running: remembered for the next start, nothing sent.
+    await eng.set_permission_mode("acceptEdits")
+    assert client.modes == ["default"] and eng.permission_mode == "acceptEdits"
 
 
 async def test_pump_failure_mid_turn_reports_the_turn_as_error(tmp_path: Path, sdk_client: Any) -> None:
@@ -529,3 +555,33 @@ async def test_sdk_engine_context_usage_reads_percentage_and_model() -> None:
     assert await engine.context_usage() is None, "no client yet: unavailable"
     engine._client = Client()  # type: ignore[assignment]
     assert await engine.context_usage() == (62.4, "some-model")
+
+
+def test_a_result_auto_mode_blocked_is_labelled_blocked() -> None:
+    text = "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [no]"
+    blocked = UserMessage(
+        content=[ToolResultBlock(tool_use_id="t1", content=[{"type": "text", "text": text}], is_error=True)]
+    )
+    (event,) = translate(blocked, chat=1, turn=1)
+    assert isinstance(event, ToolFinished) and event.permission == "blocked" and not event.ok
+    # Any other failure, or the same words in a successful result, is not a block.
+    failed = UserMessage(content=[ToolResultBlock(tool_use_id="t2", content="exit 1", is_error=True)])
+    quoted = UserMessage(content=[ToolResultBlock(tool_use_id="t3", content=text, is_error=False)])
+    assert [e.permission for e in translate(failed, 1, 1) + translate(quoted, 1, 1)] == [None, None]  # type: ignore[union-attr]
+
+
+async def test_slash_commands_come_from_initialize_and_the_init_message(tmp_path: Path, sdk_client: Any) -> None:
+    _FakeSDKClient.next_server_info = {"commands": [{"name": "review", "description": ""}, {"name": "/compact"}]}
+    try:
+        cb = RecordingCallbacks()
+        eng = SDKEngine(chat=3)
+        assert eng.slash_commands() is None
+        await eng.start(tmp_path, None, ["project"], cb)
+        assert eng.slash_commands() == {"review", "compact"}
+        (client,) = _FakeSDKClient.instances
+        client.push(SystemMessage(subtype="init", data={"session_id": "sess-live", "slash_commands": ["context", "plug:do"]}))
+        await _until(lambda: "plug:do" in (eng.slash_commands() or set()))
+        assert eng.slash_commands() == {"review", "compact", "context", "plug:do"}
+        await eng.close()
+    finally:
+        _FakeSDKClient.next_server_info = None

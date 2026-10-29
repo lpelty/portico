@@ -121,6 +121,8 @@ def gateway(clone: Path, tmp_path_factory: pytest.TempPathFactory) -> Gateway:
     for d in (home, folder, cli_config):
         d.mkdir()
     (folder / "CLAUDE.md").write_text("This is a throwaway test folder. Do exactly what the message asks.\n", encoding="utf-8")
+    # The done-when checks predate v0.3's defaults: a list of chats, and a card for every step.
+    (home / "config.toml").write_text('presentation = "multiple"\npermission_mode = "default"\n', encoding="utf-8")
     log = root / "gateway.log"
     with log.open("ab") as out:
         proc = subprocess.Popen(

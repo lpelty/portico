@@ -11,11 +11,11 @@ next ``seq`` and kept in a ring of the newest ``history_buffer`` events.
 after the last ``seq`` it saw, and a ``truncated`` flag when the ring has
 already dropped some of what it asked for (so it should refetch history).
 
-The ring, ``seq``, ``turn``, the engine and the per-chat allows belong to
-one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
+The ring, ``seq``, ``turn`` and the engine belong to one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
 number, folder, engine session id, alias, state word, creation time,
 the artifacts the chat produced, and (v0.2) the session facts: title,
-ended, logged, parent, compactions and the last context percentage. A chat that came back from the index with
+ended, logged, parent, compactions and the last context percentage, and
+(v0.3) the permission mode and the session's chat-scoped allows. A chat that came back from the index with
 a session is ``restored``: its conversation before this launch lives in
 the engine's transcript, which the server replays on ``chat.open``.
 """
@@ -27,13 +27,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
-from .messages import Artifact, ChatState, ChatStateWord, ChatSummary, ServerMessage
-from .state import ChatRecord, Index, StateDir
+from .messages import Artifact, ChatState, ChatStateWord, ChatSummary, PermissionMode, ServerMessage
+from .state import ChatRecord, Index, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .engine import Engine
 
 STATE_WORDS: frozenset[str] = frozenset(get_args(ChatStateWord))
+
+# How many tool uses' permission outcomes a chat record keeps (newest).
+TOOL_PERMISSIONS_KEPT = 500
 
 # A session's title: the first line of its first message, at most this long.
 TITLE_LIMIT = 60
@@ -98,6 +101,9 @@ class Chat:
         parent: int | None = None,
         compactions: int = 0,
         context_percent: float | None = None,
+        mode: PermissionMode | None = None,
+        allows: list[str] | None = None,
+        permissions: dict[str, ToolPermission] | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -122,9 +128,21 @@ class Chat:
         self.parent = parent
         self.compactions = compactions
         self.context_percent = context_percent
+        # The session's permission mode (v0.3); the registry fills in the
+        # deployment's default for a chat that has none.
+        self.mode: PermissionMode | None = mode
         # Chat-scoped allows: bare tool names, or ``Tool(rule)`` keys for a
-        # command tool (``cards.CardBroker.chat_allow_keys``).
-        self.chat_allows: set[str] = set()
+        # command tool (``cards.CardBroker.chat_allow_keys``). Kept on the
+        # record (v0.3), so they last as long as the session does.
+        self.chat_allows: set[str] = set(allows or [])
+        # Permission outcomes by ``tool_use_id`` (v0.3): what a card's answer,
+        # a session allow, a cancel, auto mode or its classifier decided.
+        # Recorded when decided, attached to ``tool.finished``, kept on the
+        # record for replays from the transcript.
+        self.permissions: dict[str, ToolPermission] = dict(permissions or {})
+        # The tool of every ``tool.started`` this launch, by ``tool_use_id``,
+        # until its ``tool.finished``.
+        self.started_tools: dict[str, str] = {}
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from
@@ -163,7 +181,18 @@ class Chat:
     def set_state(self, word: ChatStateWord) -> ChatState:
         """Set the state word and emit the stamped ``chat.state`` event for it."""
         self.state = _checked_state(word)
-        return self.stamp(ChatState(chat=self.number, state=self.state, ts=_now()))  # type: ignore[return-value]
+        return self.stamp(ChatState(chat=self.number, state=self.state, mode=self.mode, ts=_now()))  # type: ignore[return-value]
+
+    # --- permission outcomes ----------------------------------------------------
+
+    def note_permission(self, tool_use_id: str, outcome: str, note: str | None = None) -> None:
+        """Record what became of ``tool_use_id``'s permission; the oldest go past ``TOOL_PERMISSIONS_KEPT``."""
+        if not tool_use_id:
+            return
+        self.permissions.pop(tool_use_id, None)
+        self.permissions[tool_use_id] = ToolPermission(outcome=outcome, note=note)  # type: ignore[arg-type]
+        while len(self.permissions) > TOOL_PERMISSIONS_KEPT:
+            del self.permissions[next(iter(self.permissions))]
 
     # --- views ----------------------------------------------------------------
 
@@ -175,6 +204,7 @@ class Chat:
             "parent": self.parent,
             "compactions": self.compactions,
             "context_percent": self.context_percent,
+            "mode": self.mode,
         }
 
     def summary(self) -> ChatSummary:
@@ -196,6 +226,8 @@ class Chat:
             state=self.state,
             created=self.created,
             artifacts=list(self.artifacts),
+            allows=sorted(self.chat_allows),
+            permissions=dict(self.permissions),
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -217,6 +249,9 @@ class Chat:
             parent=record.parent,
             compactions=record.compactions,
             context_percent=record.context_percent,
+            mode=record.mode,
+            allows=record.allows,
+            permissions=record.permissions,
         )
         chat.restored = record.session_id is not None
         return chat
@@ -231,13 +266,20 @@ def _checked_state(word: str) -> ChatStateWord:
 class ChatRegistry:
     """The chats, in number order, backed by the index. Numbers come from ``index.next_chat``."""
 
-    def __init__(self, index: Index, state: StateDir, history_buffer: int) -> None:
+    def __init__(
+        self, index: Index, state: StateDir, history_buffer: int, default_mode: PermissionMode = "auto"
+    ) -> None:
         self._index = index
         self._state = state
         self._history_buffer = history_buffer
+        # The mode a new session starts with (config ``permission_mode``).
+        self.default_mode: PermissionMode = default_mode
         self._chats: dict[int, Chat] = {}
         for record in index.chats:
-            self._chats[record.chat] = Chat.from_record(record, history_buffer)
+            chat = Chat.from_record(record, history_buffer)
+            if chat.mode is None:
+                chat.mode = default_mode
+            self._chats[record.chat] = chat
         if self._chats:
             self._index.next_chat = max(self._index.next_chat, max(self._chats) + 1)
 
@@ -254,7 +296,7 @@ class ChatRegistry:
         """A new chat on ``folder`` with the next number; saved to the index at once."""
         number = self._index.next_chat
         self._index.next_chat = number + 1
-        chat = Chat(number, Path(folder), self._history_buffer, parent=parent)
+        chat = Chat(number, Path(folder), self._history_buffer, parent=parent, mode=self.default_mode)
         self._chats[number] = chat
         self.persist()
         return chat

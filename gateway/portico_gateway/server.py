@@ -106,6 +106,7 @@ import http
 import json
 import logging
 import os
+import re
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
@@ -124,7 +125,7 @@ from .artifacts import TurnCollector, artifact_for_location
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
-from .engine import Engine, PermissionDecision, history_events, read_history
+from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, friendly_model_name, history_events, read_history
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
     PROTOCOL_VERSION,
@@ -139,11 +140,13 @@ from .messages import (
     ChatHistory,
     ChatList,
     ChatLive,
+    ChatNotice,
     ChatNew,
     ChatOpen,
     ChatRemove,
     ChatState,
     ChatStateWord,
+    ConfigStale,
     ChatStop,
     ClientMessage,
     ContextUsage,
@@ -160,14 +163,17 @@ from .messages import (
     Outcome,
     ProtocolError,
     ServerMessage,
+    SessionMode,
     SessionRenew,
     SessionRenewed,
     StatusSet,
     TextDelta,
+    ToolFinished,
     ToolStarted,
     TurnFinished,
     TurnStarted,
     TurnStop,
+    UpdateAvailable,
     UserText,
     dump,
     parse_client,
@@ -175,6 +181,7 @@ from .messages import (
 from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .state import StateDir
+from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
 
@@ -193,6 +200,9 @@ CLOSE_GOING_AWAY = 1001
 CLOSE_PROTOCOL_ERROR = 1002
 CLOSE_POLICY = 1008
 
+# How often the gateway looks at the config file's modification time.
+CONFIG_CHECK_SECONDS = 10.0
+
 # After ``turn.stop`` the engine is given this long to send its own
 # ``turn.finished``; then the gateway ends the turn itself, and closes the
 # engine, so the app is never left on a turn that cannot finish.
@@ -201,6 +211,19 @@ STOP_GRACE_SECONDS = 15.0
 # The exact form attachments take in the text the engine receives
 # (PROTOCOL.md, ``message.send``).
 ATTACHMENT_HEADER = "Attached files:"
+
+# A message that starts with a slash command: ``/word`` (``plugin:word``
+# too) followed by a blank or the end. ``/Users/...`` is a path, not one.
+SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
+
+# Portico's own commands, which the app acts on (``/new`` renews the session).
+PORTICO_COMMANDS: frozenset[str] = frozenset({"new"})
+
+
+def slash_command(text: str) -> str | None:
+    """The command a message starts with (without ``/``), or ``None``."""
+    m = SLASH_COMMAND.match(text.lstrip())
+    return m.group(1) if m else None
 
 
 def _now() -> str:
@@ -550,11 +573,22 @@ class GatewayServer:
         engine_factory: Callable[[], Engine],
         version: str,
         plugins: Plugins | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self.config = config
+        # The file the config came from and its modification time at start:
+        # a newer file means the running gateway is not using it (v0.3).
+        self.config_path = Path(config_path) if config_path is not None else None
+        self.config_mtime = self._config_mtime()
+        self._config_stale_sent = False
+        self.started_at = _now()
+        # The version the deployment's update check last found, if any.
+        self.update_version: str | None = None
         self.plugins = plugins if plugins is not None else Plugins.none()
         self.state = state
         self.registry = registry
+        # A new session starts in the deployment's mode.
+        self.registry.default_mode = config.permission_mode
         self.engine_factory = engine_factory
         self.version = version
         self.epoch = str(uuid.uuid4())
@@ -584,6 +618,7 @@ class GatewayServer:
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
             ("GET", "/v1/health"): self._health,
             ("POST", "/v1/artifact"): self._producer,
+            ("GET", "/v1/status"): self._status,
         }
         self.register("artifact.opened", self.on_artifact_opened)
         self.register("card.answer", self.on_card_answer)
@@ -598,6 +633,7 @@ class GatewayServer:
         self.register("files.list", self.on_files_list)
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
+        self.register("session.mode", self.on_session_mode)
 
     @property
     def attached(self) -> bool:
@@ -627,6 +663,10 @@ class GatewayServer:
         )
         self.port = self._server.sockets[0].getsockname()[1]
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
+        if self.config_path is not None:
+            self._spawn(self._watch_config(), name="portico-config-watch")
+        if self.config.update.check:
+            self._spawn(self._watch_updates(), name="portico-update-check")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -719,6 +759,83 @@ class GatewayServer:
         """One chat-less ``status.set`` for the strip (lifecycle commands, stop progress)."""
         await self.broadcast(StatusSet(ts=_now(), text=text))
 
+    # --- the config file and the gateway's status ----------------------------------
+
+    def _config_mtime(self) -> float | None:
+        if self.config_path is None:
+            return None
+        try:
+            return self.config_path.stat().st_mtime
+        except OSError:
+            return None
+
+    def config_stale(self) -> bool:
+        """Whether the config file is newer than when this gateway started (or appeared since)."""
+        if self.config_path is None:
+            return False
+        now = self._config_mtime()
+        return now is not None and (self.config_mtime is None or now > self.config_mtime)
+
+    async def check_config(self) -> None:
+        """Send ``config.stale`` once, the first time the file is seen newer."""
+        if self._config_stale_sent or not self.config_stale():
+            return
+        self._config_stale_sent = True
+        log.info("%s changed after the gateway started; restart the gateway to apply it", self.config_path)
+        await self.broadcast(ConfigStale(ts=_now()))
+
+    async def _watch_config(self) -> None:
+        while not self._config_stale_sent:
+            await asyncio.sleep(CONFIG_CHECK_SECONDS)
+            await self.check_config()
+
+    async def check_update(self) -> None:
+        """Run the deployment's update check once; a newly found version goes to the app as ``update.available``."""
+        command = self.config.update.check
+        if not command:
+            return
+        version = await check_for_update(command, float(self.config.command_timeout_seconds))
+        if version is None or version == self.update_version:
+            return
+        self.update_version = version
+        log.info("update available: %s", version)
+        await self.broadcast(UpdateAvailable(ts=_now(), version=version))
+
+    async def _watch_updates(self) -> None:
+        """At start, then every ``UPDATE_CHECK_SECONDS``; in the background, never in anyone's way."""
+        while True:
+            try:
+                await self.check_update()
+            except Exception:
+                log.exception("update check failed")
+            await asyncio.sleep(UPDATE_CHECK_SECONDS)
+
+    def status(self) -> dict[str, Any]:
+        """What ``GET /v1/status`` answers (``portico-gateway status --json``): the live session, if any.
+
+        The live session is the newest chat that has not ended (in
+        ``multiple`` presentation, the newest open chat).
+        """
+        out: dict[str, Any] = {
+            "version": 1,
+            "running": True,
+            "pid": os.getpid(),
+            "port": self.port,
+            "started_at": self.started_at,
+            "config_stale": self.config_stale(),
+        }
+        live = [chat for chat in self.registry.chats() if chat.ended is None]
+        if live:
+            chat = live[-1]
+            out.update(
+                {"folder": str(chat.folder), "session": chat.number, "state": chat.state, "mode": chat.mode}
+            )
+        return {k: v for k, v in out.items() if v is not None}
+
+    async def _status(self, request: HttpRequest) -> HttpResponse:
+        self.require_token(request)
+        return HttpResponse.json(http.HTTPStatus.OK, self.status())
+
     async def on_gateway_stop(self, msg: GatewayStop, conn: ServerConnection) -> None:
         await self.stop("the app asked")
 
@@ -807,8 +924,14 @@ class GatewayServer:
             return
 
         await self._attach(conn)
-        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins))
+        stale = self.config_stale()
+        if stale:
+            self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
+        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
         await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
+        if self.update_version is not None:
+            # Found before this app attached: it hears it now.
+            await self._send(conn, UpdateAvailable(ts=_now(), version=self.update_version))
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while
         # the worker is inside a slow handler (a hung ``before_first_chat``).
@@ -945,6 +1068,7 @@ class GatewayServer:
         await self._preflight()
         engine = self.engine_factory()
         engine.chat = chat.number
+        engine.permission_mode = chat.mode or self.config.permission_mode
         session = await engine.start(
             chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
         )
@@ -992,6 +1116,10 @@ class GatewayServer:
             log.warning("chat %d: engine event for turn %s during turn %d; dropped", chat.number, turn, run.turn)
             return
         if not isinstance(event, TurnFinished):
+            if isinstance(event, ToolStarted):
+                chat.started_tools[event.tool_use_id] = event.tool
+            elif isinstance(event, ToolFinished):
+                event = self._with_permission(chat, event)
             if run is not None:
                 if isinstance(event, ToolStarted):
                     run.collector.note_tool(event.tool, event.input)
@@ -1012,6 +1140,29 @@ class GatewayServer:
         # Its own task: the engine is asked from inside its own event stream.
         if chat.engine is not None:
             self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
+
+    def _with_permission(self, chat: Chat, event: ToolFinished) -> ToolFinished:
+        """``event`` with what became of its permission (v0.3), recorded on the chat.
+
+        In order: auto mode's classifier blocked it (seen in the result);
+        a card's answer, a session allow or a cancel decided it; else, in
+        ``auto`` mode, a tool that is not read-only ran without a card, so
+        auto mode allowed it. Nothing for a read, or a step no one decided.
+        """
+        tool = chat.started_tools.pop(event.tool_use_id, None)
+        if event.permission == "blocked":
+            chat.note_permission(event.tool_use_id, "blocked")
+        else:
+            decided = chat.permissions.get(event.tool_use_id)
+            if decided is not None:
+                event = event.model_copy(update={"permission": decided.outcome, "note": decided.note})
+            elif chat.mode == "auto" and tool is not None and tool not in READ_ONLY_TOOLS:
+                chat.note_permission(event.tool_use_id, "auto")
+                event = event.model_copy(update={"permission": "auto"})
+            else:
+                return event
+        self.registry.persist()
+        return event
 
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
@@ -1036,7 +1187,11 @@ class GatewayServer:
         percent, model = usage
         chat.context_percent = percent
         self.registry.persist()
-        await self.broadcast(ContextUsage(ts=_now(), chat=chat.number, percent=percent, model=model))
+        await self.broadcast(
+            ContextUsage(
+                ts=_now(), chat=chat.number, percent=percent, model=model, model_name=friendly_model_name(model, os.environ)
+            )
+        )
 
     async def compacted(self, chat: Chat, trigger: str) -> None:
         """The engine is summarizing earlier conversation: ``chat.compacted`` (stamped), counted on the record."""
@@ -1118,11 +1273,20 @@ class GatewayServer:
     ) -> PermissionDecision:
         """A permission card, unless a person already allowed the tool for this chat. Never allow by default."""
         if self.cards.allowed(chat, tool, input):
+            chat.note_permission(tool_use_id, "session")
             return "allow"
         run = self._runs.get(chat.number)
+        before = set(chat.chat_allows)
         try:
-            return await self.cards.ask_permission(chat, tool, input, suggestions, tool_use_id, self._emit_card)
+            decision = await self.cards.ask_permission(chat, tool, input, suggestions, tool_use_id, self._emit_card)
+            if isinstance(decision, tuple) and decision[0] == "deny" and tool_use_id not in chat.permissions:
+                # Cancelled (turn stopped, nobody there): declined, with the reason.
+                chat.note_permission(tool_use_id, "declined", decision[1])
+            return decision
         finally:
+            if chat.chat_allows != before:
+                # On the record at once: a gateway restart keeps the session's allows.
+                self.registry.persist()
             await self._resume_working(chat, run)
 
     async def ask_question(self, chat: Chat, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
@@ -1154,10 +1318,23 @@ class GatewayServer:
             "chat %d: card %s answered %s%s", chat.number, msg.id,
             msg.answer.get("decision", "submit") if isinstance(msg.answer, dict) else "submit",
             f" scope={msg.scope}" if msg.scope else "")
+        card = next((c for c in self.cards.open_cards(chat) if c.id == msg.id), None)
         self.cards.answer(chat.number, msg.id, msg)
+        closing = CardAnswered(ts=_now(), chat=chat.number, id=msg.id)
+        if card is not None and card.kind == "permission":
+            # One permission unit (v0.3): the closing says what was decided,
+            # for the tool row; ``tool.finished`` carries it again.
+            if msg.answer.get("decision") == "allow":
+                outcome = "once" if msg.scope in (None, "once") else "session"  # ``always`` covers the session too
+                note = None
+            else:
+                outcome, note = "declined", msg.note
+            if card.tool_use_id:
+                chat.note_permission(card.tool_use_id, outcome, note)
+            closing = closing.model_copy(update={"tool_use_id": card.tool_use_id, "outcome": outcome, "note": note})
         # The closing goes in the ring before the engine resumes (and the
         # state goes back to working): a replay closes what it opened.
-        await self.emit(chat, CardAnswered(ts=_now(), chat=chat.number, id=msg.id))
+        await self.emit(chat, closing)
 
     # --- handlers: chats --------------------------------------------------------
 
@@ -1195,6 +1372,11 @@ class GatewayServer:
         for artifact in artifacts:
             await self._send(conn, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact.model_copy(update={"open": False})))
         await self._send(conn, ChatLive(ts=_now(), chat=chat.number, id=msg.id, seq=chat.seq))
+        # The state word and the session's permission mode as they are now
+        # (v0.3: the composer's mode chip reads it here). A direct reply like
+        # ``chat.live`` — no ``seq``, not in the ring — so opening a chat
+        # never adds to its history.
+        await self._send(conn, ChatState(ts=_now(), chat=chat.number, id=msg.id, state=chat.state, mode=chat.mode))
         # Open cards again, as sent (same id and seq): the app de-duplicates by id.
         for card in self.cards.open_cards(chat):
             await self._send(conn, card)
@@ -1224,7 +1406,7 @@ class GatewayServer:
         if not truncated and (since is not None or not chat.restored):
             return ring, truncated, []
         transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
-        events = history_events(transcript, chat.number)
+        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number)]
         if not events:
             replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
             return ring, truncated and since is not None, [a for a in chat.artifacts if a.id not in replayed]
@@ -1233,6 +1415,16 @@ class GatewayServer:
         if chat.turn == 0 and chat.number not in self._runs:
             chat.turn = turns
         return events, False, list(chat.artifacts)
+
+    @staticmethod
+    def _replayed_permission(chat: Chat, event: ServerMessage) -> ServerMessage:
+        """A transcript's ``tool.finished`` with the outcome recorded for it live."""
+        if not isinstance(event, ToolFinished) or event.permission is not None:
+            return event
+        decided = chat.permissions.get(event.tool_use_id)
+        if decided is None:
+            return event
+        return event.model_copy(update={"permission": decided.outcome, "note": decided.note})
 
     async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
@@ -1349,6 +1541,23 @@ class GatewayServer:
             log.exception("chat %d: the plug-in's on_renew failed; the session ends unlogged", chat.number)
             return False
 
+    async def on_session_mode(self, msg: SessionMode, conn: ServerConnection) -> None:
+        """Change the session's permission mode: the running engine at once, every later engine from the record.
+
+        Answered with ``chat.state`` (stamped, carrying ``mode`` and the
+        request's ``id``). A mode the engine refuses leaves the record as it was.
+        """
+        chat = self.registry.get(msg.chat)
+        if chat.ended is not None:
+            raise ProtocolError("session.ended", f"session {chat.number} has ended")
+        if chat.engine is not None:
+            await chat.engine.set_permission_mode(msg.mode)
+        chat.mode = msg.mode
+        log.info("chat %d: permission mode %s", chat.number, msg.mode)
+        event = chat.set_state(chat.state)
+        self.registry.persist()
+        await self._send(conn, event.model_copy(update={"id": msg.id}))
+
     async def on_files_search(self, msg: FilesSearch, conn: ServerConnection) -> None:
         """Hits for ``query`` under a root (named as ``files.list`` names them): a plug-in's, else Spotlight's."""
         root = self.root_path(msg.root, msg.chat)
@@ -1375,6 +1584,10 @@ class GatewayServer:
         # taking a later message's. No ``chat.list`` is pushed for it: the
         # app has the same first line in ``user.text``, and the next
         # ``chat.list`` (renew, new, alias, reattach) carries the title.
+        command = slash_command(msg.text)
+        if command is not None and not await self._knows_command(chat, command):
+            await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
+            return
         title = None
         if chat.title is None and chat.turn == 0 and not chat.restored:
             title = title_from(msg.text)
@@ -1382,6 +1595,53 @@ class GatewayServer:
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
+
+    def deployment_commands(self) -> set[str]:
+        """Command names (no ``/``) the deployment offers: ``hello.commands`` and its actions' slash text."""
+        hello = hello_for(self.config, self.epoch, self.version, self.plugins)
+        names = {c.strip().lstrip("/").split()[0] for c in hello.commands if c.strip().lstrip("/")}
+        for action in hello.actions:
+            name = slash_command(action.text)
+            if name:
+                names.add(name)
+        return names
+
+    async def _knows_command(self, chat: Chat, command: str) -> bool:
+        """Whether someone knows ``/command``: Portico, the deployment, or the engine.
+
+        The engine's commands are only known once it runs, so a chat without
+        one has its engine started first (as the send would). An engine that
+        cannot say is trusted: the message goes to it as typed.
+        """
+        if command in PORTICO_COMMANDS or command in self.deployment_commands():
+            return True
+        engine = await self._ensure_engine(chat)
+        known = engine.slash_commands()
+        return known is None or command in known
+
+    async def _unknown_command(self, chat: Chat, command: str, text: str) -> None:
+        """An empty turn: what was typed, one ``chat.notice``, done. Nothing reaches the agent."""
+        log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
+        chat.turn += 1
+        turn = chat.turn
+        await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=turn))
+        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=turn, text=text))
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=f"No command /{command} here"))
+        await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=turn, outcome="done"))
+        await self.set_state(chat, "idle")
+
+    async def _ensure_engine(self, chat: Chat) -> Engine:
+        """The chat's engine, started (resuming its session) when it has none."""
+        engine = chat.engine
+        if engine is not None:
+            return engine
+        try:
+            return await self._start_engine(chat)
+        except ProtocolError:
+            raise  # the preflight refused: lifecycle.before_first_chat_failed, as on chat.new
+        except Exception as e:
+            log.exception("chat %d: engine failed to start", chat.number)
+            raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e
 
     def _check_can_send(self, chat: Chat) -> None:
         if chat.ended is not None:
@@ -1395,15 +1655,7 @@ class GatewayServer:
         The caller has checked the chat can take a turn. ``run.finished`` is
         set when the turn ends, with ``run.outcome`` saying how.
         """
-        engine = chat.engine
-        if engine is None:
-            try:
-                engine = await self._start_engine(chat)
-            except ProtocolError:
-                raise  # the preflight refused: lifecycle.before_first_chat_failed, as on chat.new
-            except Exception as e:
-                log.exception("chat %d: engine failed to start", chat.number)
-                raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e
+        engine = await self._ensure_engine(chat)
 
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))

@@ -41,10 +41,10 @@ final class NoticeAndModelNameTests: XCTestCase {
         model.apply(.contextUsage(ContextUsage(chat: 1, percent: 10, model: "claude-opus-5-5")))
         XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).modelText, "Claude Opus 5.5", "the id, made readable")
 
-        model.apply(.contextUsage(ContextUsage(chat: 1, percent: 12, model: "claude-opus-5-5", modelName: "Claude Opus 5.5 via Bedrock")))
-        XCTAssertEqual(model.modelName(for: 1), "Claude Opus 5.5 via Bedrock")
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).modelText, "Claude Opus 5.5 via Bedrock")
-        XCTAssertEqual(model.modelName(for: 2), "Claude Opus 5.5 via Bedrock", "another session shows the deployment's model too")
+        model.apply(.contextUsage(ContextUsage(chat: 1, percent: 12, model: "claude-opus-5-5", modelName: "Claude Opus 5.5 (work)")))
+        XCTAssertEqual(model.modelName(for: 1), "Claude Opus 5.5 (work)")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).modelText, "Claude Opus 5.5 (work)")
+        XCTAssertEqual(model.modelName(for: 2), "Claude Opus 5.5 (work)", "another session shows the deployment's model too")
 
         XCTAssertEqual(ContextUsage(chat: 1, percent: 1, model: "m", modelName: "  ").displayModel, "m", "a blank name falls back to the id")
         XCTAssertNil(ContextUsage(chat: 1, percent: 1).displayModel)

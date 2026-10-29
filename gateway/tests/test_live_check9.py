@@ -110,6 +110,7 @@ async def server(state_dir: StateDir, isolated_cli_config: Path, vault: Vault) -
     """Like the smoke's server, but on a ``config.toml`` in the state directory that names one root, ``vault``."""
     state_dir.path.mkdir(parents=True, exist_ok=True)
     state_dir.config_path.write_text(
+        'presentation = "multiple"\npermission_mode = "default"\n'
         '[brand]\nname = "Portico"\nagent_name = "Agent"\n\n[[roots]]\nname = "vault"\npath = ' + json.dumps(str(vault.path)) + "\n",
         encoding="utf-8",
     )

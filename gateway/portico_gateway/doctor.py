@@ -492,6 +492,25 @@ def check_app_sdk(repo: Path = REPO_ROOT, run: Runner = _run, clt_present: bool 
         True,
         f"the app is not built yet; the default is the macOS {version or 'unknown'} SDK ({where}), and bin/install falls back to another installed SDK if it does not compile",
     )
+def check_gateway_config(state: StateDir) -> Check:
+    """Whether the running gateway is using the config file as it is now (v0.3)."""
+    from .status import gateway_status
+
+    status = gateway_status(state)
+    if not status.get("running"):
+        return Check("gateway config", True, "no gateway running; the next one reads the config at start")
+    pid = status.get("pid", "?")
+    if status.get("config_stale"):
+        return Check(
+            "gateway config",
+            True,
+            f"the running gateway (pid {pid}) started before the config file changed: "
+            "restart the gateway to apply (portico-gateway stop; the app starts a fresh one)",
+            warn=True,
+        )
+    if "config_stale" not in status:
+        return Check("gateway config", True, f"a gateway is running (pid {pid}) but could not be asked about its config")
+    return Check("gateway config", True, f"the running gateway (pid {pid}) uses the config as it is now")
 
 
 def check_plugins(config_path: Path) -> list[Check]:
@@ -561,6 +580,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_token(state),
         check_env_file(state),
         check_ledger(state),
+        check_gateway_config(state),
         *prerequisite_checks(repo),
     ]
 

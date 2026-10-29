@@ -131,7 +131,8 @@ async def test_permission_card_round_trip_allow_once(server: GatewayServer, fact
 
         assert [type(m) for m in frames] == [TurnStarted, UserText, ChatState, CardAsk]
         assert card.chat == number and card.kind == "permission" and card.id
-        assert card.title == "Write a file"
+        assert card.title == "Create summary.md?"  # v0.3: a plain question; the file does not exist yet
+        assert card.tool_use_id == "toolu_w1"
         assert card.permission is not None
         assert card.permission.tool == "Write"
         assert card.permission.summary == str(folder / "summary.md")
@@ -147,6 +148,7 @@ async def test_permission_card_round_trip_allow_once(server: GatewayServer, fact
         idle = await recv(conn)
         assert [type(m) for m in after] == [CardAnswered, ChatState, TurnFinished]
         assert isinstance(after[0], CardAnswered) and after[0].id == card.id
+        assert (after[0].tool_use_id, after[0].outcome, after[0].note) == ("toolu_w1", "once", None)
         assert isinstance(after[1], ChatState) and after[1].state == "working"
         assert isinstance(after[2], TurnFinished) and after[2].outcome == "done"
         assert isinstance(idle, ChatState) and idle.state == "idle"
@@ -207,7 +209,7 @@ async def test_permission_scope_chat_skips_next_ask_for_same_tool(
         # The second Write in the same turn was allowed without a card.
         assert engine.decisions == ["allow", "allow"]
         assert not any(isinstance(m, CardAsk) for m in after)
-        assert server.registry.get(number).chat_allows == {"Write"}
+        assert server.registry.get(number).chat_allows == {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
         # Still allowed on the next turn; a different tool still asks.
         engine.script(write_ask(folder, "toolu_3"), AskPermission("Bash", {"command": "ls"}, tool_use_id="toolu_4"), fake_result())
@@ -215,7 +217,7 @@ async def test_permission_scope_chat_skips_next_ask_for_same_tool(
         frames = await recv_until(conn, CardAsk)
         bash_card = frames[-1]
         assert isinstance(bash_card, CardAsk) and bash_card.permission is not None
-        assert bash_card.permission.tool == "Bash" and bash_card.title == "Run a command"
+        assert bash_card.permission.tool == "Bash" and bash_card.title == "Run ls?"
         assert bash_card.permission.summary == "ls"
         assert engine.decisions == ["allow", "allow", "allow"]
         await recv(conn)  # waiting on you
@@ -223,7 +225,7 @@ async def test_permission_scope_chat_skips_next_ask_for_same_tool(
         await recv_until(conn, TurnFinished)
         await recv(conn)
         assert engine.decisions[-1] == ("deny", "not now")
-        assert server.registry.get(number).chat_allows == {"Write"}
+        assert server.registry.get(number).chat_allows == {"Write", "Edit", "MultiEdit", "NotebookEdit"}
     finally:
         await conn.close()
 
@@ -397,6 +399,7 @@ async def test_question_card_round_trip_maps_answers(server: GatewayServer, fact
         after = await recv_until(conn, TurnFinished)
         await recv(conn)
         assert isinstance(after[0], CardAnswered) and after[0].id == card.id
+        assert (after[0].tool_use_id, after[0].outcome) == (None, None)  # a question has no tool row outcome
         assert isinstance(after[1], ChatState) and after[1].state == "working"
         assert engine.answers == [answers]
     finally:
@@ -498,6 +501,7 @@ async def test_held_card_delivered_on_attach(server: GatewayServer, factory: Eng
         assert [type(m) for m in history.events] == [CardAsk, ChatState]
         live = await recv(again)
         assert isinstance(live, ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
         # The open card is sent again after chat.live, unchanged: same id, same seq.
         replay = await recv(again)
         assert isinstance(replay, CardAsk)
@@ -611,6 +615,7 @@ async def test_answered_card_is_closed_in_a_ring_replay(server: GatewayServer, f
         assert kinds.index(CardAsk) < kinds.index(CardAnswered)
         assert [m.id for m in history.events if isinstance(m, CardAnswered)] == [card.id]
         assert isinstance(await recv(again), ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
         # Nothing is open, so nothing is re-sent after chat.live.
         with pytest.raises(TimeoutError):
             await recv(again, timeout=0.2)
@@ -636,6 +641,7 @@ async def test_open_cards_replay_on_chat_open(server: GatewayServer, factory: En
         assert isinstance(history, ChatHistory) and history.events == []
         live = await recv(conn)
         assert isinstance(live, ChatLive) and live.seq == waiting.seq
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         replay = await recv(conn)
         assert isinstance(replay, CardAsk) and replay.id == card.id and replay.seq == card.seq
         # Replaying does not advance the chat's sequence.
@@ -649,6 +655,7 @@ async def test_open_cards_replay_on_chat_open(server: GatewayServer, factory: En
         await conn.send(dump(ChatOpen(ts=TS, chat=number, since=server.registry.get(number).seq)))
         assert isinstance(await recv(conn), ChatHistory)
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         with pytest.raises(TimeoutError):
             await recv(conn, timeout=0.2)
     finally:
@@ -683,14 +690,22 @@ async def test_chat_stop_cancels_open_cards(server: GatewayServer, factory: Engi
 # --- the broker on its own -------------------------------------------------------
 
 
-def test_title_for_tools() -> None:
-    assert title_for("Write") == "Write a file"
-    assert title_for("Edit") == "Edit a file"
-    assert title_for("MultiEdit") == "Edit a file"
-    assert title_for("Read") == "Read a file"
-    assert title_for("Bash") == "Run a command"
-    assert title_for("WebFetch") == "Fetch a web page"
-    assert title_for("mcp__thing__do") == "Use mcp__thing__do"
+def test_title_for_tools(tmp_path: Path) -> None:
+    existing = tmp_path / "Q3-synthesis.md"
+    existing.write_text("x")
+    assert title_for("Write", {"file_path": str(tmp_path / "new.md")}) == "Create new.md?"
+    assert title_for("Write", {"file_path": str(existing)}) == "Save changes to Q3-synthesis.md?"
+    assert title_for("Edit", {"file_path": str(existing)}) == "Save changes to Q3-synthesis.md?"
+    assert title_for("MultiEdit", {"file_path": str(existing)}) == "Save changes to Q3-synthesis.md?"
+    assert title_for("NotebookEdit", {"notebook_path": "/x/a.ipynb"}) == "Save changes to a.ipynb?"
+    assert title_for("Bash", {"command": "git status\ngit log"}) == "Run git status?"
+    long = "echo " + "a" * 100
+    title = title_for("Bash", {"command": long})
+    assert title.startswith("Run echo aaa") and title.endswith("…?") and len(title) <= 60 + len("Run ?")
+    assert title_for("WebFetch", {"url": "https://example.com/a?b=c"}) == "Open example.com?"
+    assert title_for("WebFetch", {"url": "not a url"}) == "Use WebFetch?"
+    assert title_for("Write") == "Use Write?"  # no path to name
+    assert title_for("mcp__thing__do", {}) == "Use mcp__thing__do?"
 
 
 def test_question_card_maps_fields_and_tolerates_missing_description() -> None:
