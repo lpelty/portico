@@ -1,6 +1,7 @@
 import AppKit
 import PDFKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - ArtifactPresentation
 
@@ -24,6 +25,62 @@ struct ArtifactPresentation: Equatable {
     /// The media kind, in the protocol's word.
     var kindLabel: String { artifact.media.rawValue }
 
+    /// How the viewer draws it: the gateway's media, except that a file a
+    /// pre-0.5 gateway called `other` but the app knows as text (`app.py`,
+    /// `q3.csv`) draws as text, so an older gateway gets the new panes too.
+    var media: Media {
+        guard artifact.media == .other, artifact.kind != .url else { return artifact.media }
+        return Media.of(path: artifact.location) == .text ? .text : .other
+    }
+
+    /// The file's extension, lowercased; empty for a URL.
+    var fileExtension: String { fileURL?.pathExtension.lowercased() ?? "" }
+
+    /// The separator when the file is a table (`csv`, `tsv`); else `nil`.
+    var tableSeparator: Character? {
+        media == .text ? DelimitedTable.separator(forExtension: fileExtension) : nil
+    }
+
+    /// A file artifact whose file is gone: the write was declined, or the
+    /// file was moved or deleted after it was made.
+    var isMissing: Bool {
+        guard let fileURL else { return false }
+        return !FileManager.default.fileExists(atPath: fileURL.path)
+    }
+
+    /// The path the way a person writes it, with `~` for the home folder.
+    var displayPath: String {
+        fileURL.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? artifact.location
+    }
+
+    /// The app macOS would open it in ("Pages"), or `nil` when none.
+    var defaultAppName: String? {
+        guard let url = externalURL else { return nil }
+        let app = NSWorkspace.shared.urlForApplication(toOpen: url)
+            ?? UTType(filenameExtension: fileExtension).flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+        guard let app else { return nil }
+        let name = FileManager.default.displayName(atPath: app.path)
+        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+    }
+
+    /// The Open button's words: named for the app when there is one.
+    var openLabel: String { defaultAppName.map { "Open in \($0)" } ?? "Open externally" }
+
+    /// The kind in a sentence, plural: "Portico can't show <kind> here."
+    var kindPhrase: String { Self.kindPhrase(forExtension: fileExtension) }
+
+    /// The system's name for the file type, made plural ("Zip archive" →
+    /// "Zip archives"); "DOCX files" when the system has no name for it;
+    /// "this kind of file" with no extension at all.
+    static func kindPhrase(forExtension ext: String) -> String {
+        guard !ext.isEmpty else { return "this kind of file" }
+        if let type = UTType(filenameExtension: ext), !type.isDynamic,
+           let name = type.localizedDescription, !name.isEmpty {
+            return name.hasSuffix("s") ? name : name + "s"
+        }
+        return ext.uppercased() + " files"
+    }
+
     /// The file on disk, for file artifacts; `nil` for a URL.
     var fileURL: URL? {
         artifact.kind == .url ? nil : URL(fileURLWithPath: artifact.location)
@@ -39,7 +96,8 @@ struct ArtifactPresentation: Equatable {
     var subtitle: String { artifact.location }
 
     var systemImage: String {
-        switch artifact.media {
+        if tableSeparator != nil { return "tablecells" }
+        return switch media {
         case .markdown: "doc.richtext"
         case .image: "photo"
         case .html: "globe"
@@ -269,28 +327,41 @@ struct ArtifactMenu: View {
 
 // MARK: - ArtifactContent
 
-/// The artifact itself, by media kind.
+/// The artifact itself, by media kind. A file that is no longer on disk
+/// says so first, whatever its kind.
 struct ArtifactContent: View {
     let artifact: Artifact
 
     private var shown: ArtifactPresentation { ArtifactPresentation(artifact: artifact) }
 
     var body: some View {
-        switch artifact.media {
-        case .markdown:
-            if let file = shown.fileURL { WebPane(load: .markdown(file)) } else { OtherPane(shown: shown) }
-        case .html:
-            if let file = shown.fileURL { WebPane(load: .html(file)) } else { OtherPane(shown: shown) }
-        case .url:
-            if let url = shown.externalURL { WebPane(load: .url(url)) } else { OtherPane(shown: shown) }
-        case .image:
-            if let file = shown.fileURL { ImagePane(file: file, shown: shown) } else { OtherPane(shown: shown) }
-        case .pdf:
-            if let file = shown.fileURL { PDFPane(file: file) } else { OtherPane(shown: shown) }
-        case .text:
-            if let file = shown.fileURL { TextPane(file: file, shown: shown) } else { OtherPane(shown: shown) }
-        case .other:
-            OtherPane(shown: shown)
+        if shown.isMissing {
+            MissingPane(shown: shown)
+        } else {
+            switch shown.media {
+            case .markdown:
+                if let file = shown.fileURL { WebPane(load: .markdown(file)) } else { OtherPane(shown: shown) }
+            case .html:
+                if let file = shown.fileURL { WebPane(load: .html(file)) } else { OtherPane(shown: shown) }
+            case .url:
+                if let url = shown.externalURL { WebPane(load: .url(url)) } else { OtherPane(shown: shown) }
+            case .image:
+                if let file = shown.fileURL { ImagePane(file: file, shown: shown) } else { OtherPane(shown: shown) }
+            case .pdf:
+                if let file = shown.fileURL { PDFPane(file: file) } else { OtherPane(shown: shown) }
+            case .text:
+                if let file = shown.fileURL {
+                    if let separator = shown.tableSeparator {
+                        TablePane(file: file, separator: separator, shown: shown)
+                    } else {
+                        TextPane(file: file, shown: shown)
+                    }
+                } else {
+                    OtherPane(shown: shown)
+                }
+            case .other:
+                OtherPane(shown: shown)
+            }
         }
     }
 }
@@ -311,7 +382,7 @@ struct ImagePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
-            OtherPane(shown: shown, note: "The image could not be read.")
+            OtherPane(shown: shown, message: "Portico can't read this image. Open it in the app that can.")
         }
     }
 }
@@ -336,53 +407,164 @@ struct PDFPane: NSViewRepresentable {
     }
 }
 
-/// Plain text, monospaced, selectable. Never auto-opens (spec §5.3), but
-/// readable here once picked from the viewer's menu.
+/// Plain text and code: monospaced, not wrapped, selectable in the native
+/// text view (a drag selects from anywhere). Never auto-opens (spec §5.3),
+/// but readable here once picked. Reads the first megabyte only, off the
+/// main thread, and says so when the file is longer.
 struct TextPane: View {
     let file: URL
     let shown: ArtifactPresentation
+    @State private var phase: Phase = .loading
+
+    enum Phase {
+        case loading
+        case text(TextFileRead)
+        case unreadable
+    }
 
     var body: some View {
-        if let text = try? String(contentsOf: file, encoding: .utf8) {
-            ScrollView([.horizontal, .vertical]) {
-                Text(text)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+        Group {
+            switch phase {
+            case .loading: LoadingPane()
+            case .text(let read): TextBody(read: read)
+            case .unreadable: OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
             }
-        } else {
-            OtherPane(shown: shown, note: "The file could not be read as text.")
+        }
+        .task(id: file) {
+            let file = file
+            let read = await Task.detached { TextFileRead.read(file, limit: TextFileRead.textLimit) }.value
+            phase = read.map(Phase.text) ?? .unreadable
         }
     }
 }
 
-/// What the viewer cannot render: the path and Open externally.
-struct OtherPane: View {
-    let shown: ArtifactPresentation
-    var note: String? = nil
+/// Text already read, drawn monospaced 12 on scroll views both ways, with a
+/// line under it when the file was cut short.
+struct TextBody: View {
+    let read: TextFileRead
+    @State private var attributed: NSAttributedString?
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: shown.systemImage)
+        VStack(spacing: 0) {
+            ScrollView([.horizontal, .vertical]) {
+                if let attributed {
+                    SelectableText(text: attributed, wraps: false)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if read.truncated {
+                let size = ByteCountFormatter.string(fromByteCount: Int64(read.totalBytes), countStyle: .file)
+                let limit = ByteCountFormatter.string(fromByteCount: Int64(TextFileRead.textLimit), countStyle: .file)
+                ViewerFootnote(text: "Showing the first \(limit) of \(size). Open it externally for the rest.")
+            }
+        }
+        // Built once, not on every redraw: a megabyte of text is not free.
+        .task(id: read) { attributed = MarkdownAttributed.code(read.text) }
+    }
+}
+
+/// The small line under a pane that says what it left out.
+struct ViewerFootnote: View {
+    let text: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(Theme.border).frame(height: 1)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.text3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 12)
+        }
+    }
+}
+
+/// A brief "Loading…" while a big file is read off the main thread.
+struct LoadingPane: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Loading…")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A file that is not on disk: says so and why it might be, with the path.
+/// No Open button: there is nothing to open.
+struct MissingPane: View {
+    let shown: ArtifactPresentation
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.questionmark")
                 .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-            Text(shown.title)
-                .font(.headline)
-            Text(shown.subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.text3)
+            Text("\(shown.title) isn't on disk")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text("The agent's write may have been declined, or the file was moved or deleted after it was made.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text2)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 300)
+            Text(shown.displayPath)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.text3)
                 .textSelection(.enabled)
                 .multilineTextAlignment(.center)
-            if let note {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Button("Open externally") { shown.openExternally() }
-                .pointerStyle(.link)
         }
-        .padding(24)
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// What the viewer cannot show: why, and a button that opens it in the app
+/// macOS would use, named for that app ("Open in Pages").
+struct OtherPane: View {
+    let shown: ArtifactPresentation
+    /// Replaces "Portico can't show <kind> here…" when something more
+    /// specific went wrong (an image that would not decode).
+    var message: String? = nil
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc")
+                .font(.system(size: 36))
+                .foregroundStyle(Theme.text3)
+            Text(shown.title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text(message ?? "Portico can't show \(shown.kindPhrase) here. Open it in the app that can.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text2)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 300)
+            Button {
+                shown.openExternally()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(shown.openLabel)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(Theme.text)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 12)
+                .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.hover)
+            .help(shown.subtitle)
+        }
+        .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
