@@ -87,11 +87,8 @@ struct StartView: View {
     private var greetingMark: some View {
         switch GreetingMark(brand: model.brand) {
         case .icon(let icon):
-            Image(nsImage: icon)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: Self.markSize, height: Self.markSize)
+            // Rounded when the icon is a flat square (v0.7 decision 5).
+            BrandIcon(image: icon, side: Self.markSize)
                 .accessibilityLabel(model.brand.name)
         case .sparkle:
             ZStack {
@@ -226,37 +223,31 @@ struct StartView: View {
     /// Y1's quiet line in place of the folder line: which session the
     /// composer continues, when it started and last answered, then View
     /// (its conversation, nothing sent) and Start a new session (New,
-    /// which asks to log first when there is unlogged work).
+    /// which asks to log first when there is unlogged work) as two small
+    /// bordered buttons the size of the suggestion chips (v0.7 decision 2,
+    /// AA1), so they read as clickable.
     private func continuingLine(_ live: ChatSummary) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "folder")
-                .font(.system(size: 11))
-            // Re-read each minute so "last reply … ago" moves.
-            TimelineView(.everyMinute) { context in
-                Text(SessionPresentation(summary: live).continuingLine(now: context.date))
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11))
+                // Re-read each minute so "last reply … ago" moves.
+                TimelineView(.everyMinute) { context in
+                    Text(SessionPresentation(summary: live).continuingLine(now: context.date))
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
-            Text("·").font(.system(size: 12))
-            Button("View Session \(live.chat)") { model.open(chat: live.chat) }
-                .buttonStyle(.hoverText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.text2)
-                .fixedSize()
+            .foregroundStyle(Theme.text3)
+            SmallBorderedButton(title: "View Session \(live.chat)") { model.open(chat: live.chat) }
                 .help("Show Session \(live.chat)'s conversation")
             if model.canRenew(chat: live.chat) {
-                Text("·").font(.system(size: 12))
-                Button("Start a new session") { model.requestNew(chat: live.chat) }
-                    .buttonStyle(.hoverText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.text2)
-                    .fixedSize()
+                SmallBorderedButton(title: "Start a new session") { model.requestNew(chat: live.chat) }
                     .disabled(!connected || model.isSessionCommandPending(chat: live.chat))
                     .help("End Session \(live.chat) and start the next")
             }
         }
-        .foregroundStyle(Theme.text3)
     }
 
     /// V4's quiet line: where the agent works, and that Settings changes it.
@@ -347,5 +338,33 @@ struct StartView: View {
         panel.prompt = "Attach"
         guard panel.runModal() == .OK else { return }
         model.attachToStart(panel.urls.map(\.path))
+    }
+}
+
+/// A small bordered capsule button, drawn as the welcome's suggestion chips
+/// are (13-point text, 6 × 12 padding, the control fill and a hairline
+/// border) with their hover tint and pointing-hand cursor: View Session N
+/// and Start a new session under the composer (v0.7 decision 2, AA1).
+struct SmallBorderedButton: View {
+    let title: String
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 12)
+                .background(Theme.control, in: Capsule())
+                .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
+                .contentShape(Capsule())
+                .opacity(isEnabled ? 1 : 0.5)
+        }
+        .buttonStyle(.hoverCapsule)
+        .fixedSize()
+        .accessibilityLabel(title)
     }
 }

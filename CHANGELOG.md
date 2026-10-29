@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.7.0 — unreleased
+
+### What a person gets (app)
+
+- **Times say which day, in your own clock.** One rule everywhere a time
+  is shown, on the Mac's locale and 12/24-hour setting: within the hour
+  "just now" or "12 min ago" (kept current); then "today, 9:14 AM",
+  "yesterday, 4:12 PM", "Oct 27, 4:12 PM", "Oct 27, 2025, 4:12 PM". The
+  session card ("Started today, 9:14 AM"), the welcome line ("Continuing
+  Session 15 · started today, 8:47 AM · last reply 6 min ago"), the ended
+  bar and the logged line use it; the Earlier list and Changed this
+  session show a compact form ("12 min ago", "10:30 AM", "Yesterday",
+  "Oct 27") with the full date and time on hover. The card's age ("38 m")
+  is a duration and stays.
+- **View Session N and Start a new session are buttons**: small bordered
+  ones the size of the suggestion chips, with hover and a pointing hand.
+- **A square brand icon is drawn rounded** on the welcome and in the
+  sidebar header (the macOS icon shape, corners about 22 % of the side);
+  an icon whose corners are already transparent is drawn as given.
+
 ## v0.6.0 (2026-10-29)
 
 Launch continues the live session, a way back from an earlier one, a calmer

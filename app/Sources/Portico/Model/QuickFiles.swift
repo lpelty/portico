@@ -22,9 +22,10 @@ struct ChangedFile: Equatable, Sendable {
 
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
 
-    /// `9:14`, the app's clock; empty when the time is unknown.
-    func time(calendar: Calendar = .current) -> String {
-        at.map { SessionTime.clock($0, calendar: calendar) } ?? ""
+    /// The trailing column's time (v0.7 decision 1's compact form):
+    /// `12 min ago`, `9:14 AM`, `Yesterday`; empty when the time is unknown.
+    func time(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        at.map { SessionTime.compact($0, now: now, calendar: calendar, locale: locale) } ?? ""
     }
 }
 

@@ -66,6 +66,7 @@ final class LaunchAndWayBackTests: XCTestCase {
     }
 
     private func date(_ stamp: String) -> Date { SessionTime.parse(stamp)! }
+    private let us = Locale(identifier: "en_US")
 
     // MARK: - 1. launch decides before drawing
 
@@ -186,11 +187,15 @@ final class LaunchAndWayBackTests: XCTestCase {
     func testTheContinuingLineSaysWhichSessionAndWhenItLastAnswered() {
         let shown = SessionPresentation(summary: session(3, lastReply: "2026-10-29T10:02:00Z"))
         XCTAssertEqual(
-            shown.continuingLine(now: date("2026-10-29T10:14:00Z"), calendar: utc),
-            "Continuing Session 3 · started 9:14 · last reply 12 min ago")
+            shown.continuingLine(now: date("2026-10-29T10:14:00Z"), calendar: utc, locale: us),
+            "Continuing Session 3 · started today, 9:14 AM · last reply 12 min ago")
         XCTAssertEqual(
-            SessionPresentation(summary: session(3)).continuingLine(now: date("2026-10-29T10:14:00Z"), calendar: utc),
-            "Continuing Session 3 · started 9:14", "no last reply until the gateway says")
+            SessionPresentation(summary: session(3)).continuingLine(now: date("2026-10-29T10:14:00Z"), calendar: utc, locale: us),
+            "Continuing Session 3 · started today, 9:14 AM", "no last reply until the gateway says")
+        XCTAssertEqual(
+            shown.continuingLine(now: date("2026-10-30T08:00:00Z"), calendar: utc, locale: us),
+            "Continuing Session 3 · started yesterday, 9:14 AM · last reply yesterday, 10:02 AM",
+            "an older reply on the full form too (v0.7 decision 1)")
         XCTAssertEqual(SessionTime.ago(date("2026-10-29T10:13:40Z"), now: date("2026-10-29T10:14:00Z")), "just now")
         XCTAssertEqual(SessionTime.ago(date("2026-10-29T07:00:00Z"), now: date("2026-10-29T10:14:00Z")), "3 h ago")
         XCTAssertEqual(SessionTime.ago(date("2026-10-27T07:00:00Z"), now: date("2026-10-29T10:14:00Z")), "2 d ago")
@@ -380,13 +385,13 @@ final class LaunchAndWayBackTests: XCTestCase {
     func testTheEarlierBarSaysWhenItEnded() {
         let now = date("2026-10-29T15:00:00Z")
         func line(_ ended: String) -> String {
-            SessionPresentation(summary: session(2, ended: ended)).endedBarLine(now: now, calendar: utc)
+            SessionPresentation(summary: session(2, ended: ended)).endedBarLine(now: now, calendar: utc, locale: us)
         }
-        XCTAssertEqual(line("2026-10-28T17:00:00Z"), "Session 2 · ended yesterday · read-only")
+        XCTAssertEqual(line("2026-10-28T17:00:00Z"), "Session 2 · ended yesterday, 5:00 PM · read-only")
         XCTAssertEqual(line("2026-10-29T14:48:00Z"), "Session 2 · ended 12 min ago · read-only")
-        XCTAssertEqual(line("2026-10-29T09:14:00Z"), "Session 2 · ended today at 9:14 · read-only")
-        XCTAssertEqual(line("2026-10-27T09:00:00Z"), "Session 2 · ended on Tuesday · read-only")
-        XCTAssertEqual(line("2026-10-03T09:00:00Z"), "Session 2 · ended on Oct 3 · read-only")
+        XCTAssertEqual(line("2026-10-29T09:14:00Z"), "Session 2 · ended today, 9:14 AM · read-only")
+        XCTAssertEqual(line("2026-10-27T16:12:00Z"), "Session 2 · ended Oct 27, 4:12 PM · read-only")
+        XCTAssertEqual(line("2025-10-27T16:12:00Z"), "Session 2 · ended Oct 27, 2025, 4:12 PM · read-only")
     }
 
     // MARK: - 5. earlier rows
