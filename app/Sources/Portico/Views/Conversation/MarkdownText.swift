@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -450,10 +451,68 @@ struct MarkdownText: View {
     static let bodySize: CGFloat = 13
     static let lineSpacing: CGFloat = 5
 
+    @State private var hovering = false
+
+    /// Under the message, Copy (its Markdown as written) while the pointer
+    /// is on it: a selection stops at a block's edge, this takes it all.
     var body: some View {
-        MarkdownBlocksView(blocks: MarkdownCache.blocks(for: text))
-            .foregroundStyle(Theme.text)
-            .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 4) {
+            MarkdownBlocksView(blocks: MarkdownCache.blocks(for: text))
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+            CopyButton(help: "Copy this message as Markdown") { MarkdownCopy.message(text) }
+                .opacity(hovering ? 1 : 0)
+                .offset(x: -6)
+        }
+        .onHover { hovering = $0 }
+    }
+}
+
+/// What Copy puts on the pasteboard. Pure, so it is tested without one.
+enum MarkdownCopy {
+    /// The code exactly as fenced, without the blank lines at its end, so
+    /// a pasted command runs as it reads.
+    static func code(_ text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The message's Markdown, without blank space around it.
+    static func message(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// A small "Copy" that reads "Copied" for a moment after a click. The text
+/// goes on the pasteboard as plain text only.
+struct CopyButton: View {
+    let help: String
+    let text: () -> String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text(), forType: .string)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                Text(copied ? "Copied" : "Copy")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.text3)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+        }
+        .buttonStyle(.hover)
+        .help(help)
     }
 }
 
@@ -491,8 +550,8 @@ struct MarkdownBlockView: View {
                     listItem(entry.element)
                 }
             }
-        case .code(_, let text, _):
-            codeBlock(text)
+        case .code(let language, let text, _):
+            codeBlock(text, language: language)
         case .quote(let blocks):
             HStack(alignment: .top, spacing: 10) {
                 RoundedRectangle(cornerRadius: 1.5).fill(Theme.borderStrong).frame(width: 3)
@@ -540,17 +599,32 @@ struct MarkdownBlockView: View {
         .padding(.leading, item.level == 0 ? 6 : 26)
     }
 
-    /// Monospaced on the surface colour; a long line scrolls sideways.
-    private func codeBlock(_ text: String) -> some View {
-        ScrollView(.horizontal) {
-            Text(text.isEmpty ? " " : text)
-                .font(.system(size: 12, design: .monospaced))
-                .lineSpacing(3)
-                .fixedSize(horizontal: true, vertical: true)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+    /// Monospaced on the surface colour; a long line scrolls sideways. Over
+    /// it, the fence's language and Copy, which copies the code alone: no
+    /// fence, no wrapping, no trailing blank lines.
+    private func codeBlock(_ text: String, language: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(language ?? "")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.text3)
+                Spacer(minLength: 0)
+                CopyButton(help: "Copy the code") { MarkdownCopy.code(text) }
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .padding(.top, 4)
+            ScrollView(.horizontal) {
+                Text(text.isEmpty ? " " : text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 2)
+                    .padding(.bottom, 10)
+            }
+            .scrollIndicators(.automatic)
         }
-        .scrollIndicators(.automatic)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))

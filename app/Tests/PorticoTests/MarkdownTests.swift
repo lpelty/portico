@@ -291,4 +291,24 @@ final class MarkdownTests: XCTestCase {
         _ = MarkdownCache.blocks(for: text + "c")
         XCTAssertEqual(MarkdownCache.parses - before, 2, "a streamed delta is new text")
     }
+
+    // MARK: Copy
+
+    func testCodeCopiesAsFencedWithoutFenceOrTrailingBlankLines() {
+        let blocks = MarkdownParser.parse("Example install:\n\n```bash\npip install portico\nportico --help\n\n```\n")
+        guard case .code(let language, let text, _) = blocks.last else { return XCTFail("\(blocks)") }
+        XCTAssertEqual(language, "bash")
+        XCTAssertEqual(MarkdownCopy.code(text), "pip install portico\nportico --help")
+    }
+
+    func testCodeInAListItemCopiesWithoutTheItemsIndent() {
+        let blocks = MarkdownParser.parse("1. Install it:\n   ```bash\n   pip install portico\n     --upgrade\n   ```\n2. Run it.")
+        guard case .list(let items) = blocks.first,
+              case .code(_, let text, _) = items.first?.blocks.first else { return XCTFail("\(blocks)") }
+        XCTAssertEqual(MarkdownCopy.code(text), "pip install portico\n  --upgrade")
+    }
+
+    func testMessageCopiesItsMarkdownAsWritten() {
+        XCTAssertEqual(MarkdownCopy.message("\n**Done.** See `a.md`:\n\n- one\n\n"), "**Done.** See `a.md`:\n\n- one")
+    }
 }
