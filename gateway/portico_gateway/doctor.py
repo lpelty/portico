@@ -528,6 +528,28 @@ def check_plugins(config_path: Path) -> list[Check]:
     return checks
 
 
+# The config keys whose errors are the services check's to report.
+SERVICES_KEYS = frozenset({"services", "services_interval_seconds"})
+
+
+def check_services(config_path: Path) -> Check:
+    """The deployment's ``[[services]]`` (v0.4): how many and which, or why they cannot be read. Runs no check."""
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        if e.keys & SERVICES_KEYS:
+            return Check("services", False, _one_line(str(e)))
+        return Check("services", True, "not checked: the config does not load (see the config check)")
+    if not config.services:
+        return Check("services", True, "none configured; the app shows the Gateway row only")
+    names = ", ".join(s.id for s in config.services)
+    return Check(
+        "services",
+        True,
+        f"{len(config.services)} configured ({names}), checked every {config.services_interval_seconds} s",
+    )
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
 
@@ -577,6 +599,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_config(config_path),
         check_setting_sources(config_path),
         *check_plugins(config_path),
+        check_services(config_path),
         check_token(state),
         check_env_file(state),
         check_ledger(state),

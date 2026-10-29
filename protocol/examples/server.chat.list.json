@@ -6,14 +6,17 @@
       "compactions": 0,
       "created": "2026-10-27T12:00:00Z",
       "folder": "/Users/someone/projects/demo",
-      "state": "idle"
+      "logged_at": "2026-10-27T11:40:00Z",
+      "state": "idle",
+      "unlogged": true
     },
     {
       "chat": 2,
       "compactions": 0,
       "created": "2026-10-27T12:00:00Z",
       "folder": "/Users/someone/projects/demo-two",
-      "state": "working"
+      "state": "working",
+      "unlogged": false
     }
   ],
   "ts": "2026-10-27T12:00:00Z",

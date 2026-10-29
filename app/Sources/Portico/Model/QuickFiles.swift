@@ -3,35 +3,28 @@ import Foundation
 
 // MARK: - Files, v0.2 (F1–F4)
 
-/// A file the live session's tools touched (F2's "Touched this session").
+/// A file the session's tools touched, read or written (quick open
+/// ranks these after the bookmarks).
 struct TouchedFile: Equatable, Sendable {
     var path: String
     /// A write-like tool touched it (Write, Edit, NotebookEdit…); else it was read.
     var wrote: Bool
 
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
-    var verb: String { wrote ? "wrote" : "read" }
 }
 
-/// The Quick tab's touched list as drawn: every write, and the reads
-/// folded to two rows and "… N more read" once there are more than four.
-struct TouchedList: Equatable {
-    var shown: [TouchedFile]
-    var moreRead: Int
+/// A file the agent created or edited this session (v0.4's "Changed this
+/// session"), with when it last changed.
+struct ChangedFile: Equatable, Sendable {
+    var path: String
+    /// The last change's time, from its tool events; nil when unknown.
+    var at: Date?
 
-    static let readsBeforeFolding = 4
-    static let readsShownWhenFolded = 2
+    var name: String { URL(fileURLWithPath: path).lastPathComponent }
 
-    init(_ files: [TouchedFile]) {
-        let reads = files.filter { !$0.wrote }
-        guard reads.count > Self.readsBeforeFolding else {
-            shown = files
-            moreRead = 0
-            return
-        }
-        let keep = Set(reads.prefix(Self.readsShownWhenFolded).map(\.path))
-        shown = files.filter { $0.wrote || keep.contains($0.path) }
-        moreRead = reads.count - Self.readsShownWhenFolded
+    /// `9:14`, the app's clock; empty when the time is unknown.
+    func time(calendar: Calendar = .current) -> String {
+        at.map { SessionTime.clock($0, calendar: calendar) } ?? ""
     }
 }
 
@@ -107,7 +100,7 @@ extension AppModel {
     }
 
     /// The files this chat's tool calls touched, newest first, one row per
-    /// path; a path any call wrote reads "wrote".
+    /// path; `wrote` when any call wrote it.
     func touchedFiles(chat: Int) -> [TouchedFile] {
         let folder = summary(of: chat)?.folder
         var order: [String] = []
@@ -120,14 +113,32 @@ extension AppModel {
         return order.map { TouchedFile(path: $0, wrote: wrote[$0] ?? false) }
     }
 
-    // MARK: pins
+    /// The files this chat's tools created or edited (no reads, no failed
+    /// writes), newest change first, one row per path with the time of its
+    /// last change.
+    func changedFiles(chat: Int) -> [ChangedFile] {
+        let folder = summary(of: chat)?.folder
+        var seen = Set<String>()
+        var files: [ChangedFile] = []
+        for item in (transcripts[chat] ?? []).reversed() {
+            guard case .tool(let row) = item, Self.isWriteTool(row.tool), row.ok != false,
+                let path = Self.filePath(of: row, folder: folder), seen.insert(path).inserted
+            else { continue }
+            files.append(ChangedFile(path: path, at: SessionTime.parse(row.at)))
+        }
+        return files
+    }
 
-    func isPinned(_ path: String) -> Bool {
+    // MARK: bookmarks
+
+    /// Bookmarked, by absolute path. Stored as `pinnedFiles` (v0.2's word)
+    /// so bookmarks made before v0.4 survive.
+    func isBookmarked(_ path: String) -> Bool {
         settings.pinnedFiles.contains(path)
     }
 
-    /// Pin or unpin a file (or folder) for the Quick tab; kept in settings.
-    func togglePin(_ path: String) {
+    /// Bookmark a file (or folder), or remove its bookmark; kept in settings.
+    func toggleBookmark(_ path: String) {
         objectWillChange.send()
         if let index = settings.pinnedFiles.firstIndex(of: path) {
             settings.pinnedFiles.remove(at: index)
@@ -171,7 +182,7 @@ extension AppModel {
     static let quickOpenLimit = 50
 
     /// Quick open's rows for `query`: file names containing it (all files
-    /// when empty), pinned first, then touched this session, then names
+    /// when empty), bookmarked first, then touched this session, then names
     /// that start with the query, then shorter names; at most 50.
     func quickOpenItems(chat: Int, query: String) -> [QuickOpenItem] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -231,11 +242,11 @@ extension AppModel {
     // MARK: the document view (F3)
 
     /// Open the document view, on `file` when given. The sidebar's files
-    /// switch to Quick while it is open.
+    /// switch to Bookmarks while it is open.
     func openDocumentView(file: String? = nil) {
         if !documentMode {
             filesTabBeforeDocument = filesTab
-            filesTab = .quick
+            filesTab = .bookmarks
             documentMode = true
         }
         if let file { documentFile = file }

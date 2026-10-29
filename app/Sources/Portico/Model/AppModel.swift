@@ -22,11 +22,15 @@ struct ToolRow: Equatable, Sendable, Identifiable {
     /// The gateway cancelled this use's permission card before anyone
     /// answered it (its reason): the row says so instead of an outcome.
     var unanswered: String? = nil
+    /// When the use last moved: its start's `ts`, then its finish's (v0.4:
+    /// "Changed this session" shows when a file last changed).
+    var at: String? = nil
 
     var id: String { toolUseId }
 }
 
-/// A turn ended; shown as a small marker between turns.
+/// A turn ended. Kept in the model; the conversation draws a note only
+/// under a stopped or failed turn (v0.4: no rule between turns).
 struct TurnMarker: Equatable, Sendable {
     var turn: Int
     var outcome: Outcome
@@ -159,9 +163,29 @@ final class AppModel: ObservableObject {
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
     @Published var renewing: [Int: String] = [:]
+    /// Per chat, the id of a `session.log` the gateway has not answered
+    /// (v0.4): the card says "Logging…" and sends wait, as for a renewal.
+    @Published var logging: [Int: String] = [:]
+    /// The session whose New is asking "Log Session N first?" (W2).
+    @Published var askingToLog: Int?
+    /// The deployment's services from the latest `services.status`; `nil`
+    /// until the first one on this connection ("Checking…").
+    @Published var services: [Service]?
+    /// Restarts sent and not yet answered by a `services.status`: service
+    /// id → request id.
+    @Published var restartingServices: [String: String] = [:]
+    /// Per restarting service, how it was when Restart was pressed: only a
+    /// status that moves it (to `checking`, or another state or detail)
+    /// answers that restart.
+    var restartBaselines: [String: Service] = [:]
+    /// After a `chat.list`, gives up waiting for the first `services.status`
+    /// (a gateway that sends none): the Gateway row alone, not "Checking…".
+    var servicesFallback: Task<Void, Never>?
+    /// How long `servicesFallback` waits.
+    var servicesFallbackDelay: Duration = .seconds(5)
     /// Chats whose nudge (S2) the person put off with "Not now".
     @Published var nudgeDismissed: Set<Int> = []
-    /// The Files pane's switch (F1 Folder, F2 Quick).
+    /// The Files pane's switch (F1 Folder, F2 Bookmarks).
     @Published var filesTab: FilesTab = .folder
     /// The quick-open palette (F4) is showing.
     @Published var quickOpenShown = false
@@ -175,7 +199,7 @@ final class AppModel: ObservableObject {
     /// The tab to go back to when the document view closes.
     var filesTabBeforeDocument: FilesTab?
 
-    enum FilesTab: String, Sendable { case folder, quick }
+    enum FilesTab: String, Sendable { case folder, bookmarks }
 
     /// One directory in one root of one chat's Files pane.
     struct FilesKey: Hashable, Sendable {
@@ -373,6 +397,18 @@ final class AppModel: ObservableObject {
         case .hello(let hello):
             // Each gateway says afresh: a restarted one has read the config.
             configStale = hello.configStale ?? false
+            // Services are checked afresh too: "Checking…" until it says.
+            // A gateway older than v0.4 never will: the Gateway row alone.
+            services = Self.gatewaySendsServices(hello.gatewayVersion) ? nil : []
+            restartingServices = [:]
+            restartBaselines = [:]
+            servicesFallback?.cancel()
+            servicesFallback = nil
+            // A log or renewal sent on the old connection was never
+            // answered (or its answer was lost with it); the `chat.list`
+            // that follows says how each session is now.
+            logging = [:]
+            renewing = [:]
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -390,11 +426,13 @@ final class AppModel: ObservableObject {
                 forget(chat: chat)
             }
             openLiveSessionIfNeeded()
+            awaitServicesStatus()
 
         case .chatState(let state):
             if let index = chats.firstIndex(where: { $0.chat == state.chat }) {
                 chats[index].state = state.state
                 if let mode = state.mode { chats[index].mode = mode }
+                if let unlogged = state.unlogged { chats[index].unlogged = unlogged }
             }
             if let id = state.id, pendingNewChats.remove(id) != nil {
                 // The new session runs in what the start screen's chip
@@ -456,6 +494,14 @@ final class AppModel: ObservableObject {
         case .sessionRenewed(let renewed):
             applyRenewed(renewed)
 
+        case .sessionLogged(let logged):
+            applyLogged(logged)
+
+        case .servicesStatus(let status):
+            servicesFallback?.cancel()
+            servicesFallback = nil
+            applyServicesStatus(status)
+
         case .filesResults(let results):
             applySearchResults(results)
 
@@ -471,6 +517,14 @@ final class AppModel: ObservableObject {
             // (below) carries the gateway's reason like any other error.
             if let id = error.id, let chat = renewing.first(where: { $0.value == id })?.key {
                 renewing[chat] = nil
+            }
+            // A refused log or restart: likewise no longer pending.
+            if let id = error.id, let chat = logging.first(where: { $0.value == id })?.key {
+                logging[chat] = nil
+            }
+            if let id = error.id, let service = restartingServices.first(where: { $0.value == id })?.key {
+                restartingServices[service] = nil
+                restartBaselines[service] = nil
             }
             if let id = error.id, fileSearch?.pending[id] != nil {
                 fileSearch?.pending[id] = nil
@@ -594,7 +648,7 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = started.turn
             var row = ToolRow(
                 toolUseId: started.toolUseId, turn: started.turn, tool: started.tool,
-                summary: started.summary, input: started.input)
+                summary: started.summary, input: started.input, at: started.ts)
             if let decision = pendingOutcomes[chat]?.removeValue(forKey: row.toolUseId) {
                 row.permission = decision.outcome
                 row.note = decision.note
@@ -605,6 +659,7 @@ final class AppModel: ObservableObject {
                     row.permission = row.permission ?? old.permission
                     row.note = row.note ?? old.note
                     row.unanswered = old.unanswered
+                    row.at = old.at ?? row.at
                 }
                 items[index] = .tool(row)
             } else {
@@ -618,6 +673,7 @@ final class AppModel: ObservableObject {
                 row.finished = true
                 row.ok = finished.ok
                 row.result = finished.summary
+                row.at = finished.ts
                 if let permission = finished.permission {
                     row.permission = permission
                     row.note = finished.note ?? row.note
@@ -628,7 +684,7 @@ final class AppModel: ObservableObject {
                 items.append(.tool(ToolRow(
                     toolUseId: finished.toolUseId, turn: finished.turn, tool: "tool", summary: finished.summary,
                     input: [:], finished: true, ok: finished.ok, result: finished.summary,
-                    permission: finished.permission, note: finished.note)))
+                    permission: finished.permission, note: finished.note, at: finished.ts)))
             }
 
         case .turnFinished(let finished):
@@ -708,7 +764,7 @@ final class AppModel: ObservableObject {
             items.append(.notice(id: Self.itemId(&nextItemId), text: notice.text))
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
-            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable:
+            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus:
             break
         }
     }
@@ -1030,14 +1086,23 @@ final class AppModel: ObservableObject {
     /// `turn.started` the engine may take seconds to start, with the state
     /// word still `idle`, so the state word alone cannot gate the composer.
     ///
-    /// In single presentation, `/new` alone is not sent: it renews the
-    /// session (S1's "Same as typing /new"). `about` is the document view's
-    /// open file, attached to the message along with the chips.
+    /// In single presentation, `/new` alone is not sent: it does what the
+    /// card's New does (S1's "Same as typing /new"), asking to log first
+    /// when that would lose something (W2); `/log` alone logs the session
+    /// without ending it, when the deployment can. `about` is the document
+    /// view's open file, attached to the message along with the chips.
     func sendMessage(chat: Int, text: String, about: String? = nil) {
-        if text.trimmingCharacters(in: .whitespacesAndNewlines) == Self.renewCommand, canRenew(chat: chat) {
-            guard !isRenewing(chat: chat) else { return }
+        let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if command == Self.renewCommand, canRenew(chat: chat) {
+            guard !isSessionCommandPending(chat: chat) else { return }
             drafts[chat] = nil
-            renew(chat: chat)
+            requestNew(chat: chat)
+            return
+        }
+        if command == Self.logCommand, canLogSession(chat: chat) {
+            guard !isSessionCommandPending(chat: chat) else { return }
+            drafts[chat] = nil
+            logSession(chat: chat)
             return
         }
         var attachments = draftAttachments[chat] ?? []
@@ -1151,6 +1216,8 @@ final class AppModel: ObservableObject {
         contextUsage[chat] = nil
         turnStartedAt[chat] = nil
         renewing[chat] = nil
+        logging[chat] = nil
+        if askingToLog == chat { askingToLog = nil }
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
     }

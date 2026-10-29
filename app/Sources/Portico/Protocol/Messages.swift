@@ -186,10 +186,45 @@ struct ChatSummary: Codable, Equatable, Sendable {
     var contextPercent: Double? = nil
     /// The session's permission mode (v0.3); absent from older gateways.
     var mode: PermissionMode? = nil
+    /// When the log step last finished cleanly in this session (v0.4:
+    /// `session.log` or a renewal's log).
+    var loggedAt: String? = nil
+    /// The session has work no log holds yet (v0.4): a turn finished after
+    /// the last log, or none ran and a turn finished. Computed by the
+    /// gateway; absent means false.
+    var unlogged: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case chat, folder, alias, state, created, title, ended, logged, parent, compactions, mode
+        case chat, folder, alias, state, created, title, ended, logged, parent, compactions, mode, unlogged
         case contextPercent = "context_percent"
+        case loggedAt = "logged_at"
+    }
+
+    /// `unlogged`, absent read as false.
+    var hasUnloggedWork: Bool { unlogged ?? false }
+}
+
+/// What a service check last said (v0.4).
+enum ServiceState: String, Codable, Sendable {
+    case up, down, checking
+}
+
+/// One of the deployment's services as the gateway last checked it
+/// (`services.status`, v0.4). Portico draws it; it never knows what it is.
+struct Service: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var name: String
+    var state: ServiceState
+    /// One line: the up detail, or why it is down.
+    var detail: String? = nil
+    /// When the service entered its state (ISO 8601).
+    var since: String? = nil
+    /// The deployment has a restart command for it; absent means false.
+    var canRestart: Bool? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, state, detail, since
+        case canRestart = "can_restart"
     }
 }
 
@@ -344,6 +379,24 @@ struct SessionRenew: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// Run the deployment's log step in the live session `chat` without
+/// ending it (v0.4). Answered with `session.logged`.
+struct SessionLog: Codable, Equatable, Sendable {
+    static let messageType = "session.log"
+    var chat: Int
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Run a service's restart command (v0.4); answered by the next
+/// `services.status`.
+struct ServiceRestart: Codable, Equatable, Sendable {
+    static let messageType = "service.restart"
+    var service: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 /// Change the session's permission mode; answered with `chat.state`
 /// carrying `mode`.
 struct SessionMode: Codable, Equatable, Sendable {
@@ -448,6 +501,10 @@ struct ChatState: Codable, Equatable, Sendable {
     var chat: Int
     var state: ChatStateWord
     var mode: PermissionMode? = nil
+    /// The session's `unlogged` as of this state (v0.4, on every
+    /// `chat.state`): a turn that just finished makes it true without a
+    /// `chat.list`. Absent from an older gateway: the record keeps its own.
+    var unlogged: Bool? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -702,6 +759,32 @@ struct SessionRenewed: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// `session.log` finished: the session's record as the gateway now has it
+/// (`logged_at` moved, `unlogged` cleared). `chat` is the record, not a
+/// number, so the envelope carries no chat.
+struct SessionLogged: Codable, Equatable, Sendable {
+    static let messageType = "session.logged"
+    var chat: ChatSummary
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: seq) }
+}
+
+/// Every service the deployment lists, down ones first (v0.4). Sent after
+/// `hello` and `chat.list`, and on every change.
+struct ServicesStatus: Codable, Equatable, Sendable {
+    static let messageType = "services.status"
+    var services: [Service]
+    var chat: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The answer to `files.search`.
 struct FilesResults: Codable, Equatable, Sendable {
     static let messageType = "files.results"
@@ -807,6 +890,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case sessionRenew(SessionRenew)
     case filesSearch(FilesSearch)
     case sessionMode(SessionMode)
+    case sessionLog(SessionLog)
+    case serviceRestart(ServiceRestart)
 
     var type: String {
         switch self {
@@ -825,6 +910,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionRenew: SessionRenew.messageType
         case .filesSearch: FilesSearch.messageType
         case .sessionMode: SessionMode.messageType
+        case .sessionLog: SessionLog.messageType
+        case .serviceRestart: ServiceRestart.messageType
         }
     }
 
@@ -846,6 +933,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SessionRenew.messageType: self = .sessionRenew(try SessionRenew(from: decoder))
         case FilesSearch.messageType: self = .filesSearch(try FilesSearch(from: decoder))
         case SessionMode.messageType: self = .sessionMode(try SessionMode(from: decoder))
+        case SessionLog.messageType: self = .sessionLog(try SessionLog(from: decoder))
+        case ServiceRestart.messageType: self = .serviceRestart(try ServiceRestart(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -869,6 +958,8 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionRenew(let m): try m.encode(to: encoder)
         case .filesSearch(let m): try m.encode(to: encoder)
         case .sessionMode(let m): try m.encode(to: encoder)
+        case .sessionLog(let m): try m.encode(to: encoder)
+        case .serviceRestart(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -901,6 +992,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case chatNotice(ChatNotice)
     case configStale(ConfigStale)
     case updateAvailable(UpdateAvailable)
+    case sessionLogged(SessionLogged)
+    case servicesStatus(ServicesStatus)
 
     var type: String {
         switch self {
@@ -929,6 +1022,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatNotice: ChatNotice.messageType
         case .configStale: ConfigStale.messageType
         case .updateAvailable: UpdateAvailable.messageType
+        case .sessionLogged: SessionLogged.messageType
+        case .servicesStatus: ServicesStatus.messageType
         }
     }
 
@@ -959,6 +1054,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatNotice(let m): m.envelope
         case .configStale(let m): m.envelope
         case .updateAvailable(let m): m.envelope
+        case .sessionLogged(let m): m.envelope
+        case .servicesStatus(let m): m.envelope
         }
     }
 
@@ -990,6 +1087,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ChatNotice.messageType: self = .chatNotice(try ChatNotice(from: decoder))
         case ConfigStale.messageType: self = .configStale(try ConfigStale(from: decoder))
         case UpdateAvailable.messageType: self = .updateAvailable(try UpdateAvailable(from: decoder))
+        case SessionLogged.messageType: self = .sessionLogged(try SessionLogged(from: decoder))
+        case ServicesStatus.messageType: self = .servicesStatus(try ServicesStatus(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1023,6 +1122,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatNotice(let m): try m.encode(to: encoder)
         case .configStale(let m): try m.encode(to: encoder)
         case .updateAvailable(let m): try m.encode(to: encoder)
+        case .sessionLogged(let m): try m.encode(to: encoder)
+        case .servicesStatus(let m): try m.encode(to: encoder)
         }
     }
 }

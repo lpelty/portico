@@ -151,8 +151,10 @@ struct EarlierRow: View {
     }
 }
 
-/// The live session's card (S1), or the nudge (S2) when the session is
-/// long: amber, the sentence, primary "Log and start new" and "Not now".
+/// The live session's card (S1, v0.4's W1): its commands, Log session
+/// (when the deployment can log) and New; or the nudge (S2) when the
+/// session is long: amber, the sentence, primary "Log and start new" and
+/// "Not now".
 struct SessionCard: View {
     let summary: ChatSummary
     @EnvironmentObject private var model: AppModel
@@ -160,7 +162,10 @@ struct SessionCard: View {
     private var chat: Int { summary.chat }
     private var nudging: Bool { model.shouldNudge(chat: chat) }
     private var renewing: Bool { model.isRenewing(chat: chat) }
-    private var canLog: Bool { model.hello?.canLog == true }
+    private var logging: Bool { model.isLogging(chat: chat) }
+    private var pending: Bool { model.isSessionCommandPending(chat: chat) }
+    private var canLog: Bool { model.canLog }
+    private var canLogSession: Bool { model.canLogSession(chat: chat) }
     private var renewLabel: String { canLog ? "Log and start new" : "Start new" }
 
     var body: some View {
@@ -196,7 +201,9 @@ struct SessionCard: View {
             contextRow
             buttons
             if !nudging && model.canRenew(chat: chat) {
-                Text("Same as typing \(AppModel.renewCommand)")
+                Text(canLogSession
+                    ? "Same as typing \(AppModel.logCommand) or \(AppModel.renewCommand)"
+                    : "Same as typing \(AppModel.renewCommand)")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text3)
             }
@@ -249,14 +256,45 @@ struct SessionCard: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.text2)
                 }
-                .disabled(renewing || model.connection != .connected)
+                .disabled(pending || model.connection != .connected)
             } else {
-                Button(action: renew) {
-                    renewButtonLabel.frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    if canLogSession {
+                        Button { model.logSession(chat: chat) } label: {
+                            HStack(spacing: 6) {
+                                if logging {
+                                    ProgressView().controlSize(.mini)
+                                    Text("Logging…")
+                                } else {
+                                    Image(systemName: "square.and.pencil")
+                                    Text("Log session")
+                                }
+                            }
+                            .lineLimit(1)
+                            // Never "Log ses…": the label keeps its width, New gives way.
+                            .fixedSize()
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                        .help("Save what this session did, so the next one can pick up where it left off. The session goes on.")
+                    }
+                    Button { model.requestNew(chat: chat) } label: {
+                        HStack(spacing: 6) {
+                            if renewing {
+                                ProgressView().controlSize(.mini)
+                                Text("Starting…")
+                            } else {
+                                Image(systemName: "plus")
+                                Text("New")
+                            }
+                        }
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .quiet))
+                    .help("End this session and start the next")
                 }
-                .buttonStyle(PillButtonStyle(kind: .quiet))
-                .disabled(renewing || model.connection != .connected)
-                .help(canLog ? "Log this session, then start the next" : "End this session and start the next")
+                .disabled(pending || model.connection != .connected)
             }
         }
     }

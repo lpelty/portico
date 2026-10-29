@@ -777,50 +777,29 @@ final class AppModelTests: XCTestCase {
 
     // MARK: - Status strip, settings and quit (Task 21)
 
-    func testStatusStripTextComposition() {
+    func testStatusStripSaysModelContextAndServices() {
         let (model, _) = model()
         model.apply(.chatList(ChatList(chats: [summary(1), summary(2, state: .working, alias: "notes")])))
 
-        // Nothing selected, no gateway: the strip still says where things stand.
-        XCTAssertEqual(model.statusStrip(gateway: .stopped).text, "no chat · gateway stopped")
+        // No state word, no folder (v0.4): before anything is known the
+        // strip only says where the services stand.
+        XCTAssertEqual(model.statusStrip(gateway: .stopped).text, "Gateway is down")
 
-        // A selected chat: its state word, its folder's name, the gateway with its port.
         model.selected = 2
         model.setConnection(.connected)
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "working · demo · gateway running :4321")
+        model.apply(.contextUsage(ContextUsage(chat: 2, percent: 2.2, model: "claude-opus-5-5", seq: 2)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · 2% context · Checking…")
 
-        // v0.3: status.set lines no longer reach the strip (the working
-        // line in the conversation says what the agent is doing).
+        // status.set lines never reach the strip (v0.3).
         model.apply(.statusSet(StatusSet(text: "thinking", chat: 2, seq: 3)))
-        model.apply(.statusSet(StatusSet(text: "checking memory services")))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "working · demo · gateway running :4321")
+        model.apply(.servicesStatus(ServicesStatus(services: [])))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · 2% context · All services up")
 
-        // The state word follows chat.state, in exactly the protocol's words.
-        model.apply(.chatState(ChatState(chat: 2, state: .waitingOnYou, seq: 5)))
-        XCTAssertTrue(model.statusStrip(gateway: .running(port: 4321)).text.hasPrefix("waiting on you · demo · "))
-
-        // The gateway indicator: stopped / starting / running :port / failed.
+        // The gateway text stays for Settings.
         XCTAssertEqual(model.statusStrip(gateway: .starting).gatewayText, "gateway starting")
-        XCTAssertEqual(model.statusStrip(gateway: .stopped).gatewayText, "gateway stopped")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).gatewayText, "gateway running :4321")
         XCTAssertEqual(model.statusStrip(gateway: .failed("no gateway command found")).gatewayText,
                        "gateway failed: no gateway command found")
-
-        // The socket's state is only mentioned when it is not simply connected.
-        XCTAssertNil(model.statusStrip(gateway: .running(port: 4321)).connectionText)
-        model.setConnection(.connecting)
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText, "connecting")
-        XCTAssertEqual(
-            model.statusStrip(gateway: .running(port: 4321)).text,
-            "waiting on you · demo · gateway running :4321 · connecting")
-        model.setConnection(.disconnected)
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText, "not connected")
-        XCTAssertNil(model.statusStrip(gateway: .stopped).connectionText, "a stopped gateway already says why there is no socket")
-        model.setConnection(.failed("connection refused"))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText,
-                       "cannot reach the gateway: connection refused")
-        // ... but not twice when the gateway itself failed with the same reason.
-        model.setConnection(.failed("no gateway command found"))
-        XCTAssertNil(model.statusStrip(gateway: .failed("no gateway command found")).connectionText)
     }
 
     func testStopGatewaySendsGatewayStopAndWaitsForTheSocketToClose() async {

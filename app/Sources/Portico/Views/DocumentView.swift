@@ -197,7 +197,7 @@ struct DocumentHeader: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        let pinned = model.isPinned(path)
+        let bookmarked = model.isBookmarked(path)
         let obsidian = Obsidian.isInstalled
         HStack(spacing: 10) {
             Image(systemName: FileIcon.systemName(for: path))
@@ -217,18 +217,18 @@ struct DocumentHeader: View {
             .help(path)
             Spacer(minLength: 8)
             Button {
-                model.togglePin(path)
+                model.toggleBookmark(path)
             } label: {
-                Image(systemName: pinned ? "pin.fill" : "pin")
+                Image(systemName: bookmarked ? "bookmark.fill" : "bookmark")
                     .font(.system(size: 12))
-                    .foregroundStyle(pinned ? (model.brand.accent ?? Theme.accent) : Theme.text2)
+                    .foregroundStyle(bookmarked ? (model.brand.accent ?? Theme.accent) : Theme.text2)
                     .frame(width: 28, height: 26)
-                    .background(pinned ? Theme.accentSoft : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .background(bookmarked ? Theme.accentSoft : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.hover)
-            .help(pinned ? "Unpin" : "Pin to Quick")
+            .help(bookmarked ? "Remove bookmark" : "Bookmark")
             Button {
                 Obsidian.open(path: path)
             } label: {

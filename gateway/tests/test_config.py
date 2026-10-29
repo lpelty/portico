@@ -336,3 +336,87 @@ def test_hello_carries_the_mode_a_new_session_starts_in() -> None:
     assert hello_for(Config(), "e", "0.3.0").permission_mode == "auto"
     assert hello_for(Config(permission_mode="default"), "e", "0.3.0").permission_mode == "default"
     assert hello_for(Config(permission_mode="acceptEdits"), "e", "0.3.0").permission_mode == "acceptEdits"
+
+
+# --- v0.4: services, the log command -------------------------------------------------
+
+
+def test_services_load(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "services_interval_seconds = 15\n"
+        "[[services]]\n"
+        'id = "memory"\n'
+        'name = "Memory (recall server)"\n'
+        'check = "curl -sf http://localhost:8888/health"\n'
+        'restart = "launchctl kickstart -k gui/$UID/com.example.memory"\n'
+        'up_detail = "recall and capture"\n'
+        "[[services]]\n"
+        'id = "search-2"\n'
+        'name = "Search"\n'
+        'check = "true"\n'
+        "timeout_seconds = 3\n"
+    )
+    config = load_config(path)
+    assert config.services_interval_seconds == 15
+    memory, search = config.services
+    assert (memory.id, memory.name, memory.up_detail) == ("memory", "Memory (recall server)", "recall and capture")
+    assert memory.restart and "$UID" in memory.restart, "the command is kept as written; the shell expands it"
+    assert (search.id, search.restart, search.up_detail) == ("search-2", None, None)
+    assert (memory.timeout_seconds, search.timeout_seconds) == (10, 3), "a check is bounded by 10 s unless it says"
+
+
+def test_services_default_to_none_every_30_seconds() -> None:
+    assert Config().services == [] and Config().services_interval_seconds == 30
+
+
+@pytest.mark.parametrize(
+    "text, words",
+    [
+        ('[[services]]\nid = "Memory"\nname = "M"\ncheck = "true"\n', ["services", "'Memory'", "lowercase"]),
+        ('[[services]]\nid = "a b"\nname = "M"\ncheck = "true"\n', ["services", "'a b'"]),
+        ('[[services]]\nid = "m"\nname = "  "\ncheck = "true"\n', ["services", "name"]),
+        ('[[services]]\nid = "m"\nname = "M"\ncheck = ""\n', ["services", "check"]),
+        ('[[services]]\nid = "m"\nname = "M"\n', ["services.0.check"]),
+        ('[[services]]\nname = "M"\ncheck = "true"\n', ["services.0.id"]),
+        ('[[services]]\nid = "m"\nname = "M"\ncheck = "true"\nrestrat = "x"\n', ["services.0.restrat"]),
+        (
+            '[[services]]\nid = "m"\nname = "M"\ncheck = "true"\n[[services]]\nid = "m"\nname = "N"\ncheck = "true"\n',
+            ["services", "'m'", "twice"],
+        ),
+        ("services_interval_seconds = 4\n", ["services_interval_seconds"]),
+        ('[[services]]\nid = "a\\n"\nname = "M"\ncheck = "true"\n', ["services", "lowercase"]),
+        ('[[services]]\nid = "m"\nname = "M"\ncheck = "true"\ntimeout_seconds = 0\n', ["services.0.timeout_seconds"]),
+    ],
+)
+def test_bad_services_are_refused_naming_the_key(tmp_path: Path, text: str, words: list[str]) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    for word in words:
+        assert word in str(e.value), (word, str(e.value))
+
+
+@pytest.mark.parametrize(
+    "text, keys",
+    [
+        ('[[services]]\nid = "Memory"\nname = "M"\ncheck = "true"\n', {"services"}),
+        ("services_interval_seconds = 4\n", {"services_interval_seconds"}),
+        # Words in the message never decide which key failed.
+        ("servicess = 1\n", {"servicess"}),
+        ('roots = [{ name = "x", path = "relative/services" }]\n', {"roots"}),
+        ("not toml [", set()),
+    ],
+)
+def test_a_config_error_names_its_top_level_keys(tmp_path: Path, text: str, keys: set[str]) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert e.value.keys == keys
+
+
+def test_hello_commands_list_log_when_the_deployment_can_log() -> None:
+    assert hello_for(Config(log_prompt="/session-close"), epoch="e", gateway_version="0.4.0").commands == ["log"]
+    assert hello_for(Config(), epoch="e", gateway_version="0.4.0").commands == []

@@ -55,6 +55,7 @@ struct MainWindow: View {
             }
         }
         .background(Theme.window)
+        .askToLogDialog(model)
         .overlay {
             if model.quickOpenShown, let chat = model.filesChat {
                 QuickOpenView(chat: chat)
@@ -195,16 +196,22 @@ struct MainToolbar: View {
                 Text(model.brand.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
+            // The brand keeps its room; the title truncates first, and
+            // nothing wraps when the main column is narrow (W4).
+            .layoutPriority(1)
             if let title = chatTitle {
                 Text("/")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text3)
+                    .fixedSize()
                 Text(title)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
             }
             Spacer(minLength: 0)
             if let chat = model.selected, !model.documentMode {

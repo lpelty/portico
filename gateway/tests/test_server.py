@@ -26,6 +26,7 @@ from portico_gateway.messages import (
     FilesListRequest,
     HelloClient,
     HelloServer,
+    ServicesStatus,
     StatusSet,
     dump,
     parse_server,
@@ -62,11 +63,15 @@ def ws_url(server: GatewayServer, token: str | None = None) -> str:
 
 
 async def attach(server: GatewayServer) -> ClientConnection:
-    """Connect with the token and complete the hello handshake; returns the live connection."""
+    """Connect with the token and complete the hello handshake; returns the live connection.
+
+    The handshake is ``hello``, ``chat.list`` and (v0.4) ``services.status``.
+    """
     conn = await connect(ws_url(server, server.token))
     await conn.send(dump(HelloClient(ts=TS, app_version="0.1.0")))
     assert isinstance(parse_server(await conn.recv()), HelloServer)
     assert isinstance(parse_server(await conn.recv()), ChatList)
+    assert isinstance(parse_server(await conn.recv()), ServicesStatus)
     return conn
 
 
@@ -137,6 +142,8 @@ async def test_hello_handshake_returns_hello_and_chat_list(server: GatewayServer
         assert isinstance(listing, ChatList)
         assert [c.chat for c in listing.chats] == [1]
         assert listing.chats[0].folder == FOLDER
+        services = parse_server(await conn.recv())
+        assert isinstance(services, ServicesStatus) and services.services == [], "no [[services]]: an empty list"
         assert server.attached
     finally:
         await conn.close()
@@ -291,6 +298,7 @@ async def test_config_newer_than_the_start_is_said_once_and_in_hello(
         hello = parse_server(await conn.recv())
         assert isinstance(hello, HelloServer) and hello.config_stale is False
         await conn.recv()  # chat.list
+        await conn.recv()  # services.status
         assert srv.status()["config_stale"] is False
 
         later = path.stat().st_mtime + 5
@@ -338,6 +346,7 @@ async def test_update_check_at_start_reaches_the_app_now_and_later(state_dir: St
         hello = parse_server(await conn.recv())
         assert isinstance(hello, HelloServer) and hello.can_update is True
         await conn.recv()  # chat.list: the check runs in the background and blocks nothing
+        await conn.recv()  # services.status
         gate.write_text("")
         found = parse_server(await asyncio.wait_for(conn.recv(), 5))
         assert isinstance(found, UpdateAvailable) and found.version == "0.3.1"
@@ -347,6 +356,7 @@ async def test_update_check_at_start_reaches_the_app_now_and_later(state_dir: St
         await again.send(dump(HelloClient(ts=TS, app_version="0.3.0")))
         assert isinstance(parse_server(await again.recv()), HelloServer)
         assert isinstance(parse_server(await again.recv()), ChatList)
+        assert isinstance(parse_server(await again.recv()), ServicesStatus)
         later = parse_server(await again.recv())
         assert isinstance(later, UpdateAvailable) and later.version == "0.3.1"
         await again.close()

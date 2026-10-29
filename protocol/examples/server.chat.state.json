@@ -4,5 +4,6 @@
   "seq": 42,
   "state": "waiting on you",
   "ts": "2026-10-27T12:00:00Z",
-  "type": "chat.state"
+  "type": "chat.state",
+  "unlogged": true
 }

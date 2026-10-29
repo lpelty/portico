@@ -1,0 +1,6 @@
+{
+  "id": "req-7",
+  "service": "memory",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "service.restart"
+}

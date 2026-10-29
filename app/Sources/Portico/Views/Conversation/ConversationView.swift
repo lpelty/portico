@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// One chat's conversation: the transcript (user bubbles, streamed
-/// assistant text, folded tool rows, cards, turn markers) scrolled to the
-/// newest item, the chat's last status line, and the input bar.
+/// One chat's conversation: the transcript (user bubbles, the agent's
+/// Markdown, folded tool rows, cards, a note under a stopped or failed
+/// turn) scrolled to the newest item, the chat's last status line, and
+/// the input bar.
 struct ConversationView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
@@ -63,7 +64,7 @@ struct ConversationView: View {
                     if items.isEmpty {
                         emptyState
                     }
-                    ForEach(items) { item in
+                    ForEach(items.filter(TurnMarkerView.isDrawn)) { item in
                         TranscriptItemView(item: item, folder: folder, chat: chat)
                             .id(item.id)
                     }
@@ -140,11 +141,7 @@ struct TranscriptItemView: View {
         case .userText(let user):
             UserBubble(text: user.text)
         case .assistantText(_, let text):
-            Text(text)
-                .font(.system(size: 13))
-                .lineSpacing(7)
-                .foregroundStyle(Theme.text)
-                .textSelection(.enabled)
+            MarkdownText(text: text)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
             ToolRowView(
@@ -184,27 +181,37 @@ struct UserBubble: View {
     }
 }
 
-/// A thin line between turns with the outcome word; `done` stays quiet,
-/// `stopped` and `error` say so.
+/// The end of a turn (v0.4): nothing for a turn that finished, a
+/// one-line note under a stopped or failed one. The markers stay in the
+/// model; chat apps draw no rule between turns.
 struct TurnMarkerView: View {
     let marker: TurnMarker
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Rectangle().fill(Theme.border).frame(height: 1)
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(marker.outcome == .error ? .red : Theme.text3)
-                .fixedSize()
-            Rectangle().fill(Theme.border).frame(height: 1)
+    /// Whether an item is drawn at all: a finished turn's marker is not.
+    static func isDrawn(_ item: TranscriptItem) -> Bool {
+        if case .turnMarker(let marker) = item { return label(marker.outcome) != nil }
+        return true
+    }
+
+    /// `Stopped`, `This turn ended with an error`, or nothing.
+    static func label(_ outcome: Outcome) -> String? {
+        switch outcome {
+        case .done: nil
+        case .stopped: "Stopped"
+        case .error: "This turn ended with an error"
         }
     }
 
-    private var label: String {
-        switch marker.outcome {
-        case .done: "turn \(marker.turn)"
-        case .stopped: "turn \(marker.turn) stopped"
-        case .error: "turn \(marker.turn) ended with an error"
+    var body: some View {
+        if let label = Self.label(marker.outcome) {
+            HStack(spacing: 6) {
+                Image(systemName: marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle")
+                    .font(.system(size: 11))
+                Text(label)
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(marker.outcome == .error ? Theme.deny : Theme.text3)
+            .accessibilityElement(children: .combine)
         }
     }
 }

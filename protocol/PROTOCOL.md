@@ -176,7 +176,7 @@ to the engine as typed and dispatches the folder's commands.
 
 v0.3: a message whose first word is a slash command (`/word`, or
 `/plugin:word`; a path like `/Users/...` is not one) that nobody knows —
-not Portico (`/new`), not the deployment (`hello.commands`, or the first
+not Portico (`/new`, and `/log` from v0.4), not the deployment (`hello.commands`, or the first
 word of an action's text), not the engine — is **not** sent to the agent.
 It is an empty turn: `turn.started`, `user.text`, `chat.notice` ("No
 command /word here"), `turn.finished outcome=done`, `chat.state idle`
@@ -287,6 +287,46 @@ renew is running), `session.ended` (already ended). While a renew runs,
 `message.send` to that session is `chat.busy`; `turn.stop` stops the log
 turn; `card.answer` answers its cards.
 
+A log step that finishes `done` also sets the ending session's
+`logged_at` (v0.4).
+
+### `session.log` — `SessionLog` *(v0.4)*
+`chat`, `id`. Runs the deployment's log step in the **live** session
+without ending it — the same step `session.renew` runs with `log: true`:
+a plug-in's `on_renew` (its `ctx.ending` is `false`), else `log_prompt`
+sent as an ordinary turn (`turn.started`, `user.text`, its events, any
+cards, `turn.finished`). When it finishes `done` the session's
+`logged_at` is set to now and `unlogged` clears; a log step that errors
+or is stopped still answers, with `logged_at` where it was. The session
+is not ended, its engine stays up, and `logged` (the renewal's verdict)
+is untouched. Answered with `chat.state` (carrying `unlogged`), then
+`session.logged` (with the `id`), then `chat.list`. Errors: `chat.unknown`, `session.ended` (the session has
+ended), `session.cannot_log` (the deployment has no log step:
+`hello.can_log` is false), `chat.busy` (a turn, a renewal or another log
+is running). While a log runs, `message.send`, `session.renew` and
+`session.log` to that session are `chat.busy`; `turn.stop` stops the log
+turn; `card.answer` answers its cards. The app turns a typed `/log` into
+this request; should `/log` arrive as message text, the gateway treats it
+as a known command (like `/new`) and passes it to the engine as typed.
+
+A plug-in's `on_renew` is the deployment's whole log step, and the
+gateway (never the plug-in) ends a session, so the same hook serves both
+requests. `RenewContext.ending` tells it which: `true` for a renewal (the
+session ends afterwards), `false` for `session.log` (it carries on), so
+its message to the agent can say so. Plug-ins written before v0.4 run
+unchanged; they simply do not look at `ending`.
+
+### `service.restart` — `ServiceRestart` *(v0.4)*
+`service` (a service `id` from `services.status`), `id`. Runs that
+service's `restart` command (with `/bin/sh -c`, in its own process
+group, killed after `command_timeout_seconds`), then checks the service
+again. The answer is the `services.status` frames that follow: the
+service goes to `checking` (detail `restarting`) while the command runs,
+then to what the check finds. A restart command that fails or times out
+is logged; the re-check says how the service is. Errors:
+`service.unknown` (no service with that id), `service.no_restart` (the
+service has no `restart` command: `can_restart` is false).
+
 ### `files.search` — `FilesSearch`
 `root` (named as for `files.list`; `chat` with `chat` set), `query`, `id`.
 Reply: `files.results`, or `error` with the `files.list` root codes or
@@ -321,9 +361,11 @@ the mark beside the start screen's greeting;
 absent or unreadable values fall back to "Portico" and the system
 defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
 absolute, as configured with any `~` expanded), `commands: [string]`
-(reserved; empty in v0.1), `capabilities: [string]` (v0.1: `cards.form`,
+(Portico's own commands the deployment offers, without the `/`; empty in
+v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
+`capabilities: [string]` (v0.1: `cards.form`,
 `files`, `producer`). Always followed by `chat.list`, so the app has the
-sidebar before anything else arrives.
+sidebar before anything else arrives, and then (v0.4) `services.status`.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
@@ -337,15 +379,39 @@ starts in — the start screen shows it, and a new session the person did
 not pick a mode for runs in it).
 
 ### `chat.list` — `ChatList`
-`chats: [{chat, folder, alias?, state, created}]`. Sent after `hello` and
-after every change to the set of chats or their aliases (`chat.new`,
-`chat.alias`, `chat.remove`). State changes alone travel as `chat.state`.
-Not chat-scoped: no `seq`, not replayed in `chat.history`.
+`chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
+plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,
+`compactions`, `context_percent?`; v0.3: `mode?`; v0.4: `logged_at?`,
+`unlogged`). Sent after `hello` and after every change to the set of
+chats or their aliases (`chat.new`, `chat.alias`, `chat.remove`,
+`session.renew`, `session.log`). State changes alone travel as
+`chat.state`. Not chat-scoped: no `seq`, not replayed in `chat.history`.
+
+`ChatSummary.logged_at?` *(v0.4)* is when the session was last logged
+(UTC, ISO 8601): a `session.log`, or a renewal's log step, that finished
+`done`. `ChatSummary.unlogged` *(v0.4, default `false`)* is computed by the
+gateway: `true` when the deployment can log (`hello.can_log`) **and** a
+turn finished after `logged_at` — or, never logged, at least one turn
+finished. A turn counts however it finished (done, stopped, error),
+including a log turn that did not finish `done`; an unknown command's
+empty turn does not (nothing reached the agent). The app asks "log
+first?" before New only when `unlogged` is true. Both are kept on the
+chat record, so they survive a gateway restart; a session recorded before
+v0.4 counts as unlogged when the engine had named it (it has had a turn)
+and it was not logged by a renewal.
 
 ### `chat.state` — `ChatState`
 `chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`;
 `mode?` (v0.3): the session's permission mode, sent when the chat opens
 and whenever it changes.
+`unlogged?` *(v0.4)*: the session's `ChatSummary.unlogged` as of this
+state. The gateway sets it on **every** `chat.state` it sends (always
+present from a v0.4 gateway; absent from an older one), so the app learns
+of unlogged work the moment a turn finishes: the turn's `chat.state idle`
+already carries `unlogged: true`. After `session.log` the gateway sends
+one more `chat.state` (the current word) with `unlogged` as the log step
+left it, before `session.logged`: `false` when it finished `done`, `true`
+when it errored or was stopped (the log turn itself counts as work).
 Stamped and kept in the ring like every chat-scoped event, so a replay
 shows the state transitions in order. The one answering `chat.new` also
 carries the request's `id`.
@@ -543,6 +609,32 @@ notices; `hello.config_stale` carries the same fact on connect.
 newer version. The app offers the update; `portico-gateway update` runs
 it (config `update.run`).
 
+### `session.logged` — `SessionLogged` *(v0.4)*
+`id` (the `session.log`'s), `chat: ChatSummary` — the session as it is
+after its log step (`logged_at`, `unlogged`; `ended` absent). Note that
+`chat` here is the summary, not a number. Not stamped. Followed by
+`chat.list`.
+
+### `services.status` — `ServicesStatus` *(v0.4)*
+`services: [Service]`, each `{id, name, state: "up" | "down" |
+"checking", detail?, since?, can_restart}`: `detail` one line for the
+menu, `since` when the current state began (UTC, ISO 8601),
+`can_restart` whether the service has a `restart` command (default
+`false`). Down services first, then the rest in config order. Sent right
+after `hello` and `chat.list` on every connection (an empty list when the
+deployment lists no services: the app draws its own Gateway row either
+way), and broadcast whenever any service's state or detail changes. Not
+chat-scoped: no `seq`.
+
+`checking` is a service's state from gateway start until its first check
+answers, and while a `service.restart` runs. `up` carries the service's
+`up_detail`, or no detail. `down` carries `not responding since H:MM`
+(local time, 24-hour) plus ` · <the check's last non-empty output line>`
+when it printed one (cut to 80 characters), or ` · check timed out after
+N s` when it printed nothing and was killed. An outage's `since` and
+`H:MM` are when the service was first seen down: a restart that does not
+bring it back keeps them.
+
 ### `files.results` — `FilesResults`
 `id`, `root`, `query`, `hits: [{path, snippet?}]` with `path` relative to
 the root. A direct reply: no `seq`.
@@ -560,8 +652,11 @@ directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
 engine refused the message; the turn is finished with `outcome: error`),
 `card.stale`, `card.invalid_answer`, `files.unknown_root`, `files.outside_root`,
 `files.not_found`, `files.search_failed` (Spotlight failed or timed out),
-`session.ended` (`session.renew` or `message.send` on a session that has
-ended), `session.live` (`chat.new` in single presentation while a session
+`session.ended` (`session.renew`, `session.log` or `message.send` on a
+session that has ended), `session.cannot_log` (v0.4: `session.log` and the
+deployment has no log step), `service.unknown` (v0.4: `service.restart`
+names no configured service), `service.no_restart` (v0.4: the service has
+no `restart` command), `session.live` (`chat.new` in single presentation while a session
 is live; renew it instead),
 `lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
 carries its last line and no chat was created),
@@ -573,6 +668,37 @@ and is not stamped: refusals are replies, not history.
 A bad frame after `hello` (unknown type, unknown field, not JSON) is
 answered with an `error` and the connection stays open; only the first
 frame is fatal.
+
+## Services *(v0.4)*
+
+Configuration notes for the reference gateway (not protocol messages).
+A deployment lists the services it depends on in `config.toml`:
+
+```toml
+services_interval_seconds = 30   # default 30, at least 5
+
+[[services]]
+id = "memory"                    # required, unique, [a-z0-9-]+
+name = "Memory (recall server)"      # required: what the menu says
+check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up
+restart = "launchctl kickstart -k gui/$UID/com.example.memory"  # optional: the menu offers Restart
+up_detail = "recall and capture" # optional: the detail shown while up
+timeout_seconds = 10             # optional, default 10, at least 1: the check's time limit
+```
+
+The gateway runs every check at start, then every
+`services_interval_seconds`, and after a `service.restart`; each check
+(and each restart) runs in its own process group; a check is killed after
+its service's `timeout_seconds` (default 10), a restart after
+`command_timeout_seconds`. Checks of different services run side by side,
+and each one's answer reaches the app (a `services.status`, when it changed
+anything) as soon as it comes: one slow check never holds back the others.
+One service never has two checks at once. A bad `[[services]]` entry (a
+missing or blank key, an id with other characters, an id used twice, an
+unknown key, a `timeout_seconds` under 1, an interval under 5) stops the gateway at start with the key
+named; `bin/doctor` reports it on its `config` and `services` lines and
+otherwise lists the configured ids without running any check. Portico
+never knows what a service is: it draws what the deployment lists.
 
 ## Command line *(v0.3)*
 

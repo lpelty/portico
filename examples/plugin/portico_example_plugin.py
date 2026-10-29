@@ -17,8 +17,8 @@ from __future__ import annotations
 PORTICO_PLUGIN_API = 1
 
 LOG_MESSAGE = (
-    "This session is ending. Append a short summary of what we did and what is "
-    "still open to SESSION-LOG.md in this folder, then reply with one line."
+    "Append a short summary of what we did and what is still open to "
+    "SESSION-LOG.md in this folder, then reply with one line."
 )
 
 
@@ -28,10 +28,14 @@ def on_hello(hello):
 
 
 async def on_renew(ctx, chat):
-    """Ask the agent to log the session; logged only when that turn finished cleanly."""
+    """Ask the agent to log the session; logged only when that turn finished cleanly.
+
+    Runs for a renewal (``ctx.ending``: the session ends afterwards) and for
+    ``session.log`` (the session stays live), so the message says which.
+    """
+    lead = "This session is ending." if ctx.ending else "We are logging this session and carrying on."
+    message = f"{lead} {LOG_MESSAGE}"
     if chat.title:
-        message = f"{LOG_MESSAGE} The session began with: {chat.title}"
-    else:
-        message = LOG_MESSAGE
+        message = f"{message} The session began with: {chat.title}"
     outcome = await ctx.send(message)
     return outcome == "done"

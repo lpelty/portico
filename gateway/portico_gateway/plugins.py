@@ -7,10 +7,12 @@ so updating Portico never touches it. Each module sets
 
 - ``on_hello(hello) -> hello`` — adjust the ``hello`` the app receives.
   Every plug-in's runs, in list order.
-- ``async on_renew(ctx, chat) -> bool`` — the log step a renewal runs in
-  the ending session, instead of sending ``config.log_prompt``. ``ctx`` is
-  a ``RenewContext``; ``chat`` the session's ``ChatSummary``. Returns
-  whether the session was logged.
+- ``async on_renew(ctx, chat) -> bool`` — the deployment's log step,
+  instead of sending ``config.log_prompt``: a renewal runs it in the ending
+  session, and (v0.4) ``session.log`` runs it in the live session without
+  ending it (``ctx.ending`` says which). ``ctx`` is a ``RenewContext``;
+  ``chat`` the session's ``ChatSummary``. Returns whether the session was
+  logged.
 - ``search(root, query) -> list[Hit]`` (sync or async) — ``files.search``
   instead of Spotlight. ``root`` is the root's directory; hit paths are
   relative to it.
@@ -51,17 +53,22 @@ class PluginError(Exception):
 
 @dataclass
 class RenewContext:
-    """What a plug-in's ``on_renew`` gets to run a log step in the ending session.
+    """What a plug-in's ``on_renew`` gets to run a log step in the session.
 
     ``send(text)`` sends ``text`` into the session as a message — a turn
     the app shows like any other, cards included — and returns the turn's
     outcome once it finishes: ``"done"``, ``"stopped"`` or ``"error"``.
+    ``ending`` (v0.4) is true when a renewal ends the session after the log
+    step, false for ``session.log``, which logs and keeps it live; the log
+    step itself is the same either way, and the gateway, not the plug-in,
+    ends the session.
     """
 
     chat: int
     folder: Path
     log_prompt: str | None
     send: Callable[[str], Awaitable[Outcome]]
+    ending: bool = True
 
 
 def _add_paths(paths: list[str]) -> None:
