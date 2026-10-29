@@ -184,7 +184,17 @@ struct SelectableText: NSViewRepresentable {
         container.containerSize = NSSize(width: wraps ? offered : .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        return CGSize(width: wraps ? offered : ceil(used.width) + 1, height: ceil(used.height))
+        guard !wraps else { return CGSize(width: offered, height: ceil(used.height)) }
+        // Not the used rect's width: in an endless container it reports the
+        // container's clamp (ten million points), and a text view that wide
+        // is centred by whatever holds it, far off screen. The text's own
+        // bounds give its width; the container then comes back to it.
+        let bounds = text.boundingRect(
+            with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let width = ceil(bounds.width) + 1
+        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        return CGSize(width: width, height: ceil(used.height))
     }
 }
 

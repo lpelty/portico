@@ -295,6 +295,37 @@ final class ViewerFilesTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5, "laid out lazily")
     }
 
+    /// Short text in the text pane's layout (a scroll view that scrolls
+    /// both ways, content at least the pane's size, top-leading) sits at
+    /// the top left. A non-wrapping text view used to take an endless
+    /// width as its frame (ten million points), so it was centred far off
+    /// screen and the pane looked empty.
+    @MainActor
+    func testShortTextSitsTopLeftInTheTextPaneLayout() throws {
+        let text = MarkdownAttributed.code("# example\npresentation = \"single\"")
+        let pane = GeometryReader { geo in
+            ScrollView([.horizontal, .vertical]) {
+                SelectableText(text: text, wraps: false)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 14)
+                    .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
+            }
+        }
+        let host = NSHostingView(rootView: pane)
+        host.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        host.layoutSubtreeIfNeeded()
+        let view = try XCTUnwrap(Self.textViews(in: host).first)
+        let frame = view.convert(view.bounds, to: host)
+        XCTAssertLessThan(frame.width, 600, "as wide as its text, not endless")
+        XCTAssertEqual(frame.minX, 14, accuracy: 1, "at the left padding")
+        let top = host.isFlipped ? frame.minY : host.bounds.height - frame.maxY
+        XCTAssertEqual(top, 12, accuracy: 1, "at the top padding")
+    }
+
+    private static func textViews(in view: NSView) -> [NSTextView] {
+        (view as? NSTextView).map { [$0] } ?? view.subviews.flatMap { textViews(in: $0) }
+    }
+
     // MARK: - media and presentation
 
     func testTextAndCodeExtensionsAreText() {
