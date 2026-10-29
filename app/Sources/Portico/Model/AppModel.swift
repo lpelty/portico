@@ -1408,10 +1408,21 @@ extension Media {
         case "png", "jpg", "jpeg", "gif", "webp", "svg": .image
         case "html", "htm": .html
         case "pdf": .pdf
-        case "txt": .text
+        case let ext where textExtensions.contains(ext): .text
         default: .other
         }
     }
+
+    /// Plain text and code, `text` like `.txt` (`artifacts.TEXT_EXTENSIONS`;
+    /// keep the two lists the same). The viewer draws them monospaced, and
+    /// `csv`/`tsv` as a table when they parse.
+    static let textExtensions: Set<String> = [
+        "txt", "log", "csv", "tsv",
+        "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml", "plist",
+        "py", "js", "mjs", "cjs", "jsx", "ts", "tsx", "swift", "rb", "go", "rs",
+        "java", "kt", "c", "h", "cpp", "hpp", "m", "cs", "php", "pl", "lua", "r",
+        "sh", "bash", "zsh", "fish", "css", "scss", "sql", "diff", "patch",
+    ]
 }
 
 // MARK: - The connection loop

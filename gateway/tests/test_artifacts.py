@@ -119,11 +119,15 @@ def test_media_mapping() -> None:
     assert media_for(Path("/a/index.htm")) == "html"
     assert media_for(Path("/a/paper.pdf")) == "pdf"
     assert media_for(Path("/a/log.txt")) == "text"
-    for name in ("main.py", "Package.swift", "config.toml", "Makefile", "data.csv", "archive.tar.gz"):
+    # Text and code are `text` too (the app draws them monospaced, CSV/TSV
+    # as a table), never a new media word an older app could not decode.
+    for name in ("main.py", "Package.swift", "config.toml", "data.csv", "q3.TSV", "app.log", "s.yml", "q.sql"):
+        assert media_for(Path(f"/a/{name}")) == "text", name
+    for name in ("Makefile", "archive.tar.gz", "proposal.docx", "book.xlsx", ".env"):
         assert media_for(Path(f"/a/{name}")) == "other", name
 
     assert [m for m in ("markdown", "image", "html", "pdf", "url") if not is_viewable(m)] == []
-    assert not is_viewable("text")
+    assert not is_viewable("text")  # text and code never auto-open
     assert not is_viewable("other")
 
 
@@ -215,7 +219,7 @@ def test_source_files_listed_but_not_opened(tmp_path: Path) -> None:
         collector.note_tool("Write", {"file_path": str(path), "content": ""})
     artifacts = collector.finish(folder)
     assert [a.title for a in artifacts] == ["App.swift", "Model.swift", "Package.swift"]
-    assert all(a.media == "other" and a.open is False and a.kind == "file" for a in artifacts)
+    assert all(a.media == "text" and a.open is False and a.kind == "file" for a in artifacts)
 
 
 def test_newest_viewable_opens_and_dedup_by_location(tmp_path: Path) -> None:

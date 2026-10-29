@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FILE_TOOLS",
+    "TEXT_EXTENSIONS",
     "VIEWABLE_MEDIA",
     "TurnCollector",
     "artifact_for_location",
@@ -65,8 +66,19 @@ MEDIA_BY_EXTENSION: dict[str, Media] = {
     ".html": "html",
     ".htm": "html",
     ".pdf": "pdf",
-    ".txt": "text",
 }
+
+# Plain text and code: the viewer draws these monospaced (and `.csv`/`.tsv`
+# as a table, by extension). Still `text`, never a new media word, so an
+# older app decodes them; `text` never auto-opens.
+TEXT_EXTENSIONS: tuple[str, ...] = (
+    ".txt", ".log", ".csv", ".tsv",
+    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".xml", ".plist",
+    ".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".swift", ".rb", ".go", ".rs",
+    ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".m", ".cs", ".php", ".pl", ".lua", ".r",
+    ".sh", ".bash", ".zsh", ".fish", ".css", ".scss", ".sql", ".diff", ".patch",
+)
+MEDIA_BY_EXTENSION.update(dict.fromkeys(TEXT_EXTENSIONS, "text"))
 
 # The kinds the viewer renders and therefore the only ones that auto-open.
 VIEWABLE_MEDIA: frozenset[str] = frozenset({"markdown", "image", "html", "pdf", "url"})
