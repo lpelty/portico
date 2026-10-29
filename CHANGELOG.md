@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.9.0 — unreleased
+
+### What a person gets (app)
+
+- **Settings from the sidebar.** The bottom of the sidebar shows a round
+  initial and your first name (from the account's full name, as the
+  welcome greeting), with a gear on the right that opens Settings, the
+  same window as ⌘,. With no name set it shows a person glyph.
+- **"When Portico quits" lives in Settings › Gateway**, moved from
+  General, with clearer choices: "Keep the gateway and its services
+  running" (the default) or "Stop the gateway and its services", which
+  saves battery and runs the deployment's stop command first. The
+  behaviour and saved choice are unchanged.
+
 ## v0.8.0 (2026-10-29)
 
 ### What a person gets (app)

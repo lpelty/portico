@@ -14,10 +14,15 @@ final class Settings: ObservableObject {
 
         var label: String {
             switch self {
-            case .keepRunning: "Keep the agent running"
-            case .stopEverything: "Stop everything"
+            // Raw values stay as they were so saved choices survive; only
+            // the wording changed (v0.9 decision 7, AE2).
+            case .keepRunning: "Keep the gateway and its services running"
+            case .stopEverything: "Stop the gateway and its services"
             }
         }
+
+        /// The line under the choices in Settings › Gateway.
+        static let caption = "Keeping them running lets a long turn finish while Portico is closed; reopening attaches to it. Stopping saves battery, and runs the deployment's stop command first."
     }
 
     enum Appearance: String, CaseIterable, Sendable {

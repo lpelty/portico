@@ -120,8 +120,8 @@ struct StartView: View {
     static func greeting(at date: Date = Date(), fullName: String = NSFullUserName()) -> String {
         let hour = Calendar.current.component(.hour, from: date)
         let part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
-        let first = fullName.split(separator: " ").first.map(String.init) ?? ""
-        return first.isEmpty ? part : "\(part), \(first)"
+        guard let first = PersonName(fullName: fullName).first else { return part }
+        return "\(part), \(first)"
     }
 
     // MARK: composer
