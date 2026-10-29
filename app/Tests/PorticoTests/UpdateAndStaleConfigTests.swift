@@ -56,8 +56,13 @@ final class UpdateAndStaleConfigTests: XCTestCase {
         XCTAssertTrue(Updater.isUpdaterLaunch(["/Applications/Portico.app/Contents/MacOS/Portico", "--update"]))
         XCTAssertFalse(Updater.isUpdaterLaunch(["/x/Portico"]))
         XCTAssertFalse(Updater.isUpdaterLaunch(["--update"]), "the program's own name does not count")
-        XCTAssertEqual(Updater.relaunchArguments(["/x/Portico", "-psn_0_123", "--verbose"], updating: true), ["--verbose", "--update"])
-        XCTAssertEqual(Updater.relaunchArguments(["/x/Portico", "--update", "--verbose"], updating: false), ["--verbose"])
+        XCTAssertEqual(
+            Updater.relaunchArguments(["/x/Portico", "-psn_0_123", "--verbose"], updating: true, pid: 4321),
+            ["--verbose", "--update", "--wait-pid", "4321"])
+        XCTAssertEqual(Updater.relaunchArguments(["/x/Portico", "--update", "--wait-pid", "4321", "--verbose"], updating: false), ["--verbose"])
+        XCTAssertEqual(Updater.waitPid(["/x/Portico", "--update", "--wait-pid", "4321"]), 4321)
+        XCTAssertNil(Updater.waitPid(["/x/Portico", "--update"]))
+        XCTAssertNil(Updater.waitPid(["/x/Portico", "--wait-pid"]))
         XCTAssertEqual(Updater.brandName(info: ["CFBundleName": "Acme Agent"]), "Acme Agent")
         XCTAssertEqual(Updater.brandName(info: ["CFBundleDisplayName": "Acme", "CFBundleName": "acme"]), "Acme")
         XCTAssertEqual(Updater.brandName(info: [:]), "Portico")
@@ -70,6 +75,33 @@ final class UpdateAndStaleConfigTests: XCTestCase {
         XCTAssertEqual(state, .succeeded)
         XCTAssertEqual(Array(runner.lines.dropFirst()), ["stopping the gateway", "pulling 0.3.1", "no newline at the end"])
         XCTAssertTrue(runner.lines.first?.hasSuffix(" update") == true, "the command line is shown first")
+    }
+
+    func testRunnerWaitsForTheOldAppToExitBeforeUpdating() async throws {
+        let old = Process()
+        old.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        old.arguments = ["0.6"]
+        try old.run()
+        let pid = old.processIdentifier
+        let script = try script("kill -0 \(pid) 2>/dev/null && echo old app alive || echo old app gone\n")
+        let runner = UpdateRunner(resolve: { script }, environment: ["PATH": "/usr/bin:/bin"], waitFor: pid)
+        let state = await runner.run()
+        XCTAssertEqual(state, .succeeded)
+        XCTAssertEqual(runner.lines.first, "Waiting for the app to quit…")
+        XCTAssertEqual(runner.lines.last, "old app gone")
+    }
+
+    func testRunnerDoesNotUpdateWhileTheOldAppWillNotQuit() async throws {
+        let old = Process()
+        old.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        old.arguments = ["30"]
+        try old.run()
+        defer { old.terminate() }
+        let script = try script("echo should not run\n")
+        let runner = UpdateRunner(resolve: { script }, environment: ["PATH": "/usr/bin:/bin"], waitFor: old.processIdentifier, waitSeconds: 0.3)
+        let state = await runner.run()
+        guard case .couldNotStart = state else { return XCTFail("expected couldNotStart, got \(state)") }
+        XCTAssertFalse(runner.lines.contains("should not run"))
     }
 
     func testRunnerKeepsTheLogOnFailure() async throws {

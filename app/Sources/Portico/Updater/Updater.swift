@@ -11,6 +11,12 @@ import Foundation
 /// the commands.
 enum Updater {
     static let flag = "--update"
+    /// `--wait-pid <pid>`: the app that asked for the update. The updater
+    /// waits for it to exit before running the update, so the old app
+    /// cannot start the gateway again in the middle of it.
+    static let waitFlag = "--wait-pid"
+    /// How long the updater waits for the old app to quit.
+    static let waitSeconds: Double = 30
 
     /// This launch is the updater's.
     static func isUpdaterLaunch(_ arguments: [String] = CommandLine.arguments) -> Bool {
@@ -18,12 +24,36 @@ enum Updater {
     }
 
     /// The arguments to launch the app again with (no program name): the
-    /// ones it had, without `--update` (and without the `-psn_` serial
-    /// LaunchServices adds), plus `--update` when `updating`.
-    static func relaunchArguments(_ arguments: [String] = CommandLine.arguments, updating: Bool) -> [String] {
-        var kept = arguments.dropFirst().filter { $0 != flag && !$0.hasPrefix("-psn_") }
-        if updating { kept.append(flag) }
-        return Array(kept)
+    /// ones it had, without `--update` and `--wait-pid <pid>` (and without
+    /// the `-psn_` serial LaunchServices adds), plus `--update` and
+    /// `--wait-pid <this pid>` when `updating`.
+    static func relaunchArguments(
+        _ arguments: [String] = CommandLine.arguments, updating: Bool,
+        pid: pid_t = ProcessInfo.processInfo.processIdentifier
+    ) -> [String] {
+        var kept: [String] = []
+        var rest = arguments.dropFirst()[...]
+        while let argument = rest.popFirst() {
+            if argument == waitFlag {
+                _ = rest.popFirst()
+            } else if argument != flag && !argument.hasPrefix("-psn_") {
+                kept.append(argument)
+            }
+        }
+        if updating { kept += [flag, waitFlag, String(pid)] }
+        return kept
+    }
+
+    /// The pid after `--wait-pid`, if any.
+    static func waitPid(_ arguments: [String] = CommandLine.arguments) -> pid_t? {
+        guard let index = arguments.dropFirst().firstIndex(of: waitFlag), index + 1 < arguments.count else { return nil }
+        guard let pid = pid_t(arguments[index + 1]), pid > 0 else { return nil }
+        return pid
+    }
+
+    /// Whether a process with `pid` still exists.
+    static func isRunning(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
     }
 
     /// The name the updater window uses: the bundle's display name (an
@@ -95,16 +125,23 @@ final class UpdateRunner: ObservableObject {
     private let resolve: () throws -> URL
     private let arguments: [String]
     private let environment: [String: String]
+    private let waitFor: pid_t?
+    private let waitSeconds: Double
     private var partial = ""
 
     /// - Parameters:
     ///   - resolve: finds the command; by default the gateway command, as
     ///     the supervisor looks it up.
     ///   - arguments: `["update"]`.
+    ///   - waitFor: the old app's pid (`--wait-pid`): the update runs only
+    ///     once it has exited, so it cannot restart the gateway mid-update.
     init(
         resolve: (() throws -> URL)? = nil, arguments: [String] = ["update"],
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        waitFor: pid_t? = Updater.waitPid(), waitSeconds: Double = Updater.waitSeconds
     ) {
+        self.waitFor = waitFor
+        self.waitSeconds = waitSeconds
         if let resolve {
             self.resolve = resolve
         } else {
@@ -134,6 +171,19 @@ final class UpdateRunner: ObservableObject {
             return state
         }
         state = .running
+        if let pid = waitFor, Updater.isRunning(pid) {
+            lines.append("Waiting for the app to quit…")
+            let deadline = Date().addingTimeInterval(waitSeconds)
+            while Updater.isRunning(pid) {
+                if Date() >= deadline {
+                    let why = "The app (pid \(pid)) did not quit within \(Int(waitSeconds)) seconds; not updating."
+                    lines.append(why)
+                    state = .couldNotStart(why)
+                    return state
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
         lines.append("$ \(([command.path] + arguments).joined(separator: " "))")
 
         let process = Process()
