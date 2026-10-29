@@ -2,11 +2,13 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The start screen, frame "A4 · New chat (dark)" in design/portico.pen:
-/// shown when no chat is selected. A greeting, one large composer with
-/// Attach, the folder the chat will work in, and Send, then the
-/// deployment's actions as suggestion chips. Send starts the chat in that
-/// folder and sends the message in one motion.
+/// The start screen, frame "V4 · First launch" in design/portico.pen
+/// (A4 before it): shown when no chat is selected. A greeting, one large
+/// composer with `+`, the permission mode chip and Send, the deployment's
+/// actions as suggestion chips, and a quiet line saying where the agent
+/// works — the folder is chosen once (at setup, or the deployment's
+/// default) and changed in Settings, not here. Enter (or Send) starts the
+/// session in that folder and sends the message in one motion.
 struct StartView: View {
     @EnvironmentObject private var model: AppModel
     @FocusState private var focused: Bool
@@ -32,6 +34,7 @@ struct StartView: View {
             if let actions = model.hello?.actions, !actions.isEmpty {
                 suggestions(actions)
             }
+            folderLine
         }
         .frame(maxWidth: 720)
         .padding(EdgeInsets(top: 32, leading: 48, bottom: 120, trailing: 48))
@@ -41,16 +44,50 @@ struct StartView: View {
 
     // MARK: greeting
 
-    private var greeting: some View {
-        HStack(spacing: 14) {
+    /// The mark beside the greeting: the deployment's brand icon when it
+    /// gives one that can be read (`hello.brand.icon`, as the Dock, About
+    /// panel and sidebar header load it), else a sparkle on the accent.
+    enum GreetingMark: Equatable {
+        case icon(NSImage)
+        case sparkle
+
+        init(brand: BrandPresentation) {
+            if let icon = brand.iconImage { self = .icon(icon) } else { self = .sparkle }
+        }
+    }
+
+    /// The mark's side, in points: about 1.6 times the v0.3 mark (34), so
+    /// it holds its own beside the 40-point greeting.
+    static let markSize: CGFloat = 54
+    /// The sparkle inside the accent tile.
+    static let sparkleSize: CGFloat = 26
+
+    @ViewBuilder
+    private var greetingMark: some View {
+        switch GreetingMark(brand: model.brand) {
+        case .icon(let icon):
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: Self.markSize, height: Self.markSize)
+                .accessibilityLabel(model.brand.name)
+        case .sparkle:
             ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(model.brand.accent ?? Theme.accent)
                 Image(systemName: "sparkle")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: Self.sparkleSize, weight: .semibold))
                     .foregroundStyle(.white)
             }
-            .frame(width: 34, height: 34)
+            .frame(width: Self.markSize, height: Self.markSize)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var greeting: some View {
+        HStack(spacing: 16) {
+            greetingMark
             Text(Self.greeting())
                 .font(.system(size: 40, design: .serif))
                 .tracking(-0.6)
@@ -88,9 +125,13 @@ struct StartView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.text)
                     .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
                     .frame(minHeight: 44, maxHeight: 200)
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
+                    .onKeyPress(.return, phases: .down) { press in
+                        InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
+                    }
             }
             HStack(spacing: 8) {
                 Button(action: pickAttachments) {
@@ -103,7 +144,10 @@ struct StartView: View {
                 }
                 .buttonStyle(.hover)
                 .help("Attach files to the first message")
-                folderChip
+                ModeChip(
+                    mode: model.startModeShown, agentName: model.hello?.brand.agentName ?? model.brand.name,
+                    enabled: connected && !model.isStarting
+                ) { model.startMode = $0 }
                 Spacer(minLength: 0)
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -116,7 +160,7 @@ struct StartView: View {
                 }
                 .buttonStyle(.hover)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help(model.startFolder == nil ? "Choose a folder first" : "Start the chat and send (⌘↩)")
+                .help(model.startFolder == nil ? "Choose a folder in Settings first" : "Start and send (Enter)")
                 .disabled(!canSend)
             }
         }
@@ -137,37 +181,16 @@ struct StartView: View {
         return "What should we work on? Ask anything, or drop a file here"
     }
 
-    /// The folder the chat will work in, with a menu of recent and
-    /// configured folders and "Choose…".
-    private var folderChip: some View {
-        Menu {
-            ForEach(model.startFolderChoices, id: \.path) { folder in
-                Button(folder.lastPathComponent) { model.chosenStartFolder = folder }
-                    .help(folder.path)
-            }
-            if !model.startFolderChoices.isEmpty { Divider() }
-            Button("Choose a folder…", action: chooseFolder)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
-                    .font(.system(size: 12))
-                Text(model.startFolder?.lastPathComponent ?? "Choose a folder")
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.text3)
-            }
-            .foregroundStyle(Theme.text2)
-            .padding(EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 10))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.border, lineWidth: 1))
-            .contentShape(Rectangle())
+    /// V4's quiet line: where the agent works, and that Settings changes it.
+    private var folderLine: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "folder")
+                .font(.system(size: 11))
+            Text(model.workingFolderLine)
+                .font(.system(size: 12))
         }
-        .menuStyle(.button)
-        .buttonStyle(.hover)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(model.startFolder?.path ?? "The folder the agent works in")
+        .foregroundStyle(Theme.text3)
+        .help(model.startFolder?.path ?? "Settings › General › Folder")
     }
 
     private var chips: some View {
@@ -228,19 +251,6 @@ struct StartView: View {
     private func send() {
         guard canSend else { return }
         model.startChat(text: model.startDraft)
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Use Folder"
-        panel.message = "Choose the folder the agent works in"
-        if let current = model.startFolder { panel.directoryURL = current }
-        guard panel.runModal() == .OK, let folder = panel.url else { return }
-        model.chosenStartFolder = folder
     }
 
     private func pickAttachments() {

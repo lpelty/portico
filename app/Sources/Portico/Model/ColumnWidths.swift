@@ -48,6 +48,17 @@ enum ColumnWidths {
         return min(earlierDefault, CGFloat(max(sessions, 1)) * earlierRow)
     }
 
+    /// Focus (V3): the conversation keeps about a quarter of the window,
+    /// never less than this; the viewer takes the rest.
+    static let focusConversationShare: CGFloat = 0.25
+    static let focusConversationMinimum: CGFloat = 320
+
+    /// The viewer's width in focus: the window less the conversation's
+    /// share (at least its minimum), and never below the viewer's minimum.
+    static func focusViewer(window: CGFloat) -> CGFloat {
+        max(viewerMinimum, window - max(focusConversationMinimum, (window * focusConversationShare).rounded()))
+    }
+
     static func viewerDefault(for fit: Fit) -> CGFloat {
         fit == .canvas ? canvasDefault : viewerDefault
     }

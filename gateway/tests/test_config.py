@@ -15,7 +15,7 @@ EMPTY_SOURCES_MESSAGE = (
 def test_defaults_when_no_file(tmp_path: Path) -> None:
     config = load_config(tmp_path / "config.toml")
     assert config == Config()
-    assert config.brand == Brand(name="Portico", agent_name="Agent")
+    assert config.brand.for_hello() == Brand(name="Portico", agent_name="Agent")
     assert config.brand.accent is None and config.brand.icon is None
     assert config.actions == []
     assert config.roots == []
@@ -26,7 +26,10 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
     assert config.default_folder is None
     assert config.card_hold_seconds == 600
     assert config.history_buffer == 2000
-    assert config.presentation == "multiple"
+    assert config.presentation == "single"
+    assert config.permission_mode == "auto"
+    assert config.update.check is None and config.update.run is None
+    assert config.brand.app_icon is None
     assert config.log_prompt is None
     assert config.plugins == []
     assert config.plugin_paths == []
@@ -66,7 +69,7 @@ path = "/Users/someone/projects"
 """
     )
     config = load_config(path)
-    assert config.brand == Brand(name="Front Door", agent_name="Helper", accent="#3B6EF5", icon="/Users/someone/icon.png")
+    assert config.brand.for_hello() == Brand(name="Front Door", agent_name="Helper", accent="#3B6EF5", icon="/Users/someone/icon.png")
     assert config.actions == [Action(label="Review", text="/review"), Action(label="Plan", text="/plan")]
     assert config.roots == [Root(name="projects", path="/Users/someone/projects")]
     assert config.setting_sources == ["project", "user"]
@@ -169,13 +172,14 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     assert hello.protocol == 1
     assert hello.gateway_version == "0.1.0"
     assert hello.epoch == "7f1c4a2e-3b5d-4c6e-9a8b-0d1e2f3a4b5c"
-    assert hello.brand == config.brand
+    assert hello.brand == config.brand.for_hello()
     assert hello.actions == config.actions
     assert hello.roots == config.roots
     assert hello.commands == []
     assert hello.capabilities == ["cards.form", "files", "producer", "sessions", "files.search", "context"]
-    assert hello.presentation == "multiple"
+    assert hello.presentation == "single"
     assert hello.can_log is False
+    assert hello.config_stale is False and hello.can_update is False
     assert hello.chat is None and hello.seq is None
     assert hello.ts
 
@@ -254,3 +258,81 @@ def test_hello_carries_presentation_and_can_log_from_log_prompt() -> None:
 def test_hello_without_a_log_step_cannot_log() -> None:
     hello = hello_for(Config(presentation="single"), epoch="e", gateway_version="0.2.0")
     assert hello.can_log is False
+
+
+# --- v0.3: permission mode, update commands, the app icon ----------------------
+
+
+def test_v03_keys_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'permission_mode = "acceptEdits"\n'
+        "[brand]\n"
+        'name = "Front Door"\n'
+        'agent_name = "Helper"\n'
+        'app_icon = "~/icons/front-door.png"\n'
+        "[update]\n"
+        'check = "deploy-tool update --check"\n'
+        'run = "deploy-tool update"\n'
+    )
+    config = load_config(path)
+    assert config.permission_mode == "acceptEdits"
+    assert config.brand.app_icon == str(tmp_path / "icons" / "front-door.png")
+    assert config.update.check == "deploy-tool update --check" and config.update.run == "deploy-tool update"
+
+
+def test_hello_never_carries_the_app_icon_and_says_it_can_update() -> None:
+    config = Config.model_validate(
+        {"brand": {"name": "Front Door", "agent_name": "Helper", "app_icon": "/icons/front-door.png"}, "update": {"run": "deploy-tool update"}}
+    )
+    hello = hello_for(config, epoch="e", gateway_version="0.3.0", config_stale=True)
+    assert hello.brand == Brand(name="Front Door", agent_name="Helper")
+    assert "app_icon" not in dump(hello)
+    assert hello.can_update is True and hello.config_stale is True
+    assert parse_server(dump(hello)) == hello
+
+
+@pytest.mark.parametrize(
+    "text, key",
+    [
+        ('permission_mode = "bypassPermissions"\n', "permission_mode"),
+        ('[update]\nchek = "x"\n', "update"),
+        ('[brand]\nname = "a"\nagent_name = "b"\napp_icon = "icon.png"\n', "app_icon"),
+    ],
+)
+def test_bad_v03_keys_are_refused_naming_the_key(tmp_path: Path, text: str, key: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert key in str(e.value)
+
+
+def test_config_value_reads_dotted_keys() -> None:
+    from portico_gateway.config import config_value
+
+    config = Config.model_validate({"brand": {"name": "Front Door", "agent_name": "Helper", "app_icon": "/i.png"}})
+    assert config_value(config, "brand.name") == "Front Door"
+    assert config_value(config, "brand.app_icon") == "/i.png"
+    assert config_value(config, "brand.accent") is None
+    assert config_value(config, "update.run") is None
+    assert config_value(config, "permission_mode") == "auto"
+    assert config_value(config, "no.such.key") is None
+    assert config_value(config, "brand.name.deeper") is None
+
+
+def test_hello_carries_default_folder_expanded(tmp_path: Path) -> None:
+    from portico_gateway.config import Config, hello_for
+
+    assert hello_for(Config(), "e", "0.3.0").default_folder is None
+    hello = hello_for(Config(default_folder="~/work"), "e", "0.3.0")
+    assert hello.default_folder == str(Path("~/work").expanduser())
+
+
+def test_hello_carries_the_mode_a_new_session_starts_in() -> None:
+    from portico_gateway.config import Config, hello_for
+
+    assert hello_for(Config(), "e", "0.3.0").permission_mode == "auto"
+    assert hello_for(Config(permission_mode="default"), "e", "0.3.0").permission_mode == "default"
+    assert hello_for(Config(permission_mode="acceptEdits"), "e", "0.3.0").permission_mode == "acceptEdits"

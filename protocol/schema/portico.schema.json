@@ -320,6 +320,37 @@
           "title": "Id",
           "type": "string"
         },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "once",
+                "session",
+                "auto",
+                "declined",
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
         "seq": {
           "anyOf": [
             {
@@ -331,6 +362,18 @@
           ],
           "default": null,
           "title": "Seq"
+        },
+        "tool_use_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Use Id"
         },
         "ts": {
           "title": "Ts",
@@ -412,6 +455,18 @@
           "default": null,
           "title": "Questions"
         },
+        "scope_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope Note"
+        },
         "seq": {
           "anyOf": [
             {
@@ -427,6 +482,18 @@
         "title": {
           "title": "Title",
           "type": "string"
+        },
+        "tool_use_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Use Id"
         },
         "ts": {
           "title": "Ts",
@@ -640,6 +707,7 @@
                 "card.ask": "#/$defs/CardAsk",
                 "card.cancel": "#/$defs/CardCancel",
                 "chat.compacted": "#/$defs/ChatCompacted",
+                "chat.notice": "#/$defs/ChatNotice",
                 "chat.state": "#/$defs/ChatState",
                 "error": "#/$defs/Error",
                 "status.set": "#/$defs/StatusSet",
@@ -691,6 +759,9 @@
               },
               {
                 "$ref": "#/$defs/ChatCompacted"
+              },
+              {
+                "$ref": "#/$defs/ChatNotice"
               },
               {
                 "$ref": "#/$defs/Error"
@@ -921,6 +992,61 @@
       "title": "ChatNew",
       "type": "object"
     },
+    "ChatNotice": {
+      "additionalProperties": false,
+      "description": "A quiet line in the conversation from the gateway, e.g. an unknown command.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.notice",
+          "default": "chat.notice",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "text"
+      ],
+      "title": "ChatNotice",
+      "type": "object"
+    },
     "ChatOpen": {
       "additionalProperties": false,
       "properties": {
@@ -1049,6 +1175,23 @@
           ],
           "default": null,
           "title": "Id"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "acceptEdits",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
         },
         "seq": {
           "anyOf": [
@@ -1208,6 +1351,23 @@
           "default": null,
           "title": "Logged"
         },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "acceptEdits",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
+        },
         "parent": {
           "anyOf": [
             {
@@ -1296,8 +1456,68 @@
         },
         {
           "$ref": "#/$defs/FilesSearch"
+        },
+        {
+          "$ref": "#/$defs/SessionMode"
         }
       ]
+    },
+    "ConfigStale": {
+      "additionalProperties": false,
+      "description": "The config file changed after the gateway started; restart the gateway to apply it.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "config.stale",
+          "default": "config.stale",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "ConfigStale",
+      "type": "object"
     },
     "ContextUsage": {
       "additionalProperties": false,
@@ -1330,6 +1550,18 @@
           ],
           "default": null,
           "title": "Model"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Name"
         },
         "percent": {
           "title": "Percent",
@@ -1931,6 +2163,11 @@
           "title": "Can Log",
           "type": "boolean"
         },
+        "can_update": {
+          "default": false,
+          "title": "Can Update",
+          "type": "boolean"
+        },
         "capabilities": {
           "default": [],
           "items": {
@@ -1959,6 +2196,23 @@
           "title": "Commands",
           "type": "array"
         },
+        "config_stale": {
+          "default": false,
+          "title": "Config Stale",
+          "type": "boolean"
+        },
+        "default_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Folder"
+        },
         "epoch": {
           "title": "Epoch",
           "type": "string"
@@ -1979,8 +2233,25 @@
           "default": null,
           "title": "Id"
         },
+        "permission_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "acceptEdits",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permission Mode"
+        },
         "presentation": {
-          "default": "multiple",
+          "default": "single",
           "enum": [
             "single",
             "multiple"
@@ -2285,9 +2556,78 @@
           "$ref": "#/$defs/FilesResults"
         },
         {
+          "$ref": "#/$defs/ChatNotice"
+        },
+        {
+          "$ref": "#/$defs/ConfigStale"
+        },
+        {
+          "$ref": "#/$defs/UpdateAvailable"
+        },
+        {
           "$ref": "#/$defs/Error"
         }
       ]
+    },
+    "SessionMode": {
+      "additionalProperties": false,
+      "description": "Change the session's permission mode; answered with ``chat.state`` carrying ``mode``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "mode": {
+          "enum": [
+            "default",
+            "acceptEdits",
+            "auto"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "session.mode",
+          "default": "session.mode",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "mode"
+      ],
+      "title": "SessionMode",
+      "type": "object"
     },
     "SessionRenew": {
       "additionalProperties": false,
@@ -2548,9 +2888,40 @@
           "default": null,
           "title": "Id"
         },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
         "ok": {
           "title": "Ok",
           "type": "boolean"
+        },
+        "permission": {
+          "anyOf": [
+            {
+              "enum": [
+                "once",
+                "session",
+                "auto",
+                "declined",
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permission"
         },
         "seq": {
           "anyOf": [
@@ -2838,6 +3209,68 @@
         "ts"
       ],
       "title": "TurnStop",
+      "type": "object"
+    },
+    "UpdateAvailable": {
+      "additionalProperties": false,
+      "description": "The deployment's update check found a newer version.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "update.available",
+          "default": "update.available",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "version"
+      ],
+      "title": "UpdateAvailable",
       "type": "object"
     },
     "UserText": {

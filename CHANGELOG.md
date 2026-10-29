@@ -1,5 +1,126 @@
 # Changelog
 
+## v0.3.0 (2026-10-28)
+
+### What a person gets (gateway)
+
+- **Single session by default**: `presentation` defaults to `"single"`;
+  multiple chats stay behind config.
+- **Permission mode per session**: `permission_mode` (`auto` by default,
+  `acceptEdits`, `default`) is passed to the agent engine; `session.mode`
+  changes it mid-session (the running engine at once, later engines from
+  the record). `chat.state` and the chat list carry the mode.
+- **One permission unit**: a permission card asks a plain question
+  (`Save changes to notes.md?`, `Create notes.md?`, `Run git status?`,
+  `Open example.com?`, else `Use <tool>?`) and names its tool row
+  (`tool_use_id`). The closing (`card.answered`) and the row
+  (`tool.finished`) carry the outcome: `once`, `session`, `declined` (with
+  the note), `auto` (auto mode allowed a step that would otherwise ask),
+  `blocked` (auto mode's classifier refused it). Outcomes are kept on the
+  record, so rows replayed after a restart read the same.
+- **"Allow for this session" lasts**: the allows are saved on the chat
+  record. Before, a gateway restart lost them (they lived in memory only);
+  an allow given on a `Write` did not cover the `Edit` of the same file
+  that followed (both now ask "Save changes to ...?" and share one allow);
+  and `cd <the session's folder> && <allowed command>` asked again. A new
+  session starts with none.
+- **"Allow for this session" never covers more than the card showed**
+  (review fixes): on a file edit inside the session's folder it covers
+  edits to files in that folder (symlinks followed), outside it only that
+  one file — before, one allow covered every file edit anywhere. On a
+  command, a prefix rule (`git status:*`) no longer covers a part with a
+  background `&`, `$(…)`, `${…}`, backticks or a `<`/`>` redirection
+  (`git status & rm -rf ~` asks), and a `cd` alongside it is covered only as
+  `cd <literal path>` into the session's folder — before, `cd "$(…)"`,
+  ``cd `…` ``, `cd >file`, `cd $HOME`, `cd -` and a bare `cd` were covered.
+  The card says what the allow covers (`card.ask.scope_note`).
+- **Card titles** resolve a relative path against the session's folder
+  (`Create x.md?` vs `Save changes to x.md?` looked in the gateway's own
+  directory).
+- **Outcomes go by the mode when the tool started**: `auto` and `blocked`
+  are labelled from the mode at `tool.started`, not at `tool.finished`;
+  `blocked` only in auto mode and only when no person answered for that
+  step. An answer's outcome is saved at once, not at the tool's end.
+- **Sessions created before v0.3** (no mode on the record) resume in the
+  deployment's `permission_mode` (`auto` by default); the chip shows it.
+- **A message that starts with a path is not a command**: `/tmp please
+  summarize`, `/etc`, `/file.md summarize` go to the agent as typed (the
+  word has a `.` in it, or names something at the root of the disk).
+- **`update --check` exits 4 when the check fails** (another exit code, a
+  timeout, or a command that cannot start), with the reason on stderr: 0
+  available, 1 none, 2 not configured, 4 failed.
+- **Starting the gateway while `status` probes** no longer refuses it as a
+  second copy: it retries the lock for half a second first.
+- **Friendly model name**: `context.usage.model_name` from
+  `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME` when the model in use
+  is that family's `ANTHROPIC_DEFAULT_*_MODEL` or alias.
+- **Unknown slash command**: `/foo` that neither Portico, the deployment
+  nor the engine knows is not sent to the agent; the conversation shows
+  "No command /foo here" (an empty turn with `chat.notice`) and the
+  gateway logs it.
+- **Config changes are visible**: `hello.config_stale`, a `config.stale`
+  frame when the file changes while the gateway runs, and a doctor warning
+  "restart the gateway to apply".
+- **New commands**: `portico-gateway stop`, `status [--json]`, `update
+  [--check]`, `config-value <key>` (see README, Command line).
+- **Updates**: the gateway runs `update.check` at start and every 6 hours
+  in the background and tells the app (`update.available`); `hello.can_update`
+  says whether `update.run` is set.
+
+### What a person gets (app, review fixes)
+
+- **The start screen's mode chip is the truth**: it shows the pick, else
+  the deployment's mode for new sessions (`hello.permission_mode`), never
+  the mode some other session last reported — and the new session runs in
+  what it showed (before, it could read "Ask each time" while the session
+  ran in auto, or Auto while a `default` deployment asked).
+- **The card says what "Allow for this session" covers**, in the gateway's
+  words (`scope_note`): edits to files in the folder, this file, this
+  command, or the command prefix.
+- **Enter while an input method is composing** (marked text) commits the
+  composition instead of sending.
+- **Updater waits for the old app to quit** (`--wait-pid`) before running
+  the update, so the old app cannot restart the gateway mid-update; after
+  30 seconds it gives up and says so.
+- **Start screen mark**: bigger (54 pt, from 34), and the deployment's
+  brand icon (`brand.icon`) when it gives one, else the sparkle.
+
+### Protocol (still version 1; additions only)
+
+- App → gateway: `session.mode {chat, mode}`, answered with `chat.state`
+  (stamped, with `mode` and the request's `id`).
+- Gateway → app: `chat.notice {chat, text}` (stamped), `config.stale`,
+  `update.available {version}`. `chat.open` now ends with a `chat.state`
+  (state and mode; a direct reply, no `seq`) after `chat.live`.
+- Fields: `mode` on `chat.state` and `ChatSummary`; `tool_use_id` on a
+  permission `card.ask`; `tool_use_id`, `outcome`, `note` on
+  `card.answered`; `permission`, `note` on `tool.finished`; `model_name` on
+  `context.usage`; `config_stale`, `can_update`, `default_folder`,
+  `permission_mode` (the mode a new session starts in) on `hello`;
+  `scope_note` on a permission `card.ask`;
+  `presentation` defaults to `single`.
+
+### Configuration
+
+New keys, all optional: `permission_mode` (`"auto"`, `"acceptEdits"`,
+`"default"`; default `"auto"`), `[update] check` and `run` (shell strings),
+`brand.app_icon` (absolute path, `~` expanded; read by `bin/install`, never
+sent in `hello`). `presentation` now defaults to `"single"`.
+
+### For plug-in authors
+
+- Plug-in API stays **1**; no hook changed.
+- `on_hello` sees two new `hello` fields, `config_stale` and `can_update`,
+  and the brand without `app_icon`. A plug-in that adds `hello.commands`
+  also teaches the gateway those commands: they are never reported as
+  unknown.
+- `session.mode` is handled by the gateway; a deployment that wants a
+  different starting mode sets `permission_mode` (for example
+  `"acceptEdits"` where the engine's auto mode classifier is not
+  available).
+- A deployment's tools should read `portico-gateway status --json`, not the
+  lock or ledger files, to see whether the app holds a live session.
+
 ## v0.2.0 (2026-10-28)
 
 ### What a person gets

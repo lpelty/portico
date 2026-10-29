@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .messages import Action, Brand, HelloServer, Presentation, Root
+from .messages import Action, Brand, HelloServer, PermissionMode, Presentation, Root
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -35,10 +35,50 @@ class ConfigError(ValueError):
     """``config.toml`` cannot be used; the message says which key and why."""
 
 
+class ConfigBrand(Brand):
+    """The protocol's ``Brand`` plus what only the install reads.
+
+    ``app_icon`` is the deployment's 1024×1024 PNG for the ``.app`` bundle
+    (``bin/install`` reads it with ``portico-gateway config-value
+    brand.app_icon``). It is never sent in ``hello``: ``hello_for`` builds the
+    protocol ``Brand`` without it.
+    """
+
+    app_icon: str | None = None
+
+    @field_validator("app_icon")
+    @classmethod
+    def _app_icon_absolute(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            raise ConfigError(f"brand.app_icon: {value!r} is relative; it must be an absolute path (~ is expanded)")
+        return str(path)
+
+    def for_hello(self) -> Brand:
+        return Brand.model_validate(self.model_dump(exclude={"app_icon"}))
+
+
+class UpdateConfig(BaseModel):
+    """``[update]``: the deployment's own update commands, run with ``/bin/sh -c``.
+
+    ``check`` exits 0 and prints a version when an update is available (any
+    other exit, or no output, means none); ``run`` performs the update.
+    Portico owns when they run and the window around them; the deployment
+    owns what they do.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    check: str | None = None
+    run: str | None = None
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    brand: Brand = Brand(name="Portico", agent_name="Agent")
+    brand: ConfigBrand = ConfigBrand(name="Portico", agent_name="Agent")
     actions: list[Action] = []
     roots: list[Root] = []
     setting_sources: list[str] = ["project"]
@@ -56,12 +96,24 @@ class Config(BaseModel):
     # renews it; ``multiple`` is the v0.1 list of chats. ``log_prompt`` is
     # the default log step a renewal runs in the ending session, sent as a
     # message (a slash command the folder already has, typically).
-    presentation: Presentation = "multiple"
+    presentation: Presentation = "single"
     log_prompt: str | None = None
     # Plug-ins: module names, imported at start; ``plugin_paths`` are the
     # directories (outside the checkout) put on ``sys.path`` first.
     plugins: list[str] = []
     plugin_paths: list[str] = []
+    # v0.3: how a new session's engine decides on tool use (the SDK's
+    # ``permission_mode``); ``session.mode`` changes it per session.
+    permission_mode: PermissionMode = "auto"
+    update: UpdateConfig = UpdateConfig()
+
+    @field_validator("brand", mode="before")
+    @classmethod
+    def _brand_from_protocol_brand(cls, value: Any) -> Any:
+        # A plain protocol ``Brand`` (code and tests build one) is taken as its fields.
+        if isinstance(value, Brand) and not isinstance(value, ConfigBrand):
+            return value.model_dump()
+        return value
 
     @field_validator("setting_sources")
     @classmethod
@@ -144,23 +196,49 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def hello_for(config: Config, epoch: str, gateway_version: str, plugins: Plugins | None = None) -> HelloServer:
+def hello_for(
+    config: Config, epoch: str, gateway_version: str, plugins: Plugins | None = None, config_stale: bool = False
+) -> HelloServer:
     """The ``hello`` the gateway sends first on every connection.
 
     ``can_log`` is true when renewing has a log step to run: ``log_prompt``
     is set or a plug-in provides ``on_renew``. Each plug-in's ``on_hello``
-    then sees the result, in list order.
+    then sees the result, in list order. ``config_stale`` is the server's
+    reading of the config file's modification time; ``can_update`` is
+    whether ``[update] run`` is set; ``permission_mode`` is the mode a new
+    session starts in.
     """
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,
         epoch=epoch,
-        brand=config.brand,
+        brand=config.brand.for_hello(),
         actions=list(config.actions),
         roots=list(config.roots),
         commands=[],
         capabilities=list(CAPABILITIES),
         presentation=config.presentation,
         can_log=bool(config.log_prompt) or (plugins is not None and plugins.renew is not None),
+        config_stale=config_stale,
+        can_update=bool(config.update.run),
+        default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
+        permission_mode=config.permission_mode,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
+
+
+def config_value(config: Config, dotted: str) -> Any:
+    """The value at ``dotted`` (``brand.name``, ``update.run``…), or ``None`` when there is no such key."""
+    node: Any = config
+    for part in dotted.split("."):
+        if isinstance(node, BaseModel):
+            if part not in type(node).model_fields:
+                return None
+            node = getattr(node, part)
+        elif isinstance(node, dict):
+            node = node.get(part)
+        else:
+            return None
+        if node is None:
+            return None
+    return node

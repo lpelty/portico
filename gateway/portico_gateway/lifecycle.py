@@ -22,6 +22,7 @@ import contextlib
 import logging
 import os
 import signal
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -174,10 +175,25 @@ async def run_lifecycle_command(name: str, command: str, on_line: OnLine, timeou
         )
 
 
-def single_instance(state: StateDir) -> None:
-    """Take the gateway lock on ``state``; ``AlreadyRunning`` when another gateway holds it."""
-    if not state.acquire_lock():
-        raise AlreadyRunning(f"another gateway is already running on {state.path}")
+# A ``status`` probe takes the free lock for an instant; a gateway starting in
+# that instant tries again this many times, this far apart, before it says
+# another gateway runs.
+LOCK_ATTEMPTS = 10
+LOCK_RETRY_SECONDS = 0.05
+
+
+def single_instance(state: StateDir, attempts: int = LOCK_ATTEMPTS, delay: float = LOCK_RETRY_SECONDS) -> None:
+    """Take the gateway lock on ``state``; ``AlreadyRunning`` when another gateway holds it.
+
+    A lock held only for a moment (``status`` probing it) is waited out:
+    up to ``attempts`` tries, ``delay`` seconds apart.
+    """
+    for attempt in range(max(1, attempts)):
+        if state.acquire_lock():
+            return
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    raise AlreadyRunning(f"another gateway is already running on {state.path}")
 
 
 def install_stop_signals(loop: asyncio.AbstractEventLoop, on_signal: Callable[[str], Any]) -> None:

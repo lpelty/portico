@@ -182,6 +182,8 @@ def gateway(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     S.cli_config = S.run_dir / "cli-config"
     for d in (S.home, S.folder1, S.folder2, S.cli_config):
         d.mkdir()
+    # The done-when checks predate v0.3's defaults: a list of chats, and a card for every step.
+    (S.home / "config.toml").write_text('presentation = "multiple"\npermission_mode = "default"\n', encoding="utf-8")
     for folder in (S.folder1, S.folder2):
         (folder / "CLAUDE.md").write_text(
             "This is a throwaway test folder. Do exactly what the message asks, briefly. "

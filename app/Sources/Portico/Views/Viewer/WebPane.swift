@@ -57,7 +57,7 @@ enum MarkdownPage {
     private static func resource(_ name: String) throws -> String {
         let parts = name.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2,
-            let url = Bundle.module.url(forResource: parts[0], withExtension: parts[1], subdirectory: "Resources"),
+            let url = AppResources.url(forResource: parts[0], withExtension: parts[1]),
             let text = try? String(contentsOf: url, encoding: .utf8)
         else { throw Error.missingResource(name) }
         return text

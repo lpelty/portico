@@ -1,7 +1,10 @@
 {
   "chat": 1,
   "id": "card-7",
+  "note": "not yet",
+  "outcome": "declined",
   "seq": 49,
+  "tool_use_id": "toolu_02",
   "ts": "2026-10-27T12:00:00Z",
   "type": "card.answered"
 }

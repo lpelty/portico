@@ -46,7 +46,7 @@ from claude_agent_sdk import (
     get_session_messages,
 )
 
-from .messages import ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
+from .messages import PermissionMode, ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +55,21 @@ QUESTION_TOOL = "AskUserQuestion"
 CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
 SUMMARY_LIMIT = 80
+
+# Tools that only read (or keep the engine's own notes): auto mode never has
+# anything to decide for them, so their rows carry no permission outcome.
+READ_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "TodoRead", "ToolSearch",
+        "Task", "Agent", "TaskOutput", "BashOutput", "Skill", "AskUserQuestion",
+        "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool", "ReadMcpResourceTool",
+    }
+)
+
+# What the engine's tool result says when auto mode's classifier refused a
+# step ("Permission for this action was denied by the Claude Code auto mode
+# classifier. Reason: ..."); matched case-insensitively.
+AUTO_MODE_BLOCK_MARK = "auto mode classifier"
 
 # What ``on_permission`` returns. ``"allow"`` for once/chat (the chat layer
 # remembers chat-wide allows itself), ``("allow", "always")`` persists the
@@ -97,12 +112,23 @@ class Engine(Protocol):
     chat: int
     turn: int
     session_id: str | None
+    # How the engine decides on tool use; the owner sets it before ``start``
+    # and changes it while running with ``set_permission_mode``.
+    permission_mode: PermissionMode
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str: ...
 
     async def send(self, text: str) -> None: ...
 
     async def interrupt(self) -> None: ...
+
+    async def set_permission_mode(self, mode: PermissionMode) -> None:
+        """Change the permission mode now (when running) and for every later turn."""
+        ...
+
+    def slash_commands(self) -> set[str] | None:
+        """The slash commands the running engine knows (names without ``/``); ``None`` when it cannot say."""
+        ...
 
     async def close(self) -> None: ...
 
@@ -145,6 +171,21 @@ def _result_summary(content: str | list[dict[str, Any]] | None) -> str:
         if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
             return _first_line(block["text"])
     return ""
+
+
+def _result_text(content: str | list[dict[str, Any]] | None) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    return "\n".join(
+        block["text"] for block in content if isinstance(block, dict) and isinstance(block.get("text"), str)
+    )
+
+
+def blocked_by_auto_mode(is_error: bool | None, content: str | list[dict[str, Any]] | None) -> bool:
+    """Whether a tool result is auto mode's classifier refusing the step."""
+    return bool(is_error) and AUTO_MODE_BLOCK_MARK in _result_text(content).lower()
 
 
 def translate(msg: Message, chat: int, turn: int) -> list[ServerMessage]:
@@ -193,6 +234,7 @@ def translate(msg: Message, chat: int, turn: int) -> list[ServerMessage]:
                         tool_use_id=block.tool_use_id,
                         ok=not bool(block.is_error),
                         summary=_result_summary(block.content),
+                        permission="blocked" if blocked_by_auto_mode(block.is_error, block.content) else None,
                     )
                 )
     elif isinstance(msg, ResultMessage):
@@ -268,12 +310,24 @@ def build_compact_hook(callbacks: EngineCallbacks):
 
 
 def build_options(
-    folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks
+    folder: Path,
+    resume: str | None,
+    setting_sources: list[str],
+    callbacks: EngineCallbacks,
+    permission_mode: PermissionMode = "default",
 ) -> ClaudeAgentOptions:
-    """The SDK options for one chat. Never sets ``verbatim_prompts`` or a permission mode."""
+    """The SDK options for one chat. Never sets ``verbatim_prompts``.
+
+    ``permission_mode`` is the session's: ``default`` asks (``can_use_tool``)
+    for every step the engine's rules do not already allow, ``acceptEdits``
+    allows file edits, ``auto`` lets the engine's classifier decide and only
+    asks when it escalates. ``bypassPermissions`` and ``dontAsk`` are never
+    passed: the protocol does not offer them.
+    """
     return ClaudeAgentOptions(
         cwd=str(folder),
         resume=resume,
+        permission_mode=permission_mode,
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
@@ -282,6 +336,39 @@ def build_options(
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
         },
     )
+
+
+# --- the model's display name ---------------------------------------------------
+
+MODEL_FAMILIES = ("OPUS", "SONNET", "HAIKU")
+
+
+def friendly_model_name(model: str | None, environ: Mapping[str, str]) -> str | None:
+    """The deployment's display name for ``model``, or ``None``.
+
+    ``ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME`` names the model
+    when ``model`` is that family's ``ANTHROPIC_DEFAULT_*_MODEL`` (a
+    trailing ``[1m]``-style tag is ignored on either side) or its alias
+    (``opus``, ``sonnet``, ``haiku``).
+    """
+    if not model:
+        return None
+
+    def bare(value: str) -> str:
+        value = value.strip()
+        if value.endswith("]") and "[" in value:
+            value = value[: value.rindex("[")]
+        return value.strip()
+
+    wanted = bare(model)
+    for family in MODEL_FAMILIES:
+        name = (environ.get(f"ANTHROPIC_DEFAULT_{family}_MODEL_NAME") or "").strip()
+        if not name:
+            continue
+        configured = environ.get(f"ANTHROPIC_DEFAULT_{family}_MODEL") or ""
+        if (configured and bare(configured) == wanted) or wanted.lower() == family.lower():
+            return name
+    return None
 
 
 # --- the SDK adapter -------------------------------------------------------------
@@ -306,6 +393,7 @@ class SDKEngine:
         self.chat = chat
         self.turn = 0
         self.session_id: str | None = None
+        self.permission_mode: PermissionMode = "default"
         self.init_timeout = init_timeout
         self._client: ClaudeSDKClient | None = None
         self._callbacks: EngineCallbacks | None = None
@@ -314,14 +402,18 @@ class SDKEngine:
         # The last turn a result message closed; ``turn`` beyond it is in flight.
         self._finished_turn = 0
         self._closing = False
+        # Slash command names (no ``/``) from the engine's initialize answer
+        # and its ``init`` message; ``None`` until either has said.
+        self._commands: set[str] | None = None
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
         if self._client is not None:
             raise RuntimeError("engine already started")
         self._callbacks = callbacks
         self.session_id = resume
-        self._client = ClaudeSDKClient(build_options(folder, resume, setting_sources, callbacks))
+        self._client = ClaudeSDKClient(build_options(folder, resume, setting_sources, callbacks, self.permission_mode))
         await self._client.connect()
+        self._note_commands_from_server_info(await self._client.get_server_info())
         self._pump = asyncio.create_task(self._run_pump(), name=f"portico-engine-{self.chat}")
         try:
             await asyncio.wait_for(self._init_seen.wait(), self.init_timeout)
@@ -359,10 +451,25 @@ class SDKEngine:
         except Exception:
             log.exception("chat %s: could not report the lost turn", self.chat)
 
+    def _note_commands_from_server_info(self, info: Any) -> None:
+        commands = info.get("commands") if isinstance(info, Mapping) else None
+        if isinstance(commands, list):
+            self._add_commands(c.get("name") if isinstance(c, Mapping) else c for c in commands)
+
+    def _add_commands(self, names: Iterable[Any]) -> None:
+        found = {n.strip().lstrip("/") for n in names if isinstance(n, str) and n.strip()}
+        self._commands = (self._commands or set()) | found
+
+    def slash_commands(self) -> set[str] | None:
+        return set(self._commands) if self._commands is not None else None
+
     def _note_session(self, msg: Message) -> None:
         sid: str | None = None
         if isinstance(msg, SystemMessage) and msg.subtype == "init":
             sid = msg.data.get("session_id")
+            commands = msg.data.get("slash_commands")
+            if isinstance(commands, list):
+                self._add_commands(commands)
             self._init_seen.set()
         else:
             sid = getattr(msg, "session_id", None)
@@ -378,6 +485,12 @@ class SDKEngine:
     async def interrupt(self) -> None:
         if self._client is not None:
             await self._client.interrupt()
+
+    async def set_permission_mode(self, mode: PermissionMode) -> None:
+        """The SDK's ``set_permission_mode`` while connected; remembered for a later ``start`` either way."""
+        if self._client is not None:
+            await self._client.set_permission_mode(mode)
+        self.permission_mode = mode
 
     async def context_usage(self) -> tuple[float, str | None] | None:
         """The SDK's ``get_context_usage``: ``percentage`` and ``model``; ``None`` before ``start``."""
@@ -512,6 +625,9 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         tool_use_id=str(block.get("tool_use_id") or ""),
                         ok=not bool(block.get("is_error")),
                         summary=_result_summary(block.get("content")),
+                        permission="blocked"
+                        if blocked_by_auto_mode(block.get("is_error"), block.get("content"))
+                        else None,
                     )
                 )
         elif role == "assistant":

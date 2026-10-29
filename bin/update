@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Move this checkout to the newest release tag (vX.Y.Z), reinstall the gateway, rebuild the app, run the doctor.
+# Move this checkout to the newest release tag (vX.Y.Z), then bin/install (prerequisites, gateway, the app
+# rebuilt with a working macOS SDK and reinstalled as <brand.name>.app), then the doctor.
 #   bin/update                  newest release tag (the default)
 #   bin/update --channel main   follow main instead: fast-forward pull
 # Refuses to update over local changes: deployment code belongs in a plug-in, outside the checkout.

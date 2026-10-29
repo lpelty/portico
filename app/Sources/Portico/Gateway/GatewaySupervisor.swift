@@ -53,6 +53,9 @@ final class GatewaySupervisor: ObservableObject {
     nonisolated static let readyPrefix = "PORTICO_READY"
     nonisolated static let commandEnvironmentVariable = "PORTICO_GATEWAY_BIN"
     nonisolated static let homeEnvironmentVariable = "PORTICO_HOME"
+    /// The Info.plist key an assembled `.app` carries: the absolute path of
+    /// the deployment's `bin/portico-gateway` (written by `bin/install`).
+    nonisolated static let infoPlistCommandKey = "PorticoGatewayBin"
 
     @Published private(set) var status: Status = .stopped
 
@@ -136,14 +139,21 @@ final class GatewaySupervisor: ObservableObject {
     // MARK: - start
 
     /// Where the gateway command is looked for, in order: `$PORTICO_GATEWAY_BIN`,
-    /// `../bin/portico-gateway` next to the executable, then `bin/portico-gateway`
-    /// in any ancestor of the executable (a `swift run` build inside the repo).
-    /// Nothing is tied to where the checkout lives: a deployment that bundles
-    /// the app sets the variable or ships `bin/` beside it.
-    static func candidateCommands(environment: [String: String] = ProcessInfo.processInfo.environment) -> [URL] {
+    /// the app bundle's `PorticoGatewayBin` (an absolute path `bin/install`
+    /// writes into the assembled `.app`), `../bin/portico-gateway` next to
+    /// the executable, then `bin/portico-gateway` in any ancestor of the
+    /// executable (a `swift run` build inside the repo). Nothing is tied to
+    /// where the checkout lives.
+    static func candidateCommands(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> [URL] {
         var candidates: [URL] = []
         if let explicit = environment[commandEnvironmentVariable], !explicit.isEmpty {
             candidates.append(URL(fileURLWithPath: (explicit as NSString).expandingTildeInPath))
+        }
+        if let bundled = infoDictionary?[infoPlistCommandKey] as? String, !bundled.isEmpty {
+            candidates.append(URL(fileURLWithPath: (bundled as NSString).expandingTildeInPath))
         }
         if let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() {
             let dir = executable.deletingLastPathComponent()

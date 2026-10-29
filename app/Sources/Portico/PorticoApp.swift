@@ -3,8 +3,7 @@ import SwiftUI
 
 /// The app entry point: one window, the model, the settings and the
 /// gateway supervisor. The window's task keeps the model attached to a
-/// gateway for as long as the window is open.
-@main
+/// gateway for as long as the window is open. Started by `PorticoLaunch`.
 struct PorticoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model: AppModel

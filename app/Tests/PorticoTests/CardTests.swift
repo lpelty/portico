@@ -20,7 +20,9 @@ final class CardTests: XCTestCase {
 
     func testPermissionChoicesMapToDecisionAndScope() {
         let card = permissionCard()
-        XCTAssertEqual(PermissionChoice.allCases.map(\.label), ["Allow this time", "Allow for this chat", "Always allow", "Deny"])
+        // V1: Deny… · Allow for this session · Allow once — no "Always allow".
+        XCTAssertEqual(PermissionChoice.allCases.map(\.label), ["Deny…", "Allow for this session", "Allow once"])
+        XCTAssertFalse(PermissionChoice.allCases.contains { $0.scope == .always }, "the app does not offer always")
 
         let once = PermissionChoice.allowOnce.answer(for: card, note: "")
         XCTAssertEqual(once.chat, 1)
@@ -29,14 +31,32 @@ final class CardTests: XCTestCase {
         XCTAssertEqual(once.scope, .once)
         XCTAssertNil(once.note, "a blank note is left out")
 
-        XCTAssertEqual(PermissionChoice.allowChat.answer(for: card, note: "  ok here ").scope, .chat)
-        XCTAssertEqual(PermissionChoice.allowChat.answer(for: card, note: "  ok here ").note, "ok here")
-        XCTAssertEqual(PermissionChoice.allowAlways.answer(for: card, note: "").scope, .always)
+        XCTAssertEqual(PermissionChoice.allowSession.answer(for: card).scope, .chat, "this session is the protocol's chat scope")
+        XCTAssertNil(PermissionChoice.allowSession.answer(for: card, note: "  ok here ").note, "the note goes only with a deny")
 
-        let deny = PermissionChoice.deny.answer(for: card, note: "not that file")
+        let deny = PermissionChoice.deny.answer(for: card, note: "  not that file ")
         XCTAssertEqual(deny.answer, ["decision": .string("deny")])
         XCTAssertNil(deny.scope, "deny carries no scope")
         XCTAssertEqual(deny.note, "not that file")
+        XCTAssertNil(PermissionChoice.deny.answer(for: card, note: "   ").note)
+    }
+
+    func testPermissionCardReadsAsAPlainQuestionWithTheToolAsATag() {
+        var card = permissionCard()
+        card.title = "Save changes to Q3-synthesis.md?"
+        let shown = PermissionPresentation(card: card)
+        XCTAssertEqual(shown.question, "Save changes to Q3-synthesis.md?")
+        XCTAssertEqual(shown.tool, "Write")
+        card.title = "  "
+        XCTAssertEqual(PermissionPresentation(card: card).question, "Use Write?")
+        XCTAssertEqual(PermissionPresentation.whereLine(folder: "/Users/x/Research vault"), "in Research vault")
+        XCTAssertNil(PermissionPresentation.whereLine(folder: nil))
+        XCTAssertEqual(shown.scopeNote, PermissionPresentation.generalScopeNote, "an older gateway says nothing: the general line")
+        card.scopeNote = "For this session: edits to files in Research vault, until you start a new session."
+        XCTAssertEqual(PermissionPresentation(card: card).scopeNote, "For this session: edits to files in Research vault, until you start a new session.")
+        card.scopeNote = "  "
+        XCTAssertEqual(PermissionPresentation(card: card).scopeNote, PermissionPresentation.generalScopeNote)
+        XCTAssertEqual(PermissionPresentation.noteHint(agentName: "Portico"), "Optional. Portico reads this instead of just being told no.")
     }
 
     func testPermissionPresentationShowsToolSummaryAndPrettyInput() {

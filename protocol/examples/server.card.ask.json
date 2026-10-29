@@ -10,8 +10,10 @@
     "summary": "/Users/someone/projects/demo/summary.md",
     "tool": "Write"
   },
+  "scope_note": "For this session: edits to files in demo, until you start a new session.",
   "seq": 48,
-  "title": "Write a file",
+  "title": "Save changes to summary.md?",
+  "tool_use_id": "toolu_02",
   "ts": "2026-10-27T12:00:00Z",
   "type": "card.ask"
 }

@@ -103,6 +103,19 @@ enum Scope: String, Codable, Sendable {
     case once, chat, always
 }
 
+/// How the engine decides on tool use: ask each time, allow edits, or let
+/// the engine's classifier decide.
+enum PermissionMode: String, Codable, Sendable, CaseIterable {
+    case `default`
+    case acceptEdits
+    case auto
+}
+
+/// What happened to one tool use's permission, drawn on its tool row.
+enum PermissionOutcome: String, Codable, Sendable {
+    case once, session, auto, declined, blocked
+}
+
 enum Media: String, Codable, Sendable {
     case markdown, image, html, pdf, text, url, other
 }
@@ -171,9 +184,11 @@ struct ChatSummary: Codable, Equatable, Sendable {
     var compactions: Int? = nil
     /// The context window's fullness after the last turn, 0–100.
     var contextPercent: Double? = nil
+    /// The session's permission mode (v0.3); absent from older gateways.
+    var mode: PermissionMode? = nil
 
     enum CodingKeys: String, CodingKey {
-        case chat, folder, alias, state, created, title, ended, logged, parent, compactions
+        case chat, folder, alias, state, created, title, ended, logged, parent, compactions, mode
         case contextPercent = "context_percent"
     }
 }
@@ -329,6 +344,16 @@ struct SessionRenew: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// Change the session's permission mode; answered with `chat.state`
+/// carrying `mode`.
+struct SessionMode: Codable, Equatable, Sendable {
+    static let messageType = "session.mode"
+    var chat: Int
+    var mode: PermissionMode
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 /// Search names and text under a root; answered with `files.results`.
 struct FilesSearch: Codable, Equatable, Sendable {
     static let messageType = "files.search"
@@ -377,6 +402,15 @@ struct HelloServer: Codable, Equatable, Sendable {
     var presentation: String? = nil
     /// Whether the deployment has a log step for `session.renew`.
     var canLog: Bool? = nil
+    /// The config file changed after the gateway started (v0.3).
+    var configStale: Bool? = nil
+    /// The deployment has an update command (v0.3).
+    var canUpdate: Bool? = nil
+    /// Where a new session works when the person has not chosen (v0.3).
+    var defaultFolder: String? = nil
+    /// The mode a new session starts in (config `permission_mode`, v0.3):
+    /// what the start screen's chip shows until the person picks one.
+    var permissionMode: PermissionMode? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -386,6 +420,10 @@ struct HelloServer: Codable, Equatable, Sendable {
         case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts
         case gatewayVersion = "gateway_version"
         case canLog = "can_log"
+        case configStale = "config_stale"
+        case canUpdate = "can_update"
+        case defaultFolder = "default_folder"
+        case permissionMode = "permission_mode"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
@@ -409,6 +447,7 @@ struct ChatState: Codable, Equatable, Sendable {
     static let messageType = "chat.state"
     var chat: Int
     var state: ChatStateWord
+    var mode: PermissionMode? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -504,12 +543,16 @@ struct ToolFinished: Codable, Equatable, Sendable {
     var toolUseId: String
     var ok: Bool
     var summary: String
+    /// What happened to this use's permission, when anything did (v0.3).
+    var permission: PermissionOutcome? = nil
+    /// The person's note on a decline.
+    var note: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case chat, turn, ok, summary, id, seq, ts
+        case chat, turn, ok, summary, permission, note, id, seq, ts
         case toolUseId = "tool_use_id"
     }
 
@@ -538,20 +581,41 @@ struct CardAsk: Codable, Equatable, Sendable {
     var permission: Permission?
     var questions: [Question]?
     var form: [FormField]?
+    /// The tool use a permission card asks about, so the app can draw the
+    /// card's outcome on that tool row (v0.3).
+    var toolUseId: String? = nil
+    /// A permission card: what "Allow for this session" would cover, in
+    /// the gateway's words (v0.3). Shown under the buttons.
+    var scopeNote: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, id, kind, title, permission, questions, form, seq, ts
+        case toolUseId = "tool_use_id"
+        case scopeNote = "scope_note"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
 /// The gateway accepted a `card.answer`: the card is closed. In the ring,
 /// so a replay that carries the `card.ask` carries its closing too.
+/// A permission card's closing carries its tool use and outcome (v0.3).
 struct CardAnswered: Codable, Equatable, Sendable {
     static let messageType = "card.answered"
     var chat: Int
     var id: String
+    var toolUseId: String? = nil
+    var outcome: PermissionOutcome? = nil
+    var note: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, id, outcome, note, seq, ts
+        case toolUseId = "tool_use_id"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
@@ -597,9 +661,16 @@ struct ContextUsage: Codable, Equatable, Sendable {
     var chat: Int
     var percent: Double
     var model: String? = nil
+    /// The deployment's display name for `model`, when its env names one (v0.3).
+    var modelName: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, percent, model, id, seq, ts
+        case modelName = "model_name"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
@@ -656,6 +727,41 @@ struct StatusSet: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// A quiet line in the conversation from the gateway, e.g. an unknown command.
+struct ChatNotice: Codable, Equatable, Sendable {
+    static let messageType = "chat.notice"
+    var chat: Int
+    var text: String
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// The config file changed after the gateway started; restart to apply it.
+struct ConfigStale: Codable, Equatable, Sendable {
+    static let messageType = "config.stale"
+    var chat: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// The deployment's update check found a newer version.
+struct UpdateAvailable: Codable, Equatable, Sendable {
+    static let messageType = "update.available"
+    var version: String
+    var chat: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The protocol's `error` message. Named `ErrorMessage` so it does not shadow
 /// `Swift.Error`.
 struct ErrorMessage: Codable, Equatable, Sendable {
@@ -700,6 +806,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case gatewayStop(GatewayStop)
     case sessionRenew(SessionRenew)
     case filesSearch(FilesSearch)
+    case sessionMode(SessionMode)
 
     var type: String {
         switch self {
@@ -717,6 +824,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .gatewayStop: GatewayStop.messageType
         case .sessionRenew: SessionRenew.messageType
         case .filesSearch: FilesSearch.messageType
+        case .sessionMode: SessionMode.messageType
         }
     }
 
@@ -737,6 +845,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case GatewayStop.messageType: self = .gatewayStop(try GatewayStop(from: decoder))
         case SessionRenew.messageType: self = .sessionRenew(try SessionRenew(from: decoder))
         case FilesSearch.messageType: self = .filesSearch(try FilesSearch(from: decoder))
+        case SessionMode.messageType: self = .sessionMode(try SessionMode(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -759,6 +868,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .gatewayStop(let m): try m.encode(to: encoder)
         case .sessionRenew(let m): try m.encode(to: encoder)
         case .filesSearch(let m): try m.encode(to: encoder)
+        case .sessionMode(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -788,6 +898,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case chatCompacted(ChatCompacted)
     case sessionRenewed(SessionRenewed)
     case filesResults(FilesResults)
+    case chatNotice(ChatNotice)
+    case configStale(ConfigStale)
+    case updateAvailable(UpdateAvailable)
 
     var type: String {
         switch self {
@@ -813,6 +926,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCompacted: ChatCompacted.messageType
         case .sessionRenewed: SessionRenewed.messageType
         case .filesResults: FilesResults.messageType
+        case .chatNotice: ChatNotice.messageType
+        case .configStale: ConfigStale.messageType
+        case .updateAvailable: UpdateAvailable.messageType
         }
     }
 
@@ -840,6 +956,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCompacted(let m): m.envelope
         case .sessionRenewed(let m): m.envelope
         case .filesResults(let m): m.envelope
+        case .chatNotice(let m): m.envelope
+        case .configStale(let m): m.envelope
+        case .updateAvailable(let m): m.envelope
         }
     }
 
@@ -868,6 +987,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ChatCompacted.messageType: self = .chatCompacted(try ChatCompacted(from: decoder))
         case SessionRenewed.messageType: self = .sessionRenewed(try SessionRenewed(from: decoder))
         case FilesResults.messageType: self = .filesResults(try FilesResults(from: decoder))
+        case ChatNotice.messageType: self = .chatNotice(try ChatNotice(from: decoder))
+        case ConfigStale.messageType: self = .configStale(try ConfigStale(from: decoder))
+        case UpdateAvailable.messageType: self = .updateAvailable(try UpdateAvailable(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -898,6 +1020,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCompacted(let m): try m.encode(to: encoder)
         case .sessionRenewed(let m): try m.encode(to: encoder)
         case .filesResults(let m): try m.encode(to: encoder)
+        case .chatNotice(let m): try m.encode(to: encoder)
+        case .configStale(let m): try m.encode(to: encoder)
+        case .updateAvailable(let m): try m.encode(to: encoder)
         }
     }
 }

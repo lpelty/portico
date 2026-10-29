@@ -157,7 +157,7 @@ def test_state_words_exact(state: StateDir) -> None:
     assert chat.state == "idle"
 
     # The summary carries the exact word.
-    assert chat.summary() == ChatSummary(chat=1, folder=FOLDER_A, alias=None, state="idle", created=chat.created)
+    assert chat.summary() == ChatSummary(chat=1, folder=FOLDER_A, alias=None, state="idle", created=chat.created, mode="auto")
 
 
 # --- persistence --------------------------------------------------------------
@@ -176,7 +176,7 @@ def test_registry_persists_to_index(state: StateDir) -> None:
     one.session_id = "sess-1"
     one.alias = "report draft"
     one.artifacts.append(artifact)
-    one.chat_allows.add("Bash")  # per-chat allows are in-memory only; they do not persist
+    one.chat_allows.add("Bash")  # v0.3: the session's allows are on the record
     one.set_state("working")
     one.stamp(TurnFinished(chat=1, turn=1, outcome="done", ts=TS))
     two.set_state("stopped")
@@ -186,15 +186,15 @@ def test_registry_persists_to_index(state: StateDir) -> None:
     assert index.next_chat == 3
     assert index.chats == [
         ChatRecord(chat=1, folder=FOLDER_A, session_id="sess-1", alias="report draft", state="working",
-                   created=one.created, artifacts=[artifact]),
+                   created=one.created, artifacts=[artifact], mode="auto", allows=["Bash"]),
         ChatRecord(chat=2, folder=FOLDER_B, session_id=None, alias=None, state="stopped",
-                   created=two.created, artifacts=[]),
+                   created=two.created, artifacts=[], mode="auto"),
     ]
     assert reg.list() == index.chats
 
     # A new registry on the same index rebuilds the chats: numbers, folders,
-    # sessions, aliases, artifacts come back; the ring, seq, turn, engine and
-    # chat allows do not (they belong to a gateway launch). A chat recorded
+    # sessions, aliases, artifacts and (v0.3) chat allows come back; the ring,
+    # seq, turn and engine do not (they belong to a gateway launch). A chat recorded
     # mid-turn comes back ``idle`` — no turn can be running after a launch.
     again = ChatRegistry(index=index, state=state, history_buffer=2000)
     r1, r2 = again.get(1), again.get(2)
@@ -203,7 +203,7 @@ def test_registry_persists_to_index(state: StateDir) -> None:
     assert r1.artifacts == [artifact]
     assert r1.state == "idle" and r2.state == "stopped"
     assert r1.seq == 0 and r1.turn == 0 and len(r1.ring) == 0
-    assert r1.engine is None and r1.chat_allows == set()
+    assert r1.engine is None and r1.chat_allows == {"Bash"} and r2.chat_allows == set()
     assert r1.created == one.created
 
     # Removing persists too, and the ledger of numbers moves on.
