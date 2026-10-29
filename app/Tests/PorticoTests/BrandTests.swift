@@ -33,6 +33,17 @@ final class BrandTests: XCTestCase {
         XCTAssertNil(unparsable.accent, "an accent the app cannot read falls back to the system accent")
     }
 
+    func testTheDockIconIsReplacedOnlyWhenTheBundleHasNone() {
+        // A `swift run` build: no Info.plist icon, the brand's icon goes in the Dock.
+        XCTAssertTrue(BrandPresentation.shouldReplaceApplicationIcon(bundleInfo: nil))
+        XCTAssertTrue(BrandPresentation.shouldReplaceApplicationIcon(bundleInfo: ["CFBundleName": "Portico"]))
+        XCTAssertTrue(BrandPresentation.shouldReplaceApplicationIcon(bundleInfo: ["CFBundleIconFile": " "]), "a blank name is no icon")
+        // A built .app keeps the icon it was built with.
+        XCTAssertFalse(BrandPresentation.shouldReplaceApplicationIcon(bundleInfo: ["CFBundleIconFile": "AppIcon"]))
+        XCTAssertFalse(BrandPresentation.shouldReplaceApplicationIcon(bundleInfo: ["CFBundleIconName": "AppIcon"]))
+        XCTAssertFalse(BrandPresentation.shouldReplaceApplicationIcon(bundleInfo: ["CFBundleIconFile": "AppIcon.icns", "CFBundleIconName": "AppIcon"]))
+    }
+
     func testIconLoadsFromAnImageFileAndIsNilOtherwise() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-brand-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
