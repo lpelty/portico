@@ -124,7 +124,9 @@ artifacts as `artifact.created` frames with `open: false` and no `seq`,
 then `chat.live` with the chat's current `seq`, then the chat's open cards
 again as `card.ask` frames exactly as first sent (same `id`, same `seq`,
 so an app that already holds one de-duplicates by `id`; re-sending does
-not advance `seq`). Opening a chat neither starts a turn nor advances `seq`; it
+not advance `seq`). v0.3: right after `chat.live` comes a `chat.state`
+with the chat's state word and `mode` — a direct reply carrying the
+request's `id` and no `seq`, not kept in the ring. Opening a chat neither starts a turn nor advances `seq`; it
 can be repeated at any time, including while a turn is running.
 
 Where the history comes from: the gateway's ring buffer when it can serve
@@ -171,6 +173,18 @@ attachments included), `chat.state working`, then streams the engine's events
 (`text.delta`, `tool.started`, `tool.finished`, cards, artifacts) and ends
 with `turn.finished` and `chat.state idle`. Slash text (`/review`) is passed
 to the engine as typed and dispatches the folder's commands.
+
+v0.3: a message whose first word is a slash command (`/word`, or
+`/plugin:word`; a path like `/Users/...` is not one) that nobody knows —
+not Portico (`/new`), not the deployment (`hello.commands`, or the first
+word of an action's text), not the engine — is **not** sent to the agent.
+It is an empty turn: `turn.started`, `user.text`, `chat.notice` ("No
+command /word here"), `turn.finished outcome=done`, `chat.state idle`
+(never `working`); the gateway logs it. The engine's commands are what it
+lists when it starts (its initialize answer, and the `slash_commands` of
+its `init` message), so a chat without a running engine has it started
+first, exactly as the send would. An engine that cannot say what it knows
+gets the message as typed.
 
 A send while a turn is running (state `working` or `waiting on you`) is
 refused with `error code=chat.busy`. Every attachment must be an absolute
@@ -284,6 +298,9 @@ step. Answered with `chat.state` carrying `mode`; the mode is kept on the
 chat record (`ChatSummary.mode`). A new session starts with the
 deployment's `permission_mode` (default `auto`). `bypassPermissions` and
 `dontAsk` are not offered. Errors: `chat.unknown`, `session.ended`.
+The answering `chat.state` is stamped (it is history) and carries the
+request's `id`. A chat with no running engine records the mode for its
+next engine; no engine is started to change it.
 
 ## Messages: gateway → app
 
@@ -368,6 +385,23 @@ only for tools that would otherwise ask), `declined` (with the person's
 `note`), `blocked` (auto mode's classifier refused it). Absent when
 nothing was decided (a read in `default` mode).
 
+How the reference gateway decides: `blocked` when the tool result is an
+error saying it was denied by the engine's auto mode classifier; else the
+answer to this use's card (`once`, `session`, `declined` with the note; a
+card cancelled by a stop or by nobody being there is `declined` with the
+reason as the note); else `session` when an earlier allow for this
+session covered it (no card); else `auto` when the session's mode is
+`auto` and the tool is not a read-only one (Read, Glob, Grep, LS,
+TodoWrite, ToolSearch, Task and the like get nothing). Outcomes are kept
+on the chat record by `tool_use_id`, so rows replayed from the transcript
+after a gateway restart carry them too. An allow for this session is
+kept on the chat record as well (it survives a gateway restart; a new
+session starts with none); one given on any of `Write`, `Edit`,
+`MultiEdit`, `NotebookEdit` covers all four (their cards ask the same
+question); one given on a command covers that command (the engine's
+suggested prefix rule, else the exact command), also after a `cd` into the
+session's own folder.
+
 ### `turn.finished` — `TurnFinished`
 `chat`, `seq`, `turn`, `outcome: done | stopped | error`. Exactly one per
 turn: `done` when the engine finished, `stopped` after `turn.stop` or
@@ -413,7 +447,8 @@ pin an answered card again after a relaunch. The app that answered has
 already unpinned the card; for it this frame confirms. v0.3: a permission
 card's closing carries `tool_use_id`, `outcome` (`once`, `session`,
 `declined`) and the deny `note`, so the outcome is drawn on the tool row
-at once and the card leaves no record of its own.
+at once and the card leaves no record of its own. The reference gateway
+reports scope `always` as `session` (it covers this session at least).
 
 ### `card.cancel` — `CardCancel`
 `chat`, `seq`, `id`, `reason?`. The card is closed and its answer is no
@@ -524,3 +559,48 @@ and is not stamped: refusals are replies, not history.
 A bad frame after `hello` (unknown type, unknown field, not JSON) is
 answered with an `error` and the connection stays open; only the first
 frame is fatal.
+
+## Command line *(v0.3)*
+
+Besides `run` and `doctor`, the reference gateway's CLI
+(`bin/portico-gateway <command>`; `--state` and `--config` as for `run`)
+offers what a deployment's own tools build on. These are behaviour notes
+for the reference gateway, not protocol messages.
+
+- `status [--json]` — whether a gateway runs on this state directory, and
+  its live session. **This is the documented signal for "the app holds a
+  session in this folder"** (a deployment's one-surface rule: terminal or app, never both); the lock and
+  ledger files are internal and may change. `--json` prints one object:
+  `{"version": 1, "running": bool, "pid", "port", "folder", "session",
+  "state", "mode", "started_at", "config_stale"}`. Keys whose value is
+  unknown are left out (no session yet: no `folder`, `session`, `state`,
+  `mode`); `session` is the live session's number (the newest chat that
+  has not ended), `state` its state word, `mode` its permission mode,
+  `started_at` when the gateway started (UTC, ISO 8601), `config_stale`
+  whether the config file changed since. `version` changes only if a key
+  changes meaning. Exit 0 when a gateway runs, 3 when none does. Without
+  `--json`, one line for a person.
+- `stop` — stops the gateway running on this state directory through its
+  own stop path (as `gateway.stop`: running turns reported as stopped,
+  `on_stop`, index saved) and waits for it to exit. Exit 0 when one was
+  stopped, 3 when none ran, 1 when it did not stop in time
+  (`--timeout`, default `command_timeout_seconds` + 30).
+- `update --check` — runs config `update.check` with `/bin/sh -c`: exit 0
+  and the version on stdout when an update is available (the command's
+  last non-blank line), 1 when none (any other exit, or no output), 2 when
+  no check is configured.
+- `update` — stops a running gateway (as `stop`), then runs config
+  `update.run` with `/bin/sh -c`, its output (stdout and stderr) streamed
+  to stdout; exits with its exit code, 2 when no update command is
+  configured. It does not start the gateway again: the app does.
+- `config-value <dotted.key>` — prints one config value (`brand.name`,
+  `brand.app_icon`, `update.run`...) or nothing when it is unset or not a
+  key; exit 0. A config file that does not load: its reason on stderr,
+  exit 1. Lists and tables print as JSON.
+
+The running gateway also checks for updates itself: `update.check` at
+start and every 6 hours, in the background; a version found goes to the
+attached app as `update.available`, and again to an app that attaches
+later. It watches the config file's modification time every ~10 seconds
+and sends `config.stale` once when the file is newer than at start.
+

@@ -1,5 +1,79 @@
 # Changelog
 
+## v0.3.0 (unreleased)
+
+### What a person gets (gateway)
+
+- **Single session by default**: `presentation` defaults to `"single"`;
+  multiple chats stay behind config.
+- **Permission mode per session**: `permission_mode` (`auto` by default,
+  `acceptEdits`, `default`) is passed to the agent engine; `session.mode`
+  changes it mid-session (the running engine at once, later engines from
+  the record). `chat.state` and the chat list carry the mode.
+- **One permission unit**: a permission card asks a plain question
+  (`Save changes to notes.md?`, `Create notes.md?`, `Run git status?`,
+  `Open example.com?`, else `Use <tool>?`) and names its tool row
+  (`tool_use_id`). The closing (`card.answered`) and the row
+  (`tool.finished`) carry the outcome: `once`, `session`, `declined` (with
+  the note), `auto` (auto mode allowed a step that would otherwise ask),
+  `blocked` (auto mode's classifier refused it). Outcomes are kept on the
+  record, so rows replayed after a restart read the same.
+- **"Allow for this session" lasts**: the allows are saved on the chat
+  record. Before, a gateway restart lost them (they lived in memory only);
+  an allow given on a `Write` did not cover the `Edit` of the same file
+  that followed (both now ask "Save changes to ...?" and share one allow);
+  and `cd <the session's folder> && <allowed command>` asked again. A new
+  session starts with none.
+- **Friendly model name**: `context.usage.model_name` from
+  `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME` when the model in use
+  is that family's `ANTHROPIC_DEFAULT_*_MODEL` or alias.
+- **Unknown slash command**: `/foo` that neither Portico, the deployment
+  nor the engine knows is not sent to the agent; the conversation shows
+  "No command /foo here" (an empty turn with `chat.notice`) and the
+  gateway logs it.
+- **Config changes are visible**: `hello.config_stale`, a `config.stale`
+  frame when the file changes while the gateway runs, and a doctor warning
+  "restart the gateway to apply".
+- **New commands**: `portico-gateway stop`, `status [--json]`, `update
+  [--check]`, `config-value <key>` (see README, Command line).
+- **Updates**: the gateway runs `update.check` at start and every 6 hours
+  in the background and tells the app (`update.available`); `hello.can_update`
+  says whether `update.run` is set.
+
+### Protocol (still version 1; additions only)
+
+- App → gateway: `session.mode {chat, mode}`, answered with `chat.state`
+  (stamped, with `mode` and the request's `id`).
+- Gateway → app: `chat.notice {chat, text}` (stamped), `config.stale`,
+  `update.available {version}`. `chat.open` now ends with a `chat.state`
+  (state and mode; a direct reply, no `seq`) after `chat.live`.
+- Fields: `mode` on `chat.state` and `ChatSummary`; `tool_use_id` on a
+  permission `card.ask`; `tool_use_id`, `outcome`, `note` on
+  `card.answered`; `permission`, `note` on `tool.finished`; `model_name` on
+  `context.usage`; `config_stale`, `can_update` on `hello`;
+  `presentation` defaults to `single`.
+
+### Configuration
+
+New keys, all optional: `permission_mode` (`"auto"`, `"acceptEdits"`,
+`"default"`; default `"auto"`), `[update] check` and `run` (shell strings),
+`brand.app_icon` (absolute path, `~` expanded; read by `bin/install`, never
+sent in `hello`). `presentation` now defaults to `"single"`.
+
+### For plug-in authors
+
+- Plug-in API stays **1**; no hook changed.
+- `on_hello` sees two new `hello` fields, `config_stale` and `can_update`,
+  and the brand without `app_icon`. A plug-in that adds `hello.commands`
+  also teaches the gateway those commands: they are never reported as
+  unknown.
+- `session.mode` is handled by the gateway; a deployment that wants a
+  different starting mode sets `permission_mode` (for example
+  `"acceptEdits"` where the engine's auto mode classifier is not
+  available).
+- A deployment's tools should read `portico-gateway status --json`, not the
+  lock or ledger files, to see whether the app holds a live session.
+
 ## v0.2.0 (2026-10-28)
 
 ### What a person gets
