@@ -237,12 +237,12 @@ def test_app_replaces_an_existing_bundle_and_leaves_no_temporaries(products: Pat
 
 def test_app_name_becomes_a_safe_file_name_and_identifier(products: Path, tmp_path: Path) -> None:
     dest = tmp_path / "Applications"
-    done = make_app(products, dest, name="ethOS / Agent: Beta")
+    done = make_app(products, dest, name="Acme / Agent: Beta")
     assert done.returncode == 0, done.stderr
-    app = dest / "ethOS - Agent- Beta.app"
+    app = dest / "Acme - Agent- Beta.app"
     with (app / "Contents" / "Info.plist").open("rb") as f:
         info = plistlib.load(f)
-    assert info["CFBundleIdentifier"] == "dev.portico.ethos-agent-beta"
+    assert info["CFBundleIdentifier"] == "dev.portico.acme-agent-beta"
 
 
 def test_a_custom_icon_that_is_not_1024_is_scaled_with_a_warning(products: Path, tmp_path: Path) -> None:

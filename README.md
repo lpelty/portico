@@ -11,19 +11,39 @@ The protocol in `protocol/` is the authority a deployment builds against.
 
 ## Run it
 
-Requirements: macOS 15, `uv` (brings Python 3.13), Swift 6 (Xcode or the
-Command Line Tools), and a provider credential for the agent.
+Requirements: macOS 15, the Command Line Tools (`xcode-select --install`;
+Xcode is not needed), `uv` (it brings Python 3.13), and a provider
+credential for the agent.
 
 ```sh
 git clone <this repo> ~/dev-projects/portico && cd ~/dev-projects/portico
-bin/install                      # gateway: uv sync; app: swift build -c release
+bin/install                      # prerequisites, gateway (uv sync), app (release build) -> ~/Applications/Portico.app
 bin/doctor                       # one line per check; tells you if a credential is missing
-bin/portico-gateway run          # prints PORTICO_READY port=<n>; leave it running
-cd app && swift run              # opens the app; it finds the running gateway
+open ~/Applications/Portico.app  # the app starts the gateway itself
 ```
 
-The app also starts the gateway itself when none is running, so `swift run`
-alone works once `bin/install` has been done. In the app: **New Chat**,
+**What `bin/install` does.** It checks the prerequisites first and stops in
+plain words when one is missing (nothing is installed then). It builds the
+app with the default macOS SDK; when that SDK does not compile it (a macOS
+beta's newest SDK can fail on SwiftUI's `@State`), it retries with each other
+installed `MacOSX*.sdk`, newest first, and says which one worked; compiler
+output is shown only when every SDK fails. `PORTICO_SDKROOT=<path to an
+.sdk>` builds with that SDK only. It then assembles `<brand.name>.app` in
+`~/Applications` (`PORTICO_APP_DIR` to put it elsewhere): the release binary,
+an icon made from `brand.app_icon` (a 1024×1024 PNG; Portico's own when
+unset), this checkout's `bin/portico-gateway` recorded in `Info.plist` as
+`PorticoGatewayBin`, signed locally (`codesign -s -`). An existing app of the
+same name is replaced. Stock macOS tools only (`sips`, `iconutil`,
+`codesign`). The app keeps using this checkout: move or delete the checkout
+and run `bin/install` again from its new place.
+
+`bin/doctor` names the Command Line Tools version, the Swift and uv in use,
+the macOS SDK the app was built with, and whether the installed
+`claude-agent-sdk` is the version `gateway/uv.lock` pins.
+
+For development, `bin/portico-gateway run` (prints `PORTICO_READY
+port=<n>`) and `cd app && swift run` still work; the app finds a running
+gateway, or starts one itself. In the app: **New Chat**,
 pick a folder, type, cmd-return. The agent works in that folder with the
 folder's own `.claude/` settings and hooks in force.
 
@@ -67,6 +87,7 @@ name = "Portico"
 agent_name = "Agent"
 accent = "#3B6EF5"                  # optional CSS hex
 icon = "/path/to/icon.png"          # optional
+app_icon = "/path/to/AppIcon.png"   # optional: 1024x1024 PNG for the .app (bin/install)
 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
@@ -176,6 +197,7 @@ protocol/   PROTOCOL.md (the contract), schema/portico.schema.json, examples/*.j
 gateway/    Python package portico_gateway; tests against a fake engine
 app/        SwiftPM package Portico; tests decode every protocol example
 bin/        install, doctor, update, portico-gateway
+            (install's helpers and the default icon: app/Packaging/)
 examples/   plugin/: an example plug-in (copy it outside the checkout to use it)
 docs/       done-when.md: the release checklist and what each test covers
 tests/      test_distribution.py: no deployment names in the repo

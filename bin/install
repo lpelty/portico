@@ -56,5 +56,9 @@ app="$("$packaging/make-app.sh" \
 
 echo
 echo "Installed: $app"
-echo "Open it:   open \"$app\"   (or from Finder, Applications in your home folder)"
+if [ -z "${PORTICO_APP_DIR:-}" ]; then
+  echo "Open it:   open \"$app\"   (or Finder: your home folder, Applications)"
+else
+  echo "Open it:   open \"$app\""
+fi
 echo "Gateway:   $repo/bin/portico-gateway run"
