@@ -452,17 +452,28 @@ struct MarkdownText: View {
     static let lineSpacing: CGFloat = 5
 
     @State private var hovering = false
+    @EnvironmentObject private var settings: Settings
+    @EnvironmentObject private var reader: ReadAloud
 
     /// Under the message, Copy (its Markdown as written) while the pointer
     /// is on it: a selection stops at a block's edge, this takes it all.
+    /// Beside it Read aloud (v0.9 decision 2), which stays while it reads.
+    /// The `[TTS]` tags are not drawn or copied, the text inside them is
+    /// (decision 3).
     var body: some View {
+        let shown = SpeakableText.displayed(text)
         VStack(alignment: .leading, spacing: 4) {
-            MarkdownBlocksView(blocks: MarkdownCache.blocks(for: text))
+            MarkdownBlocksView(blocks: MarkdownCache.blocks(for: shown))
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
-            CopyButton(help: "Copy this message as Markdown") { MarkdownCopy.message(text) }
-                .opacity(hovering ? 1 : 0)
-                .offset(x: -6)
+            HStack(spacing: 2) {
+                CopyButton(help: "Copy this message as Markdown") { MarkdownCopy.message(shown) }
+                if settings.readAloudEnabled {
+                    ReadAloudButton(reply: text)
+                }
+            }
+            .opacity(hovering || reader.isReading(text) ? 1 : 0)
+            .offset(x: -6)
         }
         .onHover { hovering = $0 }
     }

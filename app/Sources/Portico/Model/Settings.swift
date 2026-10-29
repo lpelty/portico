@@ -40,6 +40,44 @@ final class Settings: ObservableObject {
         }
     }
 
+    /// How fast Read aloud speaks (v0.9, AE2 Voice pane).
+    enum SpeechRate: String, CaseIterable, Sendable {
+        case slow, normal, fast
+
+        var label: String {
+            switch self {
+            case .slow: "Slow"
+            case .normal: "Normal"
+            case .fast: "Fast"
+            }
+        }
+
+        /// The utterance rate: `AVSpeechUtteranceDefaultSpeechRate` is 0.5
+        /// on a 0–1 scale, and a step either side stays easy to follow.
+        var utteranceRate: Float {
+            switch self {
+            case .slow: 0.42
+            case .normal: 0.5
+            case .fast: 0.58
+            }
+        }
+    }
+
+    /// A key held to talk while the window is key (v0.9 decision 1). None
+    /// by default: Fn belongs to the system's dictation and to dictation
+    /// tools, so the mic button is the way in unless the person picks one.
+    enum HoldToTalk: String, CaseIterable, Sendable {
+        case none
+        case rightOption
+
+        var label: String {
+            switch self {
+            case .none: "None"
+            case .rightOption: "Hold Right Option"
+            }
+        }
+    }
+
     /// The media kinds that may auto-open (spec §5.3): everything else is
     /// listed in the history and never opens on its own.
     static let viewableKinds: Set<String> = ["markdown", "image", "html", "pdf", "url"]
@@ -58,6 +96,12 @@ final class Settings: ObservableObject {
         static let canvasWidth = "viewerWidth.canvas"
         static let earlierHeight = "earlierHeight"
         static let viewerAtQuit = "viewerAtQuit"
+        static let voiceInputEnabled = "voice.inputEnabled"
+        static let sendWhenStopTalking = "voice.sendWhenStopTalking"
+        static let holdToTalk = "voice.holdToTalk"
+        static let readAloudEnabled = "voice.readAloudEnabled"
+        static let voiceIdentifier = "voice.identifier"
+        static let speechRate = "voice.speechRate"
     }
 
     private let defaults: UserDefaults
@@ -113,6 +157,31 @@ final class Settings: ObservableObject {
         }
     }
 
+    // MARK: voice (v0.9 decisions 1, 2; AE2 Voice pane)
+
+    /// Talk: the mic in the composers; off hides it.
+    @Published var voiceInputEnabled: Bool {
+        didSet { defaults.set(voiceInputEnabled, forKey: Key.voiceInputEnabled) }
+    }
+    /// Stopping the mic sends what was said, instead of leaving it to glance at.
+    @Published var sendWhenStopTalking: Bool {
+        didSet { defaults.set(sendWhenStopTalking, forKey: Key.sendWhenStopTalking) }
+    }
+    @Published var holdToTalk: HoldToTalk {
+        didSet { defaults.set(holdToTalk.rawValue, forKey: Key.holdToTalk) }
+    }
+    /// Listen: Read aloud on each reply; off hides it.
+    @Published var readAloudEnabled: Bool {
+        didSet { defaults.set(readAloudEnabled, forKey: Key.readAloudEnabled) }
+    }
+    /// The voice's identifier (`AVSpeechSynthesisVoice.identifier`); `nil` is the system default.
+    @Published var voiceIdentifier: String? {
+        didSet { Self.store(voiceIdentifier, forKey: Key.voiceIdentifier, in: defaults) }
+    }
+    @Published var speechRate: SpeechRate {
+        didSet { defaults.set(speechRate.rawValue, forKey: Key.speechRate) }
+    }
+
     /// The artifact the viewer showed when the app last quit, and in which
     /// session (v0.6); `nil` when it was closed or empty. Read at launch to
     /// decide whether the viewer comes back.
@@ -158,6 +227,12 @@ final class Settings: ObservableObject {
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
         earlierHeight = Self.width(Key.earlierHeight, in: defaults)
+        voiceInputEnabled = defaults.object(forKey: Key.voiceInputEnabled) as? Bool ?? true
+        sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
+        holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none
+        readAloudEnabled = defaults.object(forKey: Key.readAloudEnabled) as? Bool ?? true
+        voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
+        speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
     }
 
     /// Whether an artifact of `media` should open on its own.
