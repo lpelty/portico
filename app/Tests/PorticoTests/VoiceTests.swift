@@ -144,6 +144,22 @@ private func settle(until done: () -> Bool) async {
 
 @MainActor
 final class VoiceSettingsTests: XCTestCase {
+    func testReadAloudIsHiddenUnlessTheFlagIsOn() {
+        // Larry 10-29: the voices sound dated; the feature stays in the code
+        // but is off and out of Settings until the hidden flag is set.
+        let name = "VoiceFlag-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        let off = Settings(defaults: defaults)
+        XCTAssertFalse(off.readAloudAvailable)
+        XCTAssertTrue(off.readAloudEnabled, "the person's own setting keeps its default")
+        XCTAssertFalse(off.readAloudShown)
+        defaults.set(true, forKey: "voice.readAloudAvailable")
+        let on = Settings(defaults: defaults)
+        XCTAssertTrue(on.readAloudShown)
+        on.readAloudEnabled = false
+        XCTAssertFalse(on.readAloudShown)
+    }
+
     private func defaults() -> UserDefaults {
         let name = "VoiceSettingsTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!

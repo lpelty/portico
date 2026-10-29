@@ -277,6 +277,12 @@ Voice is all in the app and all on the Mac (macOS 26 or later): nothing
 said or read goes to a server, and the gateway and protocol stay text.
 Settings › Voice turns each half on or off.
 
+**Read aloud is off by default and hidden** (v0.9): the voices macOS lets
+apps use still sound dated, so the button and the Listen settings are kept
+behind a flag until a better voice is available. Turn it on with
+`defaults write dev.portico.portico voice.readAloudAvailable -bool YES`
+(and off with `-bool NO`), then relaunch.
+
 **Talk.** The mic in the message box (the conversation's and the
 welcome's) starts listening; your words land in the box as they are
 recognised, after anything already typed. Press the mic again, or Esc, to

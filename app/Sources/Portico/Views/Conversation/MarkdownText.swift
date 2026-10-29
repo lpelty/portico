@@ -470,7 +470,7 @@ struct MarkdownText: View {
                 .textSelection(.enabled)
             HStack(spacing: 2) {
                 CopyButton(help: "Copy this message as Markdown") { MarkdownCopy.message(shown) }
-                if settings.readAloudEnabled {
+                if settings.readAloudShown {
                     ReadAloudButton(reply: text, key: id)
                 }
             }

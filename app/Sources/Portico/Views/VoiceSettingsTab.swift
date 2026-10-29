@@ -25,42 +25,45 @@ struct VoiceSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Listen") {
-                Toggle("Read aloud on replies", isOn: $settings.readAloudEnabled)
-                Picker("Voice", selection: $settings.voiceIdentifier) {
-                    Text(automaticLabel).tag(String?.none)
-                    ForEach(voices) { voice in
-                        Text(voice.label).tag(Optional(voice.id))
-                    }
-                    // A chosen voice the system no longer has still shows as chosen.
-                    if let chosen = settings.voiceIdentifier, !voices.contains(where: { $0.id == chosen }) {
-                        Text("Unavailable voice").tag(Optional(chosen))
-                    }
-                }
-                .disabled(!settings.readAloudEnabled)
-                Picker("Speed", selection: $settings.speechRate) {
-                    ForEach(Settings.SpeechRate.allCases, id: \.self) { rate in
-                        Text(rate.label).tag(rate)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .disabled(!settings.readAloudEnabled)
-                HStack {
-                    personalVoiceRow
-                    Spacer()
-                    Button(reader.reading == nil ? "Play sample" : "Stop") {
-                        if reader.reading == nil { reader.sample() } else { reader.stop() }
+            // Hidden behind a flag for now (Settings.readAloudAvailable).
+            if settings.readAloudAvailable {
+                Section("Listen") {
+                    Toggle("Read aloud on replies", isOn: $settings.readAloudEnabled)
+                    Picker("Voice", selection: $settings.voiceIdentifier) {
+                        Text(automaticLabel).tag(String?.none)
+                        ForEach(voices) { voice in
+                            Text(voice.label).tag(Optional(voice.id))
+                        }
+                        // A chosen voice the system no longer has still shows as chosen.
+                        if let chosen = settings.voiceIdentifier, !voices.contains(where: { $0.id == chosen }) {
+                            Text("Unavailable voice").tag(Optional(chosen))
+                        }
                     }
                     .disabled(!settings.readAloudEnabled)
-                }
-                if !VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage) {
-                    Text("For a natural voice, download a Premium one: System Settings › Accessibility › Spoken Content › System voice › Manage Voices… (for example Ava or Zoe, Premium). It appears here once installed.")
+                    Picker("Speed", selection: $settings.speechRate) {
+                        ForEach(Settings.SpeechRate.allCases, id: \.self) { rate in
+                            Text(rate.label).tag(rate)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(!settings.readAloudEnabled)
+                    HStack {
+                        personalVoiceRow
+                        Spacer()
+                        Button(reader.reading == nil ? "Play sample" : "Stop") {
+                            if reader.reading == nil { reader.sample() } else { reader.stop() }
+                        }
+                        .disabled(!settings.readAloudEnabled)
+                    }
+                    if !VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage) {
+                        Text("For a natural voice, download a Premium one: System Settings › Accessibility › Spoken Content › System voice › Manage Voices… (for example Ava or Zoe, Premium). It appears here once installed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

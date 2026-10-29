@@ -16,7 +16,10 @@
   leaving it (another conversation, Document View, closing the window)
   ends the talk without sending; your typing is never overwritten. A key
   typed while holding the hold-to-talk key cancels that talk.
-- **Read aloud.** Every reply has Read aloud beside Copy, on hover; Stop
+- **Read aloud, behind a flag (off by default).** The voices apps can use
+  still sound dated, so Read aloud and Settings › Voice › Listen are hidden
+  until `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`.
+  When on: every reply has Read aloud beside Copy, on hover; Stop
   reading while it speaks, and Esc stops. Code blocks and tables are never
   read ("See the code below.", "See the table below."); links are read as
   their text. When the reply has `[TTS]…[/TTS]` parts, only they are read.

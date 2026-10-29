@@ -105,6 +105,7 @@ final class Settings: ObservableObject {
         static let sendWhenStopTalking = "voice.sendWhenStopTalking"
         static let holdToTalk = "voice.holdToTalk"
         static let readAloudEnabled = "voice.readAloudEnabled"
+        static let readAloudAvailable = "voice.readAloudAvailable"
         static let voiceIdentifier = "voice.identifier"
         static let speechRate = "voice.speechRate"
     }
@@ -179,6 +180,13 @@ final class Settings: ObservableObject {
     @Published var readAloudEnabled: Bool {
         didSet { defaults.set(readAloudEnabled, forKey: Key.readAloudEnabled) }
     }
+    /// The Read aloud feature at all (v0.9, Larry 10-29): off by default and
+    /// not in Settings, because the voices the Mac lets apps use sound dated.
+    /// The code stays for a better voice later. Turn it on with
+    /// `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`.
+    let readAloudAvailable: Bool
+    /// Read aloud is offered: the hidden flag, then the person's setting.
+    var readAloudShown: Bool { readAloudAvailable && readAloudEnabled }
     /// The voice's identifier (`AVSpeechSynthesisVoice.identifier`); `nil` is the system default.
     @Published var voiceIdentifier: String? {
         didSet { Self.store(voiceIdentifier, forKey: Key.voiceIdentifier, in: defaults) }
@@ -236,6 +244,7 @@ final class Settings: ObservableObject {
         sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
         holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none
         readAloudEnabled = defaults.object(forKey: Key.readAloudEnabled) as? Bool ?? true
+        readAloudAvailable = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
     }
