@@ -109,6 +109,19 @@ deployment's ``[[services]]`` checks; every connection gets
 ``services.status`` right after ``hello`` and ``chat.list``, and every
 change is broadcast. ``service.restart`` runs a service's restart command
 and checks it again.
+
+Titles and the deployment's services (v0.8): when a session's first turn
+(a ``message.send``, never a log step or an unknown command's empty turn)
+finishes ``done``, a background task asks the ``titler`` (``titles.py``)
+for a title; it replaces the first-line title, is persisted, and goes out
+in ``chat.list``. It never replaces an alias or a title set any other way,
+and a failure leaves the first line. ``titles = "first_line"`` or no
+``titler`` makes no call. The services come from a plug-in's
+``services_status``, else ``[deployment] status``, else the
+``[[services]]`` checks; ``services.restart_all`` runs a plug-in's
+``restart_services``, else ``[deployment] restart``, and is answered by
+the ``services.status`` that follows (plus ``error
+code=services.restart_failed`` when it failed).
 """
 
 from __future__ import annotations
@@ -177,6 +190,7 @@ from .messages import (
     ServerMessage,
     Service,
     ServiceRestart,
+    ServicesRestartAll,
     ServicesStatus,
     SessionLog,
     SessionLogged,
@@ -197,8 +211,9 @@ from .messages import (
 )
 from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
-from .services import ServiceMonitor
+from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .state import StateDir
+from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
@@ -367,6 +382,12 @@ class TurnRun:
     # How the turn ended, once it has; a turn ended by closing its engine
     # (``chat.stop``, gateway stop) leaves it unset and counts as stopped.
     outcome: Outcome | None = None
+    # v0.8: on a session's first turn, what the title is generated from (the
+    # person's first message) and the first-line title it would replace;
+    # ``reply`` collects the start of the agent's answer.
+    title_message: str | None = None
+    first_line_title: str | None = None
+    reply: str = ""
 
 
 class ChatCallbacks:
@@ -610,6 +631,7 @@ class GatewayServer:
         version: str,
         plugins: Plugins | None = None,
         config_path: Path | None = None,
+        titler: Titler | None = None,
     ) -> None:
         self.config = config
         # The file the config came from and its modification time at start:
@@ -641,12 +663,32 @@ class GatewayServer:
         self._logging: set[int] = set()
         # Whether a summary can be ``unlogged`` depends on the deployment having a log step.
         self.registry.can_log = self.has_log_step()
-        # The deployment's services (v0.4); started with ``serve``.
+        # Asks a small model for a session's title (v0.8; ``titles.sdk_titler``
+        # from the command line); ``None`` keeps first-line titles.
+        self.titler = titler
+        self.title_timeout = TITLE_TIMEOUT
+        # The deployment's services (v0.4); started with ``serve``. v0.8: a
+        # plug-in's hooks, else ``[deployment]``, give one status and one
+        # restart for all of them.
+        timeout = float(config.command_timeout_seconds)
+        status, status_label = None, "status command"
+        if self.plugins.services_status is not None:
+            status, status_label = hook_status(self.plugins.services_status), "status plug-in"
+        elif config.deployment.status:
+            status = command_status(config.deployment.status, timeout)
+        restart_all = None
+        if self.plugins.restart_services is not None:
+            restart_all = hook_restart(self.plugins.restart_services)
+        elif config.deployment.restart:
+            restart_all = command_restart(config.deployment.restart, timeout)
         self.services = ServiceMonitor(
             config.services,
             interval=float(config.services_interval_seconds),
-            timeout=float(config.command_timeout_seconds),
+            timeout=timeout,
             publish=self._publish_services,
+            status=status,
+            restart_all=restart_all,
+            status_label=status_label,
         )
         # Lifecycle: ``before_first_chat`` runs once per launch; ``stop`` runs once.
         self._preflight_done = False
@@ -686,6 +728,7 @@ class GatewayServer:
         self.register("session.mode", self.on_session_mode)
         self.register("session.log", self.on_session_log)
         self.register("service.restart", self.on_service_restart)
+        self.register("services.restart_all", self.on_services_restart_all)
 
     @property
     def attached(self) -> bool:
@@ -719,7 +762,7 @@ class GatewayServer:
             self._spawn(self._watch_config(), name="portico-config-watch")
         if self.config.update.check:
             self._spawn(self._watch_updates(), name="portico-update-check")
-        if self.config.services:
+        if self.services.active:
             self._spawn(self.services.run(), name="portico-services")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
@@ -1184,6 +1227,8 @@ class GatewayServer:
                     run.collector.note_tool(event.tool, event.input)
                 elif isinstance(event, TextDelta):
                     run.collector.note_text(event.text)
+                    if run.title_message is not None and len(run.reply) < REPLY_CHARS:
+                        run.reply = (run.reply + event.text)[:REPLY_CHARS]
             await self.emit(chat, event)
             return
         if run is None:
@@ -1199,6 +1244,9 @@ class GatewayServer:
         # Its own task: the engine is asked from inside its own event stream.
         if chat.engine is not None:
             self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
+        if run.outcome == "done" and run.title_message is not None and self.wants_title(chat):
+            # Its own task too: a title never holds up or fails a turn.
+            self._spawn(self._title_task(chat, run), name=f"portico-title-{chat.number}")
 
     def _with_permission(self, chat: Chat, event: ToolFinished) -> ToolFinished:
         """``event`` with what became of its permission (v0.3), recorded on the chat.
@@ -1264,6 +1312,36 @@ class GatewayServer:
         self.registry.persist()
         word = trigger if trigger in ("auto", "manual") else "auto"
         await self.emit(chat, ChatCompacted(ts=_now(), chat=chat.number, trigger=word))  # type: ignore[arg-type]
+
+    # --- titles (v0.8) ------------------------------------------------------------
+
+    def wants_title(self, chat: Chat) -> bool:
+        """Whether a title would be generated for ``chat`` now: configured, a titler, and no alias."""
+        return self.config.titles == "generated" and self.titler is not None and chat.alias is None
+
+    async def _title_task(self, chat: Chat, run: TurnRun) -> None:
+        """Ask for the session's title; store it and push ``chat.list`` when it may replace the current one.
+
+        It replaces only the first-line title this turn set (or none): an
+        alias given meanwhile, a removed chat, or a title from anywhere else
+        stays as it is.
+        """
+        assert self.titler is not None and run.title_message is not None
+        try:
+            title = await generate_title(
+                self.titler, run.title_message, run.reply, self.config.title_model, self.title_timeout
+            )
+        except Exception:
+            log.exception("chat %d: generating a title failed", chat.number)
+            return
+        if title is None or chat.number not in self.registry or chat.alias is not None:
+            return
+        if chat.title not in (None, run.first_line_title):
+            return
+        chat.title = title
+        log.info("chat %d: titled %r", chat.number, title)
+        self.registry.persist()
+        await self.send_chat_list()
 
     async def _await_stop(self, chat: Chat, run: TurnRun) -> None:
         """After ``turn.stop``: give the engine its grace, then end the turn on its behalf."""
@@ -1758,6 +1836,29 @@ class GatewayServer:
             log.exception("service %s: restart failed", msg.service)
             await self._send(conn, self.error("gateway.error", f"service.restart failed: {e}", id=msg.id))
 
+    async def on_services_restart_all(self, msg: ServicesRestartAll, conn: ServerConnection) -> None:
+        """Restart all the deployment's services (v0.8); the ``services.status`` frames that follow are the answer.
+
+        ``services.no_restart_all`` (nothing to run) and ``services.busy``
+        (one already running) are checked here; the restart runs as a task.
+        A restart that fails ends with ``error code=services.restart_failed``
+        and the request's ``id``, after the status read once it was done.
+        """
+        if not self.services.can_restart_all:
+            raise ProtocolError("services.no_restart_all", "this deployment has no restart for all its services")
+        if self.services.restarting_all:
+            raise ProtocolError("services.busy", "a restart of all services is already running")
+        self._spawn(self._restart_all_task(msg, conn), name="portico-restart-all")
+
+    async def _restart_all_task(self, msg: ServicesRestartAll, conn: ServerConnection) -> None:
+        try:
+            await self.services.restart_all()
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, id=msg.id))
+        except Exception as e:
+            log.exception("services: restart all failed")
+            await self._send(conn, self.error("services.restart_failed", f"services.restart_all failed: {e}", id=msg.id))
+
     async def on_session_mode(self, msg: SessionMode, conn: ServerConnection) -> None:
         """Change the session's permission mode: the running engine at once, every later engine from the record.
 
@@ -1806,10 +1907,15 @@ class GatewayServer:
             await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
             return
         title = None
-        if chat.title is None and chat.turn == 0 and not chat.restored:
+        first = chat.title is None and chat.turn == 0 and not chat.restored
+        if first:
             title = title_from(msg.text)
         text = with_attachments(msg.text, attachments)
         run = await self._echo_turn(chat, text)
+        if first and msg.text.strip():
+            # v0.8: this turn may name the session once it finishes cleanly.
+            run.title_message = msg.text
+            run.first_line_title = title
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
         self._spawn(self._send_task(chat, run, text, title, msg, conn), name=f"portico-send-{chat.number}")

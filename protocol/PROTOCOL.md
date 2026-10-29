@@ -356,6 +356,25 @@ is logged; the re-check says how the service is. Errors:
 `service.unknown` (no service with that id), `service.no_restart` (the
 service has no `restart` command: `can_restart` is false).
 
+v0.8: with a deployment status (see Services), the service is read
+again through that status after its restart command, not through a check.
+
+### `services.restart_all` — `ServicesRestartAll` *(v0.8)*
+`id`. Only when `hello.capabilities` has `services.restart_all`. Runs the
+deployment's one restart for all its services (a plug-in's
+`restart_services`, else config `[deployment] restart`, with
+`/bin/sh -c`, killed after `command_timeout_seconds`), then reads every
+service again. No `services.status` goes out between the request and the
+end of the command (neither the periodic checks nor a `service.restart`):
+the next `services.status` is the answer, sent once the services were
+read again, changed or not. A restart that fails (a non-zero exit, a
+timeout, a hook that raises or returns `false`) is answered by that
+`services.status` and then `error code=services.restart_failed` with the
+request's `id` and the reason. Errors before anything runs:
+`services.no_restart_all` (the deployment has no restart for all its
+services), `services.busy` (one is already running). An app that never
+sends it is unaffected.
+
 ### `files.search` — `FilesSearch`
 `root` (named as for `files.list`; `chat` with `chat` set), `query`, `id`.
 Reply: `files.results`, or `error` with the `files.list` root codes or
@@ -395,7 +414,9 @@ absolute, as configured with any `~` expanded), `commands: [string]`
 (Portico's own commands the deployment offers, without the `/`; empty in
 v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 `capabilities: [string]` (v0.1: `cards.form`,
-`files`, `producer`). Always followed by `chat.list`, so the app has the
+`files`, `producer`; v0.8: `services.restart_all` when the deployment can
+restart all its services at once, so the app offers Restart all
+services). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
@@ -415,7 +436,8 @@ plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,
 `compactions`, `context_percent?`; v0.3: `mode?`; v0.4: `logged_at?`,
 `unlogged`; v0.6: `last_reply?`). Sent after `hello` and after every
 change to the set of chats or their aliases (`chat.new`, `chat.alias`, `chat.remove`,
-`session.renew`, `session.log`). State changes alone travel as
+`session.renew`, `session.log`), and (v0.8) when a session's generated
+title arrives. State changes alone travel as
 `chat.state`. Not chat-scoped: no `seq`, not replayed in `chat.history`.
 
 `ChatSummary.logged_at?` *(v0.4)* is when the session was last logged
@@ -439,6 +461,18 @@ or a stop came first) does not move it.
 Kept on the chat record, so it survives a gateway restart — unlike the
 `ts` of events replayed from a transcript, which is the time of the
 replay. The app's welcome says "last reply 12 min ago" from it.
+
+`ChatSummary.title?` *(v0.2; generated in v0.8)* is the first line of the
+session's first message (cut to 60 characters). v0.8: with config
+`titles = "generated"` (the default), once the session's first turn
+finishes `done` the gateway asks a small model for a title of at most six
+words and, when one comes back within ten seconds, replaces the first
+line with it and sends `chat.list`. No new field or frame: an older app
+simply shows the better title. Only a `message.send`'s first turn counts
+(never a log step's turn, nor an unknown command's empty turn); a session
+with an alias is not titled, an alias given meanwhile is kept, a
+generated title is never replaced, and a session restored from the index
+keeps the title it had. A failed or slow call leaves the first line.
 
 ### `chat.state` — `ChatState`
 `chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`;
@@ -689,6 +723,15 @@ N s` when it printed nothing and was killed. An outage's `since` and
 `H:MM` are when the service was first seen down: a restart that does not
 bring it back keeps them.
 
+v0.8: with a deployment status (see Services) the rows are the status's,
+in its order (down first): `up` with the row's `detail`, or `down` with
+`not responding since H:MM` plus ` · <detail>`. A status that cannot be
+read is one `down` row, id `status`, name `Services status`, detail
+`status command failed · <reason>` (`status plug-in failed · ...` for a
+plug-in's). Rows appear with the first reading; there are no `checking`
+rows before it. `can_restart` is true for a row whose id matches a
+`[[services]]` entry with a `restart`.
+
 ### `files.results` — `FilesResults`
 `id`, `root`, `query`, `hits: [{path, snippet?}]` with `path` relative to
 the root. A direct reply: no `seq`.
@@ -710,7 +753,9 @@ engine refused the message; the turn is finished with `outcome: error`),
 session that has ended), `session.cannot_log` (v0.4: `session.log` and the
 deployment has no log step), `service.unknown` (v0.4: `service.restart`
 names no configured service), `service.no_restart` (v0.4: the service has
-no `restart` command), `session.live` (`chat.new` in single presentation while a session
+no `restart` command), `services.no_restart_all`, `services.busy`,
+`services.restart_failed` (v0.8: `services.restart_all`; see there),
+`session.live` (`chat.new` in single presentation while a session
 is live; renew it instead),
 `lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
 carries its last line and no chat was created),
@@ -753,6 +798,24 @@ unknown key, a `timeout_seconds` under 1, an interval under 5) stops the gateway
 named; `bin/doctor` reports it on its `config` and `services` lines and
 otherwise lists the configured ids without running any check. Portico
 never knows what a service is: it draws what the deployment lists.
+
+v0.8: a deployment that already has one command for all its services
+names it instead (or as well):
+
+```toml
+[deployment]
+restart = "my-tool restart-all"   # optional: Restart all services runs it; exit 0 = done
+status = "my-tool status --json"  # optional: prints the services as JSON
+```
+
+`status` prints `{"services": [{"id": "memory", "name": "Memory", "up":
+true, "detail": "recall and capture"}]}` (`detail` optional). When it is
+set, the gateway runs it at start and every `services_interval_seconds`
+instead of each `[[services]]` check; `[[services]]` entries then only give
+rows their Restart, matched by id. Both commands run with `/bin/sh -c`, in
+their own process group, killed after `command_timeout_seconds`. A
+plug-in's `services_status()` and `restart_services()` hooks take
+precedence over them.
 
 ## Command line *(v0.3)*
 
