@@ -321,4 +321,18 @@ final class GatewayControlsTests: XCTestCase {
             ServicesPresentation.outageDetail("not responding since 17:28", since: nil, now: now, calendar: utc, locale: us),
             "not responding since 17:28", "no since, no rewrite")
     }
+
+    func testAnotherWindowTakingTheGatewayStopsTheRetriesUntilStart() {
+        // Two windows on one gateway used to knock each other off forever:
+        // the gateway replaces the older connection, and the older one
+        // reconnected within a second (v0.9).
+        let model = AppModel()
+        XCTAssertFalse(model.replacedElsewhere)
+        model.apply(.error(ErrorMessage(code: "session.replaced", message: "another app attached to this gateway")))
+        XCTAssertTrue(model.replacedElsewhere)
+        XCTAssertEqual(
+            AppModel.replacedText, "Another Portico window is using this gateway. Agent › Start brings it back here.")
+        model.startGateway()
+        XCTAssertFalse(model.replacedElsewhere, "Start takes it back")
+    }
 }

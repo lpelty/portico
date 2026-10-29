@@ -147,6 +147,8 @@ struct SidebarColumn: View {
             } else {
                 ChatListView()
             }
+            // Pinned below whatever scrolls above it (v0.9 decision 6, AE1).
+            SidebarFooter()
         }
         .background(Theme.sidebar)
     }

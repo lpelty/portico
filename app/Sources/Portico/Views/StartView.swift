@@ -16,6 +16,7 @@ import UniformTypeIdentifiers
 /// quiet line says which session, with View and Start a new session.
 struct StartView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var dictation: Dictation
     @FocusState private var focused: Bool
 
     private var connected: Bool { model.connection == .connected }
@@ -120,8 +121,8 @@ struct StartView: View {
     static func greeting(at date: Date = Date(), fullName: String = NSFullUserName()) -> String {
         let hour = Calendar.current.component(.hour, from: date)
         let part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
-        let first = fullName.split(separator: " ").first.map(String.init) ?? ""
-        return first.isEmpty ? part : "\(part), \(first)"
+        guard let first = PersonName(fullName: fullName).first else { return part }
+        return "\(part), \(first)"
     }
 
     // MARK: composer
@@ -177,6 +178,14 @@ struct StartView: View {
                     ) { model.startMode = $0 }
                 }
                 Spacer(minLength: 0)
+                if let line = DictationLine.text(dictation, composer: voiceComposer.id) {
+                    Text(line)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text3)
+                        .lineLimit(1)
+                        .layoutPriority(-1)
+                }
+                MicButton(composer: voiceComposer, side: 30, bordered: true)
                 Button(action: send) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
@@ -327,10 +336,36 @@ struct StartView: View {
 
     private func send() {
         guard canSend else { return }
+        // A talk into this composer ends first: what is shown is what goes.
+        dictation.willSend(from: voiceComposer.id)
         if let live = continuing?.chat {
             model.continueSession(chat: live, text: model.startDraft)
         } else {
             model.startChat(text: model.startDraft)
+        }
+    }
+
+    /// The welcome's composer for Talk (v0.9 decision 1). Its send is
+    /// Send's, read from the model when the talk stops.
+    private var voiceComposer: Dictation.Composer {
+        Dictation.Composer(
+            id: "start",
+            text: { [model] in model.startDraft },
+            setText: { [model] in model.startDraft = $0 },
+            send: { [model] in StartView.sendSpoken(model) })
+    }
+
+    /// Send, from outside the view: to the continued session, or a new one
+    /// in the start folder, when that could be sent now.
+    static func sendSpoken(_ model: AppModel) {
+        let text = model.startDraft
+        guard model.connection == .connected, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let live = model.continuingSession.flatMap({ model.summary(of: $0) })?.chat {
+            guard !model.isSessionCommandPending(chat: live) else { return }
+            model.continueSession(chat: live, text: text)
+        } else {
+            guard model.startFolder != nil, !model.isStarting else { return }
+            model.startChat(text: text)
         }
     }
 

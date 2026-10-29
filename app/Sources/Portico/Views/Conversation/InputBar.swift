@@ -15,6 +15,7 @@ struct InputBar: View {
     /// and the message carries it as an attachment.
     var about: String? = nil
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var dictation: Dictation
     @FocusState private var editorFocused: Bool
 
     /// The editor's text lives in the model (per chat) so it survives
@@ -33,9 +34,26 @@ struct InputBar: View {
     private var renewing: Bool { model.isRenewing(chat: chat) }
     /// A `session.log` is out (v0.4): typing goes on, sending waits.
     private var logging: Bool { model.isLogging(chat: chat) }
-    private var canSend: Bool {
-        connected && !busy && !sending && !renewing && !logging
-            && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var canSend: Bool { InputBar.canSend(model, chat: chat, text: draft.wrappedValue) }
+
+    static func canSend(_ model: AppModel, chat: Int, text: String) -> Bool {
+        model.connection == .connected && !model.isBusy(chat: chat) && !model.isSending(chat: chat)
+            && !model.isRenewing(chat: chat) && !model.isLogging(chat: chat)
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// This composer for Talk (v0.9 decision 1): the words go into the
+    /// chat's draft; "Send when I stop talking" sends it as Send would.
+    private var voiceComposer: Dictation.Composer {
+        Dictation.Composer(
+            id: "chat-\(chat)",
+            text: { [model, chat] in model.draft(for: chat) },
+            setText: { [model, chat] in model.setDraft($0, for: chat) },
+            send: { [model, chat, about] in
+                let text = model.draft(for: chat)
+                guard InputBar.canSend(model, chat: chat, text: text) else { return }
+                model.sendMessage(chat: chat, text: text, about: about)
+            })
     }
 
     var body: some View {
@@ -80,11 +98,14 @@ struct InputBar: View {
                     ) { model.setMode($0, for: chat) }
                 }
                 Spacer(minLength: 0)
-                Text(InputBar.enterHint)
+                // While Talk listens, its line in place of the Enter hint.
+                Text(DictationLine.text(dictation, composer: voiceComposer.id) ?? InputBar.enterHint)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text3)
                     .lineLimit(1)
                     .layoutPriority(-1)
+                MicButton(composer: voiceComposer)
+                    .disabled(renewing)
                 if busy {
                     Button(action: { model.stopTurn(chat: chat) }) {
                         Text("Stop")
@@ -228,6 +249,8 @@ struct InputBar: View {
     /// refuses (`attachment.missing`, `chat.busy`).
     private func send() {
         guard canSend else { return }
+        // A talk into this composer ends first: what is shown is what goes.
+        dictation.willSend(from: voiceComposer.id)
         model.sendMessage(chat: chat, text: draft.wrappedValue, about: about)
         editorFocused = true
     }

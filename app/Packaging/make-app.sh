@@ -130,6 +130,10 @@ set_string LSMinimumSystemVersion "$min_macos"
 set_string NSPrincipalClass NSApplication
 plutil -insert NSHighResolutionCapable -bool YES "$plist"
 set_string PorticoGatewayBin "$gateway_bin"
+# Voice input (v0.9): the system shows these when it first asks for the
+# microphone and speech recognition; without them the app may not ask.
+set_string NSMicrophoneUsageDescription "$name listens only while you hold or press the mic, and turns speech into text on this Mac."
+set_string NSSpeechRecognitionUsageDescription "$name turns what you say into text in the message box, on this Mac, only while the mic is on."
 plutil -lint "$plist" >/dev/null
 
 codesign --force --deep -s - "$bundle" 2>"$work/codesign.log" || {

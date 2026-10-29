@@ -356,6 +356,12 @@ final class AppModel: ObservableObject {
     var relistDelay: Duration = .milliseconds(400)
     /// The connection loop's pause between attempts; `startGateway` cancels it.
     private var reconnectWait: Task<Void, Never>?
+    /// Another window attached to this gateway and it closed this one
+    /// (`error code=session.replaced`): the loop stops retrying, or the two
+    /// windows would take the gateway from each other forever, until Start.
+    private(set) var replacedElsewhere = false
+    static let replacedCode = "session.replaced"
+    static let replacedText = "Another Portico window is using this gateway. Agent › Start brings it back here."
     /// The loop's socket, while `run` is going; `stopGateway` closes it.
     private var client: GatewayClient?
     /// Whether `run` is going (the window is open).
@@ -576,6 +582,7 @@ final class AppModel: ObservableObject {
 
         case .error(let error):
             lastError = error
+            if error.code == Self.replacedCode { replacedElsewhere = true }
             // A refused renew: the card is no longer busy; the status line
             // (below) carries the gateway's reason like any other error.
             if let id = error.id, let chat = renewing.first(where: { $0.value == id })?.key {
@@ -1790,6 +1797,12 @@ extension AppModel {
                 connection = .failed("\(error)")
             }
             if Task.isCancelled { break }
+            if replacedElsewhere {
+                connection = .failed(Self.replacedText)
+                while replacedElsewhere && !Task.isCancelled { await pause(.seconds(3600)) }
+                backoff = .seconds(1)
+                continue
+            }
             await pause(backoff)
             backoff = min(backoff * 2, .seconds(10))
         }
@@ -1892,6 +1905,7 @@ extension AppModel {
     /// supervisor is started directly and the next loop attaches to it.
     func startGateway() {
         autoStartGateway = true
+        replacedElsewhere = false
         if loopRunning {
             reconnectWait?.cancel()
         } else if let supervisor {

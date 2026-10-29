@@ -1,18 +1,21 @@
 import AppKit
 import SwiftUI
 
-/// The settings window (spec §5.6): General (auto-open, quit behaviour),
-/// Appearance, Gateway (address and token overrides, Start / Stop, Doctor).
+/// The settings window (spec §5.6): General (folder, auto-open),
+/// Appearance, Gateway (address and token overrides, Start / Stop, Doctor,
+/// and what quitting does, v0.9 decision 7).
 /// Brand, actions and roots are the gateway's, not here.
 struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettingsTab()
                 .tabItem { Label("General", systemImage: "gearshape") }
-            AppearanceSettingsTab()
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
             GatewaySettingsTab()
                 .tabItem { Label("Gateway", systemImage: "server.rack") }
+            VoiceSettingsTab()
+                .tabItem { Label("Voice", systemImage: "waveform") }
+            AppearanceSettingsTab()
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
         .frame(width: 520)
         .padding(20)
@@ -61,18 +64,6 @@ struct GeneralSettingsTab: View {
                         .padding(.leading, 20)
                 }
                 Text("Anything else is listed in the chat's history and never opens on its own.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("When I quit") {
-                Picker("When I quit", selection: $settings.quitBehaviour) {
-                    ForEach(Settings.QuitBehaviour.allCases, id: \.self) { behaviour in
-                        Text(behaviour.label).tag(behaviour)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                Text("Keeping the agent running lets a long turn finish while the app is closed; reopening attaches to it. Stop everything stops the gateway, which runs the deployment's stop command first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -166,6 +157,19 @@ struct GatewaySettingsTab: View {
                         .disabled(doctorRunning)
                 }
                 Text("Stop interrupts every running turn, runs the deployment's stop command, and exits the gateway. Restart stops it and starts it again, reading the config afresh. Doctor checks this machine, the state directory and the config, one line per check.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            // Moved here from General with clearer wording (v0.9 decision 7, AE2).
+            Section("When Portico quits") {
+                Picker("When Portico quits", selection: $settings.quitBehaviour) {
+                    ForEach(Settings.QuitBehaviour.allCases, id: \.self) { behaviour in
+                        Text(behaviour.label).tag(behaviour)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                Text(Settings.QuitBehaviour.caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

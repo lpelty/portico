@@ -151,8 +151,8 @@ struct TranscriptItemView: View {
         switch item {
         case .userText(let user):
             UserBubble(text: user.text)
-        case .assistantText(_, let text):
-            MarkdownText(text: text)
+        case .assistantText(let id, let text):
+            MarkdownText(text: text, id: id)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
             ToolRowView(

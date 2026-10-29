@@ -9,6 +9,9 @@ struct PorticoApp: App {
     @StateObject private var model: AppModel
     @StateObject private var settings: Settings
     @StateObject private var supervisor: GatewaySupervisor
+    /// Voice (v0.9): Read aloud on replies, Talk into the composers.
+    @StateObject private var reader: ReadAloud
+    @StateObject private var dictation: Dictation
 
     init() {
         // The model reads the auto-open settings (spec §5.3), so it holds the
@@ -24,6 +27,8 @@ struct PorticoApp: App {
         _settings = StateObject(wrappedValue: settings)
         _supervisor = StateObject(wrappedValue: supervisor)
         _model = StateObject(wrappedValue: model)
+        _reader = StateObject(wrappedValue: ReadAloud(settings: settings))
+        _dictation = StateObject(wrappedValue: Dictation(settings: settings))
     }
 
     /// The app's version, sent in `hello`: the repo's VERSION file when the
@@ -60,6 +65,8 @@ struct PorticoApp: App {
                 .environmentObject(model)
                 .environmentObject(settings)
                 .environmentObject(supervisor)
+                .environmentObject(reader)
+                .environmentObject(dictation)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 // Brand from hello (spec section 8): the accent on every
                 // control (nil keeps the system accent), the icon in the Dock only
@@ -71,7 +78,9 @@ struct PorticoApp: App {
                 .task {
                     // Quit honours the setting (spec §5.5, D19): keep the
                     // agent running (detach only) or stop everything.
-                    delegate.quitHandler = { [model, settings] in
+                    delegate.quitHandler = { [model, settings, dictation] in
+                        // Talk ends unsent; the microphone is let go.
+                        await dictation.cancel()
                         // The viewer comes back next launch only with
                         // something in it (v0.6).
                         model.rememberViewerForNextLaunch()
@@ -79,6 +88,8 @@ struct PorticoApp: App {
                     }
                     await model.run(supervisor: supervisor, settings: settings, appVersion: Self.version)
                 }
+                // The window closed: a talk into its composers ends, unsent.
+                .onDisappear { Task { await dictation.cancel() } }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: Theme.defaultWindowSize.width, height: Theme.defaultWindowSize.height)
@@ -119,6 +130,7 @@ struct PorticoApp: App {
                 .environmentObject(model)
                 .environmentObject(settings)
                 .environmentObject(supervisor)
+                .environmentObject(reader)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 .tint(model.brand.accent)
         }
