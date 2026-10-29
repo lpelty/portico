@@ -679,9 +679,9 @@ services_interval_seconds = 30   # default 30, at least 5
 
 [[services]]
 id = "memory"                    # required, unique, [a-z0-9-]+
-name = "Memory (Hindsight)"      # required: what the menu says
+name = "Memory (recall server)"      # required: what the menu says
 check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up
-restart = "launchctl kickstart -k gui/$UID/com.fleet.hindsight"  # optional: the menu offers Restart
+restart = "launchctl kickstart -k gui/$UID/com.example.memory"  # optional: the menu offers Restart
 up_detail = "recall and capture" # optional: the detail shown while up
 timeout_seconds = 10             # optional, default 10, at least 1: the check's time limit
 ```

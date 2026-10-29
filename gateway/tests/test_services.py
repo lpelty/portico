@@ -266,7 +266,7 @@ async def services_server(state_dir: StateDir, tmp_path: Path, gate: Path) -> As
         state_dir,
         services=[
             {"id": "files", "name": "Files", "check": wait + "true", "up_detail": "watching"},
-            {"id": "memory", "name": "Memory (Hindsight)", "check": wait + f"test -f {flag}", "restart": f"touch {flag}"},
+            {"id": "memory", "name": "Memory (recall server)", "check": wait + f"test -f {flag}", "restart": f"touch {flag}"},
         ],
     )
     try:

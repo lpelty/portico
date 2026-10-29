@@ -52,8 +52,8 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
     func testV04MessagesDecodeAndEncodeAsTheContractSays() throws {
         guard case .servicesStatus(let status) = try decode("""
             {"type":"services.status","ts":"2026-10-28T12:00:00Z","services":[
-              {"id":"memory","name":"Memory (Hindsight)","state":"down","detail":"not responding since 9:41","since":"2026-10-28T09:41:00Z","can_restart":true},
-              {"id":"search","name":"Search (Chroma)","state":"up"}]}
+              {"id":"memory","name":"Memory (recall server)","state":"down","detail":"not responding since 9:41","since":"2026-10-28T09:41:00Z","can_restart":true},
+              {"id":"search","name":"Search (index)","state":"up"}]}
             """) else { return XCTFail() }
         XCTAssertEqual(status.services.map(\.id), ["memory", "search"])
         XCTAssertEqual(status.services[0].canRestart, true)
@@ -81,17 +81,17 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
 
     func testAllUpOneDownSeveralDown() {
         let allUp = ServicesPresentation(gateway: gatewayUp, services: [
-            service("memory", "Memory (Hindsight)", .up, detail: "recall and capture"),
-            service("search", "Search (Chroma)", .up, detail: "10 collections"),
+            service("memory", "Memory (recall server)", .up, detail: "recall and capture"),
+            service("search", "Search (index)", .up, detail: "10 collections"),
         ])
         XCTAssertEqual(allUp.label, "All services up")
         XCTAssertEqual(allUp.tone, .up)
-        XCTAssertEqual(allUp.rows.map(\.name), ["Gateway", "Memory (Hindsight)", "Search (Chroma)"])
+        XCTAssertEqual(allUp.rows.map(\.name), ["Gateway", "Memory (recall server)", "Search (index)"])
         XCTAssertEqual(allUp.rows.map(\.detail), ["running · port 54675", "up · recall and capture", "up · 10 collections"])
 
         let oneDown = ServicesPresentation(gateway: gatewayUp, services: [
-            service("memory", "Memory (Hindsight)", .down, detail: "not responding since 9:41 · chat still works", restart: true),
-            service("search", "Search (Chroma)", .up),
+            service("memory", "Memory (recall server)", .down, detail: "not responding since 9:41 · chat still works", restart: true),
+            service("search", "Search (index)", .up),
         ])
         XCTAssertEqual(oneDown.label, "Memory is down")
         XCTAssertEqual(oneDown.tone, .down)
@@ -133,7 +133,7 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         model.setConnection(.connected)
         model.apply(.hello(hello()))
         XCTAssertEqual(model.servicesPresentation(gateway: .running(port: 2)).label, "Checking…")
-        model.apply(.servicesStatus(ServicesStatus(services: [service("memory", "Memory (Hindsight)", .down, restart: true)])))
+        model.apply(.servicesStatus(ServicesStatus(services: [service("memory", "Memory (recall server)", .down, restart: true)])))
         XCTAssertEqual(model.servicesPresentation(gateway: .running(port: 2)).label, "Memory is down")
 
         model.restartService("memory")
@@ -142,7 +142,7 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertTrue(model.isRestarting(service: "memory"))
         model.restartService("memory")
         XCTAssertEqual(sent.types().filter { $0 == "service.restart" }.count, 1, "one restart at a time")
-        model.apply(.servicesStatus(ServicesStatus(services: [service("memory", "Memory (Hindsight)", .up)])))
+        model.apply(.servicesStatus(ServicesStatus(services: [service("memory", "Memory (recall server)", .up)])))
         XCTAssertFalse(model.isRestarting(service: "memory"), "the next status answers it")
         XCTAssertEqual(model.servicesPresentation(gateway: .running(port: 2)).label, "All services up")
 

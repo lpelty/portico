@@ -347,9 +347,9 @@ def test_services_load(tmp_path: Path) -> None:
         "services_interval_seconds = 15\n"
         "[[services]]\n"
         'id = "memory"\n'
-        'name = "Memory (Hindsight)"\n'
+        'name = "Memory (recall server)"\n'
         'check = "curl -sf http://localhost:8888/health"\n'
-        'restart = "launchctl kickstart -k gui/$UID/com.fleet.hindsight"\n'
+        'restart = "launchctl kickstart -k gui/$UID/com.example.memory"\n'
         'up_detail = "recall and capture"\n'
         "[[services]]\n"
         'id = "search-2"\n'
@@ -360,7 +360,7 @@ def test_services_load(tmp_path: Path) -> None:
     config = load_config(path)
     assert config.services_interval_seconds == 15
     memory, search = config.services
-    assert (memory.id, memory.name, memory.up_detail) == ("memory", "Memory (Hindsight)", "recall and capture")
+    assert (memory.id, memory.name, memory.up_detail) == ("memory", "Memory (recall server)", "recall and capture")
     assert memory.restart and "$UID" in memory.restart, "the command is kept as written; the shell expands it"
     assert (search.id, search.restart, search.up_detail) == ("search-2", None, None)
     assert (memory.timeout_seconds, search.timeout_seconds) == (10, 3), "a check is bounded by 10 s unless it says"

@@ -865,7 +865,7 @@ def example_messages() -> dict[str, BaseModel]:
             services=[
                 Service(
                     id="memory",
-                    name="Memory (Hindsight)",
+                    name="Memory (recall server)",
                     state="down",
                     detail="not responding since 11:52 · curl: (7) Failed to connect to localhost port 8888",
                     since="2026-10-27T11:52:00Z",

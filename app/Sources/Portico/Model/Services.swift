@@ -66,7 +66,7 @@ struct ServicesPresentation: Equatable, Sendable {
     /// The strip's compact word.
     static let compactLabel = "Services"
 
-    /// `Memory (Hindsight)` reads `Memory` in the strip's sentence.
+    /// `Memory (recall server)` reads `Memory` in the strip's sentence.
     static func shortName(_ name: String) -> String {
         guard let open = name.range(of: " (") else { return name }
         let short = name[..<open.lowerBound].trimmingCharacters(in: .whitespaces)

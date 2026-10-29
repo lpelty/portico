@@ -44786,7 +44786,7 @@
                 {
                   "type": "frame",
                   "id": "YvO56",
-                  "name": "Memory (Hindsight)",
+                  "name": "Memory (recall server)",
                   "width": "fill_container",
                   "cornerRadius": 5,
                   "gap": 8,
@@ -44817,7 +44817,7 @@
                           "id": "FxhzM",
                           "name": "Name",
                           "fill": "$text",
-                          "content": "Memory (Hindsight)",
+                          "content": "Memory (recall server)",
                           "fontFamily": "$font",
                           "fontSize": 12,
                           "fontWeight": "500"
@@ -44839,7 +44839,7 @@
                 {
                   "type": "frame",
                   "id": "eiChg",
-                  "name": "Search (Chroma)",
+                  "name": "Search (index)",
                   "width": "fill_container",
                   "cornerRadius": 5,
                   "gap": 8,
@@ -44870,7 +44870,7 @@
                           "id": "M161M",
                           "name": "Name",
                           "fill": "$text",
-                          "content": "Search (Chroma)",
+                          "content": "Search (index)",
                           "fontFamily": "$font",
                           "fontSize": 12,
                           "fontWeight": "500"
@@ -45090,7 +45090,7 @@
                 {
                   "type": "frame",
                   "id": "CSbod",
-                  "name": "Memory (Hindsight)",
+                  "name": "Memory (recall server)",
                   "width": "fill_container",
                   "fill": "$wait-soft",
                   "cornerRadius": 5,
@@ -45122,7 +45122,7 @@
                           "id": "xcTEW",
                           "name": "Name",
                           "fill": "$text",
-                          "content": "Memory (Hindsight)",
+                          "content": "Memory (recall server)",
                           "fontFamily": "$font",
                           "fontSize": 12,
                           "fontWeight": "500"
@@ -45222,7 +45222,7 @@
                 {
                   "type": "frame",
                   "id": "DLuKv",
-                  "name": "Search (Chroma)",
+                  "name": "Search (index)",
                   "width": "fill_container",
                   "cornerRadius": 5,
                   "gap": 8,
@@ -45253,7 +45253,7 @@
                           "id": "pkyLB",
                           "name": "Name",
                           "fill": "$text",
-                          "content": "Search (Chroma)",
+                          "content": "Search (index)",
                           "fontFamily": "$font",
                           "fontSize": 12,
                           "fontWeight": "500"

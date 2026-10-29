@@ -4,9 +4,9 @@ A deployment lists what it depends on in ``config.toml``::
 
     [[services]]
     id = "memory"
-    name = "Memory (Hindsight)"
+    name = "Memory (recall server)"
     check = "curl -sf http://localhost:8888/health"   # exit 0 = up
-    restart = "launchctl kickstart -k gui/$UID/com.fleet.hindsight"  # optional
+    restart = "launchctl kickstart -k gui/$UID/com.example.memory"  # optional
     up_detail = "recall and capture"                   # optional
     timeout_seconds = 10                               # optional, default 10, at least 1
 

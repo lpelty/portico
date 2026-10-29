@@ -1,5 +1,92 @@
 # Changelog
 
+## v0.4.0 (2026-10-29)
+
+Chat that reads like chat, session commands, services, a quieter strip.
+Screens: `design/portico.pen` row W (W1–W4).
+
+### What a person gets (app)
+
+- **The agent's messages render Markdown**: headings, bold, italic,
+  `code`, links (open in the browser), strikethrough, bulleted and numbered
+  lists (two levels, with code fences inside items), code blocks, quotes
+  (holding lists and paragraphs), rules and tables (drawn as a grid). Your
+  own messages stay plain text. In-house parser, no package dependency.
+- **Selecting and copying works like Mail**: the agent's prose and code are
+  native text views, so a drag starts anywhere in the text (not only on a
+  letter), runs across paragraphs and list items, shows the I-beam, and
+  copies with ⌘C.
+- **Copy**: each code block shows its language and a Copy button that
+  copies the code alone (no fence, no trailing blank lines, no wrapping
+  breaks), so a pasted command runs as it reads. Each agent message shows
+  Copy on hover, copying its Markdown.
+- **No "turn N" dividers.** A stopped or failed turn keeps its one-line
+  note.
+- **Session card commands**: **Log session** (when the deployment can log)
+  logs without ending the session; **New** starts the next one. When the
+  session has unlogged work, New asks first: *Log Session N before starting
+  a new one?* — Cancel, Start without logging, **Log and start new**
+  (default). `/log` and `/new` typed do the same.
+- **Status strip**: model · context · services, plus the update link. The
+  state word and the folder are gone. The strip never wraps; when narrow it
+  shortens its words, then hides the model.
+- **Services**: one control, **All services up** / **X is down** / **N
+  services down** / **Checking…**, opening a menu with a row per service
+  (dot, name, one line of detail, down ones first) and **Restart** where
+  the deployment gives a restart command. The Gateway row comes from the
+  app itself, so it shows even when the gateway is what is down.
+- **Files words**: tabs **Folder | Bookmarks**; Bookmarks lists your
+  bookmarks and **Changed this session** (files the agent created or
+  edited, newest first, with the time). Existing pins carry over.
+
+### What a person gets (gateway)
+
+- **`session.log`** runs the deployment's log step in the live session
+  without ending it; the record keeps `logged_at` and `unlogged`, sent on
+  every `chat.state`, so the app never guesses whether New should ask.
+- **Services monitor**: `[[services]]` checks run at start, every
+  `services_interval_seconds` and on request, each bounded by its own
+  timeout and published as it answers; a failing check reads "not
+  responding since H:MM" plus its last output line. `service.restart` runs
+  the restart command and rechecks. `portico-gateway doctor` checks the
+  services too.
+
+### Review fixes (before release)
+
+A fresh-context review found eleven problems, all fixed: New would not ask
+after ordinary turns (unlogged now rides on every `chat.state`); "Logging…"
+could stick after a reconnect; one slow check delayed every service; any
+status update cleared every Restart spinner; a pre-0.4 gateway left
+"Checking…" forever (now: no services after 5 s or on an older gateway);
+Markdown misreads (`C#` heads, fences in list items, table cells, a stray
+`a | b` line, a wrapped "2024." becoming a list, quoted lists); re-parsing
+every message on each streamed delta (now cached); the strip measuring
+itself too narrow.
+
+### Protocol (still version 1; additions only)
+
+- App → gateway: `session.log {chat, id}`, `service.restart {service, id}`.
+- Gateway → app: `session.logged {id, chat}`, `services.status {services:
+  [{id, name, state: up | down | checking, detail?, since?, can_restart}]}`.
+- Fields: `logged_at` and `unlogged` on `ChatSummary`; `unlogged` on
+  `chat.state`; `hello.commands` lists `log` when the deployment can log.
+- Errors: `session.cannot_log`, `service.unknown`, `service.no_restart`.
+
+### Configuration
+
+New keys, all optional: `[[services]]` tables (`id`, `name`, `check`,
+optional `restart`, `up_detail`, `timeout_seconds` default 10) and
+`services_interval_seconds` (default 30). With no `[[services]]` the menu
+holds the Gateway row only.
+
+### For plug-in authors
+
+- Plug-in API stays **1**.
+- `on_renew` now also runs for **Log session** (`/log`), where the session
+  goes on: `ctx.ending` is `False` there and `True` for a renewal. A
+  plug-in whose log prompt tells the agent "this session is ending" should
+  check `ctx.ending`.
+
 ## v0.3.0 (2026-10-28)
 
 ### What a person gets (gateway)
