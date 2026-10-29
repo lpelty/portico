@@ -21,7 +21,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .messages import Artifact, ChatStateWord
+from .messages import Artifact, ChatStateWord, PermissionMode
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
@@ -64,6 +64,9 @@ class ChatRecord(BaseModel):
     parent: int | None = None
     compactions: int = 0
     context_percent: float | None = None
+    # v0.3: the session's permission mode (``None`` in a v0.2 index: the
+    # deployment's ``permission_mode`` applies).
+    mode: PermissionMode | None = None
 
 
 class Index(BaseModel):

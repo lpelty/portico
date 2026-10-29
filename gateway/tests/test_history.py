@@ -302,6 +302,7 @@ async def test_open_after_restart_replays_transcript_and_artifacts(
         assert created.chat == 1 and created.artifact.id == "art-1" and created.artifact.open is False
         live = await recv(conn)
         assert isinstance(live, ChatLive) and live.chat == 1 and live.id == "req-open"
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # Opening is a read: no engine was started, nothing was stamped.
         assert factory.engines == []
@@ -347,12 +348,14 @@ async def test_open_with_since_in_ring_uses_ring(
         assert isinstance(history, ChatHistory) and not history.truncated
         assert [m.seq for m in history.events] == list(range(3, last_seq + 1))
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # A chat created this launch, opened from the beginning, is also served by the ring.
         await conn.send(dump(ChatOpen(ts=TS, chat=number)))
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and [m.seq for m in history.events] == list(range(1, last_seq + 1))
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         assert reads == []
     finally:
         await conn.close()
@@ -382,6 +385,7 @@ async def test_open_with_since_off_the_ring_replays_transcript(
         assert isinstance(history, ChatHistory) and not history.truncated
         assert [type(e) for e in history.events] == [TurnStarted, UserText, TextDelta, TurnFinished]
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -413,6 +417,7 @@ async def test_open_from_beginning_with_empty_transcript_and_wrapped_ring_is_not
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and history.truncated
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # ... and that refetch is final: the ring's tail, not truncated.
         await conn.send(dump(ChatOpen(ts=TS, chat=number)))
@@ -420,6 +425,7 @@ async def test_open_from_beginning_with_empty_transcript_and_wrapped_ring_is_not
         assert isinstance(history, ChatHistory) and not history.truncated
         assert [m.seq for m in history.events] == [m.seq for m in chat.ring]
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -437,6 +443,7 @@ async def test_missing_transcript_gives_empty_history_not_error(
         assert isinstance(history, ChatHistory)
         assert history.events == [] and not history.truncated and history.id == "req-open"
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -453,6 +460,7 @@ async def test_restored_chat_without_session_opens_empty(
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and history.events == [] and not history.truncated
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -477,6 +485,7 @@ async def test_open_with_a_stale_or_zero_since_on_a_restored_chat_replays_the_tr
         assert [type(e) for e in history.events][:2] == [TurnStarted, UserText]
         live = await recv(conn)
         assert isinstance(live, ChatLive) and live.seq == 0
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -494,11 +503,13 @@ async def test_stale_since_without_a_transcript_is_truncated_once_then_final(
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and history.truncated and history.events == []
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         # ... and the refetch from the beginning is final.
         await conn.send(dump(ChatOpen(ts=TS, chat=1)))
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and not history.truncated and history.events == []
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -513,5 +524,6 @@ async def test_since_equal_to_the_current_seq_is_up_to_date(server: GatewayServe
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and history.events == [] and not history.truncated
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()

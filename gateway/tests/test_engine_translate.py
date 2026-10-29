@@ -253,7 +253,9 @@ def test_options_pin_the_sdk_facts(tmp_path: Path) -> None:
     assert options.include_partial_messages is True
     assert options.verbatim_prompts is False  # slash text must keep dispatching
     assert options.can_use_tool is not None
-    assert options.permission_mode is None  # never allow anything by default
+    assert options.permission_mode == "default"  # asks unless the session's mode says otherwise
+    auto = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=cb, permission_mode="auto")
+    assert auto.permission_mode == "auto" and auto.can_use_tool is not None  # escalations still ask
     hooks = options.hooks or {}
     matchers = hooks.get("PreToolUse") or []
     assert any(m.matcher == "AskUserQuestion" and m.hooks for m in matchers)
@@ -289,6 +291,7 @@ class _FakeSDKClient:
         self.options = options
         self.disconnected = False
         self.script: list[Any] = []
+        self.modes: list[str] = []
         self._queue: asyncio.Queue[Any] = asyncio.Queue()
         _FakeSDKClient.instances.append(self)
 
@@ -301,6 +304,9 @@ class _FakeSDKClient:
 
     async def interrupt(self) -> None:
         pass
+
+    async def set_permission_mode(self, mode: str) -> None:
+        self.modes.append(mode)
 
     async def disconnect(self) -> None:
         self.disconnected = True
@@ -342,6 +348,21 @@ async def _started_engine(tmp_path: Path, cb: RecordingCallbacks) -> tuple[SDKEn
     assert sid == "sess-live"
     (client,) = _FakeSDKClient.instances
     return eng, client
+
+
+async def test_permission_mode_goes_into_the_options_and_changes_live(tmp_path: Path, sdk_client: Any) -> None:
+    cb = RecordingCallbacks()
+    eng = SDKEngine(chat=3)
+    eng.permission_mode = "auto"
+    await eng.start(tmp_path, None, ["project"], cb)
+    (client,) = _FakeSDKClient.instances
+    assert client.options.permission_mode == "auto"
+    await eng.set_permission_mode("default")
+    assert client.modes == ["default"] and eng.permission_mode == "default"
+    await eng.close()
+    # Not running: remembered for the next start, nothing sent.
+    await eng.set_permission_mode("acceptEdits")
+    assert client.modes == ["default"] and eng.permission_mode == "acceptEdits"
 
 
 async def test_pump_failure_mid_turn_reports_the_turn_as_error(tmp_path: Path, sdk_client: Any) -> None:

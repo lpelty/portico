@@ -481,6 +481,7 @@ async def test_chat_open_since_replays_ring_then_live(server: GatewayServer, fac
         ]
         live = await recv(conn)
         assert isinstance(live, ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         assert live.chat == number and live.seq == last_seq and live.id == "req-open"
 
         # Since the turn.started (seq 2): only what came after it.
@@ -490,12 +491,14 @@ async def test_chat_open_since_replays_ring_then_live(server: GatewayServer, fac
         assert [m.seq for m in history.events] == list(range(3, last_seq + 1))
         live = await recv(conn)
         assert isinstance(live, ChatLive) and live.seq == last_seq
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # Up to date: empty history, still followed by live.
         await conn.send(dump(ChatOpen(ts=TS, chat=number, since=last_seq)))
         history = await recv(conn)
         assert isinstance(history, ChatHistory) and history.events == []
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
 
         # chat.open neither stamps nor advances the sequence.
         assert server.registry.get(number).seq == last_seq
@@ -531,6 +534,7 @@ async def test_same_launch_replay_carries_user_text(server: GatewayServer, facto
         assert [m.text for m in replayed] == [live_text.text]
         assert replayed[0].seq == live_text.seq
         assert isinstance(await recv(again), ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
     finally:
         await again.close()
 
@@ -556,6 +560,7 @@ async def test_chat_open_reports_truncation_when_since_fell_off_the_ring(
         assert history.truncated
         assert len(history.events) == 3
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
         await srv.shutdown()
@@ -589,6 +594,7 @@ async def test_events_while_detached_are_kept_for_reattach(
         assert [type(m) for m in history.events] == [TurnFinished, ChatState]
         assert isinstance(history.events[0], TurnFinished) and history.events[0].outcome == "done"
         assert isinstance(await recv(again), ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
     finally:
         await again.close()
 

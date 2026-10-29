@@ -498,6 +498,7 @@ async def test_held_card_delivered_on_attach(server: GatewayServer, factory: Eng
         assert [type(m) for m in history.events] == [CardAsk, ChatState]
         live = await recv(again)
         assert isinstance(live, ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
         # The open card is sent again after chat.live, unchanged: same id, same seq.
         replay = await recv(again)
         assert isinstance(replay, CardAsk)
@@ -611,6 +612,7 @@ async def test_answered_card_is_closed_in_a_ring_replay(server: GatewayServer, f
         assert kinds.index(CardAsk) < kinds.index(CardAnswered)
         assert [m.id for m in history.events if isinstance(m, CardAnswered)] == [card.id]
         assert isinstance(await recv(again), ChatLive)
+        assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live
         # Nothing is open, so nothing is re-sent after chat.live.
         with pytest.raises(TimeoutError):
             await recv(again, timeout=0.2)
@@ -636,6 +638,7 @@ async def test_open_cards_replay_on_chat_open(server: GatewayServer, factory: En
         assert isinstance(history, ChatHistory) and history.events == []
         live = await recv(conn)
         assert isinstance(live, ChatLive) and live.seq == waiting.seq
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         replay = await recv(conn)
         assert isinstance(replay, CardAsk) and replay.id == card.id and replay.seq == card.seq
         # Replaying does not advance the chat's sequence.
@@ -649,6 +652,7 @@ async def test_open_cards_replay_on_chat_open(server: GatewayServer, factory: En
         await conn.send(dump(ChatOpen(ts=TS, chat=number, since=server.registry.get(number).seq)))
         assert isinstance(await recv(conn), ChatHistory)
         assert isinstance(await recv(conn), ChatLive)
+        assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
         with pytest.raises(TimeoutError):
             await recv(conn, timeout=0.2)
     finally:

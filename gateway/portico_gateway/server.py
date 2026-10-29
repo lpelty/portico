@@ -160,6 +160,7 @@ from .messages import (
     Outcome,
     ProtocolError,
     ServerMessage,
+    SessionMode,
     SessionRenew,
     SessionRenewed,
     StatusSet,
@@ -555,6 +556,8 @@ class GatewayServer:
         self.plugins = plugins if plugins is not None else Plugins.none()
         self.state = state
         self.registry = registry
+        # A new session starts in the deployment's mode.
+        self.registry.default_mode = config.permission_mode
         self.engine_factory = engine_factory
         self.version = version
         self.epoch = str(uuid.uuid4())
@@ -598,6 +601,7 @@ class GatewayServer:
         self.register("files.list", self.on_files_list)
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
+        self.register("session.mode", self.on_session_mode)
 
     @property
     def attached(self) -> bool:
@@ -945,6 +949,7 @@ class GatewayServer:
         await self._preflight()
         engine = self.engine_factory()
         engine.chat = chat.number
+        engine.permission_mode = chat.mode or self.config.permission_mode
         session = await engine.start(
             chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
         )
@@ -1195,6 +1200,11 @@ class GatewayServer:
         for artifact in artifacts:
             await self._send(conn, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact.model_copy(update={"open": False})))
         await self._send(conn, ChatLive(ts=_now(), chat=chat.number, id=msg.id, seq=chat.seq))
+        # The state word and the session's permission mode as they are now
+        # (v0.3: the composer's mode chip reads it here). A direct reply like
+        # ``chat.live`` — no ``seq``, not in the ring — so opening a chat
+        # never adds to its history.
+        await self._send(conn, ChatState(ts=_now(), chat=chat.number, id=msg.id, state=chat.state, mode=chat.mode))
         # Open cards again, as sent (same id and seq): the app de-duplicates by id.
         for card in self.cards.open_cards(chat):
             await self._send(conn, card)
@@ -1348,6 +1358,23 @@ class GatewayServer:
         except Exception:
             log.exception("chat %d: the plug-in's on_renew failed; the session ends unlogged", chat.number)
             return False
+
+    async def on_session_mode(self, msg: SessionMode, conn: ServerConnection) -> None:
+        """Change the session's permission mode: the running engine at once, every later engine from the record.
+
+        Answered with ``chat.state`` (stamped, carrying ``mode`` and the
+        request's ``id``). A mode the engine refuses leaves the record as it was.
+        """
+        chat = self.registry.get(msg.chat)
+        if chat.ended is not None:
+            raise ProtocolError("session.ended", f"session {chat.number} has ended")
+        if chat.engine is not None:
+            await chat.engine.set_permission_mode(msg.mode)
+        chat.mode = msg.mode
+        log.info("chat %d: permission mode %s", chat.number, msg.mode)
+        event = chat.set_state(chat.state)
+        self.registry.persist()
+        await self._send(conn, event.model_copy(update={"id": msg.id}))
 
     async def on_files_search(self, msg: FilesSearch, conn: ServerConnection) -> None:
         """Hits for ``query`` under a root (named as ``files.list`` names them): a plug-in's, else Spotlight's."""

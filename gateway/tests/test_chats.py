@@ -157,7 +157,7 @@ def test_state_words_exact(state: StateDir) -> None:
     assert chat.state == "idle"
 
     # The summary carries the exact word.
-    assert chat.summary() == ChatSummary(chat=1, folder=FOLDER_A, alias=None, state="idle", created=chat.created)
+    assert chat.summary() == ChatSummary(chat=1, folder=FOLDER_A, alias=None, state="idle", created=chat.created, mode="auto")
 
 
 # --- persistence --------------------------------------------------------------
@@ -186,9 +186,9 @@ def test_registry_persists_to_index(state: StateDir) -> None:
     assert index.next_chat == 3
     assert index.chats == [
         ChatRecord(chat=1, folder=FOLDER_A, session_id="sess-1", alias="report draft", state="working",
-                   created=one.created, artifacts=[artifact]),
+                   created=one.created, artifacts=[artifact], mode="auto"),
         ChatRecord(chat=2, folder=FOLDER_B, session_id=None, alias=None, state="stopped",
-                   created=two.created, artifacts=[]),
+                   created=two.created, artifacts=[], mode="auto"),
     ]
     assert reg.list() == index.chats
 

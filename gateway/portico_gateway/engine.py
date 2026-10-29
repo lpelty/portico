@@ -46,7 +46,7 @@ from claude_agent_sdk import (
     get_session_messages,
 )
 
-from .messages import ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
+from .messages import PermissionMode, ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
 
 log = logging.getLogger(__name__)
 
@@ -97,12 +97,19 @@ class Engine(Protocol):
     chat: int
     turn: int
     session_id: str | None
+    # How the engine decides on tool use; the owner sets it before ``start``
+    # and changes it while running with ``set_permission_mode``.
+    permission_mode: PermissionMode
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str: ...
 
     async def send(self, text: str) -> None: ...
 
     async def interrupt(self) -> None: ...
+
+    async def set_permission_mode(self, mode: PermissionMode) -> None:
+        """Change the permission mode now (when running) and for every later turn."""
+        ...
 
     async def close(self) -> None: ...
 
@@ -268,12 +275,24 @@ def build_compact_hook(callbacks: EngineCallbacks):
 
 
 def build_options(
-    folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks
+    folder: Path,
+    resume: str | None,
+    setting_sources: list[str],
+    callbacks: EngineCallbacks,
+    permission_mode: PermissionMode = "default",
 ) -> ClaudeAgentOptions:
-    """The SDK options for one chat. Never sets ``verbatim_prompts`` or a permission mode."""
+    """The SDK options for one chat. Never sets ``verbatim_prompts``.
+
+    ``permission_mode`` is the session's: ``default`` asks (``can_use_tool``)
+    for every step the engine's rules do not already allow, ``acceptEdits``
+    allows file edits, ``auto`` lets the engine's classifier decide and only
+    asks when it escalates. ``bypassPermissions`` and ``dontAsk`` are never
+    passed: the protocol does not offer them.
+    """
     return ClaudeAgentOptions(
         cwd=str(folder),
         resume=resume,
+        permission_mode=permission_mode,
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
@@ -306,6 +325,7 @@ class SDKEngine:
         self.chat = chat
         self.turn = 0
         self.session_id: str | None = None
+        self.permission_mode: PermissionMode = "default"
         self.init_timeout = init_timeout
         self._client: ClaudeSDKClient | None = None
         self._callbacks: EngineCallbacks | None = None
@@ -320,7 +340,7 @@ class SDKEngine:
             raise RuntimeError("engine already started")
         self._callbacks = callbacks
         self.session_id = resume
-        self._client = ClaudeSDKClient(build_options(folder, resume, setting_sources, callbacks))
+        self._client = ClaudeSDKClient(build_options(folder, resume, setting_sources, callbacks, self.permission_mode))
         await self._client.connect()
         self._pump = asyncio.create_task(self._run_pump(), name=f"portico-engine-{self.chat}")
         try:
@@ -378,6 +398,12 @@ class SDKEngine:
     async def interrupt(self) -> None:
         if self._client is not None:
             await self._client.interrupt()
+
+    async def set_permission_mode(self, mode: PermissionMode) -> None:
+        """The SDK's ``set_permission_mode`` while connected; remembered for a later ``start`` either way."""
+        if self._client is not None:
+            await self._client.set_permission_mode(mode)
+        self.permission_mode = mode
 
     async def context_usage(self) -> tuple[float, str | None] | None:
         """The SDK's ``get_context_usage``: ``percentage`` and ``model``; ``None`` before ``start``."""

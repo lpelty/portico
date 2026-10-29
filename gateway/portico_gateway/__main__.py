@@ -54,7 +54,9 @@ async def _run_server(config, state, port: int, engine_factory=None, plugins=Non
         from portico_gateway.engine import SDKEngine
 
         engine_factory = SDKEngine
-    registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=config.history_buffer)
+    registry = ChatRegistry(
+        index=state.load_index(), state=state, history_buffer=config.history_buffer, default_mode=config.permission_mode
+    )
     server = GatewayServer(
         config=config, state=state, registry=registry, engine_factory=engine_factory, version=__version__, plugins=plugins
     )
