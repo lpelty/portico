@@ -61,14 +61,42 @@ struct StatusStripPresentation: Equatable, Sendable {
         static let fontSize: CGFloat = 12
         static let sidePadding: CGFloat = 16
         static let spacing: CGFloat = 16
-        /// An icon and the gap after it.
-        static let icon: CGFloat = 16
-        /// The services control: dot, gaps, chevron and its own padding.
-        static let servicesChrome: CGFloat = 6 + 5 + 4 + 8 + 16
-        /// A right-hand item drawn as an icon alone.
-        static let iconOnly: CGFloat = 18
-        /// Room left over so a fit is not on the pixel.
-        static let slack: CGFloat = 12
+        /// Between an icon and its words.
+        static let iconGap: CGFloat = 5
+        /// The segments' icons, as drawn.
+        static let modelIcon = Symbol(name: "cpu", size: 11)
+        static let contextIcon = Symbol(name: "gauge.with.dots.needle.50percent", size: 11)
+        static let chevron = Symbol(name: "chevron.down", size: 8, weight: .semibold)
+        static let restartIcon = Symbol(name: "arrow.clockwise", size: 10, weight: .semibold)
+        static let updateIcon = Symbol(name: "arrow.down.circle", size: 11)
+        static let updateIconCompact = Symbol(name: "arrow.down.circle", size: 13)
+        /// The services control around its words: dot and gap, the gap
+        /// before the chevron, and its own padding.
+        static let servicesChrome: CGFloat = 6 + 5 + 5 + 16
+        /// Room left over so a fit is not on the pixel (text drawn a hair
+        /// wider than measured, a symbol's optical margins).
+        static let slack: CGFloat = 20
+    }
+
+    /// An SF Symbol at the size and weight the strip draws it.
+    struct Symbol: Equatable, Sendable {
+        var name: String
+        var size: CGFloat
+        var weight: NSFont.Weight = .regular
+    }
+
+    /// How the strip's words and icons are measured; the tests give their own.
+    struct Metrics {
+        /// Words in the strip's font.
+        var text: (String) -> CGFloat
+        /// Words with `.monospacedDigit()`, as the context is drawn.
+        var digits: (String) -> CGFloat
+        var symbol: (Symbol) -> CGFloat
+
+        /// AppKit's measure of the real fonts and symbols.
+        static var system: Metrics {
+            Metrics(text: textWidth, digits: digitWidth, symbol: symbolWidth)
+        }
     }
 
     /// The text's width in the strip's font.
@@ -77,28 +105,55 @@ struct StatusStripPresentation: Equatable, Sendable {
         return ceil((text as NSString).size(withAttributes: [.font: font]).width)
     }
 
+    /// The text's width in the strip's font with monospaced digits.
+    static func digitWidth(_ text: String) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: Measure.fontSize, weight: .regular)
+        return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// The symbol's width as AppKit draws it; a guess on the generous side
+    /// should the symbol be missing.
+    static func symbolWidth(_ symbol: Symbol) -> CGFloat {
+        let configuration = NSImage.SymbolConfiguration(pointSize: symbol.size, weight: symbol.weight)
+        guard let image = NSImage(systemSymbolName: symbol.name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+        else { return ceil(symbol.size * 1.5) }
+        return ceil(image.size.width)
+    }
+
     /// The width the strip needs at a fit, the right-hand items included
     /// (`restart`: the stale-config button shows; `update`: the version
     /// offered).
-    func width(at fit: Fit, restart: Bool, update: String?, measure: (String) -> CGFloat = textWidth) -> CGFloat {
+    func width(at fit: Fit, restart: Bool, update: String?, metrics: Metrics = .system) -> CGFloat {
+        func labelled(_ icon: Symbol, _ text: CGFloat) -> CGFloat {
+            metrics.symbol(icon) + Measure.iconGap + text
+        }
         var segments: [CGFloat] = []
-        if let model = model(at: fit) { segments.append(Measure.icon + measure(model)) }
-        if let context = context(at: fit) { segments.append(Measure.icon + measure(context)) }
-        segments.append(Measure.servicesChrome + measure(servicesLabel(at: fit)))
+        if let model = model(at: fit) { segments.append(labelled(Measure.modelIcon, metrics.text(model))) }
+        if let context = context(at: fit) { segments.append(labelled(Measure.contextIcon, metrics.digits(context))) }
+        segments.append(Measure.servicesChrome + metrics.text(servicesLabel(at: fit)) + metrics.symbol(Measure.chevron))
         segments.append(0)  // the spacer
         if restart {
-            segments.append(fit == .full ? Measure.icon + measure(Self.restartText) : Measure.iconOnly)
+            segments.append(
+                fit == .full
+                    ? labelled(Measure.restartIcon, metrics.text(Self.restartText)) : metrics.symbol(Measure.restartIcon))
         }
         if let update {
-            segments.append(fit == .full ? Measure.icon + measure(Self.updateText(update)) : Measure.iconOnly)
+            segments.append(
+                fit == .full
+                    ? labelled(Measure.updateIcon, metrics.text(Self.updateText(update)))
+                    : metrics.symbol(Measure.updateIconCompact))
         }
         let gaps = CGFloat(max(segments.count - 1, 0)) * Measure.spacing
         return 2 * Measure.sidePadding + segments.reduce(0, +) + gaps + Measure.slack
     }
 
-    /// The fullest fit that fits `width`; `minimal` when none does.
-    func fit(width: CGFloat, restart: Bool, update: String?, measure: (String) -> CGFloat = textWidth) -> Fit {
-        Fit.allCases.first { self.width(at: $0, restart: restart, update: update, measure: measure) <= width } ?? .minimal
+    /// The fullest fit that fits `width`; `minimal` when none does. A
+    /// width not measured yet (the first frame) is the full strip, so it
+    /// does not flash minimal first.
+    func fit(width: CGFloat?, restart: Bool, update: String?, metrics: Metrics = .system) -> Fit {
+        guard let width else { return .full }
+        return Fit.allCases.first { self.width(at: $0, restart: restart, update: update, metrics: metrics) <= width } ?? .minimal
     }
 
     // MARK: words
@@ -165,7 +220,8 @@ extension AppModel {
 struct StatusStrip: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var supervisor: GatewaySupervisor
-    @State private var width: CGFloat = 0
+    /// `nil` until the strip has been laid out once.
+    @State private var width: CGFloat?
     @State private var servicesShown = false
 
     var body: some View {
@@ -173,10 +229,10 @@ struct StatusStrip: View {
         let fit = strip.fit(width: width, restart: model.configStale, update: model.offeredUpdate)
         HStack(spacing: StatusStripPresentation.Measure.spacing) {
             if let modelText = strip.model(at: fit) {
-                segment("cpu", modelText, help: strip.modelText)
+                segment(StatusStripPresentation.Measure.modelIcon, modelText, help: strip.modelText)
             }
             if let context = strip.context(at: fit) {
-                segment("gauge.with.dots.needle.50percent", context, monospaced: true)
+                segment(StatusStripPresentation.Measure.contextIcon, context, monospaced: true)
             }
             ServicesControl(services: strip.services, label: strip.servicesLabel(at: fit), shown: $servicesShown)
             Spacer(minLength: 0)
@@ -197,10 +253,12 @@ struct StatusStrip: View {
         .accessibilityLabel("Status: \(strip.text)")
     }
 
-    private func segment(_ icon: String, _ text: String, monospaced: Bool = false, help: String? = nil) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
+    private func segment(
+        _ icon: StatusStripPresentation.Symbol, _ text: String, monospaced: Bool = false, help: String? = nil
+    ) -> some View {
+        HStack(spacing: StatusStripPresentation.Measure.iconGap) {
+            Image(systemName: icon.name)
+                .font(.system(size: icon.size))
             Text(text)
                 .font(monospaced ? .system(size: 12).monospacedDigit() : .system(size: 12))
         }
@@ -214,8 +272,8 @@ struct StatusStrip: View {
             Task { await model.restartGateway() }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10, weight: .semibold))
+                Image(systemName: StatusStripPresentation.Measure.restartIcon.name)
+                    .font(.system(size: StatusStripPresentation.Measure.restartIcon.size, weight: .semibold))
                 if !compact {
                     Text(model.restarting ? "Restarting…" : StatusStripPresentation.restartText)
                         .font(.system(size: 12))
@@ -236,8 +294,9 @@ struct StatusStrip: View {
             Updater.relaunchForUpdate()
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: compact ? 13 : 11))
+                let icon = compact ? StatusStripPresentation.Measure.updateIconCompact : StatusStripPresentation.Measure.updateIcon
+                Image(systemName: icon.name)
+                    .font(.system(size: icon.size))
                 if !compact {
                     Text(StatusStripPresentation.updateText(version))
                         .font(.system(size: 12))
@@ -273,8 +332,8 @@ struct ServicesControl: View {
                 Text(label)
                     .font(.system(size: 12))
                     .foregroundStyle(services.tone == .down ? Theme.wait : Theme.text2)
-                Image(systemName: shown ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                Image(systemName: shown ? "chevron.up" : StatusStripPresentation.Measure.chevron.name)
+                    .font(.system(size: StatusStripPresentation.Measure.chevron.size, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
             .fixedSize()

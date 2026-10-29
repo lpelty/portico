@@ -170,10 +170,19 @@ final class AppModel: ObservableObject {
     @Published var askingToLog: Int?
     /// The deployment's services from the latest `services.status`; `nil`
     /// until the first one on this connection ("Checking…").
-    @Published private(set) var services: [Service]?
+    @Published var services: [Service]?
     /// Restarts sent and not yet answered by a `services.status`: service
     /// id → request id.
     @Published var restartingServices: [String: String] = [:]
+    /// Per restarting service, how it was when Restart was pressed: only a
+    /// status that moves it (to `checking`, or another state or detail)
+    /// answers that restart.
+    var restartBaselines: [String: Service] = [:]
+    /// After a `chat.list`, gives up waiting for the first `services.status`
+    /// (a gateway that sends none): the Gateway row alone, not "Checking…".
+    var servicesFallback: Task<Void, Never>?
+    /// How long `servicesFallback` waits.
+    var servicesFallbackDelay: Duration = .seconds(5)
     /// Chats whose nudge (S2) the person put off with "Not now".
     @Published var nudgeDismissed: Set<Int> = []
     /// The Files pane's switch (F1 Folder, F2 Bookmarks).
@@ -389,8 +398,17 @@ final class AppModel: ObservableObject {
             // Each gateway says afresh: a restarted one has read the config.
             configStale = hello.configStale ?? false
             // Services are checked afresh too: "Checking…" until it says.
-            services = nil
+            // A gateway older than v0.4 never will: the Gateway row alone.
+            services = Self.gatewaySendsServices(hello.gatewayVersion) ? nil : []
             restartingServices = [:]
+            restartBaselines = [:]
+            servicesFallback?.cancel()
+            servicesFallback = nil
+            // A log or renewal sent on the old connection was never
+            // answered (or its answer was lost with it); the `chat.list`
+            // that follows says how each session is now.
+            logging = [:]
+            renewing = [:]
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -408,11 +426,13 @@ final class AppModel: ObservableObject {
                 forget(chat: chat)
             }
             openLiveSessionIfNeeded()
+            awaitServicesStatus()
 
         case .chatState(let state):
             if let index = chats.firstIndex(where: { $0.chat == state.chat }) {
                 chats[index].state = state.state
                 if let mode = state.mode { chats[index].mode = mode }
+                if let unlogged = state.unlogged { chats[index].unlogged = unlogged }
             }
             if let id = state.id, pendingNewChats.remove(id) != nil {
                 // The new session runs in what the start screen's chip
@@ -478,8 +498,9 @@ final class AppModel: ObservableObject {
             applyLogged(logged)
 
         case .servicesStatus(let status):
-            services = status.services
-            restartingServices = [:]
+            servicesFallback?.cancel()
+            servicesFallback = nil
+            applyServicesStatus(status)
 
         case .filesResults(let results):
             applySearchResults(results)
@@ -503,6 +524,7 @@ final class AppModel: ObservableObject {
             }
             if let id = error.id, let service = restartingServices.first(where: { $0.value == id })?.key {
                 restartingServices[service] = nil
+                restartBaselines[service] = nil
             }
             if let id = error.id, fileSearch?.pending[id] != nil {
                 fileSearch?.pending[id] = nil

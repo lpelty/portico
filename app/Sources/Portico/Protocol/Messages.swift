@@ -501,6 +501,10 @@ struct ChatState: Codable, Equatable, Sendable {
     var chat: Int
     var state: ChatStateWord
     var mode: PermissionMode? = nil
+    /// The session's `unlogged` as of this state (v0.4, on every
+    /// `chat.state`): a turn that just finished makes it true without a
+    /// `chat.list`. Absent from an older gateway: the record keeps its own.
+    var unlogged: Bool? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
