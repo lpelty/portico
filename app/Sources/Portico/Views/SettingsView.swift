@@ -138,6 +138,17 @@ struct GatewaySettingsTab: View {
             }
             Section("Gateway") {
                 LabeledContent("State", value: model.statusStrip(gateway: supervisor.status).gatewayText)
+                if model.configStale {
+                    HStack {
+                        Label(StatusStripPresentation.restartText, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(Theme.wait)
+                        Spacer()
+                        Button(model.restarting ? "Restarting…" : "Restart") {
+                            Task { await model.restartGateway() }
+                        }
+                        .disabled(model.restarting)
+                    }
+                }
                 HStack {
                     Button("Start") { model.startGateway() }
                         .disabled(model.connection == .connected || supervisor.status == .starting)

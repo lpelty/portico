@@ -35,6 +35,12 @@ struct StatusStripPresentation: Equatable, Sendable {
         return (words + (version.isEmpty ? [] : [version])).joined(separator: " ")
     }
 
+    static let restartText = "Restart the gateway to apply"
+
+    static func updateText(_ version: String) -> String {
+        "Update available (\(version))"
+    }
+
     /// `62% context`, rounded to a whole percent.
     static func contextText(_ percent: Double) -> String {
         "\(Int(percent.rounded()))% context"
@@ -142,6 +148,39 @@ struct StatusStrip: View {
                     .foregroundStyle(Theme.wait)
             }
             Spacer(minLength: 8)
+            if model.configStale {
+                Button {
+                    Task { await model.restartGateway() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(model.restarting ? "Restarting…" : StatusStripPresentation.restartText)
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(Theme.wait)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.hover)
+                .disabled(model.restarting)
+                .help("The config file changed after the gateway started. Restart it to apply the change.")
+            }
+            if let version = model.offeredUpdate {
+                Button {
+                    Updater.relaunchForUpdate()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 11))
+                        Text(StatusStripPresentation.updateText(version))
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(model.brand.accent ?? Theme.accent)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.hover)
+                .help("Install the update: \(model.brand.name) closes, updates, and opens again")
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.statusStripHeight)

@@ -124,6 +124,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var live: Set<Int> = []
     /// The socket's state, for the status strip.
     @Published private(set) var connection: ConnectionState = .disconnected
+    /// The gateway's config file changed after it started (`hello.config_stale`,
+    /// `config.stale`): Settings and the strip offer a restart.
+    @Published private(set) var configStale = false
+    /// A restart (stop, then start) is under way.
+    @Published private(set) var restarting = false
+    /// The version the deployment's update check found (`update.available`).
+    @Published private(set) var updateVersion: String?
     /// Per chat, the attachment paths queued in the input bar: the Files
     /// pane and drag-and-drop add here; a send clears the chat's list.
     @Published private(set) var draftAttachments: [Int: [String]] = [:]
@@ -367,6 +374,8 @@ final class AppModel: ObservableObject {
     func apply(_ message: ServerMessage) {
         switch message {
         case .hello(let hello):
+            // Each gateway says afresh: a restarted one has read the config.
+            configStale = hello.configStale ?? false
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -454,9 +463,11 @@ final class AppModel: ObservableObject {
         case .filesResults(let results):
             applySearchResults(results)
 
-        case .configStale, .updateAvailable:
-            // v0.3: drawn by the app work that follows the protocol change.
-            break
+        case .configStale:
+            configStale = true
+
+        case .updateAvailable(let update):
+            updateVersion = update.version
 
         case .error(let error):
             lastError = error
@@ -1476,6 +1487,24 @@ extension AppModel {
         } else if let supervisor {
             Task { _ = try? await supervisor.start() }
         }
+    }
+
+    /// "Restart the gateway to apply": stop it (`gateway.stop`, as Stop
+    /// does) and start it again; the new gateway's `hello` clears the
+    /// stale mark.
+    func restartGateway(timeout: Duration = .seconds(10)) async {
+        guard !restarting else { return }
+        restarting = true
+        defer { restarting = false }
+        await stopGateway(timeout: timeout)
+        startGateway()
+    }
+
+    /// The update the strip offers: a version was found and the deployment
+    /// can run the update (`hello.can_update`).
+    var offeredUpdate: String? {
+        guard hello?.canUpdate == true else { return nil }
+        return updateVersion
     }
 
     /// What quitting does to the gateway (spec §5.5, D19): keep it running
