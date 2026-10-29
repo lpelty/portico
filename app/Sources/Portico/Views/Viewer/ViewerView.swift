@@ -48,6 +48,22 @@ struct ArtifactPresentation: Equatable {
         return !FileManager.default.fileExists(atPath: fileURL.path)
     }
 
+    /// What the viewer keys its pane on: the artifact's id, plus the file's
+    /// modification date and size. A file opened from the Files pane keeps
+    /// one id however often it is opened, and the agent can rewrite a file
+    /// that is on screen; with the date in the key, a re-open or the next
+    /// redraw after a change on disk loads it afresh instead of showing what
+    /// was read the first time.
+    var contentIdentity: String {
+        guard let fileURL,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path) else {
+            return artifact.id
+        }
+        let date = (attributes[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        return "\(artifact.id)|\(date)|\(size)"
+    }
+
     /// The path the way a person writes it, with `~` for the home folder.
     var displayPath: String {
         fileURL.map { ($0.path as NSString).abbreviatingWithTildeInPath } ?? artifact.location
@@ -153,7 +169,8 @@ struct ViewerView: View {
         HStack(spacing: 8) {
             titleMenu
             Spacer(minLength: 8)
-            if let current = model.current[chat] {
+            // No Open button for a file that isn't on disk: nothing to open.
+            if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
                 Button {
                     ArtifactPresentation(artifact: current).openExternally()
                 } label: {
@@ -259,7 +276,7 @@ struct ViewerView: View {
     private var content: some View {
         if let current = model.current[chat] {
             ArtifactContent(artifact: current)
-                .id(current.id)
+                .id(ArtifactPresentation(artifact: current).contentIdentity)
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",
@@ -445,36 +462,63 @@ struct TextPane: View {
         }
         .task(id: file) {
             let file = file
-            let read = await Task.detached { TextFileRead.read(file, limit: TextFileRead.textLimit) }.value
+            let read = await offMain { TextFileRead.read(file, limit: TextFileRead.textLimit) }
+            guard !Task.isCancelled else { return }
             phase = read.map(Phase.text) ?? .unreadable
         }
     }
 }
 
 /// Text already read, drawn monospaced 12 on scroll views both ways, with a
-/// line under it when the file was cut short.
+/// line under it when the file was cut short or a very long line was
+/// broken for display (`TextFileRead.hardBreak`).
 struct TextBody: View {
     let read: TextFileRead
     @State private var attributed: NSAttributedString?
+    @State private var broke = false
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView([.horizontal, .vertical]) {
-                if let attributed {
-                    SelectableText(text: attributed, wraps: false)
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            // A scroll view that scrolls both ways centres content smaller
+            // than itself; text starts at the top left like any editor, so
+            // the content is at least as big as the pane, aligned there.
+            GeometryReader { geo in
+                ScrollView([.horizontal, .vertical]) {
+                    if let attributed {
+                        SelectableText(text: attributed, wraps: false)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 14)
+                            .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
+                    }
                 }
             }
-            if read.truncated {
-                let size = ByteCountFormatter.string(fromByteCount: Int64(read.totalBytes), countStyle: .file)
-                let limit = ByteCountFormatter.string(fromByteCount: Int64(TextFileRead.textLimit), countStyle: .file)
-                ViewerFootnote(text: "Showing the first \(limit) of \(size). Open it externally for the rest.")
+            if let note = Self.note(read: read, broke: broke) {
+                ViewerFootnote(text: note)
             }
         }
         // Built once, not on every redraw: a megabyte of text is not free.
-        .task(id: read) { attributed = MarkdownAttributed.code(read.text) }
+        // Long lines are broken off the main thread first.
+        .task(id: read) {
+            let text = read.text
+            let shown = await offMain { TextFileRead.hardBreak(text) }
+            guard !Task.isCancelled else { return }
+            broke = shown.broke
+            attributed = MarkdownAttributed.code(shown.text)
+        }
+    }
+
+    /// The line under the text, or `nil` when it is all there as written.
+    static func note(read: TextFileRead, broke: Bool) -> String? {
+        var parts: [String] = []
+        if broke {
+            parts.append("Lines longer than \(TextFileRead.displayLineLimit.formatted()) characters are broken to fit.")
+        }
+        if read.truncated {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(read.totalBytes), countStyle: .file)
+            let limit = ByteCountFormatter.string(fromByteCount: Int64(TextFileRead.textLimit), countStyle: .file)
+            parts.append("Showing the first \(limit) of \(size). Open it externally for the rest.")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 }
 
@@ -495,7 +539,9 @@ struct ViewerFootnote: View {
     }
 }
 
-/// A brief "Loading…" while a big file is read off the main thread.
+/// A brief "Loading…" while a big file is read off the main thread. At
+/// the top left, where the text or table will start, so nothing jumps
+/// from the middle of the pane when it arrives.
 struct LoadingPane: View {
     var body: some View {
         HStack(spacing: 8) {
@@ -504,7 +550,9 @@ struct LoadingPane: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text2)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 

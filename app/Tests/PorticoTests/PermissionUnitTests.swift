@@ -170,4 +170,13 @@ final class PermissionUnitTests: XCTestCase {
         XCTAssertEqual(shown.unanswered, "nobody was there to answer")
         XCTAssertEqual(ToolRowPresentation(row: shown).outcomeText(waiting: false), "not answered")
     }
+
+    func testAWriteWhoseCardWasNeverAnsweredDidNotWrite() {
+        var write = ToolRow(toolUseId: "tu-1", turn: 1, tool: "Write", summary: "", input: ["file_path": .string("/tmp/a.md")])
+        write.finished = true
+        write.ok = true
+        XCTAssertTrue(AppModel.didWrite(write))
+        write.unanswered = "cancelled"
+        XCTAssertFalse(AppModel.didWrite(write), "nobody allowed it, so it didn't run")
+    }
 }

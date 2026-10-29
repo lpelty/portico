@@ -231,11 +231,24 @@ final class SelectableTextView: NSTextView {
     }
 
     /// Collapse the selection of every registered view in `window` that
-    /// `hit` (the view under a click, nil for none) is not inside.
+    /// `hit` (the view under a click, nil for none) is not inside. A click
+    /// on a scroll bar clears nothing: scrolling to read more of what is
+    /// selected is not a click elsewhere, and AppKit keeps it there too.
     static func deselect(in window: NSWindow, except hit: NSView?) {
+        if isOnScroller(hit) { return }
         for view in all.allObjects where view.window === window && view.selectedRange().length > 0 {
             if let hit, hit === view || hit.isDescendant(of: view) { continue }
             view.setSelectedRange(NSRange(location: view.selectedRange().location, length: 0))
         }
+    }
+
+    /// Whether `view` is a scroll bar or inside one (its knob, its arrows).
+    private static func isOnScroller(_ view: NSView?) -> Bool {
+        var current = view
+        while let candidate = current {
+            if candidate is NSScroller { return true }
+            current = candidate.superview
+        }
+        return false
     }
 }

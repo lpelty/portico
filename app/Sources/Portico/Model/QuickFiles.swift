@@ -138,11 +138,12 @@ extension AppModel {
     }
 
     /// A write that may have happened: not failed, and its permission
-    /// not declined or blocked. A declined write can still finish `ok`
-    /// (the engine reports the refusal as a result), so the outcome is
-    /// checked on its own.
+    /// not declined or blocked, nor its card cancelled before anyone
+    /// answered (`unanswered`: nobody allowed it, so it didn't run). A
+    /// declined write can still finish `ok` (the engine reports the refusal
+    /// as a result), so the outcome is checked on its own.
     static func didWrite(_ row: ToolRow) -> Bool {
-        guard row.ok != false else { return false }
+        guard row.ok != false, row.unanswered == nil else { return false }
         switch row.permission {
         case .declined?, .blocked?: return false
         default: return true

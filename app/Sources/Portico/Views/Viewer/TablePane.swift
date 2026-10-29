@@ -25,15 +25,33 @@ struct TablePane: View {
         .task(id: file) {
             let file = file
             let separator = separator
-            load = await Task.detached { TableLoad.load(file, separator: separator) }.value
+            let result = await offMain { TableLoad.load(file, separator: separator) }
+            guard !Task.isCancelled else { return }
+            load = result
         }
     }
 }
 
+/// Runs `work` off the main thread and waits for it; when the waiting task
+/// is cancelled (the view went away, another file was picked) the work is
+/// cancelled too. A detached task doesn't inherit cancellation on its own,
+/// so without this every big file clicked past kept parsing.
+func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    let task = Task.detached(operation: work)
+    return await withTaskCancellationHandler {
+        await task.value
+    } onCancel: {
+        task.cancel()
+    }
+}
+
 /// The table itself. The header row stays put while the rows scroll down,
-/// and moves with them when a wide table scrolls sideways: one horizontal
-/// scroll view holds the header and a vertical one under it. Rows draw
-/// lazily on fixed column widths, so tens of thousands scroll smoothly.
+/// and moves with them when a wide table scrolls sideways: one scroll view
+/// scrolls both ways (so both scrollers sit at the viewer's edges, however
+/// wide the table), and the header is the pinned header of the one section
+/// in a lazy stack. Rows draw lazily on fixed column widths, so tens of
+/// thousands scroll smoothly. At most `DelimitedTable.maxDrawnColumns`
+/// columns draw: one width per drawn column.
 ///
 /// Header semibold on the surface colour; hairlines between rows; numeric
 /// columns right-aligned; a cell wider than its column truncates. Cells
@@ -50,21 +68,25 @@ struct TableBody: View {
     var body: some View {
         VStack(spacing: 0) {
             GeometryReader { geo in
-                ScrollView(.horizontal) {
-                    VStack(spacing: 0) {
-                        row(table.header, header: true)
-                        hairline
-                        ScrollView(.vertical) {
-                            LazyVStack(spacing: 0) {
-                                ForEach(0..<table.rows.count, id: \.self) { index in
-                                    row(table.rows[index], header: false)
-                                    hairline
-                                }
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        Section {
+                            ForEach(0..<table.rows.count, id: \.self) { index in
+                                row(table.rows[index], header: false)
+                                hairline
+                            }
+                        } header: {
+                            VStack(spacing: 0) {
+                                row(table.header, header: true)
+                                hairline
                             }
                         }
                     }
                     .textSelection(.enabled)
-                    .frame(width: max(tableWidth, geo.size.width), height: geo.size.height, alignment: .topLeading)
+                    // As wide as the table, or the viewer when that is wider;
+                    // at least as tall as the viewer so a short table sits at the top.
+                    .frame(width: max(tableWidth, geo.size.width), alignment: .topLeading)
+                    .frame(minHeight: geo.size.height, alignment: .topLeading)
                 }
             }
             if let note {
@@ -91,6 +113,7 @@ struct TableBody: View {
         }
         .frame(height: Self.rowHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The pinned header is opaque so rows scrolling under it don't show.
         .background(header ? Theme.surface : .clear)
     }
 }

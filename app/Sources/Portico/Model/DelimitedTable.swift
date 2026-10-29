@@ -26,12 +26,13 @@ struct DelimitedTable: Equatable, Sendable {
     /// a guard against absurd files, not a page size (rows draw lazily).
     static let defaultRowLimit = 200_000
 
-    /// The separator a file's extension implies: tab for `.tsv` (and
-    /// `.tab`), comma for `.csv`; `nil` for anything else.
+    /// The separator a file's extension implies: tab for `.tsv`, comma for
+    /// `.csv`; `nil` for anything else. Only extensions in
+    /// `Media.textExtensions` reach the table, so the two lists agree.
     static func separator(forExtension ext: String) -> Character? {
         switch ext.lowercased() {
         case "csv": ","
-        case "tsv", "tab": "\t"
+        case "tsv": "\t"
         default: nil
         }
     }
@@ -42,7 +43,17 @@ struct DelimitedTable: Equatable, Sendable {
     /// as plain text instead.
     ///
     /// A trailing line break, a byte-order mark and CRLF line ends are fine.
-    static func parse(_ text: String, separator: Character, rowLimit: Int = defaultRowLimit) -> DelimitedTable? {
+    ///
+    /// `partial` says the text is the start of a longer file, cut at a line
+    /// break. A cut can land inside a quoted cell that spans lines; then the
+    /// quote that never closes is where the read stopped, not a broken file,
+    /// so the table ends with the last complete record before it.
+    ///
+    /// Checks for cancellation every few thousand records and gives up
+    /// (`nil`) when the task is cancelled, so a parse nobody waits for stops.
+    static func parse(
+        _ text: String, separator: Character, rowLimit: Int = defaultRowLimit, partial: Bool = false
+    ) -> DelimitedTable? {
         // Works on UTF-8 bytes: the separator, quote and line breaks are all
         // ASCII, so they never appear inside a multi-byte character, and a
         // field is a byte slice made a String once (a 25 MB file parses in
@@ -78,7 +89,8 @@ struct DelimitedTable: Equatable, Sendable {
 
             var i = bytes.startIndex
             let end = bytes.endIndex
-            while i < end {
+            var records = 0
+            fields: while i < end {
                 // At the start of a field.
                 var field: String
                 if bytes[i] == quote {
@@ -100,7 +112,12 @@ struct DelimitedTable: Equatable, Sendable {
                         quoted.append(c)
                         i += 1
                     }
-                    guard closedAt != nil else { return nil }  // never closed
+                    guard closedAt != nil else {
+                        // Never closed: the end of a cut read, or a broken file.
+                        guard partial else { return nil }
+                        record = []
+                        break fields
+                    }
                     // Only the separator or a line end may follow.
                     if i < end, bytes[i] != sep, bytes[i] != lf, bytes[i] != cr { return nil }
                     field = String(decoding: quoted, as: UTF8.self)
@@ -128,6 +145,8 @@ struct DelimitedTable: Equatable, Sendable {
                     record = []
                 } else {
                     guard endRecord() else { return nil }
+                    records += 1
+                    if records % cancelCheckInterval == 0, Task.isCancelled { return nil }
                 }
                 // Skip blank lines here too, so the limit check below sees
                 // whether real rows remain.
@@ -142,6 +161,9 @@ struct DelimitedTable: Equatable, Sendable {
             return finish(header: header, rows: rows, limitHit: limitHit)
         }
     }
+
+    /// How many records the parse goes between cancellation checks.
+    static let cancelCheckInterval = 4096
 
     private static func finish(header: [String]?, rows: [[String]], limitHit: Bool) -> DelimitedTable? {
         guard let header, !header.isEmpty, !(header.count == 1 && header[0].isEmpty) else { return nil }
@@ -208,6 +230,10 @@ struct DelimitedTable: Equatable, Sendable {
     /// How many rows below the header the widths are measured from: enough
     /// to be representative, few enough that a huge file opens at once.
     static let widthSampleRows = 200
+    /// The most columns the table draws: every column is a view in every
+    /// row on screen, so a file with thousands would crawl. The rest are
+    /// left out, and the table says so.
+    static let maxDrawnColumns = 200
     static let minColumnWidth: CGFloat = 60
     static let maxColumnWidth: CGFloat = 320
     /// Room on each side of a cell's text.
@@ -243,30 +269,42 @@ enum TableLoad: Sendable {
     case text(TextFileRead)
     case unreadable
 
-    /// Reads at most `TextFileRead.tableLimit` bytes and `rowLimit` rows,
-    /// and says so in `note` when either cuts the file short.
-    static func load(_ file: URL, separator: Character, rowLimit: Int = DelimitedTable.defaultRowLimit) -> TableLoad {
-        if let read = TextFileRead.read(file, limit: TextFileRead.tableLimit, wholeLines: true),
-           let table = DelimitedTable.parse(read.text, separator: separator, rowLimit: rowLimit) {
-            let widths = DelimitedTable.columnWidths(header: table.header, rows: table.rows)
-            return .table(table, widths: widths, note: note(table: table, read: read))
+    /// Reads at most `byteLimit` bytes and `rowLimit` rows, and draws at
+    /// most `DelimitedTable.maxDrawnColumns` columns (widths are worked out
+    /// for those only); says so in `note` when any of them cuts the file
+    /// short. A cancelled load gives `unreadable`, which nobody sees.
+    static func load(
+        _ file: URL, separator: Character, rowLimit: Int = DelimitedTable.defaultRowLimit,
+        byteLimit: Int = TextFileRead.tableLimit
+    ) -> TableLoad {
+        if let read = TextFileRead.read(file, limit: byteLimit, wholeLines: true),
+           let table = DelimitedTable.parse(read.text, separator: separator, rowLimit: rowLimit, partial: read.truncated) {
+            let drawn = Array(table.header.prefix(DelimitedTable.maxDrawnColumns))
+            let widths = DelimitedTable.columnWidths(header: drawn, rows: table.rows)
+            return .table(table, widths: widths, note: note(table: table, read: read, byteLimit: byteLimit))
         }
+        if Task.isCancelled { return .unreadable }
         guard let text = TextFileRead.read(file, limit: TextFileRead.textLimit) else { return .unreadable }
         return .text(text)
     }
 
-    /// The line under a table cut short, or `nil` when it is all there.
-    static func note(table: DelimitedTable, read: TextFileRead) -> String? {
+    /// The line under a table cut short (rows, bytes or columns), or `nil`
+    /// when it is all there.
+    static func note(table: DelimitedTable, read: TextFileRead, byteLimit: Int = TextFileRead.tableLimit) -> String? {
         let rows = table.rows.count.formatted()
+        var parts: [String] = []
         if read.truncated {
             let size = ByteCountFormatter.string(fromByteCount: Int64(read.totalBytes), countStyle: .file)
-            let limit = ByteCountFormatter.string(fromByteCount: Int64(TextFileRead.tableLimit), countStyle: .file)
-            return "Showing \(rows) rows from the first \(limit) of \(size). Open it externally for the rest."
+            let limit = ByteCountFormatter.string(fromByteCount: Int64(byteLimit), countStyle: .file)
+            parts.append("Showing \(rows) rows from the first \(limit) of \(size).")
+        } else if table.rowLimitHit {
+            parts.append("Showing the first \(rows) rows; the file has more.")
         }
-        if table.rowLimitHit {
-            return "Showing the first \(rows) rows; the file has more. Open it externally for the rest."
+        if table.columnCount > DelimitedTable.maxDrawnColumns {
+            parts.append("Showing the first \(DelimitedTable.maxDrawnColumns) of \(table.columnCount.formatted()) columns.")
         }
-        return nil
+        guard !parts.isEmpty else { return nil }
+        return (parts + ["Open it externally for the rest."]).joined(separator: " ")
     }
 }
 
@@ -286,6 +324,36 @@ struct TextFileRead: Equatable, Sendable {
     static let textLimit = 1_000_000
     /// The table's cap: big enough for any table a person means to look at.
     static let tableLimit = 50_000_000
+
+    /// The longest line the text pane draws as one: a longer one (a
+    /// minified file, a megabyte of JSON on one line) is laid out at its
+    /// full width on the main thread and can hang the app, so it is broken
+    /// into pieces this long for display.
+    static let displayLineLimit = 10_000
+
+    /// `text` with every line longer than `limit` characters broken into
+    /// pieces of `limit`, and whether any was. Line ends become `\n`
+    /// when anything is broken; otherwise the text comes back as it was.
+    static func hardBreak(_ text: String, limit: Int = displayLineLimit) -> (text: String, broke: Bool) {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        // A line's UTF-8 length is at least its character count: cheap and safe.
+        guard lines.contains(where: { $0.utf8.count > limit }) else { return (text, false) }
+        var out = ""
+        out.reserveCapacity(text.utf8.count + text.utf8.count / limit + 1)
+        var broke = false
+        for (index, line) in lines.enumerated() {
+            if index > 0 { out.append("\n") }
+            var start = line.startIndex
+            while let cut = line.index(start, offsetBy: limit, limitedBy: line.endIndex), cut < line.endIndex {
+                out.append(contentsOf: line[start..<cut])
+                out.append("\n")
+                start = cut
+                broke = true
+            }
+            out.append(contentsOf: line[start...])
+        }
+        return (out, broke)
+    }
 
     /// The file's first `limit` bytes as UTF-8, or `nil` when it can't be
     /// read or isn't UTF-8. A cut that lands inside a multi-byte character
