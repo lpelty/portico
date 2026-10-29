@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.5.0 (2026-10-29)
+
+The viewer shows more, and nine fixes from the first deployment's use.
+Screens: `design/portico.pen` row X (X1, X2).
+
+### What a person gets (app)
+
+- **CSV and TSV as tables**: header row pinned while the rows scroll down
+  and moving sideways with the columns; one viewport with its scrollbars
+  at the viewer's edges; rows draw lazily, so tens of thousands scroll
+  smoothly; numeric columns right-aligned; cells select and copy. Quoted
+  commas, quotes and line breaks parse. Read and parsed off the main
+  thread ("Loading…"), cancelled when you switch files. Limits, each with
+  a line under the table: 50 MB / 200,000 rows (a cut inside a quoted
+  cell keeps the complete rows), 200 drawn columns.
+- **Text and code** (`toml`, `json`, `yaml`, `py`, `js`, `swift`, `sh`,
+  `log`, `sql` and about forty more) drawn monospaced, unwrapped, top left,
+  selectable like the chat; the first 1 MB; lines over 10,000 characters
+  broken to fit, with a note.
+- **A file that isn't on disk** says so ("The agent's write may have been
+  declined, or the file was moved or deleted…"), with no Open button.
+- **A kind Portico can't show** names the app that can ("Open in Pages")
+  and says so in plain words ("Word documents", not the system's type name).
+- **A file the agent changes reloads** when you open it again.
+- **Selection clears when you click elsewhere**, as everywhere on macOS
+  (a scrollbar click keeps it).
+- **Log session without a log step** shows disabled with the reason;
+  `/log` says why in a notice instead of reaching the agent.
+- **Changed this session** heads the Folder tab too; declined, blocked and
+  unanswered writes are never listed.
+- **The services menu wraps** each row's detail; a check's reason may run
+  to 240 characters.
+- **The Dock icon stays the bundle's**: `brand.icon` replaces it only for a
+  build without one (it is the in-app mark).
+
+### Install
+
+- **`bin/install` stops on a config that does not load**, printing the
+  gateway's reason, instead of building a default-branded app.
+- **A square `brand.app_icon` is shaped for macOS** (824 px rounded body on
+  1024, shadow); an icon with transparent corners is used as given.
+- New optional **`brand.app_icon_assets`** (absolute path to a precompiled
+  `Assets.car`) and **`brand.app_icon_name`** (the icon's name in it): the
+  macOS 26 glass icon, with the PNG as the fallback. Never sent in `hello`.
+
+### Protocol (still version 1)
+
+No new messages or fields. The gateway maps the text and code extensions
+to the existing `text` media (an older app would not decode a new media
+word); `text` still never auto-opens. The app picks the table by
+extension.
+
+### For deployments
+
+- If you pointed `brand.icon` at the app icon to stop the Dock swapping,
+  you can point it back at the in-app mark.
+- A config error now stops `bin/install`; fix it and run it again.
+
 ## v0.4.0 (2026-10-29)
 
 Chat that reads like chat, session commands, services, a quieter strip.
