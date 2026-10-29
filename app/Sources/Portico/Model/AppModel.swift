@@ -15,6 +15,13 @@ struct ToolRow: Equatable, Sendable, Identifiable {
     /// The finish summary (a line count, an error) — distinct from `summary`,
     /// which stays what the start said.
     var result: String? = nil
+    /// What became of this use's permission (v0.3): drawn at the row's end.
+    var permission: PermissionOutcome? = nil
+    /// The person's note on a decline, drawn under the row.
+    var note: String? = nil
+    /// The gateway cancelled this use's permission card before anyone
+    /// answered it (its reason): the row says so instead of an outcome.
+    var unanswered: String? = nil
 
     var id: String { toolUseId }
 }
@@ -34,6 +41,8 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     case turnMarker(TurnMarker)
     /// The engine summarized earlier conversation to make room (`chat.compacted`).
     case compacted(id: String, trigger: String)
+    /// A quiet line from the gateway (`chat.notice`), e.g. an unknown command.
+    case notice(id: String, text: String)
 
     var id: String {
         switch self {
@@ -43,6 +52,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
         case .card(let card): "card:\(card.id)"
         case .turnMarker(let marker): "turn:\(marker.turn)"
         case .compacted(let id, _): "compacted:\(id)"
+        case .notice(let id, _): "notice:\(id)"
         }
     }
 }
@@ -70,8 +80,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var hello: HelloServer?
     /// The sidebar, exactly as the gateway last listed it.
     @Published private(set) var chats: [ChatSummary] = []
-    /// The chat shown in the conversation pane.
-    @Published var selected: Int?
+    /// The chat shown in the conversation pane. Showing another ends focus.
+    @Published var selected: Int? {
+        didSet { if let focus = viewerFocus, focus.chat != selected { endFocus() } }
+    }
     /// Per chat, what the conversation pane renders.
     @Published private(set) var transcripts: [Int: [TranscriptItem]] = [:]
     /// Per chat, the cards still waiting for an answer, in arrival order.
@@ -88,6 +100,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var viewerVisible: [Int: Bool] = [:]
     /// Whether the sidebar column (chats and files) is shown.
     @Published var sidebarVisible: Bool = true
+    /// Focus (V3): the viewer has most of the window and the sidebar is
+    /// hidden; holds what to put back. Not remembered across launches.
+    @Published private(set) var viewerFocus: ViewerFocus?
+
+    struct ViewerFocus: Equatable, Sendable {
+        var chat: Int
+        var sidebarWasVisible: Bool
+    }
     /// Per chat, the last `status.set` line (or the last error's message).
     @Published private(set) var status: [Int: String] = [:]
     /// The last chat-less `status.set` line: lifecycle command output, "stopping".
@@ -104,6 +124,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var live: Set<Int> = []
     /// The socket's state, for the status strip.
     @Published private(set) var connection: ConnectionState = .disconnected
+    /// The gateway's config file changed after it started (`hello.config_stale`,
+    /// `config.stale`): Settings and the strip offer a restart.
+    @Published private(set) var configStale = false
+    /// A restart (stop, then start) is under way.
+    @Published private(set) var restarting = false
+    /// The version the deployment's update check found (`update.available`).
+    @Published private(set) var updateVersion: String?
     /// Per chat, the attachment paths queued in the input bar: the Files
     /// pane and drag-and-drop add here; a send clears the chat's list.
     @Published private(set) var draftAttachments: [Int: [String]] = [:]
@@ -125,8 +152,9 @@ final class AppModel: ObservableObject {
     /// Per chat, the latest `context.usage`: the percent for the card and
     /// the strip, and the model's name for the strip.
     @Published private(set) var contextUsage: [Int: ContextUsage] = [:]
-    /// The model named by the most recent `context.usage` in any chat: the
-    /// deployment's model does not change when a session is renewed.
+    /// The model named by the most recent `context.usage` in any chat (its
+    /// display name when the deployment gives one): the deployment's model
+    /// does not change when a session is renewed.
     @Published private(set) var latestModel: String?
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
@@ -210,6 +238,15 @@ final class AppModel: ObservableObject {
     @Published var startDraft: String = ""
     /// Files attached on the start screen, sent with the first message.
     @Published private(set) var startAttachments: [String] = []
+    /// The permission mode the start screen's chip picked for the next
+    /// session; applied with `session.mode` once the gateway makes it.
+    @Published var startMode: PermissionMode?
+    /// The mode the gateway last reported for any session: what the start
+    /// screen's chip shows until one is picked.
+    @Published private(set) var lastKnownMode: PermissionMode?
+    /// Per chat, when the running turn started (its `turn.started` stamp):
+    /// the working line's elapsed time.
+    @Published private(set) var turnStartedAt: [Int: Date] = [:]
     /// The folder the next chat starts in; `nil` means the default
     /// (`defaultStartFolder`). Set by the folder chip.
     @Published var chosenStartFolder: URL?
@@ -217,6 +254,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var startError: String?
     /// Per chat, the turn the last delta belonged to, for coalescing.
     private var currentTurn: [Int: Int] = [:]
+    /// Per chat and tool use, a permission outcome that arrived before the
+    /// tool's row did (a card answered ahead of `tool.started`): drawn on
+    /// the row when it starts.
+    private var pendingOutcomes: [Int: [String: PermissionDecision]] = [:]
+
+    /// A permission outcome with the note that went with it.
+    struct PermissionDecision: Equatable, Sendable {
+        var outcome: PermissionOutcome
+        var note: String?
+    }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
     /// Per chat, the id of the artifact that was on screen when a replay
@@ -327,6 +374,8 @@ final class AppModel: ObservableObject {
     func apply(_ message: ServerMessage) {
         switch message {
         case .hello(let hello):
+            // Each gateway says afresh: a restarted one has read the config.
+            configStale = hello.configStale ?? false
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -348,8 +397,18 @@ final class AppModel: ObservableObject {
         case .chatState(let state):
             if let index = chats.firstIndex(where: { $0.chat == state.chat }) {
                 chats[index].state = state.state
+                if let mode = state.mode { chats[index].mode = mode }
             }
+            if let mode = state.mode { lastKnownMode = mode }
             if let id = state.id, pendingNewChats.remove(id) != nil {
+                // The start screen's chip picked a mode for this session:
+                // apply it now that the session exists.
+                if let wanted = startMode {
+                    startMode = nil
+                    if wanted != state.mode {
+                        send(.sessionMode(SessionMode(chat: state.chat, mode: wanted, id: Self.requestId())))
+                    }
+                }
                 open(chat: state.chat)
                 if let start = pendingStarts.removeValue(forKey: id) {
                     dispatch(chat: state.chat, text: start.text, attachments: start.attachments, fromComposer: true)
@@ -395,7 +454,7 @@ final class AppModel: ObservableObject {
 
         case .contextUsage(let usage):
             contextUsage[usage.chat] = usage
-            if let name = usage.model, !name.isEmpty { latestModel = name }
+            if let name = usage.displayModel { latestModel = name }
             noteSeq(of: message)
 
         case .sessionRenewed(let renewed):
@@ -404,13 +463,11 @@ final class AppModel: ObservableObject {
         case .filesResults(let results):
             applySearchResults(results)
 
-        case .chatNotice(let notice):
-            applyEvent(message, to: notice.chat)
-            noteSeq(of: message)
+        case .configStale:
+            configStale = true
 
-        case .configStale, .updateAvailable:
-            // v0.3: drawn by the app work that follows the protocol change.
-            break
+        case .updateAvailable(let update):
+            updateVersion = update.version
 
         case .error(let error):
             lastError = error
@@ -443,7 +500,7 @@ final class AppModel: ObservableObject {
             }
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
-            .chatCompacted:
+            .chatCompacted, .chatNotice:
             guard let chat = message.envelope.chat else { return }
             // A sequenced event we already hold (a re-sent card, a ring
             // overlap) is not applied twice; the card case de-duplicates by
@@ -493,6 +550,8 @@ final class AppModel: ObservableObject {
             }
             closedCards[chat] = [:]
             currentTurn[chat] = nil
+            turnStartedAt[chat] = nil
+            pendingOutcomes[chat] = nil
             lastSeq[chat] = nil
             // The replay is the whole truth of the chat: its `user.text` is
             // the bubble for any send that ran; a send the gateway never saw is gone.
@@ -513,6 +572,7 @@ final class AppModel: ObservableObject {
         switch event {
         case .turnStarted(let started):
             currentTurn[chat] = started.turn
+            turnStartedAt[chat] = SessionTime.parse(started.ts) ?? Date()
 
         case .userText(let user):
             // The gateway's echo is the bubble, live or replayed; the send
@@ -536,10 +596,20 @@ final class AppModel: ObservableObject {
 
         case .toolStarted(let started):
             currentTurn[chat] = started.turn
-            let row = ToolRow(
+            var row = ToolRow(
                 toolUseId: started.toolUseId, turn: started.turn, tool: started.tool,
                 summary: started.summary, input: started.input)
+            if let decision = pendingOutcomes[chat]?.removeValue(forKey: row.toolUseId) {
+                row.permission = decision.outcome
+                row.note = decision.note
+            }
             if let index = items.lastIndex(where: { if case .tool(let r) = $0 { return r.toolUseId == row.toolUseId } else { return false } }) {
+                // A re-sent start keeps what was already drawn on the row.
+                if case .tool(let old) = items[index] {
+                    row.permission = row.permission ?? old.permission
+                    row.note = row.note ?? old.note
+                    row.unanswered = old.unanswered
+                }
                 items[index] = .tool(row)
             } else {
                 items.append(.tool(row))
@@ -552,17 +622,23 @@ final class AppModel: ObservableObject {
                 row.finished = true
                 row.ok = finished.ok
                 row.result = finished.summary
+                if let permission = finished.permission {
+                    row.permission = permission
+                    row.note = finished.note ?? row.note
+                }
                 items[index] = .tool(row)
             } else {
                 // The start fell off the ring; show the finish rather than lose it.
                 items.append(.tool(ToolRow(
                     toolUseId: finished.toolUseId, turn: finished.turn, tool: "tool", summary: finished.summary,
-                    input: [:], finished: true, ok: finished.ok, result: finished.summary)))
+                    input: [:], finished: true, ok: finished.ok, result: finished.summary,
+                    permission: finished.permission, note: finished.note)))
             }
 
         case .turnFinished(let finished):
             items.append(.turnMarker(TurnMarker(turn: finished.turn, outcome: finished.outcome)))
             if currentTurn[chat] == finished.turn { currentTurn[chat] = nil }
+            turnStartedAt[chat] = nil
 
         case .cardAsk(let card):
             var open = openCards[chat] ?? []
@@ -578,18 +654,36 @@ final class AppModel: ObservableObject {
             closedCards[chat]?[card.id] = nil
             open.append(card)
             openCards[chat] = open
-            let inline = TranscriptItem.card(card)
-            if !items.contains(where: { $0.id == inline.id }) {
-                items.append(inline)
+            // V1: a permission card is one unit with its tool row — pinned
+            // above the composer while open, its outcome drawn on the row
+            // after. It leaves no copy of its own in the transcript. Other
+            // cards keep their inline record.
+            if card.kind != .permission {
+                let inline = TranscriptItem.card(card)
+                if !items.contains(where: { $0.id == inline.id }) {
+                    items.append(inline)
+                }
             }
 
         case .cardAnswered(let answered):
             // The gateway accepted an answer (ours, or one given before a
             // relaunch and now replayed): the card is closed either way.
+            let asked = openCards[chat]?.first { $0.id == answered.id }
             closeCard(chat: chat, id: answered.id, why: Self.answeredMarker)
+            if let outcome = answered.outcome, let toolUseId = answered.toolUseId ?? asked?.toolUseId {
+                record(PermissionDecision(outcome: outcome, note: answered.note), on: toolUseId, in: &items, chat: chat)
+            }
 
         case .cardCancel(let cancel):
-            closeCard(chat: chat, id: cancel.id, why: cancel.reason ?? "cancelled")
+            let asked = openCards[chat]?.first { $0.id == cancel.id }
+            let reason = cancel.reason ?? "cancelled"
+            closeCard(chat: chat, id: cancel.id, why: reason)
+            if asked?.kind == .permission, let toolUseId = asked?.toolUseId,
+                let index = Self.toolIndex(toolUseId, in: items), case .tool(var row) = items[index], row.permission == nil
+            {
+                row.unanswered = reason
+                items[index] = .tool(row)
+            }
 
         case .artifactCreated(let created):
             let artifact = created.artifact
@@ -614,9 +708,29 @@ final class AppModel: ObservableObject {
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
 
+        case .chatNotice(let notice):
+            items.append(.notice(id: Self.itemId(&nextItemId), text: notice.text))
+
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
-            .contextUsage, .sessionRenewed, .filesResults, .chatNotice, .configStale, .updateAvailable:
+            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable:
             break
+        }
+    }
+
+    private static func toolIndex(_ toolUseId: String, in items: [TranscriptItem]) -> Int? {
+        items.lastIndex { if case .tool(let row) = $0 { row.toolUseId == toolUseId } else { false } }
+    }
+
+    /// Draw a permission outcome on its tool row, or hold it for the row
+    /// when the row has not started yet.
+    private func record(_ decision: PermissionDecision, on toolUseId: String, in items: inout [TranscriptItem], chat: Int) {
+        if let index = Self.toolIndex(toolUseId, in: items), case .tool(var row) = items[index] {
+            row.permission = decision.outcome
+            row.note = decision.note ?? (decision.outcome == .declined ? row.note : nil)
+            row.unanswered = nil
+            items[index] = .tool(row)
+        } else {
+            pendingOutcomes[chat, default: [:]][toolUseId] = decision
         }
     }
 
@@ -652,9 +766,81 @@ final class AppModel: ObservableObject {
     /// already, cancelled, never seen) gets nothing: the gateway would only
     /// refuse it as `card.stale`, and there is nothing to show for it.
     func answerCard(_ answer: CardAnswer) {
-        guard pinnedCards(for: answer.chat).contains(where: { $0.id == answer.id }) else { return }
+        guard let card = pinnedCards(for: answer.chat).first(where: { $0.id == answer.id }) else { return }
         send(.cardAnswer(answer))
         closeCard(chat: answer.chat, id: answer.id, why: Self.answeredMarker)
+        // The row shows the answer at once; the gateway's `card.answered`
+        // (and the tool's finish) confirm it.
+        if card.kind == .permission, let toolUseId = card.toolUseId, let decision = Self.decision(for: answer) {
+            var items = transcripts[answer.chat] ?? []
+            record(decision, on: toolUseId, in: &items, chat: answer.chat)
+            transcripts[answer.chat] = items
+        }
+    }
+
+    /// What a permission answer comes to on the tool row.
+    static func decision(for answer: CardAnswer) -> PermissionDecision? {
+        guard case .string(let word)? = answer.answer["decision"] else { return nil }
+        if word == "deny" { return PermissionDecision(outcome: .declined, note: answer.note) }
+        guard word == "allow" else { return nil }
+        return PermissionDecision(outcome: answer.scope == .chat || answer.scope == .always ? .session : .once)
+    }
+
+    /// The open permission card that asks about this tool use, if any:
+    /// its row reads "waiting for your OK" while it is open.
+    func permissionCard(chat: Int, toolUseId: String) -> CardAsk? {
+        openCards[chat]?.first { $0.kind == .permission && $0.toolUseId == toolUseId }
+    }
+
+    // MARK: - permission mode (V2)
+
+    /// The session's permission mode as the gateway last said; `nil` from
+    /// a gateway that does not speak modes (the chip is not shown).
+    func mode(of chat: Int) -> PermissionMode? {
+        summary(of: chat)?.mode
+    }
+
+    /// What the start screen's chip shows: the pick, else the last mode
+    /// any session reported, else the protocol's default for a new session.
+    var startModeShown: PermissionMode {
+        startMode ?? lastKnownMode ?? .auto
+    }
+
+    /// Change the session's mode: `session.mode`, answered with a
+    /// `chat.state` carrying the mode, which is what the chip then shows.
+    func setMode(_ mode: PermissionMode, for chat: Int) {
+        guard mode != self.mode(of: chat) else { return }
+        send(.sessionMode(SessionMode(chat: chat, mode: mode, id: Self.requestId())))
+    }
+
+    // MARK: - working line (V2)
+
+    /// What the working line says the agent is doing: the running tool
+    /// (`Write Q3-synthesis.md`, its path relative to the chat's folder),
+    /// else `Thinking`.
+    func activity(for chat: Int) -> String {
+        let folder = summary(of: chat)?.folder
+        for item in (transcripts[chat] ?? []).reversed() {
+            if case .tool(let row) = item, !row.finished {
+                let what = ToolRowView.display(row.summary, in: folder)
+                return what.isEmpty ? row.tool : "\(row.tool) \(what)"
+            }
+            if case .turnMarker = item { break }
+            if case .userText = item { break }
+        }
+        return "Thinking"
+    }
+
+    /// The working line shows while a turn runs and nothing waits on the person.
+    func showsWorkingLine(chat: Int) -> Bool {
+        state(of: chat) == .working
+    }
+
+    /// `0:48`, `12:05`, `1:02:09`: how long the turn has run.
+    static func elapsedText(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60)
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
     // MARK: - viewer
@@ -680,9 +866,38 @@ final class AppModel: ObservableObject {
         viewerVisible[chat] ?? !(artifacts[chat] ?? []).isEmpty
     }
 
-    /// Open or collapse the viewer column for `chat` by hand.
+    /// Open or collapse the viewer column for `chat` by hand. Collapsing
+    /// it ends focus.
     func setViewer(visible: Bool, for chat: Int) {
         viewerVisible[chat] = visible
+        if !visible, viewerFocus?.chat == chat { endFocus() }
+    }
+
+    /// Focus is on for the chat shown.
+    func isFocused(chat: Int) -> Bool { viewerFocus?.chat == chat }
+
+    /// The Focus button (⌘⇧↩): hide the sidebar and give the viewer most of
+    /// the window; again, put the sidebar back as it was. The remembered
+    /// column widths are never touched, so they come back exactly.
+    func toggleFocus(chat: Int) {
+        if viewerFocus != nil {
+            endFocus()
+        } else {
+            viewerFocus = ViewerFocus(chat: chat, sidebarWasVisible: sidebarVisible)
+            sidebarVisible = false
+            viewerVisible[chat] = true
+        }
+    }
+
+    func endFocus() {
+        guard let focus = viewerFocus else { return }
+        viewerFocus = nil
+        sidebarVisible = focus.sidebarWasVisible
+    }
+
+    /// The artifacts menu's heading: `Made in this session` (or chat).
+    var madeHereLabel: String {
+        isSinglePresentation ? "Made in this session" : "Made in this chat"
     }
 
     // MARK: - sidebar actions
@@ -735,6 +950,13 @@ final class AppModel: ObservableObject {
             startAttachments = []
         }
         send(.chatNew(ChatNew(folder: folder.path, id: id)))
+    }
+
+    /// Settings › Folder: the folder new sessions start in, from now on.
+    func chooseStartFolder(_ folder: URL) {
+        objectWillChange.send()
+        settings.lastFolder = folder.path
+        chosenStartFolder = nil
     }
 
     /// Queue files for the first message on the start screen.
@@ -919,6 +1141,7 @@ final class AppModel: ObservableObject {
         status[chat] = nil
         statusStamps[chat] = nil
         closedCards[chat] = nil
+        pendingOutcomes[chat] = nil
         live.remove(chat)
         pendingOpenSince[chat] = nil
         currentTurn[chat] = nil
@@ -926,6 +1149,7 @@ final class AppModel: ObservableObject {
         fileListErrors = fileListErrors.filter { $0.key.chat != chat }
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
         contextUsage[chat] = nil
+        turnStartedAt[chat] = nil
         renewing[chat] = nil
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
@@ -1263,6 +1487,24 @@ extension AppModel {
         } else if let supervisor {
             Task { _ = try? await supervisor.start() }
         }
+    }
+
+    /// "Restart the gateway to apply": stop it (`gateway.stop`, as Stop
+    /// does) and start it again; the new gateway's `hello` clears the
+    /// stale mark.
+    func restartGateway(timeout: Duration = .seconds(10)) async {
+        guard !restarting else { return }
+        restarting = true
+        defer { restarting = false }
+        await stopGateway(timeout: timeout)
+        startGateway()
+    }
+
+    /// The update the strip offers: a version was found and the deployment
+    /// can run the update (`hello.can_update`).
+    var offeredUpdate: String? {
+        guard hello?.canUpdate == true else { return nil }
+        return updateVersion
     }
 
     /// What quitting does to the gateway (spec §5.5, D19): keep it running

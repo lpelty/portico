@@ -1,16 +1,17 @@
 import SwiftUI
 
 /// What the strip under the toolbar says, in order (spec §5.5): the
-/// selected chat's state word · its folder's name · the gateway
-/// (`stopped / starting / running :port / failed: …`) · the socket when it
-/// is not simply connected · the last `status.set` line, verbatim.
+/// selected chat's state word · its folder's name · the model · the
+/// context · the gateway (`stopped / starting / running :port / failed: …`)
+/// · the socket when it is not simply connected. v0.3 dropped the free-text
+/// status line: the working line in the conversation says what the agent
+/// is doing.
 struct StatusStripPresentation: Equatable, Sendable {
     /// The chat's state word in the protocol's words, or `no chat`.
     var chatText: String
     var folderName: String?
     var gatewayText: String
     var connectionText: String?
-    var statusText: String?
     /// The model's name from `context.usage` (A1/S5's Model segment), when known.
     var modelText: String? = nil
     /// `62% context`, when the gateway reports context usage.
@@ -19,7 +20,7 @@ struct StatusStripPresentation: Equatable, Sendable {
     static let separator = " · "
 
     var text: String {
-        [chatText, folderName, modelText, contextText, gatewayText, connectionText, statusText].compactMap { $0 }
+        [chatText, folderName, modelText, contextText, gatewayText, connectionText].compactMap { $0 }
             .joined(separator: Self.separator)
     }
 
@@ -32,6 +33,12 @@ struct StatusStripPresentation: Equatable, Sendable {
         let words = parts.prefix { Int($0) == nil }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
         let version = parts.drop { Int($0) == nil }.joined(separator: ".")
         return (words + (version.isEmpty ? [] : [version])).joined(separator: " ")
+    }
+
+    static let restartText = "Restart the gateway to apply"
+
+    static func updateText(_ version: String) -> String {
+        "Update available (\(version))"
     }
 
     /// `62% context`, rounded to a whole percent.
@@ -75,7 +82,6 @@ extension AppModel {
             folderName: summary.map { URL(fileURLWithPath: $0.folder).lastPathComponent },
             gatewayText: StatusStripPresentation.gatewayText(gateway),
             connectionText: StatusStripPresentation.connectionText(connection, gateway: gateway),
-            statusText: latestStatusLine(for: selected),
             modelText: selected.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
             contextText: selected.flatMap { contextPercent(for: $0) }.map(StatusStripPresentation.contextText))
     }
@@ -142,13 +148,38 @@ struct StatusStrip: View {
                     .foregroundStyle(Theme.wait)
             }
             Spacer(minLength: 8)
-            if let status = strip.statusText {
-                Text(status)
-                    .font(.system(size: 12))
-                    .italic()
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            if model.configStale {
+                Button {
+                    Task { await model.restartGateway() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(model.restarting ? "Restarting…" : StatusStripPresentation.restartText)
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(Theme.wait)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.hover)
+                .disabled(model.restarting)
+                .help("The config file changed after the gateway started. Restart it to apply the change.")
+            }
+            if let version = model.offeredUpdate {
+                Button {
+                    Updater.relaunchForUpdate()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 11))
+                        Text(StatusStripPresentation.updateText(version))
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(model.brand.accent ?? Theme.accent)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.hover)
+                .help("Install the update: \(model.brand.name) closes, updates, and opens again")
             }
         }
         .padding(.horizontal, 16)

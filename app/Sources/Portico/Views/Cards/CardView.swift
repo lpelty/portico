@@ -70,12 +70,27 @@ enum CardSummary {
 // MARK: - The interactive card
 
 /// A card the person can answer, by kind. Pinned above the input while
-/// open; `onAnswer` receives the finished `card.answer`.
+/// open; `onAnswer` receives the finished `card.answer`. A permission card
+/// is drawn in its own V1 frame; questions and forms keep this one.
 struct CardView: View {
     let card: CardAsk
+    var folder: String? = nil
     let onAnswer: (CardAnswer) -> Void
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        if card.kind == .permission {
+            PermissionCard(
+                card: card, folder: folder,
+                agentName: model.hello?.brand.agentName ?? model.brand.name,
+                accent: model.brand.accent ?? Theme.accent,
+                onAnswer: onAnswer)
+        } else {
+            framed
+        }
+    }
+
+    private var framed: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: CardStatusPresentation(status: .open).icon)
@@ -89,7 +104,7 @@ struct CardView: View {
             }
             switch card.kind {
             case .permission:
-                PermissionCard(card: card, onAnswer: onAnswer)
+                EmptyView()
             case .question:
                 QuestionCard(card: card, onAnswer: onAnswer)
             case .form:

@@ -24,6 +24,8 @@ enum Theme {
     static let wait = dynamic("#B86E00", "#F0B24A")
     static let waitSoft = dynamic("#FFF3DE", "#3B2E16")
     static let working = dynamic("#2DA44E", "#4CC86A")
+    /// Deny and decline (V1): the Deny button, a declined or blocked step.
+    static let deny = dynamic("#C93C37", "#F0706A")
     static let idle = dynamic("#B5B5BB", "#6A6A70")
     static let stopped = dynamic("#8E8E93", "#8E8E93")
     /// The context meter's empty track (S1) and its fill below the nudge.

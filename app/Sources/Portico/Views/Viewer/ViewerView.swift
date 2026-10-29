@@ -58,13 +58,13 @@ struct ArtifactPresentation: Equatable {
 
 // MARK: - ViewerView
 
-/// The right column: the current artifact full size with a title bar
-/// (title, kind, Open externally, collapse), and the chat's history below
-/// it. Nothing current: the history alone, with a hint.
+/// The right column: the current artifact full size under a title bar.
+/// The title is a menu of everything made in this session, with a count
+/// (V2/V3); then Open externally, Focus (⌘⇧↩) and collapse.
 struct ViewerView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
-    @State private var historyShown = true
+    @State private var menuOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -72,33 +72,16 @@ struct ViewerView: View {
             Rectangle().fill(Theme.border).frame(height: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if historyShown {
-                HistoryList(chat: chat)
-                    .frame(minHeight: 80, idealHeight: 150, maxHeight: 220)
-            }
         }
         .background(Theme.panel)
     }
 
+    private var made: [Artifact] { model.history(for: chat) }
+
     private var header: some View {
         HStack(spacing: 8) {
-            if let current = model.current[chat] {
-                let shown = ArtifactPresentation(artifact: current)
-                Image(systemName: shown.systemImage)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text2)
-                Text(shown.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help("\(shown.kindLabel) · \(shown.subtitle)")
-            } else {
-                Text("Viewer")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text2)
-            }
-            Spacer()
+            titleMenu
+            Spacer(minLength: 8)
             if let current = model.current[chat] {
                 Button {
                     ArtifactPresentation(artifact: current).openExternally()
@@ -118,17 +101,7 @@ struct ViewerView: View {
                 }
                 .buttonStyle(.hover)
             }
-            Button {
-                withAnimation { historyShown.toggle() }
-            } label: {
-                Image(systemName: "list.bullet.rectangle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(historyShown ? Theme.text2 : Theme.text)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.hover)
-            .help(historyShown ? "Hide the history" : "Show the history")
+            focusButton
             Button {
                 model.setViewer(visible: false, for: chat)
             } label: {
@@ -145,6 +118,72 @@ struct ViewerView: View {
         .frame(height: Theme.toolbarHeight)
     }
 
+    private var focusButton: some View {
+        let on = model.isFocused(chat: chat)
+        let accent = model.brand.accent ?? Theme.accent
+        return Button {
+            model.toggleFocus(chat: chat)
+        } label: {
+            Image(systemName: on ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(on ? accent : Theme.text2)
+                .frame(width: 24, height: 24)
+                .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .keyboardShortcut(.return, modifiers: [.command, .shift])
+        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Focus on this: hide the sidebar and widen the viewer (⌘⇧↩)")
+        .accessibilityLabel(on ? "Leave focus" : "Focus")
+    }
+
+    /// The title, with the count of things made here and a chevron; a
+    /// click lists them, the one shown checked.
+    private var titleMenu: some View {
+        Button {
+            menuOpen.toggle()
+        } label: {
+            HStack(spacing: 7) {
+                if let current = model.current[chat] {
+                    let shown = ArtifactPresentation(artifact: current)
+                    Image(systemName: shown.systemImage)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text2)
+                    Text(shown.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text(made.isEmpty ? "Viewer" : model.madeHereLabel)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text2)
+                }
+                if !made.isEmpty {
+                    Text("\(made.count)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(Theme.text2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Theme.surface, in: Capsule())
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.text3)
+                }
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .disabled(made.isEmpty)
+        .help(model.current[chat].map { "\(ArtifactPresentation(artifact: $0).kindLabel) · \($0.location)" } ?? model.madeHereLabel)
+        .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
+            ArtifactMenu(chat: chat, artifacts: made, onPick: { menuOpen = false })
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if let current = model.current[chat] {
@@ -153,7 +192,77 @@ struct ViewerView: View {
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",
-                description: Text("Pick something from the history below."))
+                description: Text(made.isEmpty ? "What the agent makes opens here." : "Pick something from the menu above."))
+        }
+    }
+}
+
+/// The viewer title's menu: everything made in this session, newest
+/// first. A pick shows it; every row can open externally.
+struct ArtifactMenu: View {
+    let chat: Int
+    let artifacts: [Artifact]
+    let onPick: () -> Void
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(model.madeHereLabel.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.text3)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(artifacts, id: \.id) { artifact in
+                        row(artifact)
+                    }
+                }
+            }
+            .frame(maxHeight: 360)
+        }
+        .padding(6)
+        .frame(width: 340)
+    }
+
+    private func row(_ artifact: Artifact) -> some View {
+        let shown = ArtifactPresentation(artifact: artifact)
+        let isCurrent = model.current[chat]?.id == artifact.id
+        return Button {
+            model.show(artifact, in: chat)
+            onPick()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: shown.systemImage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text2)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(shown.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(shown.kindLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.text3)
+                }
+                Spacer(minLength: 8)
+                if isCurrent {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(model.brand.accent ?? Theme.accent)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isCurrent ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .help(shown.subtitle)
+        .contextMenu {
+            Button("Open externally") { shown.openExternally() }
         }
     }
 }
@@ -228,7 +337,7 @@ struct PDFPane: NSViewRepresentable {
 }
 
 /// Plain text, monospaced, selectable. Never auto-opens (spec §5.3), but
-/// readable here once picked from the history.
+/// readable here once picked from the viewer's menu.
 struct TextPane: View {
     let file: URL
     let shown: ArtifactPresentation

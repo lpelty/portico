@@ -25,6 +25,31 @@ extension AppModel {
         hello?.capabilities.contains(capability) == true
     }
 
+    /// First launch (V4): no session has started yet in single
+    /// presentation (or nothing is known yet), so there is nothing for a
+    /// sidebar to list; it appears with the first message of Session 1.
+    var awaitingFirstSession: Bool {
+        chats.isEmpty && (hello == nil || isSinglePresentation)
+    }
+
+    /// The sidebar is drawn: the person has not hidden it and there is a
+    /// session for it to show.
+    var sidebarShown: Bool { sidebarVisible && !awaitingFirstSession }
+
+    /// The toolbar's title with no session selected: `Session 1` before the
+    /// first, `New session` after, `New chat` in multiple presentation.
+    var startTitle: String {
+        guard isSinglePresentation || hello == nil else { return "New chat" }
+        return chats.isEmpty ? "Session 1" : "New session"
+    }
+
+    /// The quiet line under the start screen's composer: where the agent
+    /// works and how to change it.
+    var workingFolderLine: String {
+        guard let folder = startFolder else { return "No folder yet · choose one in Settings" }
+        return "Working in \(folder.lastPathComponent) · chosen at setup, change it in Settings"
+    }
+
     /// The live session: the newest chat that has not ended.
     var liveSession: ChatSummary? {
         chats.filter { $0.ended == nil }.max { $0.chat < $1.chat }
@@ -104,9 +129,11 @@ extension AppModel {
         contextUsage[chat]?.percent ?? summary(of: chat)?.contextPercent
     }
 
-    /// The model's name from the latest `context.usage`, for the strip.
+    /// The model's name from the latest `context.usage`, for the strip:
+    /// the deployment's display name (`model_name`) when it gives one,
+    /// else the model id.
     func modelName(for chat: Int) -> String? {
-        if let name = contextUsage[chat]?.model, !name.isEmpty { return name }
+        if let name = contextUsage[chat]?.displayModel { return name }
         return latestModel
     }
 
@@ -127,6 +154,16 @@ extension AppModel {
     /// "Not now": the nudge stays away for this session.
     func dismissNudge(chat: Int) {
         nudgeDismissed.insert(chat)
+    }
+}
+
+extension ContextUsage {
+    /// `model_name ?? model`, blanks skipped; `nil` when neither is set.
+    var displayModel: String? {
+        for candidate in [modelName, model] {
+            if let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        }
+        return nil
     }
 }
 

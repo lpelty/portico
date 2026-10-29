@@ -64,8 +64,12 @@ struct ConversationView: View {
                         emptyState
                     }
                     ForEach(items) { item in
-                        TranscriptItemView(item: item, folder: folder)
+                        TranscriptItemView(item: item, folder: folder, chat: chat)
                             .id(item.id)
+                    }
+                    if model.showsWorkingLine(chat: chat) {
+                        WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
+                            .id("working")
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -88,7 +92,7 @@ struct ConversationView: View {
         ScrollView {
             VStack(spacing: 8) {
                 ForEach(model.pinnedCards(for: chat)) { card in
-                    CardView(card: card, onAnswer: { model.answerCard($0) })
+                    CardView(card: card, folder: folder, onAnswer: { model.answerCard($0) })
                         .id(card.id)
                 }
             }
@@ -100,6 +104,11 @@ struct ConversationView: View {
 
     /// Changes whenever an item is added or the streaming tail grows.
     private var scrollKey: String {
+        let working = model.showsWorkingLine(chat: chat) ? ":w" : ""
+        return itemsKey + working
+    }
+
+    private var itemsKey: String {
         guard let last = items.last else { return "" }
         if case .assistantText(let id, let text) = last { return "\(items.count):\(id):\(text.count)" }
         return "\(items.count):\(last.id)"
@@ -121,6 +130,9 @@ struct ConversationView: View {
 struct TranscriptItemView: View {
     let item: TranscriptItem
     var folder: String? = nil
+    /// The chat the item belongs to: a tool row asks it whether its
+    /// permission card is still open.
+    var chat: Int? = nil
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -135,13 +147,17 @@ struct TranscriptItemView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
-            ToolRowView(row: row, folder: folder)
+            ToolRowView(
+                row: row, folder: folder,
+                waiting: chat.map { model.permissionCard(chat: $0, toolUseId: row.toolUseId) != nil } ?? false)
         case .card(let card):
             CardInlineView(card: card, status: model.cardStatus(chat: card.chat, id: card.id))
         case .turnMarker(let marker):
             TurnMarkerView(marker: marker)
         case .compacted:
             CompactedLine()
+        case .notice(_, let text):
+            NoticeLine(text: text)
         }
     }
 }
@@ -243,6 +259,25 @@ struct CompactedLine: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+/// A quiet line from the gateway (`chat.notice`): an unknown command, say.
+/// Not the agent's words, so small and dimmed, with no bubble.
+struct NoticeLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+            Text(text)
+                .font(.system(size: 12))
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Theme.text3)
+        .accessibilityElement(children: .combine)
     }
 }
 

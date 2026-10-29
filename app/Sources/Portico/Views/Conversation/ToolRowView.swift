@@ -28,6 +28,43 @@ struct ToolRowPresentation: Equatable {
         return result.isEmpty ? "done" : result
     }
 
+    /// How the row's end reads (V1): `waiting for your OK` while its
+    /// permission card is open, then what became of the permission —
+    /// `allowed once`, `allowed for this session`, `auto`, `declined`,
+    /// `blocked by auto mode` — or `not answered` when the gateway cancelled
+    /// the card. `nil`: nothing was asked (a read in Ask each time).
+    func outcomeText(waiting: Bool) -> String? {
+        if waiting { return "waiting for your OK" }
+        switch row.permission {
+        case .once: return "allowed once"
+        case .session: return "allowed for this session"
+        case .auto: return "auto"
+        case .declined: return "declined"
+        case .blocked: return "blocked by auto mode"
+        case nil: return row.unanswered == nil ? nil : "not answered"
+        }
+    }
+
+    enum Tone: Equatable { case wait, quiet, deny }
+
+    /// The outcome's colour: the wait colour while asking, red for a
+    /// refusal, quiet for an allow (it reads like any finished step).
+    func outcomeTone(waiting: Bool) -> Tone {
+        if waiting { return .wait }
+        switch row.permission {
+        case .declined, .blocked: return .deny
+        default: return .quiet
+        }
+    }
+
+    /// The line under a declined row: the note the person gave, if any.
+    var noteLine: String? {
+        guard row.permission == .declined, let note = row.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty else {
+            return nil
+        }
+        return "Your note: \(note)"
+    }
+
     /// The tool's input, keys sorted, two-space indented.
     var prettyInput: String {
         PrettyJSON.render(row.input)
@@ -41,11 +78,38 @@ struct ToolRowPresentation: Equatable {
 struct ToolRowView: View {
     let row: ToolRow
     var folder: String? = nil
+    /// Its permission card is open (pinned above the composer).
+    var waiting: Bool = false
     @State private var expanded = false
 
     private var shown: ToolRowPresentation { ToolRowPresentation(row: row) }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            box
+            if let note = shown.noteLine {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 10))
+                    Text(note)
+                        .font(.system(size: 12))
+                        .textSelection(.enabled)
+                }
+                .foregroundStyle(Theme.text2)
+                .padding(.leading, 30)
+            }
+        }
+    }
+
+    private var outcomeColor: Color {
+        switch shown.outcomeTone(waiting: waiting) {
+        case .wait: Theme.wait
+        case .deny: Theme.deny
+        case .quiet: Theme.text3
+        }
+    }
+
+    private var box: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(.easeInOut(duration: 0.12)) { expanded.toggle() }
@@ -62,6 +126,14 @@ struct ToolRowView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 8)
+                    if let outcome = shown.outcomeText(waiting: waiting) {
+                        Text(outcome)
+                            .font(.system(size: 12))
+                            .foregroundStyle(outcomeColor)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .help(row.unanswered ?? outcome)
+                    }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Theme.text3)
@@ -94,7 +166,19 @@ struct ToolRowView: View {
 
     @ViewBuilder
     private var stateIcon: some View {
-        if !row.finished {
+        if waiting {
+            Image(systemName: "hourglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.wait)
+        } else if row.permission == .blocked {
+            Image(systemName: "xmark.shield")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.deny)
+        } else if row.permission == .declined {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.deny)
+        } else if !row.finished {
             ProgressView()
                 .controlSize(.mini)
         } else if row.ok == false {
