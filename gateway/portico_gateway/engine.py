@@ -46,6 +46,7 @@ from claude_agent_sdk import (
     get_session_messages,
 )
 
+from .agents import AgentTracker
 from .messages import PermissionMode, ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
 
 log = logging.getLogger(__name__)
@@ -162,7 +163,7 @@ def summarize_tool(tool: str, input: dict[str, Any]) -> str:
     return tool
 
 
-def _result_summary(content: str | list[dict[str, Any]] | None) -> str:
+def result_summary(content: str | list[dict[str, Any]] | None) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
@@ -188,15 +189,26 @@ def blocked_by_auto_mode(is_error: bool | None, content: str | list[dict[str, An
     return bool(is_error) and AUTO_MODE_BLOCK_MARK in _result_text(content).lower()
 
 
-def translate(msg: Message, chat: int, turn: int) -> list[ServerMessage]:
-    """SDK message -> protocol events for ``chat``/``turn``. Pure; ``seq`` is left to the chat.
+def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = None) -> list[ServerMessage]:
+    """SDK message -> protocol events for ``chat``/``turn``; ``seq`` is left to the chat.
 
     Text arrives as ``text.delta`` from the stream events, so an
-    ``AssistantMessage``'s text blocks are not re-emitted. Anything from a
-    subagent (``parent_tool_use_id`` set) stays out of the conversation.
+    ``AssistantMessage``'s text blocks are not re-emitted. A subagent's
+    text (``parent_tool_use_id`` set) stays out of the conversation. With
+    ``agents`` (v0.10), the engine's task messages and a subagent's own tool
+    calls go through that tracker (``agents.py``): ``agent.*`` and
+    ``workflow.*`` events, and tool rows carrying ``agent_id``; a turn's
+    result first ends any foreground subagent still open. Without it, as
+    before v0.10, they are dropped and the function is pure.
     """
     ts = _now()
     out: list[ServerMessage] = []
+    if agents is not None:
+        handled = agents.translate(msg, chat, turn, ts)
+        if handled is not None and not isinstance(msg, ResultMessage):
+            return handled
+        if handled:
+            out.extend(handled)
     if isinstance(msg, StreamEvent):
         if msg.parent_tool_use_id is not None:
             return out
@@ -233,7 +245,7 @@ def translate(msg: Message, chat: int, turn: int) -> list[ServerMessage]:
                         turn=turn,
                         tool_use_id=block.tool_use_id,
                         ok=not bool(block.is_error),
-                        summary=_result_summary(block.content),
+                        summary=result_summary(block.content),
                         permission="blocked" if blocked_by_auto_mode(block.is_error, block.content) else None,
                     )
                 )
@@ -405,6 +417,8 @@ class SDKEngine:
         # Slash command names (no ``/``) from the engine's initialize answer
         # and its ``init`` message; ``None`` until either has said.
         self._commands: set[str] | None = None
+        # v0.10: this engine's subagents and workflows.
+        self.agents = AgentTracker()
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
         if self._client is not None:
@@ -426,7 +440,7 @@ class SDKEngine:
         try:
             async for msg in self._client.receive_messages():
                 self._note_session(msg)
-                for event in translate(msg, self.chat, self.turn):
+                for event in translate(msg, self.chat, self.turn, self.agents):
                     if isinstance(event, TurnFinished):
                         self._finished_turn = event.turn
                     await self._callbacks.on_event(event)
@@ -624,7 +638,7 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         turn=turn,
                         tool_use_id=str(block.get("tool_use_id") or ""),
                         ok=not bool(block.get("is_error")),
-                        summary=_result_summary(block.get("content")),
+                        summary=result_summary(block.get("content")),
                         permission="blocked"
                         if blocked_by_auto_mode(block.get("is_error"), block.get("content"))
                         else None,

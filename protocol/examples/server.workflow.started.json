@@ -1,0 +1,14 @@
+{
+  "chat": 1,
+  "id": "w9k2m4",
+  "name": "audit-quotes",
+  "phases": [
+    "find",
+    "verify",
+    "report"
+  ],
+  "seq": 57,
+  "ts": "2026-10-27T12:00:00Z",
+  "turn": 3,
+  "type": "workflow.started"
+}

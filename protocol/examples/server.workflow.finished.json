@@ -1,0 +1,9 @@
+{
+  "chat": 1,
+  "id": "w9k2m4",
+  "outcome": "done",
+  "seq": 59,
+  "summary": "Workflow audit-quotes completed",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "workflow.finished"
+}

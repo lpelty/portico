@@ -1,0 +1,9 @@
+{
+  "chat": 1,
+  "id": "a4f1c2e9b7d3",
+  "outcome": "done",
+  "seq": 56,
+  "summary": "6 quotes confirmed",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "agent.finished"
+}

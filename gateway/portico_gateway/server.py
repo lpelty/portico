@@ -153,6 +153,8 @@ from .config import Config, hello_for
 from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, friendly_model_name, history_events, read_history
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
+    AGENT_FRAME_TYPES,
+    AGENTS_CAPABILITY,
     PROTOCOL_VERSION,
     Artifact,
     ArtifactCreated,
@@ -365,6 +367,44 @@ def list_directory(root: Path, rel: str) -> tuple[str, list[Entry]]:
 def _entry_key(entry: Entry) -> tuple[str, str]:
     """Case-insensitive order; the exact name breaks ties so the order is stable."""
     return (entry.name.casefold(), entry.name)
+
+
+# --- what an app is sent (v0.10) ------------------------------------------------
+
+_CAPABILITIES_ATTR = "portico_capabilities"
+
+
+def _set_capabilities(conn: ServerConnection, capabilities: list[str]) -> None:
+    setattr(conn, _CAPABILITIES_ATTR, frozenset(capabilities))
+
+
+def _capabilities(conn: ServerConnection) -> frozenset[str]:
+    return getattr(conn, _CAPABILITIES_ATTR, frozenset())
+
+
+def _is_agent_frame(msg: Any) -> bool:
+    """A v0.10 subagent or workflow frame, or a tool row from inside a subagent."""
+    if getattr(msg, "type", None) in AGENT_FRAME_TYPES:
+        return True
+    return isinstance(msg, (ToolStarted, ToolFinished)) and msg.agent_id is not None
+
+
+def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
+    """``msg`` as an app with ``capabilities`` may be sent it; ``None`` when it may not.
+
+    An app that did not declare ``agents.v1`` is sent no ``agent.*`` or
+    ``workflow.*`` frame and no tool row from inside a subagent, live or in
+    a ``chat.history`` (an older app's decoder refuses a whole history
+    holding a type it does not know). The ring keeps everything; ``seq``
+    gaps are harmless, the app only skips what it has already seen.
+    """
+    if AGENTS_CAPABILITY in capabilities:
+        return msg
+    if _is_agent_frame(msg):
+        return None
+    if isinstance(msg, ChatHistory) and any(_is_agent_frame(e) for e in msg.events):
+        return msg.model_copy(update={"events": [e for e in msg.events if not _is_agent_frame(e)]})
+    return msg
 
 
 @dataclass
@@ -1022,6 +1062,8 @@ class GatewayServer:
             await conn.close(CLOSE_PROTOCOL_ERROR, "hello required")
             return
 
+        # v0.10: what the app declared it can show; frames it did not declare are never sent to it.
+        _set_capabilities(conn, first.capabilities or [])
         await self._attach(conn)
         stale = self.config_stale()
         if stale:
@@ -1211,7 +1253,9 @@ class GatewayServer:
         self._sync_session(chat)
         run = self._runs.get(chat.number)
         turn = getattr(event, "turn", None)
-        if run is not None and turn is not None and turn != run.turn:
+        if run is not None and turn is not None and turn != run.turn and not _is_agent_frame(event):
+            # (A subagent's or workflow's frames keep the turn that started
+            # them; background ones arrive during later turns and are kept.)
             # The gateway ended an earlier turn itself (the stop grace ran out)
             # and the engine is only now finishing it: that must not touch
             # the turn that is running now.
@@ -2104,8 +2148,11 @@ class GatewayServer:
 
     @staticmethod
     async def _send(conn: ServerConnection, msg: ServerMessage | Error) -> None:
+        shown = for_app(msg, _capabilities(conn))
+        if shown is None:
+            return
         try:
-            await conn.send(dump(msg))
+            await conn.send(dump(shown))
         except ConnectionClosed:
             pass
 

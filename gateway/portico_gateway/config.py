@@ -29,7 +29,9 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 
 # What this gateway can do beyond the protocol's baseline; the app keys
 # optional UI on these.
-CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context"]
+# v0.10: ``agents.v1`` — this gateway sends subagent and workflow frames to an
+# app that lists the same capability in its ``hello``.
+CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1"]
 
 # v0.8: advertised when the deployment can restart all its services at once
 # (``[deployment] restart`` or a plug-in's ``restart_services``); the app
