@@ -336,3 +336,64 @@ def test_hello_carries_the_mode_a_new_session_starts_in() -> None:
     assert hello_for(Config(), "e", "0.3.0").permission_mode == "auto"
     assert hello_for(Config(permission_mode="default"), "e", "0.3.0").permission_mode == "default"
     assert hello_for(Config(permission_mode="acceptEdits"), "e", "0.3.0").permission_mode == "acceptEdits"
+
+
+# --- v0.4: services, the log command -------------------------------------------------
+
+
+def test_services_load(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "services_interval_seconds = 15\n"
+        "[[services]]\n"
+        'id = "memory"\n'
+        'name = "Memory (Hindsight)"\n'
+        'check = "curl -sf http://localhost:8888/health"\n'
+        'restart = "launchctl kickstart -k gui/$UID/com.fleet.hindsight"\n'
+        'up_detail = "recall and capture"\n'
+        "[[services]]\n"
+        'id = "search-2"\n'
+        'name = "Search"\n'
+        'check = "true"\n'
+    )
+    config = load_config(path)
+    assert config.services_interval_seconds == 15
+    memory, search = config.services
+    assert (memory.id, memory.name, memory.up_detail) == ("memory", "Memory (Hindsight)", "recall and capture")
+    assert memory.restart and "$UID" in memory.restart, "the command is kept as written; the shell expands it"
+    assert (search.id, search.restart, search.up_detail) == ("search-2", None, None)
+
+
+def test_services_default_to_none_every_30_seconds() -> None:
+    assert Config().services == [] and Config().services_interval_seconds == 30
+
+
+@pytest.mark.parametrize(
+    "text, words",
+    [
+        ('[[services]]\nid = "Memory"\nname = "M"\ncheck = "true"\n', ["services", "'Memory'", "lowercase"]),
+        ('[[services]]\nid = "a b"\nname = "M"\ncheck = "true"\n', ["services", "'a b'"]),
+        ('[[services]]\nid = "m"\nname = "  "\ncheck = "true"\n', ["services", "name"]),
+        ('[[services]]\nid = "m"\nname = "M"\ncheck = ""\n', ["services", "check"]),
+        ('[[services]]\nid = "m"\nname = "M"\n', ["services.0.check"]),
+        ('[[services]]\nname = "M"\ncheck = "true"\n', ["services.0.id"]),
+        ('[[services]]\nid = "m"\nname = "M"\ncheck = "true"\nrestrat = "x"\n', ["services.0.restrat"]),
+        (
+            '[[services]]\nid = "m"\nname = "M"\ncheck = "true"\n[[services]]\nid = "m"\nname = "N"\ncheck = "true"\n',
+            ["services", "'m'", "twice"],
+        ),
+        ("services_interval_seconds = 4\n", ["services_interval_seconds"]),
+    ],
+)
+def test_bad_services_are_refused_naming_the_key(tmp_path: Path, text: str, words: list[str]) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    for word in words:
+        assert word in str(e.value), (word, str(e.value))
+
+
+def test_hello_commands_list_log_when_the_deployment_can_log() -> None:
+    assert hello_for(Config(log_prompt="/session-close"), epoch="e", gateway_version="0.4.0").commands == ["log"]
+    assert hello_for(Config(), epoch="e", gateway_version="0.4.0").commands == []

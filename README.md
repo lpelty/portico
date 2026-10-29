@@ -80,9 +80,10 @@ history_buffer = 2000               # events kept per chat for reattach; at leas
 presentation = "single"             # the default: one live session at a time; "multiple": a list of chats
 permission_mode = "auto"            # a new session's mode: "auto" (the engine's classifier decides),
                                     # "acceptEdits" (file edits allowed), "default" (ask each time)
-log_prompt = "/session-close"       # the log step a renewal runs first; unset = no log step
+log_prompt = "/session-close"       # the log step (Log session, /log, and a renewal first); unset = no log step
 plugins = ["my_deployment_plugin"]  # plug-in modules, imported at start (see Plug-ins)
 plugin_paths = ["~/portico-plugins"] # absolute directories put on the import path for them
+services_interval_seconds = 30      # how often the services below are checked; at least 5
 
 [brand]
 name = "Portico"
@@ -98,6 +99,13 @@ run = "my-tool update"              # performs it; the app's "Update available" 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
 text = "/review"
+
+[[services]]                        # what the deployment depends on, shown in the app's services menu
+id = "memory"                       # unique, lowercase letters, digits and dashes
+name = "Memory"
+check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up
+restart = "my-tool restart memory"  # optional: the menu offers Restart
+up_detail = "recall and capture"    # optional: shown while it is up
 
 [[roots]]                           # folders the files pane can browse
 name = "projects"
@@ -118,6 +126,11 @@ ending session as an ordinary turn (its cards come to the app as usual),
 marks the session ended (and logged when that turn finished cleanly),
 then opens the next number in the same folder with the ended one as its
 parent. Ended sessions stay listed, read-only.
+
+**Log session** (or `/log`) runs the same log step in the live session
+without ending it (`session.log`). Each session's summary carries when it
+was last logged and whether it has work since (`unlogged`), so New asks
+"log first?" only when something would be lost.
 
 The log step is `log_prompt`, sent to the agent as a message — so the
 agent logs itself with the command or skill its folder already has. A
@@ -158,7 +171,9 @@ def search(root, query):             # files.search instead of Spotlight; sync o
     return [{"path": "relative/to/root.md", "snippet": None}]
 ```
 
-`ctx` carries `chat` (the number), `folder`, `log_prompt` and `send`;
+`ctx` carries `chat` (the number), `folder`, `log_prompt`, `send` and
+`ending` (true for a renewal, false for Log session, which keeps the
+session live);
 `chat` is the session's `ChatSummary` (title, created, compactions, ...).
 For `on_renew` and `search` the last plug-in listed that defines one wins.
 A module that is missing, fails to import, or names another API number

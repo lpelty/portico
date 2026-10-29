@@ -29,6 +29,8 @@ from portico_gateway.messages import (
     Error,
     HelloServer,
     MessageSend,
+    SessionLog,
+    SessionLogged,
     SessionRenew,
     SessionRenewed,
     ServerMessage,
@@ -438,3 +440,203 @@ async def test_multiple_presentation_allows_many_chats(server: GatewayServer, fo
         assert len(server.registry) == 2
     finally:
         await conn.close()
+
+
+# --- v0.4: session.log, logged_at, unlogged ------------------------------------------
+
+
+async def log_and_finish(conn: ClientConnection, chat: int, id: str = "req-l") -> list[ServerMessage]:
+    """``session.log`` and everything up to its ``chat.list``."""
+    await conn.send(dump(SessionLog(ts=TS, id=id, chat=chat)))
+    got = await recv_until(conn, SessionLogged)
+    got.append(await recv(conn))
+    assert isinstance(got[-1], ChatList), "chat.list follows session.logged"
+    return got
+
+
+async def test_session_log_runs_the_log_step_and_keeps_the_session_live(
+    logging_server: GatewayServer, factory: EngineFactory, folder: Path, state_dir: StateDir
+) -> None:
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        before = logging_server.registry.get(number).summary()
+        assert before.unlogged is False and before.logged_at is None, "no turn yet: nothing to lose"
+
+        await send_and_finish(conn, number, "work")
+        assert logging_server.registry.get(number).summary().unlogged is True
+
+        got = await log_and_finish(conn, number)
+        assert [m.text for m in got if isinstance(m, UserText)] == ["/session-close"]
+        assert [m.outcome for m in got if isinstance(m, TurnFinished)] == ["done"]
+        logged = next(m for m in got if isinstance(m, SessionLogged))
+        assert logged.id == "req-l"
+        assert logged.chat.chat == number and logged.chat.logged_at is not None and logged.chat.unlogged is False
+        assert logged.chat.ended is None and logged.chat.state == "idle", "the session is not ended"
+        assert logged.chat.logged is None, "logged stays the renewal's verdict"
+        listing = got[-1]
+        assert isinstance(listing, ChatList) and listing.chats[0].unlogged is False
+        assert not factory.last.closed, "the engine stays up"
+
+        # The record keeps it across a restart.
+        record = state_dir.load_index().chats[0]
+        assert record.logged_at == logged.chat.logged_at and record.work_since_log is False
+
+        # Another turn: unlogged again; logged_at stays until the next log.
+        await send_and_finish(conn, number, "more work")
+        summary = logging_server.registry.get(number).summary()
+        assert summary.unlogged is True and summary.logged_at == logged.chat.logged_at
+        assert ("send", "more work") in factory.last.calls
+    finally:
+        await conn.close()
+
+
+async def test_a_log_step_that_errors_answers_but_logs_nothing(
+    logging_server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        await send_and_finish(conn, number, "work")
+        factory.last.script(fake_result(is_error=True))
+        got = await log_and_finish(conn, number)
+        logged = next(m for m in got if isinstance(m, SessionLogged))
+        assert logged.chat.logged_at is None and logged.chat.unlogged is True
+    finally:
+        await conn.close()
+
+
+async def test_while_a_log_runs_sends_and_renewals_are_busy_and_stop_ends_it(
+    logging_server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        await send_and_finish(conn, number, "work")
+        engine = factory.last
+        engine.script(Block())
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=number)))
+        await engine.wait_blocked()
+        for refused in (
+            MessageSend(ts=TS, id="req-m", chat=number, text="hello?"),
+            SessionRenew(ts=TS, id="req-r", chat=number),
+            SessionLog(ts=TS, id="req-2", chat=number),
+        ):
+            await conn.send(dump(refused))
+            err = (await recv_until(conn, Error))[-1]
+            assert isinstance(err, Error) and err.code == "chat.busy" and err.id == refused.id, refused.type
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        got = await recv_until(conn, SessionLogged)
+        assert [m.outcome for m in got if isinstance(m, TurnFinished)] == ["stopped"]
+        assert got[-1].chat.unlogged is True and got[-1].chat.logged_at is None  # type: ignore[union-attr]
+        await recv(conn)  # chat.list
+        # Free again: a send goes through.
+        await send_and_finish(conn, number, "after")
+    finally:
+        await conn.close()
+
+
+async def test_session_log_refusals(server: GatewayServer, logging_server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    # ``server`` has no log step.
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(SessionLog(ts=TS, id="req-c", chat=number)))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "session.cannot_log" and err.id == "req-c"
+        assert server.registry.get(number).summary().unlogged is False
+    finally:
+        await conn.close()
+
+    conn = await attach(logging_server)
+    try:
+        await conn.send(dump(SessionLog(ts=TS, id="req-u", chat=99)))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "chat.unknown" and err.id == "req-u"
+
+        number = await new_chat(conn, folder)
+        factory.last.script(Block())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="long")))
+        await factory.last.wait_blocked()
+        await conn.send(dump(SessionLog(ts=TS, id="req-b", chat=number)))
+        err = (await recv_until(conn, Error))[-1]
+        assert isinstance(err, Error) and err.code == "chat.busy" and err.id == "req-b"
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=number, log=False)))
+        await recv_until(conn, SessionRenewed)
+        await recv(conn)
+        await conn.send(dump(SessionLog(ts=TS, id="req-e", chat=number)))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "session.ended" and err.id == "req-e"
+    finally:
+        await conn.close()
+
+
+async def test_a_renewal_that_logs_sets_logged_at(logging_server: GatewayServer, folder: Path) -> None:
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        await send_and_finish(conn, number, "work")
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=number)))
+        renewed = (await recv_until(conn, SessionRenewed))[-1]
+        assert isinstance(renewed, SessionRenewed)
+        assert renewed.ended.logged is True and renewed.ended.logged_at is not None and renewed.ended.unlogged is False
+        assert renewed.next.unlogged is False and renewed.next.logged_at is None
+    finally:
+        await conn.close()
+
+
+async def test_hello_lists_log_only_when_the_deployment_can_log(server: GatewayServer, logging_server: GatewayServer) -> None:
+    from portico_gateway.config import hello_for
+
+    assert hello_for(server.config, "e", "0.4.0").commands == []
+    assert hello_for(logging_server.config, "e", "0.4.0").commands == ["log"]
+    assert "log" in logging_server.deployment_commands()
+
+
+async def test_unlogged_from_an_older_index(state_dir: StateDir) -> None:
+    # A v0.3 index has no logging facts: a session the engine named has had a
+    # turn and nothing in v0.4 logged it; one that never ran a turn has nothing.
+    index = {
+        "chats": [
+            {**V01_INDEX["chats"][0], "chat": 3, "session_id": "sess-3"},
+            {**V01_INDEX["chats"][0], "chat": 4, "session_id": None},
+            {**V01_INDEX["chats"][0], "chat": 5, "session_id": "sess-5", "ended": TS, "logged": True},
+        ],
+        "next_chat": 6,
+    }
+    state_dir.index_path.write_text(json.dumps(index))
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=10)
+    assert [s.unlogged for s in registry.summaries()] == [False, False, False], "no log step: never unlogged"
+    registry.can_log = True
+    assert [s.unlogged for s in registry.summaries()] == [True, False, False]
+    assert registry.create(Path("/tmp")).summary().unlogged is False
+
+
+async def test_a_plugin_log_step_knows_whether_the_session_ends(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "modules", dict(sys.modules))
+    plugins = load_plugins(["portico_example_plugin"], [str(REPO_ROOT / "examples" / "plugin")])
+    srv = await start_server(state_dir, factory, plugins=plugins, presentation="single")
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        await send_and_finish(conn, number, "Draft the codebook")
+        got = await log_and_finish(conn, number)
+        texts = [m.text for m in got if isinstance(m, UserText)]
+        assert len(texts) == 1 and "carrying on" in texts[0] and "ending" not in texts[0]
+        logged = next(m for m in got if isinstance(m, SessionLogged))
+        assert logged.chat.logged_at is not None and logged.chat.ended is None
+
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=number)))
+        got = await recv_until(conn, SessionRenewed)
+        texts = [m.text for m in got if isinstance(m, UserText)]
+        assert len(texts) == 1 and "This session is ending." in texts[0]
+    finally:
+        await conn.close()
+        await srv.shutdown()

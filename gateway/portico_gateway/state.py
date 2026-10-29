@@ -83,6 +83,11 @@ class ChatRecord(BaseModel):
     # ``tool_use_id`` (newest ``TOOL_PERMISSIONS_KEPT``), so rows replayed
     # from the transcript after a restart read as they did live.
     permissions: dict[str, ToolPermission] = {}
+    # v0.4: when the session was last logged (``session.log``, or a
+    # renewal's log step that finished cleanly), and whether a turn has
+    # finished since (``None`` in an older index: the registry infers it).
+    logged_at: str | None = None
+    work_since_log: bool | None = None
 
 
 class Index(BaseModel):

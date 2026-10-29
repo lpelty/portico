@@ -15,7 +15,8 @@ The ring, ``seq``, ``turn`` and the engine belong to one gateway launch. What su
 number, folder, engine session id, alias, state word, creation time,
 the artifacts the chat produced, and (v0.2) the session facts: title,
 ended, logged, parent, compactions and the last context percentage, and
-(v0.3) the permission mode and the session's chat-scoped allows. A chat that came back from the index with
+(v0.3) the permission mode and the session's chat-scoped allows, and
+(v0.4) when it was last logged and whether a turn finished since. A chat that came back from the index with
 a session is ``restored``: its conversation before this launch lives in
 the engine's transcript, which the server replays on ``chat.open``.
 """
@@ -104,6 +105,8 @@ class Chat:
         mode: PermissionMode | None = None,
         allows: list[str] | None = None,
         permissions: dict[str, ToolPermission] | None = None,
+        logged_at: str | None = None,
+        work_since_log: bool = False,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -143,6 +146,12 @@ class Chat:
         # The tool of every ``tool.started`` this launch and the session's
         # mode when it started, by ``tool_use_id``, until its ``tool.finished``.
         self.started_tools: dict[str, tuple[str, PermissionMode | None]] = {}
+        # v0.4: the last successful log (``session.log`` or a renewal's log
+        # step), and whether a turn finished after it (or, never logged,
+        # at all). ``can_log`` is the deployment's: the registry sets it.
+        self.logged_at = logged_at
+        self.work_since_log = work_since_log
+        self.can_log = False
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from
@@ -194,6 +203,22 @@ class Chat:
         while len(self.permissions) > TOOL_PERMISSIONS_KEPT:
             del self.permissions[next(iter(self.permissions))]
 
+    # --- logging ----------------------------------------------------------------
+
+    def note_turn_done(self) -> None:
+        """A turn finished (however it ended): the session has work its log has not seen."""
+        self.work_since_log = True
+
+    def note_logged(self, when: str) -> None:
+        """The log step finished cleanly at ``when``: nothing is unlogged now."""
+        self.logged_at = when
+        self.work_since_log = False
+
+    @property
+    def unlogged(self) -> bool:
+        """The deployment can log and a turn finished after the last log (or ever, when never logged)."""
+        return self.can_log and self.work_since_log
+
     # --- views ----------------------------------------------------------------
 
     def _session_facts(self) -> dict[str, object]:
@@ -205,6 +230,7 @@ class Chat:
             "compactions": self.compactions,
             "context_percent": self.context_percent,
             "mode": self.mode,
+            "logged_at": self.logged_at,
         }
 
     def summary(self) -> ChatSummary:
@@ -214,6 +240,7 @@ class Chat:
             alias=self.alias,
             state=self.state,
             created=self.created,
+            unlogged=self.unlogged,
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -228,6 +255,7 @@ class Chat:
             artifacts=list(self.artifacts),
             allows=sorted(self.chat_allows),
             permissions=dict(self.permissions),
+            work_since_log=self.work_since_log,
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -252,6 +280,14 @@ class Chat:
             mode=record.mode,
             allows=record.allows,
             permissions=record.permissions,
+            logged_at=record.logged_at,
+            # An index from before v0.4 does not say: a session the engine
+            # named has had a turn, and nothing in v0.4 has logged it.
+            work_since_log=(
+                record.work_since_log
+                if record.work_since_log is not None
+                else record.session_id is not None and record.logged_at is None and not record.logged
+            ),
         )
         chat.restored = record.session_id is not None
         return chat
@@ -275,6 +311,7 @@ class ChatRegistry:
         # The mode a new session starts with (config ``permission_mode``).
         self.default_mode: PermissionMode = default_mode
         self._chats: dict[int, Chat] = {}
+        self._can_log = False
         for record in index.chats:
             chat = Chat.from_record(record, history_buffer)
             if chat.mode is None:
@@ -282,6 +319,17 @@ class ChatRegistry:
             self._chats[record.chat] = chat
         if self._chats:
             self._index.next_chat = max(self._index.next_chat, max(self._chats) + 1)
+
+    @property
+    def can_log(self) -> bool:
+        """Whether the deployment has a log step (v0.4): ``ChatSummary.unlogged`` is false without one."""
+        return self._can_log
+
+    @can_log.setter
+    def can_log(self, value: bool) -> None:
+        self._can_log = value
+        for chat in self._chats.values():
+            chat.can_log = value
 
     def __len__(self) -> int:
         return len(self._chats)
@@ -297,6 +345,7 @@ class ChatRegistry:
         number = self._index.next_chat
         self._index.next_chat = number + 1
         chat = Chat(number, Path(folder), self._history_buffer, parent=parent, mode=self.default_mode)
+        chat.can_log = self._can_log
         self._chats[number] = chat
         self.persist()
         return chat

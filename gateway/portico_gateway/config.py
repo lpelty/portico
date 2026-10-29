@@ -10,6 +10,7 @@ environment only.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
@@ -75,6 +76,47 @@ class UpdateConfig(BaseModel):
     run: str | None = None
 
 
+SERVICE_ID = re.compile(r"^[a-z0-9-]+$")
+
+
+class ServiceConfig(BaseModel):
+    """``[[services]]`` (v0.4): one thing the deployment depends on, and how to tell it is up.
+
+    ``check`` runs with ``/bin/sh -c``; exit 0 means up. ``restart``, when
+    set, is what the menu's Restart runs. ``up_detail`` is the line shown
+    while it is up. Portico never knows what a service is.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    check: str
+    restart: str | None = None
+    up_detail: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _id_shape(cls, value: str) -> str:
+        if not SERVICE_ID.match(value):
+            raise ConfigError(
+                f"services: id {value!r} must be lowercase letters, digits and dashes (like \"memory\" or \"search-index\")"
+            )
+        return value
+
+    @field_validator("name", "check")
+    @classmethod
+    def _not_blank(cls, value: str, info: Any) -> str:
+        if not value.strip():
+            raise ConfigError(f"services: {info.field_name} must not be empty")
+        return value
+
+    @field_validator("restart", "up_detail")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +148,21 @@ class Config(BaseModel):
     # ``permission_mode``); ``session.mode`` changes it per session.
     permission_mode: PermissionMode = "auto"
     update: UpdateConfig = UpdateConfig()
+    # v0.4: the deployment's services, checked every
+    # ``services_interval_seconds`` (at least 5) and shown in the app's
+    # services menu.
+    services: list[ServiceConfig] = []
+    services_interval_seconds: int = Field(default=30, ge=5)
+
+    @field_validator("services")
+    @classmethod
+    def _service_ids_unique(cls, value: list[ServiceConfig]) -> list[ServiceConfig]:
+        seen: set[str] = set()
+        for service in value:
+            if service.id in seen:
+                raise ConfigError(f"services: id {service.id!r} is used twice; each service needs its own id")
+            seen.add(service.id)
+        return value
 
     @field_validator("brand", mode="before")
     @classmethod
@@ -206,8 +263,9 @@ def hello_for(
     then sees the result, in list order. ``config_stale`` is the server's
     reading of the config file's modification time; ``can_update`` is
     whether ``[update] run`` is set; ``permission_mode`` is the mode a new
-    session starts in.
+    session starts in; ``commands`` lists ``log`` when the deployment can log.
     """
+    can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,
@@ -215,10 +273,12 @@ def hello_for(
         brand=config.brand.for_hello(),
         actions=list(config.actions),
         roots=list(config.roots),
-        commands=[],
+        # Portico's own commands the deployment offers (v0.4: ``log`` when it
+        # can log; the app turns a typed ``/log`` into ``session.log``).
+        commands=["log"] if can_log else [],
         capabilities=list(CAPABILITIES),
         presentation=config.presentation,
-        can_log=bool(config.log_prompt) or (plugins is not None and plugins.renew is not None),
+        can_log=can_log,
         config_stale=config_stale,
         can_update=bool(config.update.run),
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,

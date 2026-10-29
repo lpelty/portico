@@ -97,6 +97,18 @@ engine's context reading goes out as ``context.usage`` (from its own task:
 a failure is logged and skipped); its ``PreCompact`` hook becomes a stamped
 ``chat.compacted``. ``files.search`` answers from Spotlight under a root
 (``search.py``) or from a plug-in's ``search``.
+
+Logging and services (v0.4): ``session.log`` runs the same log step in the
+live session without ending it (as a task, like a renewal; sends are
+``chat.busy`` meanwhile) and answers ``session.logged`` then ``chat.list``.
+Every finished turn marks the session as having unlogged work; a log step
+that finishes cleanly (by ``session.log`` or a renewal) sets ``logged_at``
+and clears it, and ``ChatSummary.unlogged`` is that mark when the
+deployment can log. The ``ServiceMonitor`` (``services.py``) runs the
+deployment's ``[[services]]`` checks; every connection gets
+``services.status`` right after ``hello`` and ``chat.list``, and every
+change is broadcast. ``service.restart`` runs a service's restart command
+and checks it again.
 """
 
 from __future__ import annotations
@@ -163,6 +175,11 @@ from .messages import (
     Outcome,
     ProtocolError,
     ServerMessage,
+    Service,
+    ServiceRestart,
+    ServicesStatus,
+    SessionLog,
+    SessionLogged,
     SessionMode,
     SessionRenew,
     SessionRenewed,
@@ -180,6 +197,7 @@ from .messages import (
 )
 from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
+from .services import ServiceMonitor
 from .state import StateDir
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
@@ -216,8 +234,9 @@ ATTACHMENT_HEADER = "Attached files:"
 # too) followed by a blank or the end. ``/Users/...`` is a path, not one.
 SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
 
-# Portico's own commands, which the app acts on (``/new`` renews the session).
-PORTICO_COMMANDS: frozenset[str] = frozenset({"new"})
+# Portico's own commands, which the app acts on (``/new`` renews the
+# session, ``/log`` logs it without ending it: v0.4).
+PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log"})
 
 
 def slash_command(text: str) -> str | None:
@@ -611,6 +630,17 @@ class GatewayServer:
         self._tasks: set[asyncio.Task[None]] = set()
         # Chats with a ``session.renew`` in flight: no second renew, no send.
         self._renewing: set[int] = set()
+        # Chats with a ``session.log`` in flight (v0.4): the same rule.
+        self._logging: set[int] = set()
+        # Whether a summary can be ``unlogged`` depends on the deployment having a log step.
+        self.registry.can_log = self.has_log_step()
+        # The deployment's services (v0.4); started with ``serve``.
+        self.services = ServiceMonitor(
+            config.services,
+            interval=float(config.services_interval_seconds),
+            timeout=float(config.command_timeout_seconds),
+            publish=self._publish_services,
+        )
         # Lifecycle: ``before_first_chat`` runs once per launch; ``stop`` runs once.
         self._preflight_done = False
         self._preflight_lock = asyncio.Lock()
@@ -644,6 +674,8 @@ class GatewayServer:
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
         self.register("session.mode", self.on_session_mode)
+        self.register("session.log", self.on_session_log)
+        self.register("service.restart", self.on_service_restart)
 
     @property
     def attached(self) -> bool:
@@ -677,6 +709,8 @@ class GatewayServer:
             self._spawn(self._watch_config(), name="portico-config-watch")
         if self.config.update.check:
             self._spawn(self._watch_updates(), name="portico-update-check")
+        if self.config.services:
+            self._spawn(self.services.run(), name="portico-services")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -749,6 +783,7 @@ class GatewayServer:
             await self.cards.cancel_all(chat, reason, self.emit)
             await self._close_engine(chat)
             if run is not None:
+                chat.note_turn_done()
                 await self._report_artifacts(chat, run)
                 await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
                 await self.set_state(chat, "idle")
@@ -939,6 +974,9 @@ class GatewayServer:
             self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
         await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
         await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
+        # v0.4: every connection hears the services as they stand (an empty
+        # list when the deployment lists none: the app has its own Gateway row).
+        await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
         if self.update_version is not None:
             # Found before this app attached: it hears it now.
             await self._send(conn, UpdateAvailable(ts=_now(), version=self.update_version))
@@ -1181,6 +1219,7 @@ class GatewayServer:
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
             del self._runs[chat.number]
+        chat.note_turn_done()
         self._sync_session(chat)
         await self.set_state(chat, "idle")
         run.finished.set()
@@ -1449,6 +1488,7 @@ class GatewayServer:
         await self.cards.cancel_all(chat, "chat stopped", self.emit)
         await self._close_engine(chat)
         if run is not None:
+            chat.note_turn_done()
             await self._report_artifacts(chat, run)
             await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self.set_state(chat, "stopped")
@@ -1523,7 +1563,9 @@ class GatewayServer:
         """
         logged: bool | None = None
         if log_first and self.has_log_step():
-            logged = await self._run_log_step(chat)
+            logged = await self._run_log_step(chat, ending=True)
+            if logged:
+                chat.note_logged(_now())
         await self.cards.cancel_all(chat, "session ended", self.emit)
         await self._close_engine(chat)
         chat.ended = _now()
@@ -1536,8 +1578,12 @@ class GatewayServer:
         await self.send_chat_list()
         return following
 
-    async def _run_log_step(self, chat: Chat) -> bool:
-        """The plug-in's ``on_renew``, else ``log_prompt`` as a message; whether it finished cleanly."""
+    async def _run_log_step(self, chat: Chat, ending: bool) -> bool:
+        """The plug-in's ``on_renew``, else ``log_prompt`` as a message; whether it finished cleanly.
+
+        ``ending`` tells the plug-in whether a renewal ends the session
+        afterwards (``session.renew``) or it stays live (``session.log``).
+        """
 
         async def send(text: str) -> Outcome:
             # Turns are this method's own: the renew holds the chat.
@@ -1551,12 +1597,78 @@ class GatewayServer:
         if hook is None:
             assert self.config.log_prompt
             return await send(self.config.log_prompt) == "done"
-        ctx = RenewContext(chat=chat.number, folder=chat.folder, log_prompt=self.config.log_prompt, send=send)
+        ctx = RenewContext(
+            chat=chat.number, folder=chat.folder, log_prompt=self.config.log_prompt, send=send, ending=ending
+        )
         try:
             return bool(await hook(ctx, chat.summary()))
         except Exception:
-            log.exception("chat %d: the plug-in's on_renew failed; the session ends unlogged", chat.number)
+            log.exception("chat %d: the plug-in's on_renew failed; the session is not logged", chat.number)
             return False
+
+    async def on_session_log(self, msg: SessionLog, conn: ServerConnection) -> None:
+        """Run the log step in the live session ``chat`` without ending it (v0.4).
+
+        Checked here, answered from a task, as a renewal is: the log step is
+        a whole turn whose cards (or stop) arrive as frames meanwhile.
+        """
+        chat = self.registry.get(msg.chat)
+        if chat.ended is not None:
+            raise ProtocolError("session.ended", f"session {chat.number} has ended; log the session that followed it")
+        if not self.has_log_step():
+            raise ProtocolError("session.cannot_log", "this deployment has no log step (no log_prompt, no plug-in on_renew)")
+        self._check_can_send(chat)
+        self._logging.add(chat.number)
+        self._spawn(self._log_task(chat, msg, conn), name=f"portico-log-{chat.number}")
+
+    async def _log_task(self, chat: Chat, msg: SessionLog, conn: ServerConnection) -> None:
+        try:
+            await self.log_session(chat, msg.id)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
+        except Exception as e:
+            log.exception("chat %d: log failed", chat.number)
+            await self._send(conn, self.error("gateway.error", f"session.log failed: {e}", chat=chat.number, id=msg.id))
+        finally:
+            self._logging.discard(chat.number)
+
+    async def log_session(self, chat: Chat, id: str | None = None) -> None:
+        """The log step in the live session; ``session.logged`` (with ``id``), then ``chat.list``.
+
+        A log step that does not finish cleanly (an error, a stop) still
+        answers: ``logged_at`` stays where it was and ``unlogged`` with it.
+        """
+        logged = await self._run_log_step(chat, ending=False)
+        if logged:
+            chat.note_logged(_now())
+        self.registry.persist()
+        log.info("chat %d: session log step ran (logged=%s); the session stays live", chat.number, logged)
+        # ``chat`` is a summary here, not a number: the frame names the session in it.
+        await self.broadcast(SessionLogged(ts=_now(), id=id, chat=chat.summary()))
+        await self.send_chat_list()
+
+    # --- handlers: services -------------------------------------------------------
+
+    async def _publish_services(self, services: list[Service]) -> None:
+        await self.broadcast(ServicesStatus(ts=_now(), services=services))
+
+    async def on_service_restart(self, msg: ServiceRestart, conn: ServerConnection) -> None:
+        """Restart one service and check it again; the ``services.status`` frames that follow are the answer.
+
+        Refusals (``service.unknown``, ``service.no_restart``) are checked
+        here; the restart itself runs as a task so other frames keep moving.
+        """
+        self.services.check_restart(msg.service)
+        self._spawn(self._restart_task(msg, conn), name=f"portico-restart-{msg.service}")
+
+    async def _restart_task(self, msg: ServiceRestart, conn: ServerConnection) -> None:
+        try:
+            await self.services.restart(msg.service)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, id=msg.id))
+        except Exception as e:
+            log.exception("service %s: restart failed", msg.service)
+            await self._send(conn, self.error("gateway.error", f"service.restart failed: {e}", id=msg.id))
 
     async def on_session_mode(self, msg: SessionMode, conn: ServerConnection) -> None:
         """Change the session's permission mode: the running engine at once, every later engine from the record.
@@ -1663,7 +1775,7 @@ class GatewayServer:
     def _check_can_send(self, chat: Chat) -> None:
         if chat.ended is not None:
             raise ProtocolError("session.ended", f"session {chat.number} has ended; send to the session that followed it")
-        if chat.number in self._runs or chat.number in self._renewing:
+        if chat.number in self._runs or chat.number in self._renewing or chat.number in self._logging:
             raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
 
     async def start_turn(self, chat: Chat, text: str) -> TurnRun:
