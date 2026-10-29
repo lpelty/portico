@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 @testable import Portico
@@ -12,6 +13,14 @@ private final class FakeTranscriber: SpeechTranscribing {
     var update: (@MainActor (Transcript) -> Void)?
     var level: (@MainActor (Float) -> Void)?
     var failed: (@MainActor (String) -> Void)?
+    /// The next start waits (after taking its callbacks) until `resumeStart`.
+    var suspendNextStart = false
+    /// Stops wait until `resumeStops`, as finalising takes a moment.
+    var holdStops = false
+    private var startGate: CheckedContinuation<Void, Never>?
+    private var stopGates: [CheckedContinuation<Void, Never>] = []
+
+    var isStartSuspended: Bool { startGate != nil }
 
     func start(
         update: @escaping @MainActor (Transcript) -> Void,
@@ -23,9 +32,27 @@ private final class FakeTranscriber: SpeechTranscribing {
         self.update = update
         self.level = level
         self.failed = failed
+        if suspendNextStart {
+            suspendNextStart = false
+            await withCheckedContinuation { startGate = $0 }
+        }
     }
 
-    func stop() async { stops += 1 }
+    func stop() async {
+        stops += 1
+        if holdStops { await withCheckedContinuation { stopGates.append($0) } }
+    }
+
+    func resumeStart() {
+        startGate?.resume()
+        startGate = nil
+    }
+
+    func resumeStops() {
+        holdStops = false
+        stopGates.forEach { $0.resume() }
+        stopGates = []
+    }
 }
 
 @MainActor
@@ -34,12 +61,23 @@ private final class FakePermissions: VoicePermissions {
     var speech: VoicePermission = .notAsked
     var grantMicrophone = true
     var grantSpeech = true
+    /// The microphone prompt stays up until `answer`.
+    var promptStaysUp = false
     private(set) var asked: [String] = []
+    private var prompt: CheckedContinuation<Void, Never>?
+
+    var isPromptUp: Bool { prompt != nil }
 
     func requestMicrophone() async -> Bool {
         asked.append("microphone")
+        if promptStaysUp { await withCheckedContinuation { prompt = $0 } }
         microphone = grantMicrophone ? .granted : .denied
         return grantMicrophone
+    }
+
+    func answer() {
+        prompt?.resume()
+        prompt = nil
     }
 
     func requestSpeech() async -> Bool {
@@ -89,6 +127,18 @@ private final class FakeComposer {
 }
 
 private func bundled(_ key: String) -> Any? { VoiceInputGuard.usageKeys.contains(key) ? "why" : nil }
+
+/// Raw modifier flags as a key event carries them.
+private let option = NSEvent.ModifierFlags.option.rawValue
+private let rightOptionDown = HoldToTalkTracker.rightOptionMask | option
+/// Left Option's own bit (`NX_DEVICELALTKEYMASK`).
+private let leftOptionDown: UInt = 0x20 | option
+
+/// Lets tasks the code under test started run, until `done` (or a while).
+@MainActor
+private func settle(until done: () -> Bool) async {
+    for _ in 0..<200 where !done() { await Task.yield() }
+}
 
 // MARK: - Settings
 
@@ -208,6 +258,33 @@ final class ReadAloudTests: XCTestCase {
     func testOnlyTheMarkedPartIsSpoken() {
         reader.read("Lots of detail.\n\n[TTS]All green.[/TTS]")
         XCTAssertEqual(synth.spoken.last?.text, "All green.")
+    }
+
+    func testAReplyIsKnownByItsMessageIdWhileItGrows() {
+        reader.read("Working on", key: "m1")
+        XCTAssertTrue(reader.isReading("m1"))
+        XCTAssertFalse(reader.isReading("Working on"))
+        // The same message, more of it streamed in: still the one reading.
+        reader.toggle("Working on it. Done.", key: "m1")
+        XCTAssertNil(reader.reading)
+        // Two replies with the same words are two replies.
+        reader.read("Done.", key: "m2")
+        XCTAssertFalse(reader.isReading("m3"))
+        reader.toggle("Done.", key: "m3")
+        XCTAssertTrue(reader.isReading("m3"))
+    }
+
+    func testUtteranceTokensMatchTheUtteranceItself() {
+        var tokens = UtteranceTokens<NSObject>()
+        let first = NSObject()
+        let second = NSObject()
+        tokens.add(first, token: 1)
+        tokens.add(second, token: 2)
+        XCTAssertNil(tokens.remove(NSObject()), "another object is not matched")
+        XCTAssertEqual(tokens.remove(second), 2)
+        XCTAssertNil(tokens.remove(second), "each token once")
+        XCTAssertEqual(tokens.remove(first), 1)
+        XCTAssertTrue(tokens.isEmpty)
     }
 }
 
@@ -403,9 +480,11 @@ final class DictationTests: XCTestCase {
         let talk = dictation()
         await talk.toggle(FakeComposer().composer)
         transcriber.failed?("Voice input stopped: the microphone went away.")
+        await settle { talk.phase == .idle }
         XCTAssertEqual(talk.phase, .idle)
         XCTAssertEqual(talk.notice, "Voice input stopped: the microphone went away.")
         XCTAssertFalse(escape.isWatching)
+        XCTAssertEqual(transcriber.stops, 1, "the microphone is let go after a failure too")
     }
 
     // MARK: hold-to-talk
@@ -414,7 +493,7 @@ final class DictationTests: XCTestCase {
         let talk = dictation()
         let box = FakeComposer()
         talk.shown(box.composer)
-        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, down: true)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown)
         await talk.holdDelayElapsed()
         XCTAssertEqual(transcriber.starts, 0)
     }
@@ -424,12 +503,12 @@ final class DictationTests: XCTestCase {
         let talk = dictation()
         let box = FakeComposer("start")
         talk.shown(box.composer)
-        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, down: true)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown)
         await talk.holdDelayElapsed()
         XCTAssertEqual(talk.target, "start")
         XCTAssertTrue(talk.byHold)
         XCTAssertEqual(DictationLine.text(talk, composer: "start"), Dictation.holdingLine)
-        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, down: false)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: 0)
         for _ in 0..<20 where talk.phase != .idle { await Task.yield() }
         XCTAssertEqual(transcriber.stops, 1)
         XCTAssertEqual(talk.phase, .idle)
@@ -440,9 +519,239 @@ final class DictationTests: XCTestCase {
         settings.voiceInputEnabled = false
         let talk = dictation()
         talk.shown(FakeComposer().composer)
-        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, down: true)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown)
         await talk.holdDelayElapsed()
         XCTAssertEqual(transcriber.starts, 0)
+    }
+
+    func testRightOptionReleasedWhileLeftOptionIsHeldEndsTheHold() async {
+        settings.holdToTalk = .rightOption
+        let talk = dictation()
+        talk.shown(FakeComposer().composer)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown | 0x20)
+        await talk.holdDelayElapsed()
+        XCTAssertEqual(talk.phase, .listening)
+        // Right Option up, Left Option still down: `.option` is still set.
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: leftOptionDown)
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertEqual(transcriber.stops, 1)
+    }
+
+    func testAKeyTypedDuringTheHoldCancelsWithoutSendingAndRestoresTheText() async {
+        settings.holdToTalk = .rightOption
+        settings.sendWhenStopTalking = true
+        let talk = dictation()
+        let box = FakeComposer(text: "Hi")
+        talk.shown(box.composer)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown)
+        await talk.holdDelayElapsed()
+        transcriber.update?(Transcript(finalized: "", volatile: "there"))
+        XCTAssertEqual(box.text, "Hi there")
+        talk.keyDown()  // Option+E, for an accent
+        XCTAssertEqual(box.text, "Hi", "what the composer held before the talk")
+        transcriber.update?(Transcript(finalized: "there", volatile: ""))
+        XCTAssertEqual(box.text, "Hi")
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: 0)
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertEqual(transcriber.stops, 1)
+        XCTAssertTrue(box.sends.isEmpty)
+    }
+
+    func testReleasingTheKeyDuringThePermissionPromptEndsTheTalk() async {
+        settings.holdToTalk = .rightOption
+        permissions.promptStaysUp = true
+        let talk = dictation()
+        talk.shown(FakeComposer().composer)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown)
+        let starting = Task { await talk.holdDelayElapsed() }
+        await settle { permissions.isPromptUp }
+        XCTAssertEqual(talk.phase, .starting)
+        XCTAssertTrue(talk.byHold)
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: 0)
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle)
+        permissions.answer()
+        await starting.value
+        XCTAssertEqual(transcriber.starts, 0, "the key was up before the prompt was answered")
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertNil(talk.target)
+    }
+
+    // MARK: one talk, in a composer it owns
+
+    func testSendingWhileListeningEndsTheTalkAndNothingRefillsOrSendsAgain() async {
+        settings.sendWhenStopTalking = true
+        let talk = dictation()
+        let box = FakeComposer()
+        await talk.toggle(box.composer)
+        transcriber.update?(Transcript(finalized: "Ship it.", volatile: ""))
+        // Send, as the composer does: Talk first, then the draft goes and clears.
+        talk.willSend(from: "chat-1")
+        box.sends.append(box.text)
+        box.text = ""
+        transcriber.update?(Transcript(finalized: "Ship it.", volatile: "and"))
+        transcriber.update?(Transcript(finalized: "Ship it. And more.", volatile: ""))
+        XCTAssertEqual(box.text, "", "the sent text is not written back")
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertEqual(transcriber.stops, 1)
+        XCTAssertEqual(box.sends, ["Ship it."], "sent once, by the person")
+    }
+
+    func testAClearedDraftIsNotRefilled() async {
+        let talk = dictation()
+        let box = FakeComposer()
+        await talk.toggle(box.composer)
+        transcriber.update?(Transcript(finalized: "", volatile: "hello"))
+        box.text = ""
+        transcriber.update?(Transcript(finalized: "hello there", volatile: ""))
+        XCTAssertEqual(box.text, "")
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle)
+    }
+
+    func testHandEditsWhileListeningAreNeverOverwritten() async {
+        settings.sendWhenStopTalking = true
+        let talk = dictation()
+        let box = FakeComposer(text: "Please")
+        await talk.toggle(box.composer)
+        transcriber.update?(Transcript(finalized: "", volatile: "fix the"))
+        XCTAssertEqual(box.text, "Please fix the")
+        box.text = "Please fix the bug"  // typed while listening
+        transcriber.update?(Transcript(finalized: "fix the build.", volatile: ""))
+        XCTAssertEqual(box.text, "Please fix the bug")
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle, "Talk lets go of the composer")
+        XCTAssertTrue(box.sends.isEmpty)
+    }
+
+    func testAComposerGoingAwayEndsItsTalkUnsent() async {
+        settings.sendWhenStopTalking = true
+        let talk = dictation()
+        let box = FakeComposer()
+        talk.shown(box.composer)
+        await talk.toggle(box.composer)
+        transcriber.update?(Transcript(finalized: "Half a thought", volatile: ""))
+        talk.hidden("chat-1")
+        transcriber.update?(Transcript(finalized: "Half a thought, finished", volatile: ""))
+        XCTAssertEqual(box.text, "Half a thought", "nothing written into a composer no one sees")
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertEqual(transcriber.stops, 1)
+        XCTAssertTrue(box.sends.isEmpty)
+        XCTAssertFalse(escape.isWatching)
+    }
+
+    func testAComposerMadeAgainForTheSameChatKeepsItsTalk() async {
+        settings.holdToTalk = .rightOption
+        let talk = dictation()
+        let box = FakeComposer()
+        let old = UUID()
+        let new = UUID()
+        talk.shown(box.composer.shown(by: old))
+        // The new view appears before the old one goes.
+        talk.shown(box.composer.shown(by: new))
+        await talk.toggle(box.composer.shown(by: new))
+        talk.hidden("chat-1", instance: old)
+        await settle { talk.phase == .idle }
+        XCTAssertEqual(talk.phase, .listening, "the old view going does not end the new one's talk")
+        transcriber.update?(Transcript(finalized: "still here", volatile: ""))
+        XCTAssertEqual(box.text, "still here")
+        await talk.toggle(box.composer.shown(by: new))
+        // Hold-to-talk still has the new view to fill.
+        talk.flagsChanged(keyCode: HoldToTalkTracker.rightOptionKeyCode, flags: rightOptionDown)
+        await talk.holdDelayElapsed()
+        XCTAssertEqual(talk.target, "chat-1")
+        XCTAssertEqual(talk.phase, .listening)
+    }
+
+    func testClosingTheWindowOrQuittingEndsTheTalkUnsent() async {
+        settings.sendWhenStopTalking = true
+        let talk = dictation()
+        let box = FakeComposer()
+        await talk.toggle(box.composer)
+        transcriber.update?(Transcript(finalized: "Unsent", volatile: ""))
+        await talk.cancel()
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertEqual(transcriber.stops, 1)
+        XCTAssertTrue(box.sends.isEmpty)
+    }
+
+    func testASecondPressWhileAskingStopsAndNothingStarts() async {
+        permissions.promptStaysUp = true
+        let talk = dictation()
+        let box = FakeComposer()
+        let first = Task { await talk.toggle(box.composer) }
+        await settle { permissions.isPromptUp }
+        XCTAssertEqual(talk.phase, .starting, "the talk is the composer's from the press")
+        await talk.toggle(box.composer)
+        XCTAssertEqual(talk.phase, .idle)
+        permissions.answer()
+        await first.value
+        XCTAssertEqual(transcriber.starts, 0)
+        XCTAssertEqual(talk.phase, .idle)
+    }
+
+    func testAStartWhileTheLastTalkIsFinishingIsRefused() async {
+        let talk = dictation()
+        let first = FakeComposer("chat-1")
+        let second = FakeComposer("start")
+        await talk.toggle(first.composer)
+        transcriber.holdStops = true
+        let stopping = Task { await talk.stop(sending: false) }
+        await settle { talk.phase == .finishing }
+        XCTAssertEqual(talk.phase, .finishing)
+        await talk.toggle(second.composer)
+        XCTAssertEqual(transcriber.starts, 1, "one transcriber at a time")
+        XCTAssertEqual(talk.target, "chat-1")
+        transcriber.resumeStops()
+        await stopping.value
+        XCTAssertEqual(talk.phase, .idle)
+        XCTAssertNil(talk.target)
+    }
+
+    func testAnOldTalkEndingLateLeavesTheNewOneAlone() async {
+        let talk = dictation()
+        let first = FakeComposer("chat-1")
+        let second = FakeComposer("start")
+        transcriber.suspendNextStart = true
+        let starting = Task { await talk.toggle(first.composer) }
+        await settle { transcriber.isStartSuspended }
+        let oldUpdate = transcriber.update
+        let oldFailed = transcriber.failed
+        // Pressed again while starting, then the welcome's mic.
+        await talk.toggle(first.composer)
+        XCTAssertEqual(talk.phase, .idle)
+        await talk.toggle(second.composer)
+        XCTAssertEqual(talk.phase, .listening)
+        transcriber.resumeStart()
+        await starting.value
+        XCTAssertEqual(talk.phase, .listening)
+        XCTAssertEqual(talk.target, "start")
+        XCTAssertEqual(transcriber.stops, 1, "the old transcriber was stopped once")
+        oldUpdate?(Transcript(finalized: "late words", volatile: ""))
+        oldFailed?("Voice input stopped: old news.")
+        XCTAssertEqual(first.text, "")
+        XCTAssertNil(talk.notice)
+        XCTAssertEqual(talk.phase, .listening)
+        transcriber.update?(Transcript(finalized: "new words", volatile: ""))
+        XCTAssertEqual(second.text, "new words")
+    }
+
+    // MARK: the time limit on finishing
+
+    func testDeadlineSaysWhetherWorkFinishedInTime() async {
+        let quick = await Deadline.run(within: .seconds(5)) {}
+        XCTAssertTrue(quick)
+        let failing = await Deadline.run(within: .seconds(5)) { throw TalkError(message: "no") }
+        XCTAssertFalse(failing)
+        let clock = ContinuousClock()
+        let began = clock.now
+        let hung = await Deadline.run(within: .milliseconds(50)) { try await Task.sleep(for: .seconds(30)) }
+        XCTAssertFalse(hung)
+        XCTAssertLessThan(clock.now - began, .seconds(5), "a hung finish is not waited for")
     }
 }
 
@@ -477,31 +786,48 @@ final class HoldToTalkTrackerTests: XCTestCase {
 
     func testHeldAloneBeginsAndReleaseEnds() {
         var tracker = HoldToTalkTracker()
-        XCTAssertEqual(tracker.flagsChanged(keyCode: key, down: true, shortcut: .rightOption), .arm)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: rightOptionDown, shortcut: .rightOption), .arm)
         XCTAssertEqual(tracker.delayElapsed(), .begin)
-        XCTAssertEqual(tracker.flagsChanged(keyCode: key, down: false, shortcut: .rightOption), .end)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: 0, shortcut: .rightOption), .end)
         XCTAssertEqual(tracker.state, .idle)
     }
 
     func testATapIsNotATalk() {
         var tracker = HoldToTalkTracker()
-        _ = tracker.flagsChanged(keyCode: key, down: true, shortcut: .rightOption)
-        XCTAssertEqual(tracker.flagsChanged(keyCode: key, down: false, shortcut: .rightOption), .none)
+        _ = tracker.flagsChanged(keyCode: key, flags: rightOptionDown, shortcut: .rightOption)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: 0, shortcut: .rightOption), .none)
         XCTAssertEqual(tracker.delayElapsed(), .none)
     }
 
     func testOptionAsAModifierIsNotATalk() {
         var tracker = HoldToTalkTracker()
-        _ = tracker.flagsChanged(keyCode: key, down: true, shortcut: .rightOption)
+        _ = tracker.flagsChanged(keyCode: key, flags: rightOptionDown, shortcut: .rightOption)
         tracker.keyDown()
         XCTAssertEqual(tracker.delayElapsed(), .none)
-        XCTAssertEqual(tracker.flagsChanged(keyCode: key, down: false, shortcut: .rightOption), .none)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: 0, shortcut: .rightOption), .none)
+    }
+
+    func testRightOptionUpWhileLeftOptionIsHeldEnds() {
+        var tracker = HoldToTalkTracker()
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: rightOptionDown | 0x20, shortcut: .rightOption), .arm)
+        XCTAssertEqual(tracker.delayElapsed(), .begin)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: leftOptionDown, shortcut: .rightOption), .end)
+        XCTAssertEqual(tracker.state, .idle)
+    }
+
+    func testAKeyTypedWhileListeningCancels() {
+        var tracker = HoldToTalkTracker()
+        _ = tracker.flagsChanged(keyCode: key, flags: rightOptionDown, shortcut: .rightOption)
+        XCTAssertEqual(tracker.delayElapsed(), .begin)
+        XCTAssertEqual(tracker.keyDown(), .cancel)
+        XCTAssertEqual(tracker.keyDown(), .none, "cancelled once")
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: 0, shortcut: .rightOption), .none)
     }
 
     func testOtherKeysAndNoShortcutAreIgnored() {
         var tracker = HoldToTalkTracker()
-        XCTAssertEqual(tracker.flagsChanged(keyCode: 58, down: true, shortcut: .rightOption), .none)
-        XCTAssertEqual(tracker.flagsChanged(keyCode: key, down: true, shortcut: .none), .none)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: 58, flags: rightOptionDown, shortcut: .rightOption), .none)
+        XCTAssertEqual(tracker.flagsChanged(keyCode: key, flags: rightOptionDown, shortcut: .none), .none)
         XCTAssertEqual(tracker.state, .idle)
     }
 }

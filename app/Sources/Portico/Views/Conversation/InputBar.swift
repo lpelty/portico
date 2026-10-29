@@ -249,6 +249,8 @@ struct InputBar: View {
     /// refuses (`attachment.missing`, `chat.busy`).
     private func send() {
         guard canSend else { return }
+        // A talk into this composer ends first: what is shown is what goes.
+        dictation.willSend(from: voiceComposer.id)
         model.sendMessage(chat: chat, text: draft.wrappedValue, about: about)
         editorFocused = true
     }

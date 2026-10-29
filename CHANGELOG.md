@@ -12,13 +12,17 @@
   stop. Transcription is on-device (`SpeechAnalyzer`, macOS 26). The first
   press asks for the microphone and speech recognition. "Send when I stop
   talking" sends on stop (off by default); an optional hold-to-talk key
-  (Hold Right Option; none by default).
+  (Hold Right Option; none by default). Sending, typing into the box, or
+  leaving it (another conversation, Document View, closing the window)
+  ends the talk without sending; your typing is never overwritten. A key
+  typed while holding the hold-to-talk key cancels that talk.
 - **Read aloud.** Every reply has Read aloud beside Copy, on hover; Stop
   reading while it speaks, and Esc stops. Code blocks and tables are never
   read ("See the code below.", "See the table below."); links are read as
   their text. When the reply has `[TTS]…[/TTS]` parts, only they are read.
 - **`[TTS]` tags never show.** The text inside them reads as part of the
-  reply, and Copy leaves the tags out.
+  reply, and Copy leaves the tags out. Inside code blocks and inline code they
+  are the code's own text: shown, copied and never read as a part.
 - **Settings › Voice** (between Gateway and Appearance): Talk (voice input,
   send when I stop talking, hold-to-talk key) and Listen (Read aloud, the
   voice, including your Personal Voice once allowed there, and the speed,

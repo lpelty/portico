@@ -336,6 +336,8 @@ struct StartView: View {
 
     private func send() {
         guard canSend else { return }
+        // A talk into this composer ends first: what is shown is what goes.
+        dictation.willSend(from: voiceComposer.id)
         if let live = continuing?.chat {
             model.continueSession(chat: live, text: model.startDraft)
         } else {

@@ -23,8 +23,7 @@ protocol SpeechSynthesizing: AnyObject {
 final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynthesizerDelegate {
     var onFinish: ((Int) -> Void)?
     private let synthesizer = AVSpeechSynthesizer()
-    /// Each utterance's token, by the utterance's identity.
-    private var tokens: [ObjectIdentifier: Int] = [:]
+    private var tokens = UtteranceTokens<AVSpeechUtterance>()
 
     override init() {
         super.init()
@@ -35,7 +34,7 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
         utterance.rate = rate
-        tokens[ObjectIdentifier(utterance)] = token
+        tokens.add(utterance, token: token)
         synthesizer.speak(utterance)
     }
 
@@ -44,18 +43,37 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        let id = ObjectIdentifier(utterance)
-        Task { @MainActor in self.ended(id) }
+        nonisolated(unsafe) let utterance = utterance
+        Task { @MainActor in self.ended(utterance) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        let id = ObjectIdentifier(utterance)
-        Task { @MainActor in self.ended(id) }
+        nonisolated(unsafe) let utterance = utterance
+        Task { @MainActor in self.ended(utterance) }
     }
 
-    private func ended(_ id: ObjectIdentifier) {
-        guard let token = tokens.removeValue(forKey: id) else { return }
+    private func ended(_ utterance: AVSpeechUtterance) {
+        guard let token = tokens.remove(utterance) else { return }
         onFinish?(token)
+    }
+}
+
+/// Each utterance's token, matched by the utterance object itself: an
+/// `ObjectIdentifier` can be reused by a new object once the old one is
+/// freed, the object held here cannot. Pure, so it is tested.
+struct UtteranceTokens<Utterance: AnyObject> {
+    private var entries: [(utterance: Utterance, token: Int)] = []
+
+    var isEmpty: Bool { entries.isEmpty }
+
+    mutating func add(_ utterance: Utterance, token: Int) {
+        entries.append((utterance, token))
+    }
+
+    /// The token `utterance` was spoken with, once; nil for one not held.
+    mutating func remove(_ utterance: Utterance) -> Int? {
+        guard let index = entries.firstIndex(where: { $0.utterance === utterance }) else { return nil }
+        return entries.remove(at: index).token
     }
 }
 
@@ -63,10 +81,13 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
 
 /// Read aloud on a reply (v0.9 decision 2, AD1): one reply at a time.
 /// Starting another stops the current one; Stop, a second press, or Esc
-/// stops it. Reads `SpeakableText`, never the code.
+/// stops it. Reads `SpeakableText`, never the code. A reply is known by
+/// its message's id when it has one, so two replies with the same words
+/// are told apart and a reply still streaming stays the one reading.
 @MainActor
 final class ReadAloud: ObservableObject {
-    /// The reply being read (its Markdown as received), nil when silent.
+    /// The reply being read: its key (the message's id, else its Markdown
+    /// as received), nil when silent.
     @Published private(set) var reading: String?
 
     private let settings: Settings
@@ -81,21 +102,23 @@ final class ReadAloud: ObservableObject {
         self.synthesizer.onFinish = { [weak self] token in self?.finished(token) }
     }
 
-    func isReading(_ reply: String) -> Bool { reading == reply }
+    /// Whether the reply known by `key` (its message's id, else its text) is reading.
+    func isReading(_ key: String) -> Bool { reading == key }
 
     /// The reply's button: read it, or stop it when it is the one reading.
-    func toggle(_ reply: String) {
-        if isReading(reply) { stop() } else { read(reply) }
+    func toggle(_ reply: String, key: String? = nil) {
+        let key = key ?? reply
+        if isReading(key) { stop() } else { read(reply, key: key) }
     }
 
     /// Reads `reply` (its speakable text), stopping whatever was reading.
     /// A reply with nothing to say stays silent.
-    func read(_ reply: String) {
+    func read(_ reply: String, key: String? = nil) {
         stop()
         let speech = SpeakableText.speech(fromMarkdown: reply)
         guard !speech.isEmpty else { return }
         token += 1
-        reading = reply
+        reading = key ?? reply
         escape.watch { [weak self] in self?.stop() }
         synthesizer.speak(speech, voiceIdentifier: settings.voiceIdentifier, rate: settings.speechRate.utteranceRate, token: token)
     }

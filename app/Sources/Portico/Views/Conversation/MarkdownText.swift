@@ -447,6 +447,8 @@ enum MarkdownCache {
 /// draws as what it is so far.
 struct MarkdownText: View {
     let text: String
+    /// The message's id: Read aloud knows the reply by it.
+    var id: String? = nil
 
     static let bodySize: CGFloat = 13
     static let lineSpacing: CGFloat = 5
@@ -469,10 +471,10 @@ struct MarkdownText: View {
             HStack(spacing: 2) {
                 CopyButton(help: "Copy this message as Markdown") { MarkdownCopy.message(shown) }
                 if settings.readAloudEnabled {
-                    ReadAloudButton(reply: text)
+                    ReadAloudButton(reply: text, key: id)
                 }
             }
-            .opacity(hovering || reader.isReading(text) ? 1 : 0)
+            .opacity(hovering || reader.isReading(id ?? text) ? 1 : 0)
             .offset(x: -6)
         }
         .onHover { hovering = $0 }

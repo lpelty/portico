@@ -78,7 +78,9 @@ struct PorticoApp: App {
                 .task {
                     // Quit honours the setting (spec §5.5, D19): keep the
                     // agent running (detach only) or stop everything.
-                    delegate.quitHandler = { [model, settings] in
+                    delegate.quitHandler = { [model, settings, dictation] in
+                        // Talk ends unsent; the microphone is let go.
+                        await dictation.cancel()
                         // The viewer comes back next launch only with
                         // something in it (v0.6).
                         model.rememberViewerForNextLaunch()
@@ -86,6 +88,8 @@ struct PorticoApp: App {
                     }
                     await model.run(supervisor: supervisor, settings: settings, appVersion: Self.version)
                 }
+                // The window closed: a talk into its composers ends, unsent.
+                .onDisappear { Task { await dictation.cancel() } }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: Theme.defaultWindowSize.width, height: Theme.defaultWindowSize.height)

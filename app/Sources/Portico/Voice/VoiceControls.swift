@@ -3,6 +3,7 @@ import SwiftUI
 /// The composer's mic (v0.9 decision 1, AD1): pressing starts listening
 /// into this composer and pressing again stops. While listening it is a
 /// level meter on the accent. Hidden when Voice input is off (AE2).
+/// Going away ends a talk into its composer (unsent).
 struct MicButton: View {
     let composer: Dictation.Composer
     /// The side of the glyph's frame: 20 in the conversation, 30 on the welcome.
@@ -11,13 +12,16 @@ struct MicButton: View {
     @EnvironmentObject private var dictation: Dictation
     @EnvironmentObject private var settings: Settings
     @EnvironmentObject private var model: AppModel
+    /// This button, apart from one made again for the same composer.
+    @State private var instance = UUID()
 
     private var active: Bool { dictation.isActive(for: composer.id) }
+    private var shown: Dictation.Composer { composer.shown(by: instance) }
 
     var body: some View {
         if settings.voiceInputEnabled {
             Button {
-                Task { await dictation.toggle(composer) }
+                Task { await dictation.toggle(shown) }
             } label: {
                 Group {
                     if active {
@@ -41,8 +45,13 @@ struct MicButton: View {
             .buttonStyle(.hover)
             .help(active ? Dictation.listeningLine : "Talk: your words become text on this Mac")
             .accessibilityLabel(active ? "Stop listening" : "Talk")
-            .onAppear { dictation.shown(composer) }
-            .onDisappear { dictation.hidden(composer.id) }
+            .onAppear { dictation.shown(shown) }
+            .onDisappear { dictation.hidden(composer.id, instance: instance) }
+            // The same button, another chat's composer.
+            .onChange(of: composer.id) { old, _ in
+                dictation.hidden(old, instance: instance)
+                dictation.shown(shown)
+            }
         }
     }
 }
@@ -90,12 +99,14 @@ enum DictationLine {
 /// shown with it on hover; "Stop reading" while it speaks (Esc stops too).
 struct ReadAloudButton: View {
     let reply: String
+    /// The reply's message id, when it has one (`ReadAloud`).
+    var key: String? = nil
     @EnvironmentObject private var reader: ReadAloud
 
     var body: some View {
-        let reading = reader.isReading(reply)
+        let reading = reader.isReading(key ?? reply)
         Button {
-            reader.toggle(reply)
+            reader.toggle(reply, key: key)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: reading ? "stop.fill" : "speaker.wave.2")

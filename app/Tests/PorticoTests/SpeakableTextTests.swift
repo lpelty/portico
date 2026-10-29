@@ -179,4 +179,45 @@ final class SpeakableTextTests: XCTestCase {
         XCTAssertEqual(
             SpeakableText.speech(fromMarkdown: "[TTS: One.] middle [TTS]Two.[/TTS]"), "One. Two.", "both forms, in order")
     }
+
+    // MARK: markers are not markers in code
+
+    func testMarkersInsideAFencedBlockAreTheCodesOwn() {
+        let reply = "Write the tag like this:\n\n```\n[TTS]Hello[/TTS]\n[TTS: Hi]\n```"
+        XCTAssertNil(SpeakableText.markedParts(reply))
+        XCTAssertEqual(SpeakableText.displayed(reply), reply, "drawn and copied as written")
+        XCTAssertEqual(speech(reply), "Write the tag like this: See the code below.")
+    }
+
+    func testMarkersInsideInlineCodeAreTheCodesOwn() {
+        let reply = "End with `[TTS: summary]` or ``[TTS]…[/TTS]``."
+        XCTAssertNil(SpeakableText.markedParts(reply))
+        XCTAssertEqual(SpeakableText.displayed(reply), reply)
+        XCTAssertEqual(speech(reply), "End with [TTS: summary] or [TTS]…[/TTS].")
+    }
+
+    func testAPartMayHoldCodeThatHoldsAMarker() {
+        let reply = "Detail.\n\n[TTS]Run this:\n```\necho [/TTS]\n```\nThen `[/TTS]` is printed.[/TTS]"
+        XCTAssertEqual(speech(reply), "Run this: See the code below. Then [/TTS] is printed.")
+        XCTAssertEqual(
+            SpeakableText.displayed(reply), "Detail.\n\nRun this:\n```\necho [/TTS]\n```\nThen `[/TTS]` is printed.")
+    }
+
+    func testABacktickWithoutItsPairIsNotCode() {
+        XCTAssertEqual(SpeakableText.displayed("It's a ` tick. [TTS]Done.[/TTS]"), "It's a ` tick. Done.")
+    }
+
+    func testALinkInsideTheColonFormStaysWhole() {
+        let reply = "Detail.\n\n[TTS: See [the diff](https://example.com/a) for both files.] After."
+        XCTAssertEqual(speech(reply), "See the diff for both files.")
+        XCTAssertEqual(
+            SpeakableText.displayed(reply), "Detail.\n\nSee [the diff](https://example.com/a) for both files. After.")
+    }
+
+    func testAnUnclosedColonFormWhileStreamingIsAPartNotWords() {
+        let reply = "Detail.\n\n[TTS: Done. The card is war"
+        XCTAssertEqual(SpeakableText.markedParts(reply), ["Done. The card is war"])
+        XCTAssertEqual(speech(reply), "Done. The card is war", "never \"TTS colon\"")
+        XCTAssertEqual(SpeakableText.displayed(reply), "Detail.\n\nDone. The card is war")
+    }
 }

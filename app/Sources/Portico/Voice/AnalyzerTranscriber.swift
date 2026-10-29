@@ -29,71 +29,68 @@ final class AnalyzerTranscriber: SpeechTranscribing {
     private var running = false
     /// `stop` came; a start still on its way gives up at its next step.
     private var stopped = false
+    /// The results stream failed; a start still on its way gives up too.
+    private var resultsFailed = false
+
+    /// How long the last words may take to finalise before they are dropped.
+    static let finishLimit: Duration = .seconds(3)
 
     func start(
         update: @escaping @MainActor (Transcript) -> Void,
         level: @escaping @MainActor (Float) -> Void,
         failed: @escaping @MainActor (String) -> Void
     ) async throws {
+        let node = audio.inputNode
+        let micFormat = node.outputFormat(forBus: 0)
+        guard micFormat.sampleRate > 0, micFormat.channelCount > 0 else { throw Self.noMicrophone }
+        let failed: @MainActor (String) -> Void = { [weak self] message in
+            self?.resultsFailed = true
+            failed(message)
+        }
+
+        // SpeechTranscriber where it takes the language, else DictationTranscriber.
         let module: any SpeechModule
-        if SpeechTranscriber.isAvailable {
-            guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) else {
-                throw Self.unsupportedLanguage
-            }
+        if SpeechTranscriber.isAvailable, let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) {
             let transcriber = SpeechTranscriber(
                 locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
             module = transcriber
             results = Self.consume(transcriber.results, text: { $0.text }, update: update, failed: failed)
-        } else {
-            guard let locale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current) else {
-                throw Self.unsupportedLanguage
-            }
+        } else if let locale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current) {
             let transcriber = DictationTranscriber(locale: locale, preset: .progressiveLongDictation)
             module = transcriber
             results = Self.consume(transcriber.results, text: { $0.text }, update: update, failed: failed)
+        } else {
+            throw Self.unsupportedLanguage
         }
+
         do {
             try await prepare(module)
+            guard !stopped, !resultsFailed else { return await tearDown() }
+            guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) else {
+                throw TalkError(message: "Voice input could not find an audio format the speech model takes.")
+            }
+            let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+            input = continuation
+            let feed = try AudioFeed(from: micFormat, to: format, input: continuation) { value in
+                Task { @MainActor in level(value) }
+            }
+            let analyzer = SpeechAnalyzer(modules: [module])
+            self.analyzer = analyzer
+            try await analyzer.prepareToAnalyze(in: format)
+            try await analyzer.start(inputSequence: stream)
+            guard !stopped, !resultsFailed else { return await tearDown() }
+
+            node.installTap(onBus: 0, bufferSize: 4096, format: micFormat, block: Self.tap(feed))
+            running = true
+            audio.prepare()
+            do {
+                try audio.start()
+            } catch {
+                throw TalkError(message: "The microphone could not start: \(error.localizedDescription)")
+            }
         } catch {
-            results?.cancel()
+            await tearDown()
             throw error
-        }
-        guard !stopped else { return results?.cancel() ?? () }
-
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module]) else {
-            results?.cancel()
-            throw TalkError(message: "Voice input could not find an audio format the speech model takes.")
-        }
-        let analyzer = SpeechAnalyzer(modules: [module])
-        self.analyzer = analyzer
-        let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-        input = continuation
-        try await analyzer.prepareToAnalyze(in: format)
-        try await analyzer.start(inputSequence: stream)
-        guard !stopped else {
-            continuation.finish()
-            await analyzer.cancelAndFinishNow()
-            results?.cancel()
-            return
-        }
-
-        let node = audio.inputNode
-        let micFormat = node.outputFormat(forBus: 0)
-        let feed = AudioFeed(from: micFormat, to: format, input: continuation) { value in
-            Task { @MainActor in level(value) }
-        }
-        node.installTap(onBus: 0, bufferSize: 4096, format: micFormat, block: Self.tap(feed))
-        running = true
-        audio.prepare()
-        do {
-            try audio.start()
-        } catch {
-            node.removeTap(onBus: 0)
-            running = false
-            continuation.finish()
-            await analyzer.cancelAndFinishNow()
-            results?.cancel()
-            throw TalkError(message: "The microphone could not start: \(error.localizedDescription)")
         }
     }
 
@@ -104,12 +101,37 @@ final class AnalyzerTranscriber: SpeechTranscribing {
         audio.inputNode.removeTap(onBus: 0)
         audio.stop()
         input?.finish()
-        try? await analyzer?.finalizeAndFinishThroughEndOfInput()
-        await results?.value
+        guard let analyzer else { return }
+        // The last words, unless finalising fails or hangs: then they go.
+        let results = self.results
+        let finished = await Deadline.run(within: Self.finishLimit) {
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            await results?.value
+        }
+        if !finished {
+            await analyzer.cancelAndFinishNow()
+            results?.cancel()
+        }
+    }
+
+    /// Undoes a start that did not get to listening: the tap, the engine,
+    /// the analyzer and the results.
+    private func tearDown() async {
+        if running {
+            audio.inputNode.removeTap(onBus: 0)
+            audio.stop()
+            running = false
+        }
+        input?.finish()
+        input = nil
+        if let analyzer { await analyzer.cancelAndFinishNow() }
+        analyzer = nil
+        results?.cancel()
     }
 
     private static let unsupportedLanguage = TalkError(
         message: "Voice input does not support this Mac's language yet.")
+    static let noMicrophone = TalkError(message: "No microphone is available.")
 
     /// The language's speech model, installed the first time.
     private func prepare(_ module: any SpeechModule) async throws {
@@ -171,8 +193,16 @@ private final class AudioFeed: @unchecked Sendable {
     init(
         from source: AVAudioFormat, to target: AVAudioFormat,
         input: AsyncStream<AnalyzerInput>.Continuation, level: @escaping @Sendable (Float) -> Void
-    ) {
-        self.converter = source == target ? nil : AVAudioConverter(from: source, to: target)
+    ) throws {
+        if source == target {
+            self.converter = nil
+        } else {
+            // Unconverted buffers would be the wrong format for the analyzer.
+            guard let converter = AVAudioConverter(from: source, to: target) else {
+                throw TalkError(message: "Voice input could not read this microphone's audio format.")
+            }
+            self.converter = converter
+        }
         self.target = target
         self.input = input
         self.level = level
@@ -222,6 +252,43 @@ private final class OneBuffer: @unchecked Sendable {
     func take() -> AVAudioPCMBuffer? {
         defer { buffer = nil }
         return buffer
+    }
+}
+
+/// Work raced against a time limit: true when it finished, without
+/// throwing, in time. The work is not waited for past the limit.
+enum Deadline {
+    static func run(within limit: Duration, _ work: @escaping @Sendable () async throws -> Void) async -> Bool {
+        let once = ResumeOnce()
+        return await withCheckedContinuation { continuation in
+            once.set(continuation)
+            Task {
+                let done: Void? = try? await work()
+                once.resume(done != nil)
+            }
+            Task {
+                try? await Task.sleep(for: limit)
+                once.resume(false)
+            }
+        }
+    }
+}
+
+/// A continuation resumed by whichever of two tasks comes first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    func set(_ continuation: CheckedContinuation<Bool, Never>) {
+        lock.withLock { self.continuation = continuation }
+    }
+
+    func resume(_ value: Bool) {
+        let continuation = lock.withLock {
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(returning: value)
     }
 }
 
