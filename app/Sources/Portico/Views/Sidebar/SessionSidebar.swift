@@ -171,8 +171,11 @@ struct EarlierRow: View {
 /// While something else has the main column (an earlier session, the
 /// welcome, the document view) the card itself is a button to the live
 /// session (v0.6, Y2): the hand and a stronger edge on hover, help "Go
-/// back to Session M". Its own buttons keep their clicks: a tap lands on
-/// the innermost button, and the card's tap takes the rest.
+/// back to Session M". Its own buttons keep their clicks, and the row
+/// that holds them never passes a click to the card, even on a disabled
+/// button (Log session or New while a log is out): only the rest of the
+/// card opens the live session. VoiceOver reads it as "Show Session M" or
+/// "Go back to Session M", a button only while it opens the session.
 struct SessionCard: View {
     let summary: ChatSummary
     @EnvironmentObject private var model: AppModel
@@ -203,8 +206,25 @@ struct SessionCard: View {
             .onHover { hovering = $0 }
             .pointerStyle(opensLive && hovering ? .link : nil)
             .help(cardHelp)
-            .accessibilityAddTraits(opensLive ? .isButton : [])
-            .accessibilityAction(named: "Go back to Session \(chat)") { model.openLiveSession(chat) }
+            .modifier(OpensLiveAccessibility(label: opensLive ? cardHelp : nil) { model.openLiveSession(chat) })
+    }
+
+    /// The card as a button to VoiceOver, labelled and activated, only
+    /// while a click on it opens the live session.
+    private struct OpensLiveAccessibility: ViewModifier {
+        let label: String?
+        let action: () -> Void
+
+        func body(content: Content) -> some View {
+            if let label {
+                content
+                    .accessibilityLabel(label)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction(.default) { action() }
+            } else {
+                content
+            }
+        }
     }
 
     private var card: some View {
@@ -239,6 +259,10 @@ struct SessionCard: View {
             }
             contextRow
             buttons
+                // The buttons' row takes its own clicks: a disabled button
+                // (or the gap between two) does nothing, not open the session.
+                .contentShape(Rectangle())
+                .onTapGesture {}
             if goesBack && !nudging {
                 Text("Click to go back to it")
                     .font(.system(size: 11))

@@ -108,8 +108,8 @@ final class AppModel: ObservableObject {
     /// auto-opened or that the person picked from the history.
     @Published private(set) var current: [Int: Artifact] = [:]
     /// Per chat, whether the person collapsed or opened the viewer column
-    /// by hand. Unset, the column follows the chat: shown once it has
-    /// produced something, hidden until then (`isViewerShown`). An auto-open
+    /// by hand. Unset, the column follows the chat: shown when something is
+    /// set to show, hidden otherwise (`isViewerShown`). An auto-open
     /// or a pick from the history opens it again.
     @Published private(set) var viewerVisible: [Int: Bool] = [:]
     /// Whether the sidebar column (chats and files) is shown.
@@ -137,7 +137,13 @@ final class AppModel: ObservableObject {
     /// Per chat, whether `chat.live` has arrived since the last `chat.open`.
     @Published private(set) var live: Set<Int> = []
     /// The socket's state, for the status strip.
-    @Published private(set) var connection: ConnectionState = .disconnected
+    @Published private(set) var connection: ConnectionState = .disconnected {
+        didSet { if gaveUpConnecting { gaveUpBeforeList = true } }
+    }
+    /// The connection gave up before the first `chat.list`: the welcome
+    /// keeps saying "Not connected" through each retry's `connecting`,
+    /// rather than flipping to a blank column and back, until a list comes.
+    @Published private(set) var gaveUpBeforeList = false
     /// The gateway's config file changed after it started (`hello.config_stale`,
     /// `config.stale`): Settings and the strip offer a restart.
     @Published private(set) var configStale = false
@@ -231,6 +237,10 @@ final class AppModel: ObservableObject {
         /// message) and go back there on a refusal. An action button's
         /// send never touched the composer, so a refusal restores nothing.
         var fromComposer: Bool = true
+        /// Sent while the chat's `chat.open` was unanswered, on the same
+        /// connection: the gateway answers in order, so that open's
+        /// history cannot hold this send, and a replay keeps it in flight.
+        var afterOpen: Bool = false
     }
 
     enum ConnectionState: Equatable, Sendable {
@@ -368,6 +378,9 @@ final class AppModel: ObservableObject {
             // flight; the replay from the beginning carries any turn that ran.
             pendingSends = [:]
         }
+        // A send still in flight went out before the opens below: their
+        // replays may hold it (or the old connection lost it).
+        for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
         var frames: [ClientMessage] = openedChats.sorted().map { chat in
             .chatOpen(ChatOpen(chat: chat, since: lastSeq[chat], id: Self.requestId()))
@@ -440,6 +453,7 @@ final class AppModel: ObservableObject {
         case .chatList(let list):
             chats = list.chats
             chatsListed = true
+            gaveUpBeforeList = false
             if let selected, !list.chats.contains(where: { $0.chat == selected }) {
                 self.selected = nil
             }
@@ -628,6 +642,7 @@ final class AppModel: ObservableObject {
             return
         }
         let fromBeginning = since == nil || history.events.contains { $0.envelope.seq == nil }
+        let kept = pendingSends[chat].flatMap { $0.afterOpen ? $0 : nil }
         if fromBeginning {
             transcripts[chat] = []
             openCards[chat] = []
@@ -655,6 +670,11 @@ final class AppModel: ObservableObject {
             applyEvent(event, to: chat)
             noteSeq(of: event)
         }
+        // Except a send made while this open was out (the welcome's first
+        // message at launch): the gateway answered the open first, so the
+        // replay's `user.text`s are older turns; the send's own echo, or
+        // its refusal, is still to come.
+        if let kept { pendingSends[chat] = kept }
     }
 
     /// The per-event reducer shared by live frames and a history replay.
@@ -994,11 +1014,12 @@ final class AppModel: ObservableObject {
         (artifacts[chat] ?? []).reversed()
     }
 
-    /// The viewer column is there when the person opened it, or when the
-    /// chat has produced something and the person has not collapsed it.
-    /// Nothing produced and nothing asked: no column.
+    /// The viewer column is there when the person opened it, or when an
+    /// artifact is set to show and the person has not collapsed it. Stored
+    /// artifacts alone (an earlier session's, a replay's, ones that did not
+    /// auto-open) leave it closed rather than open on nothing (v0.6).
     func isViewerShown(for chat: Int) -> Bool {
-        viewerVisible[chat] ?? !(artifacts[chat] ?? []).isEmpty
+        viewerVisible[chat] ?? (current[chat] != nil)
     }
 
     /// Open or collapse the viewer column for `chat` by hand. Collapsing
@@ -1093,10 +1114,11 @@ final class AppModel: ObservableObject {
     /// that session's conversation with the message in it, the welcome's
     /// files attached. `/new` and `/log` work as in the conversation. A
     /// message the session cannot take yet (a turn is running, or a send
-    /// is in flight) waits in its composer instead of being lost.
+    /// is in flight) waits in its composer instead of being lost. While the
+    /// session is being logged or ended nothing goes: the welcome keeps it.
     func continueSession(chat: Int, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, !isSessionCommandPending(chat: chat) else { return }
         open(chat: chat)
         attach(startAttachments, to: chat)
         startAttachments = []
@@ -1112,6 +1134,7 @@ final class AppModel: ObservableObject {
     /// A suggestion on the welcome while it continues the live session:
     /// sent there, and its conversation shown.
     func continueSession(chat: Int, action text: String) {
+        guard !isSessionCommandPending(chat: chat) else { return }
         open(chat: chat)
         sendAction(chat: chat, text: text)
     }
@@ -1154,9 +1177,20 @@ final class AppModel: ObservableObject {
     /// names a point mid-stream: opening from there would show the tail
     /// alone, and (`since` suppresses the transcript read) never the
     /// conversation before it.
+    ///
+    /// A chat whose `chat.open` is still unanswered (the launch's load of
+    /// the live session) is only shown: a second open would carry `since`
+    /// from a live frame that came first, its history would be read as a
+    /// catch-up, and the beginning of the conversation would be lost.
     func open(chat: Int) {
         selected = chat
+        guard !isLoading(chat: chat) else { return }
         load(chat: chat)
+    }
+
+    /// A `chat.open` for the chat is out and its `chat.live` has not come.
+    func isLoading(chat: Int) -> Bool {
+        pendingOpenSince.keys.contains(chat)
     }
 
     /// Ask for a chat's events without showing it (`open` shows it too):
@@ -1252,7 +1286,8 @@ final class AppModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isSending(chat: chat) else { return }
         let id = Self.requestId()
-        pendingSends[chat] = PendingSend(id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer)
+        pendingSends[chat] = PendingSend(
+            id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
         send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: id)))
         if fromComposer {
             draftAttachments[chat] = nil
@@ -1495,14 +1530,6 @@ extension AppModel {
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
     }
 
-    /// The roots that are the session's own folder: `chat`, and a
-    /// deployment root at the same path (which the pane shows instead).
-    func sessionFolderRoots(chat: Int) -> Set<String> {
-        guard let folder = summary(of: chat)?.folder else { return [] }
-        let own = URL(fileURLWithPath: folder).standardizedFileURL.path
-        return Set(fileRoots(for: chat).filter { URL(fileURLWithPath: $0.path).standardizedFileURL.path == own }.map(\.name))
-    }
-
     /// A write finished or a turn ended in `chat` (`FolderRelist`): list
     /// its folder again shortly, once for a burst of writes.
     func scheduleRelist(chat: Int) {
@@ -1523,17 +1550,43 @@ extension AppModel {
     /// (no "Listing…" flash), and nothing outside the folder is asked for.
     /// A chat whose files are not on screen just forgets those listings;
     /// they are asked for when it is shown.
+    ///
+    /// A directory whose listing is still out is asked for again: that
+    /// listing may have been read before the write (each request has its
+    /// own id, and the later answer lands last). A deployment root that
+    /// holds the session's folder lists again the part inside the folder.
     func relistSessionFolder(chat: Int) {
-        let roots = sessionFolderRoots(chat: chat)
-        let keys = fileTree.keys.filter { $0.chat == chat && roots.contains($0.root) }
+        let scopes = sessionFolderScopes(chat: chat)
+        let keys = fileTree.keys.filter { key in
+            guard key.chat == chat, let inside = scopes[key.root] else { return false }
+            return inside.isEmpty || key.path == inside || key.path.hasPrefix(inside + "/")
+        }
         guard filesChat == chat else {
             for key in keys { fileTree[key] = nil }
             return
         }
-        let pending = Set(pendingFileLists.values)
-        for key in keys.sorted(by: { $0.path < $1.path }) where !pending.contains(key) {
+        for key in keys.sorted(by: { ($0.root, $0.path) < ($1.root, $1.path) }) {
             send(filesListRequest(for: key))
         }
+    }
+
+    /// Per root that holds the session's folder, where the folder is in it:
+    /// `""` for a root that is the folder (`chat`, or a deployment root at
+    /// the same path), else the folder's path under the root.
+    func sessionFolderScopes(chat: Int) -> [String: String] {
+        guard let folder = summary(of: chat)?.folder else { return [:] }
+        let own = URL(fileURLWithPath: folder).standardizedFileURL.path
+        var scopes: [String: String] = [:]
+        for root in fileRoots(for: chat) {
+            let base = URL(fileURLWithPath: root.path).standardizedFileURL.path
+            if base == own {
+                scopes[root.name] = ""
+            } else {
+                let prefix = base.hasSuffix("/") ? base : base + "/"
+                if own.hasPrefix(prefix) { scopes[root.name] = String(own.dropFirst(prefix.count)) }
+            }
+        }
+        return scopes
     }
 
     /// Show a file from the Files pane in the viewer, as a local artifact:

@@ -10,6 +10,9 @@ struct AskToLogDialog: View {
     @EnvironmentObject private var model: AppModel
 
     static func title(chat: Int) -> String { "Log Session \(chat) before starting a new one?" }
+    /// Wide enough that "Start without logging" and "Log and start new"
+    /// sit beside Cancel on one line (at 440 the first wrapped).
+    static let width: CGFloat = 480
     static let body = "Logging saves what this session did, so the next one can pick up where it left off. If you skip it, the new session starts with no record of this one."
 
     var body: some View {
@@ -27,16 +30,21 @@ struct AskToLogDialog: View {
                     .buttonStyle(PillButtonStyle(kind: .quiet))
                     .keyboardShortcut(.cancelAction)
                 Spacer(minLength: 16)
+                // Each label on one line: the sheet is wide enough for all three.
                 Button("Start without logging") { model.answerAskToLog(log: false) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
+                    .lineLimit(1)
+                    .fixedSize()
                 Button("Log and start new") { model.answerAskToLog(log: true) }
                     .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
                     .keyboardShortcut(.defaultAction)
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .padding(.top, 8)
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: Self.width)
         .background(Theme.panel)
     }
 }
