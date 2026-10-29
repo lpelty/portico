@@ -67,6 +67,24 @@
   in the background and tells the app (`update.available`); `hello.can_update`
   says whether `update.run` is set.
 
+### What a person gets (app, review fixes)
+
+- **The start screen's mode chip is the truth**: it shows the pick, else
+  the deployment's mode for new sessions (`hello.permission_mode`), never
+  the mode some other session last reported — and the new session runs in
+  what it showed (before, it could read "Ask each time" while the session
+  ran in auto, or Auto while a `default` deployment asked).
+- **The card says what "Allow for this session" covers**, in the gateway's
+  words (`scope_note`): edits to files in the folder, this file, this
+  command, or the command prefix.
+- **Enter while an input method is composing** (marked text) commits the
+  composition instead of sending.
+- **Updater waits for the old app to quit** (`--wait-pid`) before running
+  the update, so the old app cannot restart the gateway mid-update; after
+  30 seconds it gives up and says so.
+- **Start screen mark**: bigger (54 pt, from 34), and the deployment's
+  brand icon (`brand.icon`) when it gives one, else the sparkle.
+
 ### Protocol (still version 1; additions only)
 
 - App → gateway: `session.mode {chat, mode}`, answered with `chat.state`

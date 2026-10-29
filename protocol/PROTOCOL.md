@@ -316,7 +316,8 @@ next engine; no engine is started to change it.
 (`name` goes in the title bar and the About panel, `agent_name` is how
 the app refers to the agent, `accent` is a CSS hex colour — `#RRGGBB`,
 `#RGB` or `#RRGGBBAA` — for the app's controls, `icon` an absolute path
-to an image file for the Dock, the About panel and the sidebar header;
+to an image file for the Dock, the About panel, the sidebar header and
+the mark beside the start screen's greeting;
 absent or unreadable values fall back to "Portico" and the system
 defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
 absolute, as configured with any `~` expanded), `commands: [string]`
