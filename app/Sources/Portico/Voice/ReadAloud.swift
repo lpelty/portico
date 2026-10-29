@@ -261,9 +261,15 @@ enum PersonalVoiceAccess: Equatable, Sendable {
 
     /// Asks the system once; the answer comes back on the main actor.
     static func request() async -> PersonalVoiceAccess {
+        PersonalVoiceAccess(await askSystem())
+    }
+
+    /// The system answers on its own queue; the callback must not inherit
+    /// the main actor (a run-time isolation check would stop the app).
+    private nonisolated static func askSystem() async -> AVSpeechSynthesizer.PersonalVoiceAuthorizationStatus {
         await withCheckedContinuation { continuation in
-            AVSpeechSynthesizer.requestPersonalVoiceAuthorization { status in
-                continuation.resume(returning: PersonalVoiceAccess(status))
+            AVSpeechSynthesizer.requestPersonalVoiceAuthorization { @Sendable status in
+                continuation.resume(returning: status)
             }
         }
     }

@@ -323,12 +323,23 @@ struct SystemVoicePermissions: VoicePermissions {
     }
 
     func requestMicrophone() async -> Bool {
+        await Self.askMicrophone()
+    }
+
+    private nonisolated static func askMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
     func requestSpeech() async -> Bool {
+        await Self.askSpeech()
+    }
+
+    /// The system answers on a queue of its own: the callback must not
+    /// inherit the main actor (Swift checks that at run time and stops the
+    /// app — the crash on the first permission prompt).
+    private nonisolated static func askSpeech() async -> Bool {
         await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
                 continuation.resume(returning: status == .authorized)
             }
         }
