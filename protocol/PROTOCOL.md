@@ -542,7 +542,15 @@ to answer`). A `card.answer` that arrives afterwards is `card.stale`.
 `chat`, `seq`, `artifact {id, kind: file | url, location, media, title, source, open}`.
 `media` is one of `markdown`, `image`, `html`, `pdf`, `text`, `url`, `other`
 (by file extension: `.md .markdown`, `.png .jpg .jpeg .gif .webp .svg`,
-`.html .htm`, `.pdf`, `.txt`; a URL is `url`; anything else `other`).
+`.html .htm`, `.pdf`; a URL is `url`; anything else `other`).
+`text` is plain text and code: `.txt .log .csv .tsv`, `.json .jsonl .yaml
+.yml .toml .ini .cfg .conf .xml .plist`, `.py .js .mjs .cjs .jsx .ts .tsx
+.swift .rb .go .rs .java .kt .c .h .cpp .hpp .m .cs .php .pl .lua .r`,
+`.sh .bash .zsh .fish .css .scss .sql .diff .patch` (since 0.5; before it,
+only `.txt`, and the rest were `other`). The app draws `text` monospaced,
+and a `.csv` or `.tsv` that parses as a table as a table. There is no
+separate media word for code or tables, so an older app still decodes
+every artifact. `text` never auto-opens.
 `source` says where the gateway found it: `tool` (a file-writing tool —
 `Write`, `Edit`, `MultiEdit`, `NotebookEdit` — named the path), `text`
 (the agent's text printed a `http://localhost` / `http://127.0.0.1`
