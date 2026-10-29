@@ -161,6 +161,18 @@ def test_update_check_exit_codes(tmp_path: Path, capfd: pytest.CaptureFixture[st
     assert main(["update", "--check", "--state", str(home)]) == 1
 
 
+def test_update_check_that_fails_exits_4_with_the_reason(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "home"
+    write_config(home, '[update]\ncheck = "echo the server is down >&2; exit 3"\n')
+    assert main(["update", "--check", "--state", str(home)]) == 4
+    captured = capfd.readouterr()
+    assert captured.out == "" and "exited 3: the server is down" in captured.err
+
+    write_config(home, 'command_timeout_seconds = 1\n[update]\ncheck = "sleep 10"\n')
+    assert main(["update", "--check", "--state", str(home)]) == 4
+    assert "did not finish within 1s" in capfd.readouterr().err
+
+
 async def test_update_stops_the_gateway_then_streams_the_run_and_exits_with_its_code(
     tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:

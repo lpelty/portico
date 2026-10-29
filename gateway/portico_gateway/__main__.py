@@ -197,10 +197,12 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 # Exit code of the ``update`` commands when the deployment configured no update command.
 EXIT_NOT_CONFIGURED = 2
+# ``update --check``: the check command failed (another exit, a timeout, could not start).
+EXIT_CHECK_FAILED = 4
 
 
 def cmd_update(args: argparse.Namespace) -> int:
-    """``--check``: the deployment's ``update.check`` (0 + the version, 1 none, 2 not configured).
+    """``--check``: the deployment's ``update.check`` (0 + the version, 1 none, 2 not configured, 4 the check failed).
 
     Without it: stop a running gateway (as ``stop``), run ``update.run`` with
     its output streamed to stdout, exit with its code (2 when not configured).
@@ -209,7 +211,7 @@ def cmd_update(args: argparse.Namespace) -> int:
 
     from portico_gateway.config import ConfigError, load_config
     from portico_gateway.status import stop_gateway
-    from portico_gateway.update import SHELL, check_for_update
+    from portico_gateway.update import SHELL, run_check
 
     state, config_path = _state_and_config_path(args)
     try:
@@ -221,10 +223,13 @@ def cmd_update(args: argparse.Namespace) -> int:
         if not config.update.check:
             print("portico-gateway: no update check configured ([update] check in config.toml)", file=sys.stderr)
             return EXIT_NOT_CONFIGURED
-        version = asyncio.run(check_for_update(config.update.check, float(config.command_timeout_seconds)))
-        if version is None:
+        result = asyncio.run(run_check(config.update.check, float(config.command_timeout_seconds)))
+        if result.error is not None:
+            print(f"portico-gateway: {result.error}", file=sys.stderr)
+            return EXIT_CHECK_FAILED
+        if result.version is None:
             return 1
-        print(version)
+        print(result.version)
         return 0
     if not config.update.run:
         print("portico-gateway: no update command configured ([update] run in config.toml)", file=sys.stderr)
@@ -292,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("update", help="run the deployment's update (stops the gateway first); --check only asks")
-    p.add_argument("--check", action="store_true", help="exit 0 and print the version when an update is available, 1 when none")
+    p.add_argument("--check", action="store_true", help="exit 0 and print the version when an update is available, 1 when none, 2 when not configured, 4 when the check failed")
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_update)
