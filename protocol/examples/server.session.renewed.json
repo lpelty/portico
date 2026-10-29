@@ -9,7 +9,8 @@
     "logged": true,
     "parent": 12,
     "state": "stopped",
-    "title": "Interview codebook"
+    "title": "Interview codebook",
+    "unlogged": false
   },
   "id": "req-4",
   "next": {
@@ -18,7 +19,8 @@
     "created": "2026-10-27T12:00:00Z",
     "folder": "/Users/someone/projects/demo",
     "parent": 13,
-    "state": "idle"
+    "state": "idle",
+    "unlogged": false
   },
   "ts": "2026-10-27T12:00:00Z",
   "type": "session.renewed"

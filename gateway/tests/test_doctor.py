@@ -440,3 +440,23 @@ def test_doctor_with_no_plugins_says_so(state_dir: StateDir, with_credential: No
     got = by_name(doctor(state_dir, state_dir.config_path))
     assert got["plugins"].ok and "none" in got["plugins"].line
     assert "checkout" in got
+
+
+# --- v0.4: services ---------------------------------------------------------------
+
+
+def test_doctor_names_the_configured_services(state_dir: StateDir, with_credential: None) -> None:
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert got["services"].ok and "none configured" in got["services"].line
+    state_dir.config_path.write_text(
+        'services_interval_seconds = 10\n[[services]]\nid = "memory"\nname = "Memory"\ncheck = "exit 1"\n'
+    )
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert got["services"].ok and "1 configured (memory)" in got["services"].line and "10 s" in got["services"].line
+
+
+def test_doctor_reports_a_bad_services_section(state_dir: StateDir, with_credential: None) -> None:
+    state_dir.config_path.write_text('[[services]]\nid = "Memory"\nname = "M"\ncheck = "true"\n')
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert not got["config"].ok and not got["services"].ok
+    assert "'Memory'" in got["services"].line and "\n" not in got["services"].line

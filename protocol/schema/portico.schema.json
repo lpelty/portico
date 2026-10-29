@@ -1351,6 +1351,18 @@
           "default": null,
           "title": "Logged"
         },
+        "logged_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Logged At"
+        },
         "mode": {
           "anyOf": [
             {
@@ -1401,6 +1413,11 @@
           ],
           "default": null,
           "title": "Title"
+        },
+        "unlogged": {
+          "default": false,
+          "title": "Unlogged",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1459,6 +1476,12 @@
         },
         {
           "$ref": "#/$defs/SessionMode"
+        },
+        {
+          "$ref": "#/$defs/SessionLog"
+        },
+        {
+          "$ref": "#/$defs/ServiceRestart"
         }
       ]
     },
@@ -2565,9 +2588,300 @@
           "$ref": "#/$defs/UpdateAvailable"
         },
         {
+          "$ref": "#/$defs/SessionLogged"
+        },
+        {
+          "$ref": "#/$defs/ServicesStatus"
+        },
+        {
           "$ref": "#/$defs/Error"
         }
       ]
+    },
+    "Service": {
+      "additionalProperties": false,
+      "description": "One of the deployment's services (v0.4), as its check last found it.\n\n``since`` is when the current state began (ISO 8601 UTC); ``detail`` one\nline for the menu; ``can_restart`` whether the deployment gave it a\n``restart`` command.",
+      "properties": {
+        "can_restart": {
+          "default": false,
+          "title": "Can Restart",
+          "type": "boolean"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Since"
+        },
+        "state": {
+          "enum": [
+            "up",
+            "down",
+            "checking"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "state"
+      ],
+      "title": "Service",
+      "type": "object"
+    },
+    "ServiceRestart": {
+      "additionalProperties": false,
+      "description": "Run a service's ``restart`` command, then check it again (v0.4).\n\nAnswered by the ``services.status`` that follows.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "service": {
+          "title": "Service",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "service.restart",
+          "default": "service.restart",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "service"
+      ],
+      "title": "ServiceRestart",
+      "type": "object"
+    },
+    "ServicesStatus": {
+      "additionalProperties": false,
+      "description": "Every deployment service and its state, down ones first (v0.4).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "services": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Service"
+          },
+          "title": "Services",
+          "type": "array"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "services.status",
+          "default": "services.status",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "ServicesStatus",
+      "type": "object"
+    },
+    "SessionLog": {
+      "additionalProperties": false,
+      "description": "Run the deployment's log step in the live session ``chat`` without ending it (v0.4).\n\nAnswered with ``session.logged`` then ``chat.list``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "session.log",
+          "default": "session.log",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "SessionLog",
+      "type": "object"
+    },
+    "SessionLogged": {
+      "additionalProperties": false,
+      "description": "The log step ``session.log`` asked for has run; ``chat`` is the session's summary now (v0.4).",
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/ChatSummary"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "session.logged",
+          "default": "session.logged",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "SessionLogged",
+      "type": "object"
     },
     "SessionMode": {
       "additionalProperties": false,
