@@ -19,15 +19,16 @@ fi
 echo "== gateway: uv sync"
 (cd "$repo/gateway" && uv sync --quiet)
 
-products="$("$packaging/build-app.sh" "$repo" | tail -n 1)"
-
-# Brand name and icon from the deployment's config; Portico's own when unset or unreadable.
+# Brand name and icons from the deployment's config; Portico's own when a key is unset. A config
+# that does not load stops the install here, before the build: a default-branded app would hide it.
 cli="$repo/gateway/.venv/bin/portico-gateway"
-config_value() { # prints the value, or nothing when unset or when this gateway has no config-value yet
-  local out
-  if out="$("$cli" config-value "$1" 2>/dev/null)"; then
-    printf '%s\n' "$out" | head -n 1
-  fi
+if ! reason="$("$cli" config-value brand.name 2>&1 >/dev/null)"; then
+  printf '%s\n' "${reason:-portico-gateway config-value failed}" >&2
+  echo "install: the config above does not load; fix it and run bin/install again (nothing was installed)" >&2
+  exit 1
+fi
+config_value() { # prints the value, or nothing when unset
+  "$cli" config-value "$1" | head -n 1
 }
 name="$(config_value brand.name)"
 name="${name:-Portico}"
@@ -38,6 +39,21 @@ if [ -n "$icon" ] && [ ! -f "$icon" ]; then
   icon=""
 fi
 icon="${icon:-$packaging/AppIcon.png}"
+# A precompiled asset catalog (Icon Composer, actool) for macOS 26's icon look; the .icns stays.
+icon_assets="$(config_value brand.app_icon_assets)"
+icon_name="$(config_value brand.app_icon_name)"
+icon_args=()
+if [ -n "$icon_assets" ] || [ -n "$icon_name" ]; then
+  if [ -z "$icon_assets" ] || [ -z "$icon_name" ]; then
+    echo "install: brand.app_icon_assets and brand.app_icon_name go together; only the PNG icon is used" >&2
+  elif [ ! -f "$icon_assets" ]; then
+    echo "install: brand.app_icon_assets is $icon_assets, which does not exist; only the PNG icon is used" >&2
+  else
+    icon_args=(--icon-assets "$icon_assets" --icon-name "$icon_name")
+  fi
+fi
+
+products="$("$packaging/build-app.sh" "$repo" | tail -n 1)"
 
 min_macos="$(sed -n 's/.*\.macOS(\.v\([0-9][0-9]*\)).*/\1/p' "$repo/app/Package.swift" | head -n 1)"
 min_macos="${min_macos:-15}.0"
@@ -52,7 +68,8 @@ app="$("$packaging/make-app.sh" \
   --icon "$icon" \
   --version "$version" \
   --gateway-bin "$repo/bin/portico-gateway" \
-  --min-macos "$min_macos" | tail -n 1)"
+  --min-macos "$min_macos" \
+  ${icon_args[@]+"${icon_args[@]}"} | tail -n 1)"
 
 echo
 echo "Installed: $app"

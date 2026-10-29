@@ -309,6 +309,46 @@ def test_bad_v03_keys_are_refused_naming_the_key(tmp_path: Path, text: str, key:
     assert key in str(e.value)
 
 
+def test_app_icon_assets_and_name_load_expanded_and_never_reach_hello(tmp_path: Path) -> None:
+    """v0.5: a precompiled asset catalog and the icon's name in it, for bin/install only."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[brand]\n"
+        'name = "Front Door"\n'
+        'agent_name = "Helper"\n'
+        'app_icon = "/icons/front-door.png"\n'
+        'app_icon_assets = "~/icons/Assets.car"\n'
+        'app_icon_name = "FrontDoor"\n'
+    )
+    config = load_config(path)
+    assert config.brand.app_icon_assets == str(Path("~/icons/Assets.car").expanduser())
+    assert config.brand.app_icon_name == "FrontDoor"
+    hello = hello_for(config, epoch="e", gateway_version="0.5.0")
+    assert hello.brand == Brand(name="Front Door", agent_name="Helper")
+    assert "app_icon" not in dump(hello)
+
+
+def test_app_icon_assets_and_name_default_to_unset() -> None:
+    assert Config().brand.app_icon_assets is None and Config().brand.app_icon_name is None
+
+
+@pytest.mark.parametrize(
+    "line, key",
+    [
+        ('app_icon_assets = "Assets.car"\n', "brand.app_icon_assets"),
+        ('app_icon_name = ""\n', "brand.app_icon_name"),
+        ('app_icon_name = "icons/App"\n', "brand.app_icon_name"),
+        ('app_icon_assets = 3\n', "app_icon_assets"),
+    ],
+)
+def test_bad_app_icon_assets_keys_are_refused_naming_the_key(tmp_path: Path, line: str, key: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[brand]\nname = "a"\nagent_name = "b"\n' + line)
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert key in str(e.value)
+
+
 def test_config_value_reads_dotted_keys() -> None:
     from portico_gateway.config import config_value
 

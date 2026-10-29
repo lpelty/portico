@@ -21,6 +21,7 @@ PACKAGING = REPO_ROOT / "app" / "Packaging"
 BUILD_APP = PACKAGING / "build-app.sh"
 MAKE_APP = PACKAGING / "make-app.sh"
 PREREQS = PACKAGING / "prereqs.sh"
+SHAPE_ICON = PACKAGING / "shape-app-icon.swift"
 DEFAULT_ICON = PACKAGING / "AppIcon.png"
 
 pytestmark = pytest.mark.skipif(shutil.which("codesign") is None, reason="macOS tools are not available")
@@ -171,7 +172,14 @@ def products(tmp_path: Path) -> Path:
     return out
 
 
-def make_app(products: Path, dest: Path, name: str = "Acme Agent", icon: Path = DEFAULT_ICON) -> subprocess.CompletedProcess[str]:
+def make_app(
+    products: Path,
+    dest: Path,
+    name: str = "Acme Agent",
+    icon: Path = DEFAULT_ICON,
+    extra: list[object] | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return run(
         [
             MAKE_APP,
@@ -182,7 +190,9 @@ def make_app(products: Path, dest: Path, name: str = "Acme Agent", icon: Path = 
             "--version", "0.3.0",
             "--gateway-bin", "/opt/portico/bin/portico-gateway",
             "--min-macos", "15.0",
-        ]
+            *(extra or []),
+        ],
+        env,
     )  # fmt: skip
 
 
@@ -259,6 +269,90 @@ def test_the_default_icon_is_a_1024_png() -> None:
     assert "pixelWidth: 1024" in done.stdout and "pixelHeight: 1024" in done.stdout and "format: png" in done.stdout
 
 
+# --- the icon on the macOS grid (v0.5) --------------------------------------------
+
+
+@pytest.fixture
+def square_icon(tmp_path: Path) -> Path:
+    """A full-bleed square 1024 PNG: the default icon flattened through JPEG (no alpha left)."""
+    jpeg, png = tmp_path / "square.jpg", tmp_path / "square.png"
+    assert run(["sips", "-s", "format", "jpeg", DEFAULT_ICON, "--out", jpeg]).returncode == 0
+    assert run(["sips", "-s", "format", "png", jpeg, "--out", png]).returncode == 0
+    return png
+
+
+def shape(src: Path, out: Path) -> subprocess.CompletedProcess[str]:
+    return run(["swift", SHAPE_ICON, src, out])
+
+
+def test_a_full_bleed_square_icon_is_shaped_and_a_shaped_one_is_left_alone(square_icon: Path, tmp_path: Path) -> None:
+    out = tmp_path / "shaped.png"
+    done = shape(square_icon, out)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "shaped"
+    size = run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", out]).stdout
+    assert "pixelWidth: 1024" in size and "pixelHeight: 1024" in size
+    # Its corners are transparent now, so a second pass uses it as given, byte for byte.
+    again = tmp_path / "again.png"
+    done = shape(out, again)
+    assert done.returncode == 0 and done.stdout.strip() == "as given"
+    assert again.read_bytes() == out.read_bytes()
+    # Portico's own icon is already on the grid.
+    assert shape(DEFAULT_ICON, tmp_path / "default.png").stdout.strip() == "as given"
+
+
+def test_the_app_icon_of_a_square_png_comes_out_rounded(products: Path, square_icon: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "Applications"
+    done = make_app(products, dest, icon=square_icon)
+    assert done.returncode == 0, done.stderr
+    iconset = tmp_path / "out.iconset"
+    icns = dest / "Acme Agent.app" / "Contents" / "Resources" / "AppIcon.icns"
+    assert run(["iconutil", "-c", "iconset", icns, "-o", iconset]).returncode == 0
+    largest = iconset / "icon_512x512@2x.png"
+    assert shape(largest, tmp_path / "check.png").stdout.strip() == "as given"  # transparent corners
+
+
+def test_when_the_icon_cannot_be_shaped_it_is_used_as_given_with_a_warning(products: Path, square_icon: Path, tmp_path: Path) -> None:
+    env = {**os.environ, "PORTICO_SWIFT": "/usr/bin/false"}
+    done = make_app(products, tmp_path / "Applications", icon=square_icon, env=env)
+    assert done.returncode == 0, done.stderr
+    assert "could not put" in done.stderr and "used as given" in done.stderr
+    assert (tmp_path / "Applications" / "Acme Agent.app" / "Contents" / "Resources" / "AppIcon.icns").is_file()
+
+
+def test_an_asset_catalog_is_copied_with_its_icon_name_and_the_icns_stays(products: Path, tmp_path: Path) -> None:
+    car = tmp_path / "built" / "Assets.car"
+    car.parent.mkdir()
+    car.write_bytes(b"compiled asset catalog stand-in")
+    dest = tmp_path / "Applications"
+    done = make_app(products, dest, extra=["--icon-assets", car, "--icon-name", "AppIcon"])
+    assert done.returncode == 0, done.stderr
+    app = dest / "Acme Agent.app"
+    assert (app / "Contents" / "Resources" / "Assets.car").read_bytes() == car.read_bytes()
+    assert (app / "Contents" / "Resources" / "AppIcon.icns").is_file()
+    with (app / "Contents" / "Info.plist").open("rb") as f:
+        info = plistlib.load(f)
+    assert info["CFBundleIconName"] == "AppIcon" and info["CFBundleIconFile"] == "AppIcon"
+    assert run(["codesign", "--verify", "--deep", "--strict", app]).returncode == 0
+
+
+def test_without_an_asset_catalog_there_is_no_icon_name(products: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "Applications"
+    assert make_app(products, dest).returncode == 0
+    with (dest / "Acme Agent.app" / "Contents" / "Info.plist").open("rb") as f:
+        assert "CFBundleIconName" not in plistlib.load(f)
+    assert not (dest / "Acme Agent.app" / "Contents" / "Resources" / "Assets.car").exists()
+
+
+def test_asset_catalog_arguments_go_together_and_must_exist(products: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "Applications"
+    done = make_app(products, dest, extra=["--icon-name", "AppIcon"])
+    assert done.returncode == 2 and "go together" in done.stderr
+    done = make_app(products, dest, extra=["--icon-assets", tmp_path / "missing.car", "--icon-name", "AppIcon"])
+    assert done.returncode == 1 and "missing.car" in done.stderr
+    assert not (dest / "Acme Agent.app").exists()
+
+
 # --- prerequisites --------------------------------------------------------------
 
 
@@ -329,4 +423,20 @@ def test_install_stops_before_installing_anything_when_a_prerequisite_is_missing
     assert "FAIL command line tools" in done.stdout
     assert "nothing was installed" in done.stderr
     assert "uv sync" not in done.stdout
+    assert not (tmp_path / "Applications").exists()
+
+
+def test_install_stops_with_the_reason_when_the_config_does_not_load(tmp_path: Path) -> None:
+    """v0.5: a config missing brand.agent_name used to build a default "Portico.app"."""
+    if run([PREREQS, REPO_ROOT]).returncode != 0:
+        pytest.skip("this machine does not meet the prerequisites")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.toml").write_text('[brand]\nname = "Front Door"\n')
+    env = {**os.environ, "PORTICO_HOME": str(home), "PORTICO_APP_DIR": str(tmp_path / "Applications")}
+    done = run([REPO_ROOT / "bin" / "install"], env)
+    assert done.returncode == 1
+    assert "brand.agent_name" in done.stderr and "Field required" in done.stderr
+    assert "does not load" in done.stderr and "nothing was installed" in done.stderr
+    assert "== app" not in done.stdout  # stopped before the build
     assert not (tmp_path / "Applications").exists()
