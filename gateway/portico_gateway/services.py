@@ -8,17 +8,20 @@ A deployment lists what it depends on in ``config.toml``::
     check = "curl -sf http://localhost:8888/health"   # exit 0 = up
     restart = "launchctl kickstart -k gui/$UID/com.fleet.hindsight"  # optional
     up_detail = "recall and capture"                   # optional
+    timeout_seconds = 10                               # optional, default 10, at least 1
 
 The ``ServiceMonitor`` runs every check at start (each service is
 ``checking`` until its first answer), every ``services_interval_seconds``,
 and after a restart. Each check is a lifecycle command
-(``lifecycle.run_command``: its own process group, killed after
+(``lifecycle.run_command``: its own process group, killed after the
+service's ``timeout_seconds``; a restart is killed after
 ``command_timeout_seconds``). A check that exits 0 is ``up`` with the
 service's ``up_detail``; anything else is ``down`` with
 ``not responding since H:MM`` (local time) plus `` · <last output line>``
 when the check printed one. The monitor hands the app a ``services.status``
-only when some service's state or detail changed. Portico never knows
-what a service is: it draws what the deployment lists.
+only when some service's state or detail changed, as each check answers:
+one slow check never holds back what the others found. Portico never
+knows what a service is: it draws what the deployment lists.
 """
 
 from __future__ import annotations
@@ -83,6 +86,8 @@ class ServiceMonitor:
         publish: Publish,
         clock: Clock = _utc_now,
     ) -> None:
+        # ``timeout`` bounds a restart (``command_timeout_seconds``); each
+        # check is bounded by its own service's ``timeout_seconds``.
         self.services = list(services)
         self.interval = interval
         self.timeout = timeout
@@ -92,6 +97,8 @@ class ServiceMonitor:
         self._status: dict[str, _Status] = {s.id: _Status(since=started) for s in self.services}
         # One check or restart per service at a time.
         self._locks: dict[str, asyncio.Lock] = {s.id: asyncio.Lock() for s in self.services}
+        # One publish at a time, so the app gets the lists in the order they were found.
+        self._publishing = asyncio.Lock()
         # What the app was last handed (at start: everything ``checking``,
         # which is also what a connecting app is sent).
         self._last: list[Service] = self.snapshot()
@@ -117,11 +124,12 @@ class ServiceMonitor:
 
     async def _publish_if_changed(self) -> None:
         """Hand the app the list when a state or detail differs from what it last got."""
-        now = self.snapshot()
-        if [(s.id, s.state, s.detail) for s in now] == [(s.id, s.state, s.detail) for s in self._last]:
-            return
-        self._last = now
-        await self.publish(now)
+        async with self._publishing:
+            now = self.snapshot()
+            if [(s.id, s.state, s.detail) for s in now] == [(s.id, s.state, s.detail) for s in self._last]:
+                return
+            self._last = now
+            await self.publish(now)
 
     # --- checks ---------------------------------------------------------------
 
@@ -152,11 +160,11 @@ class ServiceMonitor:
             last = line
 
         try:
-            code = await run_command(service.check, seen, self.timeout)
+            code = await run_command(service.check, seen, float(service.timeout_seconds))
         except TimeoutError:
             code = None
             if last is None:
-                last = f"check timed out after {self.timeout:g} s"
+                last = f"check timed out after {service.timeout_seconds:g} s"
         except OSError as e:
             code = None
             last = f"check could not start: {e}"
@@ -181,7 +189,11 @@ class ServiceMonitor:
         await self._publish_if_changed()
 
     async def check_all(self) -> None:
-        """Check every service at once; then one ``services.status`` if anything changed."""
+        """Check every service at once; each answer is published (if it changed anything) as it comes.
+
+        A slow check (up to its ``timeout_seconds``) delays only its own
+        service: the others reach the app as soon as they answer.
+        """
 
         async def one(service: ServiceConfig) -> None:
             async with self._locks[service.id]:
@@ -189,9 +201,9 @@ class ServiceMonitor:
                     await self._run_check(service)
                 except Exception:
                     log.exception("service %s: the check failed to run", service.id)
+            await self._publish_if_changed()
 
         await asyncio.gather(*(one(s) for s in self.services))
-        await self._publish_if_changed()
 
     async def run(self) -> None:
         """At start, then every ``interval`` seconds, until cancelled."""

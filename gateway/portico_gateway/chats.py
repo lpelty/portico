@@ -188,9 +188,15 @@ class Chat:
     # --- state ----------------------------------------------------------------
 
     def set_state(self, word: ChatStateWord) -> ChatState:
-        """Set the state word and emit the stamped ``chat.state`` event for it."""
+        """Set the state word and emit the stamped ``chat.state`` event for it.
+
+        The event carries ``unlogged`` as it stands now: a turn's end must
+        call ``note_turn_done`` before its ``idle`` is built here.
+        """
         self.state = _checked_state(word)
-        return self.stamp(ChatState(chat=self.number, state=self.state, mode=self.mode, ts=_now()))  # type: ignore[return-value]
+        return self.stamp(  # type: ignore[return-value]
+            ChatState(chat=self.number, state=self.state, mode=self.mode, unlogged=self.unlogged, ts=_now())
+        )
 
     # --- permission outcomes ----------------------------------------------------
 

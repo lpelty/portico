@@ -106,6 +106,8 @@ name = "Memory"
 check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up
 restart = "my-tool restart memory"  # optional: the menu offers Restart
 up_detail = "recall and capture"    # optional: shown while it is up
+timeout_seconds = 10                # optional, default 10, at least 1: the check is killed after this
+                                    # (a restart is bounded by command_timeout_seconds)
 
 [[roots]]                           # folders the files pane can browse
 name = "projects"

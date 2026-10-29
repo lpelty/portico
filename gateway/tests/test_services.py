@@ -36,8 +36,8 @@ TS = "2026-10-28T12:00:00Z"
 NOON = datetime(2026, 10, 28, 17, 5, tzinfo=UTC)
 
 
-def svc(id: str, check: str, **kw: str) -> ServiceConfig:
-    return ServiceConfig(id=id, name=kw.pop("name", id.title()), check=check, **kw)
+def svc(id: str, check: str, **kw: object) -> ServiceConfig:
+    return ServiceConfig(id=id, name=kw.pop("name", id.title()), check=check, **kw)  # type: ignore[arg-type]
 
 
 class Recorder:
@@ -79,8 +79,8 @@ async def test_first_check_publishes_down_first_with_detail() -> None:
         ]
     )
     await mon.check_all()
-    assert len(rec.calls) == 1
-    first, second = rec.calls[0]
+    assert len(rec.calls) == 2, "each answer is published as it comes"
+    first, second = rec.calls[-1]
     assert (first.id, first.state) == ("search", "down"), "down services come first"
     assert first.detail == f"not responding since {local_hm(NOON)} · connection refused on :8888"
     assert first.since == "2026-10-28T17:05:00Z"
@@ -90,7 +90,7 @@ async def test_first_check_publishes_down_first_with_detail() -> None:
 async def test_up_without_up_detail_has_no_detail_and_silent_failure_has_no_suffix() -> None:
     mon, rec = monitor([svc("a", "true"), svc("b", "false")])
     await mon.check_all()
-    got = {s.id: s for s in rec.calls[0]}
+    got = {s.id: s for s in rec.calls[-1]}
     assert got["a"].detail is None
     assert got["b"].detail == f"not responding since {local_hm(NOON)}"
 
@@ -98,9 +98,10 @@ async def test_up_without_up_detail_has_no_detail_and_silent_failure_has_no_suff
 async def test_only_changes_are_published() -> None:
     mon, rec = monitor([svc("a", "true"), svc("b", "false")])
     await mon.check_all()
+    first = len(rec.calls)
     await mon.check_all()
     await mon.check("a")
-    assert len(rec.calls) == 1, "the same states and details again publish nothing"
+    assert len(rec.calls) == first, "the same states and details again publish nothing"
 
 
 async def test_a_state_change_is_published(tmp_path: Path) -> None:
@@ -123,18 +124,34 @@ async def test_a_long_last_line_is_cut_and_only_the_last_non_empty_line_counts()
     assert len(tail) == 80 and tail.endswith("…") and tail.startswith("xxx")
 
 
-async def test_a_check_that_hangs_is_killed_at_the_timeout_and_is_down() -> None:
-    mon, rec = monitor([svc("slow", "sleep 30")], timeout=0.3)
+async def test_a_check_that_hangs_is_killed_at_its_timeout_and_is_down() -> None:
+    # The service's own ``timeout_seconds`` bounds the check, not the monitor's (restart) timeout.
+    mon, rec = monitor([svc("slow", "sleep 30", timeout_seconds=1)], timeout=60)
     started = asyncio.get_running_loop().time()
     await mon.check_all()
     assert asyncio.get_running_loop().time() - started < 5
     service = rec.calls[0][0]
     assert service.state == "down"
-    assert service.detail is not None and "timed out after 0.3 s" in service.detail
+    assert service.detail is not None and "timed out after 1 s" in service.detail
+
+
+async def test_one_slow_check_does_not_hold_back_the_others() -> None:
+    mon, rec = monitor([svc("slow", "sleep 30", timeout_seconds=1), svc("fast", "true")], timeout=60)
+    task = asyncio.create_task(mon.check_all())
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    while not rec.calls and loop.time() - started < 0.9:
+        await asyncio.sleep(0.02)
+    assert rec.calls, "the fast check's answer arrives before the slow one times out"
+    assert loop.time() - started < 0.9
+    assert {s.id: s.state for s in rec.calls[0]} == {"slow": "checking", "fast": "up"}
+    await task
+    assert {s.id: s.state for s in rec.calls[-1]} == {"slow": "down", "fast": "up"}
+    assert len(rec.calls) == 2
 
 
 async def test_a_hanging_check_keeps_its_last_line_when_it_printed_one() -> None:
-    mon, rec = monitor([svc("slow", "echo still trying; sleep 30")], timeout=0.3)
+    mon, rec = monitor([svc("slow", "echo still trying; sleep 30", timeout_seconds=1)])
     await mon.check_all()
     assert rec.calls[0][0].detail == f"not responding since {local_hm(NOON)} · still trying"
 
@@ -263,9 +280,12 @@ async def test_the_app_hears_services_after_hello_and_each_change(services_serve
     try:
         assert [s.state for s in services_server.services.snapshot()] == ["checking", "checking"]
         gate.write_text("")
-        frames = await recv_until(conn, ServicesStatus)
-        status = frames[-1]
+        # Each check's answer is published as it comes: one frame, or two.
+        status = (await recv_until(conn, ServicesStatus))[-1]
         assert isinstance(status, ServicesStatus)
+        if any(s.state == "checking" for s in status.services):
+            status = await recv(conn)
+            assert isinstance(status, ServicesStatus)
         assert [(s.id, s.state) for s in status.services] == [("memory", "down"), ("files", "up")]
         memory = status.services[0]
         assert memory.can_restart and memory.detail and memory.detail.startswith("not responding since ")

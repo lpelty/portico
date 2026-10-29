@@ -332,6 +332,11 @@ class ChatState(Envelope):
     chat: int
     state: ChatStateWord
     mode: PermissionMode | None = None
+    # v0.4: ``ChatSummary.unlogged`` as of this state. The gateway sets it on
+    # every ``chat.state`` it sends, so the app learns of new unlogged work
+    # when a turn finishes (``chat.state idle``) without waiting for a
+    # ``chat.list``. Absent from a gateway before v0.4.
+    unlogged: bool | None = None
 
 
 class ChatLive(Envelope):
@@ -753,7 +758,7 @@ def example_messages() -> dict[str, BaseModel]:
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],
         ),
-        ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default"),
+        ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default", unlogged=True),
         ChatHistory(
             ts=_TS,
             chat=1,

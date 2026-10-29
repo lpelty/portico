@@ -299,8 +299,8 @@ cards, `turn.finished`). When it finishes `done` the session's
 `logged_at` is set to now and `unlogged` clears; a log step that errors
 or is stopped still answers, with `logged_at` where it was. The session
 is not ended, its engine stays up, and `logged` (the renewal's verdict)
-is untouched. Answered with `session.logged` (with the `id`), then
-`chat.list`. Errors: `chat.unknown`, `session.ended` (the session has
+is untouched. Answered with `chat.state` (carrying `unlogged`), then
+`session.logged` (with the `id`), then `chat.list`. Errors: `chat.unknown`, `session.ended` (the session has
 ended), `session.cannot_log` (the deployment has no log step:
 `hello.can_log` is false), `chat.busy` (a turn, a renewal or another log
 is running). While a log runs, `message.send`, `session.renew` and
@@ -404,6 +404,14 @@ and it was not logged by a renewal.
 `chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`;
 `mode?` (v0.3): the session's permission mode, sent when the chat opens
 and whenever it changes.
+`unlogged?` *(v0.4)*: the session's `ChatSummary.unlogged` as of this
+state. The gateway sets it on **every** `chat.state` it sends (always
+present from a v0.4 gateway; absent from an older one), so the app learns
+of unlogged work the moment a turn finishes: the turn's `chat.state idle`
+already carries `unlogged: true`. After `session.log` the gateway sends
+one more `chat.state` (the current word) with `unlogged` as the log step
+left it, before `session.logged`: `false` when it finished `done`, `true`
+when it errored or was stopped (the log turn itself counts as work).
 Stamped and kept in the ring like every chat-scoped event, so a replay
 shows the state transitions in order. The one answering `chat.new` also
 carries the request's `id`.
@@ -675,15 +683,19 @@ name = "Memory (Hindsight)"      # required: what the menu says
 check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up
 restart = "launchctl kickstart -k gui/$UID/com.fleet.hindsight"  # optional: the menu offers Restart
 up_detail = "recall and capture" # optional: the detail shown while up
+timeout_seconds = 10             # optional, default 10, at least 1: the check's time limit
 ```
 
 The gateway runs every check at start, then every
 `services_interval_seconds`, and after a `service.restart`; each check
-(and each restart) runs in its own process group and is killed after
-`command_timeout_seconds`. Checks of different services run side by side;
-one service never has two checks at once. A bad `[[services]]` entry (a
+(and each restart) runs in its own process group; a check is killed after
+its service's `timeout_seconds` (default 10), a restart after
+`command_timeout_seconds`. Checks of different services run side by side,
+and each one's answer reaches the app (a `services.status`, when it changed
+anything) as soon as it comes: one slow check never holds back the others.
+One service never has two checks at once. A bad `[[services]]` entry (a
 missing or blank key, an id with other characters, an id used twice, an
-unknown key, an interval under 5) stops the gateway at start with the key
+unknown key, a `timeout_seconds` under 1, an interval under 5) stops the gateway at start with the key
 named; `bin/doctor` reports it on its `config` and `services` lines and
 otherwise lists the configured ids without running any check. Portico
 never knows what a service is: it draws what the deployment lists.

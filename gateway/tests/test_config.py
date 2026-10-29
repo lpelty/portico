@@ -355,6 +355,7 @@ def test_services_load(tmp_path: Path) -> None:
         'id = "search-2"\n'
         'name = "Search"\n'
         'check = "true"\n'
+        "timeout_seconds = 3\n"
     )
     config = load_config(path)
     assert config.services_interval_seconds == 15
@@ -362,6 +363,7 @@ def test_services_load(tmp_path: Path) -> None:
     assert (memory.id, memory.name, memory.up_detail) == ("memory", "Memory (Hindsight)", "recall and capture")
     assert memory.restart and "$UID" in memory.restart, "the command is kept as written; the shell expands it"
     assert (search.id, search.restart, search.up_detail) == ("search-2", None, None)
+    assert (memory.timeout_seconds, search.timeout_seconds) == (10, 3), "a check is bounded by 10 s unless it says"
 
 
 def test_services_default_to_none_every_30_seconds() -> None:
@@ -383,6 +385,8 @@ def test_services_default_to_none_every_30_seconds() -> None:
             ["services", "'m'", "twice"],
         ),
         ("services_interval_seconds = 4\n", ["services_interval_seconds"]),
+        ('[[services]]\nid = "a\\n"\nname = "M"\ncheck = "true"\n', ["services", "lowercase"]),
+        ('[[services]]\nid = "m"\nname = "M"\ncheck = "true"\ntimeout_seconds = 0\n', ["services.0.timeout_seconds"]),
     ],
 )
 def test_bad_services_are_refused_naming_the_key(tmp_path: Path, text: str, words: list[str]) -> None:
@@ -392,6 +396,25 @@ def test_bad_services_are_refused_naming_the_key(tmp_path: Path, text: str, word
         load_config(path)
     for word in words:
         assert word in str(e.value), (word, str(e.value))
+
+
+@pytest.mark.parametrize(
+    "text, keys",
+    [
+        ('[[services]]\nid = "Memory"\nname = "M"\ncheck = "true"\n', {"services"}),
+        ("services_interval_seconds = 4\n", {"services_interval_seconds"}),
+        # Words in the message never decide which key failed.
+        ("servicess = 1\n", {"servicess"}),
+        ('roots = [{ name = "x", path = "relative/services" }]\n', {"roots"}),
+        ("not toml [", set()),
+    ],
+)
+def test_a_config_error_names_its_top_level_keys(tmp_path: Path, text: str, keys: set[str]) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(text)
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert e.value.keys == keys
 
 
 def test_hello_commands_list_log_when_the_deployment_can_log() -> None:

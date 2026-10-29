@@ -460,3 +460,12 @@ def test_doctor_reports_a_bad_services_section(state_dir: StateDir, with_credent
     got = by_name(doctor(state_dir, state_dir.config_path))
     assert not got["config"].ok and not got["services"].ok
     assert "'Memory'" in got["services"].line and "\n" not in got["services"].line
+
+
+def test_doctor_does_not_blame_services_for_another_key_that_mentions_them(
+    state_dir: StateDir, with_credential: None
+) -> None:
+    state_dir.config_path.write_text('roots = [{ name = "x", path = "relative/services" }]\n')
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert not got["config"].ok and "services" in got["config"].line
+    assert got["services"].ok and "not checked" in got["services"].line
