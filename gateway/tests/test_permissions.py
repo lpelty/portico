@@ -30,13 +30,14 @@ from portico_gateway.messages import (
     SessionRenew,
     SessionRenewed,
     ToolFinished,
+    ToolStarted,
     TurnFinished,
     TurnStop,
     dump,
 )
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import StateDir
-from tests.conftest import AskPermission, fake_result, make_config
+from tests.conftest import AskPermission, Block, fake_result, make_config
 from tests.test_server import attach
 from tests.test_turns import EngineFactory, new_chat, recv, recv_until, tool_result, tool_use
 
@@ -537,6 +538,88 @@ async def test_outcomes_survive_a_restart_on_the_transcript_replay(
         history = await recv(conn)
         assert isinstance(history, ChatHistory)
         assert rows(history.events) == {"w1": ("declined", "later"), "x1": ("blocked", None)}
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+# --- outcome bookkeeping (v0.3 review) ----------------------------------------------------------
+
+
+async def test_a_blocked_looking_result_outside_auto_mode_is_not_labelled_blocked(
+    state_dir: StateDir, factory: ScriptedFactory, folder: Path
+) -> None:
+    srv = await start_server(state_dir, factory, permission_mode="default")
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        items = step(None, "b1", "Bash", {"command": "echo"}, result=BLOCKED, is_error=True)
+        frames = await run_answering(conn, number, factory.last, items, [])
+        assert rows(frames) == {"b1": (None, None)}
+        assert "b1" not in srv.registry.get(number).permissions
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_a_persons_answer_wins_over_a_blocked_looking_result(
+    server: GatewayServer, factory: ScriptedFactory, folder: Path
+) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        ask = AskPermission("Bash", {"command": "make"}, tool_use_id="e1")
+        items = step(ask, "e1", "Bash", {"command": "make"}, result=BLOCKED, is_error=True)
+        frames = await run_answering(conn, number, factory.last, items, [("allow", "once", None)])
+        assert rows(frames) == {"e1": ("once", None)}
+    finally:
+        await conn.close()
+
+
+async def test_auto_and_blocked_go_by_the_mode_when_the_tool_started(server: GatewayServer, folder: Path) -> None:
+    chat = server.registry.create(folder)
+
+    async def run(tool_use_id: str, start: str, finish: str, result_blocked: bool) -> ToolFinished:
+        chat.mode = start  # type: ignore[assignment]
+        await server.engine_event(
+            chat, ToolStarted(ts=TS, chat=chat.number, turn=1, tool_use_id=tool_use_id, tool="Bash", summary="x")
+        )
+        chat.mode = finish  # type: ignore[assignment]
+        await server.engine_event(
+            chat,
+            ToolFinished(
+                ts=TS, chat=chat.number, turn=1, tool_use_id=tool_use_id, ok=not result_blocked,
+                permission="blocked" if result_blocked else None,
+            ),
+        )
+        last = [m for m in chat.ring if isinstance(m, ToolFinished)][-1]
+        assert last.tool_use_id == tool_use_id
+        return last
+
+    assert (await run("t1", "auto", "default", False)).permission == "auto"
+    assert (await run("t2", "default", "auto", False)).permission is None
+    assert (await run("t3", "default", "auto", True)).permission is None
+    assert (await run("t4", "auto", "default", True)).permission == "blocked"
+
+
+async def test_an_answer_is_on_the_record_before_the_tool_finishes(
+    state_dir: StateDir, factory: ScriptedFactory, folder: Path
+) -> None:
+    srv = await start_server(state_dir, factory, permission_mode="default")
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        w = {"file_path": str(folder / "a.md"), "content": "a"}
+        engine.script(tool_use("w1", "Write", w), AskPermission("Write", w, tool_use_id="w1"), Block())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+        card = (await recv_until(conn, CardAsk))[-1]
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"decision": "allow"}, scope="once")))
+        await engine.wait_blocked()
+        record = next(r for r in state_dir.load_index().chats if r.chat == number)
+        assert record.permissions["w1"].outcome == "once"
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        await recv_until(conn, TurnFinished)
     finally:
         await conn.close()
         await srv.shutdown()

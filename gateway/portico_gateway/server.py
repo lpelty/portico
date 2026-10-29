@@ -221,9 +221,19 @@ PORTICO_COMMANDS: frozenset[str] = frozenset({"new"})
 
 
 def slash_command(text: str) -> str | None:
-    """The command a message starts with (without ``/``), or ``None``."""
+    """The command a message starts with (without ``/``), or ``None``.
+
+    A word that reads as a path is not a command: one with a ``.`` in it
+    (``/file.md summarize``), or one that names something on disk at the
+    root (``/tmp please summarize``, ``/etc``). The message goes through.
+    """
     m = SLASH_COMMAND.match(text.lstrip())
-    return m.group(1) if m else None
+    if not m:
+        return None
+    word = m.group(1)
+    if "." in word or os.path.lexists("/" + word):
+        return None
+    return word
 
 
 def _now() -> str:
@@ -1117,7 +1127,7 @@ class GatewayServer:
             return
         if not isinstance(event, TurnFinished):
             if isinstance(event, ToolStarted):
-                chat.started_tools[event.tool_use_id] = event.tool
+                chat.started_tools[event.tool_use_id] = (event.tool, chat.mode)
             elif isinstance(event, ToolFinished):
                 event = self._with_permission(chat, event)
             if run is not None:
@@ -1144,23 +1154,27 @@ class GatewayServer:
     def _with_permission(self, chat: Chat, event: ToolFinished) -> ToolFinished:
         """``event`` with what became of its permission (v0.3), recorded on the chat.
 
-        In order: auto mode's classifier blocked it (seen in the result);
-        a card's answer, a session allow or a cancel decided it; else, in
-        ``auto`` mode, a tool that is not read-only ran without a card, so
-        auto mode allowed it. Nothing for a read, or a step no one decided.
+        The mode that counts is the session's mode when the tool started.
+        In order: auto mode's classifier blocked it (seen in the result) —
+        only when the tool started in ``auto`` mode and no person's answer
+        or allow was recorded for it; a card's answer, a session allow or a
+        cancel decided it; else, a tool started in ``auto`` mode that is not
+        read-only ran without a card, so auto mode allowed it. Nothing for a
+        read, or a step no one decided.
         """
-        tool = chat.started_tools.pop(event.tool_use_id, None)
-        if event.permission == "blocked":
+        tool, mode = chat.started_tools.pop(event.tool_use_id, (None, chat.mode))
+        decided = chat.permissions.get(event.tool_use_id)
+        if decided is not None and decided.outcome in ("auto", "blocked"):
+            decided = None  # not a person's answer
+        if event.permission == "blocked" and mode == "auto" and decided is None:
             chat.note_permission(event.tool_use_id, "blocked")
+        elif decided is not None:
+            event = event.model_copy(update={"permission": decided.outcome, "note": decided.note})
+        elif mode == "auto" and tool is not None and tool not in READ_ONLY_TOOLS:
+            chat.note_permission(event.tool_use_id, "auto")
+            event = event.model_copy(update={"permission": "auto"})
         else:
-            decided = chat.permissions.get(event.tool_use_id)
-            if decided is not None:
-                event = event.model_copy(update={"permission": decided.outcome, "note": decided.note})
-            elif chat.mode == "auto" and tool is not None and tool not in READ_ONLY_TOOLS:
-                chat.note_permission(event.tool_use_id, "auto")
-                event = event.model_copy(update={"permission": "auto"})
-            else:
-                return event
+            return event.model_copy(update={"permission": None}) if event.permission is not None else event
         self.registry.persist()
         return event
 
@@ -1331,6 +1345,9 @@ class GatewayServer:
                 outcome, note = "declined", msg.note
             if card.tool_use_id:
                 chat.note_permission(card.tool_use_id, outcome, note)
+                # On the record at once, not only at ``tool.finished``: a
+                # restart before the tool ends still knows who decided it.
+                self.registry.persist()
             closing = closing.model_copy(update={"tool_use_id": card.tool_use_id, "outcome": outcome, "note": note})
         # The closing goes in the ring before the engine resumes (and the
         # state goes back to working): a replay closes what it opened.

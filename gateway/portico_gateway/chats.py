@@ -140,9 +140,9 @@ class Chat:
         # Recorded when decided, attached to ``tool.finished``, kept on the
         # record for replays from the transcript.
         self.permissions: dict[str, ToolPermission] = dict(permissions or {})
-        # The tool of every ``tool.started`` this launch, by ``tool_use_id``,
-        # until its ``tool.finished``.
-        self.started_tools: dict[str, str] = {}
+        # The tool of every ``tool.started`` this launch and the session's
+        # mode when it started, by ``tool_use_id``, until its ``tool.finished``.
+        self.started_tools: dict[str, tuple[str, PermissionMode | None]] = {}
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from

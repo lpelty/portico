@@ -738,7 +738,8 @@ async def test_unknown_slash_command_is_an_empty_turn_with_a_notice(
         assert "No command /foo here" not in caplog.text and "no command /foo here" in caplog.text
 
         # What the engine, the deployment (an action's text) or Portico knows goes through as typed.
-        for text in ("/compact", "/plug:do now", "/review", "/new", "/Users/me/file.md is a path", "plain text"):
+        for text in ("/compact", "/plug:do now", "/review", "/new", "/Users/me/file.md is a path", "plain text",
+                     "/tmp please summarize", "/etc", "/file.md summarize", "/notes.v2 look"):
             await conn.send(dump(MessageSend(ts=TS, chat=number, text=text)))
             frames = await recv_until(conn, TurnFinished)
             await recv(conn)
