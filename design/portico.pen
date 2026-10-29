@@ -32173,7 +32173,7 @@
           "id": "r6zYgN",
           "name": "V · v0.3 adjustments (Da",
           "fill": "$text",
-          "content": "V · v0.3 adjustments (Daedalus-Smartsheet stage 0 feedback)",
+          "content": "V · v0.3 adjustments (stage 0 feedback)",
           "fontFamily": "$font",
           "fontSize": 22,
           "fontWeight": "600"
@@ -33865,7 +33865,7 @@
                   "fill": "$text-3",
                   "textGrowth": "fixed-width",
                   "width": 632,
-                  "content": "The SDK's auto mode: a safety check approves or blocks each step, like Atlas in the terminal. Rows say when auto approved; a blocked step says so and the agent is told.",
+                  "content": "The SDK's auto mode: a safety check approves or blocks each step, like auto mode in Claude Code. Rows say when auto approved; a blocked step says so and the agent is told.",
                   "fontFamily": "$font",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -35401,7 +35401,7 @@
                       "id": "c5cWZ",
                       "name": "Name",
                       "fill": "$text-2",
-                      "content": "Claude Opus 5.5 via Bedrock",
+                      "content": "Claude Opus 5.5 (work)",
                       "fontFamily": "$font",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -36655,7 +36655,7 @@
                       "fill": "$text-2",
                       "textGrowth": "fixed-width",
                       "width": "fill_container",
-                      "content": "A safety check approves or blocks each step, like Atlas in the terminal.",
+                      "content": "A safety check approves or blocks each step, like auto mode in Claude Code.",
                       "fontFamily": "$font",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -39071,7 +39071,7 @@
                       "id": "PTgwt",
                       "name": "Name",
                       "fill": "$text-2",
-                      "content": "Claude Opus 5.5 via Bedrock",
+                      "content": "Claude Opus 5.5 (work)",
                       "fontFamily": "$font",
                       "fontSize": 12,
                       "fontWeight": "normal"

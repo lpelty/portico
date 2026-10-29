@@ -747,7 +747,7 @@ def example_messages() -> dict[str, BaseModel]:
         ),
         StatusSet(ts=_TS, chat=1, seq=51, text="Preparing the workspace..."),
         ContextUsage(
-            ts=_TS, chat=1, percent=62.4, model="us.anthropic.claude-opus-5-5-v1:0", model_name="Claude Opus 5.5 via Bedrock"
+            ts=_TS, chat=1, percent=62.4, model="claude-opus-5-5", model_name="Claude Opus 5.5 (work)"
         ),
         ChatCompacted(ts=_TS, chat=1, seq=52, trigger="auto"),
         SessionRenewed(

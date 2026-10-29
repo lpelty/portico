@@ -468,7 +468,7 @@ Not stamped. Sent after `chat.state` for both sessions and before the
 `chat`, `percent` (0–100), `model?`, `model_name?` (v0.3: the
 deployment's display name for the model from
 `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME` when the env names one,
-e.g. `Claude Opus 5.5 via Bedrock`; the app shows it instead of the id). After a turn ends, how full the
+e.g. `Claude Opus 5.5 (work)`; the app shows it instead of the id). After a turn ends, how full the
 session's context window is. Not stamped (a reading, not history); the
 last value is the chat's `context_percent` in `chat.list`. Absent when the
 engine cannot say.
