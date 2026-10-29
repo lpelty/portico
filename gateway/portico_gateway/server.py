@@ -654,6 +654,9 @@ class GatewayServer:
         # The preflight command while it runs: ``stop`` and ``shutdown`` cancel it.
         self._preflight_task: asyncio.Task[None] | None = None
         self._stop_lock = asyncio.Lock()
+        # One engine start per chat at a time: a send that arrives while a
+        # stopped turn's engine is still starting waits for it and uses it.
+        self._engine_locks: dict[int, asyncio.Lock] = {}
         self._stopped = False
         # Set once ``stop`` has run; the main loop waits on it, then calls ``shutdown``.
         self.stopping = asyncio.Event()
@@ -1558,6 +1561,7 @@ class GatewayServer:
         await self.cards.cancel_all(chat, "chat removed", self.emit)
         await self._close_engine(chat)
         self.registry.remove(chat.number)
+        self._engine_locks.pop(chat.number, None)
         await self.send_chat_list()
 
     # --- handlers: files --------------------------------------------------------
@@ -1868,6 +1872,14 @@ class GatewayServer:
         engine = chat.engine
         if engine is not None:
             return engine
+        async with self._engine_locks.setdefault(chat.number, asyncio.Lock()):
+            # Another start may have finished while this one waited.
+            if chat.engine is not None:
+                return chat.engine
+            return await self._start_or_refuse(chat)
+
+    async def _start_or_refuse(self, chat: Chat) -> Engine:
+        """Start ``chat``'s engine; a failure is ``engine.start_failed`` unless the preflight refused."""
         try:
             return await self._start_engine(chat)
         except ProtocolError:

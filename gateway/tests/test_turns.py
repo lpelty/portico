@@ -1023,3 +1023,34 @@ async def test_a_log_step_whose_engine_cannot_start_says_so(
         assert isinstance(err, Error) and err.code == "engine.start_failed" and err.id == "req-l"
     finally:
         await conn.close()
+
+
+async def test_stop_then_send_while_the_engine_starts_starts_one_engine(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    # Stop during a cold start, then send again before the first start ends:
+    # the second send waits for that start and uses its engine, so no
+    # engine is started twice or left running unowned.
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        before = len(factory.engines)
+        await conn.send(dump(MessageSend(ts=TS, id="req-a", chat=number, text="first")))
+        await recv_until(conn, ChatState)  # working
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        await asyncio.sleep(0.05)
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        await recv_until(conn, ChatState)  # stopped
+        await conn.send(dump(MessageSend(ts=TS, id="req-b", chat=number, text="second")))
+        await recv_until(conn, ChatState)  # working
+        factory.gate.set()
+        await recv_until(conn, TurnFinished)
+        await quiet(conn)
+        started = factory.engines[before:]
+        assert len(started) == 1, f"{len(started)} engines started for one chat"
+        engine = started[0]
+        assert not engine.closed and server.registry.get(number).engine is engine
+        assert ("send", "second") in engine.calls and ("send", "first") not in engine.calls
+    finally:
+        await conn.close()
