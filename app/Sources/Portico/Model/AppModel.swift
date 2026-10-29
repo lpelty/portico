@@ -345,6 +345,9 @@ final class AppModel: ObservableObject {
     /// Per chat, the id of the artifact that was on screen when a replay
     /// from the beginning reset the list; put back when it is re-listed.
     private var restoreCurrent: [Int: String] = [:]
+    /// A replay from the beginning is being applied: an artifact it shows
+    /// again is not newer than what was remembered (`show`).
+    private var replayingFromBeginning = false
     /// The `files.list` requests in flight, by request id: the directory
     /// each asked for, so an expand asks once and the reply (or the error)
     /// lands on the directory as requested, whatever path the gateway
@@ -747,6 +750,8 @@ final class AppModel: ObservableObject {
             // the bubble for any send that ran; a send the gateway never saw is gone.
             pendingSends[chat] = nil
         }
+        replayingFromBeginning = fromBeginning
+        defer { replayingFromBeginning = false }
         for event in history.events {
             if let seq = event.envelope.seq, let seen = lastSeq[chat], seq <= seen { continue }
             applyEvent(event, to: chat)
@@ -1141,10 +1146,24 @@ final class AppModel: ObservableObject {
     /// Put an artifact in the viewer, make sure the column is showing, and
     /// tell the gateway (`artifact.opened`, telemetry only). Used by the
     /// auto-open rule and by a pick from the history list.
+    ///
+    /// Outside a replay from the beginning, what it shows is newer than
+    /// anything remembered (v0.10 decision 6): the restore held for the
+    /// welcome, the artifact remembered at quit, and the one a replay put
+    /// aside are all dropped, so none of them can come back over it.
     func show(_ artifact: Artifact, in chat: Int) {
+        if !replayingFromBeginning { supersedeRemembered(in: chat) }
         current[chat] = artifact
         viewerVisible[chat] = true
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
+    }
+
+    /// Something newer is in `chat`'s viewer: nothing remembered may
+    /// replace it when it is listed again.
+    private func supersedeRemembered(in chat: Int) {
+        launchViewer[chat] = nil
+        restoreCurrent[chat] = nil
+        if heldViewer == chat { heldViewer = nil }
     }
 
     /// At launch, the viewer of the session the window opens on comes back
@@ -1801,6 +1820,7 @@ extension AppModel {
             list.append(artifact)
         }
         artifacts[chat] = list
+        supersedeRemembered(in: chat)
         current[chat] = artifact
         viewerVisible[chat] = true
     }
