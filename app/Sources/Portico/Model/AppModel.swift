@@ -241,9 +241,6 @@ final class AppModel: ObservableObject {
     /// The permission mode the start screen's chip picked for the next
     /// session; applied with `session.mode` once the gateway makes it.
     @Published var startMode: PermissionMode?
-    /// The mode the gateway last reported for any session: what the start
-    /// screen's chip shows until one is picked.
-    @Published private(set) var lastKnownMode: PermissionMode?
     /// Per chat, when the running turn started (its `turn.started` stamp):
     /// the working line's elapsed time.
     @Published private(set) var turnStartedAt: [Int: Date] = [:]
@@ -399,15 +396,14 @@ final class AppModel: ObservableObject {
                 chats[index].state = state.state
                 if let mode = state.mode { chats[index].mode = mode }
             }
-            if let mode = state.mode { lastKnownMode = mode }
             if let id = state.id, pendingNewChats.remove(id) != nil {
-                // The start screen's chip picked a mode for this session:
-                // apply it now that the session exists.
-                if let wanted = startMode {
-                    startMode = nil
-                    if wanted != state.mode {
-                        send(.sessionMode(SessionMode(chat: state.chat, mode: wanted, id: Self.requestId())))
-                    }
+                // The new session runs in what the start screen's chip
+                // showed: the pick, else the deployment's mode. Should the
+                // gateway have started it in another, say so now.
+                let wanted = startModeShown
+                startMode = nil
+                if let mode = state.mode, wanted != mode {
+                    send(.sessionMode(SessionMode(chat: state.chat, mode: wanted, id: Self.requestId())))
                 }
                 open(chat: state.chat)
                 if let start = pendingStarts.removeValue(forKey: id) {
@@ -800,10 +796,12 @@ final class AppModel: ObservableObject {
         summary(of: chat)?.mode
     }
 
-    /// What the start screen's chip shows: the pick, else the last mode
-    /// any session reported, else the protocol's default for a new session.
+    /// What the start screen's chip shows, and what the new session runs
+    /// in: the pick, else the mode the deployment starts sessions in
+    /// (`hello.permission_mode`), else the protocol's default. Never a mode
+    /// some other session happened to report.
     var startModeShown: PermissionMode {
-        startMode ?? lastKnownMode ?? .auto
+        startMode ?? hello?.permissionMode ?? .auto
     }
 
     /// Change the session's mode: `session.mode`, answered with a

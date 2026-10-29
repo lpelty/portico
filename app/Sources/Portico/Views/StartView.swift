@@ -44,16 +44,50 @@ struct StartView: View {
 
     // MARK: greeting
 
-    private var greeting: some View {
-        HStack(spacing: 14) {
+    /// The mark beside the greeting: the deployment's brand icon when it
+    /// gives one that can be read (`hello.brand.icon`, as the Dock, About
+    /// panel and sidebar header load it), else a sparkle on the accent.
+    enum GreetingMark: Equatable {
+        case icon(NSImage)
+        case sparkle
+
+        init(brand: BrandPresentation) {
+            if let icon = brand.iconImage { self = .icon(icon) } else { self = .sparkle }
+        }
+    }
+
+    /// The mark's side, in points: about 1.6 times the v0.3 mark (34), so
+    /// it holds its own beside the 40-point greeting.
+    static let markSize: CGFloat = 54
+    /// The sparkle inside the accent tile.
+    static let sparkleSize: CGFloat = 26
+
+    @ViewBuilder
+    private var greetingMark: some View {
+        switch GreetingMark(brand: model.brand) {
+        case .icon(let icon):
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: Self.markSize, height: Self.markSize)
+                .accessibilityLabel(model.brand.name)
+        case .sparkle:
             ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(model.brand.accent ?? Theme.accent)
                 Image(systemName: "sparkle")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: Self.sparkleSize, weight: .semibold))
                     .foregroundStyle(.white)
             }
-            .frame(width: 34, height: 34)
+            .frame(width: Self.markSize, height: Self.markSize)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var greeting: some View {
+        HStack(spacing: 16) {
+            greetingMark
             Text(Self.greeting())
                 .font(.system(size: 40, design: .serif))
                 .tracking(-0.6)
@@ -96,7 +130,7 @@ struct StartView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
                     .onKeyPress(.return, phases: .down) { press in
-                        InputBar.handleReturn(modifiers: press.modifiers, send: send)
+                        InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
                     }
             }
             HStack(spacing: 8) {

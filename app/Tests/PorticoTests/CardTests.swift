@@ -51,7 +51,11 @@ final class CardTests: XCTestCase {
         XCTAssertEqual(PermissionPresentation(card: card).question, "Use Write?")
         XCTAssertEqual(PermissionPresentation.whereLine(folder: "/Users/x/Research vault"), "in Research vault")
         XCTAssertNil(PermissionPresentation.whereLine(folder: nil))
-        XCTAssertTrue(PermissionPresentation.scopeNote.hasPrefix("For this session:"))
+        XCTAssertEqual(shown.scopeNote, PermissionPresentation.generalScopeNote, "an older gateway says nothing: the general line")
+        card.scopeNote = "For this session: edits to files in Research vault, until you start a new session."
+        XCTAssertEqual(PermissionPresentation(card: card).scopeNote, "For this session: edits to files in Research vault, until you start a new session.")
+        card.scopeNote = "  "
+        XCTAssertEqual(PermissionPresentation(card: card).scopeNote, PermissionPresentation.generalScopeNote)
         XCTAssertEqual(PermissionPresentation.noteHint(agentName: "Portico"), "Optional. Portico reads this instead of just being told no.")
     }
 

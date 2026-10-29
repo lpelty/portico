@@ -408,6 +408,9 @@ struct HelloServer: Codable, Equatable, Sendable {
     var canUpdate: Bool? = nil
     /// Where a new session works when the person has not chosen (v0.3).
     var defaultFolder: String? = nil
+    /// The mode a new session starts in (config `permission_mode`, v0.3):
+    /// what the start screen's chip shows until the person picks one.
+    var permissionMode: PermissionMode? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -420,6 +423,7 @@ struct HelloServer: Codable, Equatable, Sendable {
         case configStale = "config_stale"
         case canUpdate = "can_update"
         case defaultFolder = "default_folder"
+        case permissionMode = "permission_mode"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
@@ -580,12 +584,16 @@ struct CardAsk: Codable, Equatable, Sendable {
     /// The tool use a permission card asks about, so the app can draw the
     /// card's outcome on that tool row (v0.3).
     var toolUseId: String? = nil
+    /// A permission card: what "Allow for this session" would cover, in
+    /// the gateway's words (v0.3). Shown under the buttons.
+    var scopeNote: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
         case chat, id, kind, title, permission, questions, form, seq, ts
         case toolUseId = "tool_use_id"
+        case scopeNote = "scope_note"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }

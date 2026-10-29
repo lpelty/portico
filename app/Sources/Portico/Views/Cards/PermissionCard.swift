@@ -62,8 +62,15 @@ struct PermissionPresentation: Equatable {
         return "in " + URL(fileURLWithPath: folder).lastPathComponent
     }
 
-    /// The line under the buttons: what "this session" covers.
-    static let scopeNote = "For this session: no more asks like this one until you start a new session."
+    /// The line under the buttons: what "this session" covers, as the
+    /// gateway says it (`card.ask.scope_note`); an older gateway that does
+    /// not say gets the general line.
+    var scopeNote: String {
+        let said = card.scopeNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return said.isEmpty ? Self.generalScopeNote : said
+    }
+
+    static let generalScopeNote = "For this session: no more asks like this one until you start a new session."
 
     /// The line under the deny note.
     static func noteHint(agentName: String) -> String {
@@ -190,12 +197,12 @@ struct PermissionCard: View {
                 Spacer(minLength: 0)
                 Button(PermissionChoice.allowSession.label) { answer(.allowSession) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
-                    .help(PermissionPresentation.scopeNote)
+                    .help(shown.scopeNote)
                 Button(PermissionChoice.allowOnce.label) { answer(.allowOnce) }
                     .buttonStyle(PillButtonStyle(kind: .primary(accent)))
                     .help("Allow this one step")
             }
-            Text(PermissionPresentation.scopeNote)
+            Text(shown.scopeNote)
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
         }

@@ -126,7 +126,7 @@ struct InputBar: View {
                 .focused($editorFocused)
                 .disabled(renewing)
                 .onKeyPress(.return, phases: .down) { press in
-                    InputBar.handleReturn(modifiers: press.modifiers, send: send)
+                    InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
                 }
         }
     }
@@ -201,11 +201,24 @@ struct InputBar: View {
     static let enterHint = "Enter to send · Shift+Enter for a new line"
 
     /// Enter sends; Shift+Enter (or Option+Enter) is left to the editor,
-    /// which adds a line.
-    static func handleReturn(modifiers: EventModifiers, send: () -> Void) -> KeyPress.Result {
-        if modifiers.contains(.shift) || modifiers.contains(.option) { return .ignored }
+    /// which adds a line. While an input method is composing (marked
+    /// text: Japanese, Chinese, Korean…) Return belongs to it — it commits
+    /// the composition — so it is left to the editor too and nothing is sent.
+    static func handleReturn(
+        modifiers: EventModifiers, composing: Bool = false, send: () -> Void
+    ) -> KeyPress.Result {
+        if composing || modifiers.contains(.shift) || modifiers.contains(.option) { return .ignored }
         send()
         return .handled
+    }
+
+    /// Whether the focused text view holds marked text from an input
+    /// method. The composer is an `NSTextView` under SwiftUI's `TextEditor`,
+    /// the key window's first responder while one types in it.
+    @MainActor
+    static func isComposing() -> Bool {
+        guard let responder = NSApplication.shared.keyWindow?.firstResponder as? NSTextInputClient else { return false }
+        return responder.hasMarkedText()
     }
 
     /// The model clears the draft on send and restores it if the gateway

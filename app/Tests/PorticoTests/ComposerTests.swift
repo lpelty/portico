@@ -43,7 +43,6 @@ final class ComposerTests: XCTestCase {
 
         model.apply(.chatState(ChatState(chat: 1, state: .idle, mode: .auto, seq: 2)))
         XCTAssertEqual(model.mode(of: 1), .auto)
-        XCTAssertEqual(model.lastKnownMode, .auto)
 
         // A state without a mode leaves the mode alone; picking the current mode sends nothing.
         model.apply(.chatState(ChatState(chat: 1, state: .working, seq: 3)))
@@ -56,6 +55,42 @@ final class ComposerTests: XCTestCase {
     func testModeWordsAsTheMenuShowsThem() {
         XCTAssertEqual(PermissionModePresentation.all.map { PermissionModePresentation(mode: $0).label }, ["Ask each time", "Edits allowed", "Auto"])
         XCTAssertEqual(PermissionModePresentation.heading(agentName: "Portico"), "WHEN PORTICO WANTS TO ACT")
+    }
+
+    private func hello(mode: PermissionMode?) -> HelloServer {
+        HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.3.0", epoch: "e",
+            brand: Brand(name: "Portico", agentName: "Agent"), actions: [],
+            roots: [Root(name: "work", path: NSTemporaryDirectory())], commands: [], capabilities: [],
+            permissionMode: mode)
+    }
+
+    func testTheStartChipShowsTheDeploymentsModeNeverAnotherSessionsAndTheSessionRunsInIt() throws {
+        let (model, sent) = model()
+        model.apply(.hello(hello(mode: .default)))
+        // Another session reporting auto must not move the chip: the next session starts in the deployment's mode.
+        model.apply(.chatList(ChatList(chats: [summary(1, mode: .auto)])))
+        model.apply(.chatState(ChatState(chat: 1, state: .idle, mode: .auto, seq: 1)))
+        XCTAssertEqual(model.startModeShown, .default)
+
+        // Nothing picked, the gateway starts it in the deployment's mode: nothing to send.
+        model.startChat(text: "hello")
+        guard case .chatNew(let new)? = sent.frames.last else { return XCTFail("expected chat.new") }
+        model.apply(.chatList(ChatList(chats: [summary(1, mode: .auto), summary(2, mode: .default)])))
+        model.apply(.chatState(ChatState(chat: 2, state: .idle, mode: .default, id: new.id, seq: 1)))
+        XCTAssertTrue(sent.frames.allSatisfy { if case .sessionMode = $0 { false } else { true } })
+    }
+
+    func testTheStartChipShowsWhatTheNewSessionRunsInEvenWhenTheGatewayDisagrees() throws {
+        let (model, sent) = model()
+        model.apply(.hello(hello(mode: nil)))  // an older gateway: it does not say
+        XCTAssertEqual(model.startModeShown, .auto, "the protocol's default")
+        model.startChat(text: "hello")
+        guard case .chatNew(let new)? = sent.frames.last else { return XCTFail("expected chat.new") }
+        model.apply(.chatList(ChatList(chats: [summary(1, mode: .default)])))
+        model.apply(.chatState(ChatState(chat: 1, state: .idle, mode: .default, id: new.id, seq: 1)))
+        let modes = sent.frames.compactMap { if case .sessionMode(let m) = $0 { m } else { nil } }
+        XCTAssertEqual(modes.map(\.mode), [.auto], "the session is brought to the mode the chip showed")
     }
 
     func testTheStartScreensPickIsAppliedToTheNewSession() throws {
@@ -122,6 +157,9 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(sends, 1)
         XCTAssertEqual(InputBar.handleReturn(modifiers: .shift, send: { sends += 1 }), .ignored)
         XCTAssertEqual(InputBar.handleReturn(modifiers: .option, send: { sends += 1 }), .ignored)
+        XCTAssertEqual(sends, 1)
+        // Return while an input method is composing commits the composition; nothing is sent.
+        XCTAssertEqual(InputBar.handleReturn(modifiers: [], composing: true, send: { sends += 1 }), .ignored)
         XCTAssertEqual(sends, 1)
         XCTAssertEqual(InputBar.enterHint, "Enter to send · Shift+Enter for a new line")
     }

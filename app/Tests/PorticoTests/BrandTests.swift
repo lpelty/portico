@@ -63,4 +63,26 @@ final class BrandTests: XCTestCase {
         XCTAssertEqual(shown.name, "Acme Agent")
         XCTAssertEqual(shown.accent, BrandPresentation.color(hex: "#3B6EF5"))
     }
+
+    func testTheStartScreensMarkIsTheBrandIconWhenThereIsOneElseTheSparkleAndBigger() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-mark-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("icon.png")
+        let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+            NSColor.systemRed.setFill()
+            rect.fill()
+            return true
+        }
+        let tiff = try XCTUnwrap(image.tiffRepresentation)
+        try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])).write(to: path)
+
+        let branded = BrandPresentation(brand: Brand(name: "A", agentName: "A", icon: path.path))
+        guard case .icon = StartView.GreetingMark(brand: branded) else { return XCTFail("expected the brand icon") }
+        XCTAssertEqual(StartView.GreetingMark(brand: BrandPresentation(brand: nil)), .sparkle)
+        let unreadable = BrandPresentation(brand: Brand(name: "A", agentName: "A", icon: dir.appendingPathComponent("missing.png").path))
+        XCTAssertEqual(StartView.GreetingMark(brand: unreadable), .sparkle)
+        XCTAssertGreaterThanOrEqual(StartView.markSize, 34 * 1.5, "noticeably bigger than the v0.3 mark")
+        XCTAssertLessThanOrEqual(StartView.markSize, 34 * 2)
+    }
 }
