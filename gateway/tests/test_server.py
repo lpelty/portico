@@ -129,7 +129,7 @@ async def test_hello_handshake_returns_hello_and_chat_list(server: GatewayServer
         assert hello.protocol == 1
         assert hello.epoch == server.epoch
         assert hello.gateway_version == __version__
-        assert hello.brand == config.brand
+        assert hello.brand == config.brand.for_hello()
         assert hello.actions == config.actions
         assert hello.roots == config.roots
 

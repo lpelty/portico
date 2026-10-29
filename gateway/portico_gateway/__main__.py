@@ -106,6 +106,43 @@ def cmd_check_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def _state_and_config_path(args: argparse.Namespace):  # noqa: ANN202 - StateDir lives in state.py
+    from portico_gateway.state import StateDir
+
+    state = StateDir(Path(args.state).expanduser() if getattr(args, "state", None) else None)
+    config_path = Path(args.config).expanduser() if getattr(args, "config", None) else state.config_path
+    return state, config_path
+
+
+def cmd_config_value(args: argparse.Namespace) -> int:
+    """Print one config value (``brand.name``, ``brand.app_icon``…) or nothing; exit 0.
+
+    Strings print as they are, booleans as ``true``/``false``, lists and
+    tables as JSON. An unknown or unset key prints nothing. A config file
+    that does not load is the one failure: its reason on stderr, exit 1.
+    """
+    import json
+
+    from portico_gateway.config import ConfigError, config_value, load_config
+
+    _, config_path = _state_and_config_path(args)
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    value = config_value(config, args.key)
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        print("true" if value else "false")
+    elif isinstance(value, (str, int, float)):
+        print(value)
+    else:
+        print(json.dumps(value, default=lambda o: o.model_dump(mode="json")))
+    return 0
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -144,6 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("check-env", help="exit 1 and print the line numbers when an env file has a line that is not KEY=value")
     p.add_argument("path", help="the env file to check; a missing file passes")
     p.set_defaults(func=cmd_check_env)
+
+    p = sub.add_parser("config-value", help="print one config value (e.g. brand.name, brand.app_icon), or nothing")
+    p.add_argument("key", help="dotted key: brand.name, brand.app_icon, update.run, ...")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--config", help="config file (default: <state>/config.toml)")
+    p.set_defaults(func=cmd_config_value)
 
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")

@@ -227,8 +227,13 @@ def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StateDir:
 
 
 def make_config(**overrides: Any) -> Config:
-    """A ``Config`` with a visible brand and one action/root unless overridden."""
+    """A ``Config`` with a visible brand and one action/root unless overridden.
+
+    Tests open several chats side by side, so they run in ``multiple``
+    presentation unless they ask for ``single`` (the v0.3 default).
+    """
     base: dict[str, Any] = {
+        "presentation": "multiple",
         "brand": Brand(name="Portico", agent_name="Agent"),
         "actions": [Action(label="Review", text="/review")],
         "roots": [Root(name="projects", path="/Users/someone/projects")],
