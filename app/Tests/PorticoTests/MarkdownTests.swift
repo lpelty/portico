@@ -339,4 +339,52 @@ final class MarkdownTests: XCTestCase {
         let link = text.attribute(.link, at: (text.string as NSString).range(of: "docs").location, effectiveRange: nil) as? URL
         XCTAssertEqual(link?.absoluteString, "https://example.com")
     }
+
+    // MARK: - click elsewhere deselects (v0.5 decision 5)
+
+    @MainActor
+    func testAClickOutsideASelectionClearsItAndOneInsideKeepsIt() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: true)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        window.contentView = content
+        func message(_ text: String, y: CGFloat) -> SelectableTextView {
+            let view = SelectableTextView(frame: NSRect(x: 0, y: y, width: 400, height: 40))
+            view.string = text
+            view.isEditable = false
+            content.addSubview(view)
+            return view
+        }
+        let first = message("The first message", y: 0)
+        let second = message("The second message", y: 100)
+        let other = NSView(frame: NSRect(x: 0, y: 200, width: 400, height: 40))
+        content.addSubview(other)
+
+        first.setSelectedRange(NSRange(location: 4, length: 5))
+        SelectableTextView.deselect(in: window, except: first)
+        XCTAssertEqual(first.selectedRange().length, 5, "a click inside the selection's own view keeps it")
+
+        SelectableTextView.deselect(in: window, except: second)
+        XCTAssertEqual(first.selectedRange().length, 0, "a click on another message clears it")
+
+        first.setSelectedRange(NSRange(location: 4, length: 5))
+        SelectableTextView.deselect(in: window, except: other)
+        XCTAssertEqual(first.selectedRange().length, 0, "a click on anything else clears it")
+
+        first.setSelectedRange(NSRange(location: 4, length: 5))
+        SelectableTextView.deselect(in: window, except: nil)
+        XCTAssertEqual(first.selectedRange().length, 0, "so does a click on nothing")
+
+        // A click in another window leaves this one's selection alone.
+        first.setSelectedRange(NSRange(location: 4, length: 5))
+        let elsewhere = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+        SelectableTextView.deselect(in: elsewhere, except: nil)
+        XCTAssertEqual(first.selectedRange().length, 5)
+
+        // A click on a scroll bar (the transcript's, say) keeps it.
+        let scroller = NSScroller(frame: NSRect(x: 385, y: 0, width: 15, height: 300))
+        content.addSubview(scroller)
+        SelectableTextView.deselect(in: window, except: scroller)
+        XCTAssertEqual(first.selectedRange().length, 5, "a click on a scroller keeps the selection")
+        window.contentView = nil
+    }
 }

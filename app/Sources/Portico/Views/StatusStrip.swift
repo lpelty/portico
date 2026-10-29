@@ -347,7 +347,10 @@ struct ServicesControl: View {
         .accessibilityLabel("Services: \(services.label)")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             // A popover is its own window: hand it what the menu reads.
+            // The strip is one line (`.lineLimit(1)` above), and that
+            // reaches into the popover: undo it so details wrap.
             ServicesMenu()
+                .lineLimit(nil)
                 .environmentObject(model)
                 .environmentObject(supervisor)
         }
@@ -400,6 +403,9 @@ struct ServicesMenu: View {
         }
         .padding(10)
         .frame(width: 340)
+        // A popover takes its content's ideal size; without this the
+        // wrapped lines above are measured as one line and cut short.
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -418,12 +424,12 @@ struct ServiceRowView: View {
                 Text(row.name)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
+                // The whole detail, wrapped: a down service's reason is
+                // the part worth reading, so it is never cut short (v0.5).
                 Text(row.detail)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(row.detail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if row.canRestart && !row.isGateway {

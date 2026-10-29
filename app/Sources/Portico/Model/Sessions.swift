@@ -121,6 +121,19 @@ extension AppModel {
         canRenew(chat: chat) && canLogWithoutEnding
     }
 
+    /// Why Log session and `/log` are off for this live session, in the
+    /// words the card's hint and the `/log` notice use (v0.5, X2); `nil`
+    /// when they work, or when there is no live session to log at all.
+    /// A deployment without a log step says so; a v0.3 gateway that has
+    /// one but logs only on renewal says that instead.
+    func logSessionOffReason(chat: Int) -> String? {
+        guard canRenew(chat: chat), !canLogWithoutEnding else { return nil }
+        return canLog ? Self.logsOnlyOnRenewal : Self.noLogStep
+    }
+
+    static let noLogStep = "No log step is set up for this agent, so Log session is off."
+    static let logsOnlyOnRenewal = "This gateway logs only when starting new."
+
     /// The nudge's "Log and start new": `session.renew`, with `log` when
     /// the deployment has a log step. One at a time per session.
     func renew(chat: Int) {

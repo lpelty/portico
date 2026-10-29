@@ -114,19 +114,40 @@ extension AppModel {
     }
 
     /// The files this chat's tools created or edited (no reads, no failed
-    /// writes), newest change first, one row per path with the time of its
-    /// last change.
+    /// writes, no writes the person declined or the deployment blocked),
+    /// newest change first, one row per path with the time of its last
+    /// change.
     func changedFiles(chat: Int) -> [ChangedFile] {
         let folder = summary(of: chat)?.folder
         var seen = Set<String>()
         var files: [ChangedFile] = []
         for item in (transcripts[chat] ?? []).reversed() {
-            guard case .tool(let row) = item, Self.isWriteTool(row.tool), row.ok != false,
+            guard case .tool(let row) = item, Self.isWriteTool(row.tool), Self.didWrite(row),
                 let path = Self.filePath(of: row, folder: folder), seen.insert(path).inserted
             else { continue }
             files.append(ChangedFile(path: path, at: SessionTime.parse(row.at)))
         }
         return files
+    }
+
+    /// The Files pane's CHANGED THIS SESSION for the chat on screen: in
+    /// single presentation "this session" is the live one, even while an
+    /// earlier session is open read-only.
+    func changedThisSession(chat: Int) -> [ChangedFile] {
+        changedFiles(chat: isSinglePresentation ? (liveSession?.chat ?? chat) : chat)
+    }
+
+    /// A write that may have happened: not failed, and its permission
+    /// not declined or blocked, nor its card cancelled before anyone
+    /// answered (`unanswered`: nobody allowed it, so it didn't run). A
+    /// declined write can still finish `ok` (the engine reports the refusal
+    /// as a result), so the outcome is checked on its own.
+    static func didWrite(_ row: ToolRow) -> Bool {
+        guard row.ok != false, row.unanswered == nil else { return false }
+        switch row.permission {
+        case .declined?, .blocked?: return false
+        default: return true
+        }
     }
 
     // MARK: bookmarks

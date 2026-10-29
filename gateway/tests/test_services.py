@@ -26,7 +26,7 @@ from portico_gateway.messages import (
     dump,
 )
 from portico_gateway.server import GatewayServer
-from portico_gateway.services import ServiceMonitor
+from portico_gateway.services import DETAIL_LINE_LIMIT, ServiceMonitor
 from portico_gateway.state import StateDir
 from tests.conftest import FakeEngine, make_config
 from tests.test_server import attach
@@ -115,13 +115,13 @@ async def test_a_state_change_is_published(tmp_path: Path) -> None:
 
 
 async def test_a_long_last_line_is_cut_and_only_the_last_non_empty_line_counts() -> None:
-    long = "x" * 200
+    long = "x" * 400
     mon, rec = monitor([svc("a", f"echo first; echo {long}; echo; exit 1")])
     await mon.check_all()
     detail = rec.calls[0][0].detail
     assert detail is not None
     tail = detail.split(" · ", 1)[1]
-    assert len(tail) == 80 and tail.endswith("…") and tail.startswith("xxx")
+    assert len(tail) == DETAIL_LINE_LIMIT and tail.endswith("…") and tail.startswith("xxx")
 
 
 async def test_a_check_that_hangs_is_killed_at_its_timeout_and_is_down() -> None:

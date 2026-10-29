@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # Assemble <name>.app from a release build: Info.plist, the binary, its resource bundles,
-# the icon, signed locally. Stock macOS tools only (plutil, sips, iconutil, codesign).
+# the icon, signed locally. Stock macOS tools only (plutil, sips, iconutil, codesign, and swift
+# from the Command Line Tools for shape-app-icon.swift).
 #
 #   app/Packaging/make-app.sh --products DIR --dest DIR --name NAME --icon PNG \
-#       --version X.Y.Z --gateway-bin PATH [--min-macos 15.0]
+#       --version X.Y.Z --gateway-bin PATH [--min-macos 15.0] \
+#       [--icon-assets Assets.car --icon-name NAME]
+#
+# The icon PNG is put on the macOS icon grid first (shape-app-icon.swift: a full-bleed square
+# becomes a rounded body with a shadow; one with transparent corners is used as given).
+# --icon-assets/--icon-name add a precompiled asset catalog (Icon Composer, actool) and its
+# icon's name as CFBundleIconName, which macOS 26 and later prefer; the .icns stays the
+# fallback (CFBundleIconFile). PORTICO_SWIFT names the swift executable (default: swift).
 #
 # The bundle is built in a temporary directory beside the destination and moved
 # into place, replacing an existing <name>.app. Prints the installed path last.
 set -euo pipefail
 
-products="" dest="" name="" icon="" version="" gateway_bin="" min_macos="15.0"
+products="" dest="" name="" icon="" version="" gateway_bin="" min_macos="15.0" icon_assets="" icon_name=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --products) products="$2"; shift 2 ;;
@@ -19,6 +27,8 @@ while [ $# -gt 0 ]; do
     --version) version="$2"; shift 2 ;;
     --gateway-bin) gateway_bin="$2"; shift 2 ;;
     --min-macos) min_macos="$2"; shift 2 ;;
+    --icon-assets) icon_assets="$2"; shift 2 ;;
+    --icon-name) icon_name="$2"; shift 2 ;;
     *) echo "make-app: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -34,6 +44,16 @@ fi
 if [ ! -f "$icon" ]; then
   echo "make-app: icon $icon is missing" >&2
   exit 1
+fi
+if [ -n "$icon_assets$icon_name" ]; then
+  if [ -z "$icon_assets" ] || [ -z "$icon_name" ]; then
+    echo "make-app: --icon-assets and --icon-name go together" >&2
+    exit 2
+  fi
+  if [ ! -f "$icon_assets" ]; then
+    echo "make-app: icon assets $icon_assets are missing" >&2
+    exit 1
+  fi
 fi
 
 # A file name: no slashes or colons, no leading dot.
@@ -60,6 +80,17 @@ for res in "$products"/*.bundle; do
   cp -R "$res" "$bundle/Contents/Resources/"
 done
 
+# The icon on the macOS grid; when the shaping script cannot run, the PNG as given.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+shaped="$work/AppIcon-shaped.png"
+if "${PORTICO_SWIFT:-swift}" "$here/shape-app-icon.swift" "$icon" "$shaped" >/dev/null 2>"$work/shape.log" && [ -f "$shaped" ]; then
+  sed 's/^shape-app-icon: /make-app: /' "$work/shape.log" >&2
+  icon="$shaped"
+else
+  echo "make-app: warning: could not put $icon on the macOS icon grid; it is used as given" >&2
+  sed 's/^/  /' "$work/shape.log" >&2
+fi
+
 # The icon: every iconset size, @2x included, from one PNG.
 iconset="$work/AppIcon.iconset"
 mkdir -p "$iconset"
@@ -77,6 +108,9 @@ for size in 16 32 128 256 512; do
   sips -s format png -z "$double" "$double" "$icon" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$bundle/Contents/Resources/AppIcon.icns"
+if [ -n "$icon_assets" ]; then
+  cp "$icon_assets" "$bundle/Contents/Resources/Assets.car"
+fi
 
 plist="$bundle/Contents/Info.plist"
 plutil -create xml1 "$plist"
@@ -88,6 +122,7 @@ set_string CFBundleDisplayName "$name"
 set_string CFBundleIdentifier "dev.portico.$slug"
 set_string CFBundleExecutable "$exe"
 set_string CFBundleIconFile AppIcon
+[ -z "$icon_name" ] || set_string CFBundleIconName "$icon_name"
 set_string CFBundlePackageType APPL
 set_string CFBundleShortVersionString "$version"
 set_string CFBundleVersion "$version"

@@ -39,7 +39,7 @@ from .messages import ProtocolError, Service, ServiceState
 log = logging.getLogger(__name__)
 
 # A check's last output line is cut to this many characters in the detail.
-DETAIL_LINE_LIMIT = 80
+DETAIL_LINE_LIMIT = 240
 
 Publish = Callable[[list[Service]], Awaitable[None]]
 Clock = Callable[[], datetime]

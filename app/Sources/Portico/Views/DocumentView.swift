@@ -160,8 +160,9 @@ struct DocumentView: View {
             VStack(spacing: 0) {
                 DocumentHeader(path: path, chat: chat)
                 Rectangle().fill(Theme.border).frame(height: 1)
+                // Keyed on the file's date too, so a change on disk reloads it.
                 ArtifactContent(artifact: Self.artifact(for: path))
-                    .id(path)
+                    .id(ArtifactPresentation(artifact: Self.artifact(for: path)).contentIdentity)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if model.isSinglePresentation && model.isEnded(chat: chat) {
                     EndedSessionBar(chat: chat)

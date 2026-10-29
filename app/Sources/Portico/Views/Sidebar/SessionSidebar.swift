@@ -152,7 +152,8 @@ struct EarlierRow: View {
 }
 
 /// The live session's card (S1, v0.4's W1): its commands, Log session
-/// (when the deployment can log) and New; or the nudge (S2) when the
+/// (disabled with the reason when the deployment cannot log, X2) and
+/// New; or the nudge (S2) when the
 /// session is long: amber, the sentence, primary "Log and start new" and
 /// "Not now".
 struct SessionCard: View {
@@ -201,11 +202,10 @@ struct SessionCard: View {
             contextRow
             buttons
             if !nudging && model.canRenew(chat: chat) {
-                Text(canLogSession
-                    ? "Same as typing \(AppModel.logCommand) or \(AppModel.renewCommand)"
-                    : "Same as typing \(AppModel.renewCommand)")
+                Text(hint)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(12)
@@ -214,6 +214,17 @@ struct SessionCard: View {
             RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
                 .stroke(nudging ? Theme.wait : Theme.border, lineWidth: 1))
         .accessibilityElement(children: .contain)
+    }
+
+    /// The line under the buttons: what typing does the same, and, when
+    /// Log session is off, why (X2).
+    private var hint: String {
+        if canLogSession { return "Same as typing \(AppModel.logCommand) or \(AppModel.renewCommand)" }
+        switch model.logSessionOffReason(chat: chat) {
+        case AppModel.noLogStep?: return "\(AppModel.noLogStep) Same as typing \(AppModel.renewCommand)."
+        case let reason?: return reason
+        case nil: return "Same as typing \(AppModel.renewCommand)"
+        }
     }
 
     /// The frame's sentence, saying what made the session long.
@@ -259,25 +270,27 @@ struct SessionCard: View {
                 .disabled(pending || model.connection != .connected)
             } else {
                 HStack(spacing: 8) {
-                    if canLogSession {
-                        Button { model.logSession(chat: chat) } label: {
-                            HStack(spacing: 6) {
-                                if logging {
-                                    ProgressView().controlSize(.mini)
-                                    Text("Logging…")
-                                } else {
-                                    Image(systemName: "square.and.pencil")
-                                    Text("Log session")
-                                }
+                    // Shown even when it cannot log (disabled, the hint
+                    // says why), so a missing log step is visible, not a mystery.
+                    Button { model.logSession(chat: chat) } label: {
+                        HStack(spacing: 6) {
+                            if logging {
+                                ProgressView().controlSize(.mini)
+                                Text("Logging…")
+                            } else {
+                                Image(systemName: "square.and.pencil")
+                                Text("Log session")
                             }
-                            .lineLimit(1)
-                            // Never "Log ses…": the label keeps its width, New gives way.
-                            .fixedSize()
-                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                        .help("Save what this session did, so the next one can pick up where it left off. The session goes on.")
+                        .lineLimit(1)
+                        // Never "Log ses…": the label keeps its width, New gives way.
+                        .fixedSize()
+                        .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(PillButtonStyle(kind: canLogSession ? .primary(model.brand.accent ?? Theme.accent) : .quiet))
+                    .disabled(!canLogSession)
+                    .help(model.logSessionOffReason(chat: chat)
+                        ?? "Save what this session did, so the next one can pick up where it left off. The session goes on.")
                     Button { model.requestNew(chat: chat) } label: {
                         HStack(spacing: 6) {
                             if renewing {

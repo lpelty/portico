@@ -14,9 +14,9 @@ import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
 from .messages import Action, Brand, HelloServer, PermissionMode, Presentation, Root
 
@@ -51,24 +51,45 @@ class ConfigBrand(Brand):
 
     ``app_icon`` is the deployment's 1024×1024 PNG for the ``.app`` bundle
     (``bin/install`` reads it with ``portico-gateway config-value
-    brand.app_icon``). It is never sent in ``hello``: ``hello_for`` builds the
-    protocol ``Brand`` without it.
+    brand.app_icon``). ``app_icon_assets`` (v0.5) is a precompiled asset
+    catalog (``Assets.car`` from Icon Composer or actool) and
+    ``app_icon_name`` the icon's name inside it; ``bin/install`` copies the
+    catalog into the bundle and sets ``CFBundleIconName`` when both are set.
+    None of the three is ever sent in ``hello``: ``hello_for`` builds the
+    protocol ``Brand`` without them.
     """
 
-    app_icon: str | None = None
+    INSTALL_ONLY: ClassVar[frozenset[str]] = frozenset({"app_icon", "app_icon_assets", "app_icon_name"})
 
-    @field_validator("app_icon")
+    app_icon: str | None = None
+    app_icon_assets: str | None = None
+    app_icon_name: str | None = None
+
+    @field_validator("app_icon", "app_icon_assets")
     @classmethod
-    def _app_icon_absolute(cls, value: str | None) -> str | None:
+    def _absolute_path(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
         path = Path(value).expanduser()
         if not path.is_absolute():
-            raise ConfigError(f"brand.app_icon: {value!r} is relative; it must be an absolute path (~ is expanded)")
+            raise ConfigError(
+                f"brand.{info.field_name}: {value!r} is relative; it must be an absolute path (~ is expanded)"
+            )
         return str(path)
 
+    @field_validator("app_icon_name")
+    @classmethod
+    def _icon_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip() or "/" in value:
+            raise ConfigError(
+                f"brand.app_icon_name: {value!r} must be the icon's name in the asset catalog (not empty, no slashes)"
+            )
+        return value
+
     def for_hello(self) -> Brand:
-        return Brand.model_validate(self.model_dump(exclude={"app_icon"}))
+        return Brand.model_validate(self.model_dump(exclude=set(self.INSTALL_ONLY)))
 
 
 class UpdateConfig(BaseModel):

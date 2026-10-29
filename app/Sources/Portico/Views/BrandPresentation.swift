@@ -100,11 +100,26 @@ extension BrandPresentation {
         NSApplication.shared.orderFrontStandardAboutPanel(options: options)
     }
 
-    /// The Dock and app-switcher icon: the brand's when it has one.
+    /// The Dock and app-switcher icon: the brand's, but only for a build
+    /// with no icon of its own (`swift run`). A built Portico.app carries
+    /// the icon `bin/install` made for macOS; replacing it with the raw
+    /// `brand.icon` a moment after launch swapped the shaped Dock icon for
+    /// a flat square (v0.5 decision 2). `brand.icon` stays the in-app mark.
     @MainActor
-    func applyApplicationIcon() {
-        if let icon = iconImage {
-            NSApplication.shared.applicationIconImage = icon
+    func applyApplicationIcon(bundle: Bundle = .main) {
+        guard Self.shouldReplaceApplicationIcon(bundleInfo: bundle.infoDictionary), let icon = iconImage else { return }
+        NSApplication.shared.applicationIconImage = icon
+    }
+
+    /// Whether the running bundle lacks an icon of its own: neither
+    /// `CFBundleIconFile` (an `.icns`) nor `CFBundleIconName` (an asset
+    /// catalog icon) names one.
+    nonisolated static func shouldReplaceApplicationIcon(bundleInfo: [String: Any]?) -> Bool {
+        for key in ["CFBundleIconFile", "CFBundleIconName"] {
+            if let name = bundleInfo?[key] as? String, !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                return false
+            }
         }
+        return true
     }
 }

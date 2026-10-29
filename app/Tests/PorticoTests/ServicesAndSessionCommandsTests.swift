@@ -363,13 +363,48 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertEqual(model.askingToLog, 1)
         XCTAssertFalse(sent.types().contains("session.renew"), "nothing renewed yet")
 
-        // Without a log step, /log is just text.
+        // Without a log step (v0.5, X2), /log is not sent: a notice says why.
         let (plain, plainSent) = try self.model()
         plain.apply(.hello(hello(canLog: false)))
         plain.apply(.chatList(ChatList(chats: [session(1)])))
         XCTAssertFalse(plain.canLogSession(chat: 1))
+        plain.setDraft("/log", for: 1)
         plain.sendMessage(chat: 1, text: "/log")
-        XCTAssertEqual(plainSent.types().last, "message.send")
+        XCTAssertFalse(plainSent.types().contains("message.send"))
+        XCTAssertFalse(plainSent.types().contains("session.log"))
+        XCTAssertEqual(plain.draft(for: 1), "")
+        guard case .notice(_, let text)? = plain.transcripts[1]?.last else { return XCTFail("no notice") }
+        XCTAssertEqual(text, "No log step is set up for this agent, so Log session is off.")
+    }
+
+    func testLogSessionOffReason() throws {
+        let (model, _) = try self.model()
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1)])))
+        XCTAssertNil(model.logSessionOffReason(chat: 1), "it can log")
+
+        let (plain, _) = try self.model()
+        plain.apply(.hello(hello(canLog: false)))
+        plain.apply(.chatList(ChatList(chats: [session(1)])))
+        XCTAssertEqual(plain.logSessionOffReason(chat: 1), AppModel.noLogStep)
+
+        // A v0.3 gateway: a log step, but no `log` command.
+        let (old, oldSent) = try self.model()
+        old.apply(.hello(hello(canLog: true, speaksLog: false)))
+        old.apply(.chatList(ChatList(chats: [session(1)])))
+        XCTAssertEqual(old.logSessionOffReason(chat: 1), "This gateway logs only when starting new.")
+        old.sendMessage(chat: 1, text: "/log")
+        XCTAssertFalse(oldSent.types().contains { $0 == "message.send" || $0.hasPrefix("session.") }, "\(oldSent.types())")
+        guard case .notice(_, let text)? = old.transcripts[1]?.last else { return XCTFail("no notice") }
+        XCTAssertEqual(text, AppModel.logsOnlyOnRenewal)
+
+        // An ended session has no card and nothing to log: no reason.
+        let (ended, _) = try self.model()
+        ended.apply(.hello(hello(canLog: false)))
+        var done = session(1)
+        done.ended = "2026-10-28T10:00:00Z"
+        ended.apply(.chatList(ChatList(chats: [done])))
+        XCTAssertNil(ended.logSessionOffReason(chat: 1))
     }
 
     // MARK: - New asks to log first (W2)

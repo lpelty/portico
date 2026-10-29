@@ -62,7 +62,8 @@ struct PorticoApp: App {
                 .environmentObject(supervisor)
                 .preferredColorScheme(settings.appearance.colorScheme)
                 // Brand from hello (spec section 8): the accent on every
-                // control (nil keeps the system accent), the icon in the Dock.
+                // control (nil keeps the system accent), the icon in the Dock only
+                // for a build without one of its own (v0.5).
                 .tint(model.brand.accent)
                 .onChange(of: model.hello?.brand, initial: true) { _, _ in
                     model.brand.applyApplicationIcon()

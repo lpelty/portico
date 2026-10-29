@@ -70,6 +70,7 @@ struct FilesView: View {
                 .padding(.bottom, 8)
             switch model.filesTab {
             case .folder:
+                FolderChangedSection(chat: chat)
                 header
                 if filter.trimmingCharacters(in: .whitespaces).isEmpty {
                     tree
@@ -442,7 +443,8 @@ struct HeaderIcon: View {
 
 /// The Files pane's Bookmarks tab: BOOKMARKS (from settings, by absolute
 /// path) then CHANGED THIS SESSION (the files the agent created or edited,
-/// newest change first, each with the time it last changed; no reads).
+/// newest change first, each with the time it last changed; no reads;
+/// hidden when there are none, v0.5).
 struct BookmarksView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
@@ -460,19 +462,15 @@ struct BookmarksView: View {
                 ForEach(bookmarks, id: \.self) { path in
                     BookmarkRow(chat: chat, path: path, time: nil)
                 }
-                // In single presentation "this session" is the live one,
-                // even while an earlier session is open read-only.
-                let session = model.isSinglePresentation ? (model.liveSession?.chat ?? chat) : chat
-                let changed = model.changedFiles(chat: session)
-                SidebarSectionLabel("Changed this session")
-                    .padding(.horizontal, 16)
-                    .padding(.top, 18)
-                    .padding(.bottom, 6)
-                if changed.isEmpty {
-                    hint("Files the agent creates or edits show here.")
-                }
-                ForEach(changed, id: \.path) { file in
-                    BookmarkRow(chat: chat, path: file.path, time: file.time())
+                let changed = model.changedThisSession(chat: chat)
+                if !changed.isEmpty {
+                    SidebarSectionLabel("Changed this session")
+                        .padding(.horizontal, 16)
+                        .padding(.top, 18)
+                        .padding(.bottom, 6)
+                    ForEach(changed, id: \.path) { file in
+                        BookmarkRow(chat: chat, path: file.path, time: file.time())
+                    }
                 }
             }
             .padding(.bottom, 12)
@@ -485,6 +483,42 @@ struct BookmarksView: View {
             .foregroundStyle(Theme.text3)
             .padding(.horizontal, 16)
             .padding(.vertical, 2)
+    }
+}
+
+/// CHANGED THIS SESSION at the head of the Folder tab (v0.5, X2), above
+/// the filter and the tree, as on Bookmarks; nothing at all when the agent
+/// has changed nothing. At most `visibleRows` show at once and the rest
+/// scroll, so a busy session never pushes the tree off the sidebar.
+struct FolderChangedSection: View {
+    let chat: Int
+    @EnvironmentObject private var model: AppModel
+
+    static let visibleRows = 5
+    /// One BookmarkRow: 13-point text and 5 above and below.
+    static let rowHeight: CGFloat = 26
+
+    var body: some View {
+        let changed = model.changedThisSession(chat: chat)
+        if !changed.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                SidebarSectionLabel("Changed this session")
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(changed, id: \.path) { file in
+                            BookmarkRow(chat: chat, path: file.path, time: file.time())
+                        }
+                    }
+                }
+                .frame(height: CGFloat(min(changed.count, Self.visibleRows)) * Self.rowHeight)
+                .scrollBounceBehavior(.basedOnSize)
+                Rectangle().fill(Theme.border).frame(height: 1)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
+        }
     }
 }
 

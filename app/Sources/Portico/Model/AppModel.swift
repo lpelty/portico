@@ -1089,7 +1089,8 @@ final class AppModel: ObservableObject {
     /// In single presentation, `/new` alone is not sent: it does what the
     /// card's New does (S1's "Same as typing /new"), asking to log first
     /// when that would lose something (W2); `/log` alone logs the session
-    /// without ending it, when the deployment can. `about` is the document
+    /// without ending it, when the deployment can, and otherwise says why
+    /// it cannot in a notice. `about` is the document
     /// view's open file, attached to the message along with the chips.
     func sendMessage(chat: Int, text: String, about: String? = nil) {
         let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1105,9 +1106,24 @@ final class AppModel: ObservableObject {
             logSession(chat: chat)
             return
         }
+        // `/log` where the session cannot be logged is not sent to the
+        // agent as text: it gets the card's reason, as a notice.
+        if command == Self.logCommand, let reason = logSessionOffReason(chat: chat) {
+            drafts[chat] = nil
+            appendNotice(reason, to: chat)
+            return
+        }
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
         dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
+    }
+
+    /// A notice the app itself puts in the transcript (not from the
+    /// gateway, so a history replay from the beginning drops it).
+    func appendNotice(_ text: String, to chat: Int) {
+        var items = transcripts[chat] ?? []
+        items.append(.notice(id: Self.itemId(&nextItemId), text: text))
+        transcripts[chat] = items
     }
 
     /// Send an action button's text (`hello.actions`) on its own. The
@@ -1392,10 +1408,21 @@ extension Media {
         case "png", "jpg", "jpeg", "gif", "webp", "svg": .image
         case "html", "htm": .html
         case "pdf": .pdf
-        case "txt": .text
+        case let ext where textExtensions.contains(ext): .text
         default: .other
         }
     }
+
+    /// Plain text and code, `text` like `.txt` (`artifacts.TEXT_EXTENSIONS`;
+    /// keep the two lists the same). The viewer draws them monospaced, and
+    /// `csv`/`tsv` as a table when they parse.
+    static let textExtensions: Set<String> = [
+        "txt", "log", "csv", "tsv",
+        "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg", "conf", "xml", "plist",
+        "py", "js", "mjs", "cjs", "jsx", "ts", "tsx", "swift", "rb", "go", "rs",
+        "java", "kt", "c", "h", "cpp", "hpp", "m", "cs", "php", "pl", "lua", "r",
+        "sh", "bash", "zsh", "fish", "css", "scss", "sql", "diff", "patch",
+    ]
 }
 
 // MARK: - The connection loop

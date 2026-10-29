@@ -292,6 +292,26 @@ final class SessionAndFilesTests: XCTestCase {
         XCTAssertEqual(changed.first?.time(calendar: utc), "9:14", "the last change's time")
     }
 
+    func testDeclinedOrBlockedWritesAreNotChanged() throws {
+        let (model, _) = try model()
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1, folder: "/tmp/demo")])))
+        func write(_ id: String, _ path: String, seq: Int) -> ServerMessage {
+            .toolStarted(ToolStarted(chat: 1, turn: 1, toolUseId: id, tool: "Write", summary: path, input: ["file_path": .string(path)], seq: seq, ts: "2026-10-28T09:10:00Z"))
+        }
+        model.apply(write("a", "test.csv", seq: 1))
+        model.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-a", toolUseId: "a", outcome: .declined, seq: 2)))
+        // The engine reports the refusal as the tool's result, which may read as ok.
+        model.apply(.toolFinished(ToolFinished(chat: 1, turn: 1, toolUseId: "a", ok: true, summary: "", seq: 3, ts: "2026-10-28T09:10:05Z")))
+        model.apply(write("b", "secrets.env", seq: 4))
+        model.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-b", toolUseId: "b", outcome: .blocked, seq: 5)))
+        model.apply(write("c", "notes.md", seq: 6))
+        model.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-c", toolUseId: "c", outcome: .once, seq: 7)))
+        model.apply(.toolFinished(ToolFinished(chat: 1, turn: 1, toolUseId: "c", ok: true, summary: "", seq: 8, ts: "2026-10-28T09:11:00Z")))
+
+        XCTAssertEqual(model.changedFiles(chat: 1).map(\.path), ["/tmp/demo/notes.md"])
+    }
+
     func testPinsPersistInSettings() throws {
         let suite = "portico-pins-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
