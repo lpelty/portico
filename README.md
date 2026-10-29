@@ -105,6 +105,10 @@ log_prompt = "/session-close"       # the log step (Log session, /log, and a ren
 plugins = ["my_deployment_plugin"]  # plug-in modules, imported at start (see Plug-ins)
 plugin_paths = ["~/portico-plugins"] # absolute directories put on the import path for them
 services_interval_seconds = 30      # how often the services below are checked; at least 5
+titles = "generated"                # the default: after a session's first clean turn, a small model names it
+                                    # (six words at most; the first line until then, and if the call fails);
+                                    # "first_line": the first line of the first message, no extra model call
+title_model = "my-small-model"      # optional: the model for titles; default "haiku", the provider's small model
 
 [brand]
 name = "Portico"
@@ -121,6 +125,14 @@ app_icon_name = "AppIcon"           # the icon's name inside app_icon_assets; ne
 [update]                            # optional: the deployment's own update commands, run with /bin/sh -c
 check = "my-tool update --check"    # exit 0 and print the version when an update is available
 run = "my-tool update"              # performs it; the app's "Update available" runs it through portico-gateway update
+
+[deployment]                        # optional (v0.8): one restart and one status for all the services
+restart = "my-tool restart-all"     # /bin/sh -c, bounded by command_timeout_seconds; exit 0 = done;
+                                    # the services menu ends with Restart all services
+status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": true|false, "detail"?}]} on stdout
+                                    # (stderr is not read as JSON; it only names the reason when it fails);
+                                    # when set, its rows replace the [[services]] checks; a row offers
+                                    # Restart when a [[services]] entry with the same id gives one
 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
@@ -139,6 +151,21 @@ timeout_seconds = 10                # optional, default 10, at least 1: the chec
 name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
 ```
+
+A title call goes through the Agent SDK to the same provider, with the
+same credentials, as the agent: the gateway's environment plus the `env`
+blocks of the settings files the agent reads (`setting_sources`: user,
+then the session folder's project and local settings). The files
+themselves are not loaded, so the call runs none of their hooks, servers
+or instructions: one turn, no tools, from the state directory, given
+twenty seconds. A provider set up through another settings key (an API
+key helper, a cloud credential refresh) reaches the agent but not the
+title call; put what it needs in `env`, or set `titles = "first_line"`.
+A session that already has an alias is not titled, and a generated title
+is never replaced.
+
+A status command that fails, times out or prints something else becomes
+one row in the menu, "status command failed · <reason>".
 
 The gateway reads `config.toml` once, at start. Change it, and the app's
 Settings and `bin/doctor` say "restart the gateway to apply":
@@ -204,13 +231,21 @@ async def on_renew(ctx, chat):       # the log step; replaces log_prompt; return
 
 def search(root, query):             # files.search instead of Spotlight; sync or async
     return [{"path": "relative/to/root.md", "snippet": None}]
+
+def services_status():               # v0.8: the services menu's rows instead of [deployment] status
+    return {"services": [{"id": "memory", "name": "Memory", "up": True}]}   # sync or async; raise = failed
+
+async def restart_services():        # v0.8: Restart all services instead of [deployment] restart
+    ...                              # sync or async; return False or raise = failed
 ```
 
 `ctx` carries `chat` (the number), `folder`, `log_prompt`, `send` and
 `ending` (true for a renewal, false for Log session, which keeps the
 session live);
 `chat` is the session's `ChatSummary` (title, created, compactions, ...).
-For `on_renew` and `search` the last plug-in listed that defines one wins.
+For `on_renew`, `search`, `services_status` and `restart_services` the
+last plug-in listed that defines one wins; the last two take precedence
+over `[deployment]`.
 A module that is missing, fails to import, or names another API number
 stops the gateway at start with one line saying which; `bin/doctor` checks
 each configured plug-in the same way. `examples/plugin/` holds a complete

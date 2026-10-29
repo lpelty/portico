@@ -276,11 +276,25 @@ class SessionLog(Envelope):
 class ServiceRestart(Envelope):
     """Run a service's ``restart`` command, then check it again (v0.4).
 
-    Answered by the ``services.status`` that follows.
+    Answered by the ``services.status`` that follows. v0.8: refused with
+    ``services.busy`` while a ``services.restart_all`` runs.
     """
 
     type: Literal["service.restart"] = "service.restart"
     service: str
+
+
+class ServicesRestartAll(Envelope):
+    """Restart all the deployment's services with its one restart command (v0.8).
+
+    Only when ``hello.capabilities`` has ``services.restart_all``. No
+    ``services.status`` goes out while it runs; the one read after the
+    restart is the answer. A restart that fails also answers, after that
+    status, with ``error code=services.restart_failed`` carrying the
+    request's ``id``.
+    """
+
+    type: Literal["services.restart_all"] = "services.restart_all"
 
 
 class FilesSearch(Envelope):
@@ -585,6 +599,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SessionMode,
     SessionLog,
     ServiceRestart,
+    ServicesRestartAll,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -737,6 +752,7 @@ def example_messages() -> dict[str, BaseModel]:
         SessionMode(ts=_TS, chat=14, mode="auto"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
+        ServicesRestartAll(ts=_TS, id="req-8"),
         # gateway -> app
         HelloServer(
             ts=_TS,

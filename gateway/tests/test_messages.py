@@ -59,6 +59,7 @@ EXPECTED_KEYS = {
     "server.update.available",
     "client.session.log",
     "client.service.restart",
+    "client.services.restart_all",
     "server.session.logged",
     "server.services.status",
 }
@@ -70,8 +71,9 @@ def test_every_type_has_schema_def_and_example():
     for key, msg in ex.items():
         assert type(msg).__name__ in schema["$defs"], key
     # v0.1's 30, v0.2's 6, v0.3's session.mode, chat.notice, config.stale,
-    # update.available, v0.4's session.log, service.restart, session.logged, services.status
-    assert len(ex) == 44
+    # update.available, v0.4's session.log, service.restart, session.logged, services.status,
+    # v0.8's services.restart_all
+    assert len(ex) == 45
     assert set(ex) == EXPECTED_KEYS
 
 

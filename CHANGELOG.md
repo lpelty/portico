@@ -1,5 +1,82 @@
 # Changelog
 
+## v0.8.0 (2026-10-29)
+
+### What a person gets (app)
+
+- **The welcome shows on its own.** An artifact that was showing at quit
+  no longer opens beside the welcome; it comes back when you go into the
+  conversation (View Session N, a send from the welcome, or picking the
+  session). Quitting from the welcome keeps it for next time.
+- **Gateway controls in the services menu.** The Gateway row has Stop
+  while the gateway runs, Start while it doesn't, and always Restart: the
+  same actions as Settings › Gateway. Restart stops the gateway and starts
+  it again, so a config change no longer needs a terminal. Settings ›
+  Gateway now always offers Restart too.
+- **Stop and Restart ask first during a turn**: "A turn is running in
+  Session 3. Restart anyway?" (several sessions are named together). The
+  status strip's Restart for a stale config asks the same way.
+- **Restart all services.** When the deployment has one restart command
+  (`services.restart_all` in `hello.capabilities`), the services menu ends
+  with Restart all services. It asks first, sends `services.restart_all`,
+  spins until a fresh `services.status`, and shows the gateway's reason
+  under it when an `error` comes back for the request (the gateway sends
+  that status first, then the error: the reason still shows).
+- **A row's Restart says why it failed**: the gateway's reason (an `error`
+  for that request) shows under the row, tinted like a down row, until the
+  next try or a new gateway. A row's Restart waits while Restart all
+  services runs.
+- **The Gateway row's Restart waits while the gateway is starting**, as
+  Start does.
+- **Generated titles need nothing new in the app**: a title that changes
+  in a later `chat.list` updates the Earlier row, the session card and the
+  divider (tested).
+
+- **A down service says when on the date rule.** "not responding since
+  17:28" (the gateway's own clock, no day) now reads "not responding since
+  today, 5:28 PM", from the service's `since`; any gateway version.
+
+### Gateway
+
+- **Generated session titles.** After a session's first turn finishes
+  `done`, the gateway asks a small model for a title of at most six words
+  (from the first message and the first 500 characters of the reply),
+  stores it on the session and sends `chat.list`. The call goes through
+  the Agent SDK's one-shot `query` to the agent's own provider and
+  credentials (the gateway's environment plus the `env` blocks of the
+  settings files the agent reads, `setting_sources`; the files themselves
+  are not loaded, so no hooks, servers or instructions): one turn, no
+  tools, from the state directory, twenty seconds at most, in the
+  background (it never holds up or fails a turn). The first line stays
+  until it arrives, and for good when the call fails. The default model is the alias `haiku`, the
+  provider's small model (a hosted provider maps it with
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL`); `title_model` overrides it. `titles =
+  "first_line"` makes no extra call. A log step's turn, an unknown
+  command's empty turn, a session with an alias and a restored session
+  are never titled; a generated title is never replaced. A session whose
+  first message was an unknown command is titled from the first message
+  that reaches the agent.
+- **One restart and one status for the whole deployment.** New optional
+  `[deployment]` with `restart` and `status` commands. `status` prints
+  `{"services": [{"id", "name", "up", "detail"?}]}` on stdout (its
+  stderr is kept apart and only names the reason when it fails) and,
+  when set, replaces the `[[services]]` checks (rows keep their Restart from a
+  `[[services]]` entry with the same id); a status that fails or prints
+  something else is one row saying so, with the reason. `restart` is run
+  by the new request `services.restart_all`, advertised as the
+  `services.restart_all` capability in `hello`; the next
+  `services.status` (none goes out meanwhile) is the answer, plus `error
+  code=services.restart_failed` when it failed. A `service.restart` sent
+  while it runs is refused with `services.busy`. A single service whose
+  restart command fails now answers `services.restart_failed` with the
+  reason too (after its fresh status), so the menu can say why. Plug-ins can provide both
+  with the new hooks `services_status()` and `restart_services()`, which
+  take precedence over the config.
+- Protocol: additive only (a new request an older app never sends, a new
+  capability string, a title that changes once in `chat.list`, an
+  existing error code on `service.restart`). Schema and examples
+  re-exported.
+
 ## v0.7.0 (2026-10-29)
 
 ### What a person gets (app)

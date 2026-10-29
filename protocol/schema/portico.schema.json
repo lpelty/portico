@@ -1518,6 +1518,9 @@
         },
         {
           "$ref": "#/$defs/ServiceRestart"
+        },
+        {
+          "$ref": "#/$defs/ServicesRestartAll"
         }
       ]
     },
@@ -2695,7 +2698,7 @@
     },
     "ServiceRestart": {
       "additionalProperties": false,
-      "description": "Run a service's ``restart`` command, then check it again (v0.4).\n\nAnswered by the ``services.status`` that follows.",
+      "description": "Run a service's ``restart`` command, then check it again (v0.4).\n\nAnswered by the ``services.status`` that follows. v0.8: refused with\n``services.busy`` while a ``services.restart_all`` runs.",
       "properties": {
         "chat": {
           "anyOf": [
@@ -2753,6 +2756,63 @@
         "service"
       ],
       "title": "ServiceRestart",
+      "type": "object"
+    },
+    "ServicesRestartAll": {
+      "additionalProperties": false,
+      "description": "Restart all the deployment's services with its one restart command (v0.8).\n\nOnly when ``hello.capabilities`` has ``services.restart_all``. No\n``services.status`` goes out while it runs; the one read after the\nrestart is the answer. A restart that fails also answers, after that\nstatus, with ``error code=services.restart_failed`` carrying the\nrequest's ``id``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "services.restart_all",
+          "default": "services.restart_all",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "ServicesRestartAll",
       "type": "object"
     },
     "ServicesStatus": {

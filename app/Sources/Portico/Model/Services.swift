@@ -75,6 +75,21 @@ struct ServicesPresentation: Equatable, Sendable {
 
     /// A reported service as a row: `up · recall and capture`,
     /// `not responding since 9:41 · …` as the gateway wrote it.
+    /// A down service's "not responding since 17:28 · reason" with the
+    /// gateway's bare clock replaced by the date rule (v0.7 decision 1):
+    /// "not responding since today, 5:28 PM · reason". The time comes from
+    /// the service's own `since`; anything else is left as the gateway
+    /// wrote it.
+    static func outageDetail(
+        _ detail: String, since: String?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current
+    ) -> String {
+        let prefix = "not responding since "
+        guard detail.hasPrefix(prefix), let start = SessionTime.parse(since) else { return detail }
+        let rest = detail.dropFirst(prefix.count)
+        let tail = rest.range(of: " · ").map { String(rest[$0.lowerBound...]) } ?? ""
+        return prefix + SessionTime.full(start, now: now, calendar: calendar, locale: locale) + tail
+    }
+
     static func row(_ service: Service) -> ServiceRow {
         let word: String = switch service.state {
         case .up: "up"
@@ -83,7 +98,7 @@ struct ServicesPresentation: Equatable, Sendable {
         }
         let detail: String
         if let given = service.detail?.trimmingCharacters(in: .whitespacesAndNewlines), !given.isEmpty {
-            detail = service.state == .up ? "\(word) · \(given)" : given
+            detail = service.state == .up ? "\(word) · \(given)" : outageDetail(given, since: service.since)
         } else {
             detail = word
         }
@@ -129,12 +144,25 @@ extension AppModel {
 
     func isRestarting(service: String) -> Bool { restartingServices[service] != nil }
 
+    /// Whether a row's Restart can be pressed: connected, and not while
+    /// Restart all services runs (v0.8: the gateway would refuse it with
+    /// `services.busy`, and holds back the status that would answer it).
+    func canRestart(service: String) -> Bool {
+        connection == .connected && restartingAll == nil && !isRestarting(service: service)
+    }
+
+    /// The gateway's reason a row's last restart failed, until the next try.
+    func restartError(service: String) -> String? { restartErrors[service] }
+
     /// A row's Restart: `service.restart`; the row shows progress until a
-    /// `services.status` moves that service.
+    /// `services.status` moves that service, or the gateway's reason when
+    /// an `error` carries this request's id.
     func restartService(_ service: String) {
-        guard connection == .connected, !isRestarting(service: service) else { return }
+        guard canRestart(service: service) else { return }
         let id = Self.requestId()
         restartingServices[service] = id
+        lastRestartIds[service] = id
+        restartErrors[service] = nil
         restartBaselines[service] = services?.first { $0.id == service }
         send(.serviceRestart(ServiceRestart(service: service, id: id)))
     }
@@ -146,6 +174,11 @@ extension AppModel {
     /// detail moves, or when it is gone from the list.
     func applyServicesStatus(_ status: ServicesStatus) {
         services = status.services
+        // A fresh status after Restart all services is its answer (v0.8
+        // decision 4); `lastRestartAllId` stays for the error that may follow.
+        // A status already on its way before the gateway took the request
+        // ends the spinner early too: nothing in the frame tells them apart.
+        restartingAll = nil
         for service in Array(restartingServices.keys) {
             let now = status.services.first { $0.id == service }
             let before = restartBaselines[service]
@@ -181,5 +214,175 @@ extension AppModel {
         guard let major = numbers.first.flatMap({ Int($0) }) else { return true }
         let minor = numbers.count > 1 ? Int(numbers[1]) ?? 0 : 0
         return (major, minor) >= (0, 4)
+    }
+}
+
+// MARK: - Gateway controls and Restart all services (v0.8 decisions 3, 4)
+
+/// A button on the services menu's Gateway row (v0.8 decision 3, AC1).
+enum GatewayControl: Equatable, Sendable {
+    case start, stop, restart
+
+    var title: String {
+        switch self {
+        case .start: "Start"
+        case .stop: "Stop"
+        case .restart: "Restart"
+        }
+    }
+}
+
+extension ServicesPresentation {
+    /// The Gateway row's buttons (v0.8 decision 3): Stop while it runs,
+    /// Start while it doesn't, and always Restart, last.
+    static func gatewayControls(_ gateway: ServiceRow) -> [GatewayControl] {
+        [gateway.state == .up ? .stop : .start, .restart]
+    }
+
+    /// Whether a Gateway row button can be pressed now: none during a
+    /// restart; Start and Restart not while the gateway is starting (as in
+    /// Settings).
+    static func gatewayControlEnabled(_ control: GatewayControl, gateway: ServiceRow, restarting: Bool) -> Bool {
+        if restarting { return false }
+        if control == .start || control == .restart { return gateway.state != .checking }
+        return true
+    }
+
+    /// The menu ends with Restart all services when the deployment has one
+    /// restart command (`hello.capabilities` has `services.restart_all`,
+    /// v0.8 decision 4).
+    static func offersRestartAll(capabilities: [String]?) -> Bool {
+        capabilities?.contains(ServicesRestartAll.capability) ?? false
+    }
+
+    static let restartAllTitle = "Restart all services"
+}
+
+/// An action that may ask first (v0.8 decisions 3, 4).
+enum GatewayAction: Equatable, Sendable {
+    /// The gateway: Stop, Restart (services menu, Settings, the strip).
+    case stop, restart
+    /// Restart all services: the deployment's one restart command.
+    case restartAll
+}
+
+/// The window a confirmation shows in: the one whose button asked.
+enum ConfirmPlace: Equatable, Sendable {
+    case window, settings
+}
+
+/// The question asked before a gateway or services action (v0.8 decisions
+/// 3, 4): Stop and Restart ask only while a turn runs in some session;
+/// Restart all services always asks. Pure, so its words are tested
+/// without a window.
+struct GatewayConfirmation: Equatable, Sendable {
+    var action: GatewayAction
+    /// The sessions with a turn running (or a card waiting), ascending.
+    var running: [Int]
+    var place: ConfirmPlace = .window
+
+    static func needed(_ action: GatewayAction, running: [Int]) -> Bool {
+        switch action {
+        case .stop, .restart: !running.isEmpty
+        case .restartAll: true
+        }
+    }
+
+    /// `A turn is running in Session 3.`, `Turns are running in Sessions 2
+    /// and 3.`; `nil` when none is.
+    static func runningSentence(_ running: [Int]) -> String? {
+        let numbers = running.map(String.init)
+        switch numbers.count {
+        case 0: return nil
+        case 1: return "A turn is running in Session \(numbers[0])."
+        default:
+            let list = numbers.dropLast().joined(separator: ", ") + " and " + numbers[numbers.count - 1]
+            return "Turns are running in Sessions \(list)."
+        }
+    }
+
+    /// `A turn is running in Session 3. Restart anyway?`
+    var title: String {
+        let running = Self.runningSentence(running)
+        switch action {
+        case .stop: return [running, "Stop anyway?"].compactMap { $0 }.joined(separator: " ")
+        case .restart: return [running, "Restart anyway?"].compactMap { $0 }.joined(separator: " ")
+        case .restartAll: return "Restart all services?"
+        }
+    }
+
+    var body: String {
+        switch action {
+        case .stop:
+            return "Stopping the gateway interrupts every running turn. Start brings it back."
+        case .restart:
+            return "Restarting the gateway interrupts every running turn. It starts again with the config as it is now."
+        case .restartAll:
+            let what = "This runs the deployment's restart command for all its services, then checks them again."
+            return [Self.runningSentence(running), what].compactMap { $0 }.joined(separator: " ")
+        }
+    }
+
+    var confirmTitle: String {
+        switch action {
+        case .stop: "Stop gateway"
+        case .restart: "Restart gateway"
+        case .restartAll: "Restart all"
+        }
+    }
+}
+
+extension AppModel {
+    /// The sessions where a turn is running or a card waits, ascending:
+    /// what a gateway stop or restart would interrupt.
+    var sessionsWithTurns: [Int] {
+        chats.map(\.chat).filter { isBusy(chat: $0) }.sorted()
+    }
+
+    /// The menu offers Restart all services (v0.8 decision 4).
+    var offersRestartAll: Bool {
+        ServicesPresentation.offersRestartAll(capabilities: hello?.capabilities)
+    }
+
+    /// A Gateway row, Settings or strip button (v0.8 decisions 3, 4): ask
+    /// first when `GatewayConfirmation.needed`, in the window at `place`;
+    /// otherwise act now. Returns whether it asked.
+    @discardableResult
+    func request(_ action: GatewayAction, from place: ConfirmPlace = .window) -> Bool {
+        let running = sessionsWithTurns
+        guard GatewayConfirmation.needed(action, running: running) else {
+            perform(action)
+            return false
+        }
+        confirming = GatewayConfirmation(action: action, running: running, place: place)
+        return true
+    }
+
+    /// The confirmation's answer: Cancel (`false`) or go ahead.
+    func answerConfirmation(_ proceed: Bool) {
+        guard let asked = confirming else { return }
+        confirming = nil
+        if proceed { perform(asked.action) }
+    }
+
+    /// The same model actions as Settings › Gateway's buttons.
+    private func perform(_ action: GatewayAction) {
+        switch action {
+        case .stop: Task { await stopGateway() }
+        case .restart: Task { await restartGateway() }
+        case .restartAll: restartAllServices()
+        }
+    }
+
+    /// Restart all services: `services.restart_all`; the menu shows
+    /// progress until a fresh `services.status`, or the gateway's reason
+    /// when an `error` carries this request's id.
+    func restartAllServices() {
+        guard connection == .connected, offersRestartAll, restartingAll == nil else { return }
+        let id = Self.requestId()
+        restartingAll = id
+        lastRestartAllId = id
+        restartAllError = nil
+        send(.servicesRestartAll(ServicesRestartAll(id: id)))
     }
 }
