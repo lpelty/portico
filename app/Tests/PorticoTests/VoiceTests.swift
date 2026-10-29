@@ -202,7 +202,20 @@ final class ReadAloudTests: XCTestCase {
         settings = Settings(defaults: UserDefaults(suiteName: name)!)
         synth = FakeSynthesizer()
         escape = EscapeKey()
-        reader = ReadAloud(settings: settings, synthesizer: synth, escape: escape)
+        // The voices this Mac has would make the tests depend on the Mac.
+        reader = ReadAloud(
+            settings: settings, synthesizer: synth, escape: escape,
+            installedVoices: {
+                [
+                    VoiceOption(id: "voice.a", name: "A", language: "en-US"),
+                    VoiceOption(id: "voice.premium", name: "P", language: "en-US", quality: .premium),
+                ]
+            })
+    }
+
+    func testWithNoVoiceChosenTheBestInstalledOneReads() {
+        reader.read("Done.")
+        XCTAssertEqual(synth.spoken.last?.voice, "voice.premium")
     }
 
     func testReadsTheSpeakableTextWithTheChosenVoiceAndSpeed() {
@@ -291,6 +304,30 @@ final class ReadAloudTests: XCTestCase {
 // MARK: - Voices
 
 final class VoiceChoicesTests: XCTestCase {
+    func testWithNoChoiceTheBestInstalledVoiceSpeaks() {
+        // The system default is often a compact voice; Portico picks the
+        // best one installed for the language: Premium, then Enhanced.
+        let voices = [
+            VoiceOption(id: "compact.samantha", name: "Samantha", language: "en-US"),
+            VoiceOption(id: "enhanced.evan", name: "Evan", language: "en-US", quality: .enhanced),
+            VoiceOption(id: "premium.zoe", name: "Zoe", language: "en-US", quality: .premium),
+            VoiceOption(id: "premium.thomas", name: "Thomas", language: "fr-FR", quality: .premium),
+            VoiceOption(id: "personal", name: "Larry", language: "en-US", quality: .premium, personal: true),
+        ]
+        XCTAssertEqual(VoiceChoices.resolved(chosen: nil, installed: voices, language: "en"), "premium.zoe")
+        XCTAssertEqual(VoiceChoices.resolved(chosen: "enhanced.evan", installed: voices, language: "en"), "enhanced.evan")
+        XCTAssertEqual(
+            VoiceChoices.resolved(chosen: "gone", installed: voices, language: "en"), "premium.zoe",
+            "a chosen voice that is no longer installed falls back to the best")
+        XCTAssertNil(VoiceChoices.resolved(chosen: nil, installed: [], language: "en"), "nothing installed: the system's own")
+        XCTAssertNil(
+            VoiceChoices.resolved(chosen: nil, installed: [voices[0]], language: "en"),
+            "only compact voices: the system's own choice, not one picked by name")
+        XCTAssertEqual(VoiceChoices.best(voices, language: "en")?.quality, .premium)
+        XCTAssertFalse(VoiceChoices.hasNaturalVoice([voices[0]], language: "en"))
+        XCTAssertTrue(VoiceChoices.hasNaturalVoice(voices, language: "en"))
+    }
+
     private let voices: [VoiceOption] = [
         VoiceOption(id: "v.zoe", name: "Zoe", language: "en-US", quality: .premium),
         VoiceOption(id: "v.ava", name: "Ava", language: "en-US"),

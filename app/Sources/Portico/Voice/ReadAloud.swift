@@ -95,7 +95,14 @@ final class ReadAloud: ObservableObject {
     private let escape: EscapeKey
     private var token = 0
 
-    init(settings: Settings, synthesizer: SpeechSynthesizing? = nil, escape: EscapeKey? = nil) {
+    /// The installed voices, read when speaking starts (a fake in tests).
+    private let installedVoices: () -> [VoiceOption]
+
+    init(
+        settings: Settings, synthesizer: SpeechSynthesizing? = nil, escape: EscapeKey? = nil,
+        installedVoices: @escaping () -> [VoiceOption] = VoiceChoices.installed
+    ) {
+        self.installedVoices = installedVoices
         self.settings = settings
         self.synthesizer = synthesizer ?? SystemSpeechSynthesizer()
         self.escape = escape ?? EscapeKey()
@@ -120,7 +127,12 @@ final class ReadAloud: ObservableObject {
         token += 1
         reading = key ?? reply
         escape.watch { [weak self] in self?.stop() }
-        synthesizer.speak(speech, voiceIdentifier: settings.voiceIdentifier, rate: settings.speechRate.utteranceRate, token: token)
+        synthesizer.speak(speech, voiceIdentifier: voice, rate: settings.speechRate.utteranceRate, token: token)
+    }
+
+    /// The chosen voice, or the best installed one (`VoiceChoices.resolved`).
+    private var voice: String? {
+        VoiceChoices.resolved(chosen: settings.voiceIdentifier, installed: installedVoices(), language: VoiceChoices.currentLanguage)
     }
 
     /// Speaks a line for the Voice pane's sample with the chosen voice and speed.
@@ -222,6 +234,34 @@ enum VoiceChoices {
                 if a.name != b.name { return a.name.localizedStandardCompare(b.name) == .orderedAscending }
                 return a.quality.rawValue > b.quality.rawValue
             }
+    }
+
+    /// The best voice installed for `language`, Personal Voice aside:
+    /// Premium, then Enhanced, then the rest (v0.9: the system default is
+    /// often a compact voice, which sounds dated).
+    static func best(_ voices: [VoiceOption], language: String) -> VoiceOption? {
+        options(voices, language: language, personalAllowed: false)
+            .max { a, b in
+                if a.quality != b.quality { return a.quality.rawValue < b.quality.rawValue }
+                return a.name.localizedStandardCompare(b.name) == .orderedDescending
+            }
+    }
+
+    /// The voice Read aloud uses: the chosen one while it is installed,
+    /// else the best installed Enhanced or Premium one; nil leaves it to the
+    /// system.
+    static func resolved(chosen: String?, installed: [VoiceOption], language: String) -> String? {
+        if let chosen, installed.contains(where: { $0.id == chosen }) { return chosen }
+        // Only a natural voice beats the system's own choice; among compact
+        // voices the system knows the person's region best.
+        guard hasNaturalVoice(installed, language: language) else { return nil }
+        return best(installed, language: language)?.id
+    }
+
+    /// Whether an Enhanced or Premium voice is installed for `language`;
+    /// without one the Voice pane says where to get one.
+    static func hasNaturalVoice(_ voices: [VoiceOption], language: String) -> Bool {
+        (best(voices, language: language)?.quality.rawValue ?? 0) >= VoiceOption.Quality.enhanced.rawValue
     }
 
     /// The system's voices, as options.

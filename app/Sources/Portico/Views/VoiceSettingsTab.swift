@@ -28,7 +28,7 @@ struct VoiceSettingsTab: View {
             Section("Listen") {
                 Toggle("Read aloud on replies", isOn: $settings.readAloudEnabled)
                 Picker("Voice", selection: $settings.voiceIdentifier) {
-                    Text("System voice").tag(String?.none)
+                    Text(automaticLabel).tag(String?.none)
                     ForEach(voices) { voice in
                         Text(voice.label).tag(Optional(voice.id))
                     }
@@ -53,6 +53,11 @@ struct VoiceSettingsTab: View {
                     }
                     .disabled(!settings.readAloudEnabled)
                 }
+                if !VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage) {
+                    Text("For a natural voice, download a Premium one: System Settings › Accessibility › Spoken Content › System voice › Manage Voices… (for example Ava or Zoe, Premium). It appears here once installed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text("Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -60,6 +65,15 @@ struct VoiceSettingsTab: View {
         }
         .formStyle(.grouped)
         .onAppear(perform: refresh)
+    }
+
+    /// "Best installed (Zoe, Premium)": with no voice chosen, Read aloud
+    /// uses the best one installed for the language (`VoiceChoices.best`).
+    private var automaticLabel: String {
+        guard VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage),
+            let best = VoiceChoices.best(voices, language: VoiceChoices.currentLanguage)
+        else { return "System voice" }
+        return "Best installed (\(best.label))"
     }
 
     /// Personal Voice: offered only when the person asks for it here.
