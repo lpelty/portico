@@ -238,6 +238,9 @@ SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
 # session, ``/log`` logs it without ending it: v0.4).
 PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log"})
 
+# The ``chat.notice`` a log step that did not finish cleanly leaves (v0.7).
+LOG_STEP_UNFINISHED = "The log step didn't finish; the session isn't logged"
+
 
 def slash_command(text: str) -> str | None:
     """The command a message starts with (without ``/``), or ``None``.
@@ -1563,10 +1566,17 @@ class GatewayServer:
         Sends ``chat.state`` for both, then ``session.renewed`` (with ``id``),
         then ``chat.list``. The next session's engine starts with its first
         message, as a restored chat's does.
+
+        Recorded in both conversations as ``chat.notice`` lines (v0.7): what
+        is happening, at once, in the ending session; that it ended and
+        which session follows; and, first in the next, which one it continues.
         """
+        logging = log_first and self.has_log_step()
+        text = "New — logging, then ending this session" if logging else "New — ending this session"
+        await self.notice(chat, text)
         logged: bool | None = None
-        if log_first and self.has_log_step():
-            logged = await self._run_log_step(chat, ending=True)
+        if logging:
+            logged = await self._noted_log_step(chat, ending=True)
             if logged:
                 chat.note_logged(_now())
         await self.cards.cancel_all(chat, "session ended", self.emit)
@@ -1575,7 +1585,9 @@ class GatewayServer:
         chat.logged = logged
         await self.set_state(chat, "stopped")
         following = self.registry.create(chat.folder, parent=chat.number)
+        await self.notice(chat, f"Session ended · continues in Session {following.number}")
         await self.set_state(following, "idle")
+        await self.notice(following, f"Continues Session {chat.number}")
         log.info("chat %d: session ended (logged=%s); session %d follows", chat.number, logged, following.number)
         await self.broadcast(SessionRenewed(ts=_now(), id=id, ended=chat.summary(), next=following.summary()))
         await self.send_chat_list()
@@ -1608,6 +1620,18 @@ class GatewayServer:
         except Exception:
             log.exception("chat %d: the plug-in's on_renew failed; the session is not logged", chat.number)
             return False
+
+    async def _noted_log_step(self, chat: Chat, ending: bool) -> bool:
+        """``_run_log_step``; one that raises (its turn could not start) says so in the conversation first."""
+        try:
+            return await self._run_log_step(chat, ending)
+        except Exception:
+            await self.notice(chat, LOG_STEP_UNFINISHED)
+            raise
+
+    async def notice(self, chat: Chat, text: str) -> None:
+        """A quiet line in ``chat``'s conversation: stamped, so it is in the ring and replays."""
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=text))
 
     async def on_session_log(self, msg: SessionLog, conn: ServerConnection) -> None:
         """Run the log step in the live session ``chat`` without ending it (v0.4).
@@ -1644,10 +1668,15 @@ class GatewayServer:
         not seen. The log turn's own ``chat.state idle`` goes out before the
         step's verdict is known (a plug-in may send more than one turn), so
         a ``chat.state`` follows the step with ``unlogged`` as it now stands.
+
+        The conversation records it (v0.7): a ``chat.notice`` at once, and
+        one with the verdict when the step is done.
         """
-        logged = await self._run_log_step(chat, ending=False)
+        await self.notice(chat, "Log session — running the log step")
+        logged = await self._noted_log_step(chat, ending=False)
         if logged:
             chat.note_logged(_now())
+        await self.notice(chat, "Session logged" if logged else LOG_STEP_UNFINISHED)
         await self.set_state(chat, chat.state)
         log.info("chat %d: session log step ran (logged=%s); the session stays live", chat.number, logged)
         # ``chat`` is a summary here, not a number: the frame names the session in it.
@@ -1790,17 +1819,39 @@ class GatewayServer:
 
         The caller has checked the chat can take a turn. ``run.finished`` is
         set when the turn ends, with ``run.outcome`` saying how.
-        """
-        engine = await self._ensure_engine(chat)
 
+        The echo goes first (v0.7): ``turn.started``, ``user.text`` and
+        ``chat.state working`` precede starting or resuming the engine, so
+        the person's message shows at once however long a cold engine takes.
+        An engine that cannot start ends the turn ``error``, as a refused
+        send does, and the start's ``ProtocolError`` is raised.
+        """
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
+        # Registered before the engine starts: a second send meanwhile is busy.
         self._runs[chat.number] = run
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
         # The person's words go in the ring too, as the engine receives them,
         # so a replay from this launch reads as a conversation, not a monologue.
         await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text))
         await self.set_state(chat, "working")
+        try:
+            engine = await self._ensure_engine(chat)
+        except ProtocolError:
+            await self._fail_turn(chat, run)
+            raise
+        if self._runs.get(chat.number) is not run:
+            # Ended while the engine started (chat.stop, chat.remove, gateway
+            # stop): that reported the turn; the fresh engine goes as well.
+            if chat.number not in self._runs:
+                await self._close_engine(chat)
+            return run
+        if run.stop_requested:
+            # turn.stop while the engine started: nothing was sent to stop.
+            run.outcome = "stopped"
+            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
+            await self._finish_run(chat, run)
+            return run
         # ``send`` advances the engine's own turn counter; align it so the
         # engine's events carry this turn even after an engine restart.
         engine.turn = chat.turn - 1
@@ -1808,18 +1859,24 @@ class GatewayServer:
             await engine.send(text)
         except Exception as e:
             log.exception("chat %d: engine send failed", chat.number)
-            run.outcome = "error"
-            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="error"))
-            await self._finish_run(chat, run)
+            await self._fail_turn(chat, run)
             raise ProtocolError("engine.send_failed", f"the engine refused the message: {e}") from e
         return run
+
+    async def _fail_turn(self, chat: Chat, run: TurnRun) -> None:
+        """End ``run`` with ``error``: the engine could not start, or refused the message."""
+        run.outcome = "error"
+        await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="error"))
+        await self._finish_run(chat, run)
 
     async def on_turn_stop(self, msg: TurnStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
         run = self._runs.get(chat.number)
-        if run is None or chat.engine is None:
+        if run is None:
             return  # nothing running: a stop is harmless
         run.stop_requested = True
+        if chat.engine is None:
+            return  # the engine is still starting: ``start_turn`` ends the turn stopped instead of sending
         # An open card would keep the engine's permission call waiting past the interrupt.
         await self.cards.cancel_all(chat, "turn stopped", self.emit)
         await chat.engine.interrupt()

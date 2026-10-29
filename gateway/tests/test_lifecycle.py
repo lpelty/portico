@@ -40,6 +40,7 @@ from portico_gateway.messages import (
     TextDelta,
     TurnFinished,
     TurnStarted,
+    UserText,
     dump,
 )
 from portico_gateway.server import GatewayServer
@@ -273,23 +274,27 @@ async def test_before_first_chat_runs_for_a_restored_chat_continued_after_restar
     try:
         await conn.send(dump(MessageSend(ts=TS, chat=1, id="req-send", text="go on")))
         frames = await recv_until(conn, Error)
-        assert [type(m) for m in frames] == [StatusSet, StatusSet, Error]
+        # v0.7: the echo goes first; the refused preflight ends that turn with an error.
+        assert [type(m) for m in frames] == [
+            TurnStarted, UserText, ChatState, StatusSet, StatusSet, TurnFinished, ChatState, Error
+        ]
+        assert isinstance(frames[5], TurnFinished) and frames[5].outcome == "error"
+        assert isinstance(frames[6], ChatState) and frames[6].state == "idle"
         err = frames[-1]
         assert isinstance(err, Error)
         assert err.code == "lifecycle.before_first_chat_failed" and err.id == "req-send" and err.chat == 1
         assert "memory service is down" in err.message
-        # No engine, no turn: the chat is untouched.
+        # No engine; the chat is idle again.
         assert factory.engines == []
         chat = server.registry.get(1)
-        assert chat.engine is None and chat.turn == 0 and chat.state == "idle"
-        assert not any(isinstance(m, TurnStarted) for m in chat.ring)
+        assert chat.engine is None and chat.turn == 1 and chat.state == "idle"
 
         # Fixed: the preflight passes once, the turn runs, and a chat.new afterwards skips it.
         flag.write_text("")
         await conn.send(dump(MessageSend(ts=TS, chat=1, text="go on")))
         frames = await recv_until(conn, TurnFinished)
-        assert [type(m) for m in frames][:2] == [StatusSet, TurnStarted]
-        assert isinstance(frames[0], StatusSet) and frames[0].text == "checking"
+        assert [type(m) for m in frames][:4] == [TurnStarted, UserText, ChatState, StatusSet]
+        assert isinstance(frames[3], StatusSet) and frames[3].text == "checking"
         assert factory.last.started
         await recv(conn)  # idle
         await conn.send(dump(ChatNew(ts=TS, id="req-2", folder=str(folder))))

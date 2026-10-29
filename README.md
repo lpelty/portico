@@ -110,7 +110,8 @@ services_interval_seconds = 30      # how often the services below are checked; 
 name = "Portico"
 agent_name = "Agent"
 accent = "#3B6EF5"                  # optional CSS hex
-icon = "/path/to/icon.png"          # optional
+icon = "/path/to/icon.png"          # optional; may be a flat square: Portico rounds it in the macOS icon shape
+                                    # (an image whose corners are already transparent is drawn as given)
 app_icon = "~/icons/app.png"        # optional 1024x1024 PNG for the .app bundle (bin/install); never sent to the app
 app_icon_assets = "~/icons/Assets.car" # optional precompiled asset catalog (macOS 26 icon); with app_icon_name
 app_icon_name = "AppIcon"           # the icon's name inside app_icon_assets; neither is sent to the app
@@ -156,6 +157,13 @@ parent. Ended sessions stay listed, read-only.
 without ending it (`session.log`). Each session's summary carries when it
 was last logged and whether it has work since (`unlogged`), so New asks
 "log first?" only when something would be lost.
+
+Both are recorded in the conversation as quiet lines, at once and again
+when they finish: "Log session — running the log step", then "Session
+logged" (or "The log step didn't finish; the session isn't logged");
+"New — logging, then ending this session" (or "New — ending this
+session"), then "Session ended · continues in Session M", and "Continues
+Session N" first in the next. A replay shows them.
 
 The log step is `log_prompt`, sent to the agent as a message — so the
 agent logs itself with the command or skill its folder already has. A

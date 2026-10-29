@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.7.0 — unreleased
+
+### What a person gets (gateway)
+
+- **The first send shows at once.** The gateway sends `turn.started`, the
+  `user.text` echo and `chat.state working` before it starts or resumes the
+  agent's engine, so after a gateway restart the message and "Working"
+  appear immediately instead of after the engine's 5–10 s start. An engine
+  that cannot start ends the turn `error` and answers `engine.start_failed`
+  (or `lifecycle.before_first_chat_failed`), as a refused send does; a
+  `turn.stop` while it starts ends the turn stopped without sending.
+- **Log session and New are recorded in the conversation** as `chat.notice`
+  lines, kept in the ring so a replay shows them: "Log session — running
+  the log step" at once, then "Session logged" or "The log step didn't
+  finish; the session isn't logged"; "New — logging, then ending this
+  session" (or "New — ending this session"), then "Session ended ·
+  continues in Session M", and "Continues Session N" first in the next
+  session. `/log` and `/new` in the composer send the same requests and get
+  the same lines. A refused command (busy, ended, no log step) writes none.
+- README: `brand.icon` may be a flat square; Portico rounds it in the macOS
+  icon shape (an image with transparent corners is drawn as given).
+
+### Protocol (still version 1; no new messages)
+
+- The echo frames come before the engine starts; `chat.notice` also
+  records session commands. Same frames, earlier and more of them.
+
 ## v0.6.0 (2026-10-29)
 
 Launch continues the live session, a way back from an earlier one, a calmer
