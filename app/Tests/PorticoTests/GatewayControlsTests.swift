@@ -297,4 +297,28 @@ final class GatewayControlsTests: XCTestCase {
         model.restartAllServices()
         XCTAssertTrue(sent.frames.isEmpty)
     }
+
+    func testAnOutageSaysWhenOnTheDateRuleNotTheGatewaysClock() {
+        // The gateway writes "since 17:28" (its own clock, no day); the app
+        // rewrites it from the service's `since` (v0.8, v0.7 decision 1).
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let us = Locale(identifier: "en_US")
+        let now = SessionTime.parse("2026-10-29T19:00:00Z")!
+        XCTAssertEqual(
+            ServicesPresentation.outageDetail(
+                "not responding since 17:28 · connection refused on :8100", since: "2026-10-29T17:28:00Z",
+                now: now, calendar: utc, locale: us),
+            "not responding since today, 5:28 PM · connection refused on :8100")
+        XCTAssertEqual(
+            ServicesPresentation.outageDetail(
+                "not responding since 23:10", since: "2026-10-28T23:10:00Z", now: now, calendar: utc, locale: us),
+            "not responding since yesterday, 11:10 PM")
+        XCTAssertEqual(
+            ServicesPresentation.outageDetail("permission denied", since: "2026-10-29T17:28:00Z", now: now, calendar: utc, locale: us),
+            "permission denied", "only the gateway's outage line is rewritten")
+        XCTAssertEqual(
+            ServicesPresentation.outageDetail("not responding since 17:28", since: nil, now: now, calendar: utc, locale: us),
+            "not responding since 17:28", "no since, no rewrite")
+    }
 }

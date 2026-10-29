@@ -32,6 +32,10 @@
   in a later `chat.list` updates the Earlier row, the session card and the
   divider (tested).
 
+- **A down service says when on the date rule.** "not responding since
+  17:28" (the gateway's own clock, no day) now reads "not responding since
+  today, 5:28 PM", from the service's `since`; any gateway version.
+
 ### Gateway
 
 - **Generated session titles.** After a session's first turn finishes

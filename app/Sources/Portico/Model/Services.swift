@@ -75,6 +75,21 @@ struct ServicesPresentation: Equatable, Sendable {
 
     /// A reported service as a row: `up · recall and capture`,
     /// `not responding since 9:41 · …` as the gateway wrote it.
+    /// A down service's "not responding since 17:28 · reason" with the
+    /// gateway's bare clock replaced by the date rule (v0.7 decision 1):
+    /// "not responding since today, 5:28 PM · reason". The time comes from
+    /// the service's own `since`; anything else is left as the gateway
+    /// wrote it.
+    static func outageDetail(
+        _ detail: String, since: String?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current
+    ) -> String {
+        let prefix = "not responding since "
+        guard detail.hasPrefix(prefix), let start = SessionTime.parse(since) else { return detail }
+        let rest = detail.dropFirst(prefix.count)
+        let tail = rest.range(of: " · ").map { String(rest[$0.lowerBound...]) } ?? ""
+        return prefix + SessionTime.full(start, now: now, calendar: calendar, locale: locale) + tail
+    }
+
     static func row(_ service: Service) -> ServiceRow {
         let word: String = switch service.state {
         case .up: "up"
@@ -83,7 +98,7 @@ struct ServicesPresentation: Equatable, Sendable {
         }
         let detail: String
         if let given = service.detail?.trimmingCharacters(in: .whitespacesAndNewlines), !given.isEmpty {
-            detail = service.state == .up ? "\(word) · \(given)" : given
+            detail = service.state == .up ? "\(word) · \(given)" : outageDetail(given, since: service.since)
         } else {
             detail = word
         }
