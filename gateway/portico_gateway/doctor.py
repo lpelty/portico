@@ -18,7 +18,7 @@ import stat
 import subprocess
 import sys
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -211,7 +211,9 @@ def check_python() -> Check:
     got = ".".join(str(n) for n in have)
     if have[:2] >= MIN_PYTHON:
         return Check("python", True, f"{got} ({sys.executable})")
-    return Check("python", False, f"{got} is too old; the gateway needs {want} or newer")
+    return Check(
+        "python", False, f"{got} is too old; the gateway needs {want} or newer, and uv provides it: run bin/install"
+    )
 
 
 def check_sdk() -> Check:
@@ -320,11 +322,176 @@ def check_ledger(state: StateDir) -> Check:
     return Check("ledger", False, f"pid {ledger.pid} is gone and nothing listens on {ledger.host}:{ledger.port}; {STALE_LEDGER}")
 
 
-def check_swift() -> Check:
-    path = shutil.which("swift")
-    if path:
-        return Check("swift", True, path)
-    return Check("swift", False, "swift is not on PATH; install Xcode or the Command Line Tools to build the app")
+# --- prerequisites: what bin/install needs to build the app ---------------------
+
+CLT_PKG = "com.apple.pkg.CLTools_Executables"
+PKGUTIL = "/usr/sbin/pkgutil"
+# Written by app/Packaging/build-app.sh: which macOS SDK the release build used and why.
+BUILD_RECORD = Path("app") / ".build" / "portico-build.env"
+CLT_INSTALL_HINT = "run: xcode-select --install (Xcode is not needed)"
+
+Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+
+
+def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+
+
+def _try(run: Runner, argv: list[str]) -> subprocess.CompletedProcess[str] | None:
+    """``run(argv)``, or None when the program is missing or does not answer."""
+    try:
+        return run(argv)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return _one_line(line)
+    return ""
+
+
+def developer_dir(run: Runner = _run) -> str | None:
+    """The active developer directory (``xcode-select -p``), or None when there is none."""
+    done = _try(run, ["xcode-select", "-p"])
+    if done is None or done.returncode != 0:
+        return None
+    path = done.stdout.strip()
+    return path if path and Path(path).is_dir() else None
+
+
+def check_clt(run: Runner = _run) -> Check:
+    """The Command Line Tools build the app; Xcode is not needed (but works when it is the active dir)."""
+    dev = developer_dir(run)
+    if dev is None:
+        return Check("command line tools", False, f"not installed; {CLT_INSTALL_HINT}")
+    info = _try(run, [PKGUTIL, f"--pkg-info={CLT_PKG}"])
+    version = ""
+    if info is not None and info.returncode == 0:
+        for line in info.stdout.splitlines():
+            if line.startswith("version:"):
+                version = line.split(":", 1)[1].strip()
+    if version:
+        return Check("command line tools", True, f"{version} (active developer dir: {dev})")
+    return Check(
+        "command line tools",
+        True,
+        f"no Command Line Tools package; the active developer dir {dev} provides the tools",
+    )
+
+
+def check_swift(run: Runner = _run, which: Callable[[str], str | None] = shutil.which, clt_present: bool = True) -> Check:
+    """``swift`` runs. Not asked without developer tools: the /usr/bin shim would open an installer dialog."""
+    if not clt_present:
+        return Check("swift", False, "not checked: swift comes with the Command Line Tools (see above)")
+    path = which("swift")
+    if not path:
+        return Check("swift", False, f"swift is not on PATH; {CLT_INSTALL_HINT}")
+    done = _try(run, [path, "--version"])
+    if done is None or done.returncode != 0:
+        said = _first_line((done.stderr or done.stdout) if done is not None else "") or "no answer"
+        return Check("swift", False, f"swift does not run ({said}); reinstall the Command Line Tools: {CLT_INSTALL_HINT}")
+    m = re.search(r"Swift version (\S+)", done.stdout + done.stderr)
+    return Check("swift", True, f"Swift {m.group(1)} ({path})" if m else f"{_first_line(done.stdout)} ({path})")
+
+
+def check_uv(run: Runner = _run, which: Callable[[str], str | None] = shutil.which) -> Check:
+    path = which("uv")
+    if not path:
+        return Check(
+            "uv",
+            False,
+            "uv is not on PATH; bin/install and bin/update need it: https://docs.astral.sh/uv/getting-started/installation/",
+        )
+    done = _try(run, [path, "--version"])
+    version = _first_line(done.stdout) if done is not None and done.returncode == 0 else ""
+    return Check("uv", True, f"{version or 'uv'} ({path})")
+
+
+def locked_version(lock_path: Path, dist: str = SDK_DIST) -> str | None:
+    """The version ``uv.lock`` pins for ``dist``, or None when the lock or the package is absent."""
+    try:
+        data = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    for package in data.get("package", []):
+        if package.get("name") == dist:
+            version = package.get("version")
+            return str(version) if version else None
+    return None
+
+
+def installed_version(dist: str = SDK_DIST) -> str | None:
+    try:
+        return importlib.metadata.version(dist)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def check_sdk_lock(lock_path: Path | None = None, installed: Callable[[], str | None] = installed_version) -> Check:
+    """The installed engine SDK is the one ``gateway/uv.lock`` pins: what was tested is what runs."""
+    lock_path = REPO_ROOT / "gateway" / "uv.lock" if lock_path is None else lock_path
+    have = installed()
+    want = locked_version(lock_path)
+    if want is None:
+        return Check("sdk lock", True, f"{lock_path} pins no {SDK_DIST}; not compared")
+    if have is None:
+        return Check("sdk lock", False, f"{SDK_DIST} is not installed; {lock_path.name} pins {want}; run bin/install")
+    if have == want:
+        return Check("sdk lock", True, f"{SDK_DIST} {have} is the version {lock_path.name} pins")
+    return Check(
+        "sdk lock",
+        False,
+        f"{SDK_DIST} {have} is installed but {lock_path.name} pins {want}; run bin/install (uv sync) to install {want}",
+    )
+
+
+def _read_build_record(path: Path) -> dict[str, str]:
+    record: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            record[key.strip()] = value.strip()
+    return record
+
+
+def check_app_sdk(repo: Path = REPO_ROOT, run: Runner = _run, clt_present: bool = True) -> Check:
+    """Which macOS SDK the app builds with: the one bin/install recorded, else the default one."""
+    path = Path(repo) / BUILD_RECORD
+    if path.is_file():
+        try:
+            record = _read_build_record(path)
+        except (OSError, UnicodeDecodeError) as e:
+            return Check("macos sdk", True, f"{path} could not be read ({_one_line(str(e))}); run bin/install to rebuild", warn=True)
+        sdk = record.get("sdk", "")
+        version = record.get("sdk_version", "unknown")
+        chosen = record.get("chosen", "")
+        if sdk and not Path(sdk).is_dir():
+            return Check(
+                "macos sdk",
+                False,
+                f"the app was built with the macOS {version} SDK ({sdk}), which is no longer installed; run bin/install to pick another",
+            )
+        why = {
+            "fallback": "; the default SDK does not compile the app, bin/install picked this one",
+            "PORTICO_SDKROOT": ", set by PORTICO_SDKROOT",
+            "default": " (the default)",
+        }.get(chosen, "")
+        return Check("macos sdk", True, f"the app builds with the macOS {version} SDK ({sdk}){why}")
+    if not clt_present:
+        return Check("macos sdk", False, "not checked: the macOS SDK comes with the Command Line Tools (see above)")
+    sdk_path = _try(run, ["xcrun", "--sdk", "macosx", "--show-sdk-path"])
+    sdk_version = _try(run, ["xcrun", "--sdk", "macosx", "--show-sdk-version"])
+    where = sdk_path.stdout.strip() if sdk_path is not None and sdk_path.returncode == 0 else ""
+    version = sdk_version.stdout.strip() if sdk_version is not None and sdk_version.returncode == 0 else ""
+    if not where:
+        return Check("macos sdk", False, f"no macOS SDK found; reinstall the Command Line Tools: {CLT_INSTALL_HINT}")
+    return Check(
+        "macos sdk",
+        True,
+        f"the app is not built yet; the default is the macOS {version or 'unknown'} SDK ({where}), and bin/install falls back to another installed SDK if it does not compile",
+    )
 
 
 def check_plugins(config_path: Path) -> list[Check]:
@@ -386,6 +553,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_checkout(repo),
         check_python(),
         check_sdk(),
+        check_sdk_lock(Path(repo) / "gateway" / "uv.lock"),
         check_credential(),
         check_config(config_path),
         check_setting_sources(config_path),
@@ -393,5 +561,16 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_token(state),
         check_env_file(state),
         check_ledger(state),
-        check_swift(),
+        *prerequisite_checks(repo),
+    ]
+
+
+def prerequisite_checks(repo: Path = REPO_ROOT, run: Runner = _run, which: Callable[[str], str | None] = shutil.which) -> list[Check]:
+    """What building the app needs: the Command Line Tools, swift, uv, and the SDK the app builds with."""
+    clt = check_clt(run)
+    return [
+        clt,
+        check_swift(run, which, clt_present=clt.ok),
+        check_uv(run, which),
+        check_app_sdk(repo, run, clt_present=clt.ok),
     ]
