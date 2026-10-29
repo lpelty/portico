@@ -33,7 +33,17 @@ CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files
 
 
 class ConfigError(ValueError):
-    """``config.toml`` cannot be used; the message says which key and why."""
+    """``config.toml`` cannot be used; the message says which key and why.
+
+    ``keys`` names the top-level config keys the error is about (``services``,
+    ``roots``, ...) when it came from validating them; it is empty when the
+    file as a whole cannot be used (unreadable, not TOML). Callers that care
+    which section failed read ``keys``, never the message.
+    """
+
+    def __init__(self, message: str, keys: frozenset[str] = frozenset()) -> None:
+        super().__init__(message)
+        self.keys = keys
 
 
 class ConfigBrand(Brand):
@@ -76,7 +86,7 @@ class UpdateConfig(BaseModel):
     run: str | None = None
 
 
-SERVICE_ID = re.compile(r"^[a-z0-9-]+$")
+SERVICE_ID = re.compile(r"[a-z0-9-]+")
 
 
 class ServiceConfig(BaseModel):
@@ -84,7 +94,9 @@ class ServiceConfig(BaseModel):
 
     ``check`` runs with ``/bin/sh -c``; exit 0 means up. ``restart``, when
     set, is what the menu's Restart runs. ``up_detail`` is the line shown
-    while it is up. Portico never knows what a service is.
+    while it is up. ``timeout_seconds`` bounds each check (a restart is
+    bounded by ``command_timeout_seconds``). Portico never knows what a
+    service is.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -94,11 +106,12 @@ class ServiceConfig(BaseModel):
     check: str
     restart: str | None = None
     up_detail: str | None = None
+    timeout_seconds: int = Field(default=10, ge=1)
 
     @field_validator("id")
     @classmethod
     def _id_shape(cls, value: str) -> str:
-        if not SERVICE_ID.match(value):
+        if not SERVICE_ID.fullmatch(value):
             raise ConfigError(
                 f"services: id {value!r} must be lowercase letters, digits and dashes (like \"memory\" or \"search-index\")"
             )
@@ -226,13 +239,19 @@ def _validate(path: Path, data: dict[str, Any]) -> Config:
         raise
     except ValidationError as e:
         # A ConfigError raised inside a field validator is wrapped by
-        # pydantic; surface its exact text rather than the wrapped form.
+        # pydantic; surface its exact text rather than the wrapped form,
+        # naming the top-level key it was raised for.
         for err in e.errors():
             ctx = err.get("ctx") or {}
             inner = ctx.get("error")
             if isinstance(inner, ConfigError):
-                raise inner from None
-        raise ConfigError(_describe(path, e)) from e
+                raise ConfigError(str(inner), keys=_top_keys([err])) from None
+        raise ConfigError(_describe(path, e), keys=_top_keys(e.errors())) from e
+
+
+def _top_keys(errors: Any) -> frozenset[str]:
+    """The top-level config keys pydantic's errors are located under."""
+    return frozenset(str(err["loc"][0]) for err in errors if err.get("loc"))
 
 
 def load_config(path: Path) -> Config:

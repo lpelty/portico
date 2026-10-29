@@ -463,12 +463,18 @@ async def test_session_log_runs_the_log_step_and_keeps_the_session_live(
         before = logging_server.registry.get(number).summary()
         assert before.unlogged is False and before.logged_at is None, "no turn yet: nothing to lose"
 
-        await send_and_finish(conn, number, "work")
+        turn = await send_and_finish(conn, number, "work")
         assert logging_server.registry.get(number).summary().unlogged is True
+        # The frame the app gets when the turn finishes carries it (v0.4).
+        idle = turn[-1]
+        assert isinstance(idle, ChatState) and idle.state == "idle" and idle.unlogged is True
 
         got = await log_and_finish(conn, number)
         assert [m.text for m in got if isinstance(m, UserText)] == ["/session-close"]
         assert [m.outcome for m in got if isinstance(m, TurnFinished)] == ["done"]
+        # The last chat.state before session.logged says the log cleared it.
+        states = [m for m in got[: [type(m) for m in got].index(SessionLogged)] if isinstance(m, ChatState)]
+        assert states and states[-1].state == "idle" and states[-1].unlogged is False
         logged = next(m for m in got if isinstance(m, SessionLogged))
         assert logged.id == "req-l"
         assert logged.chat.chat == number and logged.chat.logged_at is not None and logged.chat.unlogged is False
@@ -502,6 +508,8 @@ async def test_a_log_step_that_errors_answers_but_logs_nothing(
         got = await log_and_finish(conn, number)
         logged = next(m for m in got if isinstance(m, SessionLogged))
         assert logged.chat.logged_at is None and logged.chat.unlogged is True
+        states = [m for m in got if isinstance(m, ChatState)]
+        assert states and all(m.unlogged is True for m in states), "a failed log leaves the session unlogged"
     finally:
         await conn.close()
 
@@ -532,6 +540,26 @@ async def test_while_a_log_runs_sends_and_renewals_are_busy_and_stop_ends_it(
         await recv(conn)  # chat.list
         # Free again: a send goes through.
         await send_and_finish(conn, number, "after")
+    finally:
+        await conn.close()
+
+
+async def test_every_chat_state_carries_unlogged(server: GatewayServer, logging_server: GatewayServer, folder: Path) -> None:
+    # With a log step: false until a turn finishes, then true on the turn's own idle.
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        turn = await send_and_finish(conn, number, "work")
+        states = [m for m in turn if isinstance(m, ChatState)]
+        assert [(m.state, m.unlogged) for m in states] == [("working", False), ("idle", True)]
+    finally:
+        await conn.close()
+    # Without one: always false, never absent.
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        turn = await send_and_finish(conn, number, "work")
+        assert [m.unlogged for m in turn if isinstance(m, ChatState)] == [False, False]
     finally:
         await conn.close()
 

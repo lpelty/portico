@@ -528,12 +528,16 @@ def check_plugins(config_path: Path) -> list[Check]:
     return checks
 
 
+# The config keys whose errors are the services check's to report.
+SERVICES_KEYS = frozenset({"services", "services_interval_seconds"})
+
+
 def check_services(config_path: Path) -> Check:
     """The deployment's ``[[services]]`` (v0.4): how many and which, or why they cannot be read. Runs no check."""
     try:
         config = load_config(config_path)
     except ConfigError as e:
-        if "services" in str(e):
+        if e.keys & SERVICES_KEYS:
             return Check("services", False, _one_line(str(e)))
         return Check("services", True, "not checked: the config does not load (see the config check)")
     if not config.services:

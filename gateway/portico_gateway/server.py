@@ -1432,7 +1432,10 @@ class GatewayServer:
         # (v0.3: the composer's mode chip reads it here). A direct reply like
         # ``chat.live`` — no ``seq``, not in the ring — so opening a chat
         # never adds to its history.
-        await self._send(conn, ChatState(ts=_now(), chat=chat.number, id=msg.id, state=chat.state, mode=chat.mode))
+        await self._send(
+            conn,
+            ChatState(ts=_now(), chat=chat.number, id=msg.id, state=chat.state, mode=chat.mode, unlogged=chat.unlogged),
+        )
         # Open cards again, as sent (same id and seq): the app de-duplicates by id.
         for card in self.cards.open_cards(chat):
             await self._send(conn, card)
@@ -1633,15 +1636,19 @@ class GatewayServer:
             self._logging.discard(chat.number)
 
     async def log_session(self, chat: Chat, id: str | None = None) -> None:
-        """The log step in the live session; ``session.logged`` (with ``id``), then ``chat.list``.
+        """The log step in the live session; ``chat.state``, ``session.logged`` (with ``id``), then ``chat.list``.
 
         A log step that does not finish cleanly (an error, a stop) still
-        answers: ``logged_at`` stays where it was and ``unlogged`` with it.
+        answers: ``logged_at`` stays where it was, and ``unlogged`` is true,
+        since the log turn itself finished and counts as work the log has
+        not seen. The log turn's own ``chat.state idle`` goes out before the
+        step's verdict is known (a plug-in may send more than one turn), so
+        a ``chat.state`` follows the step with ``unlogged`` as it now stands.
         """
         logged = await self._run_log_step(chat, ending=False)
         if logged:
             chat.note_logged(_now())
-        self.registry.persist()
+        await self.set_state(chat, chat.state)
         log.info("chat %d: session log step ran (logged=%s); the session stays live", chat.number, logged)
         # ``chat`` is a summary here, not a number: the frame names the session in it.
         await self.broadcast(SessionLogged(ts=_now(), id=id, chat=chat.summary()))

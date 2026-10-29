@@ -1224,6 +1224,18 @@
           "default": "chat.state",
           "title": "Type",
           "type": "string"
+        },
+        "unlogged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unlogged"
         }
       },
       "required": [
