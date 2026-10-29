@@ -15,15 +15,21 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Y2: pinned over an earlier session's transcript, so the way
-            // back is in view however long it is (v0.6; it used to sit at
-            // the end, where the composer would be).
-            if model.showsEarlierBar(chat: chat) {
-                EndedSessionBar(chat: chat)
-                    .padding(.horizontal, Self.sideInset)
-                    .padding(.top, 16)
-            }
             transcript
+                // Y2: pinned over an earlier session's transcript, so the
+                // way back is in view however long it is (v0.6; it used to
+                // sit at the end, where the composer would be). An inset,
+                // not a row above: the transcript's first item starts below
+                // the bar, and what scrolls up goes under it.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if model.showsEarlierBar(chat: chat) {
+                        EndedSessionBar(chat: chat)
+                            .padding(.horizontal, Self.sideInset)
+                            .padding(.top, 16)
+                            .padding(.bottom, 4)
+                            .background(Theme.window)
+                    }
+                }
             if !model.pinnedCards(for: chat).isEmpty {
                 pinnedCards
             }
