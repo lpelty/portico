@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.6.0 (2026-10-29)
+
+Launch continues the live session, a way back from an earlier one, a calmer
+resume. Screens: `design/portico.pen` row Y (Y1, Y2).
+
+### What a person gets (app)
+
+- **Launch with a live session** opens the welcome view and stays there (no
+  more welcome-then-jump). Its composer continues the session ("Continue
+  Session N — what next?"); sending switches to the conversation. A quiet
+  line offers **View Session N** and **Start a new session** (which asks to
+  log first when there is unlogged work). With no live session the welcome
+  starts one, as before. A reconnect never sends you back to the welcome.
+- **The viewer opens only with something in it**: on relaunch it comes back
+  only if an artifact was showing when you quit; elsewhere it opens when an
+  artifact is set to show, not just because a session has artifacts.
+- **New files appear in the Folder tree** without pressing refresh: the
+  session's folders are listed again shortly after a write or a turn ends.
+- **A way back from an earlier session**: a bar pinned at the top ("Session
+  N · ended … · read-only") with **Back to Session M**, and the THIS
+  SESSION card is itself a button back to the live session.
+- **Earlier rows are plain** until hovered; selected is a tint and a
+  brighter title; no focus ring.
+- The log-first dialog keeps its buttons on one line.
+
+### Fixed before release (review)
+
+A second `chat.open` while the first was unanswered could drop the start of
+a conversation and forget a send in flight; the welcome could send into a
+session being logged or ended; the column flickered between blank and "Not
+connected" while a gateway failed to start; a click on a disabled button in
+the session card fell through to the card.
+
+### Protocol (still version 1; additions only)
+
+- `last_reply` (optional) on `ChatSummary`: when the session's last turn
+  finished, kept on the record across restarts. An older app ignores it; an
+  older gateway leaves it out and the welcome omits "last reply … ago".
+
 ## v0.5.0 (2026-10-29)
 
 The viewer shows more, and nine fixes from the first deployment's use.
