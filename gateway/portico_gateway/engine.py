@@ -334,6 +334,39 @@ def build_options(
     )
 
 
+# --- the model's display name ---------------------------------------------------
+
+MODEL_FAMILIES = ("OPUS", "SONNET", "HAIKU")
+
+
+def friendly_model_name(model: str | None, environ: Mapping[str, str]) -> str | None:
+    """The deployment's display name for ``model``, or ``None``.
+
+    ``ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME`` names the model
+    when ``model`` is that family's ``ANTHROPIC_DEFAULT_*_MODEL`` (a
+    trailing ``[1m]``-style tag is ignored on either side) or its alias
+    (``opus``, ``sonnet``, ``haiku``).
+    """
+    if not model:
+        return None
+
+    def bare(value: str) -> str:
+        value = value.strip()
+        if value.endswith("]") and "[" in value:
+            value = value[: value.rindex("[")]
+        return value.strip()
+
+    wanted = bare(model)
+    for family in MODEL_FAMILIES:
+        name = (environ.get(f"ANTHROPIC_DEFAULT_{family}_MODEL_NAME") or "").strip()
+        if not name:
+            continue
+        configured = environ.get(f"ANTHROPIC_DEFAULT_{family}_MODEL") or ""
+        if (configured and bare(configured) == wanted) or wanted.lower() == family.lower():
+            return name
+    return None
+
+
 # --- the SDK adapter -------------------------------------------------------------
 
 

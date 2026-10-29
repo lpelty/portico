@@ -124,7 +124,7 @@ from .artifacts import TurnCollector, artifact_for_location
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
-from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, history_events, read_history
+from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, friendly_model_name, history_events, read_history
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
     PROTOCOL_VERSION,
@@ -1069,7 +1069,11 @@ class GatewayServer:
         percent, model = usage
         chat.context_percent = percent
         self.registry.persist()
-        await self.broadcast(ContextUsage(ts=_now(), chat=chat.number, percent=percent, model=model))
+        await self.broadcast(
+            ContextUsage(
+                ts=_now(), chat=chat.number, percent=percent, model=model, model_name=friendly_model_name(model, os.environ)
+            )
+        )
 
     async def compacted(self, chat: Chat, trigger: str) -> None:
         """The engine is summarizing earlier conversation: ``chat.compacted`` (stamped), counted on the record."""
