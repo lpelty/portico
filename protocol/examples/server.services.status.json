@@ -1,0 +1,22 @@
+{
+  "services": [
+    {
+      "can_restart": true,
+      "detail": "not responding since 11:52 · curl: (7) Failed to connect to localhost port 8888",
+      "id": "memory",
+      "name": "Memory (Hindsight)",
+      "since": "2026-10-27T11:52:00Z",
+      "state": "down"
+    },
+    {
+      "can_restart": false,
+      "detail": "indexing the vault",
+      "id": "search",
+      "name": "Search index",
+      "since": "2026-10-27T09:00:00Z",
+      "state": "up"
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "services.status"
+}

@@ -29,6 +29,8 @@ Presentation = Literal["single", "multiple"]
 PermissionMode = Literal["default", "acceptEdits", "auto"]
 # What happened to one tool use's permission, drawn on its tool row.
 PermissionOutcome = Literal["once", "session", "auto", "declined", "blocked"]
+# A deployment service's state (v0.4): ``checking`` until its first check answers.
+ServiceState = Literal["up", "down", "checking"]
 
 
 class ProtocolError(Exception):
@@ -81,6 +83,28 @@ class ChatSummary(Strict):
     compactions: int = 0
     context_percent: float | None = None
     mode: PermissionMode | None = None
+    # v0.4: when the session was last logged (``session.log`` or a renewal's
+    # log step that finished cleanly), and whether it has work since that
+    # the deployment could log (computed by the gateway; false when the
+    # deployment has no log step).
+    logged_at: str | None = None
+    unlogged: bool = False
+
+
+class Service(Strict):
+    """One of the deployment's services (v0.4), as its check last found it.
+
+    ``since`` is when the current state began (ISO 8601 UTC); ``detail`` one
+    line for the menu; ``can_restart`` whether the deployment gave it a
+    ``restart`` command.
+    """
+
+    id: str
+    name: str
+    state: ServiceState
+    detail: str | None = None
+    since: str | None = None
+    can_restart: bool = False
 
 
 class Permission(Strict):
@@ -231,6 +255,26 @@ class SessionRenew(Envelope):
     type: Literal["session.renew"] = "session.renew"
     chat: int
     log: bool = True
+
+
+class SessionLog(Envelope):
+    """Run the deployment's log step in the live session ``chat`` without ending it (v0.4).
+
+    Answered with ``session.logged`` then ``chat.list``.
+    """
+
+    type: Literal["session.log"] = "session.log"
+    chat: int
+
+
+class ServiceRestart(Envelope):
+    """Run a service's ``restart`` command, then check it again (v0.4).
+
+    Answered by the ``services.status`` that follows.
+    """
+
+    type: Literal["service.restart"] = "service.restart"
+    service: str
 
 
 class FilesSearch(Envelope):
@@ -431,6 +475,20 @@ class SessionRenewed(Envelope):
     next: ChatSummary
 
 
+class SessionLogged(Envelope):
+    """The log step ``session.log`` asked for has run; ``chat`` is the session's summary now (v0.4)."""
+
+    type: Literal["session.logged"] = "session.logged"
+    chat: ChatSummary  # type: ignore[assignment]
+
+
+class ServicesStatus(Envelope):
+    """Every deployment service and its state, down ones first (v0.4)."""
+
+    type: Literal["services.status"] = "services.status"
+    services: list[Service] = []
+
+
 class FilesResults(Envelope):
     type: Literal["files.results"] = "files.results"
     root: str
@@ -514,6 +572,8 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SessionRenew,
     FilesSearch,
     SessionMode,
+    SessionLog,
+    ServiceRestart,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -541,6 +601,8 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatNotice,
     ConfigStale,
     UpdateAvailable,
+    SessionLogged,
+    ServicesStatus,
     Error,
 )
 
@@ -662,6 +724,8 @@ def example_messages() -> dict[str, BaseModel]:
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),
         FilesSearch(ts=_TS, id="req-5", root="projects", query="synthesis"),
         SessionMode(ts=_TS, chat=14, mode="auto"),
+        SessionLog(ts=_TS, id="req-6", chat=14),
+        ServiceRestart(ts=_TS, id="req-7", service="memory"),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -670,7 +734,7 @@ def example_messages() -> dict[str, BaseModel]:
             brand=Brand(name="Portico", agent_name="Agent", accent="#3B6EF5", icon=None),
             actions=[Action(label="Review", text="/review")],
             roots=[Root(name="projects", path="/Users/someone/projects")],
-            commands=[],
+            commands=["log"],
             capabilities=["cards.form", "files", "producer", "sessions", "files.search", "context"],
             presentation="single",
             can_log=True,
@@ -682,7 +746,10 @@ def example_messages() -> dict[str, BaseModel]:
         ChatList(
             ts=_TS,
             chats=[
-                ChatSummary(chat=1, folder=_FOLDER, alias="report draft", state="idle", created=_TS),
+                ChatSummary(
+                    chat=1, folder=_FOLDER, alias="report draft", state="idle", created=_TS,
+                    logged_at="2026-10-27T11:40:00Z", unlogged=True,
+                ),
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],
         ),
@@ -780,6 +847,35 @@ def example_messages() -> dict[str, BaseModel]:
         ChatNotice(ts=_TS, chat=1, seq=53, text="No command /foo here"),
         ConfigStale(ts=_TS),
         UpdateAvailable(ts=_TS, version="0.3.1"),
+        SessionLogged(
+            ts=_TS,
+            id="req-6",
+            chat=ChatSummary(
+                chat=14, folder=_FOLDER, state="idle", created=_TS, title="Interview codebook",
+                parent=13, logged_at=_TS, unlogged=False,
+            ),
+        ),
+        ServicesStatus(
+            ts=_TS,
+            services=[
+                Service(
+                    id="memory",
+                    name="Memory (Hindsight)",
+                    state="down",
+                    detail="not responding since 11:52 · curl: (7) Failed to connect to localhost port 8888",
+                    since="2026-10-27T11:52:00Z",
+                    can_restart=True,
+                ),
+                Service(
+                    id="search",
+                    name="Search index",
+                    state="up",
+                    detail="indexing the vault",
+                    since="2026-10-27T09:00:00Z",
+                    can_restart=False,
+                ),
+            ],
+        ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

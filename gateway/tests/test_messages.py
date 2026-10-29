@@ -57,6 +57,10 @@ EXPECTED_KEYS = {
     "server.chat.notice",
     "server.config.stale",
     "server.update.available",
+    "client.session.log",
+    "client.service.restart",
+    "server.session.logged",
+    "server.services.status",
 }
 
 
@@ -65,7 +69,9 @@ def test_every_type_has_schema_def_and_example():
     ex = example_messages()
     for key, msg in ex.items():
         assert type(msg).__name__ in schema["$defs"], key
-    assert len(ex) == 40  # v0.1's 30, v0.2's 6, v0.3's session.mode, chat.notice, config.stale, update.available
+    # v0.1's 30, v0.2's 6, v0.3's session.mode, chat.notice, config.stale,
+    # update.available, v0.4's session.log, service.restart, session.logged, services.status
+    assert len(ex) == 44
     assert set(ex) == EXPECTED_KEYS
 
 
@@ -166,3 +172,26 @@ def test_state_words_and_answers_are_exact():
         CardAnswer(chat=1, id="c1", ts=TS, answer={}, scope=scope)
     with pytest.raises(Exception):
         CardAnswer(chat=1, id="c1", ts=TS, answer={}, scope="forever")
+
+
+def test_v04_messages_parse_and_keep_their_shapes():
+    from portico_gateway.messages import ServicesStatus, SessionLog, SessionLogged
+
+    log = parse_client('{"type":"session.log","chat":14,"id":"r1","ts":"%s"}' % TS)
+    assert isinstance(log, SessionLog) and log.chat == 14
+    restart = parse_client('{"type":"service.restart","service":"memory","ts":"%s"}' % TS)
+    assert type(restart).__name__ == "ServiceRestart" and restart.service == "memory"
+    with pytest.raises(ProtocolError):
+        parse_client('{"type":"service.restart","ts":"%s"}' % TS)  # the service is required
+
+    logged = parse_server(
+        '{"type":"session.logged","id":"r1","ts":"%s","chat":{"chat":14,"folder":"/f","state":"idle",'
+        '"created":"%s","logged_at":"%s"}}' % (TS, TS, TS)
+    )
+    assert isinstance(logged, SessionLogged) and logged.chat.chat == 14 and logged.chat.unlogged is False
+    status = parse_server(
+        '{"type":"services.status","ts":"%s","services":[{"id":"m","name":"M","state":"checking"}]}' % TS
+    )
+    assert isinstance(status, ServicesStatus) and status.services[0].can_restart is False
+    with pytest.raises(ProtocolError):
+        parse_server('{"type":"services.status","ts":"%s","services":[{"id":"m","name":"M","state":"sleeping"}]}' % TS)
