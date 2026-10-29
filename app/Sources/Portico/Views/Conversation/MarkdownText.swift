@@ -521,11 +521,20 @@ struct CopyButton: View {
 struct MarkdownBlocksView: View {
     let blocks: [MarkdownBlock]
     var spacing: CGFloat = 10
+    /// A quote's contents: the secondary text colour.
+    var secondary = false
 
+    /// Plain prose is gathered into runs, each one selectable text view
+    /// (`SelectableText`); code, quotes, tables and rules draw as blocks.
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { entry in
-                MarkdownBlockView(block: entry.element, first: entry.offset == 0)
+            ForEach(Array(MarkdownRun.split(blocks).enumerated()), id: \.offset) { entry in
+                switch entry.element {
+                case .prose(let run, let first):
+                    SelectableText(text: MarkdownAttributed.prose(run, first: first, spacing: spacing, secondary: secondary))
+                case .block(let block, let first):
+                    MarkdownBlockView(block: block, first: first, secondary: secondary)
+                }
             }
         }
     }
@@ -534,16 +543,14 @@ struct MarkdownBlocksView: View {
 struct MarkdownBlockView: View {
     let block: MarkdownBlock
     let first: Bool
+    var secondary = false
 
     private static let bodySize = MarkdownText.bodySize
 
     var body: some View {
         switch block {
-        case .paragraph(let text):
-            Self.inlineText(text)
-        case .heading(let level, let text):
-            Self.inlineText(text, font: .system(size: Self.bodySize + (level == 1 ? 3 : level == 2 ? 2 : 1), weight: .semibold))
-                .padding(.top, first ? 0 : 4)
+        case .paragraph, .heading:
+            SelectableText(text: MarkdownAttributed.prose([block], first: first, secondary: secondary))
         case .list(let items):
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(items.enumerated()), id: \.offset) { entry in
@@ -555,7 +562,7 @@ struct MarkdownBlockView: View {
         case .quote(let blocks):
             HStack(alignment: .top, spacing: 10) {
                 RoundedRectangle(cornerRadius: 1.5).fill(Theme.borderStrong).frame(width: 3)
-                MarkdownBlocksView(blocks: blocks, spacing: 8)
+                MarkdownBlocksView(blocks: blocks, spacing: 8, secondary: true)
                     .foregroundStyle(Theme.text2)
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -567,17 +574,9 @@ struct MarkdownBlockView: View {
         }
     }
 
-    /// `font` is applied here, not after: an outer `.font` loses to this one.
-    static func inlineText(_ text: String, font: Font = .system(size: bodySize)) -> some View {
-        Text(MarkdownParser.inline(text, codeBackground: Theme.surface))
-            .font(font)
-            .lineSpacing(MarkdownText.lineSpacing)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private func listItem(_ item: MarkdownListItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        // Top, not first baseline: the item's text is an AppKit view, which has none.
+        HStack(alignment: .top, spacing: 8) {
             Group {
                 if let number = item.number {
                     Text(number)
@@ -590,9 +589,9 @@ struct MarkdownBlockView: View {
             .foregroundStyle(Theme.text3)
             .frame(minWidth: 10, alignment: .trailing)
             VStack(alignment: .leading, spacing: 8) {
-                Self.inlineText(item.text)
+                SelectableText(text: MarkdownAttributed.prose([.paragraph(item.text)], secondary: secondary))
                 if !item.blocks.isEmpty {
-                    MarkdownBlocksView(blocks: item.blocks, spacing: 8)
+                    MarkdownBlocksView(blocks: item.blocks, spacing: 8, secondary: secondary)
                 }
             }
         }
@@ -615,9 +614,7 @@ struct MarkdownBlockView: View {
             .padding(.trailing, 6)
             .padding(.top, 4)
             ScrollView(.horizontal) {
-                Text(text.isEmpty ? " " : text)
-                    .font(.system(size: 12, design: .monospaced))
-                    .lineSpacing(3)
+                SelectableText(text: MarkdownAttributed.code(text), wraps: false)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.top, 2)

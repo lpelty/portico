@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import XCTest
@@ -310,5 +311,32 @@ final class MarkdownTests: XCTestCase {
 
     func testMessageCopiesItsMarkdownAsWritten() {
         XCTAssertEqual(MarkdownCopy.message("\n**Done.** See `a.md`:\n\n- one\n\n"), "**Done.** See `a.md`:\n\n- one")
+    }
+
+    // MARK: Selectable prose
+
+    func testProseRunsGatherParagraphsHeadsAndPlainListsAroundCode() {
+        let blocks = MarkdownParser.parse("## Head\n\nOne.\n\n- a\n- b\n\n```\nx\n```\n\nTwo.")
+        let runs = MarkdownRun.split(blocks)
+        XCTAssertEqual(runs.count, 3, "\(runs)")
+        guard case .prose(let first, true) = runs[0] else { return XCTFail("\(runs[0])") }
+        XCTAssertEqual(first.count, 3, "head, paragraph and list in one selectable run")
+        guard case .block(.code, false) = runs[1], case .prose(_, false) = runs[2] else { return XCTFail("\(runs)") }
+    }
+
+    func testAListWithCodeUnderAnItemIsNotProse() {
+        let blocks = MarkdownParser.parse("1. Install:\n   ```bash\n   pip install portico\n   ```\n2. Run it.")
+        XCTAssertEqual(MarkdownRun.split(blocks).count, 1)
+        guard case .block(.list, true) = MarkdownRun.split(blocks)[0] else { return XCTFail() }
+    }
+
+    @MainActor
+    func testProseTextReadsAsShownWithMarkersAndSoftBreaks() {
+        let text = MarkdownAttributed.prose(MarkdownParser.parse("**Done.** See [docs](https://example.com)\nnext line\n\n- one\n- `two`"))
+        XCTAssertEqual(text.string, "Done. See docs\u{2028}next line\n•\tone\n•\ttwo")
+        let bold = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        XCTAssertTrue(bold?.fontDescriptor.symbolicTraits.contains(.bold) == true)
+        let link = text.attribute(.link, at: (text.string as NSString).range(of: "docs").location, effectiveRange: nil) as? URL
+        XCTAssertEqual(link?.absoluteString, "https://example.com")
     }
 }
