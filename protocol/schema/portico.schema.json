@@ -455,6 +455,18 @@
           "default": null,
           "title": "Questions"
         },
+        "scope_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope Note"
+        },
         "seq": {
           "anyOf": [
             {
@@ -2220,6 +2232,23 @@
           ],
           "default": null,
           "title": "Id"
+        },
+        "permission_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "default",
+                "acceptEdits",
+                "auto"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permission Mode"
         },
         "presentation": {
           "default": "single",

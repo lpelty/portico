@@ -328,3 +328,11 @@ def test_hello_carries_default_folder_expanded(tmp_path: Path) -> None:
     assert hello_for(Config(), "e", "0.3.0").default_folder is None
     hello = hello_for(Config(default_folder="~/work"), "e", "0.3.0")
     assert hello.default_folder == str(Path("~/work").expanduser())
+
+
+def test_hello_carries_the_mode_a_new_session_starts_in() -> None:
+    from portico_gateway.config import Config, hello_for
+
+    assert hello_for(Config(), "e", "0.3.0").permission_mode == "auto"
+    assert hello_for(Config(permission_mode="default"), "e", "0.3.0").permission_mode == "default"
+    assert hello_for(Config(permission_mode="acceptEdits"), "e", "0.3.0").permission_mode == "acceptEdits"

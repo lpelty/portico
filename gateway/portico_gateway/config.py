@@ -205,7 +205,8 @@ def hello_for(
     is set or a plug-in provides ``on_renew``. Each plug-in's ``on_hello``
     then sees the result, in list order. ``config_stale`` is the server's
     reading of the config file's modification time; ``can_update`` is
-    whether ``[update] run`` is set.
+    whether ``[update] run`` is set; ``permission_mode`` is the mode a new
+    session starts in.
     """
     hello = HelloServer(
         ts=_now(),
@@ -221,6 +222,7 @@ def hello_for(
         config_stale=config_stale,
         can_update=bool(config.update.run),
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
+        permission_mode=config.permission_mode,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

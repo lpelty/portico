@@ -226,13 +226,20 @@ whose shape does not fit the card's kind is refused with
 answer is recorded in the chat's history as `card.answered`. The answer
 resolves the engine's request: `allow` with scope `once` (or no scope)
 allows this use; scope `chat` also allows it for the rest of this chat,
-so later requests it covers answer without a card (the gateway's memory
-of that lasts as long as the gateway runs). What "it" covers mirrors the
-engine's own prompt: for a tool that names a file, the tool; for a tool
-that runs a command, the engine's suggested rule for that command (a
-prefix such as `git status:*`, matched as whole words, every part of a
-compound command on its own) or, when the engine suggests none, that
-exact command — so allowing `ls` for the chat never allows `rm -rf /`.
+so later requests it covers answer without a card (kept on the chat
+record: it lasts as long as the session). It never covers more than the
+person could read from the card, and the card's `scope_note` says what
+it covers: for a file edit (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`)
+inside the session's folder, edits to files in that folder (symlinks
+followed); outside it, that one file only; for a tool that runs a
+command, the engine's suggested rule for that command (a prefix such as
+`git status:*`, matched as whole words, every part of a compound command
+on its own) or, when the engine suggests none, that exact command — so
+allowing `ls` for the chat never allows `rm -rf /`. A part with a
+background `&`, a `$(…)` or `${…}` substitution, backticks or a `<`/`>`
+redirection is never covered by a prefix (the card asks); a `cd` alongside
+covered parts is covered only as `cd <literal path>` into the session's
+folder; for any other tool, the tool.
 Scope `always` hands
 the engine its own suggested permission rule, which lands in the folder's
 local settings, the same place the engine's own prompt writes it — the
@@ -323,7 +330,10 @@ changed after the gateway started, so a restart is needed to apply it);
 `can_update: bool` (the deployment configured an update command, which
 `portico-gateway update` runs); `default_folder?` (config `default_folder`,
 `~` expanded: where a new session works when the person has not chosen a
-folder; after the folder the person last used, before the first root).
+folder; after the folder the person last used, before the first root);
+`permission_mode?` (config `permission_mode`: the mode a new session
+starts in — the start screen shows it, and a new session the person did
+not pick a mode for runs in it).
 
 ### `chat.list` — `ChatList`
 `chats: [{chat, folder, alias?, state, created}]`. Sent after `hello` and
@@ -387,22 +397,21 @@ only for tools that would otherwise ask), `declined` (with the person's
 `note`), `blocked` (auto mode's classifier refused it). Absent when
 nothing was decided (a read in `default` mode).
 
-How the reference gateway decides: `blocked` when the tool result is an
-error saying it was denied by the engine's auto mode classifier; else the
+How the reference gateway decides, by the session's mode when the tool
+started: `blocked` when the tool started in `auto` mode, no person's
+answer or allow was recorded for it, and the tool result is an error
+saying it was denied by the engine's auto mode classifier; else the
 answer to this use's card (`once`, `session`, `declined` with the note; a
 card cancelled by a stop or by nobody being there is `declined` with the
 reason as the note); else `session` when an earlier allow for this
-session covered it (no card); else `auto` when the session's mode is
-`auto` and the tool is not a read-only one (Read, Glob, Grep, LS,
+session covered it (no card); else `auto` when the session's mode was
+`auto` when the tool started and the tool is not a read-only one (Read, Glob, Grep, LS,
 TodoWrite, ToolSearch, Task and the like get nothing). Outcomes are kept
 on the chat record by `tool_use_id`, so rows replayed from the transcript
 after a gateway restart carry them too. An allow for this session is
 kept on the chat record as well (it survives a gateway restart; a new
-session starts with none); one given on any of `Write`, `Edit`,
-`MultiEdit`, `NotebookEdit` covers all four (their cards ask the same
-question); one given on a command covers that command (the engine's
-suggested prefix rule, else the exact command), also after a `cd` into the
-session's own folder.
+session starts with none); what it covers is in `card.answer` and the
+card's `scope_note`.
 
 ### `turn.finished` — `TurnFinished`
 `chat`, `seq`, `turn`, `outcome: done | stopped | error`. Exactly one per
@@ -419,7 +428,9 @@ message. Always followed by `chat.state` (`idle`, or `stopped` after
 A `permission` card's `title` is a plain question about the step (v0.3:
 `Save changes to Q3-synthesis.md?`, `Run git status?`, else `Use <tool>?`;
 the app shows `permission.tool` beside it as a tag), its `tool_use_id`
-(v0.3) names the tool row the card belongs to, `summary` is the one-line
+(v0.3) names the tool row the card belongs to, `scope_note?` (v0.3) is
+one line saying what "Allow for this session" would cover (the app shows
+it under the buttons; without it, something general), `summary` is the one-line
 summary also shown on the tool row (a path, the first line of a command),
 and `input` is the tool's full input. A `question` card maps the engine's
 question tool field for field (`multiSelect` → `multi_select`) and its
@@ -589,8 +600,10 @@ for the reference gateway, not protocol messages.
   (`--timeout`, default `command_timeout_seconds` + 30).
 - `update --check` — runs config `update.check` with `/bin/sh -c`: exit 0
   and the version on stdout when an update is available (the command's
-  last non-blank line), 1 when none (any other exit, or no output), 2 when
-  no check is configured.
+  last non-blank line), 1 when none (the command exited 1, or exited 0
+  with no output), 2 when no check is configured, 4 when the check failed
+  (any other exit, a timeout, or a command that cannot start; the reason
+  on stderr).
 - `update` — stops a running gateway (as `stop`), then runs config
   `update.run` with `/bin/sh -c`, its output (stdout and stderr) streamed
   to stdout; exits with its exit code, 2 when no update command is

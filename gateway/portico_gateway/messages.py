@@ -273,6 +273,9 @@ class HelloServer(Envelope):
     can_update: bool = False
     # Where a new session works when the person has not chosen a folder.
     default_folder: str | None = None
+    # The mode a new session starts in (config ``permission_mode``), so the
+    # start screen shows the mode the session will really run in (v0.3).
+    permission_mode: PermissionMode | None = None
 
 
 class ChatList(Envelope):
@@ -357,6 +360,9 @@ class CardAsk(Envelope):
     questions: list[Question] | None = None
     form: list[FormField] | None = None
     tool_use_id: str | None = None
+    # A permission card: what "Allow for this session" would cover, in words
+    # (v0.3). The app shows it under the buttons; absent, it says something general.
+    scope_note: str | None = None
 
 
 class CardAnswered(Envelope):
@@ -671,6 +677,7 @@ def example_messages() -> dict[str, BaseModel]:
             config_stale=False,
             can_update=True,
             default_folder="/Users/someone/projects",
+            permission_mode="auto",
         ),
         ChatList(
             ts=_TS,
@@ -723,6 +730,7 @@ def example_messages() -> dict[str, BaseModel]:
             questions=None,
             form=None,
             tool_use_id="toolu_02",
+            scope_note="For this session: edits to files in demo, until you start a new session.",
         ),
         CardAnswered(ts=_TS, chat=1, id="card-7", seq=49, tool_use_id="toolu_02", outcome="declined", note="not yet"),
         CardCancel(ts=_TS, chat=1, id="card-7", seq=49, reason="turn stopped"),
