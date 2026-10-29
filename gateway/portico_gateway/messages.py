@@ -54,6 +54,9 @@ class Brand(Strict):
     agent_name: str
     accent: str | None = None
     icon: str | None = None
+    # v0.7: an image (absolute path) the toolbar shows in place of the mark
+    # and the name, e.g. the deployment's lockup.
+    header_image: str | None = None
 
 
 class Action(Strict):

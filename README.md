@@ -112,6 +112,8 @@ agent_name = "Agent"
 accent = "#3B6EF5"                  # optional CSS hex
 icon = "/path/to/icon.png"          # optional; may be a flat square: Portico rounds it in the macOS icon shape
                                     # (an image whose corners are already transparent is drawn as given)
+header_image = "/path/to/lockup.svg" # optional; replaces the mark and the name in the toolbar, 28 pt tall,
+                                    # width from the image's shape (SVG or PDF stays sharp; a PNG at least 84 px tall)
 app_icon = "~/icons/app.png"        # optional 1024x1024 PNG for the .app bundle (bin/install); never sent to the app
 app_icon_assets = "~/icons/Assets.car" # optional precompiled asset catalog (macOS 26 icon); with app_icon_name
 app_icon_name = "AppIcon"           # the icon's name inside app_icon_assets; neither is sent to the app

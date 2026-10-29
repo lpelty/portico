@@ -381,12 +381,14 @@ next engine; no engine is started to change it.
 ## Messages: gateway → app
 
 ### `hello` — `HelloServer`
-`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?}`
+`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?, header_image?}`
 (`name` goes in the title bar and the About panel, `agent_name` is how
 the app refers to the agent, `accent` is a CSS hex colour — `#RRGGBB`,
 `#RGB` or `#RRGGBBAA` — for the app's controls, `icon` an absolute path
 to an image file for the Dock, the About panel, the sidebar header and
-the mark beside the start screen's greeting;
+the mark beside the start screen's greeting, `header_image` (v0.7) an
+absolute path to an image the toolbar shows in place of the mark and the
+name, 28 points tall with its own proportions (an older app ignores it);
 absent or unreadable values fall back to "Portico" and the system
 defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
 absolute, as configured with any `~` expanded), `commands: [string]`

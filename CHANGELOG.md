@@ -29,6 +29,12 @@
   said "not logged" when the session had been logged with Log session and
   then ended with New; it now says "logged" with the time of that log.
 
+- **A header image in the toolbar.** New optional `brand.header_image`
+  (absolute path; SVG or PDF stays sharp, a PNG at least 84 px tall): the
+  toolbar shows it 28 pt tall in place of the mark and the app name, at the
+  image's own proportions (capped at 200 pt wide), never stretched. Unset,
+  the toolbar is unchanged. Sent in `hello.brand`; an older app ignores it.
+
 ### What a person gets (gateway)
 
 - **The first send shows at once.** The gateway sends `turn.started`, the

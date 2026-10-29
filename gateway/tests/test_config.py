@@ -54,6 +54,7 @@ name = "Front Door"
 agent_name = "Helper"
 accent = "#3B6EF5"
 icon = "/Users/someone/icon.png"
+header_image = "/Users/someone/lockup.svg"
 
 [[actions]]
 label = "Review"
@@ -69,7 +70,13 @@ path = "/Users/someone/projects"
 """
     )
     config = load_config(path)
-    assert config.brand.for_hello() == Brand(name="Front Door", agent_name="Helper", accent="#3B6EF5", icon="/Users/someone/icon.png")
+    assert config.brand.for_hello() == Brand(
+        name="Front Door",
+        agent_name="Helper",
+        accent="#3B6EF5",
+        icon="/Users/someone/icon.png",
+        header_image="/Users/someone/lockup.svg",
+    )
     assert config.actions == [Action(label="Review", text="/review"), Action(label="Plan", text="/plan")]
     assert config.roots == [Root(name="projects", path="/Users/someone/projects")]
     assert config.setting_sources == ["project", "user"]
@@ -460,3 +467,14 @@ def test_a_config_error_names_its_top_level_keys(tmp_path: Path, text: str, keys
 def test_hello_commands_list_log_when_the_deployment_can_log() -> None:
     assert hello_for(Config(log_prompt="/session-close"), epoch="e", gateway_version="0.4.0").commands == ["log"]
     assert hello_for(Config(), epoch="e", gateway_version="0.4.0").commands == []
+
+
+def test_a_relative_header_image_stops_the_load(tmp_path: Path) -> None:
+    # v0.7: the toolbar's header image is a path the app reads, so it is
+    # absolute (~ expanded), like the icons.
+    path = tmp_path / "config.toml"
+    path.write_text('[brand]\nname = "Front Door"\nagent_name = "Helper"\nheader_image = "lockup.svg"\n')
+    with pytest.raises(ConfigError, match="brand.header_image"):
+        load_config(path)
+    path.write_text('[brand]\nname = "Front Door"\nagent_name = "Helper"\nheader_image = "~/lockup.svg"\n')
+    assert load_config(path).brand.for_hello().header_image == str(Path("~/lockup.svg").expanduser())

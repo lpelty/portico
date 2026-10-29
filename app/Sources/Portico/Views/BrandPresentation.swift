@@ -36,6 +36,15 @@ struct BrandPresentation: Equatable {
         return BrandIconCache.shared.icon(at: (path as NSString).expandingTildeInPath)
     }
 
+    /// The toolbar's header image (v0.7), loaded from the absolute path
+    /// `brand.header_image` names; `nil` when there is none or it cannot be
+    /// read, and the toolbar shows the mark and the name. Read once per
+    /// version of the file, as the icon is.
+    var headerImage: NSImage? {
+        guard let path = brand?.headerImage?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
+        return BrandIconCache.shared.icon(at: (path as NSString).expandingTildeInPath)?.image
+    }
+
     /// A CSS hex colour (`#RGB`, `#RRGGBB`, `#RRGGBBAA`, hash optional) as a
     /// `Color`; `nil` for anything else.
     static func color(hex: String) -> Color? {

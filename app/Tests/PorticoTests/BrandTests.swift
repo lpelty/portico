@@ -123,4 +123,36 @@ final class BrandTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(StartView.markSize, 34 * 1.5, "noticeably bigger than the v0.3 mark")
         XCTAssertLessThanOrEqual(StartView.markSize, 34 * 2)
     }
+
+    func testTheHeaderImageReplacesTheMarkAndNameAtItsOwnProportions() throws {
+        // v0.7: `brand.header_image` in the toolbar, 28 points tall, its
+        // width from the image's shape; nothing set or unreadable keeps
+        // the mark and the name.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-header-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("lockup.png")
+        let image = NSImage(size: NSSize(width: 300, height: 100), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            return true
+        }
+        let tiff = try XCTUnwrap(image.tiffRepresentation)
+        try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])).write(to: path)
+
+        let branded = BrandPresentation(brand: Brand(name: "A", agentName: "A", headerImage: path.path))
+        let header = try XCTUnwrap(branded.headerImage)
+        XCTAssertEqual(HeaderImage.size(of: header), CGSize(width: 84, height: 28))
+        XCTAssertNil(BrandPresentation(brand: Brand(name: "A", agentName: "A")).headerImage)
+        XCTAssertNil(BrandPresentation(brand: Brand(name: "A", agentName: "A", headerImage: dir.appendingPathComponent("missing.svg").path)).headerImage)
+
+        // A very wide image is capped, still at its own proportions.
+        let wide = NSImage(size: NSSize(width: 2000, height: 100))
+        let capped = HeaderImage.size(of: wide)
+        XCTAssertEqual(capped.width, HeaderImage.maxWidth)
+        XCTAssertEqual(capped.height, HeaderImage.maxWidth / 20, accuracy: 0.001)
+
+        let json = #"{"name":"A","agent_name":"A","header_image":"/x/lockup.svg"}"#
+        XCTAssertEqual(try JSONDecoder().decode(Brand.self, from: Data(json.utf8)).headerImage, "/x/lockup.svg")
+    }
 }

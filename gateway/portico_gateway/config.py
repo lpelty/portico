@@ -65,7 +65,7 @@ class ConfigBrand(Brand):
     app_icon_assets: str | None = None
     app_icon_name: str | None = None
 
-    @field_validator("app_icon", "app_icon_assets")
+    @field_validator("app_icon", "app_icon_assets", "header_image")
     @classmethod
     def _absolute_path(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
