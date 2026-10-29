@@ -271,6 +271,18 @@ to files in that folder; outside the folder, that one file; given on a
 command, that command (or the prefix the engine suggests, never with a
 second command, a substitution or a redirection appended).
 
+## Subagents and workflows
+
+When the agent hands work to subagents or runs a workflow (v0.10), the
+gateway follows the engine's task reports and sends each agent's start,
+current step ("Read transcripts/p11.md"), step count, time and outcome,
+and a workflow's phases as they advance (`agent.*`, `workflow.*` in
+`protocol/PROTOCOL.md`). A subagent's own tool calls come as tool rows
+marked with its `agent_id`. All of it goes only to an app that lists
+`agents.v1` in its `hello`; an older app sees the conversation as before,
+with one `Agent` row per subagent. Shell and monitor tasks are not shown
+as agents. Nothing to configure.
+
 ## Voice
 
 Voice is all in the app and all on the Mac (macOS 26 or later): nothing

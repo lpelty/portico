@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.10.0 — unreleased
+
+### Gateway
+
+- **Subagents and workflows are reported.** The engine's task messages
+  become `agent.started`, `agent.progress` and `agent.finished` for each
+  subagent (its type, description, current step from its latest call,
+  step count, elapsed seconds, outcome and the first line of its report),
+  and `workflow.started`, `workflow.phase` and `workflow.finished` for a
+  workflow, with its agents as `agent.*` frames carrying `workflow_id` and
+  `phase`. Phases come from the engine's own workflow progress reports.
+  A subagent's own tool calls are tool rows with `agent_id`. Everything is
+  stamped, kept in the ring and replayed.
+- Background subagents end on a terminal `task_updated` alone; a
+  foreground one waits for the notification's summary, and one still open
+  when the turn's result arrives is ended with it. Background work that
+  reports after its turn is kept under the turn that started it.
+- Shell and monitor tasks are not shown as agents.
+
+### Protocol (still version 1; additions only)
+
+- `hello` from the app gains `capabilities: [string]`; `agents.v1` asks
+  for the new frames. The gateway's `hello.capabilities` lists `agents.v1`.
+- An app without `agents.v1` is sent none of the new frames and no tool
+  row with `agent_id`, live or in `chat.history`: an older app sees the
+  conversation as before.
+- New frames `agent.started`, `agent.progress`, `agent.finished`,
+  `workflow.started` (sent again when its phases become known),
+  `workflow.phase`, `workflow.finished`; `agent_id?` on `tool.started` and
+  `tool.finished`. Schema and examples regenerated.
+- A gateway before v0.10 refuses a `hello` with `capabilities` (it is
+  strict about fields).
+
 ## v0.9.0 (2026-10-29)
 
 ### What a person gets (app)

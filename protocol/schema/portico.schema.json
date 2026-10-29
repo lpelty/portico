@@ -19,6 +19,235 @@
       "title": "Action",
       "type": "object"
     },
+    "AgentFinished": {
+      "additionalProperties": false,
+      "description": "A subagent ended (v0.10); ``summary`` is the first line of what it reported.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed",
+            "stopped"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.finished",
+          "default": "agent.finished",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts",
+        "outcome"
+      ],
+      "title": "AgentFinished",
+      "type": "object"
+    },
+    "AgentProgress": {
+      "additionalProperties": false,
+      "description": "What a subagent is doing now (v0.10): its current ``step``, its tool calls so far, seconds since it started.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "elapsed": {
+          "default": 0.0,
+          "title": "Elapsed",
+          "type": "number"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "steps": {
+          "default": 0,
+          "title": "Steps",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent.progress",
+          "default": "agent.progress",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts"
+      ],
+      "title": "AgentProgress",
+      "type": "object"
+    },
+    "AgentStarted": {
+      "additionalProperties": false,
+      "description": "A subagent started (v0.10).\n\n``id`` names the agent in the frames that follow; ``tool_use_id`` is the\ncall that started it (a workflow's agents share the workflow's call).\n``kind`` is the agent type the engine names (e.g. ``general-purpose``),\nor ``workflow`` for one of a workflow's agents, which also carries\n``workflow_id`` and ``phase`` (an index into ``workflow.started``'s\n``phases``). ``background`` is set when the agent runs on after its\nturn finishes.",
+      "properties": {
+        "background": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Background"
+        },
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phase"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "type": {
+          "const": "agent.started",
+          "default": "agent.started",
+          "title": "Type",
+          "type": "string"
+        },
+        "workflow_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow Id"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts",
+        "turn",
+        "tool_use_id",
+        "description",
+        "kind"
+      ],
+      "title": "AgentStarted",
+      "type": "object"
+    },
     "Artifact": {
       "additionalProperties": false,
       "properties": {
@@ -714,6 +943,9 @@
           "items": {
             "discriminator": {
               "mapping": {
+                "agent.finished": "#/$defs/AgentFinished",
+                "agent.progress": "#/$defs/AgentProgress",
+                "agent.started": "#/$defs/AgentStarted",
                 "artifact.created": "#/$defs/ArtifactCreated",
                 "card.answered": "#/$defs/CardAnswered",
                 "card.ask": "#/$defs/CardAsk",
@@ -728,7 +960,10 @@
                 "tool.started": "#/$defs/ToolStarted",
                 "turn.finished": "#/$defs/TurnFinished",
                 "turn.started": "#/$defs/TurnStarted",
-                "user.text": "#/$defs/UserText"
+                "user.text": "#/$defs/UserText",
+                "workflow.finished": "#/$defs/WorkflowFinished",
+                "workflow.phase": "#/$defs/WorkflowPhase",
+                "workflow.started": "#/$defs/WorkflowStarted"
               },
               "propertyName": "type"
             },
@@ -774,6 +1009,24 @@
               },
               {
                 "$ref": "#/$defs/ChatNotice"
+              },
+              {
+                "$ref": "#/$defs/AgentStarted"
+              },
+              {
+                "$ref": "#/$defs/AgentProgress"
+              },
+              {
+                "$ref": "#/$defs/AgentFinished"
+              },
+              {
+                "$ref": "#/$defs/WorkflowStarted"
+              },
+              {
+                "$ref": "#/$defs/WorkflowPhase"
+              },
+              {
+                "$ref": "#/$defs/WorkflowFinished"
               },
               {
                 "$ref": "#/$defs/Error"
@@ -2146,6 +2399,21 @@
           "title": "App Version",
           "type": "string"
         },
+        "capabilities": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capabilities"
+        },
         "chat": {
           "anyOf": [
             {
@@ -2631,6 +2899,24 @@
         },
         {
           "$ref": "#/$defs/ServicesStatus"
+        },
+        {
+          "$ref": "#/$defs/AgentStarted"
+        },
+        {
+          "$ref": "#/$defs/AgentProgress"
+        },
+        {
+          "$ref": "#/$defs/AgentFinished"
+        },
+        {
+          "$ref": "#/$defs/WorkflowStarted"
+        },
+        {
+          "$ref": "#/$defs/WorkflowPhase"
+        },
+        {
+          "$ref": "#/$defs/WorkflowFinished"
         },
         {
           "$ref": "#/$defs/Error"
@@ -3282,6 +3568,18 @@
     "ToolFinished": {
       "additionalProperties": false,
       "properties": {
+        "agent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
         "chat": {
           "title": "Chat",
           "type": "integer"
@@ -3382,6 +3680,18 @@
     "ToolStarted": {
       "additionalProperties": false,
       "properties": {
+        "agent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
         "chat": {
           "title": "Chat",
           "type": "integer"
@@ -3741,6 +4051,191 @@
         "text"
       ],
       "title": "UserText",
+      "type": "object"
+    },
+    "WorkflowFinished": {
+      "additionalProperties": false,
+      "description": "A workflow ended (v0.10).",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed",
+            "stopped"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "workflow.finished",
+          "default": "workflow.finished",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts",
+        "outcome"
+      ],
+      "title": "WorkflowFinished",
+      "type": "object"
+    },
+    "WorkflowPhase": {
+      "additionalProperties": false,
+      "description": "One workflow phase changed state (v0.10); ``index`` is into ``workflow.started``'s ``phases``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "running",
+            "done",
+            "failed"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "workflow.phase",
+          "default": "workflow.phase",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts",
+        "index",
+        "state"
+      ],
+      "title": "WorkflowPhase",
+      "type": "object"
+    },
+    "WorkflowStarted": {
+      "additionalProperties": false,
+      "description": "A workflow started (v0.10). Sent again with the same ``id`` when its phases become known or change.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "phases": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Phases",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "type": {
+          "const": "workflow.started",
+          "default": "workflow.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts",
+        "turn",
+        "name"
+      ],
+      "title": "WorkflowStarted",
       "type": "object"
     }
   },

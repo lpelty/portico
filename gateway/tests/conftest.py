@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from claude_agent_sdk import ResultMessage
 
+from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
 from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, translate
 from portico_gateway.messages import Action, Brand, Root, ServerMessage
@@ -142,6 +143,8 @@ class FakeEngine:
         self.context: tuple[float, str | None] | None = None
         self.context_error: Exception | None = None
         self.context_reads = 0
+        # v0.10: subagents and workflows, as the real engine follows them.
+        self.agents = AgentTracker()
 
     def script(self, *items: Any) -> None:
         self.scripts.append(list(items))
@@ -192,11 +195,11 @@ class FakeEngine:
                 if item.stubborn:
                     await asyncio.Event().wait()
                 await self._interrupted.wait()
-                for ev in translate(fake_result(session_id=self.session_id or "fake"), self.chat, self.turn):
+                for ev in translate(fake_result(session_id=self.session_id or "fake"), self.chat, self.turn, self.agents):
                     await cb.on_event(ev)
                 return
             else:
-                for ev in translate(item, self.chat, self.turn):
+                for ev in translate(item, self.chat, self.turn, self.agents):
                     await cb.on_event(ev)
 
     async def context_usage(self) -> tuple[float, str | None] | None:

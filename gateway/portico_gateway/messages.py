@@ -31,6 +31,15 @@ PermissionMode = Literal["default", "acceptEdits", "auto"]
 PermissionOutcome = Literal["once", "session", "auto", "declined", "blocked"]
 # A deployment service's state (v0.4): ``checking`` until its first check answers.
 ServiceState = Literal["up", "down", "checking"]
+# How a subagent ended (v0.10).
+AgentOutcome = Literal["done", "failed", "stopped"]
+# Where one workflow phase stands (v0.10).
+PhaseState = Literal["pending", "running", "done", "failed"]
+
+# v0.10: the client capability an app lists in its ``hello`` when it
+# shows subagents and workflows. Only such an app is sent the ``agent.*`` and
+# ``workflow.*`` frames and the tool rows of a subagent's own steps.
+AGENTS_CAPABILITY = "agents.v1"
 
 
 class ProtocolError(Exception):
@@ -181,6 +190,10 @@ class HelloClient(Envelope):
     type: Literal["hello"] = "hello"
     protocol: Literal[1] = PROTOCOL_VERSION
     app_version: str
+    # v0.10: what this app can show beyond protocol 1's first version, e.g.
+    # ``agents.v1``. Absent from an older app, which is sent nothing it
+    # did not declare.
+    capabilities: list[str] | None = None
 
 
 class ChatNew(Envelope):
@@ -399,6 +412,9 @@ class ToolStarted(Envelope):
     tool: str
     summary: str
     input: dict[str, Any] = {}
+    # v0.10: set when a subagent made the call (``agent.started``'s ``id``);
+    # sent only to an app that declared ``agents.v1``.
+    agent_id: str | None = None
 
 
 class ToolFinished(Envelope):
@@ -410,6 +426,8 @@ class ToolFinished(Envelope):
     summary: str = ""
     permission: PermissionOutcome | None = None
     note: str | None = None
+    # v0.10: as on ``tool.started``.
+    agent_id: str | None = None
 
 
 class TurnFinished(Envelope):
@@ -548,6 +566,94 @@ class Error(Envelope):
     message: str
 
 
+# --- subagents and workflows (v0.10) -------------------------------------------
+#
+# Sent only to an app whose ``hello`` declared ``agents.v1``; stamped and kept
+# in the ring like every other turn event, so they replay.
+
+
+class AgentStarted(Envelope):
+    """A subagent started (v0.10).
+
+    ``id`` names the agent in the frames that follow; ``tool_use_id`` is the
+    call that started it (a workflow's agents share the workflow's call).
+    ``kind`` is the agent type the engine names (e.g. ``general-purpose``),
+    or ``workflow`` for one of a workflow's agents, which also carries
+    ``workflow_id`` and ``phase`` (an index into ``workflow.started``'s
+    ``phases``). ``background`` is set when the agent runs on after its
+    turn finishes.
+    """
+
+    type: Literal["agent.started"] = "agent.started"
+    chat: int
+    turn: int
+    id: str  # type: ignore[assignment]
+    tool_use_id: str
+    description: str
+    kind: str
+    workflow_id: str | None = None
+    phase: int | None = None
+    background: bool | None = None
+
+
+class AgentProgress(Envelope):
+    """What a subagent is doing now (v0.10): its current ``step``, its tool calls so far, seconds since it started."""
+
+    type: Literal["agent.progress"] = "agent.progress"
+    chat: int
+    id: str  # type: ignore[assignment]
+    step: str | None = None
+    steps: int = 0
+    elapsed: float = 0.0
+
+
+class AgentFinished(Envelope):
+    """A subagent ended (v0.10); ``summary`` is the first line of what it reported."""
+
+    type: Literal["agent.finished"] = "agent.finished"
+    chat: int
+    id: str  # type: ignore[assignment]
+    outcome: AgentOutcome
+    summary: str | None = None
+
+
+class WorkflowStarted(Envelope):
+    """A workflow started (v0.10). Sent again with the same ``id`` when its phases become known or change."""
+
+    type: Literal["workflow.started"] = "workflow.started"
+    chat: int
+    turn: int
+    id: str  # type: ignore[assignment]
+    name: str
+    phases: list[str] = []
+
+
+class WorkflowPhase(Envelope):
+    """One workflow phase changed state (v0.10); ``index`` is into ``workflow.started``'s ``phases``."""
+
+    type: Literal["workflow.phase"] = "workflow.phase"
+    chat: int
+    id: str  # type: ignore[assignment]
+    index: int
+    state: PhaseState
+
+
+class WorkflowFinished(Envelope):
+    """A workflow ended (v0.10)."""
+
+    type: Literal["workflow.finished"] = "workflow.finished"
+    chat: int
+    id: str  # type: ignore[assignment]
+    outcome: AgentOutcome
+    summary: str | None = None
+
+
+# The v0.10 frame types only an app that declared ``agents.v1`` is sent.
+AGENT_FRAME_TYPES: frozenset[str] = frozenset(
+    {"agent.started", "agent.progress", "agent.finished", "workflow.started", "workflow.phase", "workflow.finished"}
+)
+
+
 # Chat-scoped events the gateway stamps with ``seq`` and keeps in the ring;
 # ``chat.history`` replays a list of these.
 HistoryEvent = Annotated[
@@ -566,6 +672,12 @@ HistoryEvent = Annotated[
         StatusSet,
         ChatCompacted,
         ChatNotice,
+        AgentStarted,
+        AgentProgress,
+        AgentFinished,
+        WorkflowStarted,
+        WorkflowPhase,
+        WorkflowFinished,
         Error,
     ],
     Field(discriminator="type"),
@@ -629,6 +741,12 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     UpdateAvailable,
     SessionLogged,
     ServicesStatus,
+    AgentStarted,
+    AgentProgress,
+    AgentFinished,
+    WorkflowStarted,
+    WorkflowPhase,
+    WorkflowFinished,
     Error,
 )
 
@@ -722,7 +840,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.1.0"),
+        HelloClient(ts=_TS, app_version="0.10.0", capabilities=["agents.v1"]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -903,6 +1021,21 @@ def example_messages() -> dict[str, BaseModel]:
                 ),
             ],
         ),
+        AgentStarted(
+            ts=_TS,
+            chat=1,
+            seq=54,
+            turn=3,
+            id="a4f1c2e9b7d3",
+            tool_use_id="toolu_07",
+            description="Check quotes in the transcripts",
+            kind="general-purpose",
+        ),
+        AgentProgress(ts=_TS, chat=1, seq=55, id="a4f1c2e9b7d3", step="Read transcripts/p11.md", steps=4, elapsed=12.5),
+        AgentFinished(ts=_TS, chat=1, seq=56, id="a4f1c2e9b7d3", outcome="done", summary="6 quotes confirmed"),
+        WorkflowStarted(ts=_TS, chat=1, seq=57, turn=3, id="w9k2m4", name="audit-quotes", phases=["find", "verify", "report"]),
+        WorkflowPhase(ts=_TS, chat=1, seq=58, id="w9k2m4", index=1, state="running"),
+        WorkflowFinished(ts=_TS, chat=1, seq=59, id="w9k2m4", outcome="done", summary="Workflow audit-quotes completed"),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}
