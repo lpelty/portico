@@ -195,6 +195,14 @@ final class AppModel: ObservableObject {
     /// status that moves it (to `checking`, or another state or detail)
     /// answers that restart.
     var restartBaselines: [String: Service] = [:]
+    /// The `services.restart_all` sent and not yet answered (v0.8 decision
+    /// 4): its request id. The menu's Restart all services spins meanwhile.
+    @Published var restartingAll: String?
+    /// The gateway's reason the last Restart all services failed (an
+    /// `error` with its id), shown under it in the menu until the next try.
+    @Published var restartAllError: String?
+    /// The gateway or services action asking first (v0.8 decisions 3, 4).
+    @Published var confirming: GatewayConfirmation?
     /// After a `chat.list`, gives up waiting for the first `services.status`
     /// (a gateway that sends none): the Gateway row alone, not "Checking…".
     var servicesFallback: Task<Void, Never>?
@@ -440,6 +448,8 @@ final class AppModel: ObservableObject {
             services = Self.gatewaySendsServices(hello.gatewayVersion) ? nil : []
             restartingServices = [:]
             restartBaselines = [:]
+            restartingAll = nil
+            restartAllError = nil
             servicesFallback?.cancel()
             servicesFallback = nil
             // A log or renewal sent on the old connection was never
@@ -565,6 +575,11 @@ final class AppModel: ObservableObject {
             if let id = error.id, let service = restartingServices.first(where: { $0.value == id })?.key {
                 restartingServices[service] = nil
                 restartBaselines[service] = nil
+            }
+            // A failed Restart all services (v0.8 decision 4): the menu says why.
+            if let id = error.id, id == restartingAll {
+                restartingAll = nil
+                restartAllError = error.message
             }
             if let id = error.id, fileSearch?.pending[id] != nil {
                 fileSearch?.pending[id] = nil

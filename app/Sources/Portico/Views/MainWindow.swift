@@ -58,6 +58,7 @@ struct MainWindow: View {
         }
         .background(Theme.window)
         .askToLogDialog(model)
+        .gatewayConfirmDialog(model, place: .window)
         .overlay {
             if model.quickOpenShown, let chat = model.filesChat {
                 QuickOpenView(chat: chat)
