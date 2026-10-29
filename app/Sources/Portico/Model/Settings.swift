@@ -85,8 +85,8 @@ final class Settings: ObservableObject {
         didSet { Self.store(lastFolder, forKey: Key.lastFolder, in: defaults) }
     }
 
-    /// Files pinned in the Files pane's Quick tab (F2), by absolute path,
-    /// in the order they were pinned.
+    /// Files bookmarked in the Files pane's Bookmarks tab (F2), by absolute path,
+    /// in the order they were added. The key keeps v0.2's name (`pinnedFiles`) so bookmarks made before v0.4 survive.
     @Published var pinnedFiles: [String] {
         didSet { defaults.set(pinnedFiles, forKey: Key.pinnedFiles) }
     }

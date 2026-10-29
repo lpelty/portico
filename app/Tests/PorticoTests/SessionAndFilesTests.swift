@@ -266,17 +266,30 @@ final class SessionAndFilesTests: XCTestCase {
         model.apply(.toolStarted(ToolStarted(chat: 1, turn: 1, toolUseId: "e", tool: "Bash", summary: "ls -la", input: ["command": .string("ls")], seq: 5)))
         let touched = model.touchedFiles(chat: 1)
         XCTAssertEqual(touched.map(\.path), ["/tmp/demo/P01.md", "/tmp/demo/Q3.md", "/tmp/demo/notes/P02.md"])
-        XCTAssertEqual(touched.map(\.verb), ["read", "wrote", "read"])
+        XCTAssertEqual(touched.map(\.wrote), [false, true, false])
     }
 
-    func testTouchedReadsFoldPastFour() {
-        let reads = (1...12).map { TouchedFile(path: "/r/\($0).md", wrote: false) }
-        let list = TouchedList([TouchedFile(path: "/w/Q3.md", wrote: true)] + reads)
-        XCTAssertEqual(list.shown.map(\.path), ["/w/Q3.md", "/r/1.md", "/r/2.md"])
-        XCTAssertEqual(list.moreRead, 10)
-        let few = TouchedList(Array(reads.prefix(4)))
-        XCTAssertEqual(few.shown.count, 4)
-        XCTAssertEqual(few.moreRead, 0)
+    func testChangedFilesAreWritesOnlyNewestFirstWithTheirLastTime() throws {
+        let (model, _) = try model()
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1, folder: "/tmp/demo")])))
+        func started(_ id: String, _ tool: String, _ path: String, _ ts: String, seq: Int) -> ServerMessage {
+            .toolStarted(ToolStarted(chat: 1, turn: 1, toolUseId: id, tool: tool, summary: path, input: ["file_path": .string(path)], seq: seq, ts: ts))
+        }
+        func finished(_ id: String, ok: Bool = true, _ ts: String, seq: Int) -> ServerMessage {
+            .toolFinished(ToolFinished(chat: 1, turn: 1, toolUseId: id, ok: ok, summary: "", seq: seq, ts: ts))
+        }
+        model.apply(started("a", "Write", "mobile-ui.html", "2026-10-28T09:10:00Z", seq: 1))
+        model.apply(finished("a", "2026-10-28T09:11:00Z", seq: 2))
+        model.apply(started("b", "Read", "/tmp/demo/notes.md", "2026-10-28T09:12:00Z", seq: 3))
+        model.apply(started("c", "Edit", "/tmp/demo/plan.md", "2026-10-28T09:12:30Z", seq: 4))
+        model.apply(finished("c", ok: false, "2026-10-28T09:12:40Z", seq: 5))
+        model.apply(started("d", "Edit", "/tmp/demo/mobile-ui.html", "2026-10-28T09:13:00Z", seq: 6))
+        model.apply(finished("d", "2026-10-28T09:14:00Z", seq: 7))
+
+        let changed = model.changedFiles(chat: 1)
+        XCTAssertEqual(changed.map(\.path), ["/tmp/demo/mobile-ui.html"], "no reads, no failed edits, one row per file")
+        XCTAssertEqual(changed.first?.time(calendar: utc), "9:14", "the last change's time")
     }
 
     func testPinsPersistInSettings() throws {
@@ -284,11 +297,11 @@ final class SessionAndFilesTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = AppModel(settings: Settings(defaults: defaults))
-        model.togglePin("/tmp/demo/Q3.md")
-        model.togglePin("/tmp/demo/plan.md")
-        XCTAssertTrue(model.isPinned("/tmp/demo/Q3.md"))
+        model.toggleBookmark("/tmp/demo/Q3.md")
+        model.toggleBookmark("/tmp/demo/plan.md")
+        XCTAssertTrue(model.isBookmarked("/tmp/demo/Q3.md"))
         XCTAssertEqual(Settings(defaults: defaults).pinnedFiles, ["/tmp/demo/Q3.md", "/tmp/demo/plan.md"])
-        model.togglePin("/tmp/demo/Q3.md")
+        model.toggleBookmark("/tmp/demo/Q3.md")
         XCTAssertEqual(Settings(defaults: defaults).pinnedFiles, ["/tmp/demo/plan.md"])
     }
 
@@ -305,7 +318,7 @@ final class SessionAndFilesTests: XCTestCase {
             Entry(name: "synthesis-template.md", dir: false), Entry(name: "other.md", dir: false),
             Entry(name: "Archive", dir: true),
         ], id: request.id)))
-        model.togglePin("/vault/Reports/Q3-synthesis.md")
+        model.toggleBookmark("/vault/Reports/Q3-synthesis.md")
         model.apply(tool(1, "a", "Read", path: "/vault/Reports/Q2-synthesis.md", seq: 1))
 
         let items = model.quickOpenItems(chat: 1, query: "synth")
@@ -339,7 +352,7 @@ final class SessionAndFilesTests: XCTestCase {
         XCTAssertEqual(model.filesTab, .folder)
         model.openDocumentView(file: "/tmp/demo/Q3.md")
         XCTAssertTrue(model.documentMode)
-        XCTAssertEqual(model.filesTab, .quick)
+        XCTAssertEqual(model.filesTab, .bookmarks)
         XCTAssertEqual(model.documentFile, "/tmp/demo/Q3.md")
         model.reveal(file: "/tmp/demo/plan.md", in: 1)
         XCTAssertEqual(model.documentFile, "/tmp/demo/plan.md", "quick open lands in the document view while it is open")
