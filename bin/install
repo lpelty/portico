@@ -1,23 +1,64 @@
 #!/usr/bin/env bash
-# One command from a fresh clone: the gateway's venv (uv) and the app's release build (swift), then the run line.
+# One command from a fresh clone: prerequisites checked, the gateway's venv (uv), the app's
+# release build (swift, with a macOS SDK that compiles it), and <brand.name>.app in ~/Applications.
+#
+# Environment:
+#   PORTICO_APP_DIR   where the .app goes (default: ~/Applications)
+#   PORTICO_SDKROOT   build the app with this macOS SDK only (see app/Packaging/build-app.sh)
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(dirname "$here")"
+packaging="$repo/app/Packaging"
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "install: uv is not on PATH (https://docs.astral.sh/uv/)" >&2
+echo "== prerequisites"
+if ! "$packaging/prereqs.sh" "$repo"; then
+  echo "install: a prerequisite is missing (FAIL above); nothing was installed" >&2
   exit 1
 fi
 
 echo "== gateway: uv sync"
-(cd "$repo/gateway" && uv sync)
+(cd "$repo/gateway" && uv sync --quiet)
 
-if command -v swift >/dev/null 2>&1; then
-  echo "== app: swift build -c release"
-  (cd "$repo/app" && swift build -c release)
-else
-  echo "install: swift is not on PATH; the gateway is installed, the app was not built" >&2
+products="$("$packaging/build-app.sh" "$repo" | tail -n 1)"
+
+# Brand name and icon from the deployment's config; Portico's own when unset or unreadable.
+cli="$repo/gateway/.venv/bin/portico-gateway"
+config_value() { # prints the value, or nothing when unset or when this gateway has no config-value yet
+  local out
+  if out="$("$cli" config-value "$1" 2>/dev/null)"; then
+    printf '%s\n' "$out" | head -n 1
+  fi
+}
+name="$(config_value brand.name)"
+name="${name:-Portico}"
+icon="$(config_value brand.app_icon)"
+case "$icon" in "~/"*) icon="$HOME/${icon#\~/}" ;; esac
+if [ -n "$icon" ] && [ ! -f "$icon" ]; then
+  echo "install: brand.app_icon is $icon, which does not exist; using the default icon" >&2
+  icon=""
 fi
+icon="${icon:-$packaging/AppIcon.png}"
+
+min_macos="$(sed -n 's/.*\.macOS(\.v\([0-9][0-9]*\)).*/\1/p' "$repo/app/Package.swift" | head -n 1)"
+min_macos="${min_macos:-15}.0"
+version="$(tr -d '[:space:]' <"$repo/VERSION")"
+app_dir="${PORTICO_APP_DIR:-$HOME/Applications}"
+
+echo "== app: $name.app"
+app="$("$packaging/make-app.sh" \
+  --products "$products" \
+  --dest "$app_dir" \
+  --name "$name" \
+  --icon "$icon" \
+  --version "$version" \
+  --gateway-bin "$repo/bin/portico-gateway" \
+  --min-macos "$min_macos" | tail -n 1)"
 
 echo
-echo "Run the gateway:  $repo/bin/portico-gateway run"
+echo "Installed: $app"
+if [ -z "${PORTICO_APP_DIR:-}" ]; then
+  echo "Open it:   open \"$app\"   (or Finder: your home folder, Applications)"
+else
+  echo "Open it:   open \"$app\""
+fi
+echo "Gateway:   $repo/bin/portico-gateway run"
