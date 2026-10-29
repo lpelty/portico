@@ -23,8 +23,11 @@ from portico_gateway.config import Config
 from portico_gateway.messages import (
     CardAnswer,
     CardAsk,
+    ChatHistory,
     ChatList,
     ChatNew,
+    ChatNotice,
+    ChatOpen,
     ChatState,
     Error,
     HelloServer,
@@ -41,7 +44,7 @@ from portico_gateway.messages import (
     dump,
 )
 from portico_gateway.plugins import Plugins, load_plugins
-from portico_gateway.server import GatewayServer
+from portico_gateway.server import LOG_STEP_UNFINISHED, GatewayServer
 from portico_gateway.state import ChatRecord, StateDir
 from tests.conftest import AskPermission, Block, fake_result, make_config
 from tests.test_server import attach
@@ -668,3 +671,153 @@ async def test_a_plugin_log_step_knows_whether_the_session_ends(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.7: session commands recorded in the conversation ---------------------------
+
+
+def notices(frames: list[ServerMessage], chat: int) -> list[str]:
+    return [m.text for m in frames if isinstance(m, ChatNotice) and m.chat == chat]
+
+
+def before_turn(frames: list[ServerMessage], text: str) -> bool:
+    """Whether the notice ``text`` arrived before the log step's turn started."""
+    kinds = [m.text if isinstance(m, ChatNotice) else type(m) for m in frames]
+    return kinds.index(text) < kinds.index(TurnStarted)
+
+
+async def test_session_log_records_its_start_and_its_verdict(
+    logging_server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        await send_and_finish(conn, number, "work")
+        got = await log_and_finish(conn, number)
+        assert notices(got, number) == ["Log session — running the log step", "Session logged"]
+        assert before_turn(got, "Log session — running the log step")
+        # The verdict follows the log turn and comes before session.logged.
+        kinds = [type(m) for m in got]
+        assert kinds.index(TurnFinished) < len(kinds) - 1 - kinds[::-1].index(ChatNotice) < kinds.index(SessionLogged)
+
+        factory.last.script(fake_result(is_error=True))
+        got = await log_and_finish(conn, number)
+        assert notices(got, number) == ["Log session — running the log step", LOG_STEP_UNFINISHED]
+        assert LOG_STEP_UNFINISHED == "The log step didn't finish; the session isn't logged"
+    finally:
+        await conn.close()
+
+
+async def test_renew_records_the_end_in_both_sessions(
+    logging_server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        await send_and_finish(conn, number, "work")
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=number)))
+        got = await recv_until(conn, SessionRenewed)
+        nxt = number + 1
+        assert notices(got, number) == [
+            "New — logging, then ending this session",
+            f"Session ended · continues in Session {nxt}",
+        ]
+        assert notices(got, nxt) == [f"Continues Session {number}"]
+        assert before_turn(got, "New — logging, then ending this session")
+        assert isinstance(await recv(conn), ChatList)
+
+        # Without logging (asked not to): the shorter first line, no log turn.
+        await conn.send(dump(SessionRenew(ts=TS, id="req-2", chat=nxt, log=False)))
+        got = await recv_until(conn, SessionRenewed)
+        assert notices(got, nxt) == ["New — ending this session", f"Session ended · continues in Session {nxt + 1}"]
+        assert notices(got, nxt + 1) == [f"Continues Session {nxt}"]
+        assert not [m for m in got if isinstance(m, TurnStarted)]
+    finally:
+        await conn.close()
+
+
+async def test_renew_without_a_log_step_says_it_only_ends(server: GatewayServer, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=number, log=True)))
+        got = await recv_until(conn, SessionRenewed)
+        assert notices(got, number) == ["New — ending this session", f"Session ended · continues in Session {number + 1}"]
+        assert isinstance(await recv(conn), ChatList), "chat.list still follows session.renewed"
+    finally:
+        await conn.close()
+
+
+async def test_session_notices_replay_from_the_beginning(
+    logging_server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    conn = await attach(logging_server)
+    number = await new_chat(conn, folder)
+    await send_and_finish(conn, number, "work")
+    await log_and_finish(conn, number)
+    await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=number)))
+    await recv_until(conn, SessionRenewed)
+    await recv(conn)
+    await conn.close()
+
+    again = await attach(logging_server)
+    try:
+        await again.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(again)
+        assert isinstance(history, ChatHistory) and not history.truncated
+        assert notices(history.events, number) == [
+            "Log session — running the log step",
+            "Session logged",
+            "New — logging, then ending this session",
+            f"Session ended · continues in Session {number + 1}",
+        ]
+        assert all(m.seq is not None for m in history.events if isinstance(m, ChatNotice))
+        await recv_until(again, ChatState)
+
+        await again.send(dump(ChatOpen(ts=TS, chat=number + 1)))
+        history = await recv(again)
+        assert isinstance(history, ChatHistory)
+        assert notices(history.events, number + 1) == [f"Continues Session {number}"]
+    finally:
+        await again.close()
+
+
+async def test_refused_session_commands_write_no_notice(
+    server: GatewayServer, logging_server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    # No log step: session.log is refused before anything is written.
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(SessionLog(ts=TS, id="req-c", chat=number)))
+        assert isinstance(await recv(conn), Error)
+        assert not [m for m in server.registry.get(number).ring if isinstance(m, ChatNotice)]
+    finally:
+        await conn.close()
+
+    conn = await attach(logging_server)
+    try:
+        number = await new_chat(conn, folder)
+        factory.last.script(Block())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="long")))
+        await factory.last.wait_blocked()
+        for refused in (SessionLog(ts=TS, id="req-l", chat=number), SessionRenew(ts=TS, id="req-r", chat=number)):
+            await conn.send(dump(refused))
+            err = (await recv_until(conn, Error))[-1]
+            assert isinstance(err, Error) and err.code == "chat.busy"
+        assert not [m for m in logging_server.registry.get(number).ring if isinstance(m, ChatNotice)]
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)
+
+        await conn.send(dump(SessionRenew(ts=TS, id="req-1", chat=number, log=False)))
+        await recv_until(conn, SessionRenewed)
+        await recv(conn)
+        before = len([m for m in logging_server.registry.get(number).ring if isinstance(m, ChatNotice)])
+        for refused in (SessionLog(ts=TS, id="req-e", chat=number), SessionRenew(ts=TS, id="req-f", chat=number)):
+            await conn.send(dump(refused))
+            err = await recv(conn)
+            assert isinstance(err, Error) and err.code == "session.ended"
+        assert len([m for m in logging_server.registry.get(number).ring if isinstance(m, ChatNotice)]) == before
+    finally:
+        await conn.close()

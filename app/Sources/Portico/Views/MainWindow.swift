@@ -201,12 +201,16 @@ struct MainToolbar: View {
             ) { model.sidebarVisible.toggle() }
             .disabled(model.awaitingFirstSession)
             HStack(spacing: 8) {
-                BrandMark(brand: model.brand)
-                Text(model.brand.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if let header = model.brand.headerImage {
+                    HeaderImage(image: header, label: model.brand.name)
+                } else {
+                    BrandMark(brand: model.brand)
+                    Text(model.brand.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             // The brand keeps its room; the title truncates first, and
             // nothing wraps when the main column is narrow (W4).
@@ -257,22 +261,52 @@ struct MainToolbar: View {
     }
 }
 
-/// The brand's icon from `hello`, or a 20-point rounded square in the
-/// accent when the gateway sent none (the frame's placeholder).
+/// The brand's icon from `hello` (rounded when it is a flat square, v0.7
+/// decision 5), or a 20-point rounded square in the accent when the
+/// gateway sent none (the frame's placeholder).
 struct BrandMark: View {
     let brand: BrandPresentation
 
     var body: some View {
-        if let icon = brand.iconImage {
-            Image(nsImage: icon)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 20, height: 20)
+        if let icon = brand.icon {
+            BrandIcon(icon: icon, side: 20)
         } else {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(brand.accent ?? Theme.accent)
                 .frame(width: 20, height: 20)
         }
+    }
+}
+
+/// The deployment's header image in place of the mark and the name (v0.7,
+/// frame "AB1 · Header image sizes"): 28 points tall, as wide as its own
+/// proportions make it, never stretched; a very wide image is capped at
+/// `maxWidth` and drawn shorter instead.
+struct HeaderImage: View {
+    let image: NSImage
+    let label: String
+
+    static let height: CGFloat = 28
+    static let maxWidth: CGFloat = 200
+
+    /// The drawn size: `height` tall at the image's aspect ratio, or
+    /// `maxWidth` wide when that would be wider.
+    static func size(of image: NSImage) -> CGSize {
+        let natural = image.size
+        guard natural.width > 0, natural.height > 0 else { return CGSize(width: height, height: height) }
+        let ratio = natural.width / natural.height
+        let width = height * ratio
+        return width <= maxWidth ? CGSize(width: width, height: height) : CGSize(width: maxWidth, height: maxWidth / ratio)
+    }
+
+    var body: some View {
+        let size = Self.size(of: image)
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size.width, height: size.height)
+            .accessibilityLabel(label)
     }
 }
 

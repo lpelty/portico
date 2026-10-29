@@ -174,6 +174,24 @@ attachments included), `chat.state working`, then streams the engine's events
 with `turn.finished` and `chat.state idle`. Slash text (`/review`) is passed
 to the engine as typed and dispatches the folder's commands.
 
+v0.7: the first three go out **before** the gateway starts or resumes the
+chat's engine (a chat restored after a restart, or one whose engine was
+closed, starts it with its next send), so the person's message shows at
+once. An engine that cannot start then ends the turn: `turn.finished
+outcome=error`, `chat.state idle`, and the refusal (`error
+code=engine.start_failed`, or `lifecycle.before_first_chat_failed` when the
+deployment's preflight refuses). The engine start and the send run after
+the echo, while the gateway goes on reading frames, so a refusal from
+them (`engine.start_failed`, `lifecycle.before_first_chat_failed`,
+`engine.send_failed`) arrives later than the echo, still carrying the
+`message.send`'s `id`. A `turn.stop` that arrives while the engine starts
+ends the turn `stopped` without sending it; a `chat.stop` or `chat.remove`
+then ends or removes it, and an engine that fails to start afterwards
+adds nothing. A turn that never reached the engine is not a reply: it
+leaves `last_reply` and `unlogged` as they were. A slash command
+that only the engine might know is still checked against a started engine
+first (below), so its echo waits for the engine.
+
 v0.3: a message whose first word is a slash command (`/word`, or
 `/plugin:word`; a path like `/Users/...` is not one) that nobody knows —
 not Portico (`/new`, and `/log` from v0.4), not the deployment (`hello.commands`, or the first
@@ -282,7 +300,14 @@ false`). Then the engine is closed, the session gets `ended` and `chat.state
 stopped`, the next session (a new number, `parent` = the ended one) gets
 `chat.state idle`, and the gateway answers `session.renewed` (with the
 `id`) followed by `chat.list`. The next session's engine starts with its
-first `message.send`. Errors: `chat.unknown`, `chat.busy` (a turn or another
+first `message.send`.
+
+v0.7: the renewal is recorded in both conversations as `chat.notice`
+lines. In the ending session, at once (before any log turn): "New —
+logging, then ending this session" when the log step runs, else "New —
+ending this session"; once it has ended, "Session ended · continues in
+Session M". In the next session, its first event: "Continues Session N".
+All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
 renew is running), `session.ended` (already ended). While a renew runs,
 `message.send` to that session is `chat.busy`; `turn.stop` stops the log
 turn; `card.answer` answers its cards.
@@ -300,7 +325,11 @@ cards, `turn.finished`). When it finishes `done` the session's
 or is stopped still answers, with `logged_at` where it was. The session
 is not ended, its engine stays up, and `logged` (the renewal's verdict)
 is untouched. Answered with `chat.state` (carrying `unlogged`), then
-`session.logged` (with the `id`), then `chat.list`. Errors: `chat.unknown`, `session.ended` (the session has
+`session.logged` (with the `id`), then `chat.list`. v0.7: recorded in the
+conversation as `chat.notice` lines — "Log session — running the log step"
+at once (before the log turn), and after it, before `session.logged`,
+"Session logged" or "The log step didn't finish; the session isn't
+logged". A refused `session.log` writes none. Errors: `chat.unknown`, `session.ended` (the session has
 ended), `session.cannot_log` (the deployment has no log step:
 `hello.can_log` is false), `chat.busy` (a turn, a renewal or another log
 is running). While a log runs, `message.send`, `session.renew` and
@@ -352,12 +381,14 @@ next engine; no engine is started to change it.
 ## Messages: gateway → app
 
 ### `hello` — `HelloServer`
-`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?}`
+`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?, header_image?}`
 (`name` goes in the title bar and the About panel, `agent_name` is how
 the app refers to the agent, `accent` is a CSS hex colour — `#RRGGBB`,
 `#RGB` or `#RRGGBBAA` — for the app's controls, `icon` an absolute path
 to an image file for the Dock, the About panel, the sidebar header and
-the mark beside the start screen's greeting;
+the mark beside the start screen's greeting, `header_image` (v0.7) an
+absolute path to an image the toolbar shows in place of the mark and the
+name, 28 points tall with its own proportions (an older app ignores it);
 absent or unreadable values fall back to "Portico" and the system
 defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
 absolute, as configured with any `~` expanded), `commands: [string]`
@@ -394,7 +425,8 @@ gateway: `true` when the deployment can log (`hello.can_log`) **and** a
 turn finished after `logged_at` — or, never logged, at least one turn
 finished. A turn counts however it finished (done, stopped, error),
 including a log turn that did not finish `done`; an unknown command's
-empty turn does not (nothing reached the agent). The app asks "log
+empty turn does not (nothing reached the agent), nor (v0.7) a turn
+whose engine could not start or that was stopped before its send. The app asks "log
 first?" before New only when `unlogged` is true. Both are kept on the
 chat record, so they survive a gateway restart; a session recorded before
 v0.4 counts as unlogged when the engine had named it (it has had a turn)
@@ -402,6 +434,8 @@ and it was not logged by a renewal.
 
 `ChatSummary.last_reply?` *(v0.6)* is when a turn last finished in the
 session (UTC, ISO 8601), however it finished; absent before the first.
+v0.7: a turn that never reached the engine (its engine could not start,
+or a stop came first) does not move it.
 Kept on the chat record, so it survives a gateway restart — unlike the
 `ts` of events replayed from a transcript, which is the time of the
 replay. The app's welcome says "last reply 12 min ago" from it.
@@ -442,7 +476,8 @@ number, not a new one). History is complete; what follows is live.
 
 ### `turn.started` — `TurnStarted`
 `chat`, `seq`, `turn: integer` (counts from 1 per gateway launch). Always
-followed by `user.text` and then `chat.state working`.
+followed by `user.text` and then `chat.state working` (v0.7: before the
+engine starts, when it has to; see `message.send`).
 
 ### `user.text` — `UserText`
 `chat`, `turn`, `text`, `seq` when live. What the person sent to start
@@ -611,7 +646,12 @@ counted in the chat's `compactions`.
 `chat`, `seq`, `text`. A quiet line from the gateway in the conversation,
 e.g. `No command /foo here` for a slash command that neither the
 deployment nor the engine knows (the message is not sent to the agent).
-Stamped and replayed with the history.
+v0.7: also the session commands' lines (`session.log`, `session.renew`).
+No clock in the text. Stamped and replayed with the history. A chat
+replayed from the engine's transcript (one restored after a gateway
+restart) gets the notices of the current gateway run put back in, after
+the turn each followed and without `seq`; only notices from before the
+restart are lost.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
 No fields. The config file is newer than when the gateway started; the

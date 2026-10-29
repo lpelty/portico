@@ -1,5 +1,78 @@
 # Changelog
 
+## v0.7.0 (2026-10-29)
+
+### What a person gets (app)
+
+- **Times say which day, in your own clock.** One rule everywhere a time
+  is shown, on the Mac's locale and 12/24-hour setting: within the hour
+  "just now" or "12 min ago" (kept current); then "today, 9:14 AM",
+  "yesterday, 4:12 PM", "Oct 27, 4:12 PM", "Oct 27, 2025, 4:12 PM". The
+  session card ("Started today, 9:14 AM"), the welcome line ("Continuing
+  Session 15 · started today, 8:47 AM · last reply 6 min ago"), the ended
+  bar and the logged line use it; the Earlier list and Changed this
+  session show a compact form ("12 min ago", "10:30 AM", "Yesterday",
+  "Oct 27") with the full date and time on hover. The card's age ("38 m")
+  is a duration and stays.
+- **View Session N and Start a new session are buttons**: small bordered
+  ones the size of the suggestion chips, with hover and a pointing hand.
+- **A square brand icon is drawn rounded** on the welcome and in the
+  sidebar header (the macOS icon shape, corners about 22 % of the side);
+  an icon whose corners are already transparent is drawn as given.
+  The icon is read and its shape tested once per version of the file,
+  not on every redraw (each streamed word redrew it from disk before).
+- **A send whose engine could not start is not "last reply"**: a turn that
+  ends `error` before the agent said or did anything leaves the welcome's
+  "last reply" where it was.
+
+- **A Log session before New counts.** The divider over the next session
+  said "not logged" when the session had been logged with Log session and
+  then ended with New; it now says "logged" with the time of that log.
+
+- **A header image in the toolbar.** New optional `brand.header_image`
+  (absolute path; SVG or PDF stays sharp, a PNG at least 84 px tall): the
+  toolbar shows it 28 pt tall in place of the mark and the app name, at the
+  image's own proportions (capped at 200 pt wide), never stretched. Unset,
+  the toolbar is unchanged. Sent in `hello.brand`; an older app ignores it.
+
+### What a person gets (gateway)
+
+- **The first send shows at once.** The gateway sends `turn.started`, the
+  `user.text` echo and `chat.state working` before it starts or resumes the
+  agent's engine, so after a gateway restart the message and "Working"
+  appear immediately instead of after the engine's 5–10 s start. An engine
+  that cannot start ends the turn `error` and answers `engine.start_failed`
+  (or `lifecycle.before_first_chat_failed`), as a refused send does; a
+  `turn.stop` while it starts ends the turn stopped without sending.
+- **Stop works while the engine starts.** The start and the send run after
+  the echo while the gateway keeps reading frames, so Stop (`turn.stop`,
+  `chat.stop`) takes effect at once instead of after the 5–10 s start. A
+  refusal from the start still reaches the app as an `error` with the
+  send's `id`. A chat stopped or removed while its engine starts stays as
+  it was left: a start that then fails sends no second `turn.finished`,
+  no `idle`, and no frames for a removed chat.
+- **A turn that never reached the agent is not work.** One whose engine
+  could not start, or that was stopped before its send, leaves
+  `last_reply` and `unlogged` as they were.
+- **Log session and New are recorded in the conversation** as `chat.notice`
+  lines, kept in the ring so a replay shows them: "Log session — running
+  the log step" at once, then "Session logged" or "The log step didn't
+  finish; the session isn't logged"; "New — logging, then ending this
+  session" (or "New — ending this session"), then "Session ended ·
+  continues in Session M", and "Continues Session N" first in the next
+  session. `/log` and `/new` in the composer send the same requests and get
+  the same lines. A refused command (busy, ended, no log step) writes none.
+  A chat restored after a gateway restart, which replays from the engine's
+  transcript, gets this run's lines back in after the turns they followed;
+  only lines from before the restart are lost.
+- README: `brand.icon` may be a flat square; Portico rounds it in the macOS
+  icon shape (an image with transparent corners is drawn as given).
+
+### Protocol (still version 1; no new messages)
+
+- The echo frames come before the engine starts; `chat.notice` also
+  records session commands. Same frames, earlier and more of them.
+
 ## v0.6.0 (2026-10-29)
 
 Launch continues the live session, a way back from an earlier one, a calmer

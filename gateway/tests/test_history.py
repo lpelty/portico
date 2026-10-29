@@ -527,3 +527,54 @@ async def test_since_equal_to_the_current_seq_is_up_to_date(server: GatewayServe
         assert isinstance(await recv(conn), ChatState)  # v0.3: state and mode after live
     finally:
         await conn.close()
+
+
+async def test_a_restored_chat_replays_this_launchs_notices_with_its_transcript(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, config_dir: Path
+) -> None:
+    # A restored chat replays from the transcript, which has no notices:
+    # the ones this launch wrote come back in, after the turn they followed.
+    from portico_gateway.messages import ChatNotice, SessionLog, SessionLogged
+    from portico_gateway.server import LOG_STEP_UNFINISHED
+
+    restored_index(state_dir, folder, SESSION)
+    write_transcript(config_dir, folder, SESSION, two_turn_session(folder))
+    config: Config = make_config(setting_sources=["project"], log_prompt="/log-it")
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    conn = await attach(srv)
+    try:
+        await conn.send(dump(ChatOpen(ts=TS, chat=1)))
+        await recv_until(conn, ChatState)
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=1)))
+        await recv_until(conn, SessionLogged)
+        # The engine wrote the log turn to the transcript as it ran.
+        write_transcript(
+            config_dir, folder, SESSION, [*two_turn_session(folder), user("/log-it"), assistant(text("Logged."))]
+        )
+        await srv.notice(srv.registry.get(1), "a line after everything")
+        await conn.close()
+
+        conn = await attach(srv)
+        await conn.send(dump(ChatOpen(ts=TS, chat=1)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory) and not history.truncated
+        shape = [
+            e.text if isinstance(e, ChatNotice) else (type(e).__name__, getattr(e, "turn", None))
+            for e in history.events
+            if isinstance(e, (ChatNotice, TurnStarted, TurnFinished))
+        ]
+        assert shape == [
+            ("TurnStarted", 1), ("TurnFinished", 1),
+            ("TurnStarted", 2), ("TurnFinished", 2),
+            "Log session — running the log step",
+            ("TurnStarted", 3), ("TurnFinished", 3),
+            "Session logged",
+            "a line after everything",
+        ]
+        assert LOG_STEP_UNFINISHED not in shape
+        assert all(e.seq is None for e in history.events), "unstamped, as the transcript's events are"
+    finally:
+        await conn.close()
+        await srv.shutdown()

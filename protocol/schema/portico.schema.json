@@ -207,6 +207,18 @@
           "title": "Agent Name",
           "type": "string"
         },
+        "header_image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header Image"
+        },
         "icon": {
           "anyOf": [
             {

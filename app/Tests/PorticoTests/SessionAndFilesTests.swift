@@ -233,21 +233,32 @@ final class SessionAndFilesTests: XCTestCase {
     // MARK: - what the frames say
 
     func testSessionLinesAndTimes() {
+        // v0.7 decision 1: the full form, on a pinned clock, zone and locale.
+        let us = Locale(identifier: "en_US")
+        let sameDay = SessionTime.parse("2026-10-27T15:00:00Z")!
         let parent = SessionPresentation(summary: session(13, ended: "2026-10-27T11:40:00Z", logged: true, title: "Interview codebook"))
-        XCTAssertEqual(parent.parentLine(calendar: utc), "Session 13 · Interview codebook · logged 11:40")
+        XCTAssertEqual(parent.parentLine(now: sameDay, calendar: utc, locale: us), "Session 13 · Interview codebook · logged today, 11:40 AM")
+        XCTAssertEqual(
+            parent.parentLine(now: SessionTime.parse("2026-10-28T15:00:00Z")!, calendar: utc, locale: us),
+            "Session 13 · Interview codebook · logged yesterday, 11:40 AM")
         let unlogged = SessionPresentation(summary: session(13, ended: "2026-10-27T11:40:00Z", logged: false))
-        XCTAssertEqual(unlogged.parentLine(calendar: utc), "Session 13 · not logged")
+        XCTAssertEqual(unlogged.parentLine(now: sameDay, calendar: utc, locale: us), "Session 13 · not logged")
+        // Log session, then New without logging again: logged, at the log's time.
+        var loggedEarlier = session(13, ended: "2026-10-27T11:40:00Z")
+        loggedEarlier.loggedAt = "2026-10-27T11:10:00Z"
+        XCTAssertEqual(
+            SessionPresentation(summary: loggedEarlier).parentLine(now: sameDay, calendar: utc, locale: us),
+            "Session 13 · logged today, 11:10 AM")
         let current = SessionPresentation(summary: session(14, title: "Q3 synthesis"))
-        XCTAssertEqual(current.startedLine(calendar: utc), "Started 11:42 · Q3 synthesis")
-        XCTAssertEqual(current.startedSecondLine(calendar: utc), "Session 14 · started 11:42")
+        XCTAssertEqual(current.startedLine(now: sameDay, calendar: utc, locale: us), "Started today, 11:42 AM · Q3 synthesis")
+        XCTAssertEqual(current.startedSecondLine(now: sameDay, calendar: utc, locale: us), "Session 14 · started today, 11:42 AM")
+        XCTAssertEqual(
+            current.startedLine(now: SessionTime.parse("2026-10-27T12:00:00Z")!, calendar: utc, locale: us),
+            "Started 18 min ago · Q3 synthesis", "within the hour, relative")
 
         let start = SessionTime.parse("2026-10-27T11:42:00Z")!
         XCTAssertEqual(SessionTime.age(since: start, now: start.addingTimeInterval(2 * 3600 + 120)), "2 h")
         XCTAssertEqual(SessionTime.age(since: start, now: start.addingTimeInterval(12 * 60)), "12 m")
-        let now = SessionTime.parse("2026-10-29T15:00:00Z")!  // a Thursday
-        XCTAssertEqual(SessionTime.relativeDay(SessionTime.parse("2026-10-29T11:40:00Z")!, now: now, calendar: utc), "11:40")
-        XCTAssertEqual(SessionTime.relativeDay(SessionTime.parse("2026-10-27T11:40:00Z")!, now: now, calendar: utc), "Tue")
-        XCTAssertEqual(SessionTime.relativeDay(SessionTime.parse("2026-10-01T11:40:00Z")!, now: now, calendar: utc), "Oct 1")
         XCTAssertNotNil(SessionTime.parse("2026-10-27T11:42:00.123Z"), "fractional seconds parse too")
     }
 
@@ -291,7 +302,11 @@ final class SessionAndFilesTests: XCTestCase {
 
         let changed = model.changedFiles(chat: 1)
         XCTAssertEqual(changed.map(\.path), ["/tmp/demo/mobile-ui.html"], "no reads, no failed edits, one row per file")
-        XCTAssertEqual(changed.first?.time(calendar: utc), "9:14", "the last change's time")
+        let us = Locale(identifier: "en_US")
+        XCTAssertEqual(
+            changed.first?.time(now: SessionTime.parse("2026-10-28T15:00:00Z")!, calendar: utc, locale: us), "9:14 AM",
+            "the last change's time, compact (v0.7 decision 1)")
+        XCTAssertEqual(changed.first?.time(now: SessionTime.parse("2026-10-28T09:20:00Z")!, calendar: utc, locale: us), "6 min ago")
     }
 
     func testDeclinedOrBlockedWritesAreNotChanged() throws {

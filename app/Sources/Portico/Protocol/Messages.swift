@@ -145,12 +145,15 @@ enum FormFieldKind: String, Codable, Sendable {
 struct Brand: Codable, Equatable, Sendable {
     var name: String
     var agentName: String
-    var accent: String?
-    var icon: String?
+    var accent: String? = nil
+    var icon: String? = nil
+    /// v0.7: an image the toolbar shows in place of the mark and the name.
+    var headerImage: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, accent, icon
         case agentName = "agent_name"
+        case headerImage = "header_image"
     }
 }
 

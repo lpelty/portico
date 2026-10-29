@@ -460,7 +460,7 @@ struct BookmarksView: View {
                     hint("Bookmark a file from its menu or the document view.")
                 }
                 ForEach(bookmarks, id: \.self) { path in
-                    BookmarkRow(chat: chat, path: path, time: nil)
+                    BookmarkRow(chat: chat, path: path, at: nil)
                 }
                 let changed = model.changedThisSession(chat: chat)
                 if !changed.isEmpty {
@@ -469,7 +469,7 @@ struct BookmarksView: View {
                         .padding(.top, 18)
                         .padding(.bottom, 6)
                     ForEach(changed, id: \.path) { file in
-                        BookmarkRow(chat: chat, path: file.path, time: file.time())
+                        BookmarkRow(chat: chat, path: file.path, at: file.at)
                     }
                 }
             }
@@ -508,7 +508,7 @@ struct FolderChangedSection: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(changed, id: \.path) { file in
-                            BookmarkRow(chat: chat, path: file.path, time: file.time())
+                            BookmarkRow(chat: chat, path: file.path, at: file.at)
                         }
                     }
                 }
@@ -528,8 +528,9 @@ struct FolderChangedSection: View {
 struct BookmarkRow: View {
     let chat: Int
     let path: String
-    /// `9:14` for a changed file; nil for a bookmark.
-    let time: String?
+    /// When a changed file last changed, shown compact with the full date
+    /// and time as a tooltip (v0.7 decision 1); nil for a bookmark.
+    let at: Date?
     @EnvironmentObject private var model: AppModel
 
     private var name: String { URL(fileURLWithPath: path).lastPathComponent }
@@ -553,10 +554,8 @@ struct BookmarkRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if let time, !time.isEmpty {
-                Text(time)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(Theme.text3)
+            if let at {
+                CompactTime(date: at)
             }
         }
         .padding(.vertical, 5)
