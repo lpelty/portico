@@ -24,6 +24,33 @@
   that followed (both now ask "Save changes to ...?" and share one allow);
   and `cd <the session's folder> && <allowed command>` asked again. A new
   session starts with none.
+- **"Allow for this session" never covers more than the card showed**
+  (review fixes): on a file edit inside the session's folder it covers
+  edits to files in that folder (symlinks followed), outside it only that
+  one file — before, one allow covered every file edit anywhere. On a
+  command, a prefix rule (`git status:*`) no longer covers a part with a
+  background `&`, `$(…)`, `${…}`, backticks or a `<`/`>` redirection
+  (`git status & rm -rf ~` asks), and a `cd` alongside it is covered only as
+  `cd <literal path>` into the session's folder — before, `cd "$(…)"`,
+  ``cd `…` ``, `cd >file`, `cd $HOME`, `cd -` and a bare `cd` were covered.
+  The card says what the allow covers (`card.ask.scope_note`).
+- **Card titles** resolve a relative path against the session's folder
+  (`Create x.md?` vs `Save changes to x.md?` looked in the gateway's own
+  directory).
+- **Outcomes go by the mode when the tool started**: `auto` and `blocked`
+  are labelled from the mode at `tool.started`, not at `tool.finished`;
+  `blocked` only in auto mode and only when no person answered for that
+  step. An answer's outcome is saved at once, not at the tool's end.
+- **Sessions created before v0.3** (no mode on the record) resume in the
+  deployment's `permission_mode` (`auto` by default); the chip shows it.
+- **A message that starts with a path is not a command**: `/tmp please
+  summarize`, `/etc`, `/file.md summarize` go to the agent as typed (the
+  word has a `.` in it, or names something at the root of the disk).
+- **`update --check` exits 4 when the check fails** (another exit code, a
+  timeout, or a command that cannot start), with the reason on stderr: 0
+  available, 1 none, 2 not configured, 4 failed.
+- **Starting the gateway while `status` probes** no longer refuses it as a
+  second copy: it retries the lock for half a second first.
 - **Friendly model name**: `context.usage.model_name` from
   `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME` when the model in use
   is that family's `ANTHROPIC_DEFAULT_*_MODEL` or alias.
@@ -50,7 +77,9 @@
 - Fields: `mode` on `chat.state` and `ChatSummary`; `tool_use_id` on a
   permission `card.ask`; `tool_use_id`, `outcome`, `note` on
   `card.answered`; `permission`, `note` on `tool.finished`; `model_name` on
-  `context.usage`; `config_stale`, `can_update` on `hello`;
+  `context.usage`; `config_stale`, `can_update`, `default_folder`,
+  `permission_mode` (the mode a new session starts in) on `hello`;
+  `scope_note` on a permission `card.ask`;
   `presentation` defaults to `single`.
 
 ### Configuration

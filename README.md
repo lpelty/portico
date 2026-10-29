@@ -180,8 +180,11 @@ A request is one card with a plain question ("Save changes to
 notes.md?"). Its outcome is drawn on the tool row: allowed once, allowed
 for this session, auto, declined (with your note), blocked by auto mode.
 "Allow for this session" lasts as long as the session, across gateway
-restarts; the next session starts with none. Given on a file edit it
-covers every file edit; given on a command it covers that command.
+restarts; the next session starts with none. A line under the buttons
+says what it covers: given on a file edit in the session's folder, edits
+to files in that folder; outside the folder, that one file; given on a
+command, that command (or the prefix the engine suggests, never with a
+second command, a substitution or a redirection appended).
 
 ## Command line
 
@@ -192,7 +195,7 @@ covers every file edit; given on a command it covers that command.
 bin/portico-gateway status --json      # {"version": 1, "running": true, "pid", "port", "folder", "session",
                                        #  "state", "mode", "started_at", "config_stale"}; exit 0 running, 3 not
 bin/portico-gateway stop               # stop the running gateway (its own stop path); exit 3 when none runs
-bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured
+bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
 ```
