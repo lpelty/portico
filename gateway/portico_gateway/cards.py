@@ -7,15 +7,17 @@ nobody was there to answer. The ``CardBroker`` holds the open cards and
 turns the app's ``card.answer`` into the decision the engine callbacks
 expect:
 
-- permission ``allow`` with scope ``once`` → ``"allow"``; scope ``chat`` →
+- permission ``allow`` with scope ``once`` → ``"allow"``; scope ``chat`` (the
+  app's "Allow for this session") →
   an allow key joins ``chat.chat_allows`` and later asks it covers in that
-  chat answer ``"allow"`` without a card — the bare tool name for a path
-  tool, but for a command tool (``Bash``) the engine's own suggested rule
+  chat answer ``"allow"`` without a card — the tool name (all four
+  file-editing tools at once: their cards ask the same question), but for a command tool (``Bash``) the engine's own suggested rule
   (``Bash(git status:*)``) or, without one, the exact command, so one
   harmless command never allows every later one; scope ``always`` →
   ``("allow", "always")``, which the engine adapter hands to the engine's
   own settings (the gateway keeps no permanent allow store of its own);
-  ``deny`` → ``("deny", note)``.
+  ``deny`` → ``("deny", note)``. The keys are kept on the chat record, so
+  they last for the session, across gateway restarts (v0.3).
 - question → ``{<question text>: <label> | [labels]}``, the answers the
   engine's question tool expects.
 
@@ -40,10 +42,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shlex
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from .chats import Chat
@@ -87,8 +91,14 @@ _TITLES: dict[str, str] = {
 # command), never on the bare tool name.
 COMMAND_TOOLS: frozenset[str] = frozenset({"Bash"})
 
-# Shell operators that join commands; every part must be covered on its own.
-_COMMAND_JOINERS = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+# Shell operators (and line breaks) that join commands; every part must be covered on its own.
+_COMMAND_JOINERS = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
+
+# Tools that change a file. They share one chat-scoped allow: every one of
+# their cards reads "Save changes to <file>?" (or "Create <file>?"), so an
+# allow for this session given on one must cover the others, or the next
+# identical-looking question still shows a card.
+EDIT_TOOLS: frozenset[str] = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
 
 def _now() -> str:
@@ -145,6 +155,24 @@ def _rule_covers(rule: str, command: str) -> bool:
         prefix = rule[:-2].strip()
         return bool(prefix) and (command == prefix or command.startswith(prefix + " "))
     return command == rule
+
+
+def _cd_inside(part: str, folder: Path) -> bool:
+    """``cd <dir>`` where ``<dir>`` is the folder or below it (quotes and ``~`` allowed)."""
+    try:
+        words = shlex.split(part)
+    except ValueError:
+        return False
+    if len(words) != 2 or words[0] != "cd":
+        return False
+    target = Path(words[1]).expanduser()
+    if not target.is_absolute():
+        target = folder / target
+    try:
+        target.resolve().relative_to(Path(folder).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
 
 
 # --- validating answers ----------------------------------------------------------
@@ -229,9 +257,11 @@ class CardBroker:
         """``True`` when a person's earlier chat-scoped allow covers this use of ``tool``.
 
         A bare tool name covers every use. A command tool is covered only
-        when every part of its command (split on ``&&``, ``||``, ``;``, ``|``)
-        matches one of the chat's ``Tool(rule)`` keys: ``prefix:*`` matches
-        the prefix as whole words, anything else the exact command.
+        when every part of its command (split on ``&&``, ``||``, ``;``, ``|``
+        and line breaks) matches one of the chat's ``Tool(rule)`` keys:
+        ``prefix:*`` matches the prefix as whole words, anything else the
+        exact command. A ``cd`` into the chat's own folder (or below it) is
+        covered by any such key: it changes nothing a person is asked about.
         """
         if tool in chat.chat_allows:
             return True
@@ -244,11 +274,15 @@ class CardBroker:
         if not rules:
             return False
         parts = [part for part in _COMMAND_JOINERS.split(command.strip()) if part]
-        return bool(parts) and all(any(_rule_covers(rule, part) for rule in rules) for part in parts)
+        return bool(parts) and all(
+            _cd_inside(part, chat.folder) or any(_rule_covers(rule, part) for rule in rules) for part in parts
+        )
 
     @staticmethod
     def chat_allow_keys(tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]]) -> set[str]:
         """What a scope ``chat`` allow records for this use: the tool name, or ``Tool(rule)`` keys for a command tool."""
+        if tool in EDIT_TOOLS:
+            return set(EDIT_TOOLS)
         if tool not in COMMAND_TOOLS:
             return {tool}
         rules: list[str] = []

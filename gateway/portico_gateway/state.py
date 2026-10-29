@@ -67,6 +67,9 @@ class ChatRecord(BaseModel):
     # v0.3: the session's permission mode (``None`` in a v0.2 index: the
     # deployment's ``permission_mode`` applies).
     mode: PermissionMode | None = None
+    # v0.3: the session's chat-scoped allows ("Allow for this session"), so
+    # a gateway restart keeps them; a new session starts with none.
+    allows: list[str] = []
 
 
 class Index(BaseModel):

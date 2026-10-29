@@ -11,11 +11,11 @@ next ``seq`` and kept in a ring of the newest ``history_buffer`` events.
 after the last ``seq`` it saw, and a ``truncated`` flag when the ring has
 already dropped some of what it asked for (so it should refetch history).
 
-The ring, ``seq``, ``turn``, the engine and the per-chat allows belong to
-one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
+The ring, ``seq``, ``turn`` and the engine belong to one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
 number, folder, engine session id, alias, state word, creation time,
 the artifacts the chat produced, and (v0.2) the session facts: title,
-ended, logged, parent, compactions and the last context percentage. A chat that came back from the index with
+ended, logged, parent, compactions and the last context percentage, and
+(v0.3) the permission mode and the session's chat-scoped allows. A chat that came back from the index with
 a session is ``restored``: its conversation before this launch lives in
 the engine's transcript, which the server replays on ``chat.open``.
 """
@@ -99,6 +99,7 @@ class Chat:
         compactions: int = 0,
         context_percent: float | None = None,
         mode: PermissionMode | None = None,
+        allows: list[str] | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -127,8 +128,9 @@ class Chat:
         # deployment's default for a chat that has none.
         self.mode: PermissionMode | None = mode
         # Chat-scoped allows: bare tool names, or ``Tool(rule)`` keys for a
-        # command tool (``cards.CardBroker.chat_allow_keys``).
-        self.chat_allows: set[str] = set()
+        # command tool (``cards.CardBroker.chat_allow_keys``). Kept on the
+        # record (v0.3), so they last as long as the session does.
+        self.chat_allows: set[str] = set(allows or [])
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from
@@ -201,6 +203,7 @@ class Chat:
             state=self.state,
             created=self.created,
             artifacts=list(self.artifacts),
+            allows=sorted(self.chat_allows),
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -223,6 +226,7 @@ class Chat:
             compactions=record.compactions,
             context_percent=record.context_percent,
             mode=record.mode,
+            allows=record.allows,
         )
         chat.restored = record.session_id is not None
         return chat

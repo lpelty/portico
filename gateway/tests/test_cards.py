@@ -207,7 +207,7 @@ async def test_permission_scope_chat_skips_next_ask_for_same_tool(
         # The second Write in the same turn was allowed without a card.
         assert engine.decisions == ["allow", "allow"]
         assert not any(isinstance(m, CardAsk) for m in after)
-        assert server.registry.get(number).chat_allows == {"Write"}
+        assert server.registry.get(number).chat_allows == {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
         # Still allowed on the next turn; a different tool still asks.
         engine.script(write_ask(folder, "toolu_3"), AskPermission("Bash", {"command": "ls"}, tool_use_id="toolu_4"), fake_result())
@@ -223,7 +223,7 @@ async def test_permission_scope_chat_skips_next_ask_for_same_tool(
         await recv_until(conn, TurnFinished)
         await recv(conn)
         assert engine.decisions[-1] == ("deny", "not now")
-        assert server.registry.get(number).chat_allows == {"Write"}
+        assert server.registry.get(number).chat_allows == {"Write", "Edit", "MultiEdit", "NotebookEdit"}
     finally:
         await conn.close()
 

@@ -1125,9 +1125,13 @@ class GatewayServer:
         if self.cards.allowed(chat, tool, input):
             return "allow"
         run = self._runs.get(chat.number)
+        before = set(chat.chat_allows)
         try:
             return await self.cards.ask_permission(chat, tool, input, suggestions, tool_use_id, self._emit_card)
         finally:
+            if chat.chat_allows != before:
+                # On the record at once: a gateway restart keeps the session's allows.
+                self.registry.persist()
             await self._resume_working(chat, run)
 
     async def ask_question(self, chat: Chat, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
