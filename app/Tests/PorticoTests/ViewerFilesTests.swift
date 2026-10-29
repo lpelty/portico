@@ -220,7 +220,8 @@ final class ViewerFilesTests: XCTestCase {
 
     @MainActor
     func testUnsupportedKindWords() {
-        XCTAssertEqual(ArtifactPresentation.kindPhrase(forExtension: "zip"), "Zip archives")
+        XCTAssertEqual(ArtifactPresentation.kindPhrase(forExtension: "zip"), "ZIP archives")
+        XCTAssertEqual(ArtifactPresentation.kindPhrase(forExtension: "DOCX"), "Word documents")
         XCTAssertEqual(ArtifactPresentation.kindPhrase(forExtension: "zzqx"), "ZZQX files")
         XCTAssertEqual(ArtifactPresentation.kindPhrase(forExtension: ""), "this kind of file")
         let label = file("/tmp/x.docx", media: .other).openLabel

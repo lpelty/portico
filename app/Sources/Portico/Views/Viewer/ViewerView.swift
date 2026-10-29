@@ -74,12 +74,25 @@ struct ArtifactPresentation: Equatable {
     /// "this kind of file" with no extension at all.
     static func kindPhrase(forExtension ext: String) -> String {
         guard !ext.isEmpty else { return "this kind of file" }
+        if let common = commonKinds[ext.lowercased()] { return common }
         if let type = UTType(filenameExtension: ext), !type.isDynamic,
            let name = type.localizedDescription, !name.isEmpty {
             return name.hasSuffix("s") ? name : name + "s"
         }
         return ext.uppercased() + " files"
     }
+
+    /// The words people use for the usual office and archive files; the
+    /// system's own names for these read like specifications ("Office Open
+    /// XML word processing documents").
+    static let commonKinds: [String: String] = [
+        "doc": "Word documents", "docx": "Word documents",
+        "xls": "Excel spreadsheets", "xlsx": "Excel spreadsheets",
+        "ppt": "PowerPoint presentations", "pptx": "PowerPoint presentations",
+        "pages": "Pages documents", "numbers": "Numbers spreadsheets", "key": "Keynote presentations",
+        "zip": "ZIP archives", "gz": "compressed files", "tar": "archives",
+        "mp4": "videos", "mov": "videos", "mp3": "audio files", "wav": "audio files", "m4a": "audio files",
+    ]
 
     /// The file on disk, for file artifacts; `nil` for a URL.
     var fileURL: URL? {
