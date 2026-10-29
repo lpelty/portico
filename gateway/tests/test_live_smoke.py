@@ -98,7 +98,9 @@ def isolated_cli_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
 
 @pytest.fixture
 async def server(state_dir: StateDir, isolated_cli_config: Path) -> AsyncIterator[GatewayServer]:
-    config = Config()  # defaults: setting_sources=["project"], no lifecycle commands
+    # Defaults (setting_sources=["project"], no lifecycle commands), except the two v0.3 changed:
+    # the checks built on this fixture open several chats and expect a card for every step.
+    config = Config(presentation="multiple", permission_mode="default")
     registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
     srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=SDKEngine, version=__version__)
     await srv.serve(0)
