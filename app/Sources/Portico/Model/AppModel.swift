@@ -89,6 +89,7 @@ final class AppModel: ObservableObject {
         didSet {
             if let focus = viewerFocus, focus.chat != selected { endFocus() }
             if selected != nil { conversationShown = true }
+            if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
         }
     }
     /// The first `chat.list` of this run has arrived (v0.6). Until then the
@@ -312,6 +313,10 @@ final class AppModel: ObservableObject {
     private var launchViewer: [Int: String] = [:]
     /// The launch's viewer rule has been applied (once per run).
     private var launchViewerDecided = false
+    /// The session whose remembered viewer waits for its conversation
+    /// (v0.8 decision 1): the welcome stands alone, and the artifact comes
+    /// back when the person goes into the conversation.
+    private(set) var heldViewer: Int?
     /// Per chat, the id of the artifact that was on screen when a replay
     /// from the beginning reset the list; put back when it is re-listed.
     private var restoreCurrent: [Int: String] = [:]
@@ -1003,16 +1008,37 @@ final class AppModel: ObservableObject {
     /// only if it was showing an artifact when the app quit, on that
     /// artifact (`ViewerRestore`); otherwise it starts closed, rather than
     /// open on nothing. Once per run, before the chat's events arrive.
+    ///
+    /// The welcome is shown on its own (v0.8 decision 1): the viewer stays
+    /// closed while it shows, and the restore is held until the session's
+    /// conversation is (View Session N, a send from the welcome, or picking
+    /// the session), when `selected` becomes the chat.
     func restoreViewerAtLaunch(chat: Int) {
         guard !launchViewerDecided else { return }
         launchViewerDecided = true
         viewerVisible[chat] = false
+        guard ViewerRestore.artifact(saved: settings.viewerAtQuit, chat: chat) != nil else { return }
+        if selected == chat {
+            applyViewerRestore(chat: chat)
+        } else {
+            heldViewer = chat
+        }
+    }
+
+    /// Put the remembered artifact back in `chat`'s viewer: at once when it
+    /// is already listed (the welcome loaded the session's events), else
+    /// when it is (`launchViewer`).
+    private func applyViewerRestore(chat: Int) {
+        heldViewer = nil
         guard let id = ViewerRestore.artifact(saved: settings.viewerAtQuit, chat: chat) else { return }
         if id.hasPrefix(Self.localArtifactPrefix) {
             // A file opened from the Files pane: the gateway never lists
             // it, so it is opened again here, if it is still there.
             let path = String(id.dropFirst(Self.localArtifactPrefix.count))
             if FileManager.default.fileExists(atPath: path) { openArtifact(file: path, in: chat) }
+        } else if let listed = artifacts[chat]?.first(where: { $0.id == id }) {
+            current[chat] = listed
+            viewerVisible[chat] = true
         } else {
             launchViewer[chat] = id
         }
@@ -1027,9 +1053,11 @@ final class AppModel: ObservableObject {
     }
 
     /// Called as the app quits: remember what the viewer shows (or that it
-    /// shows nothing) for the next launch.
+    /// shows nothing) for the next launch; quitting from the welcome keeps
+    /// what was remembered (v0.8 decision 1).
     func rememberViewerForNextLaunch() {
-        settings.viewerAtQuit = viewerToRemember
+        settings.viewerAtQuit = ViewerRestore.toRemember(
+            showing: viewerToRemember, saved: settings.viewerAtQuit, held: heldViewer != nil)
     }
 
     /// The chat's artifacts, newest first, for the history list.
@@ -1392,6 +1420,7 @@ final class AppModel: ObservableObject {
         viewerVisible[chat] = nil
         restoreCurrent[chat] = nil
         launchViewer[chat] = nil
+        if heldViewer == chat { heldViewer = nil }
         relistTasks[chat]?.cancel()
         relistTasks[chat] = nil
         status[chat] = nil
