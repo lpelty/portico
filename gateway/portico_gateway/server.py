@@ -146,6 +146,7 @@ from .messages import (
     ChatRemove,
     ChatState,
     ChatStateWord,
+    ConfigStale,
     ChatStop,
     ClientMessage,
     ContextUsage,
@@ -196,6 +197,9 @@ HTTP_BODY_TIMEOUT = 10.0
 CLOSE_GOING_AWAY = 1001
 CLOSE_PROTOCOL_ERROR = 1002
 CLOSE_POLICY = 1008
+
+# How often the gateway looks at the config file's modification time.
+CONFIG_CHECK_SECONDS = 10.0
 
 # After ``turn.stop`` the engine is given this long to send its own
 # ``turn.finished``; then the gateway ends the turn itself, and closes the
@@ -567,8 +571,15 @@ class GatewayServer:
         engine_factory: Callable[[], Engine],
         version: str,
         plugins: Plugins | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self.config = config
+        # The file the config came from and its modification time at start:
+        # a newer file means the running gateway is not using it (v0.3).
+        self.config_path = Path(config_path) if config_path is not None else None
+        self.config_mtime = self._config_mtime()
+        self._config_stale_sent = False
+        self.started_at = _now()
         self.plugins = plugins if plugins is not None else Plugins.none()
         self.state = state
         self.registry = registry
@@ -603,6 +614,7 @@ class GatewayServer:
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
             ("GET", "/v1/health"): self._health,
             ("POST", "/v1/artifact"): self._producer,
+            ("GET", "/v1/status"): self._status,
         }
         self.register("artifact.opened", self.on_artifact_opened)
         self.register("card.answer", self.on_card_answer)
@@ -647,6 +659,8 @@ class GatewayServer:
         )
         self.port = self._server.sockets[0].getsockname()[1]
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
+        if self.config_path is not None:
+            self._spawn(self._watch_config(), name="portico-config-watch")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -739,6 +753,62 @@ class GatewayServer:
         """One chat-less ``status.set`` for the strip (lifecycle commands, stop progress)."""
         await self.broadcast(StatusSet(ts=_now(), text=text))
 
+    # --- the config file and the gateway's status ----------------------------------
+
+    def _config_mtime(self) -> float | None:
+        if self.config_path is None:
+            return None
+        try:
+            return self.config_path.stat().st_mtime
+        except OSError:
+            return None
+
+    def config_stale(self) -> bool:
+        """Whether the config file is newer than when this gateway started (or appeared since)."""
+        if self.config_path is None:
+            return False
+        now = self._config_mtime()
+        return now is not None and (self.config_mtime is None or now > self.config_mtime)
+
+    async def check_config(self) -> None:
+        """Send ``config.stale`` once, the first time the file is seen newer."""
+        if self._config_stale_sent or not self.config_stale():
+            return
+        self._config_stale_sent = True
+        log.info("%s changed after the gateway started; restart the gateway to apply it", self.config_path)
+        await self.broadcast(ConfigStale(ts=_now()))
+
+    async def _watch_config(self) -> None:
+        while not self._config_stale_sent:
+            await asyncio.sleep(CONFIG_CHECK_SECONDS)
+            await self.check_config()
+
+    def status(self) -> dict[str, Any]:
+        """What ``GET /v1/status`` answers (``portico-gateway status --json``): the live session, if any.
+
+        The live session is the newest chat that has not ended (in
+        ``multiple`` presentation, the newest open chat).
+        """
+        out: dict[str, Any] = {
+            "version": 1,
+            "running": True,
+            "pid": os.getpid(),
+            "port": self.port,
+            "started_at": self.started_at,
+            "config_stale": self.config_stale(),
+        }
+        live = [chat for chat in self.registry.chats() if chat.ended is None]
+        if live:
+            chat = live[-1]
+            out.update(
+                {"folder": str(chat.folder), "session": chat.number, "state": chat.state, "mode": chat.mode}
+            )
+        return {k: v for k, v in out.items() if v is not None}
+
+    async def _status(self, request: HttpRequest) -> HttpResponse:
+        self.require_token(request)
+        return HttpResponse.json(http.HTTPStatus.OK, self.status())
+
     async def on_gateway_stop(self, msg: GatewayStop, conn: ServerConnection) -> None:
         await self.stop("the app asked")
 
@@ -827,7 +897,10 @@ class GatewayServer:
             return
 
         await self._attach(conn)
-        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins))
+        stale = self.config_stale()
+        if stale:
+            self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
+        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
         await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while

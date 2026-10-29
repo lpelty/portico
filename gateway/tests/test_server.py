@@ -266,3 +266,59 @@ async def test_shutdown_completes_with_a_client_that_never_said_hello(state_dir:
         assert state_dir.read_ledger() is None
     finally:
         await conn.close()
+
+
+# --- v0.3: a stale config, the status route ----------------------------------------
+
+
+async def test_config_newer_than_the_start_is_said_once_and_in_hello(
+    state_dir: StateDir, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import portico_gateway.server as server_mod
+    from portico_gateway.messages import ConfigStale
+
+    monkeypatch.setattr(server_mod, "CONFIG_CHECK_SECONDS", 0.05)
+    path = state_dir.config_path
+    path.write_text("")
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(
+        config=config, state=state_dir, registry=registry, engine_factory=FakeEngine, version=__version__, config_path=path
+    )
+    await srv.serve(0)
+    try:
+        conn = await connect(ws_url(srv, srv.token))
+        await conn.send(dump(HelloClient(ts=TS, app_version="0.3.0")))
+        hello = parse_server(await conn.recv())
+        assert isinstance(hello, HelloServer) and hello.config_stale is False
+        await conn.recv()  # chat.list
+        assert srv.status()["config_stale"] is False
+
+        later = path.stat().st_mtime + 5
+        os.utime(path, (later, later))
+        stale = parse_server(await asyncio.wait_for(conn.recv(), 5))
+        assert isinstance(stale, ConfigStale) and stale.seq is None
+        with pytest.raises(TimeoutError):  # once
+            await asyncio.wait_for(conn.recv(), 0.3)
+        await conn.close()
+
+        # An app that attaches later reads it in hello.
+        again = await connect(ws_url(srv, srv.token))
+        await again.send(dump(HelloClient(ts=TS, app_version="0.3.0")))
+        hello = parse_server(await again.recv())
+        assert isinstance(hello, HelloServer) and hello.config_stale is True
+        await again.close()
+    finally:
+        await srv.shutdown()
+
+
+async def test_status_route_needs_the_token_and_names_the_live_session(server: GatewayServer, tmp_path: Path) -> None:
+    status, _, body = await http_get(server.port, "/v1/status")
+    assert status == 401
+    first = server.registry.create(tmp_path)
+    first.ended = "2026-10-28T00:00:00Z"
+    live = server.registry.create(tmp_path)
+    live.mode = "default"
+    got = server.status()
+    assert got["version"] == 1 and got["running"] is True and got["pid"] == os.getpid() and got["port"] == server.port
+    assert (got["session"], got["folder"], got["state"], got["mode"]) == (live.number, str(tmp_path), "idle", "default")
+    assert got["config_stale"] is False and "started_at" in got

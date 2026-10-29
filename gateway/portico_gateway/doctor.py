@@ -320,6 +320,27 @@ def check_ledger(state: StateDir) -> Check:
     return Check("ledger", False, f"pid {ledger.pid} is gone and nothing listens on {ledger.host}:{ledger.port}; {STALE_LEDGER}")
 
 
+def check_gateway_config(state: StateDir) -> Check:
+    """Whether the running gateway is using the config file as it is now (v0.3)."""
+    from .status import gateway_status
+
+    status = gateway_status(state)
+    if not status.get("running"):
+        return Check("gateway config", True, "no gateway running; the next one reads the config at start")
+    pid = status.get("pid", "?")
+    if status.get("config_stale"):
+        return Check(
+            "gateway config",
+            True,
+            f"the running gateway (pid {pid}) started before the config file changed: "
+            "restart the gateway to apply (portico-gateway stop; the app starts a fresh one)",
+            warn=True,
+        )
+    if "config_stale" not in status:
+        return Check("gateway config", True, f"a gateway is running (pid {pid}) but could not be asked about its config")
+    return Check("gateway config", True, f"the running gateway (pid {pid}) uses the config as it is now")
+
+
 def check_swift() -> Check:
     path = shutil.which("swift")
     if path:
@@ -393,5 +414,6 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_token(state),
         check_env_file(state),
         check_ledger(state),
+        check_gateway_config(state),
         check_swift(),
     ]

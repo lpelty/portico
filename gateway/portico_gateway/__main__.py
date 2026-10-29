@@ -1,7 +1,9 @@
 """``portico-gateway`` command line.
 
-Subcommands: ``run``, ``doctor``, ``check-env``, ``export-schema``, ``export-examples``. ``run`` holds the
-state directory lock, serves until ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``.
+Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
+``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
+gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         state = StateDir(Path(args.state).expanduser() if args.state else None)
-        config = load_config(Path(args.config).expanduser() if args.config else state.config_path)
+        config_path = Path(args.config).expanduser() if args.config else state.config_path
+        config = load_config(config_path)
         plugins = load_plugins(config.plugins, config.plugin_paths)
         hello_for(config, "start", __version__, plugins)  # a plug-in's on_hello fails here, not at the app's connect
         single_instance(state)
@@ -36,7 +39,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"portico-gateway: {e}", file=sys.stderr)
         return 1
     try:
-        return asyncio.run(_run_server(config, state, args.port, plugins=plugins))
+        return asyncio.run(_run_server(config, state, args.port, plugins=plugins, config_path=config_path))
     except StateError as e:
         print(f"portico-gateway: {e}", file=sys.stderr)
         return 1
@@ -44,7 +47,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         state.release_lock()
 
 
-async def _run_server(config, state, port: int, engine_factory=None, plugins=None) -> int:  # noqa: ANN001 - types live in the modules below
+async def _run_server(config, state, port: int, engine_factory=None, plugins=None, config_path=None) -> int:  # noqa: ANN001 - types live in the modules below
     """Serve until ``stop`` has run (``gateway.stop`` from the app, or a stop signal), then shut down; exit 0."""
     from portico_gateway.chats import ChatRegistry
     from portico_gateway.lifecycle import install_stop_signals
@@ -58,7 +61,13 @@ async def _run_server(config, state, port: int, engine_factory=None, plugins=Non
         index=state.load_index(), state=state, history_buffer=config.history_buffer, default_mode=config.permission_mode
     )
     server = GatewayServer(
-        config=config, state=state, registry=registry, engine_factory=engine_factory, version=__version__, plugins=plugins
+        config=config,
+        state=state,
+        registry=registry,
+        engine_factory=engine_factory,
+        version=__version__,
+        plugins=plugins,
+        config_path=config_path,
     )
     install_stop_signals(asyncio.get_running_loop(), server.request_stop)
     await server.serve(port)
@@ -145,6 +154,47 @@ def cmd_config_value(args: argparse.Namespace) -> int:
     return 0
 
 
+# Exit code of ``stop`` and ``status`` when no gateway runs on the state directory.
+EXIT_NONE_RUNNING = 3
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    """Stop the gateway running on this state directory; exit 0 when one was stopped, 3 when none ran."""
+    from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.status import stop_gateway
+
+    state, config_path = _state_and_config_path(args)
+    timeout = args.timeout
+    if timeout is None:
+        # The stop runs the deployment's ``on_stop``, bounded by its timeout; then a margin.
+        try:
+            timeout = float(load_config(config_path).command_timeout_seconds) + 30.0
+        except ConfigError:
+            timeout = 150.0
+    try:
+        pid = stop_gateway(state, timeout)
+    except TimeoutError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    if pid is None:
+        print(f"no gateway running on {state.path}")
+        return EXIT_NONE_RUNNING
+    print(f"stopped the gateway (pid {pid})")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Whether a gateway runs here and what it is doing; ``--json`` for programs. Exit 0 running, 3 not."""
+    import json
+
+    from portico_gateway.status import describe, gateway_status
+
+    state, _ = _state_and_config_path(args)
+    status = gateway_status(state)
+    print(json.dumps(status) if args.json else describe(status, state))
+    return 0 if status["running"] else EXIT_NONE_RUNNING
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +233,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("check-env", help="exit 1 and print the line numbers when an env file has a line that is not KEY=value")
     p.add_argument("path", help="the env file to check; a missing file passes")
     p.set_defaults(func=cmd_check_env)
+
+    p = sub.add_parser("stop", help="stop the gateway running on this state directory (exit 3 when none runs)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--config", help="config file (default: <state>/config.toml)")
+    p.add_argument("--timeout", type=float, help="seconds to wait for it to stop (default: command_timeout_seconds + 30)")
+    p.set_defaults(func=cmd_stop)
+
+    p = sub.add_parser("status", help="whether a gateway runs here and its live session (exit 0 running, 3 not)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
+    p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("config-value", help="print one config value (e.g. brand.name, brand.app_icon), or nothing")
     p.add_argument("key", help="dotted key: brand.name, brand.app_icon, update.run, ...")
