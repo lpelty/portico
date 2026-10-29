@@ -228,13 +228,20 @@ struct TurnMarkerView: View {
 }
 
 /// S5's divider at the top of a session that followed another:
-/// `✓ Session 13 · Interview codebook · logged 11:40` between two rules,
-/// and `Session 14 · started 11:42` under it.
+/// `✓ Session 13 · Interview codebook · logged today, 11:40 AM` between two
+/// rules, and `Session 14 · started today, 11:42 AM` under it; re-read each
+/// minute so a relative time moves (v0.7 decision 1).
 struct SessionDivider: View {
     let parent: SessionPresentation
     let current: SessionPresentation
 
     var body: some View {
+        TimelineView(.everyMinute) { context in
+            lines(now: context.date)
+        }
+    }
+
+    private func lines(now: Date) -> some View {
         VStack(spacing: 6) {
             HStack(spacing: 10) {
                 Rectangle().fill(Theme.border).frame(height: 1)
@@ -243,14 +250,14 @@ struct SessionDivider: View {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .semibold))
                     }
-                    Text(parent.parentLine())
+                    Text(parent.parentLine(now: now))
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
                 .fixedSize()
                 Rectangle().fill(Theme.border).frame(height: 1)
             }
-            Text(current.startedSecondLine())
+            Text(current.startedSecondLine(now: now))
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
         }
@@ -339,7 +346,7 @@ struct EndedSessionBar: View {
 }
 
 extension EndedSessionBar {
-    /// `Session 2 · ended yesterday · read-only`.
+    /// `Session 12 · ended Oct 27, 4:12 PM · read-only`.
     private func line(now: Date) -> String {
         guard let summary = model.summary(of: chat) else { return "Session \(chat) · read-only" }
         return SessionPresentation(summary: summary).endedBarLine(now: now)

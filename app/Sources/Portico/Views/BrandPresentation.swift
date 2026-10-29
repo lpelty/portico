@@ -61,6 +61,79 @@ extension AppModel {
     var brand: BrandPresentation { BrandPresentation(brand: hello?.brand) }
 }
 
+// MARK: - The rounded mark (v0.7 decision 5)
+
+/// Whether the brand icon is drawn in the macOS icon shape. A flat square
+/// (opaque corners) is rounded; an image whose four corners are already
+/// transparent has its own shape and is drawn as given. The same test
+/// `bin/install` runs on `app_icon` (`app/Packaging/shape-app-icon.swift`):
+/// the pixel one in from each corner, transparent below alpha 16.
+enum BrandIconShape {
+    /// The corner radius as a share of the side: the macOS icon grid's
+    /// 185 on an 824-point body.
+    static let cornerFraction: CGFloat = 0.22
+
+    /// True when the image should be rounded: any corner is opaque. An
+    /// image that cannot be read as pixels is drawn as given.
+    static func rounds(_ image: NSImage) -> Bool {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        return !cornersAreTransparent(cgImage)
+    }
+
+    /// True when each corner pixel (one in from the edge) is nearly
+    /// transparent. Reads four single pixels, not the whole image, so it
+    /// is cheap enough to run each time the mark is drawn.
+    static func cornersAreTransparent(_ image: CGImage) -> Bool {
+        let w = image.width, h = image.height
+        guard w > 4, h > 4 else { return false }
+        let inset = 1
+        let corners = [(inset, inset), (w - 1 - inset, inset), (inset, h - 1 - inset), (w - 1 - inset, h - 1 - inset)]
+        return corners.allSatisfy { x, y in
+            guard let alpha = alpha(of: image, x: x, y: y) else { return false }
+            return alpha < 16
+        }
+    }
+
+    /// One pixel's alpha (0–255), drawn premultiplied into a 1×1 context.
+    private static func alpha(of image: CGImage, x: Int, y: Int) -> UInt8? {
+        guard let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)),
+            let space = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return nil }
+        var bytes: [UInt8] = [0, 0, 0, 0]
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let ctx = CGContext(
+                data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            ctx.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        return drawn ? bytes[3] : nil
+    }
+}
+
+/// The brand icon at a given side: clipped to the macOS icon shape
+/// (continuous corners, radius about 22 % of the side) when its corners
+/// are opaque, else as given (v0.7 decision 5). The welcome's greeting
+/// mark and the sidebar header's mark both draw it.
+struct BrandIcon: View {
+    let image: NSImage
+    let side: CGFloat
+
+    var body: some View {
+        let picture = Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: side, height: side)
+        if BrandIconShape.rounds(image) {
+            picture.clipShape(RoundedRectangle(cornerRadius: side * BrandIconShape.cornerFraction, style: .continuous))
+        } else {
+            picture
+        }
+    }
+}
+
 /// The brand icon and name at the top of the sidebar, only when the
 /// gateway gave an icon: without one the window title already says the name.
 struct BrandHeader: View {
@@ -69,10 +142,7 @@ struct BrandHeader: View {
     var body: some View {
         if let icon = brand.iconImage {
             HStack(spacing: 8) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 20, height: 20)
+                BrandIcon(image: icon, side: 20)
                 Text(brand.name)
                     .font(.headline)
                     .lineLimit(1)

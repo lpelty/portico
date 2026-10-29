@@ -257,17 +257,15 @@ struct MainToolbar: View {
     }
 }
 
-/// The brand's icon from `hello`, or a 20-point rounded square in the
-/// accent when the gateway sent none (the frame's placeholder).
+/// The brand's icon from `hello` (rounded when it is a flat square, v0.7
+/// decision 5), or a 20-point rounded square in the accent when the
+/// gateway sent none (the frame's placeholder).
 struct BrandMark: View {
     let brand: BrandPresentation
 
     var body: some View {
         if let icon = brand.iconImage {
-            Image(nsImage: icon)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 20, height: 20)
+            BrandIcon(image: icon, side: 20)
         } else {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(brand.accent ?? Theme.accent)

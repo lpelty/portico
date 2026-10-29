@@ -133,9 +133,9 @@ struct EarlierRow: View {
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 loggedMark
-                Text(SessionTime.parse(summary.ended ?? summary.created).map { SessionTime.relativeDay($0) } ?? "")
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(Theme.text3)
+                if let when = SessionTime.parse(summary.ended ?? summary.created) {
+                    CompactTime(date: when)
+                }
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
@@ -251,11 +251,14 @@ struct SessionCard: View {
                     .foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(shown.startedLine())
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // Re-read each minute so "Started 12 min ago" moves (v0.7 decision 1).
+                TimelineView(.everyMinute) { context in
+                    Text(shown.startedLine(now: context.date))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             contextRow
             buttons
@@ -426,5 +429,22 @@ struct ContextMeter: View {
         }
         .frame(height: Theme.meterHeight)
         .accessibilityLabel("Context \(Int(percent.rounded())) percent")
+    }
+}
+
+/// A compact time in a trailing column (v0.7 decision 1): re-read each
+/// minute so "12 min ago" moves, with the full date and time as its tooltip.
+struct CompactTime: View {
+    let date: Date
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            Text(SessionTime.compact(date, now: context.date))
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(Theme.text3)
+                .lineLimit(1)
+                .fixedSize()
+                .help(SessionTime.tooltip(date))
+        }
     }
 }

@@ -323,8 +323,13 @@ extension ContextUsage {
 
 // MARK: - Times as the S frames write them
 
-/// `Started 11:42`, `2 h`, `Tue`: the session card's and the Earlier
-/// list's times, from the protocol's ISO-8601 stamps.
+/// Every time the app shows, from the protocol's ISO-8601 stamps, on one
+/// rule (v0.7 decision 1, frame AA3): the Mac's own locale and 12/24-hour
+/// setting for the clock, never a bare `h:mm`. `full` for the card, the
+/// welcome line, the ended bar and the logged line; `compact` for the
+/// Earlier list's and Changed this session's trailing column, with `full`
+/// as its tooltip. Pure: now, calendar (and its time zone) and locale are
+/// passed in, so tests pin them.
 enum SessionTime {
     static func parse(_ stamp: String?) -> Date? {
         guard let stamp else { return nil }
@@ -335,17 +340,22 @@ enum SessionTime {
         return fractional.date(from: stamp)
     }
 
-    /// `11:42`, `1:05`: the frames' clock, no am/pm.
-    static func clock(_ date: Date, calendar: Calendar = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "h:mm"
-        return formatter.string(from: date)
+    /// `9:14 AM` in en_US, `09:14` in en_GB: the locale's short time, which
+    /// on the Mac carries the person's 12/24-hour setting. The narrow space
+    /// some locales put before AM/PM becomes a plain one.
+    static func clock(_ date: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let style = Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        return style.format(date).replacingOccurrences(of: "\u{202F}", with: " ")
+    }
+
+    /// `Oct 27` (`27 Oct` in en_GB), and with the year `Oct 27, 2025`.
+    static func day(_ date: Date, withYear: Bool, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).month(.abbreviated).day()
+        return (withYear ? style.year() : style).format(date)
     }
 
     /// How long a session has been going: `now`, `12 m`, `2 h`, `3 d`.
+    /// A duration, not a time, so decision 1 leaves it as it is.
     static func age(since start: Date, now: Date = Date()) -> String {
         let minutes = max(0, Int(now.timeIntervalSince(start) / 60))
         if minutes < 1 { return "now" }
@@ -365,34 +375,55 @@ enum SessionTime {
         return "\(hours / 24) d ago"
     }
 
-    /// When a session ended, for the bar over it: `12 min ago` within the
-    /// hour, `today at 9:14`, `yesterday`, the weekday this week (`on
-    /// Tuesday`), else the date (`on Oct 3`).
-    static func endedWhen(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        let elapsed = now.timeIntervalSince(date)
-        if elapsed >= 0 && elapsed < 3600 { return ago(date, now: now) }
-        if calendar.isDate(date, inSameDayAs: now) { return "today at \(clock(date, calendar: calendar))" }
-        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
-        if days == 1 { return "yesterday" }
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = (2..<7).contains(days) ? "EEEE" : "MMM d"
-        return "on " + formatter.string(from: date)
+    /// Which part of decision 1's rule a time falls in, from `now`.
+    enum Span: Equatable {
+        /// Within the last hour (a minute of clock skew ahead counts too).
+        case lastHour
+        case today
+        case yesterday
+        case thisYear
+        case earlier
     }
 
-    /// An Earlier row's time: the clock today, the weekday this week,
-    /// else the month and day.
-    static func relativeDay(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        if calendar.isDate(date, inSameDayAs: now) { return clock(date, calendar: calendar) }
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.locale = Locale(identifier: "en_US_POSIX")
+    static func span(of date: Date, now: Date, calendar: Calendar) -> Span {
+        let elapsed = now.timeIntervalSince(date)
+        if elapsed > -60 && elapsed < 3600 { return .lastHour }
+        if calendar.isDate(date, inSameDayAs: now) { return .today }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
-        formatter.dateFormat = (0..<7).contains(days) ? "EEE" : "MMM d"
-        return formatter.string(from: date)
+        if days == 1 { return .yesterday }
+        if calendar.component(.year, from: date) == calendar.component(.year, from: now) { return .thisYear }
+        return .earlier
+    }
+
+    /// The full form: `just now`, `12 min ago`, `today, 10:30 AM`,
+    /// `yesterday, 4:12 PM`, `Oct 27, 4:12 PM`, `Oct 27, 2025, 4:12 PM`.
+    static func full(_ date: Date, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let time = clock(date, calendar: calendar, locale: locale)
+        switch span(of: date, now: now, calendar: calendar) {
+        case .lastHour: return ago(date, now: now)
+        case .today: return "today, \(time)"
+        case .yesterday: return "yesterday, \(time)"
+        case .thisYear: return "\(day(date, withYear: false, calendar: calendar, locale: locale)), \(time)"
+        case .earlier: return "\(day(date, withYear: true, calendar: calendar, locale: locale)), \(time)"
+        }
+    }
+
+    /// The compact form for a trailing column: `12 min ago`, `10:30 AM`,
+    /// `Yesterday`, `Oct 27`, `Oct 27, 2025`.
+    static func compact(_ date: Date, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        switch span(of: date, now: now, calendar: calendar) {
+        case .lastHour: return ago(date, now: now)
+        case .today: return clock(date, calendar: calendar, locale: locale)
+        case .yesterday: return "Yesterday"
+        case .thisYear: return day(date, withYear: false, calendar: calendar, locale: locale)
+        case .earlier: return day(date, withYear: true, calendar: calendar, locale: locale)
+        }
+    }
+
+    /// The compact column's tooltip: the full date and time, never relative
+    /// (`Oct 29, 2026, 10:30 AM`), so hovering tells what the column hides.
+    static func tooltip(_ date: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        "\(day(date, withYear: true, calendar: calendar, locale: locale)), \(clock(date, calendar: calendar, locale: locale))"
     }
 }
 
@@ -433,24 +464,25 @@ struct SessionPresentation: Equatable {
         return nil
     }
 
-    /// `Started 11:42 · Q3 synthesis`.
-    func startedLine(calendar: Calendar = .current) -> String {
+    /// `Started today, 9:14 AM · Q3 synthesis` (v0.7 decision 1's full form).
+    func startedLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         var parts: [String] = []
         if let start = SessionTime.parse(summary.created) {
-            parts.append("Started \(SessionTime.clock(start, calendar: calendar))")
+            parts.append("Started \(SessionTime.full(start, now: now, calendar: calendar, locale: locale))")
         }
         if let title { parts.append(title) }
         return parts.joined(separator: " · ")
     }
 
     /// The S5 divider's first line for the session this one followed:
-    /// `Session 13 · Interview codebook · logged 11:40`, or `· not logged`.
-    func parentLine(calendar: Calendar = .current) -> String {
+    /// `Session 13 · Interview codebook · logged yesterday, 1:19 PM`, or
+    /// `· not logged`.
+    func parentLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         var parts = [number]
         if let title { parts.append(title) }
         if summary.logged == true {
             if let ended = SessionTime.parse(summary.ended) {
-                parts.append("logged \(SessionTime.clock(ended, calendar: calendar))")
+                parts.append("logged \(SessionTime.full(ended, now: now, calendar: calendar, locale: locale))")
             } else {
                 parts.append("logged")
             }
@@ -460,25 +492,27 @@ struct SessionPresentation: Equatable {
         return parts.joined(separator: " · ")
     }
 
-    /// The welcome's quiet line while it continues this session (Y1):
-    /// `Continuing Session 3 · started 9:14 · last reply 12 min ago`; the
-    /// last reply only when the gateway says (v0.6 `last_reply`).
-    func continuingLine(now: Date = Date(), calendar: Calendar = .current) -> String {
+    /// The welcome's quiet line while it continues this session (Y1, AA1):
+    /// `Continuing Session 15 · started today, 8:47 AM · last reply 6 min
+    /// ago`; the last reply only when the gateway says (v0.6 `last_reply`).
+    /// Both on decision 1's full form, so an older reply reads `last reply
+    /// yesterday, 4:12 PM`.
+    func continuingLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         var parts = ["Continuing \(number)"]
         if let start = SessionTime.parse(summary.created) {
-            parts.append("started \(SessionTime.clock(start, calendar: calendar))")
+            parts.append("started \(SessionTime.full(start, now: now, calendar: calendar, locale: locale))")
         }
         if let reply = SessionTime.parse(summary.lastReply) {
-            parts.append("last reply \(SessionTime.ago(reply, now: now))")
+            parts.append("last reply \(SessionTime.full(reply, now: now, calendar: calendar, locale: locale))")
         }
         return parts.joined(separator: " · ")
     }
 
-    /// The bar over an earlier session (Y2): `Session 2 · ended yesterday · read-only`.
-    func endedBarLine(now: Date = Date(), calendar: Calendar = .current) -> String {
+    /// The bar over an earlier session (Y2): `Session 12 · ended Oct 27, 4:12 PM · read-only`.
+    func endedBarLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         var parts = [number]
         if let ended = SessionTime.parse(summary.ended) {
-            parts.append("ended \(SessionTime.endedWhen(ended, now: now, calendar: calendar))")
+            parts.append("ended \(SessionTime.full(ended, now: now, calendar: calendar, locale: locale))")
         } else {
             parts.append("ended")
         }
@@ -486,10 +520,10 @@ struct SessionPresentation: Equatable {
         return parts.joined(separator: " · ")
     }
 
-    /// The divider's second line: `Session 14 · started 11:42`.
-    func startedSecondLine(calendar: Calendar = .current) -> String {
+    /// The divider's second line: `Session 14 · started today, 11:42 AM`.
+    func startedSecondLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         guard let start = SessionTime.parse(summary.created) else { return number }
-        return "\(number) · started \(SessionTime.clock(start, calendar: calendar))"
+        return "\(number) · started \(SessionTime.full(start, now: now, calendar: calendar, locale: locale))"
     }
 }
 
