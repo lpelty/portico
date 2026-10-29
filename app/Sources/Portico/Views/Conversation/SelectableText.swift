@@ -154,7 +154,7 @@ struct SelectableText: NSViewRepresentable {
     var wraps = true
 
     func makeNSView(context: Context) -> NSTextView {
-        let view = NSTextView(usingTextLayoutManager: false)
+        let view = SelectableTextView(usingTextLayoutManager: false)
         view.isEditable = false
         view.isSelectable = true
         view.drawsBackground = false
@@ -185,5 +185,57 @@ struct SelectableText: NSViewRepresentable {
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
         return CGSize(width: wraps ? offered : ceil(used.width) + 1, height: ceil(used.height))
+    }
+}
+
+// MARK: - Click elsewhere deselects
+
+/// The text view `SelectableText` draws. Each message is its own
+/// `NSTextView`, and AppKit keeps a text view's selection when the click
+/// goes somewhere else (it only dims it), so a selection in one message
+/// stayed after a click on another message, the transcript, the sidebar or
+/// the composer. Everywhere else on macOS that click clears it (v0.5
+/// decision 5).
+///
+/// How: every one of these views registers itself (weakly), and one local
+/// monitor sees each left mouse-down in the app before the click is
+/// delivered. It finds the view under the click and collapses the selection
+/// of every registered view in that window that the click is not inside.
+/// The event goes on unchanged, so a click or drag inside a message
+/// (including starting a new selection in another one) works as before, and
+/// ⌘C copies whatever is still selected. Clicks in other windows (menus,
+/// popovers, the About panel) leave the selection alone, as AppKit does.
+final class SelectableTextView: NSTextView {
+    private static let all = NSHashTable<SelectableTextView>.weakObjects()
+    private static var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        Self.all.add(self)
+        Self.installMonitor()
+    }
+
+    private static func installMonitor() {
+        guard monitor == nil else { return }
+        // Local monitors run on the main thread, before the event is sent on.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            MainActor.assumeIsolated {
+                if let window = event.window, let content = window.contentView {
+                    let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+                    deselect(in: window, except: content.hitTest(point))
+                }
+            }
+            return event
+        }
+    }
+
+    /// Collapse the selection of every registered view in `window` that
+    /// `hit` (the view under a click, nil for none) is not inside.
+    static func deselect(in window: NSWindow, except hit: NSView?) {
+        for view in all.allObjects where view.window === window && view.selectedRange().length > 0 {
+            if let hit, hit === view || hit.isDescendant(of: view) { continue }
+            view.setSelectedRange(NSRange(location: view.selectedRange().location, length: 0))
+        }
     }
 }
