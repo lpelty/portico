@@ -18,6 +18,10 @@ final class FakeGateway: @unchecked Sendable {
     /// Whether the fake answers the app's `hello` at all; `false` stands in
     /// for a gateway that accepts the socket and then says nothing.
     let answersHello: Bool
+    /// Stands in for a gateway older than v0.10, strict about fields: a
+    /// `hello` that carries `capabilities` is refused (`protocol.invalid`)
+    /// and the socket closed.
+    let refusesCapabilities: Bool
     private let queue = DispatchQueue(label: "fake-gateway")
     private let lock = NSLock()
     private var listener: NWListener?
@@ -25,10 +29,14 @@ final class FakeGateway: @unchecked Sendable {
     private var _received: [[String: Any]] = []
     private var _port: UInt16 = 0
 
-    init(epoch: String = "epoch-1", protocol protocolVersionSent: Int = protocolVersion, answersHello: Bool = true) {
+    init(
+        epoch: String = "epoch-1", protocol protocolVersionSent: Int = protocolVersion, answersHello: Bool = true,
+        refusesCapabilities: Bool = false
+    ) {
         self.epoch = epoch
         self.protocolVersionSent = protocolVersionSent
         self.answersHello = answersHello
+        self.refusesCapabilities = refusesCapabilities
     }
 
     /// Every frame received so far, decoded as JSON objects, oldest first.
@@ -131,11 +139,26 @@ final class FakeGateway: @unchecked Sendable {
                 self.lock.lock()
                 self._received.append(obj)
                 self.lock.unlock()
+                if obj["type"] as? String == "hello", self.refusesCapabilities, obj["capabilities"] != nil {
+                    self.refuseHello(conn)
+                    return
+                }
                 if obj["type"] as? String == "hello", self.answersHello {
                     self.replyHello()
                 }
             }
             self.receiveNext(conn)
+        }
+    }
+
+    private func refuseHello(_ conn: NWConnection) {
+        let error = ErrorMessage(code: "protocol.invalid", message: "unknown field capabilities", ts: "2026-10-27T12:00:00Z")
+        if let data = try? JSONEncoder().encode(ServerMessage.error(error)) {
+            let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+            let context = NWConnection.ContentContext(identifier: "text", metadata: [metadata])
+            conn.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in
+                conn.cancel()
+            })
         }
     }
 

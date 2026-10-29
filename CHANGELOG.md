@@ -2,6 +2,39 @@
 
 ## v0.10.0 — unreleased
 
+### What a person gets (app)
+
+- **Subagents in a tray.** When the agent starts subagents, the
+  conversation shows one row where it started them ("Started 3 agents ·
+  details in the tray below"), and a tray sits on the message box, as wide
+  as it: "3 agents · 2 working" and the time, then a row per agent with its
+  status, its description, its current step ("Reading transcripts/p11.md")
+  and its step count ("9 steps", "14 steps · 1 m 52 s" once done). The
+  chevron folds it to one line with the busiest agent's step. It folds
+  itself when every agent is done and goes at the end of the turn.
+- **An agent's steps.** Clicking an agent shows its steps (its tool rows,
+  read-only) in a popover on the row. A subagent's tool rows are its steps,
+  not the conversation's.
+- **Workflows in a box.** A workflow takes the tray's place: its name,
+  "phase 2 of 3 · 7 agents · 4 m 10 s", and Phases (a column per phase,
+  its agents with their step and result, "…and N more" past what fits),
+  Agents and Log. About 290 pt tall; drag its top edge to resize; the
+  chevron folds it to its header line.
+- **The record.** After the turn, the "Started N agents" row becomes a
+  folded block per agent (✓ or ⚠, its description, "14 steps · 1 m 52 s"),
+  which opens to its steps; a workflow leaves one block per phase. Opening
+  the conversation again shows the same record.
+
+### For deployments
+
+- The app's `hello` carries `capabilities: ["agents.v1"]` (new, optional).
+  A gateway older than v0.10 refuses the field; the app then says hello
+  again without it and works as before.
+- The app reads `agent.started`, `agent.progress`, `agent.finished`,
+  `workflow.started`, `workflow.phase` and `agent_id` on tool rows. An
+  event it cannot read inside a `chat.history` is now skipped instead of
+  failing the whole replay.
+
 ### Gateway
 
 - **Subagents and workflows are reported.** The engine's task messages

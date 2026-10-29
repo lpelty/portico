@@ -44,6 +44,9 @@ struct ConversationView: View {
                     .padding(.bottom, 8)
             }
             if !model.showsEarlierBar(chat: chat) {
+                // The running turn's agents or workflow sit on the composer,
+                // as wide as it (v0.10 decisions 1 and 2, AF2 and AF3).
+                AgentDock(chat: chat, sideInset: Self.sideInset)
                 // An ended session is read-only: no composer.
                 InputBar(chat: chat)
                     .id(chat)
@@ -75,7 +78,7 @@ struct ConversationView: View {
                     if items.isEmpty {
                         emptyState
                     }
-                    ForEach(items.filter(TurnMarkerView.isDrawn)) { item in
+                    ForEach(items.filter { model.isDrawn($0, in: chat) }) { item in
                         TranscriptItemView(item: item, folder: folder, chat: chat)
                             .id(item.id)
                     }
@@ -166,6 +169,10 @@ struct TranscriptItemView: View {
             CompactedLine()
         case .notice(_, let text):
             NoticeLine(text: text)
+        case .agents(let group):
+            if let chat {
+                AgentGroupView(group: group, chat: chat, folder: folder)
+            }
         }
     }
 }

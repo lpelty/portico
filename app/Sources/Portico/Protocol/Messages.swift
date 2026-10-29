@@ -293,13 +293,22 @@ struct HelloClient: Codable, Equatable, Sendable {
     static let messageType = "hello"
     var appVersion: String
     var `protocol`: Int = protocolVersion
+    /// What this app can draw beyond protocol 1's base (v0.10: `agents.v1`,
+    /// the agent tray and workflow box). Additive and optional: absent, the
+    /// gateway assumes nothing. A gateway older than v0.10 refuses the field
+    /// (`protocol.invalid`), so `GatewayClient.connect` says hello again
+    /// without it.
+    var capabilities: [String]? = nil
     var id: String? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, id, ts
+        case `protocol`, capabilities, id, ts
         case appVersion = "app_version"
     }
+
+    /// Everything this app names in `capabilities`.
+    static let appCapabilities = [AgentActivity.capability]
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
@@ -541,6 +550,42 @@ struct ChatHistory: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+
+    enum CodingKeys: String, CodingKey {
+        case chat, events, truncated, id, seq, ts
+    }
+
+    init(chat: Int, events: [ServerMessage], truncated: Bool, id: String? = nil, seq: Int? = nil, ts: String = ProtocolClock.now()) {
+        self.chat = chat
+        self.events = events
+        self.truncated = truncated
+        self.id = id
+        self.seq = seq
+        self.ts = ts
+    }
+
+    /// An event this app cannot read (a type from a newer gateway) is
+    /// dropped from the replay, as the live socket skips such a frame,
+    /// rather than failing the whole history.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        chat = try c.decode(Int.self, forKey: .chat)
+        events = try c.decode([Ignorable<ServerMessage>].self, forKey: .events).compactMap(\.value)
+        truncated = try c.decode(Bool.self, forKey: .truncated)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+        seq = try c.decodeIfPresent(Int.self, forKey: .seq)
+        ts = try c.decode(String.self, forKey: .ts)
+    }
+}
+
+/// A value that decodes to `nil` instead of failing: for list members a
+/// newer peer may send in a shape this version does not know.
+struct Ignorable<Value: Decodable>: Decodable {
+    var value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
 }
 
 struct ChatLive: Codable, Equatable, Sendable {
@@ -599,6 +644,9 @@ struct ToolStarted: Codable, Equatable, Sendable {
     var tool: String
     var summary: String
     var input: [String: JSONValue]
+    /// The subagent this step belongs to (v0.10 decision 4): the row goes
+    /// in that agent's step list, not the conversation.
+    var agentId: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -606,6 +654,7 @@ struct ToolStarted: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case chat, turn, tool, summary, input, id, seq, ts
         case toolUseId = "tool_use_id"
+        case agentId = "agent_id"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
@@ -622,6 +671,8 @@ struct ToolFinished: Codable, Equatable, Sendable {
     var permission: PermissionOutcome? = nil
     /// The person's note on a decline.
     var note: String? = nil
+    /// The subagent this step belongs to (v0.10 decision 4).
+    var agentId: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -629,6 +680,7 @@ struct ToolFinished: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case chat, turn, ok, summary, permission, note, id, seq, ts
         case toolUseId = "tool_use_id"
+        case agentId = "agent_id"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
@@ -863,6 +915,126 @@ struct UpdateAvailable: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+// MARK: - Agents and workflows (v0.10)
+
+/// How a subagent ended (`agent.finished`, v0.10 decision 4).
+enum AgentOutcome: String, Codable, Sendable {
+    case done, failed, stopped
+}
+
+/// Where a workflow phase stands (`workflow.phase`, v0.10 decision 4).
+enum PhaseState: String, Codable, Sendable {
+    case waiting, running, done
+}
+
+/// The phase an agent of a workflow belongs to, as the gateway names it:
+/// its index in `workflow.started`'s `phases`, or its name. Either form
+/// decodes and encodes back as it came.
+enum PhaseRef: Codable, Equatable, Sendable {
+    case index(Int)
+    case name(String)
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let i = try? c.decode(Int.self) {
+            self = .index(i)
+        } else {
+            self = .name(try c.decode(String.self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .index(let i): try c.encode(i)
+        case .name(let n): try c.encode(n)
+        }
+    }
+}
+
+/// The agent started a subagent (or a background task) with the tool use
+/// `tool_use_id` (v0.10 decision 4). `id` is the agent's id; its steps
+/// (`agent.progress`, tool rows with `agent_id`) and its end carry it.
+struct AgentStarted: Codable, Equatable, Sendable {
+    static let messageType = "agent.started"
+    var chat: Int
+    var turn: Int
+    var id: String
+    var toolUseId: String
+    var description: String
+    /// The engine's word for the task: `subagent`, `shell`, `monitor`, ….
+    var kind: String
+    /// The workflow it runs in, when it runs in one.
+    var workflowId: String? = nil
+    /// Its phase in that workflow.
+    var phase: PhaseRef? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, turn, id, description, kind, phase, seq, ts
+        case toolUseId = "tool_use_id"
+        case workflowId = "workflow_id"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// A subagent moved: its current step (the last tool, in words), how many
+/// steps it has taken and how long it has run, in seconds.
+struct AgentProgress: Codable, Equatable, Sendable {
+    static let messageType = "agent.progress"
+    var chat: Int
+    var id: String
+    var step: String? = nil
+    var steps: Int
+    var elapsed: Double
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// A subagent ended: done, failed or stopped, with the engine's summary.
+struct AgentFinished: Codable, Equatable, Sendable {
+    static let messageType = "agent.finished"
+    var chat: Int
+    var id: String
+    var outcome: AgentOutcome
+    var summary: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// A workflow started (v0.10 decision 2): its name and its phases, in
+/// order; `phases` may be empty when the source names none.
+struct WorkflowStarted: Codable, Equatable, Sendable {
+    static let messageType = "workflow.started"
+    var chat: Int
+    var id: String
+    var name: String
+    var phases: [String]
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// One phase of a workflow changed state.
+struct WorkflowPhase: Codable, Equatable, Sendable {
+    static let messageType = "workflow.phase"
+    var chat: Int
+    var id: String
+    var index: Int
+    var state: PhaseState
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The protocol's `error` message. Named `ErrorMessage` so it does not shadow
 /// `Swift.Error`.
 struct ErrorMessage: Codable, Equatable, Sendable {
@@ -1016,6 +1188,11 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case updateAvailable(UpdateAvailable)
     case sessionLogged(SessionLogged)
     case servicesStatus(ServicesStatus)
+    case agentStarted(AgentStarted)
+    case agentProgress(AgentProgress)
+    case agentFinished(AgentFinished)
+    case workflowStarted(WorkflowStarted)
+    case workflowPhase(WorkflowPhase)
 
     var type: String {
         switch self {
@@ -1046,6 +1223,11 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .updateAvailable: UpdateAvailable.messageType
         case .sessionLogged: SessionLogged.messageType
         case .servicesStatus: ServicesStatus.messageType
+        case .agentStarted: AgentStarted.messageType
+        case .agentProgress: AgentProgress.messageType
+        case .agentFinished: AgentFinished.messageType
+        case .workflowStarted: WorkflowStarted.messageType
+        case .workflowPhase: WorkflowPhase.messageType
         }
     }
 
@@ -1078,6 +1260,11 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .updateAvailable(let m): m.envelope
         case .sessionLogged(let m): m.envelope
         case .servicesStatus(let m): m.envelope
+        case .agentStarted(let m): m.envelope
+        case .agentProgress(let m): m.envelope
+        case .agentFinished(let m): m.envelope
+        case .workflowStarted(let m): m.envelope
+        case .workflowPhase(let m): m.envelope
         }
     }
 
@@ -1111,6 +1298,11 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case UpdateAvailable.messageType: self = .updateAvailable(try UpdateAvailable(from: decoder))
         case SessionLogged.messageType: self = .sessionLogged(try SessionLogged(from: decoder))
         case ServicesStatus.messageType: self = .servicesStatus(try ServicesStatus(from: decoder))
+        case AgentStarted.messageType: self = .agentStarted(try AgentStarted(from: decoder))
+        case AgentProgress.messageType: self = .agentProgress(try AgentProgress(from: decoder))
+        case AgentFinished.messageType: self = .agentFinished(try AgentFinished(from: decoder))
+        case WorkflowStarted.messageType: self = .workflowStarted(try WorkflowStarted(from: decoder))
+        case WorkflowPhase.messageType: self = .workflowPhase(try WorkflowPhase(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1146,6 +1338,11 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .updateAvailable(let m): try m.encode(to: encoder)
         case .sessionLogged(let m): try m.encode(to: encoder)
         case .servicesStatus(let m): try m.encode(to: encoder)
+        case .agentStarted(let m): try m.encode(to: encoder)
+        case .agentProgress(let m): try m.encode(to: encoder)
+        case .agentFinished(let m): try m.encode(to: encoder)
+        case .workflowStarted(let m): try m.encode(to: encoder)
+        case .workflowPhase(let m): try m.encode(to: encoder)
         }
     }
 }

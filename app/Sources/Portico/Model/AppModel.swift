@@ -47,6 +47,9 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     case compacted(id: String, trigger: String)
     /// A quiet line from the gateway (`chat.notice`), e.g. an unknown command.
     case notice(id: String, text: String)
+    /// Where the agent started subagents or a workflow (v0.10 decisions 1
+    /// and 3): "Started 3 agents" while the turn runs, then the folded record.
+    case agents(AgentGroup)
 
     var id: String {
         switch self {
@@ -57,6 +60,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
         case .turnMarker(let marker): "turn:\(marker.turn)"
         case .compacted(let id, _): "compacted:\(id)"
         case .notice(let id, _): "notice:\(id)"
+        case .agents(let group): "agents:\(group.id)"
         }
     }
 }
@@ -167,6 +171,9 @@ final class AppModel: ObservableObject {
     /// (`files.outside_root` for a link that leaves the root, say), shown
     /// in the directory's row instead of a listing; cleared when it is asked for again.
     @Published private(set) var fileListErrors: [FilesKey: String] = [:]
+    /// Per chat, its subagents and workflows (v0.10): the tray, the
+    /// workflow box and the record read it.
+    @Published private(set) var agentActivity: [Int: AgentActivity] = [:]
 
     // MARK: v0.2 — sessions, context, files
 
@@ -632,7 +639,7 @@ final class AppModel: ObservableObject {
             }
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
-            .chatCompacted, .chatNotice:
+            .chatCompacted, .chatNotice, .agentStarted, .agentProgress, .agentFinished, .workflowStarted, .workflowPhase:
             guard let chat = message.envelope.chat else { return }
             // A sequenced event we already hold (a re-sent card, a ring
             // overlap) is not applied twice; the card case de-duplicates by
@@ -672,7 +679,7 @@ final class AppModel: ObservableObject {
         while index > items.startIndex {
             index -= 1
             switch items[index] {
-            case .assistantText, .card: return true
+            case .assistantText, .card, .agents: return true
             case .tool(let row): if row.turn == turn { return true }
             case .userText(let user): if user.turn == turn { return false }
             case .turnMarker: return false
@@ -686,7 +693,10 @@ final class AppModel: ObservableObject {
     func toolName(chat: Int, toolUseId: String) -> String? {
         guard let index = Self.toolIndex(toolUseId, in: transcripts[chat] ?? []),
             case .tool(let row) = transcripts[chat]?[index]
-        else { return nil }
+        else {
+            // A subagent's step (v0.10): its rows live with the agent.
+            return agentActivity[chat]?.agents.lazy.flatMap(\.rows).last { $0.toolUseId == toolUseId }?.tool
+        }
         return row.tool
     }
 
@@ -727,6 +737,7 @@ final class AppModel: ObservableObject {
                 current[chat] = nil
             }
             closedCards[chat] = [:]
+            agentActivity[chat] = nil
             currentTurn[chat] = nil
             turnStartedAt[chat] = nil
             pendingOutcomes[chat] = nil
@@ -749,6 +760,21 @@ final class AppModel: ObservableObject {
 
     /// The per-event reducer shared by live frames and a history replay.
     private func applyEvent(_ event: ServerMessage, to chat: Int) {
+        // A subagent's tool row is a step in its list, not the
+        // conversation's (v0.10 decision 4).
+        if case .toolStarted(let started) = event, started.agentId != nil {
+            return applyAgentEvent(event, to: chat)
+        }
+        if case .toolFinished(let finished) = event, finished.agentId != nil {
+            return applyAgentEvent(event, to: chat)
+        }
+        switch event {
+        case .turnStarted, .userText, .turnFinished, .agentStarted, .agentProgress, .agentFinished,
+            .workflowStarted, .workflowPhase:
+            applyAgentEvent(event, to: chat)
+        default: break
+        }
+
         var items = transcripts[chat] ?? []
         defer { transcripts[chat] = items }
 
@@ -901,10 +927,84 @@ final class AppModel: ObservableObject {
         case .chatNotice(let notice):
             items.append(.notice(id: Self.itemId(&nextItemId), text: notice.text))
 
+        case .agentStarted(let started):
+            guard started.workflowId == nil else {
+                // An agent of a workflow joins the workflow's row, made
+                // here when the agent came before the workflow's start.
+                if let workflowId = started.workflowId, !Self.hasWorkflowRow(workflowId, in: items) {
+                    items.append(.agents(AgentGroup(
+                        id: Self.itemId(&nextItemId), turn: started.turn, agentIds: [], workflowId: workflowId)))
+                }
+                break
+            }
+            let hidden = agentActivity[chat]?.startingToolUses ?? []
+            if items.contains(where: { if case .agents(let g) = $0 { g.agentIds.contains(started.id) } else { false } }) {
+                break
+            }
+            // Agents started together share one row: the last row of this
+            // turn's, with only their own (hidden) starting tool rows after it.
+            var index = items.endIndex
+            while index > items.startIndex {
+                index -= 1
+                if case .tool(let row) = items[index], hidden.contains(row.toolUseId) { continue }
+                break
+            }
+            if index >= items.startIndex, index < items.endIndex, case .agents(var group) = items[index],
+                group.workflowId == nil, group.turn == started.turn
+            {
+                group.agentIds.append(started.id)
+                items[index] = .agents(group)
+            } else {
+                items.append(.agents(AgentGroup(id: Self.itemId(&nextItemId), turn: started.turn, agentIds: [started.id])))
+            }
+
+        case .workflowStarted(let started):
+            if !Self.hasWorkflowRow(started.id, in: items) {
+                let turn = agentActivity[chat]?.workflow(started.id)?.turn ?? currentTurn[chat] ?? 0
+                items.append(.agents(AgentGroup(id: Self.itemId(&nextItemId), turn: turn, agentIds: [], workflowId: started.id)))
+            }
+
+        case .agentProgress, .agentFinished, .workflowPhase:
+            break
+
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus:
             break
         }
+    }
+
+    private static func hasWorkflowRow(_ workflowId: String, in items: [TranscriptItem]) -> Bool {
+        items.contains { if case .agents(let g) = $0 { g.workflowId == workflowId } else { false } }
+    }
+
+    // MARK: - agents and workflows (v0.10)
+
+    /// Feed a frame to the chat's agent activity.
+    private func applyAgentEvent(_ event: ServerMessage, to chat: Int) {
+        var activity = agentActivity[chat] ?? AgentActivity()
+        activity.apply(event)
+        agentActivity[chat] = activity
+    }
+
+    /// Whether the conversation draws an item: a finished turn's marker is
+    /// not (v0.4), nor the tool row that started agents, which the
+    /// "Started N agents" row stands for (v0.10 decision 1).
+    func isDrawn(_ item: TranscriptItem, in chat: Int) -> Bool {
+        guard TurnMarkerView.isDrawn(item) else { return false }
+        if case .tool(let row) = item, let activity = agentActivity[chat] {
+            return !activity.startingToolUses.contains(row.toolUseId)
+        }
+        return true
+    }
+
+    /// Fold or open the tray by hand (AF2's chevron).
+    func setTrayCollapsed(_ collapsed: Bool, chat: Int) {
+        agentActivity[chat]?.trayCollapsed = collapsed
+    }
+
+    /// Fold or open the workflow box by hand (AF3's chevron).
+    func setBoxCollapsed(_ collapsed: Bool, chat: Int) {
+        agentActivity[chat]?.boxCollapsed = collapsed
     }
 
     static func toolIndex(_ toolUseId: String, in items: [TranscriptItem]) -> Int? {
@@ -1029,7 +1129,7 @@ final class AppModel: ObservableObject {
     }
 
     /// `0:48`, `12:05`, `1:02:09`: how long the turn has run.
-    static func elapsedText(_ seconds: TimeInterval) -> String {
+    nonisolated static func elapsedText(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds))
         let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60)
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
@@ -1469,6 +1569,7 @@ final class AppModel: ObservableObject {
         statusStamps[chat] = nil
         closedCards[chat] = nil
         pendingOutcomes[chat] = nil
+        agentActivity[chat] = nil
         live.remove(chat)
         pendingOpenSince[chat] = nil
         currentTurn[chat] = nil
