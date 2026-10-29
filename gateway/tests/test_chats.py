@@ -228,3 +228,21 @@ def test_registry_starts_from_an_index_with_a_high_next_chat(state: StateDir) ->
     reg = ChatRegistry(index=Index(chats=[], next_chat=42), state=state, history_buffer=2000)
     assert reg.create(Path(FOLDER_A)).number == 42
     assert state.load_index().next_chat == 43
+
+
+def test_a_finished_turn_is_the_last_reply_and_survives_a_restart(state: StateDir) -> None:
+    # v0.6: the app's welcome says how long ago the agent last answered. A
+    # transcript replay stamps its events with the time of the replay, so
+    # the record carries the moment a turn last finished.
+    reg = registry_for(state)
+    chat = reg.create(Path(FOLDER_A))
+    assert chat.summary().last_reply is None, "no turn yet: no last reply"
+    chat.note_turn_done()
+    reply = chat.summary().last_reply
+    assert reply is not None and reply.endswith("Z")
+    reg.persist()
+
+    record = state.load_index().chats[0]
+    assert record.last_reply == reply
+    again = ChatRegistry(index=state.load_index(), state=state, history_buffer=2000)
+    assert again.get(1).summary().last_reply == reply

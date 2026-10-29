@@ -16,7 +16,8 @@ number, folder, engine session id, alias, state word, creation time,
 the artifacts the chat produced, and (v0.2) the session facts: title,
 ended, logged, parent, compactions and the last context percentage, and
 (v0.3) the permission mode and the session's chat-scoped allows, and
-(v0.4) when it was last logged and whether a turn finished since. A chat that came back from the index with
+(v0.4) when it was last logged and whether a turn finished since, and (v0.6)
+when a turn last finished. A chat that came back from the index with
 a session is ``restored``: its conversation before this launch lives in
 the engine's transcript, which the server replays on ``chat.open``.
 """
@@ -107,6 +108,7 @@ class Chat:
         permissions: dict[str, ToolPermission] | None = None,
         logged_at: str | None = None,
         work_since_log: bool = False,
+        last_reply: str | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -151,6 +153,10 @@ class Chat:
         # at all). ``can_log`` is the deployment's: the registry sets it.
         self.logged_at = logged_at
         self.work_since_log = work_since_log
+        # v0.6: when a turn last finished. The app's welcome says "last
+        # reply 12 min ago" from it; a transcript replay cannot (its events
+        # carry the time of the replay), so the record keeps it.
+        self.last_reply = last_reply
         self.can_log = False
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
@@ -212,8 +218,9 @@ class Chat:
     # --- logging ----------------------------------------------------------------
 
     def note_turn_done(self) -> None:
-        """A turn finished (however it ended): the session has work its log has not seen."""
+        """A turn finished (however it ended): the session has work its log has not seen, and a last reply now."""
         self.work_since_log = True
+        self.last_reply = _now()
 
     def note_logged(self, when: str) -> None:
         """The log step finished cleanly at ``when``: nothing is unlogged now."""
@@ -237,6 +244,7 @@ class Chat:
             "context_percent": self.context_percent,
             "mode": self.mode,
             "logged_at": self.logged_at,
+            "last_reply": self.last_reply,
         }
 
     def summary(self) -> ChatSummary:
@@ -287,6 +295,7 @@ class Chat:
             allows=record.allows,
             permissions=record.permissions,
             logged_at=record.logged_at,
+            last_reply=record.last_reply,
             # An index from before v0.4 does not say: a session the engine
             # named has had a turn, and nothing in v0.4 has logged it.
             work_since_log=(

@@ -382,8 +382,8 @@ not pick a mode for runs in it).
 `chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
 plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,
 `compactions`, `context_percent?`; v0.3: `mode?`; v0.4: `logged_at?`,
-`unlogged`). Sent after `hello` and after every change to the set of
-chats or their aliases (`chat.new`, `chat.alias`, `chat.remove`,
+`unlogged`; v0.6: `last_reply?`). Sent after `hello` and after every
+change to the set of chats or their aliases (`chat.new`, `chat.alias`, `chat.remove`,
 `session.renew`, `session.log`). State changes alone travel as
 `chat.state`. Not chat-scoped: no `seq`, not replayed in `chat.history`.
 
@@ -399,6 +399,12 @@ first?" before New only when `unlogged` is true. Both are kept on the
 chat record, so they survive a gateway restart; a session recorded before
 v0.4 counts as unlogged when the engine had named it (it has had a turn)
 and it was not logged by a renewal.
+
+`ChatSummary.last_reply?` *(v0.6)* is when a turn last finished in the
+session (UTC, ISO 8601), however it finished; absent before the first.
+Kept on the chat record, so it survives a gateway restart — unlike the
+`ts` of events replayed from a transcript, which is the time of the
+replay. The app's welcome says "last reply 12 min ago" from it.
 
 ### `chat.state` — `ChatState`
 `chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`;
