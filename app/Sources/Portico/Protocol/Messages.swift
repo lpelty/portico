@@ -922,9 +922,27 @@ enum AgentOutcome: String, Codable, Sendable {
     case done, failed, stopped
 }
 
-/// Where a workflow phase stands (`workflow.phase`, v0.10 decision 4).
+/// Where a workflow phase stands (`workflow.phase`, v0.10 decision 4):
+/// `pending` until its first agent starts, `running`, then `done` or
+/// `failed` (one of its agents failed). The earlier draft's `waiting` is
+/// read as `pending`.
 enum PhaseState: String, Codable, Sendable {
-    case waiting, running, done
+    case pending, running, done, failed
+
+    init(from decoder: Decoder) throws {
+        let word = try decoder.singleValueContainer().decode(String.self)
+        if word == "waiting" {
+            self = .pending
+        } else if let state = PhaseState(rawValue: word) {
+            self = state
+        } else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "unknown phase state \(word)"))
+        }
+    }
+
+    /// Done or failed: the phase will not move again.
+    var isSettled: Bool { self == .done || self == .failed }
 }
 
 /// The phase an agent of a workflow belongs to, as the gateway names it:
@@ -966,13 +984,16 @@ struct AgentStarted: Codable, Equatable, Sendable {
     var kind: String
     /// The workflow it runs in, when it runs in one.
     var workflowId: String? = nil
-    /// Its phase in that workflow.
+    /// Its phase in that workflow (the gateway sends a 0-based index).
     var phase: PhaseRef? = nil
+    /// It runs on after its turn finishes: a background subagent, and
+    /// every agent of a workflow. Its frames may come during later turns.
+    var background: Bool? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case chat, turn, id, description, kind, phase, seq, ts
+        case chat, turn, id, description, kind, phase, background, seq, ts
         case toolUseId = "tool_use_id"
         case workflowId = "workflow_id"
     }
@@ -1009,10 +1030,14 @@ struct AgentFinished: Codable, Equatable, Sendable {
 }
 
 /// A workflow started (v0.10 decision 2): its name and its phases, in
-/// order; `phases` may be empty when the source names none.
+/// order; `phases` may be empty when the source names none. Sent first
+/// with `phases: []` and again, with the same `id`, when the phases become
+/// known or change: the app replaces what it had.
 struct WorkflowStarted: Codable, Equatable, Sendable {
     static let messageType = "workflow.started"
     var chat: Int
+    /// The turn that started it.
+    var turn: Int? = nil
     var id: String
     var name: String
     var phases: [String]
@@ -1029,6 +1054,20 @@ struct WorkflowPhase: Codable, Equatable, Sendable {
     var id: String
     var index: Int
     var state: PhaseState
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// A workflow ended: done, failed or stopped. Its agents have ended
+/// before it; it runs in the background, so this may come after its turn.
+struct WorkflowFinished: Codable, Equatable, Sendable {
+    static let messageType = "workflow.finished"
+    var chat: Int
+    var id: String
+    var outcome: AgentOutcome
+    var summary: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
@@ -1193,6 +1232,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case agentFinished(AgentFinished)
     case workflowStarted(WorkflowStarted)
     case workflowPhase(WorkflowPhase)
+    case workflowFinished(WorkflowFinished)
 
     var type: String {
         switch self {
@@ -1228,6 +1268,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .agentFinished: AgentFinished.messageType
         case .workflowStarted: WorkflowStarted.messageType
         case .workflowPhase: WorkflowPhase.messageType
+        case .workflowFinished: WorkflowFinished.messageType
         }
     }
 
@@ -1265,6 +1306,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .agentFinished(let m): m.envelope
         case .workflowStarted(let m): m.envelope
         case .workflowPhase(let m): m.envelope
+        case .workflowFinished(let m): m.envelope
         }
     }
 
@@ -1303,6 +1345,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case AgentFinished.messageType: self = .agentFinished(try AgentFinished(from: decoder))
         case WorkflowStarted.messageType: self = .workflowStarted(try WorkflowStarted(from: decoder))
         case WorkflowPhase.messageType: self = .workflowPhase(try WorkflowPhase(from: decoder))
+        case WorkflowFinished.messageType: self = .workflowFinished(try WorkflowFinished(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1343,6 +1386,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .agentFinished(let m): try m.encode(to: encoder)
         case .workflowStarted(let m): try m.encode(to: encoder)
         case .workflowPhase(let m): try m.encode(to: encoder)
+        case .workflowFinished(let m): try m.encode(to: encoder)
         }
     }
 }

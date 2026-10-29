@@ -16,6 +16,9 @@ struct AgentRun: Equatable, Sendable, Identifiable {
     var kind: String
     var workflowId: String? = nil
     var phase: PhaseRef? = nil
+    /// It runs on after its turn (`agent.started`'s `background`, and any
+    /// agent of a workflow): its turn's end does not stop it.
+    var background: Bool = false
     /// The current step in words ("Reading transcripts/p11.md"), from the
     /// last `agent.progress` that named one.
     var step: String? = nil
@@ -71,20 +74,23 @@ struct WorkflowRun: Equatable, Sendable, Identifiable {
     var phaseStates: [PhaseState]
     var turn: Int
     var startedAt: Date? = nil
+    /// How it ended (`workflow.finished`); `nil` while it runs.
+    var outcome: AgentOutcome? = nil
+    var summary: String? = nil
 
     /// The phase under way, 0-based: the running one, else the first not
-    /// done (the last when all are). `nil` when the workflow names none.
+    /// settled (the last when all are). `nil` when the workflow names none.
     var currentPhase: Int? {
         guard !phases.isEmpty else { return nil }
         if let running = phaseStates.firstIndex(of: .running) { return running }
-        return phaseStates.firstIndex(where: { $0 != .done }) ?? phases.count - 1
+        return phaseStates.firstIndex(where: { !$0.isSettled }) ?? phases.count - 1
     }
 
-    /// Every phase done (and there was at least one).
-    var phasesDone: Bool { !phases.isEmpty && phaseStates.allSatisfy { $0 == .done } }
+    /// Every phase done or failed (and there was at least one).
+    var phasesDone: Bool { !phases.isEmpty && phaseStates.allSatisfy(\.isSettled) }
 
     func state(ofPhase index: Int) -> PhaseState {
-        phaseStates.indices.contains(index) ? phaseStates[index] : .waiting
+        phaseStates.indices.contains(index) ? phaseStates[index] : .pending
     }
 }
 
@@ -161,6 +167,7 @@ struct AgentActivity: Equatable, Sendable {
                 id: started.id, turn: started.turn, toolUseId: started.toolUseId,
                 description: started.description, kind: started.kind,
                 workflowId: started.workflowId, phase: started.phase,
+                background: started.background ?? false || started.workflowId != nil,
                 startedAt: SessionTime.parse(started.ts), moved: clock)
             if let index = index(of: started.id) {
                 // A re-sent start keeps what the agent already did.
@@ -206,23 +213,35 @@ struct AgentActivity: Equatable, Sendable {
             if trayAgents.allSatisfy({ status(of: $0).isFinished }) { trayCollapsed = nil }
 
         case .workflowStarted(let started):
-            let phaseStates = Array(repeating: PhaseState.waiting, count: started.phases.count)
             if let index = workflowIndex(of: started.id) {
+                // Sent again once its phases are known, or when they
+                // change: the list is replaced, each phase keeping the state
+                // it had at its place (as the gateway keeps it); its agents
+                // keep their phase indices into the new list.
+                let old = workflows[index].phaseStates
                 workflows[index].name = started.name
                 workflows[index].phases = started.phases
-                workflows[index].phaseStates = phaseStates
+                workflows[index].phaseStates = started.phases.indices.map { old.indices.contains($0) ? old[$0] : .pending }
             } else {
                 workflows.append(WorkflowRun(
-                    id: started.id, name: started.name, phases: started.phases, phaseStates: phaseStates,
-                    turn: turn ?? 0, startedAt: SessionTime.parse(started.ts)))
+                    id: started.id, name: started.name, phases: started.phases,
+                    phaseStates: Array(repeating: .pending, count: started.phases.count),
+                    turn: started.turn ?? turn ?? 0, startedAt: SessionTime.parse(started.ts)))
             }
+
+        case .workflowFinished(let finished):
+            guard let index = workflowIndex(of: finished.id) else { return }
+            workflows[index].outcome = finished.outcome
+            workflows[index].summary = finished.summary
+            // The box folds itself now that it is done.
+            boxCollapsed = nil
 
         case .workflowPhase(let phase):
             guard let index = workflowIndex(of: phase.id) else { return }
             var states = workflows[index].phaseStates
             if phase.index >= states.count {
                 // A phase past the announced list: grow to hold it.
-                states += Array(repeating: .waiting, count: phase.index - states.count + 1)
+                states += Array(repeating: .pending, count: phase.index - states.count + 1)
                 while workflows[index].phases.count < states.count {
                     workflows[index].phases.append("Phase \(workflows[index].phases.count + 1)")
                 }
@@ -281,7 +300,9 @@ struct AgentActivity: Equatable, Sendable {
     func isLive(turn: Int) -> Bool { !endedTurns.contains(turn) }
 
     /// How an agent reads now: its outcome once it ended; stopped when its
-    /// turn ended first; queued while its workflow phase waits; else working.
+    /// turn ended first, unless it runs in the background (it ends on its
+    /// own `agent.finished`); queued while its workflow phase waits; else
+    /// working.
     func status(of agent: AgentRun) -> AgentStatus {
         switch agent.outcome {
         case .done: return .done
@@ -289,9 +310,9 @@ struct AgentActivity: Equatable, Sendable {
         case .stopped: return .stopped
         case nil: break
         }
-        if !isLive(turn: agent.turn) { return .stopped }
+        if !agent.background, !isLive(turn: agent.turn) { return .stopped }
         if let workflowId = agent.workflowId, let workflow = workflow(workflowId),
-            let phase = phaseIndex(of: agent, in: workflow), workflow.state(ofPhase: phase) == .waiting
+            let phase = phaseIndex(of: agent, in: workflow), workflow.state(ofPhase: phase) == .pending
         {
             return .queued
         }
@@ -302,14 +323,34 @@ struct AgentActivity: Equatable, Sendable {
     /// agents" row, not tool rows of their own.
     var startingToolUses: Set<String> { Set(agents.map(\.toolUseId)) }
 
-    /// The tray's agents (AF2): those of a running turn outside any workflow.
+    /// The tray's agents (AF2): those of a running turn outside any
+    /// workflow, and background ones still working after their turn ended.
     var trayAgents: [AgentRun] {
-        agents.filter { $0.workflowId == nil && isLive(turn: $0.turn) }
+        agents.filter { $0.workflowId == nil && (isLive(turn: $0.turn) || runsOn($0)) }
     }
 
-    /// The workflow the box shows (AF3): the latest one of a running turn.
+    /// The workflow the box shows (AF3): the latest one of a running turn,
+    /// or one still running after its turn ended (workflows run in the
+    /// background until their `workflow.finished`).
     var liveWorkflow: WorkflowRun? {
-        workflows.last { isLive(turn: $0.turn) }
+        workflows.last { isLive(turn: $0.turn) || !isDone($0) }
+    }
+
+    /// A background agent still working after its turn ended.
+    private func runsOn(_ agent: AgentRun) -> Bool {
+        agent.background && agent.outcome == nil
+    }
+
+    /// Whether a conversation row still stands for live work ("Started N
+    /// agents", details in the tray or box) rather than the folded record:
+    /// while its turn runs, and after it while its background work does.
+    /// The record follows the agents, so it is complete once they end.
+    func isLive(_ group: AgentGroup) -> Bool {
+        if isLive(turn: group.turn) { return true }
+        if let workflowId = group.workflowId {
+            return workflow(workflowId).map { !isDone($0) } ?? false
+        }
+        return group.agentIds.contains { id in agent(id).map(runsOn) ?? false }
     }
 
     /// The tray shows while a turn's agents run, unless a workflow has the
@@ -327,9 +368,11 @@ struct AgentActivity: Equatable, Sendable {
         return boxCollapsed ?? isDone(workflow)
     }
 
-    /// A workflow is done when every phase is, or (naming no phases) when
-    /// it has agents and all of them ended.
+    /// A workflow is done when the gateway said it finished, or when every
+    /// phase is, or (naming no phases) when it has agents and all of them
+    /// ended.
     func isDone(_ workflow: WorkflowRun) -> Bool {
+        if workflow.outcome != nil { return true }
         let members = agents(in: workflow)
         if !workflow.phases.isEmpty { return workflow.phasesDone && members.allSatisfy { status(of: $0).isFinished } }
         return !members.isEmpty && members.allSatisfy { status(of: $0).isFinished }
@@ -342,6 +385,15 @@ struct AgentActivity: Equatable, Sendable {
     /// The agents of one phase, in start order.
     func agents(inPhase phase: Int, of workflow: WorkflowRun) -> [AgentRun] {
         agents(in: workflow).filter { phaseIndex(of: $0, in: workflow) == phase }
+    }
+
+    /// A phase's folded record reads failed (⚠) when the gateway said the
+    /// phase failed or one of its agents failed or stopped; else done (✓).
+    func recordStatus(ofPhase index: Int, in workflow: WorkflowRun) -> AgentStatus {
+        if workflow.state(ofPhase: index) == .failed { return .failed }
+        let statuses = agents(inPhase: index, of: workflow).map(status(of:))
+        if statuses.contains(.failed) || statuses.contains(.stopped) { return .failed }
+        return .done
     }
 
     /// Which phase an agent is in: its index, or its name looked up in the
@@ -377,7 +429,7 @@ struct AgentActivity: Equatable, Sendable {
     /// longest agent's.
     func elapsed(of workflow: WorkflowRun, now: Date) -> Double {
         let longest = elapsed(of: agents(in: workflow), now: now)
-        guard !isDone(workflow), isLive(turn: workflow.turn), let start = workflow.startedAt else { return longest }
+        guard !isDone(workflow), let start = workflow.startedAt else { return longest }
         return max(longest, now.timeIntervalSince(start))
     }
 

@@ -639,7 +639,8 @@ final class AppModel: ObservableObject {
             }
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
-            .chatCompacted, .chatNotice, .agentStarted, .agentProgress, .agentFinished, .workflowStarted, .workflowPhase:
+            .chatCompacted, .chatNotice, .agentStarted, .agentProgress, .agentFinished, .workflowStarted, .workflowPhase,
+            .workflowFinished:
             guard let chat = message.envelope.chat else { return }
             // A sequenced event we already hold (a re-sent card, a ring
             // overlap) is not applied twice; the card case de-duplicates by
@@ -770,7 +771,7 @@ final class AppModel: ObservableObject {
         }
         switch event {
         case .turnStarted, .userText, .turnFinished, .agentStarted, .agentProgress, .agentFinished,
-            .workflowStarted, .workflowPhase:
+            .workflowStarted, .workflowPhase, .workflowFinished:
             applyAgentEvent(event, to: chat)
         default: break
         }
@@ -964,7 +965,7 @@ final class AppModel: ObservableObject {
                 items.append(.agents(AgentGroup(id: Self.itemId(&nextItemId), turn: turn, agentIds: [], workflowId: started.id)))
             }
 
-        case .agentProgress, .agentFinished, .workflowPhase:
+        case .agentProgress, .agentFinished, .workflowPhase, .workflowFinished:
             break
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,

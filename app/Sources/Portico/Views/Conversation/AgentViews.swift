@@ -562,7 +562,7 @@ struct PhaseColumn: View {
                 PhaseStatusIcon(state: state, warning: agents.contains { activity.status(of: $0) == .failed })
                 Text(AgentPresentation.phaseTitle(index: index, name: name))
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(state == .waiting ? Theme.text3 : Theme.text)
+                    .foregroundStyle(state == .pending ? Theme.text3 : Theme.text)
                     .lineLimit(1)
             }
             .padding(.horizontal, 8)
@@ -581,17 +581,18 @@ struct PhaseColumn: View {
     }
 }
 
-/// A phase's status: a grey dot waiting, a spinner running, a check (or a
-/// warning when one of its agents failed) done.
+/// A phase's status: a grey dot pending, a spinner running, a check (or a
+/// warning when one of its agents failed) done, a warning failed.
 struct PhaseStatusIcon: View {
     let state: PhaseState
     var warning: Bool = false
 
     var body: some View {
         switch state {
-        case .waiting: AgentStatusIcon(status: .queued)
+        case .pending: AgentStatusIcon(status: .queued)
         case .running: AgentStatusIcon(status: .working)
         case .done: AgentStatusIcon(status: warning ? .failed : .done)
+        case .failed: AgentStatusIcon(status: .failed)
         }
     }
 }
@@ -659,7 +660,7 @@ struct AgentGroupView: View {
     private var activity: AgentActivity { model.agentActivity[chat] ?? AgentActivity() }
 
     var body: some View {
-        if activity.isLive(turn: group.turn) {
+        if activity.isLive(group) {
             startedRow
         } else {
             record
@@ -697,7 +698,8 @@ struct AgentGroupView: View {
                     let members = activity.agents(inPhase: index, of: workflow)
                     PhaseRecordBlock(
                         title: AgentPresentation.phaseTitle(index: index, name: name),
-                        agents: members, activity: activity)
+                        agents: members, activity: activity,
+                        status: activity.recordStatus(ofPhase: index, in: workflow))
                 }
             } else {
                 let members = workflow.map(activity.agents(in:)) ?? group.agentIds.compactMap(activity.agent)
@@ -759,13 +761,9 @@ struct PhaseRecordBlock: View {
     let title: String
     let agents: [AgentRun]
     let activity: AgentActivity
+    /// ✓ or ⚠: `AgentActivity.recordStatus(ofPhase:in:)`.
+    let status: AgentStatus
     @State private var expanded = false
-
-    private var status: AgentStatus {
-        let statuses = agents.map(activity.status(of:))
-        if statuses.contains(.failed) || statuses.contains(.stopped) { return .failed }
-        return .done
-    }
 
     var body: some View {
         RecordBlock(

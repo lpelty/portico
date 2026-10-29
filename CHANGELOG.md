@@ -24,14 +24,23 @@
   folded block per agent (✓ or ⚠, its description, "14 steps · 1 m 52 s"),
   which opens to its steps; a workflow leaves one block per phase. Opening
   the conversation again shows the same record.
+- **Background work outlives its turn.** A background subagent, and a
+  workflow, keep their tray or box after the turn ends and keep reporting
+  while later turns run; they end on their own, not as "stopped" with the
+  turn, and the turn's record fills in when they do. A foreground agent
+  still open at the end of its turn reads stopped, as before.
+- **A failed phase shows ⚠** in the workflow box and in the record. A
+  workflow's end folds its box.
 
 ### For deployments
 
 - The app's `hello` carries `capabilities: ["agents.v1"]` (new, optional).
   A gateway older than v0.10 refuses the field; the app then says hello
   again without it and works as before.
-- The app reads `agent.started`, `agent.progress`, `agent.finished`,
-  `workflow.started`, `workflow.phase` and `agent_id` on tool rows. An
+- The app reads `agent.started` (with `background`), `agent.progress`,
+  `agent.finished`, `workflow.started` (sent again with the same `id`
+  replaces its phases), `workflow.phase` (`pending|running|done|failed`),
+  `workflow.finished` and `agent_id` on tool rows. An
   event it cannot read inside a `chat.history` is now skipped instead of
   failing the whole replay.
 

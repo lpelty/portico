@@ -188,10 +188,11 @@ final class AgentActivityTests: XCTestCase {
     }
 
     private func started(_ id: String, _ description: String, turn: Int = 1, tool: String? = nil,
-                         workflow: String? = nil, phase: PhaseRef? = nil) -> ServerMessage {
+                         workflow: String? = nil, phase: PhaseRef? = nil, background: Bool? = nil) -> ServerMessage {
         .agentStarted(AgentStarted(
-            chat: 1, turn: turn, id: id, toolUseId: tool ?? "toolu_\(id)", description: description, kind: "subagent",
-            workflowId: workflow, phase: phase, seq: next(), ts: ts))
+            chat: 1, turn: turn, id: id, toolUseId: tool ?? "toolu_\(id)", description: description,
+            kind: workflow == nil ? "subagent" : "workflow",
+            workflowId: workflow, phase: phase, background: background ?? (workflow == nil ? nil : true), seq: next(), ts: ts))
     }
 
     private func progress(_ id: String, step: String?, steps: Int, elapsed: Double) -> ServerMessage {
@@ -484,6 +485,201 @@ final class AgentActivityTests: XCTestCase {
         let activity = model.agentActivity[1]!
         let lines = activity.logLines(of: activity.liveWorkflow!).map { "\($0.agent.id): \($0.text)" }
         XCTAssertEqual(lines, ["r1: Read p1.md", "r2: Thinking about codes", "r1: Grep quote"])
+    }
+
+    // MARK: - the gateway's wire format (v0.10 reconciliation)
+
+    /// `protocol/examples/<name>`, as the gateway writes it.
+    private func example(_ name: String) throws -> ServerMessage {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("protocol/examples/\(name)")
+        return try JSONDecoder().decode(ServerMessage.self, from: Data(contentsOf: url))
+    }
+
+    func testThePhaseStatesAreTheGatewaysAndTheOldWaitingStillReads() throws {
+        for (word, state) in [("pending", PhaseState.pending), ("running", .running), ("done", .done), ("failed", .failed),
+                              ("waiting", .pending)] {
+            let message = try decode(#"{"type":"workflow.phase","chat":1,"id":"w","index":0,"state":"\#(word)","ts":"2026-10-27T12:00:00Z"}"#)
+            guard case .workflowPhase(let phase) = message else { return XCTFail("got \(message)") }
+            XCTAssertEqual(phase.state, state, word)
+        }
+        XCTAssertThrowsError(try decode(#"{"type":"workflow.phase","chat":1,"id":"w","index":0,"state":"sleeping","ts":"2026-10-27T12:00:00Z"}"#))
+        guard case .workflowPhase(let example) = try example("server.workflow.phase.json") else { return XCTFail() }
+        XCTAssertEqual(example.state, .running)
+        XCTAssertEqual(example.index, 1)
+    }
+
+    func testAFailedPhaseReadsAsAWarning() {
+        let model = model()
+        workflow(model, phases: ["Find", "Verify"])
+        model.apply(started("w.0", "find", workflow: "w", phase: .index(0)))
+        model.apply(.workflowPhase(WorkflowPhase(chat: 1, id: "w", index: 0, state: .running, seq: next(), ts: ts)))
+        model.apply(finished("w.0", .failed))
+        model.apply(.workflowPhase(WorkflowPhase(chat: 1, id: "w", index: 0, state: .failed, seq: next(), ts: ts)))
+        let activity = model.agentActivity[1]!
+        let wf = activity.workflow("w")!
+        XCTAssertEqual(wf.state(ofPhase: 0), .failed)
+        XCTAssertEqual(wf.state(ofPhase: 1), .pending)
+        XCTAssertEqual(wf.currentPhase, 1, "a failed phase is settled: the next is under way")
+        XCTAssertEqual(activity.recordStatus(ofPhase: 0, in: wf), .failed)
+        XCTAssertEqual(activity.recordStatus(ofPhase: 1, in: wf), .done)
+        // Said failed with no agent of its own failing: still a warning.
+        var bare = AgentActivity()
+        bare.apply(.workflowStarted(WorkflowStarted(chat: 1, turn: 1, id: "x", name: "x", phases: ["One"], ts: ts)))
+        bare.apply(.workflowPhase(WorkflowPhase(chat: 1, id: "x", index: 0, state: .failed, ts: ts)))
+        XCTAssertEqual(bare.recordStatus(ofPhase: 0, in: bare.workflow("x")!), .failed)
+    }
+
+    func testWorkflowFinishedDecodesFromTheGatewaysExample() throws {
+        guard case .workflowFinished(let finished) = try example("server.workflow.finished.json") else { return XCTFail() }
+        XCTAssertEqual(finished.id, "w9k2m4")
+        XCTAssertEqual(finished.outcome, .done)
+        XCTAssertEqual(finished.summary, "Workflow audit-quotes completed")
+        for word in ["done", "failed", "stopped"] {
+            let message = try decode(#"{"type":"workflow.finished","chat":1,"id":"w","outcome":"\#(word)","seq":3,"ts":"2026-10-27T12:00:00Z"}"#)
+            guard case .workflowFinished(let f) = message else { return XCTFail("got \(message)") }
+            XCTAssertEqual(f.outcome.rawValue, word)
+            XCTAssertNil(f.summary)
+            XCTAssertEqual(message.envelope, Envelope(chat: 1, id: "w", seq: 3))
+        }
+    }
+
+    func testWorkflowFinishedEndsTheWorkflowTheBoxFoldsAndTheRecordKeepsIt() {
+        let model = model()
+        workflow(model, phases: ["Find"])
+        model.apply(started("w.0", "find", workflow: "w", phase: .index(0)))
+        model.setBoxCollapsed(false, chat: 1)
+        model.apply(finished("w.0", summary: "3 found"))
+        model.apply(.workflowFinished(WorkflowFinished(chat: 1, id: "w", outcome: .done, summary: "Workflow w completed", seq: next(), ts: ts)))
+        var activity = model.agentActivity[1]!
+        XCTAssertEqual(activity.workflow("w")?.outcome, .done)
+        XCTAssertTrue(activity.isDone(activity.workflow("w")!), "done though the phase never said so")
+        XCTAssertTrue(activity.isBoxCollapsed, "the box folds itself, even opened by hand")
+        model.apply(turnFinished(1))
+        activity = model.agentActivity[1]!
+        XCTAssertNil(activity.liveWorkflow)
+        let group = groups(model)[0]
+        XCTAssertFalse(activity.isLive(group), "the row is the record")
+        XCTAssertEqual(activity.agents(in: activity.workflow("w")!).map(\.summary), ["3 found"])
+    }
+
+    func testTheSecondWorkflowStartedReplacesThePhasesAndKeepsItsAgents() throws {
+        // The gateway's order: an empty start, then the same id with phases,
+        // then the agents with 0-based phase indices.
+        let model = model()
+        model.apply(turnStarted(3))
+        model.apply(.workflowStarted(WorkflowStarted(chat: 1, turn: 3, id: "w9k2m4", name: "audit-quotes", phases: [], seq: next(), ts: ts)))
+        model.apply(started("w9k2m4.1", "read:alpha", turn: 3, workflow: "w9k2m4"))  // no phases yet: no phase
+        model.apply(.workflowPhase(WorkflowPhase(chat: 1, id: "w9k2m4", index: 0, state: .running, seq: next(), ts: ts)))
+        guard case .workflowStarted(var again) = try example("server.workflow.started.json") else { return XCTFail() }
+        XCTAssertEqual(again.turn, 3)
+        again.seq = next()
+        model.apply(.workflowStarted(again))
+        model.apply(started("w9k2m4.2", "read:beta", turn: 3, workflow: "w9k2m4", phase: .index(1)))
+        let activity = model.agentActivity[1]!
+        XCTAssertEqual(activity.workflows.count, 1, "replaced, not duplicated")
+        let wf = activity.workflows[0]
+        XCTAssertEqual(wf.phases, ["find", "verify", "report"])
+        XCTAssertEqual(wf.phaseStates, [.running, .pending, .pending], "a phase keeps the state it had at its place")
+        XCTAssertEqual(wf.turn, 3)
+        XCTAssertEqual(activity.agents(in: wf).map(\.id), ["w9k2m4.1", "w9k2m4.2"], "the earlier agent keeps its place")
+        XCTAssertEqual(activity.agents(inPhase: 1, of: wf).map(\.id), ["w9k2m4.2"])
+        XCTAssertEqual(groups(model).count, 1, "one row for the workflow")
+        XCTAssertEqual(groups(model).first?.turn, 3)
+    }
+
+    func testAgentStartedCarriesBackgroundAndAWorkflowKind() throws {
+        guard case .agentStarted(let plain) = try example("server.agent.started.json") else { return XCTFail() }
+        XCTAssertNil(plain.background)
+        XCTAssertEqual(plain.kind, "general-purpose")
+        let message = try decode(#"""
+            {"type":"agent.started","chat":1,"turn":3,"id":"w9k2m4.0","tool_use_id":"toolu_07","description":"read:alpha",
+             "kind":"workflow","workflow_id":"w9k2m4","phase":0,"background":true,"seq":60,"ts":"2026-10-27T12:00:00Z"}
+            """#)
+        guard case .agentStarted(let started) = message else { return XCTFail("got \(message)") }
+        XCTAssertEqual(started.kind, "workflow")
+        XCTAssertEqual(started.phase, .index(0))
+        XCTAssertEqual(started.background, true)
+        let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
+        XCTAssertEqual(raw?["background"] as? Bool, true, "kept on the way back out")
+        var activity = AgentActivity()
+        activity.apply(message)
+        XCTAssertTrue(activity.agent("w9k2m4.0")!.background)
+    }
+
+    func testABackgroundAgentOutlivesItsTurn() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(started("fg", "Foreground"))
+        model.apply(started("bg", "Background", background: true))
+        model.apply(turnFinished(1))
+        var activity = model.agentActivity[1]!
+        XCTAssertEqual(activity.status(of: activity.agent("fg")!), .stopped, "a foreground agent open at its turn's end is stopped")
+        XCTAssertEqual(activity.status(of: activity.agent("bg")!), .working, "a background one is not")
+        XCTAssertTrue(activity.showsTray, "the tray stays for it")
+        XCTAssertEqual(activity.trayAgents.map(\.id), ["bg"])
+        XCTAssertTrue(activity.isLive(groups(model)[0]), "its row still points at the tray")
+
+        // It keeps reporting under the turn that started it, during a later turn.
+        model.apply(turnStarted(2))
+        model.apply(progress("bg", step: "Reading alpha.md", steps: 3, elapsed: 41.3))
+        model.apply(finished("bg", summary: "42"))
+        activity = model.agentActivity[1]!
+        XCTAssertEqual(activity.status(of: activity.agent("bg")!), .done)
+        XCTAssertEqual(activity.agent("bg")?.elapsed, 41.3)
+        XCTAssertFalse(activity.showsTray, "gone once it finished on its own")
+        XCTAssertFalse(activity.isLive(groups(model)[0]), "turn 1's row is now the record, with the late result in it")
+        XCTAssertEqual(activity.agent("bg")?.summary, "42")
+    }
+
+    func testAWorkflowRunsOnAfterItsTurnUntilItsOwnFinish() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(.workflowStarted(WorkflowStarted(chat: 1, turn: 1, id: "w", name: "audit", phases: ["Find"], seq: next(), ts: ts)))
+        model.apply(started("w.0", "find", workflow: "w", phase: .index(0)))
+        model.apply(.workflowPhase(WorkflowPhase(chat: 1, id: "w", index: 0, state: .running, seq: next(), ts: ts)))
+        model.apply(turnFinished(1))
+        var activity = model.agentActivity[1]!
+        XCTAssertEqual(activity.liveWorkflow?.id, "w", "the box stays")
+        XCTAssertEqual(activity.status(of: activity.agent("w.0")!), .working, "not stopped by the turn's end")
+        XCTAssertTrue(activity.isLive(groups(model)[0]))
+
+        model.apply(progress("w.0", step: "Read alpha.md", steps: 1, elapsed: 3.4))
+        model.apply(finished("w.0", summary: "7"))
+        model.apply(.workflowPhase(WorkflowPhase(chat: 1, id: "w", index: 0, state: .done, seq: next(), ts: ts)))
+        model.apply(.workflowFinished(WorkflowFinished(chat: 1, id: "w", outcome: .done, seq: next(), ts: ts)))
+        activity = model.agentActivity[1]!
+        XCTAssertNil(activity.liveWorkflow)
+        XCTAssertFalse(activity.isLive(groups(model)[0]), "the record now")
+        XCTAssertEqual(activity.recordStatus(ofPhase: 0, in: activity.workflow("w")!), .done)
+    }
+
+    func testProgressTakesTheGatewaysFractionalElapsedAndTheEnginesOwnWords() throws {
+        guard case .agentProgress(let example) = try example("server.agent.progress.json") else { return XCTFail() }
+        XCTAssertEqual(example.elapsed, 12.5)
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(started("a", "Read alpha.md number"))
+        // Before its first tool call the step is the engine's own wording.
+        model.apply(progress("a", step: "Reading alpha.md", steps: 0, elapsed: 0.8))
+        model.apply(agentTool("r1", agent: "a", summary: "alpha.md"))
+        model.apply(progress("a", step: "Read alpha.md", steps: 1, elapsed: 1.6))
+        let agent = model.agentActivity[1]!.agent("a")!
+        XCTAssertEqual(agent.elapsed, 1.6)
+        XCTAssertEqual(agent.stepHistory, ["Reading alpha.md", "Read alpha.md"])
+        XCTAssertEqual(agent.stepLines, ["Read alpha.md"], "tool rows win over reported steps")
+        XCTAssertEqual(AgentPresentation.busyLine(description: agent.description, step: "Reading alpha.md"),
+                       "Read alpha.md number — reading alpha.md")
+    }
+
+    func testTheHelloCapabilityIsTheOneTheGatewayChecks() throws {
+        // The gateway's example hello (and its `AGENTS_CAPABILITY`).
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("protocol/examples/client.hello.json")
+        let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        XCTAssertEqual(raw?["capabilities"] as? [String], HelloClient.appCapabilities)
     }
 
     // MARK: - words
