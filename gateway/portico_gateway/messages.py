@@ -89,6 +89,9 @@ class ChatSummary(Strict):
     # deployment has no log step).
     logged_at: str | None = None
     unlogged: bool = False
+    # v0.6: when a turn last finished in the session (any outcome), so the
+    # app can say how long ago the agent last answered.
+    last_reply: str | None = None
 
 
 class Service(Strict):
@@ -753,7 +756,7 @@ def example_messages() -> dict[str, BaseModel]:
             chats=[
                 ChatSummary(
                     chat=1, folder=_FOLDER, alias="report draft", state="idle", created=_TS,
-                    logged_at="2026-10-27T11:40:00Z", unlogged=True,
+                    logged_at="2026-10-27T11:40:00Z", unlogged=True, last_reply="2026-10-27T11:52:00Z",
                 ),
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],

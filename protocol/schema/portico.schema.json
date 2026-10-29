@@ -1351,6 +1351,18 @@
           "title": "Folder",
           "type": "string"
         },
+        "last_reply": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Reply"
+        },
         "logged": {
           "anyOf": [
             {

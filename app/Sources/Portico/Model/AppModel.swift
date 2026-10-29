@@ -86,8 +86,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var chats: [ChatSummary] = []
     /// The chat shown in the conversation pane. Showing another ends focus.
     @Published var selected: Int? {
-        didSet { if let focus = viewerFocus, focus.chat != selected { endFocus() } }
+        didSet {
+            if let focus = viewerFocus, focus.chat != selected { endFocus() }
+            if selected != nil { conversationShown = true }
+        }
     }
+    /// The first `chat.list` of this run has arrived (v0.6). Until then the
+    /// main column draws nothing rather than a welcome that may change
+    /// (`MainScreen`). A reconnect does not reset it.
+    @Published private(set) var chatsListed = false
+    /// A conversation has been shown in this run (v0.6): from then on, no
+    /// selection means the live session, not the welcome.
+    private(set) var conversationShown = false
     /// Per chat, what the conversation pane renders.
     @Published private(set) var transcripts: [Int: [TranscriptItem]] = [:]
     /// Per chat, the cards still waiting for an answer, in arrival order.
@@ -287,6 +297,11 @@ final class AppModel: ObservableObject {
     }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
+    /// The artifact to put back in a chat's viewer when it is listed: the
+    /// one showing when the app last quit (v0.6, `restoreViewerAtLaunch`).
+    private var launchViewer: [Int: String] = [:]
+    /// The launch's viewer rule has been applied (once per run).
+    private var launchViewerDecided = false
     /// Per chat, the id of the artifact that was on screen when a replay
     /// from the beginning reset the list; put back when it is re-listed.
     private var restoreCurrent: [Int: String] = [:]
@@ -301,6 +316,11 @@ final class AppModel: ObservableObject {
     private var statusStamps: [Int: Int] = [:]
     private var gatewayStatusStamp = 0
     private var statusClock = 0
+    /// Per chat, the relist of its folder waiting out `relistDelay` (v0.6).
+    private var relistTasks: [Int: Task<Void, Never>] = [:]
+    /// How long a write waits for the next before the folder is listed
+    /// again: a turn of twenty edits lists it once.
+    var relistDelay: Duration = .milliseconds(400)
     /// The connection loop's pause between attempts; `startGateway` cancels it.
     private var reconnectWait: Task<Void, Never>?
     /// The loop's socket, while `run` is going; `stopGateway` closes it.
@@ -419,6 +439,7 @@ final class AppModel: ObservableObject {
 
         case .chatList(let list):
             chats = list.chats
+            chatsListed = true
             if let selected, !list.chats.contains(where: { $0.chat == selected }) {
                 self.selected = nil
             }
@@ -560,7 +581,29 @@ final class AppModel: ObservableObject {
             }
             applyEvent(message, to: chat)
             noteSeq(of: message)
+            if case .turnFinished(let finished) = message {
+                noteLastReply(chat: chat, at: finished.ts)
+            }
+            if FolderRelist.triggers(message, tool: { toolName(chat: chat, toolUseId: $0) }) {
+                scheduleRelist(chat: chat)
+            }
         }
+    }
+
+    /// A live turn finished: the session's last reply is now (the welcome's
+    /// line), without waiting for the next `chat.list`. Only live frames:
+    /// a replay's `ts` is the time of the replay.
+    private func noteLastReply(chat: Int, at ts: String) {
+        guard let index = chats.firstIndex(where: { $0.chat == chat }) else { return }
+        chats[index].lastReply = ts
+    }
+
+    /// The tool a row started with, by its use id.
+    func toolName(chat: Int, toolUseId: String) -> String? {
+        guard let index = Self.toolIndex(toolUseId, in: transcripts[chat] ?? []),
+            case .tool(let row) = transcripts[chat]?[index]
+        else { return nil }
+        return row.tool
     }
 
     private func isCard(_ message: ServerMessage) -> Bool {
@@ -752,10 +795,15 @@ final class AppModel: ObservableObject {
             // `shouldAutoOpen`, whatever `open` says.
             if artifact.open && settings.shouldAutoOpen(media: artifact.media.rawValue) {
                 show(artifact, in: chat)
+            } else if launchViewer[chat] == artifact.id {
+                // The artifact that was showing when the app quit (v0.6).
+                current[chat] = artifact
+                viewerVisible[chat] = true
             } else if restoreCurrent[chat] == artifact.id {
                 current[chat] = artifact
             }
             if restoreCurrent[chat] == artifact.id { restoreCurrent[chat] = nil }
+            if launchViewer[chat] == artifact.id { launchViewer[chat] = nil }
 
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
@@ -769,7 +817,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private static func toolIndex(_ toolUseId: String, in items: [TranscriptItem]) -> Int? {
+    static func toolIndex(_ toolUseId: String, in items: [TranscriptItem]) -> Int? {
         items.lastIndex { if case .tool(let row) = $0 { row.toolUseId == toolUseId } else { false } }
     }
 
@@ -908,6 +956,39 @@ final class AppModel: ObservableObject {
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
     }
 
+    /// At launch, the viewer of the session the window opens on comes back
+    /// only if it was showing an artifact when the app quit, on that
+    /// artifact (`ViewerRestore`); otherwise it starts closed, rather than
+    /// open on nothing. Once per run, before the chat's events arrive.
+    func restoreViewerAtLaunch(chat: Int) {
+        guard !launchViewerDecided else { return }
+        launchViewerDecided = true
+        viewerVisible[chat] = false
+        guard let id = ViewerRestore.artifact(saved: settings.viewerAtQuit, chat: chat) else { return }
+        if id.hasPrefix(Self.localArtifactPrefix) {
+            // A file opened from the Files pane: the gateway never lists
+            // it, so it is opened again here, if it is still there.
+            let path = String(id.dropFirst(Self.localArtifactPrefix.count))
+            if FileManager.default.fileExists(atPath: path) { openArtifact(file: path, in: chat) }
+        } else {
+            launchViewer[chat] = id
+        }
+    }
+
+    /// What the viewer shows now, worth reopening at the next launch: an
+    /// artifact in the shown chat's open viewer; `nil` when it is closed
+    /// or empty, or the document view has the window.
+    var viewerToRemember: SavedViewer? {
+        guard !documentMode, let chat = shownChat, isViewerShown(for: chat), let artifact = current[chat] else { return nil }
+        return SavedViewer(chat: chat, artifact: artifact.id)
+    }
+
+    /// Called as the app quits: remember what the viewer shows (or that it
+    /// shows nothing) for the next launch.
+    func rememberViewerForNextLaunch() {
+        settings.viewerAtQuit = viewerToRemember
+    }
+
     /// The chat's artifacts, newest first, for the history list.
     func history(for chat: Int) -> [Artifact] {
         (artifacts[chat] ?? []).reversed()
@@ -1008,6 +1089,33 @@ final class AppModel: ObservableObject {
         send(.chatNew(ChatNew(folder: folder.path, id: id)))
     }
 
+    /// The welcome's Send while it continues the live session (Y1): show
+    /// that session's conversation with the message in it, the welcome's
+    /// files attached. `/new` and `/log` work as in the conversation. A
+    /// message the session cannot take yet (a turn is running, or a send
+    /// is in flight) waits in its composer instead of being lost.
+    func continueSession(chat: Int, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        open(chat: chat)
+        attach(startAttachments, to: chat)
+        startAttachments = []
+        startDraft = ""
+        if isBusy(chat: chat) || isSending(chat: chat) {
+            let typed = draft(for: chat)
+            setDraft(typed.isEmpty ? trimmed : typed + "\n" + trimmed, for: chat)
+        } else {
+            sendMessage(chat: chat, text: trimmed)
+        }
+    }
+
+    /// A suggestion on the welcome while it continues the live session:
+    /// sent there, and its conversation shown.
+    func continueSession(chat: Int, action text: String) {
+        open(chat: chat)
+        sendAction(chat: chat, text: text)
+    }
+
     /// Settings › Folder: the folder new sessions start in, from now on.
     func chooseStartFolder(_ folder: URL) {
         objectWillChange.send()
@@ -1048,6 +1156,12 @@ final class AppModel: ObservableObject {
     /// conversation before it.
     func open(chat: Int) {
         selected = chat
+        load(chat: chat)
+    }
+
+    /// Ask for a chat's events without showing it (`open` shows it too):
+    /// the welcome loads the live session it continues this way (v0.6).
+    func load(chat: Int) {
         let since = openedChats.contains(chat) ? lastSeq[chat] : nil
         noteOpened(chat: chat)
         pendingOpenSince[chat] = since
@@ -1219,6 +1333,9 @@ final class AppModel: ObservableObject {
         current[chat] = nil
         viewerVisible[chat] = nil
         restoreCurrent[chat] = nil
+        launchViewer[chat] = nil
+        relistTasks[chat]?.cancel()
+        relistTasks[chat] = nil
         status[chat] = nil
         statusStamps[chat] = nil
         closedCards[chat] = nil
@@ -1378,6 +1495,47 @@ extension AppModel {
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
     }
 
+    /// The roots that are the session's own folder: `chat`, and a
+    /// deployment root at the same path (which the pane shows instead).
+    func sessionFolderRoots(chat: Int) -> Set<String> {
+        guard let folder = summary(of: chat)?.folder else { return [] }
+        let own = URL(fileURLWithPath: folder).standardizedFileURL.path
+        return Set(fileRoots(for: chat).filter { URL(fileURLWithPath: $0.path).standardizedFileURL.path == own }.map(\.name))
+    }
+
+    /// A write finished or a turn ended in `chat` (`FolderRelist`): list
+    /// its folder again shortly, once for a burst of writes.
+    func scheduleRelist(chat: Int) {
+        guard offers("files") else { return }
+        relistTasks[chat]?.cancel()
+        let delay = relistDelay
+        relistTasks[chat] = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.relistTasks[chat] = nil
+            self?.relistSessionFolder(chat: chat)
+        }
+    }
+
+    /// List again the directories of the session's folder the Files pane
+    /// has already listed, so a file the agent made appears without the
+    /// refresh button. The old entries stay drawn until the new ones come
+    /// (no "Listing…" flash), and nothing outside the folder is asked for.
+    /// A chat whose files are not on screen just forgets those listings;
+    /// they are asked for when it is shown.
+    func relistSessionFolder(chat: Int) {
+        let roots = sessionFolderRoots(chat: chat)
+        let keys = fileTree.keys.filter { $0.chat == chat && roots.contains($0.root) }
+        guard filesChat == chat else {
+            for key in keys { fileTree[key] = nil }
+            return
+        }
+        let pending = Set(pendingFileLists.values)
+        for key in keys.sorted(by: { $0.path < $1.path }) where !pending.contains(key) {
+            send(filesListRequest(for: key))
+        }
+    }
+
     /// Show a file from the Files pane in the viewer, as a local artifact:
     /// no gateway round trip, the media from the extension the way the
     /// gateway maps it, listed once in the chat's history, and the viewer
@@ -1396,6 +1554,24 @@ extension AppModel {
         artifacts[chat] = list
         current[chat] = artifact
         viewerVisible[chat] = true
+    }
+}
+
+/// When the Files tree lists the session's folder again on its own (v0.6):
+/// a write-like tool finished, or a turn ended (a command may have made
+/// files too). Live frames only; a replay changes nothing on disk.
+enum FolderRelist {
+    /// The engine's tools that write files.
+    static let writeTools: Set<String> = ["Write", "Edit", "MultiEdit", "NotebookEdit"]
+
+    /// Whether `message` may have changed what the folder holds; `tool`
+    /// names the tool a use started with.
+    static func triggers(_ message: ServerMessage, tool: (String) -> String?) -> Bool {
+        switch message {
+        case .turnFinished: true
+        case .toolFinished(let finished): tool(finished.toolUseId).map(writeTools.contains) ?? false
+        default: false
+        }
     }
 }
 
