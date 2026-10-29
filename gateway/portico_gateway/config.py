@@ -14,7 +14,7 @@ import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
@@ -30,6 +30,11 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 # What this gateway can do beyond the protocol's baseline; the app keys
 # optional UI on these.
 CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context"]
+
+# v0.8: advertised when the deployment can restart all its services at once
+# (``[deployment] restart`` or a plug-in's ``restart_services``); the app
+# then offers Restart all services and sends ``services.restart_all``.
+RESTART_ALL_CAPABILITY = "services.restart_all"
 
 
 class ConfigError(ValueError):
@@ -151,6 +156,28 @@ class ServiceConfig(BaseModel):
         return value if value is not None and value.strip() else None
 
 
+class DeploymentConfig(BaseModel):
+    """``[deployment]`` (v0.8): one restart and one status for all the deployment's services.
+
+    Both run with ``/bin/sh -c``, bounded by ``command_timeout_seconds``.
+    ``restart`` is what Restart all services runs (exit 0 is done).
+    ``status`` prints ``{"services": [{"id", "name", "up", "detail"?}]}``;
+    when set, the services menu shows its rows instead of running each
+    ``[[services]]`` check, and a row's Restart comes from the
+    ``[[services]]`` entry with the same ``id``, when one gives it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    restart: str | None = None
+    status: str | None = None
+
+    @field_validator("restart", "status")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -187,6 +214,20 @@ class Config(BaseModel):
     # services menu.
     services: list[ServiceConfig] = []
     services_interval_seconds: int = Field(default=30, ge=5)
+    # v0.8: the deployment's one restart and one status command.
+    deployment: DeploymentConfig = DeploymentConfig()
+    # v0.8: a session's title. ``generated`` asks a small model for one
+    # after the first turn finishes cleanly (the first line until then, and
+    # if the call fails); ``first_line`` makes no extra model call.
+    # ``title_model`` overrides the model (default: the provider's small
+    # model, by the alias ``haiku``).
+    titles: Literal["generated", "first_line"] = "generated"
+    title_model: str | None = None
+
+    @field_validator("title_model")
+    @classmethod
+    def _title_model_blank_is_unset(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None and value.strip() else None
 
     @field_validator("services")
     @classmethod
@@ -304,8 +345,13 @@ def hello_for(
     reading of the config file's modification time; ``can_update`` is
     whether ``[update] run`` is set; ``permission_mode`` is the mode a new
     session starts in; ``commands`` lists ``log`` when the deployment can log.
+    ``capabilities`` (v0.8) adds ``services.restart_all`` when the
+    deployment can restart all its services.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
+    capabilities = list(CAPABILITIES)
+    if can_restart_all(config, plugins):
+        capabilities.append(RESTART_ALL_CAPABILITY)
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,
@@ -316,7 +362,7 @@ def hello_for(
         # Portico's own commands the deployment offers (v0.4: ``log`` when it
         # can log; the app turns a typed ``/log`` into ``session.log``).
         commands=["log"] if can_log else [],
-        capabilities=list(CAPABILITIES),
+        capabilities=capabilities,
         presentation=config.presentation,
         can_log=can_log,
         config_stale=config_stale,
@@ -325,6 +371,11 @@ def hello_for(
         permission_mode=config.permission_mode,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
+
+
+def can_restart_all(config: Config, plugins: Plugins | None = None) -> bool:
+    """Whether Restart all services has something to run: a plug-in's ``restart_services`` or ``[deployment] restart``."""
+    return bool(config.deployment.restart) or (plugins is not None and plugins.restart_services is not None)
 
 
 def config_value(config: Config, dotted: str) -> Any:

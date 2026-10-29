@@ -16,9 +16,17 @@ so updating Portico never touches it. Each module sets
 - ``search(root, query) -> list[Hit]`` (sync or async) — ``files.search``
   instead of Spotlight. ``root`` is the root's directory; hit paths are
   relative to it.
+- ``restart_services()`` (sync or async, v0.8) — the services menu's
+  Restart all services, instead of ``[deployment] restart``. Returning
+  ``False`` or raising is a failed restart (the exception's message is the
+  reason the app shows); anything else is done.
+- ``services_status()`` (sync or async, v0.8) — the deployment's services,
+  instead of ``[deployment] status`` or each ``[[services]]`` check: the
+  same shape the status command prints, ``{"services": [{"id", "name",
+  "up", "detail"?}]}`` (a dict, or that JSON as text).
 
-For ``on_renew`` and ``search`` the last plug-in in the list that names
-the hook is the one used. A module that is missing, raises on import, or
+For ``on_renew``, ``search``, ``restart_services`` and ``services_status``
+the last plug-in in the list that names the hook is the one used. A module that is missing, raises on import, or
 sets a different API number stops the gateway at start with one line
 saying which and why; the doctor reports the same.
 """
@@ -45,6 +53,8 @@ API_ATTRIBUTE = "PORTICO_PLUGIN_API"
 
 RenewHook = Callable[["RenewContext", ChatSummary], Awaitable[bool]]
 SearchHook = Callable[[Path, str], Any]
+# v0.8: sync or async, no arguments.
+ServicesHook = Callable[[], Any]
 
 
 class PluginError(Exception):
@@ -95,15 +105,18 @@ def _import(name: str) -> ModuleType:
     renew = getattr(module, "on_renew", None)
     if renew is not None and not inspect.iscoroutinefunction(renew):
         raise PluginError(f"plug-in {name!r}: on_renew must be an async function (async def)")
-    for hook in ("on_hello", "search"):
+    for hook in ("on_hello", "search", "restart_services", "services_status"):
         value = getattr(module, hook, None)
         if value is not None and not callable(value):
             raise PluginError(f"plug-in {name!r}: {hook} is not callable")
     return module
 
 
+HOOKS = ("on_hello", "on_renew", "search", "restart_services", "services_status")
+
+
 def _hooks(module: ModuleType) -> list[str]:
-    return [hook for hook in ("on_hello", "on_renew", "search") if getattr(module, hook, None) is not None]
+    return [hook for hook in HOOKS if getattr(module, hook, None) is not None]
 
 
 class Plugins:
@@ -113,9 +126,13 @@ class Plugins:
         self.modules = list(modules)
         self.renew: RenewHook | None = None
         self.search: SearchHook | None = None
+        self.restart_services: ServicesHook | None = None
+        self.services_status: ServicesHook | None = None
         for module in self.modules:
             self.renew = getattr(module, "on_renew", None) or self.renew
             self.search = getattr(module, "search", None) or self.search
+            self.restart_services = getattr(module, "restart_services", None) or self.restart_services
+            self.services_status = getattr(module, "services_status", None) or self.services_status
 
     @classmethod
     def none(cls) -> Plugins:
@@ -149,6 +166,16 @@ class Plugins:
             if inspect.isawaitable(raw):
                 raw = await raw
         return [h if isinstance(h, Hit) else Hit.model_validate(h) for h in (raw or [])]
+
+
+async def call_hook(hook: ServicesHook) -> Any:
+    """Run a no-argument hook, sync (in a thread) or async; its result."""
+    if inspect.iscoroutinefunction(hook):
+        return await hook()
+    result = await asyncio.to_thread(hook)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 def load_plugins(names: list[str], paths: list[str]) -> Plugins:

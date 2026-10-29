@@ -1,0 +1,5 @@
+{
+  "id": "req-8",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "services.restart_all"
+}

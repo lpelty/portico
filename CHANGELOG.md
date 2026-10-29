@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.8.0 — unreleased
+
+### Gateway
+
+- **Generated session titles.** After a session's first turn finishes
+  `done`, the gateway asks a small model for a title of at most six words
+  (from the first message and the first 500 characters of the reply),
+  stores it on the session and sends `chat.list`. The call goes through
+  the Agent SDK's one-shot `query` to the agent's own provider and
+  credentials: one turn, no tools, no settings files, from the state
+  directory, ten seconds at most, in the background (it never holds up
+  or fails a turn). The first line stays until it arrives, and for good
+  when the call fails. The default model is the alias `haiku`, the
+  provider's small model (a hosted provider maps it with
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL`); `title_model` overrides it. `titles =
+  "first_line"` makes no extra call. A log step's turn, an unknown
+  command's empty turn, a session with an alias and a restored session
+  are never titled; a generated title is never replaced.
+- **One restart and one status for the whole deployment.** New optional
+  `[deployment]` with `restart` and `status` commands. `status` prints
+  `{"services": [{"id", "name", "up", "detail"?}]}` and, when set,
+  replaces the `[[services]]` checks (rows keep their Restart from a
+  `[[services]]` entry with the same id); a status that fails or prints
+  something else is one row saying so, with the reason. `restart` is run
+  by the new request `services.restart_all`, advertised as the
+  `services.restart_all` capability in `hello`; the next
+  `services.status` (none goes out meanwhile) is the answer, plus `error
+  code=services.restart_failed` when it failed. Plug-ins can provide both
+  with the new hooks `services_status()` and `restart_services()`, which
+  take precedence over the config.
+- Protocol: additive only (a new request an older app never sends, a new
+  capability string, a title that changes once in `chat.list`). Schema
+  and examples re-exported.
+
 ## v0.7.0 (2026-10-29)
 
 ### What a person gets (app)
