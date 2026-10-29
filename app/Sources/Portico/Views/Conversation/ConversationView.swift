@@ -142,6 +142,8 @@ struct TranscriptItemView: View {
             TurnMarkerView(marker: marker)
         case .compacted:
             CompactedLine()
+        case .notice(_, let text):
+            NoticeLine(text: text)
         }
     }
 }
@@ -243,6 +245,25 @@ struct CompactedLine: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+/// A quiet line from the gateway (`chat.notice`): an unknown command, say.
+/// Not the agent's words, so small and dimmed, with no bubble.
+struct NoticeLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+            Text(text)
+                .font(.system(size: 12))
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Theme.text3)
+        .accessibilityElement(children: .combine)
     }
 }
 

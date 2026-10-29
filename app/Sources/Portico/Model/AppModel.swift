@@ -15,6 +15,13 @@ struct ToolRow: Equatable, Sendable, Identifiable {
     /// The finish summary (a line count, an error) — distinct from `summary`,
     /// which stays what the start said.
     var result: String? = nil
+    /// What became of this use's permission (v0.3): drawn at the row's end.
+    var permission: PermissionOutcome? = nil
+    /// The person's note on a decline, drawn under the row.
+    var note: String? = nil
+    /// The gateway cancelled this use's permission card before anyone
+    /// answered it (its reason): the row says so instead of an outcome.
+    var unanswered: String? = nil
 
     var id: String { toolUseId }
 }
@@ -34,6 +41,8 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     case turnMarker(TurnMarker)
     /// The engine summarized earlier conversation to make room (`chat.compacted`).
     case compacted(id: String, trigger: String)
+    /// A quiet line from the gateway (`chat.notice`), e.g. an unknown command.
+    case notice(id: String, text: String)
 
     var id: String {
         switch self {
@@ -43,6 +52,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
         case .card(let card): "card:\(card.id)"
         case .turnMarker(let marker): "turn:\(marker.turn)"
         case .compacted(let id, _): "compacted:\(id)"
+        case .notice(let id, _): "notice:\(id)"
         }
     }
 }
@@ -125,8 +135,9 @@ final class AppModel: ObservableObject {
     /// Per chat, the latest `context.usage`: the percent for the card and
     /// the strip, and the model's name for the strip.
     @Published private(set) var contextUsage: [Int: ContextUsage] = [:]
-    /// The model named by the most recent `context.usage` in any chat: the
-    /// deployment's model does not change when a session is renewed.
+    /// The model named by the most recent `context.usage` in any chat (its
+    /// display name when the deployment gives one): the deployment's model
+    /// does not change when a session is renewed.
     @Published private(set) var latestModel: String?
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
@@ -395,7 +406,7 @@ final class AppModel: ObservableObject {
 
         case .contextUsage(let usage):
             contextUsage[usage.chat] = usage
-            if let name = usage.model, !name.isEmpty { latestModel = name }
+            if let name = usage.displayModel { latestModel = name }
             noteSeq(of: message)
 
         case .sessionRenewed(let renewed):
@@ -403,10 +414,6 @@ final class AppModel: ObservableObject {
 
         case .filesResults(let results):
             applySearchResults(results)
-
-        case .chatNotice(let notice):
-            applyEvent(message, to: notice.chat)
-            noteSeq(of: message)
 
         case .configStale, .updateAvailable:
             // v0.3: drawn by the app work that follows the protocol change.
@@ -443,7 +450,7 @@ final class AppModel: ObservableObject {
             }
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
-            .chatCompacted:
+            .chatCompacted, .chatNotice:
             guard let chat = message.envelope.chat else { return }
             // A sequenced event we already hold (a re-sent card, a ring
             // overlap) is not applied twice; the card case de-duplicates by
@@ -614,8 +621,11 @@ final class AppModel: ObservableObject {
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
 
+        case .chatNotice(let notice):
+            items.append(.notice(id: Self.itemId(&nextItemId), text: notice.text))
+
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
-            .contextUsage, .sessionRenewed, .filesResults, .chatNotice, .configStale, .updateAvailable:
+            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable:
             break
         }
     }

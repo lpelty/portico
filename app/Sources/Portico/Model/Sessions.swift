@@ -104,9 +104,11 @@ extension AppModel {
         contextUsage[chat]?.percent ?? summary(of: chat)?.contextPercent
     }
 
-    /// The model's name from the latest `context.usage`, for the strip.
+    /// The model's name from the latest `context.usage`, for the strip:
+    /// the deployment's display name (`model_name`) when it gives one,
+    /// else the model id.
     func modelName(for chat: Int) -> String? {
-        if let name = contextUsage[chat]?.model, !name.isEmpty { return name }
+        if let name = contextUsage[chat]?.displayModel { return name }
         return latestModel
     }
 
@@ -127,6 +129,16 @@ extension AppModel {
     /// "Not now": the nudge stays away for this session.
     func dismissNudge(chat: Int) {
         nudgeDismissed.insert(chat)
+    }
+}
+
+extension ContextUsage {
+    /// `model_name ?? model`, blanks skipped; `nil` when neither is set.
+    var displayModel: String? {
+        for candidate in [modelName, model] {
+            if let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        }
+        return nil
     }
 }
 
