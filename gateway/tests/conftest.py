@@ -119,6 +119,8 @@ class FakeEngine:
         self.turn = 0
         self.session_id: str | None = None
         self.permission_mode = "default"
+        # The slash commands the engine knows; ``None``: it cannot say.
+        self.commands: set[str] | None = None
         # Every ``set_permission_mode`` call, in order (not in ``calls``).
         self.mode_changes: list[str] = []
         self._session_id = session_id
@@ -143,6 +145,9 @@ class FakeEngine:
 
     def script(self, *items: Any) -> None:
         self.scripts.append(list(items))
+
+    def slash_commands(self) -> set[str] | None:
+        return set(self.commands) if self.commands is not None else None
 
     async def set_permission_mode(self, mode: str) -> None:
         self.mode_changes.append(mode)

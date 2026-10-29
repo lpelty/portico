@@ -106,6 +106,7 @@ import http
 import json
 import logging
 import os
+import re
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
@@ -139,6 +140,7 @@ from .messages import (
     ChatHistory,
     ChatList,
     ChatLive,
+    ChatNotice,
     ChatNew,
     ChatOpen,
     ChatRemove,
@@ -203,6 +205,19 @@ STOP_GRACE_SECONDS = 15.0
 # The exact form attachments take in the text the engine receives
 # (PROTOCOL.md, ``message.send``).
 ATTACHMENT_HEADER = "Attached files:"
+
+# A message that starts with a slash command: ``/word`` (``plugin:word``
+# too) followed by a blank or the end. ``/Users/...`` is a path, not one.
+SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
+
+# Portico's own commands, which the app acts on (``/new`` renews the session).
+PORTICO_COMMANDS: frozenset[str] = frozenset({"new"})
+
+
+def slash_command(text: str) -> str | None:
+    """The command a message starts with (without ``/``), or ``None``."""
+    m = SLASH_COMMAND.match(text.lstrip())
+    return m.group(1) if m else None
 
 
 def _now() -> str:
@@ -1466,6 +1481,10 @@ class GatewayServer:
         # taking a later message's. No ``chat.list`` is pushed for it: the
         # app has the same first line in ``user.text``, and the next
         # ``chat.list`` (renew, new, alias, reattach) carries the title.
+        command = slash_command(msg.text)
+        if command is not None and not await self._knows_command(chat, command):
+            await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
+            return
         title = None
         if chat.title is None and chat.turn == 0 and not chat.restored:
             title = title_from(msg.text)
@@ -1473,6 +1492,53 @@ class GatewayServer:
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
+
+    def deployment_commands(self) -> set[str]:
+        """Command names (no ``/``) the deployment offers: ``hello.commands`` and its actions' slash text."""
+        hello = hello_for(self.config, self.epoch, self.version, self.plugins)
+        names = {c.strip().lstrip("/").split()[0] for c in hello.commands if c.strip().lstrip("/")}
+        for action in hello.actions:
+            name = slash_command(action.text)
+            if name:
+                names.add(name)
+        return names
+
+    async def _knows_command(self, chat: Chat, command: str) -> bool:
+        """Whether someone knows ``/command``: Portico, the deployment, or the engine.
+
+        The engine's commands are only known once it runs, so a chat without
+        one has its engine started first (as the send would). An engine that
+        cannot say is trusted: the message goes to it as typed.
+        """
+        if command in PORTICO_COMMANDS or command in self.deployment_commands():
+            return True
+        engine = await self._ensure_engine(chat)
+        known = engine.slash_commands()
+        return known is None or command in known
+
+    async def _unknown_command(self, chat: Chat, command: str, text: str) -> None:
+        """An empty turn: what was typed, one ``chat.notice``, done. Nothing reaches the agent."""
+        log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
+        chat.turn += 1
+        turn = chat.turn
+        await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=turn))
+        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=turn, text=text))
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=f"No command /{command} here"))
+        await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=turn, outcome="done"))
+        await self.set_state(chat, "idle")
+
+    async def _ensure_engine(self, chat: Chat) -> Engine:
+        """The chat's engine, started (resuming its session) when it has none."""
+        engine = chat.engine
+        if engine is not None:
+            return engine
+        try:
+            return await self._start_engine(chat)
+        except ProtocolError:
+            raise  # the preflight refused: lifecycle.before_first_chat_failed, as on chat.new
+        except Exception as e:
+            log.exception("chat %d: engine failed to start", chat.number)
+            raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e
 
     def _check_can_send(self, chat: Chat) -> None:
         if chat.ended is not None:
@@ -1486,15 +1552,7 @@ class GatewayServer:
         The caller has checked the chat can take a turn. ``run.finished`` is
         set when the turn ends, with ``run.outcome`` saying how.
         """
-        engine = chat.engine
-        if engine is None:
-            try:
-                engine = await self._start_engine(chat)
-            except ProtocolError:
-                raise  # the preflight refused: lifecycle.before_first_chat_failed, as on chat.new
-            except Exception as e:
-                log.exception("chat %d: engine failed to start", chat.number)
-                raise ProtocolError("engine.start_failed", f"the engine could not start in {chat.folder}: {e}") from e
+        engine = await self._ensure_engine(chat)
 
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))

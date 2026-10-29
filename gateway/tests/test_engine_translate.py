@@ -286,12 +286,14 @@ class _FakeSDKClient:
     """
 
     instances: list[_FakeSDKClient] = []
+    next_server_info: dict[str, Any] | None = None
 
     def __init__(self, options: Any) -> None:
         self.options = options
         self.disconnected = False
         self.script: list[Any] = []
         self.modes: list[str] = []
+        self.server_info: dict[str, Any] | None = _FakeSDKClient.next_server_info
         self._queue: asyncio.Queue[Any] = asyncio.Queue()
         _FakeSDKClient.instances.append(self)
 
@@ -307,6 +309,9 @@ class _FakeSDKClient:
 
     async def set_permission_mode(self, mode: str) -> None:
         self.modes.append(mode)
+
+    async def get_server_info(self) -> dict[str, Any] | None:
+        return self.server_info
 
     async def disconnect(self) -> None:
         self.disconnected = True
@@ -563,3 +568,20 @@ def test_a_result_auto_mode_blocked_is_labelled_blocked() -> None:
     failed = UserMessage(content=[ToolResultBlock(tool_use_id="t2", content="exit 1", is_error=True)])
     quoted = UserMessage(content=[ToolResultBlock(tool_use_id="t3", content=text, is_error=False)])
     assert [e.permission for e in translate(failed, 1, 1) + translate(quoted, 1, 1)] == [None, None]  # type: ignore[union-attr]
+
+
+async def test_slash_commands_come_from_initialize_and_the_init_message(tmp_path: Path, sdk_client: Any) -> None:
+    _FakeSDKClient.next_server_info = {"commands": [{"name": "review", "description": ""}, {"name": "/compact"}]}
+    try:
+        cb = RecordingCallbacks()
+        eng = SDKEngine(chat=3)
+        assert eng.slash_commands() is None
+        await eng.start(tmp_path, None, ["project"], cb)
+        assert eng.slash_commands() == {"review", "compact"}
+        (client,) = _FakeSDKClient.instances
+        client.push(SystemMessage(subtype="init", data={"session_id": "sess-live", "slash_commands": ["context", "plug:do"]}))
+        await _until(lambda: "plug:do" in (eng.slash_commands() or set()))
+        assert eng.slash_commands() == {"review", "compact", "context", "plug:do"}
+        await eng.close()
+    finally:
+        _FakeSDKClient.next_server_info = None

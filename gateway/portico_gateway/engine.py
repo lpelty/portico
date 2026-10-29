@@ -126,6 +126,10 @@ class Engine(Protocol):
         """Change the permission mode now (when running) and for every later turn."""
         ...
 
+    def slash_commands(self) -> set[str] | None:
+        """The slash commands the running engine knows (names without ``/``); ``None`` when it cannot say."""
+        ...
+
     async def close(self) -> None: ...
 
     async def context_usage(self) -> tuple[float, str | None] | None:
@@ -398,6 +402,9 @@ class SDKEngine:
         # The last turn a result message closed; ``turn`` beyond it is in flight.
         self._finished_turn = 0
         self._closing = False
+        # Slash command names (no ``/``) from the engine's initialize answer
+        # and its ``init`` message; ``None`` until either has said.
+        self._commands: set[str] | None = None
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
         if self._client is not None:
@@ -406,6 +413,7 @@ class SDKEngine:
         self.session_id = resume
         self._client = ClaudeSDKClient(build_options(folder, resume, setting_sources, callbacks, self.permission_mode))
         await self._client.connect()
+        self._note_commands_from_server_info(await self._client.get_server_info())
         self._pump = asyncio.create_task(self._run_pump(), name=f"portico-engine-{self.chat}")
         try:
             await asyncio.wait_for(self._init_seen.wait(), self.init_timeout)
@@ -443,10 +451,25 @@ class SDKEngine:
         except Exception:
             log.exception("chat %s: could not report the lost turn", self.chat)
 
+    def _note_commands_from_server_info(self, info: Any) -> None:
+        commands = info.get("commands") if isinstance(info, Mapping) else None
+        if isinstance(commands, list):
+            self._add_commands(c.get("name") if isinstance(c, Mapping) else c for c in commands)
+
+    def _add_commands(self, names: Iterable[Any]) -> None:
+        found = {n.strip().lstrip("/") for n in names if isinstance(n, str) and n.strip()}
+        self._commands = (self._commands or set()) | found
+
+    def slash_commands(self) -> set[str] | None:
+        return set(self._commands) if self._commands is not None else None
+
     def _note_session(self, msg: Message) -> None:
         sid: str | None = None
         if isinstance(msg, SystemMessage) and msg.subtype == "init":
             sid = msg.data.get("session_id")
+            commands = msg.data.get("slash_commands")
+            if isinstance(commands, list):
+                self._add_commands(commands)
             self._init_seen.set()
         else:
             sid = getattr(msg, "session_id", None)

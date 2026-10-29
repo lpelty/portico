@@ -710,3 +710,60 @@ async def test_engine_event_for_another_turn_is_dropped(server: GatewayServer, f
         assert isinstance(frames[-1], TurnFinished) and frames[-1].turn == 1
     finally:
         await conn.close()
+
+
+# --- v0.3: a slash command nobody knows ------------------------------------------
+
+
+async def test_unknown_slash_command_is_an_empty_turn_with_a_notice(
+    server: GatewayServer, factory: EngineFactory, folder: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from portico_gateway.messages import ChatNotice
+
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.commands = {"compact", "plug:do"}
+        caplog.set_level("INFO", logger="portico_gateway.server")
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="/foo bar")))
+        frames = await recv_until(conn, TurnFinished)
+        idle = await recv(conn)
+        assert [type(m) for m in frames] == [TurnStarted, UserText, ChatNotice, TurnFinished]
+        notice = frames[2]
+        assert isinstance(notice, ChatNotice) and notice.text == "No command /foo here" and notice.seq is not None
+        assert isinstance(frames[3], TurnFinished) and frames[3].outcome == "done"
+        assert isinstance(idle, ChatState) and idle.state == "idle"
+        assert [c for c in engine.calls if c[0] == "send"] == [], "never sent to the agent"
+        assert "No command /foo here" not in caplog.text and "no command /foo here" in caplog.text
+
+        # What the engine, the deployment (an action's text) or Portico knows goes through as typed.
+        for text in ("/compact", "/plug:do now", "/review", "/new", "/Users/me/file.md is a path", "plain text"):
+            await conn.send(dump(MessageSend(ts=TS, chat=number, text=text)))
+            frames = await recv_until(conn, TurnFinished)
+            await recv(conn)
+            assert not any(isinstance(m, ChatNotice) for m in frames), text
+            assert engine.calls[-1] == ("send", text)
+    finally:
+        await conn.close()
+
+
+async def test_unknown_slash_command_check_starts_the_engine_first_and_trusts_one_that_cannot_say(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    from portico_gateway.messages import ChatNotice
+
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        await recv(conn)
+        assert server.registry.get(number).engine is None
+        # The next engine cannot say what it knows (commands None): the message goes to it.
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="/whatever")))
+        frames = await recv_until(conn, TurnFinished)
+        await recv(conn)
+        assert not any(isinstance(m, ChatNotice) for m in frames)
+        assert factory.last.calls[-1] == ("send", "/whatever")
+    finally:
+        await conn.close()
