@@ -1,0 +1,9 @@
+{
+  "chat": 1,
+  "id": "agent_01",
+  "outcome": "done",
+  "seq": 60,
+  "summary": "6 findings",
+  "ts": "2026-10-27T12:01:52Z",
+  "type": "agent.finished"
+}

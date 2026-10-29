@@ -1,0 +1,11 @@
+{
+  "chat": 1,
+  "description": "Checking quotes",
+  "id": "agent_01",
+  "kind": "subagent",
+  "seq": 50,
+  "tool_use_id": "toolu_07",
+  "ts": "2026-10-27T12:00:00Z",
+  "turn": 2,
+  "type": "agent.started"
+}

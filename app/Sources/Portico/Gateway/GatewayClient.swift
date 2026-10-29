@@ -84,7 +84,24 @@ actor GatewayClient {
 
     /// Open the socket, send `hello`, await the gateway's `hello`.
     /// Any earlier connection is closed first.
+    ///
+    /// The `hello` names the app's capabilities (v0.10: `agents.v1`). A
+    /// gateway older than v0.10 is strict about fields and refuses that one
+    /// as `protocol.invalid`, closing the socket; the app then says hello
+    /// again, on a new socket, without it, and gets the older protocol.
     func connect(url: URL, token: String, appVersion: String) async throws -> HelloServer {
+        do {
+            return try await open(url: url, token: token, hello: HelloClient(
+                appVersion: appVersion, capabilities: HelloClient.appCapabilities))
+        } catch RefusedHello.invalid {
+            return try await open(url: url, token: token, hello: HelloClient(appVersion: appVersion))
+        }
+    }
+
+    /// The gateway refused a `hello` that declared capabilities as invalid.
+    private enum RefusedHello: Error { case invalid }
+
+    private func open(url: URL, token: String, hello: HelloClient) async throws -> HelloServer {
         disconnect()
         let socket = session.webSocketTask(with: Self.socketURL(base: url, token: token))
         socket.maximumMessageSize = 64 * 1024 * 1024
@@ -92,12 +109,13 @@ actor GatewayClient {
         task = socket
 
         do {
-            try await sendRaw(.hello(HelloClient(appVersion: appVersion)), on: socket)
+            try await sendRaw(.hello(hello), on: socket)
             let first = try await withDeadline(helloTimeout, what: "hello") {
                 try await Self.receiveOrCancel(socket)
             }
             let message = try decode(first)
             if case .error(let refusal) = message {
+                if refusal.code == "protocol.invalid", hello.capabilities != nil { throw RefusedHello.invalid }
                 throw ClientError.refused(refusal.message)
             }
             guard case .hello(let hello) = message else {

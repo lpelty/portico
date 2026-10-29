@@ -1,0 +1,9 @@
+{
+  "chat": 1,
+  "id": "wf_01",
+  "name": "Interview review",
+  "phases": ["Review", "Verify", "Report"],
+  "seq": 70,
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "workflow.started"
+}

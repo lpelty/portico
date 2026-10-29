@@ -1,0 +1,9 @@
+{
+  "chat": 1,
+  "id": "wf_01",
+  "index": 1,
+  "seq": 71,
+  "state": "running",
+  "ts": "2026-10-27T12:02:00Z",
+  "type": "workflow.phase"
+}
