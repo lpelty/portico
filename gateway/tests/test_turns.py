@@ -867,7 +867,10 @@ async def test_an_engine_that_cannot_start_ends_the_turn_with_an_error(
         err = frames[-1]
         assert isinstance(err, Error) and err.code == "engine.start_failed" and err.id == "req-m" and err.chat == number
         assert "no such binary" in err.message
-        assert server.registry.get(number).engine is None
+        chat = server.registry.get(number)
+        assert chat.engine is None
+        # Nothing reached the agent: no reply, and nothing for the log to see.
+        assert chat.last_reply is None and not chat.work_since_log
 
         # Not busy afterwards: the next send starts an engine that works.
         factory.fail = None
@@ -879,8 +882,85 @@ async def test_an_engine_that_cannot_start_ends_the_turn_with_an_error(
         await conn.close()
 
 
-# The app's frames are handled one at a time, so a stop can only meet a
-# starting engine when the turn runs from a task: the log step's.
+async def quiet(conn: ClientConnection, timeout: float = 0.3) -> list[ServerMessage]:
+    """Whatever arrives within ``timeout`` (nothing, when all is well)."""
+    got: list[ServerMessage] = []
+    try:
+        while True:
+            got.append(await recv(conn, timeout))
+    except TimeoutError:
+        return got
+
+
+async def test_a_stop_while_a_sends_engine_starts_ends_the_turn_without_sending(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    # The engine starts from a task: the stop is read while it starts.
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        await conn.send(dump(MessageSend(ts=TS, id="req-m", chat=number, text="hello again")))
+        assert [type(await recv(conn)) for _ in range(3)] == [TurnStarted, UserText, ChatState]
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        await asyncio.sleep(0.05)
+        assert not factory.last.started, "the stop was read before the engine started"
+        factory.gate.set()
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[-1], TurnFinished) and frames[-1].outcome == "stopped"
+        idle = await recv(conn)
+        assert isinstance(idle, ChatState) and idle.state == "idle" and not idle.unlogged
+        assert ("send", "hello again") not in factory.last.calls
+        chat = server.registry.get(number)
+        assert chat.last_reply is None and not chat.work_since_log
+        assert not [m for m in await quiet(conn) if isinstance(m, Error)]
+    finally:
+        await conn.close()
+
+
+async def test_chat_stop_while_a_sends_engine_fails_to_start_reports_the_turn_once(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        factory.fail = RuntimeError("no such binary")
+        await conn.send(dump(MessageSend(ts=TS, id="req-m", chat=number, text="hello again")))
+        await recv_until(conn, ChatState)  # working
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, ChatState)
+        assert [m.outcome for m in frames if isinstance(m, TurnFinished)] == ["stopped"]
+        assert isinstance(frames[-1], ChatState) and frames[-1].state == "stopped"
+        factory.gate.set()
+        assert await quiet(conn) == [], "no second turn.finished, no idle, no error"
+        chat = server.registry.get(number)
+        assert chat.state == "stopped" and number not in server._runs
+        assert chat.last_reply is None and not chat.work_since_log
+    finally:
+        await conn.close()
+
+
+async def test_chat_remove_while_a_sends_engine_fails_to_start_sends_nothing_more(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        factory.fail = RuntimeError("no such binary")
+        await conn.send(dump(MessageSend(ts=TS, id="req-m", chat=number, text="hello again")))
+        await recv_until(conn, ChatState)  # working
+        await conn.send(dump(ChatRemove(ts=TS, chat=number)))
+        await recv_until(conn, ChatList)
+        factory.gate.set()
+        assert await quiet(conn) == [], "no frames for a removed chat"
+        assert number not in server._runs
+    finally:
+        await conn.close()
+
+
+# A log step's turn runs from its own task too, so a stop meets its starting engine the same way.
 
 
 async def test_a_stop_while_the_engine_starts_ends_the_turn_without_sending(

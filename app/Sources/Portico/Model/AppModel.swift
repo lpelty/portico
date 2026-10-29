@@ -595,7 +595,11 @@ final class AppModel: ObservableObject {
             }
             applyEvent(message, to: chat)
             noteSeq(of: message)
-            if case .turnFinished(let finished) = message {
+            // A turn that ended in an error before the agent said or did
+            // anything (its engine could not start) is not a reply (v0.7).
+            if case .turnFinished(let finished) = message,
+                finished.outcome != .error || turnHadAgentOutput(chat: chat, turn: finished.turn)
+            {
                 noteLastReply(chat: chat, at: finished.ts)
             }
             if FolderRelist.triggers(message, tool: { toolName(chat: chat, toolUseId: $0) }) {
@@ -610,6 +614,25 @@ final class AppModel: ObservableObject {
     private func noteLastReply(chat: Int, at ts: String) {
         guard let index = chats.firstIndex(where: { $0.chat == chat }) else { return }
         chats[index].lastReply = ts
+    }
+
+    /// Whether the transcript holds anything from the agent (text, a tool,
+    /// a card) between turn `turn`'s echo and its finish marker.
+    func turnHadAgentOutput(chat: Int, turn: Int) -> Bool {
+        let items = transcripts[chat] ?? []
+        var index = items.endIndex
+        if case .turnMarker(let marker)? = items.last, marker.turn == turn { index -= 1 }
+        while index > items.startIndex {
+            index -= 1
+            switch items[index] {
+            case .assistantText, .card: return true
+            case .tool(let row): if row.turn == turn { return true }
+            case .userText(let user): if user.turn == turn { return false }
+            case .turnMarker: return false
+            case .compacted, .notice: continue
+            }
+        }
+        return false
     }
 
     /// The tool a row started with, by its use id.

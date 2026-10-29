@@ -69,11 +69,11 @@ struct StartView: View {
     /// gives one that can be read (`hello.brand.icon`, as the Dock, About
     /// panel and sidebar header load it), else a sparkle on the accent.
     enum GreetingMark: Equatable {
-        case icon(NSImage)
+        case icon(BrandIconImage)
         case sparkle
 
         init(brand: BrandPresentation) {
-            if let icon = brand.iconImage { self = .icon(icon) } else { self = .sparkle }
+            if let icon = brand.icon { self = .icon(icon) } else { self = .sparkle }
         }
     }
 
@@ -88,7 +88,7 @@ struct StartView: View {
         switch GreetingMark(brand: model.brand) {
         case .icon(let icon):
             // Rounded when the icon is a flat square (v0.7 decision 5).
-            BrandIcon(image: icon, side: Self.markSize)
+            BrandIcon(icon: icon, side: Self.markSize)
                 .accessibilityLabel(model.brand.name)
         case .sparkle:
             ZStack {

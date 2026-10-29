@@ -27,11 +27,13 @@ struct BrandPresentation: Equatable {
 
     /// The brand icon, loaded from the absolute image path `brand.icon`
     /// names; `nil` when there is none or it cannot be read.
-    var iconImage: NSImage? {
+    var iconImage: NSImage? { icon?.image }
+
+    /// The brand icon with its shape decided: read and tested once per
+    /// version of the file (`BrandIconCache`), not on every render.
+    var icon: BrandIconImage? {
         guard let path = brand?.icon?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
-        let expanded = (path as NSString).expandingTildeInPath
-        guard FileManager.default.fileExists(atPath: expanded) else { return nil }
-        return NSImage(contentsOfFile: expanded)
+        return BrandIconCache.shared.icon(at: (path as NSString).expandingTildeInPath)
     }
 
     /// A CSS hex colour (`#RGB`, `#RRGGBB`, `#RRGGBBAA`, hash optional) as a
@@ -63,6 +65,35 @@ extension AppModel {
 
 // MARK: - The rounded mark (v0.7 decision 5)
 
+/// A loaded brand icon and whether it is drawn rounded (`BrandIconShape`).
+struct BrandIconImage: Equatable {
+    let image: NSImage
+    let rounds: Bool
+}
+
+/// Brand icons by path, each read and shape-tested once per modification
+/// date: views ask for the icon on every render (each streamed text delta
+/// redraws the window), and a disk read, a decode and four pixel draws
+/// each time added up. A file replaced in place is read again.
+final class BrandIconCache: @unchecked Sendable {
+    static let shared = BrandIconCache()
+
+    private let lock = NSLock()
+    private var entries: [String: (modified: Date?, icon: BrandIconImage?)] = [:]
+
+    /// The icon at the absolute `path`; `nil` when there is no file or it is not an image.
+    func icon(at path: String) -> BrandIconImage? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
+        let modified = attributes[.modificationDate] as? Date
+        lock.lock()
+        defer { lock.unlock() }
+        if let entry = entries[path], entry.modified == modified { return entry.icon }
+        let icon = NSImage(contentsOfFile: path).map { BrandIconImage(image: $0, rounds: BrandIconShape.rounds($0)) }
+        entries[path] = (modified, icon)
+        return icon
+    }
+}
+
 /// Whether the brand icon is drawn in the macOS icon shape. A flat square
 /// (opaque corners) is rounded; an image whose four corners are already
 /// transparent has its own shape and is drawn as given. The same test
@@ -81,8 +112,8 @@ enum BrandIconShape {
     }
 
     /// True when each corner pixel (one in from the edge) is nearly
-    /// transparent. Reads four single pixels, not the whole image, so it
-    /// is cheap enough to run each time the mark is drawn.
+    /// transparent. Reads four single pixels, not the whole image; run
+    /// once per loaded icon (`BrandIconCache`), never per render.
     static func cornersAreTransparent(_ image: CGImage) -> Bool {
         let w = image.width, h = image.height
         guard w > 4, h > 4 else { return false }
@@ -117,16 +148,16 @@ enum BrandIconShape {
 /// are opaque, else as given (v0.7 decision 5). The welcome's greeting
 /// mark and the sidebar header's mark both draw it.
 struct BrandIcon: View {
-    let image: NSImage
+    let icon: BrandIconImage
     let side: CGFloat
 
     var body: some View {
-        let picture = Image(nsImage: image)
+        let picture = Image(nsImage: icon.image)
             .resizable()
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: side, height: side)
-        if BrandIconShape.rounds(image) {
+        if icon.rounds {
             picture.clipShape(RoundedRectangle(cornerRadius: side * BrandIconShape.cornerFraction, style: .continuous))
         } else {
             picture
@@ -140,9 +171,9 @@ struct BrandHeader: View {
     let brand: BrandPresentation
 
     var body: some View {
-        if let icon = brand.iconImage {
+        if let icon = brand.icon {
             HStack(spacing: 8) {
-                BrandIcon(image: icon, side: 20)
+                BrandIcon(icon: icon, side: 20)
                 Text(brand.name)
                     .font(.headline)
                     .lineLimit(1)

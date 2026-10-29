@@ -184,6 +184,21 @@ final class LaunchAndWayBackTests: XCTestCase {
         XCTAssertEqual(model.summary(of: 3)?.lastReply, "2026-10-29T10:02:00Z")
     }
 
+    func testAnErrorBeforeTheAgentSaidAnythingIsNotTheLastReply() throws {
+        let (model, _) = try model()
+        launched(model)
+        // The engine could not start: the echo, then the error finish.
+        model.apply(.userText(UserText(chat: 3, turn: 1, text: "hello", seq: 1, ts: "2026-10-29T10:00:00Z")))
+        model.apply(.turnFinished(TurnFinished(chat: 3, turn: 1, outcome: .error, seq: 2, ts: "2026-10-29T10:01:00Z")))
+        XCTAssertNil(model.summary(of: 3)?.lastReply)
+
+        // An error after the agent answered still is.
+        model.apply(.userText(UserText(chat: 3, turn: 2, text: "again", seq: 3, ts: "2026-10-29T10:02:00Z")))
+        model.apply(.textDelta(TextDelta(chat: 3, turn: 2, text: "Partly", seq: 4, ts: "2026-10-29T10:02:30Z")))
+        model.apply(.turnFinished(TurnFinished(chat: 3, turn: 2, outcome: .error, seq: 5, ts: "2026-10-29T10:03:00Z")))
+        XCTAssertEqual(model.summary(of: 3)?.lastReply, "2026-10-29T10:03:00Z")
+    }
+
     func testTheContinuingLineSaysWhichSessionAndWhenItLastAnswered() {
         let shown = SessionPresentation(summary: session(3, lastReply: "2026-10-29T10:02:00Z"))
         XCTAssertEqual(

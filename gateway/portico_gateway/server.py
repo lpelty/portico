@@ -359,6 +359,10 @@ class TurnRun:
     turn: int
     collector: TurnCollector
     stop_requested: bool = False
+    # Whether the text went to the engine: a turn ended before that (its
+    # engine could not start, or a stop came first) is neither work the log
+    # has not seen nor a reply.
+    sent: bool = False
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     # How the turn ended, once it has; a turn ended by closing its engine
     # (``chat.stop``, gateway stop) leaves it unset and counts as stopped.
@@ -786,7 +790,8 @@ class GatewayServer:
             await self.cards.cancel_all(chat, reason, self.emit)
             await self._close_engine(chat)
             if run is not None:
-                chat.note_turn_done()
+                if run.sent:
+                    chat.note_turn_done()
                 await self._report_artifacts(chat, run)
                 await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
                 await self.set_state(chat, "idle")
@@ -1222,7 +1227,8 @@ class GatewayServer:
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
             del self._runs[chat.number]
-        chat.note_turn_done()
+        if run.sent:
+            chat.note_turn_done()
         self._sync_session(chat)
         await self.set_state(chat, "idle")
         run.finished.set()
@@ -1449,7 +1455,8 @@ class GatewayServer:
         The ring serves when ``since`` is inside it, or when the chat was
         created this launch and the ring still reaches back to its first
         event. Otherwise the engine's transcript is read and translated;
-        the chat's stored artifacts come with it. When there is no
+        the chat's stored artifacts come with it, and the ring's notices
+        from this launch are put back in (v0.7). When there is no
         transcript to read, the ring is the best the gateway has: it is
         sent ``truncated`` only for a ``since`` request (the app then asks
         from the beginning), never for a from-the-beginning one, which no
@@ -1476,7 +1483,47 @@ class GatewayServer:
         turns = sum(1 for e in events if isinstance(e, TurnStarted))
         if chat.turn == 0 and chat.number not in self._runs:
             chat.turn = turns
-        return events, False, list(chat.artifacts)
+        return self._with_notices(events, chat.events_since(None)[0]), False, list(chat.artifacts)
+
+    @staticmethod
+    def _with_notices(events: list[ServerMessage], ring: list[ServerMessage]) -> list[ServerMessage]:
+        """Transcript ``events`` with this launch's ``chat.notice`` lines from ``ring`` put back in.
+
+        The transcript is the engine's and has no notices. Each goes after
+        the ``turn.finished`` of the turn before it in the ring, else before
+        the ``turn.started`` of the turn after it, else at the end. Unstamped,
+        as the transcript's events are.
+        """
+        # (notice, turn it follows, turn it precedes), in ring order.
+        notices: list[tuple[ServerMessage, int | None, int | None]] = []
+        last_turn: int | None = None
+        for e in ring:
+            if isinstance(e, ChatNotice):
+                notices.append((e.model_copy(update={"seq": None}), last_turn, None))
+            elif isinstance(e, TurnStarted):
+                if last_turn is None:
+                    notices = [(n, None, e.turn) for n, _, _ in notices]
+                last_turn = e.turn
+        if not notices:
+            return events
+        placed: set[int] = set()
+        out: list[ServerMessage] = []
+        for e in events:
+            if isinstance(e, TurnStarted):
+                for i, (n, _, nxt) in enumerate(notices):
+                    if nxt == e.turn and i not in placed:
+                        out.append(n)
+                        placed.add(i)
+            out.append(e)
+            if isinstance(e, TurnFinished):
+                for i, (n, prev, _) in enumerate(notices):
+                    if prev == e.turn and i not in placed:
+                        out.append(n)
+                        placed.add(i)
+        # Anchors the transcript does not have (a turn still running, one that
+        # never reached the engine, or none at all) leave their notices at the end.
+        out.extend(n for i, (n, _, _) in enumerate(notices) if i not in placed)
+        return out
 
     @staticmethod
     def _replayed_permission(chat: Chat, event: ServerMessage) -> ServerMessage:
@@ -1494,7 +1541,8 @@ class GatewayServer:
         await self.cards.cancel_all(chat, "chat stopped", self.emit)
         await self._close_engine(chat)
         if run is not None:
-            chat.note_turn_done()
+            if run.sent:
+                chat.note_turn_done()
             await self._report_artifacts(chat, run)
             await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         await self.set_state(chat, "stopped")
@@ -1756,7 +1804,27 @@ class GatewayServer:
         title = None
         if chat.title is None and chat.turn == 0 and not chat.restored:
             title = title_from(msg.text)
-        await self.start_turn(chat, with_attachments(msg.text, attachments))
+        text = with_attachments(msg.text, attachments)
+        run = await self._echo_turn(chat, text)
+        # The engine start and the send run from a task (v0.7): a cold engine
+        # takes seconds, and the frames that stop the turn must be read meanwhile.
+        self._spawn(self._send_task(chat, run, text, title, msg, conn), name=f"portico-send-{chat.number}")
+
+    async def _send_task(
+        self, chat: Chat, run: TurnRun, text: str, title: str | None, msg: MessageSend, conn: ServerConnection
+    ) -> None:
+        """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``."""
+        try:
+            await self._begin_turn(chat, run, text)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
+            return
+        except Exception as e:
+            log.exception("chat %d: message.send failed", chat.number)
+            if self._runs.get(chat.number) is run:
+                await self._fail_turn(chat, run)
+            await self._send(conn, self.error("gateway.error", f"message.send failed: {e}", chat=chat.number, id=msg.id))
+            return
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
@@ -1825,7 +1893,16 @@ class GatewayServer:
         the person's message shows at once however long a cold engine takes.
         An engine that cannot start ends the turn ``error``, as a refused
         send does, and the start's ``ProtocolError`` is raised.
+
+        Awaited whole by the log step, whose own task it runs in; a
+        ``message.send`` echoes here and begins from a task.
         """
+        run = await self._echo_turn(chat, text)
+        await self._begin_turn(chat, run, text)
+        return run
+
+    async def _echo_turn(self, chat: Chat, text: str) -> TurnRun:
+        """Register the next turn and send its echo: ``turn.started``, ``user.text``, ``chat.state working``."""
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
         # Registered before the engine starts: a second send meanwhile is busy.
@@ -1835,9 +1912,19 @@ class GatewayServer:
         # so a replay from this launch reads as a conversation, not a monologue.
         await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text))
         await self.set_state(chat, "working")
+        return run
+
+    async def _begin_turn(self, chat: Chat, run: TurnRun, text: str) -> None:
+        """Start or resume the engine for an echoed ``run`` and send ``text``, unless the turn ended meanwhile."""
         try:
             engine = await self._ensure_engine(chat)
         except ProtocolError:
+            if self._runs.get(chat.number) is not run:
+                # Ended while the engine started (chat.stop, chat.remove,
+                # gateway stop): that reported the turn, and a failure now
+                # has no turn left to end.
+                log.info("chat %d: engine failed to start for turn %d after it ended", chat.number, run.turn)
+                return
             await self._fail_turn(chat, run)
             raise
         if self._runs.get(chat.number) is not run:
@@ -1845,23 +1932,25 @@ class GatewayServer:
             # stop): that reported the turn; the fresh engine goes as well.
             if chat.number not in self._runs:
                 await self._close_engine(chat)
-            return run
+            return
         if run.stop_requested:
             # turn.stop while the engine started: nothing was sent to stop.
             run.outcome = "stopped"
             await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
             await self._finish_run(chat, run)
-            return run
+            return
         # ``send`` advances the engine's own turn counter; align it so the
         # engine's events carry this turn even after an engine restart.
-        engine.turn = chat.turn - 1
+        engine.turn = run.turn - 1
+        # From here the turn counts as work and a reply, a refused send too:
+        # the engine may have taken part of it.
+        run.sent = True
         try:
             await engine.send(text)
         except Exception as e:
             log.exception("chat %d: engine send failed", chat.number)
             await self._fail_turn(chat, run)
             raise ProtocolError("engine.send_failed", f"the engine refused the message: {e}") from e
-        return run
 
     async def _fail_turn(self, chat: Chat, run: TurnRun) -> None:
         """End ``run`` with ``error``: the engine could not start, or refused the message."""
@@ -1876,7 +1965,7 @@ class GatewayServer:
             return  # nothing running: a stop is harmless
         run.stop_requested = True
         if chat.engine is None:
-            return  # the engine is still starting: ``start_turn`` ends the turn stopped instead of sending
+            return  # the engine is still starting: ``_begin_turn`` ends the turn stopped instead of sending
         # An open card would keep the engine's permission call waiting past the interrupt.
         await self.cards.cancel_all(chat, "turn stopped", self.emit)
         await chat.engine.interrupt()

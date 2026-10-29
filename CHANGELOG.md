@@ -19,6 +19,11 @@
 - **A square brand icon is drawn rounded** on the welcome and in the
   sidebar header (the macOS icon shape, corners about 22 % of the side);
   an icon whose corners are already transparent is drawn as given.
+  The icon is read and its shape tested once per version of the file,
+  not on every redraw (each streamed word redrew it from disk before).
+- **A send whose engine could not start is not "last reply"**: a turn that
+  ends `error` before the agent said or did anything leaves the welcome's
+  "last reply" where it was.
 
 ### What a person gets (gateway)
 
@@ -29,6 +34,16 @@
   that cannot start ends the turn `error` and answers `engine.start_failed`
   (or `lifecycle.before_first_chat_failed`), as a refused send does; a
   `turn.stop` while it starts ends the turn stopped without sending.
+- **Stop works while the engine starts.** The start and the send run after
+  the echo while the gateway keeps reading frames, so Stop (`turn.stop`,
+  `chat.stop`) takes effect at once instead of after the 5–10 s start. A
+  refusal from the start still reaches the app as an `error` with the
+  send's `id`. A chat stopped or removed while its engine starts stays as
+  it was left: a start that then fails sends no second `turn.finished`,
+  no `idle`, and no frames for a removed chat.
+- **A turn that never reached the agent is not work.** One whose engine
+  could not start, or that was stopped before its send, leaves
+  `last_reply` and `unlogged` as they were.
 - **Log session and New are recorded in the conversation** as `chat.notice`
   lines, kept in the ring so a replay shows them: "Log session — running
   the log step" at once, then "Session logged" or "The log step didn't
@@ -37,6 +52,9 @@
   continues in Session M", and "Continues Session N" first in the next
   session. `/log` and `/new` in the composer send the same requests and get
   the same lines. A refused command (busy, ended, no log step) writes none.
+  A chat restored after a gateway restart, which replays from the engine's
+  transcript, gets this run's lines back in after the turns they followed;
+  only lines from before the restart are lost.
 - README: `brand.icon` may be a flat square; Portico rounds it in the macOS
   icon shape (an image with transparent corners is drawn as given).
 

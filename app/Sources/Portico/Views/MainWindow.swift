@@ -264,8 +264,8 @@ struct BrandMark: View {
     let brand: BrandPresentation
 
     var body: some View {
-        if let icon = brand.iconImage {
-            BrandIcon(image: icon, side: 20)
+        if let icon = brand.icon {
+            BrandIcon(icon: icon, side: 20)
         } else {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(brand.accent ?? Theme.accent)

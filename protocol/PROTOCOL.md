@@ -180,8 +180,15 @@ closed, starts it with its next send), so the person's message shows at
 once. An engine that cannot start then ends the turn: `turn.finished
 outcome=error`, `chat.state idle`, and the refusal (`error
 code=engine.start_failed`, or `lifecycle.before_first_chat_failed` when the
-deployment's preflight refuses). A `turn.stop` that arrives while the
-engine starts ends the turn `stopped` without sending it. A slash command
+deployment's preflight refuses). The engine start and the send run after
+the echo, while the gateway goes on reading frames, so a refusal from
+them (`engine.start_failed`, `lifecycle.before_first_chat_failed`,
+`engine.send_failed`) arrives later than the echo, still carrying the
+`message.send`'s `id`. A `turn.stop` that arrives while the engine starts
+ends the turn `stopped` without sending it; a `chat.stop` or `chat.remove`
+then ends or removes it, and an engine that fails to start afterwards
+adds nothing. A turn that never reached the engine is not a reply: it
+leaves `last_reply` and `unlogged` as they were. A slash command
 that only the engine might know is still checked against a started engine
 first (below), so its echo waits for the engine.
 
@@ -416,7 +423,8 @@ gateway: `true` when the deployment can log (`hello.can_log`) **and** a
 turn finished after `logged_at` — or, never logged, at least one turn
 finished. A turn counts however it finished (done, stopped, error),
 including a log turn that did not finish `done`; an unknown command's
-empty turn does not (nothing reached the agent). The app asks "log
+empty turn does not (nothing reached the agent), nor (v0.7) a turn
+whose engine could not start or that was stopped before its send. The app asks "log
 first?" before New only when `unlogged` is true. Both are kept on the
 chat record, so they survive a gateway restart; a session recorded before
 v0.4 counts as unlogged when the engine had named it (it has had a turn)
@@ -424,6 +432,8 @@ and it was not logged by a renewal.
 
 `ChatSummary.last_reply?` *(v0.6)* is when a turn last finished in the
 session (UTC, ISO 8601), however it finished; absent before the first.
+v0.7: a turn that never reached the engine (its engine could not start,
+or a stop came first) does not move it.
 Kept on the chat record, so it survives a gateway restart — unlike the
 `ts` of events replayed from a transcript, which is the time of the
 replay. The app's welcome says "last reply 12 min ago" from it.
@@ -635,8 +645,11 @@ counted in the chat's `compactions`.
 e.g. `No command /foo here` for a slash command that neither the
 deployment nor the engine knows (the message is not sent to the agent).
 v0.7: also the session commands' lines (`session.log`, `session.renew`).
-No clock in the text. Stamped and replayed with the history (from the
-ring: a transcript replay after a gateway restart does not carry them).
+No clock in the text. Stamped and replayed with the history. A chat
+replayed from the engine's transcript (one restored after a gateway
+restart) gets the notices of the current gateway run put back in, after
+the turn each followed and without `seq`; only notices from before the
+restart are lost.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
 No fields. The config file is newer than when the gateway started; the

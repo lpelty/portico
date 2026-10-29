@@ -63,6 +63,33 @@ final class BrandTests: XCTestCase {
         XCTAssertNil(BrandPresentation(brand: Brand(name: "A", agentName: "A", icon: nil)).iconImage)
     }
 
+    func testTheIconIsReadOncePerVersionOfItsFileNotOnEveryRender() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-cache-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("icon.png")
+        func write(_ color: NSColor) throws {
+            let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+                color.setFill()
+                rect.fill()
+                return true
+            }
+            let tiff = try XCTUnwrap(image.tiffRepresentation)
+            try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])).write(to: path)
+        }
+        try write(.systemBlue)
+        let brand = BrandPresentation(brand: Brand(name: "A", agentName: "A", icon: path.path))
+        let first = try XCTUnwrap(brand.icon)
+        XCTAssertTrue(first.rounds, "a flat square is rounded")
+        XCTAssertTrue(brand.icon?.image === first.image, "the same image again, not a fresh read")
+        XCTAssertTrue(BrandPresentation(brand: brand.brand).iconImage === first.image, "a new presentation of the same brand too")
+
+        // Replaced in place (a later modification date): read again.
+        try write(.systemGreen)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: path.path)
+        XCTAssertFalse(brand.icon?.image === first.image)
+    }
+
     func testHelloBrandFlowsToThePresentation() {
         let model = AppModel()
         let hello = HelloServer(
