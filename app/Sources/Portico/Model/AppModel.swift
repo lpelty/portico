@@ -228,6 +228,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var startError: String?
     /// Per chat, the turn the last delta belonged to, for coalescing.
     private var currentTurn: [Int: Int] = [:]
+    /// Per chat and tool use, a permission outcome that arrived before the
+    /// tool's row did (a card answered ahead of `tool.started`): drawn on
+    /// the row when it starts.
+    private var pendingOutcomes: [Int: [String: PermissionDecision]] = [:]
+
+    /// A permission outcome with the note that went with it.
+    struct PermissionDecision: Equatable, Sendable {
+        var outcome: PermissionOutcome
+        var note: String?
+    }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
     /// Per chat, the id of the artifact that was on screen when a replay
@@ -500,6 +510,7 @@ final class AppModel: ObservableObject {
             }
             closedCards[chat] = [:]
             currentTurn[chat] = nil
+            pendingOutcomes[chat] = nil
             lastSeq[chat] = nil
             // The replay is the whole truth of the chat: its `user.text` is
             // the bubble for any send that ran; a send the gateway never saw is gone.
@@ -543,10 +554,20 @@ final class AppModel: ObservableObject {
 
         case .toolStarted(let started):
             currentTurn[chat] = started.turn
-            let row = ToolRow(
+            var row = ToolRow(
                 toolUseId: started.toolUseId, turn: started.turn, tool: started.tool,
                 summary: started.summary, input: started.input)
+            if let decision = pendingOutcomes[chat]?.removeValue(forKey: row.toolUseId) {
+                row.permission = decision.outcome
+                row.note = decision.note
+            }
             if let index = items.lastIndex(where: { if case .tool(let r) = $0 { return r.toolUseId == row.toolUseId } else { return false } }) {
+                // A re-sent start keeps what was already drawn on the row.
+                if case .tool(let old) = items[index] {
+                    row.permission = row.permission ?? old.permission
+                    row.note = row.note ?? old.note
+                    row.unanswered = old.unanswered
+                }
                 items[index] = .tool(row)
             } else {
                 items.append(.tool(row))
@@ -559,12 +580,17 @@ final class AppModel: ObservableObject {
                 row.finished = true
                 row.ok = finished.ok
                 row.result = finished.summary
+                if let permission = finished.permission {
+                    row.permission = permission
+                    row.note = finished.note ?? row.note
+                }
                 items[index] = .tool(row)
             } else {
                 // The start fell off the ring; show the finish rather than lose it.
                 items.append(.tool(ToolRow(
                     toolUseId: finished.toolUseId, turn: finished.turn, tool: "tool", summary: finished.summary,
-                    input: [:], finished: true, ok: finished.ok, result: finished.summary)))
+                    input: [:], finished: true, ok: finished.ok, result: finished.summary,
+                    permission: finished.permission, note: finished.note)))
             }
 
         case .turnFinished(let finished):
@@ -585,18 +611,36 @@ final class AppModel: ObservableObject {
             closedCards[chat]?[card.id] = nil
             open.append(card)
             openCards[chat] = open
-            let inline = TranscriptItem.card(card)
-            if !items.contains(where: { $0.id == inline.id }) {
-                items.append(inline)
+            // V1: a permission card is one unit with its tool row — pinned
+            // above the composer while open, its outcome drawn on the row
+            // after. It leaves no copy of its own in the transcript. Other
+            // cards keep their inline record.
+            if card.kind != .permission {
+                let inline = TranscriptItem.card(card)
+                if !items.contains(where: { $0.id == inline.id }) {
+                    items.append(inline)
+                }
             }
 
         case .cardAnswered(let answered):
             // The gateway accepted an answer (ours, or one given before a
             // relaunch and now replayed): the card is closed either way.
+            let asked = openCards[chat]?.first { $0.id == answered.id }
             closeCard(chat: chat, id: answered.id, why: Self.answeredMarker)
+            if let outcome = answered.outcome, let toolUseId = answered.toolUseId ?? asked?.toolUseId {
+                record(PermissionDecision(outcome: outcome, note: answered.note), on: toolUseId, in: &items, chat: chat)
+            }
 
         case .cardCancel(let cancel):
-            closeCard(chat: chat, id: cancel.id, why: cancel.reason ?? "cancelled")
+            let asked = openCards[chat]?.first { $0.id == cancel.id }
+            let reason = cancel.reason ?? "cancelled"
+            closeCard(chat: chat, id: cancel.id, why: reason)
+            if asked?.kind == .permission, let toolUseId = asked?.toolUseId,
+                let index = Self.toolIndex(toolUseId, in: items), case .tool(var row) = items[index], row.permission == nil
+            {
+                row.unanswered = reason
+                items[index] = .tool(row)
+            }
 
         case .artifactCreated(let created):
             let artifact = created.artifact
@@ -627,6 +671,23 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable:
             break
+        }
+    }
+
+    private static func toolIndex(_ toolUseId: String, in items: [TranscriptItem]) -> Int? {
+        items.lastIndex { if case .tool(let row) = $0 { row.toolUseId == toolUseId } else { false } }
+    }
+
+    /// Draw a permission outcome on its tool row, or hold it for the row
+    /// when the row has not started yet.
+    private func record(_ decision: PermissionDecision, on toolUseId: String, in items: inout [TranscriptItem], chat: Int) {
+        if let index = Self.toolIndex(toolUseId, in: items), case .tool(var row) = items[index] {
+            row.permission = decision.outcome
+            row.note = decision.note ?? (decision.outcome == .declined ? row.note : nil)
+            row.unanswered = nil
+            items[index] = .tool(row)
+        } else {
+            pendingOutcomes[chat, default: [:]][toolUseId] = decision
         }
     }
 
@@ -662,9 +723,30 @@ final class AppModel: ObservableObject {
     /// already, cancelled, never seen) gets nothing: the gateway would only
     /// refuse it as `card.stale`, and there is nothing to show for it.
     func answerCard(_ answer: CardAnswer) {
-        guard pinnedCards(for: answer.chat).contains(where: { $0.id == answer.id }) else { return }
+        guard let card = pinnedCards(for: answer.chat).first(where: { $0.id == answer.id }) else { return }
         send(.cardAnswer(answer))
         closeCard(chat: answer.chat, id: answer.id, why: Self.answeredMarker)
+        // The row shows the answer at once; the gateway's `card.answered`
+        // (and the tool's finish) confirm it.
+        if card.kind == .permission, let toolUseId = card.toolUseId, let decision = Self.decision(for: answer) {
+            var items = transcripts[answer.chat] ?? []
+            record(decision, on: toolUseId, in: &items, chat: answer.chat)
+            transcripts[answer.chat] = items
+        }
+    }
+
+    /// What a permission answer comes to on the tool row.
+    static func decision(for answer: CardAnswer) -> PermissionDecision? {
+        guard case .string(let word)? = answer.answer["decision"] else { return nil }
+        if word == "deny" { return PermissionDecision(outcome: .declined, note: answer.note) }
+        guard word == "allow" else { return nil }
+        return PermissionDecision(outcome: answer.scope == .chat || answer.scope == .always ? .session : .once)
+    }
+
+    /// The open permission card that asks about this tool use, if any:
+    /// its row reads "waiting for your OK" while it is open.
+    func permissionCard(chat: Int, toolUseId: String) -> CardAsk? {
+        openCards[chat]?.first { $0.kind == .permission && $0.toolUseId == toolUseId }
     }
 
     // MARK: - viewer
@@ -929,6 +1011,7 @@ final class AppModel: ObservableObject {
         status[chat] = nil
         statusStamps[chat] = nil
         closedCards[chat] = nil
+        pendingOutcomes[chat] = nil
         live.remove(chat)
         pendingOpenSince[chat] = nil
         currentTurn[chat] = nil

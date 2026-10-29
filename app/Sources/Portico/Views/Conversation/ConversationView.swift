@@ -64,7 +64,7 @@ struct ConversationView: View {
                         emptyState
                     }
                     ForEach(items) { item in
-                        TranscriptItemView(item: item, folder: folder)
+                        TranscriptItemView(item: item, folder: folder, chat: chat)
                             .id(item.id)
                     }
                     Color.clear.frame(height: 1).id("bottom")
@@ -88,7 +88,7 @@ struct ConversationView: View {
         ScrollView {
             VStack(spacing: 8) {
                 ForEach(model.pinnedCards(for: chat)) { card in
-                    CardView(card: card, onAnswer: { model.answerCard($0) })
+                    CardView(card: card, folder: folder, onAnswer: { model.answerCard($0) })
                         .id(card.id)
                 }
             }
@@ -121,6 +121,9 @@ struct ConversationView: View {
 struct TranscriptItemView: View {
     let item: TranscriptItem
     var folder: String? = nil
+    /// The chat the item belongs to: a tool row asks it whether its
+    /// permission card is still open.
+    var chat: Int? = nil
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -135,7 +138,9 @@ struct TranscriptItemView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
-            ToolRowView(row: row, folder: folder)
+            ToolRowView(
+                row: row, folder: folder,
+                waiting: chat.map { model.permissionCard(chat: $0, toolUseId: row.toolUseId) != nil } ?? false)
         case .card(let card):
             CardInlineView(card: card, status: model.cardStatus(chat: card.chat, id: card.id))
         case .turnMarker(let marker):

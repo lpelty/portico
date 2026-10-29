@@ -109,10 +109,11 @@ final class AppModelTests: XCTestCase {
     func testCardAskAppendsToOpenCardsAndTranscript() {
         let (model, _) = model()
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
+        // A question card keeps its inline record (a permission card does
+        // not: PermissionUnitTests).
         let card = CardAsk(
-            chat: 1, id: "card-7", kind: .permission, title: "Write a file",
-            permission: Permission(tool: "Write", summary: "/tmp/demo/a.md", input: [:]),
-            questions: nil, form: nil, seq: 2)
+            chat: 1, id: "card-7", kind: .question, title: "File",
+            permission: nil, questions: [Question(question: "Which file?", header: "File", options: [Option(label: "a.md", description: "")], multiSelect: false)], form: nil, seq: 2)
         model.apply(.cardAsk(card))
         model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
 
@@ -137,9 +138,8 @@ final class AppModelTests: XCTestCase {
         let (model, sent) = model()
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
         let card = CardAsk(
-            chat: 1, id: "card-9", kind: .permission, title: "Run a command",
-            permission: Permission(tool: "Bash", summary: "ls", input: ["command": .string("ls")]),
-            questions: nil, form: nil, seq: 2)
+            chat: 1, id: "card-9", kind: .question, title: "File",
+            permission: nil, questions: [Question(question: "Which file?", header: "File", options: [Option(label: "a.md", description: "")], multiSelect: false)], form: nil, seq: 2)
         model.apply(.cardAsk(card))
         model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
 
@@ -186,7 +186,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pinnedCards(for: 2), [], "an answered card is no longer pinned")
         XCTAssertEqual(model.cardStatus(chat: 2, id: "card-3"), .answered)
         XCTAssertEqual(CardStatusPresentation(status: .answered).label, "answered")
-        XCTAssertEqual((model.transcripts[2] ?? []).count, 1, "the inline copy stays")
+        XCTAssertEqual((model.transcripts[2] ?? []).count, 0, "a permission card leaves no copy of its own (V1)")
 
         // A second answer for the same card is a stale one: nothing is sent.
         let before = sent.frames.count
@@ -197,7 +197,7 @@ final class AppModelTests: XCTestCase {
         model.apply(.cardAnswered(CardAnswered(chat: 2, id: "card-3", seq: 2)))
         XCTAssertEqual(model.pinnedCards(for: 2), [])
         XCTAssertEqual(model.cardStatus(chat: 2, id: "card-3"), .answered)
-        XCTAssertEqual((model.transcripts[2] ?? []).count, 1)
+        XCTAssertEqual((model.transcripts[2] ?? []).count, 0)
     }
 
     func testCardReSentAfterAnUnconfirmedAnswerIsOpenAgain() {
@@ -237,7 +237,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.pinnedCards(for: 1).map(\.id), ["card-1"], "the card the gateway still holds is open again")
         XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .open)
         let inline = (model.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }
-        XCTAssertEqual(inline.count, 1, "the inline copy is not duplicated")
+        XCTAssertEqual(inline.count, 0, "a permission card has no inline copy to duplicate")
 
         // The person answers again; this time the gateway confirms and the card closes for good.
         let before = sent.frames.count
@@ -301,7 +301,7 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertEqual(second.pinnedCards(for: 1), [], "an answered card does not come back as open after a relaunch")
         XCTAssertEqual(second.cardStatus(chat: 1, id: "card-1"), .answered)
-        XCTAssertEqual((second.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }.count, 1, "the inline copy is still there")
+        XCTAssertEqual((second.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }.count, 0, "a permission card leaves no record of its own")
         // Answering it sends nothing: there is no open card to answer.
         let before = sent.frames.count
         second.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")]))
