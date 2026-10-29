@@ -221,6 +221,15 @@ final class AppModel: ObservableObject {
     @Published var startDraft: String = ""
     /// Files attached on the start screen, sent with the first message.
     @Published private(set) var startAttachments: [String] = []
+    /// The permission mode the start screen's chip picked for the next
+    /// session; applied with `session.mode` once the gateway makes it.
+    @Published var startMode: PermissionMode?
+    /// The mode the gateway last reported for any session: what the start
+    /// screen's chip shows until one is picked.
+    @Published private(set) var lastKnownMode: PermissionMode?
+    /// Per chat, when the running turn started (its `turn.started` stamp):
+    /// the working line's elapsed time.
+    @Published private(set) var turnStartedAt: [Int: Date] = [:]
     /// The folder the next chat starts in; `nil` means the default
     /// (`defaultStartFolder`). Set by the folder chip.
     @Published var chosenStartFolder: URL?
@@ -369,8 +378,18 @@ final class AppModel: ObservableObject {
         case .chatState(let state):
             if let index = chats.firstIndex(where: { $0.chat == state.chat }) {
                 chats[index].state = state.state
+                if let mode = state.mode { chats[index].mode = mode }
             }
+            if let mode = state.mode { lastKnownMode = mode }
             if let id = state.id, pendingNewChats.remove(id) != nil {
+                // The start screen's chip picked a mode for this session:
+                // apply it now that the session exists.
+                if let wanted = startMode {
+                    startMode = nil
+                    if wanted != state.mode {
+                        send(.sessionMode(SessionMode(chat: state.chat, mode: wanted, id: Self.requestId())))
+                    }
+                }
                 open(chat: state.chat)
                 if let start = pendingStarts.removeValue(forKey: id) {
                     dispatch(chat: state.chat, text: start.text, attachments: start.attachments, fromComposer: true)
@@ -510,6 +529,7 @@ final class AppModel: ObservableObject {
             }
             closedCards[chat] = [:]
             currentTurn[chat] = nil
+            turnStartedAt[chat] = nil
             pendingOutcomes[chat] = nil
             lastSeq[chat] = nil
             // The replay is the whole truth of the chat: its `user.text` is
@@ -531,6 +551,7 @@ final class AppModel: ObservableObject {
         switch event {
         case .turnStarted(let started):
             currentTurn[chat] = started.turn
+            turnStartedAt[chat] = SessionTime.parse(started.ts) ?? Date()
 
         case .userText(let user):
             // The gateway's echo is the bubble, live or replayed; the send
@@ -596,6 +617,7 @@ final class AppModel: ObservableObject {
         case .turnFinished(let finished):
             items.append(.turnMarker(TurnMarker(turn: finished.turn, outcome: finished.outcome)))
             if currentTurn[chat] == finished.turn { currentTurn[chat] = nil }
+            turnStartedAt[chat] = nil
 
         case .cardAsk(let card):
             var open = openCards[chat] ?? []
@@ -747,6 +769,57 @@ final class AppModel: ObservableObject {
     /// its row reads "waiting for your OK" while it is open.
     func permissionCard(chat: Int, toolUseId: String) -> CardAsk? {
         openCards[chat]?.first { $0.kind == .permission && $0.toolUseId == toolUseId }
+    }
+
+    // MARK: - permission mode (V2)
+
+    /// The session's permission mode as the gateway last said; `nil` from
+    /// a gateway that does not speak modes (the chip is not shown).
+    func mode(of chat: Int) -> PermissionMode? {
+        summary(of: chat)?.mode
+    }
+
+    /// What the start screen's chip shows: the pick, else the last mode
+    /// any session reported, else the protocol's default for a new session.
+    var startModeShown: PermissionMode {
+        startMode ?? lastKnownMode ?? .auto
+    }
+
+    /// Change the session's mode: `session.mode`, answered with a
+    /// `chat.state` carrying the mode, which is what the chip then shows.
+    func setMode(_ mode: PermissionMode, for chat: Int) {
+        guard mode != self.mode(of: chat) else { return }
+        send(.sessionMode(SessionMode(chat: chat, mode: mode, id: Self.requestId())))
+    }
+
+    // MARK: - working line (V2)
+
+    /// What the working line says the agent is doing: the running tool
+    /// (`Write Q3-synthesis.md`, its path relative to the chat's folder),
+    /// else `Thinking`.
+    func activity(for chat: Int) -> String {
+        let folder = summary(of: chat)?.folder
+        for item in (transcripts[chat] ?? []).reversed() {
+            if case .tool(let row) = item, !row.finished {
+                let what = ToolRowView.display(row.summary, in: folder)
+                return what.isEmpty ? row.tool : "\(row.tool) \(what)"
+            }
+            if case .turnMarker = item { break }
+            if case .userText = item { break }
+        }
+        return "Thinking"
+    }
+
+    /// The working line shows while a turn runs and nothing waits on the person.
+    func showsWorkingLine(chat: Int) -> Bool {
+        state(of: chat) == .working
+    }
+
+    /// `0:48`, `12:05`, `1:02:09`: how long the turn has run.
+    static func elapsedText(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60)
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
     // MARK: - viewer
@@ -1019,6 +1092,7 @@ final class AppModel: ObservableObject {
         fileListErrors = fileListErrors.filter { $0.key.chat != chat }
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
         contextUsage[chat] = nil
+        turnStartedAt[chat] = nil
         renewing[chat] = nil
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }

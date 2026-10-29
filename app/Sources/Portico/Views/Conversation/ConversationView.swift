@@ -67,6 +67,10 @@ struct ConversationView: View {
                         TranscriptItemView(item: item, folder: folder, chat: chat)
                             .id(item.id)
                     }
+                    if model.showsWorkingLine(chat: chat) {
+                        WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
+                            .id("working")
+                    }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, Self.sideInset)
@@ -100,6 +104,11 @@ struct ConversationView: View {
 
     /// Changes whenever an item is added or the streaming tail grows.
     private var scrollKey: String {
+        let working = model.showsWorkingLine(chat: chat) ? ":w" : ""
+        return itemsKey + working
+    }
+
+    private var itemsKey: String {
         guard let last = items.last else { return "" }
         if case .assistantText(let id, let text) = last { return "\(items.count):\(id):\(text.count)" }
         return "\(items.count):\(last.id)"

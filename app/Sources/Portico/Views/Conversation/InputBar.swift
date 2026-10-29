@@ -2,11 +2,13 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The composer under the conversation: attachment chips, a multi-line
-/// editor, the deployment's action buttons from `hello.actions`, and
-/// Send (⌘↩) — or Stop (⌘.) while the chat is `working` or
-/// `waiting on you`. File URLs dropped anywhere on the bar become chips;
-/// the Files pane adds chips through `AppModel.attach`.
+/// The composer under the conversation (V2): attachment chips, a
+/// multi-line editor, the deployment's action buttons from
+/// `hello.actions`, then `+` (attach), the permission mode chip, the
+/// Enter hint, and Send — or Stop alone (⌘.) while the chat is `working`
+/// or `waiting on you`. Enter sends, Shift+Enter adds a line. File URLs
+/// dropped anywhere on the bar become chips; the Files pane adds chips
+/// through `AppModel.attach`.
 struct InputBar: View {
     let chat: Int
     /// The document view's open file (F3): the placeholder asks about it
@@ -60,7 +62,7 @@ struct InputBar: View {
             editor
             HStack(spacing: 8) {
                 Button(action: pickAttachments) {
-                    Image(systemName: "paperclip")
+                    Image(systemName: "plus")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.text2)
                         .frame(width: 20, height: 20)
@@ -69,21 +71,35 @@ struct InputBar: View {
                 .buttonStyle(.hover)
                 .help("Attach files to the next message")
                 .disabled(!connected)
+                if let mode = model.mode(of: chat) {
+                    ModeChip(
+                        mode: mode, agentName: model.hello?.brand.agentName ?? model.brand.name,
+                        enabled: connected && !renewing
+                    ) { model.setMode($0, for: chat) }
+                }
                 Spacer(minLength: 0)
-                Button(action: { model.stopTurn(chat: chat) }) {
-                    Text("Stop")
+                Text(InputBar.enterHint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.text3)
+                    .lineLimit(1)
+                    .layoutPriority(-1)
+                if busy {
+                    Button(action: { model.stopTurn(chat: chat) }) {
+                        Text("Stop")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                    .keyboardShortcut(".", modifiers: .command)
+                    .help("Stop the running turn (⌘.)")
+                    .disabled(!connected)
+                } else {
+                    Button(action: send) {
+                        Text("Send")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Send (Enter)")
+                    .disabled(!canSend)
                 }
-                .buttonStyle(PillButtonStyle(kind: .quiet))
-                .keyboardShortcut(".", modifiers: .command)
-                .help("Stop the running turn (⌘.)")
-                .disabled(!busy || !connected)
-                Button(action: send) {
-                    Text("Send")
-                }
-                .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                .keyboardShortcut(.return, modifiers: .command)
-                .help("Send (⌘↩)")
-                .disabled(!canSend)
             }
         }
         .padding(EdgeInsets(top: 12, leading: 14, bottom: 10, trailing: 14))
@@ -104,17 +120,20 @@ struct InputBar: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
+                .scrollIndicators(.never)
                 .frame(minHeight: 20, maxHeight: 160)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
                 .disabled(renewing)
+                .onKeyPress(.return, phases: .down) { press in
+                    InputBar.handleReturn(modifiers: press.modifiers, send: send)
+                }
         }
     }
 
     private var placeholder: String {
         if !connected { return "Not connected" }
         if renewing { return "Starting the next session…" }
-        if busy { return "Working — Stop to interrupt" }
         if sending { return "Sending…" }
         if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
         return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
@@ -177,6 +196,16 @@ struct InputBar: View {
                 }
             }
         }
+    }
+
+    static let enterHint = "Enter to send · Shift+Enter for a new line"
+
+    /// Enter sends; Shift+Enter (or Option+Enter) is left to the editor,
+    /// which adds a line.
+    static func handleReturn(modifiers: EventModifiers, send: () -> Void) -> KeyPress.Result {
+        if modifiers.contains(.shift) || modifiers.contains(.option) { return .ignored }
+        send()
+        return .handled
     }
 
     /// The model clears the draft on send and restores it if the gateway

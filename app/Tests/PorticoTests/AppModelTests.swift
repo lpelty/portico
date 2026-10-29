@@ -789,19 +789,11 @@ final class AppModelTests: XCTestCase {
         model.setConnection(.connected)
         XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "working · demo · gateway running :4321")
 
-        // The chat's last status.set line comes last, verbatim.
+        // v0.3: status.set lines no longer reach the strip (the working
+        // line in the conversation says what the agent is doing).
         model.apply(.statusSet(StatusSet(text: "thinking", chat: 2, seq: 3)))
-        XCTAssertEqual(
-            model.statusStrip(gateway: .running(port: 4321)).text,
-            "working · demo · gateway running :4321 · thinking")
-
-        // A later chat-less status.set (a lifecycle command's output line) replaces it: the newest line shows.
         model.apply(.statusSet(StatusSet(text: "checking memory services")))
-        XCTAssertEqual(
-            model.statusStrip(gateway: .running(port: 4321)).text,
-            "working · demo · gateway running :4321 · checking memory services")
-        model.apply(.statusSet(StatusSet(text: "still thinking", chat: 2, seq: 4)))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).statusText, "still thinking")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "working · demo · gateway running :4321")
 
         // The state word follows chat.state, in exactly the protocol's words.
         model.apply(.chatState(ChatState(chat: 2, state: .waitingOnYou, seq: 5)))
@@ -819,7 +811,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText, "connecting")
         XCTAssertEqual(
             model.statusStrip(gateway: .running(port: 4321)).text,
-            "waiting on you · demo · gateway running :4321 · connecting · still thinking")
+            "waiting on you · demo · gateway running :4321 · connecting")
         model.setConnection(.disconnected)
         XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).connectionText, "not connected")
         XCTAssertNil(model.statusStrip(gateway: .stopped).connectionText, "a stopped gateway already says why there is no socket")

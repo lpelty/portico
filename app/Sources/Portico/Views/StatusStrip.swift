@@ -1,16 +1,17 @@
 import SwiftUI
 
 /// What the strip under the toolbar says, in order (spec §5.5): the
-/// selected chat's state word · its folder's name · the gateway
-/// (`stopped / starting / running :port / failed: …`) · the socket when it
-/// is not simply connected · the last `status.set` line, verbatim.
+/// selected chat's state word · its folder's name · the model · the
+/// context · the gateway (`stopped / starting / running :port / failed: …`)
+/// · the socket when it is not simply connected. v0.3 dropped the free-text
+/// status line: the working line in the conversation says what the agent
+/// is doing.
 struct StatusStripPresentation: Equatable, Sendable {
     /// The chat's state word in the protocol's words, or `no chat`.
     var chatText: String
     var folderName: String?
     var gatewayText: String
     var connectionText: String?
-    var statusText: String?
     /// The model's name from `context.usage` (A1/S5's Model segment), when known.
     var modelText: String? = nil
     /// `62% context`, when the gateway reports context usage.
@@ -19,7 +20,7 @@ struct StatusStripPresentation: Equatable, Sendable {
     static let separator = " · "
 
     var text: String {
-        [chatText, folderName, modelText, contextText, gatewayText, connectionText, statusText].compactMap { $0 }
+        [chatText, folderName, modelText, contextText, gatewayText, connectionText].compactMap { $0 }
             .joined(separator: Self.separator)
     }
 
@@ -75,7 +76,6 @@ extension AppModel {
             folderName: summary.map { URL(fileURLWithPath: $0.folder).lastPathComponent },
             gatewayText: StatusStripPresentation.gatewayText(gateway),
             connectionText: StatusStripPresentation.connectionText(connection, gateway: gateway),
-            statusText: latestStatusLine(for: selected),
             modelText: selected.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
             contextText: selected.flatMap { contextPercent(for: $0) }.map(StatusStripPresentation.contextText))
     }
@@ -142,14 +142,6 @@ struct StatusStrip: View {
                     .foregroundStyle(Theme.wait)
             }
             Spacer(minLength: 8)
-            if let status = strip.statusText {
-                Text(status)
-                    .font(.system(size: 12))
-                    .italic()
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.statusStripHeight)
