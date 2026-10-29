@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The settings window (spec §5.6): General (auto-open, quit behaviour),
@@ -36,9 +37,22 @@ struct AutoOpenKindPresentation: Equatable, Sendable, Identifiable {
 
 struct GeneralSettingsTab: View {
     @EnvironmentObject private var settings: Settings
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
         Form {
+            Section("Folder") {
+                LabeledContent("Works in") {
+                    HStack {
+                        Text(model.startFolder?.lastPathComponent ?? "None chosen")
+                            .help(model.startFolder?.path ?? "")
+                        Button("Choose…", action: chooseFolder)
+                    }
+                }
+                Text("The folder new sessions work in. A session that is already going keeps its folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Artifacts") {
                 Toggle("Open artifacts automatically", isOn: $settings.autoOpen)
                 ForEach(AutoOpenKindPresentation.all) { kind in
@@ -64,6 +78,19 @@ struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the folder the agent works in"
+        if let current = model.startFolder { panel.directoryURL = current }
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        model.chooseStartFolder(folder)
     }
 
     private func binding(for kind: String) -> Binding<Bool> {

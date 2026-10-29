@@ -63,7 +63,7 @@ struct MainWindow: View {
         // No title bar: the columns run to the top edge, and the sidebar's
         // first band is where the traffic lights sit.
         .ignoresSafeArea(.container, edges: .top)
-        .animation(.easeInOut(duration: 0.18), value: model.sidebarVisible)
+        .animation(.easeInOut(duration: 0.18), value: model.sidebarShown)
         .animation(.easeInOut(duration: 0.18), value: viewerShown)
         .animation(.easeInOut(duration: 0.18), value: focused)
         // A prototype after a document: the viewer moves to the width
@@ -93,7 +93,7 @@ struct MainWindow: View {
     private func columnWidths(window: CGFloat) -> (sidebar: CGFloat?, viewer: CGFloat?) {
         if focused { return (nil, ColumnWidths.focusViewer(window: window)) }
         return ColumnWidths.fit(
-            sidebar: model.sidebarVisible ? settings.sidebarWidth : nil,
+            sidebar: model.sidebarShown ? settings.sidebarWidth : nil,
             viewer: viewerShown ? settings.viewerWidth(for: viewerFit) : nil,
             window: window)
     }
@@ -186,9 +186,10 @@ struct MainToolbar: View {
     var body: some View {
         HStack(spacing: 12) {
             PanelToggle(
-                shown: model.sidebarVisible, side: .leading,
+                shown: model.sidebarShown, side: .leading,
                 help: model.sidebarVisible ? "Hide the sidebar" : "Show the sidebar"
             ) { model.sidebarVisible.toggle() }
+            .disabled(model.awaitingFirstSession)
             HStack(spacing: 8) {
                 BrandMark(brand: model.brand)
                 Text(model.brand.name)
@@ -213,7 +214,7 @@ struct MainToolbar: View {
                 }
             }
         }
-        .padding(.leading, model.sidebarVisible ? 16 : Theme.trafficLightsInset)
+        .padding(.leading, model.sidebarShown ? 16 : Theme.trafficLightsInset)
         .padding(.trailing, 16)
         .frame(height: Theme.toolbarHeight)
         .frame(maxWidth: .infinity)
@@ -230,11 +231,10 @@ struct MainToolbar: View {
             guard let root else { return "Files" }
             return "Files · " + (root.name == AppModel.chatRoot ? URL(fileURLWithPath: root.path).lastPathComponent : root.name)
         }
+        guard let id = model.selected else { return model.startTitle }
         if model.isSinglePresentation {
-            guard let id = model.selected else { return "New session" }
             return "Session \(id)"
         }
-        guard let id = model.selected else { return "New chat" }
         let summary = model.chats.first { $0.chat == id }
         if let alias = summary?.alias, !alias.isEmpty { return alias }
         return "Chat #\(id)"

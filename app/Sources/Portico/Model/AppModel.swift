@@ -941,6 +941,13 @@ final class AppModel: ObservableObject {
         send(.chatNew(ChatNew(folder: folder.path, id: id)))
     }
 
+    /// Settings › Folder: the folder new sessions start in, from now on.
+    func chooseStartFolder(_ folder: URL) {
+        objectWillChange.send()
+        settings.lastFolder = folder.path
+        chosenStartFolder = nil
+    }
+
     /// Queue files for the first message on the start screen.
     func attachToStart(_ paths: [String]) {
         for path in paths where !startAttachments.contains(path) {
