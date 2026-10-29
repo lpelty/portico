@@ -53,6 +53,10 @@ EXPECTED_KEYS = {
     "server.session.renewed",
     "server.files.results",
     "server.error",
+    "client.session.mode",
+    "server.chat.notice",
+    "server.config.stale",
+    "server.update.available",
 }
 
 
@@ -61,7 +65,7 @@ def test_every_type_has_schema_def_and_example():
     ex = example_messages()
     for key, msg in ex.items():
         assert type(msg).__name__ in schema["$defs"], key
-    assert len(ex) == 36  # v0.1's 30 plus v0.2's session.renew, files.search, context.usage, chat.compacted, session.renewed, files.results
+    assert len(ex) == 40  # v0.1's 30, v0.2's 6, v0.3's session.mode, chat.notice, config.stale, update.available
     assert set(ex) == EXPECTED_KEYS
 
 

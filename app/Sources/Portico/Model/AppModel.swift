@@ -404,6 +404,14 @@ final class AppModel: ObservableObject {
         case .filesResults(let results):
             applySearchResults(results)
 
+        case .chatNotice(let notice):
+            applyEvent(message, to: notice.chat)
+            noteSeq(of: message)
+
+        case .configStale, .updateAvailable:
+            // v0.3: drawn by the app work that follows the protocol change.
+            break
+
         case .error(let error):
             lastError = error
             // A refused renew: the card is no longer busy; the status line
@@ -607,7 +615,7 @@ final class AppModel: ObservableObject {
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
-            .contextUsage, .sessionRenewed, .filesResults:
+            .contextUsage, .sessionRenewed, .filesResults, .chatNotice, .configStale, .updateAvailable:
             break
         }
     }

@@ -1,0 +1,7 @@
+{
+  "chat": 1,
+  "seq": 53,
+  "text": "No command /foo here",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "chat.notice"
+}

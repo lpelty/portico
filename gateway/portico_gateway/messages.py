@@ -24,6 +24,11 @@ Scope = Literal["once", "chat", "always"]
 Media = Literal["markdown", "image", "html", "pdf", "text", "url", "other"]
 Outcome = Literal["done", "stopped", "error"]
 Presentation = Literal["single", "multiple"]
+# How the engine decides on tool use: ``default`` asks each time, ``acceptEdits``
+# allows file edits, ``auto`` lets the engine's classifier decide.
+PermissionMode = Literal["default", "acceptEdits", "auto"]
+# What happened to one tool use's permission, drawn on its tool row.
+PermissionOutcome = Literal["once", "session", "auto", "declined", "blocked"]
 
 
 class ProtocolError(Exception):
@@ -75,6 +80,7 @@ class ChatSummary(Strict):
     parent: int | None = None
     compactions: int = 0
     context_percent: float | None = None
+    mode: PermissionMode | None = None
 
 
 class Permission(Strict):
@@ -181,6 +187,14 @@ class MessageSend(Envelope):
     attachments: list[str] = []
 
 
+class SessionMode(Envelope):
+    """Change the session's permission mode; answered with ``chat.state`` carrying ``mode``."""
+
+    type: Literal["session.mode"] = "session.mode"
+    chat: int
+    mode: PermissionMode
+
+
 class TurnStop(Envelope):
     type: Literal["turn.stop"] = "turn.stop"
     chat: int
@@ -250,9 +264,13 @@ class HelloServer(Envelope):
     commands: list[str] = []
     capabilities: list[str] = []
     # How the app presents chats: one live session at a time, or a list.
-    presentation: Presentation = "multiple"
+    presentation: Presentation = "single"
     # Whether renewing can log the ending session first.
     can_log: bool = False
+    # The config file changed after the gateway started; restart to apply.
+    config_stale: bool = False
+    # The deployment has an update command (``portico-gateway update`` runs it).
+    can_update: bool = False
 
 
 class ChatList(Envelope):
@@ -264,6 +282,7 @@ class ChatState(Envelope):
     type: Literal["chat.state"] = "chat.state"
     chat: int
     state: ChatStateWord
+    mode: PermissionMode | None = None
 
 
 class ChatLive(Envelope):
@@ -315,6 +334,8 @@ class ToolFinished(Envelope):
     tool_use_id: str
     ok: bool
     summary: str = ""
+    permission: PermissionOutcome | None = None
+    note: str | None = None
 
 
 class TurnFinished(Envelope):
@@ -333,6 +354,7 @@ class CardAsk(Envelope):
     permission: Permission | None = None
     questions: list[Question] | None = None
     form: list[FormField] | None = None
+    tool_use_id: str | None = None
 
 
 class CardAnswered(Envelope):
@@ -345,6 +367,9 @@ class CardAnswered(Envelope):
     type: Literal["card.answered"] = "card.answered"
     chat: int
     id: str
+    tool_use_id: str | None = None
+    outcome: PermissionOutcome | None = None
+    note: str | None = None
 
 
 class CardCancel(Envelope):
@@ -379,6 +404,7 @@ class ContextUsage(Envelope):
     chat: int
     percent: float
     model: str | None = None
+    model_name: str | None = None
 
 
 class ChatCompacted(Envelope):
@@ -404,6 +430,27 @@ class FilesResults(Envelope):
     hits: list[Hit] = []
 
 
+class ChatNotice(Envelope):
+    """A quiet line in the conversation from the gateway, e.g. an unknown command."""
+
+    type: Literal["chat.notice"] = "chat.notice"
+    chat: int
+    text: str
+
+
+class ConfigStale(Envelope):
+    """The config file changed after the gateway started; restart the gateway to apply it."""
+
+    type: Literal["config.stale"] = "config.stale"
+
+
+class UpdateAvailable(Envelope):
+    """The deployment's update check found a newer version."""
+
+    type: Literal["update.available"] = "update.available"
+    version: str
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -427,6 +474,7 @@ HistoryEvent = Annotated[
         ArtifactCreated,
         StatusSet,
         ChatCompacted,
+        ChatNotice,
         Error,
     ],
     Field(discriminator="type"),
@@ -457,6 +505,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     GatewayStop,
     SessionRenew,
     FilesSearch,
+    SessionMode,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -481,6 +530,9 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatCompacted,
     SessionRenewed,
     FilesResults,
+    ChatNotice,
+    ConfigStale,
+    UpdateAvailable,
     Error,
 )
 
@@ -601,6 +653,7 @@ def example_messages() -> dict[str, BaseModel]:
         GatewayStop(ts=_TS),
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),
         FilesSearch(ts=_TS, id="req-5", root="projects", query="synthesis"),
+        SessionMode(ts=_TS, chat=14, mode="auto"),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -613,6 +666,8 @@ def example_messages() -> dict[str, BaseModel]:
             capabilities=["cards.form", "files", "producer", "sessions", "files.search", "context"],
             presentation="single",
             can_log=True,
+            config_stale=False,
+            can_update=True,
         ),
         ChatList(
             ts=_TS,
@@ -621,7 +676,7 @@ def example_messages() -> dict[str, BaseModel]:
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],
         ),
-        ChatState(ts=_TS, chat=1, seq=42, state="waiting on you"),
+        ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default"),
         ChatHistory(
             ts=_TS,
             chat=1,
@@ -646,7 +701,9 @@ def example_messages() -> dict[str, BaseModel]:
             summary=f"{_FOLDER}/notes.md",
             input={"file_path": f"{_FOLDER}/notes.md"},
         ),
-        ToolFinished(ts=_TS, chat=1, seq=46, turn=2, tool_use_id="toolu_01", ok=True, summary="read 120 lines"),
+        ToolFinished(
+            ts=_TS, chat=1, seq=46, turn=2, tool_use_id="toolu_01", ok=True, summary="read 120 lines", permission="auto"
+        ),
         TurnFinished(ts=_TS, chat=1, seq=47, turn=2, outcome="done"),
         CardAsk(
             ts=_TS,
@@ -654,7 +711,7 @@ def example_messages() -> dict[str, BaseModel]:
             id="card-7",
             seq=48,
             kind="permission",
-            title="Write a file",
+            title="Save changes to summary.md?",
             permission=Permission(
                 tool="Write",
                 summary=f"{_FOLDER}/summary.md",
@@ -662,8 +719,9 @@ def example_messages() -> dict[str, BaseModel]:
             ),
             questions=None,
             form=None,
+            tool_use_id="toolu_02",
         ),
-        CardAnswered(ts=_TS, chat=1, id="card-7", seq=49),
+        CardAnswered(ts=_TS, chat=1, id="card-7", seq=49, tool_use_id="toolu_02", outcome="declined", note="not yet"),
         CardCancel(ts=_TS, chat=1, id="card-7", seq=49, reason="turn stopped"),
         ArtifactCreated(
             ts=_TS,
@@ -688,7 +746,9 @@ def example_messages() -> dict[str, BaseModel]:
             entries=[Entry(name="lib", dir=True, size=None), Entry(name="main.py", dir=False, size=1204)],
         ),
         StatusSet(ts=_TS, chat=1, seq=51, text="Preparing the workspace..."),
-        ContextUsage(ts=_TS, chat=1, percent=62.4, model="claude-sonnet-5-5"),
+        ContextUsage(
+            ts=_TS, chat=1, percent=62.4, model="us.anthropic.claude-opus-5-5-v1:0", model_name="Claude Opus 5.5 via Bedrock"
+        ),
         ChatCompacted(ts=_TS, chat=1, seq=52, trigger="auto"),
         SessionRenewed(
             ts=_TS,
@@ -706,6 +766,9 @@ def example_messages() -> dict[str, BaseModel]:
             query="synthesis",
             hits=[Hit(path="demo/Q3-synthesis.md", snippet="Across twelve customer interviews…")],
         ),
+        ChatNotice(ts=_TS, chat=1, seq=53, text="No command /foo here"),
+        ConfigStale(ts=_TS),
+        UpdateAvailable(ts=_TS, version="0.3.1"),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

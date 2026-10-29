@@ -11,6 +11,7 @@
     "name": "Portico"
   },
   "can_log": true,
+  "can_update": true,
   "capabilities": [
     "cards.form",
     "files",
@@ -20,6 +21,7 @@
     "context"
   ],
   "commands": [],
+  "config_stale": false,
   "epoch": "7f1c4a2e-3b5d-4c6e-9a8b-0d1e2f3a4b5c",
   "gateway_version": "0.1.0",
   "presentation": "single",

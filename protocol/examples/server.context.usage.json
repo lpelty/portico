@@ -1,6 +1,7 @@
 {
   "chat": 1,
-  "model": "claude-sonnet-5-5",
+  "model": "us.anthropic.claude-opus-5-5-v1:0",
+  "model_name": "Claude Opus 5.5 via Bedrock",
   "percent": 62.4,
   "ts": "2026-10-27T12:00:00Z",
   "type": "context.usage"

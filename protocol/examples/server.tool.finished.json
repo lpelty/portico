@@ -1,6 +1,7 @@
 {
   "chat": 1,
   "ok": true,
+  "permission": "auto",
   "seq": 46,
   "summary": "read 120 lines",
   "tool_use_id": "toolu_01",

@@ -274,6 +274,17 @@ Reply: `files.results`, or `error` with the `files.list` root codes or
 hidden entries and anything outside the root dropped; a blank query has no
 hits. A deployment plug-in may search instead.
 
+### `session.mode` — `SessionMode` *(v0.3)*
+`chat`, `mode: default | acceptEdits | auto`. Changes how the engine
+decides on tool use for this session, at once if its engine is running
+(the SDK's `set_permission_mode`) and for every later turn: `default`
+asks each time (a `card.ask` per request), `acceptEdits` allows file edits
+without asking, `auto` lets the engine's classifier allow or block each
+step. Answered with `chat.state` carrying `mode`; the mode is kept on the
+chat record (`ChatSummary.mode`). A new session starts with the
+deployment's `permission_mode` (default `auto`). `bypassPermissions` and
+`dontAsk` are not offered. Errors: `chat.unknown`, `session.ended`.
+
 ## Messages: gateway → app
 
 ### `hello` — `HelloServer`
@@ -289,6 +300,12 @@ absolute, as configured with any `~` expanded), `commands: [string]`
 `files`, `producer`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives.
 
+v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
+`presentation` defaults to `single`; `config_stale: bool` (the config file
+changed after the gateway started, so a restart is needed to apply it);
+`can_update: bool` (the deployment configured an update command, which
+`portico-gateway update` runs).
+
 ### `chat.list` — `ChatList`
 `chats: [{chat, folder, alias?, state, created}]`. Sent after `hello` and
 after every change to the set of chats or their aliases (`chat.new`,
@@ -296,7 +313,9 @@ after every change to the set of chats or their aliases (`chat.new`,
 Not chat-scoped: no `seq`, not replayed in `chat.history`.
 
 ### `chat.state` — `ChatState`
-`chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`.
+`chat`, `seq`, `state`: exactly `idle`, `working`, `waiting on you`, `stopped`;
+`mode?` (v0.3): the session's permission mode, sent when the chat opens
+and whenever it changes.
 Stamped and kept in the ring like every chat-scoped event, so a replay
 shows the state transitions in order. The one answering `chat.new` also
 carries the request's `id`.
@@ -341,7 +360,13 @@ the app appends.
 `chat`, `seq`, `turn`, `tool_use_id`, `tool`, `summary`, `input: object`. *(Task 4)*
 
 ### `tool.finished` — `ToolFinished`
-`chat`, `seq`, `turn`, `tool_use_id`, `ok: bool`, `summary`. *(Task 4)*
+`chat`, `seq`, `turn`, `tool_use_id`, `ok: bool`, `summary`;
+`permission?` and `note?` (v0.3): what happened to this use's permission,
+drawn on the tool row — `once` (allowed once), `session` (allowed for this
+session, by this answer or an earlier one), `auto` (auto mode allowed it;
+only for tools that would otherwise ask), `declined` (with the person's
+`note`), `blocked` (auto mode's classifier refused it). Absent when
+nothing was decided (a read in `default` mode).
 
 ### `turn.finished` — `TurnFinished`
 `chat`, `seq`, `turn`, `outcome: done | stopped | error`. Exactly one per
@@ -355,8 +380,10 @@ message. Always followed by `chat.state` (`idle`, or `stopped` after
 `permission {tool, summary, input}`,
 `questions: [{question, header, options: [{label, description}], multi_select}]`,
 `form: [{key, label, kind: text | choice | toggle, options?}]`.
-A `permission` card's `title` is a plain phrase for the tool (`Write a
-file`, `Run a command`, else `Use <tool>`), `summary` is the one-line
+A `permission` card's `title` is a plain question about the step (v0.3:
+`Save changes to Q3-synthesis.md?`, `Run git status?`, else `Use <tool>?`;
+the app shows `permission.tool` beside it as a tag), its `tool_use_id`
+(v0.3) names the tool row the card belongs to, `summary` is the one-line
 summary also shown on the tool row (a path, the first line of a command),
 and `input` is the tool's full input. A `question` card maps the engine's
 question tool field for field (`multiSelect` → `multi_select`) and its
@@ -383,7 +410,10 @@ way). An app that attaches while a card is open gets it again through
 answer (before the `chat.state working` that follows), so a replay that
 carries a `card.ask` also carries what became of it and the app does not
 pin an answered card again after a relaunch. The app that answered has
-already unpinned the card; for it this frame confirms.
+already unpinned the card; for it this frame confirms. v0.3: a permission
+card's closing carries `tool_use_id`, `outcome` (`once`, `session`,
+`declined`) and the deny `note`, so the outcome is drawn on the tool row
+at once and the card leaves no record of its own.
 
 ### `card.cancel` — `CardCancel`
 `chat`, `seq`, `id`, `reason?`. The card is closed and its answer is no
@@ -435,7 +465,10 @@ Not stamped. Sent after `chat.state` for both sessions and before the
 `chat.list` that includes the new one.
 
 ### `context.usage` — `ContextUsage`
-`chat`, `percent` (0–100), `model?`. After a turn ends, how full the
+`chat`, `percent` (0–100), `model?`, `model_name?` (v0.3: the
+deployment's display name for the model from
+`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_NAME` when the env names one,
+e.g. `Claude Opus 5.5 via Bedrock`; the app shows it instead of the id). After a turn ends, how full the
 session's context window is. Not stamped (a reading, not history); the
 last value is the chat's `context_percent` in `chat.list`. Absent when the
 engine cannot say.
@@ -444,6 +477,22 @@ engine cannot say.
 `chat`, `trigger: "auto" | "manual"`, `seq`. The engine is summarizing
 earlier conversation to make room. Stamped and replayed with the history;
 counted in the chat's `compactions`.
+
+### `chat.notice` — `ChatNotice` *(v0.3)*
+`chat`, `seq`, `text`. A quiet line from the gateway in the conversation,
+e.g. `No command /foo here` for a slash command that neither the
+deployment nor the engine knows (the message is not sent to the agent).
+Stamped and replayed with the history.
+
+### `config.stale` — `ConfigStale` *(v0.3)*
+No fields. The config file is newer than when the gateway started; the
+app says "restart the gateway to apply". Sent once when the gateway
+notices; `hello.config_stale` carries the same fact on connect.
+
+### `update.available` — `UpdateAvailable` *(v0.3)*
+`version`. The deployment's update check (config `update.check`) found a
+newer version. The app offers the update; `portico-gateway update` runs
+it (config `update.run`).
 
 ### `files.results` — `FilesResults`
 `id`, `root`, `query`, `hits: [{path, snippet?}]` with `path` relative to
