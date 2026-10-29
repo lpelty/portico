@@ -30,12 +30,33 @@ installed `MacOSX*.sdk`, newest first, and says which one worked; compiler
 output is shown only when every SDK fails. `PORTICO_SDKROOT=<path to an
 .sdk>` builds with that SDK only. It then assembles `<brand.name>.app` in
 `~/Applications` (`PORTICO_APP_DIR` to put it elsewhere): the release binary,
-an icon made from `brand.app_icon` (a 1024×1024 PNG; Portico's own when
-unset), this checkout's `bin/portico-gateway` recorded in `Info.plist` as
+an icon made from `brand.app_icon` (Portico's own when unset), this
+checkout's `bin/portico-gateway` recorded in `Info.plist` as
 `PorticoGatewayBin`, signed locally (`codesign -s -`). An existing app of the
 same name is replaced. Stock macOS tools only (`sips`, `iconutil`,
-`codesign`). The app keeps using this checkout: move or delete the checkout
-and run `bin/install` again from its new place.
+`codesign`, and `swift` from the Command Line Tools for the icon). The app
+keeps using this checkout: move or delete the checkout and run `bin/install`
+again from its new place.
+
+The config is read before the build. A config that does not load (a
+`[brand]` without `agent_name`, a relative `app_icon`, a typo'd key) stops
+the install with the gateway's reason; nothing is built or installed. A key
+that is simply unset falls back to Portico's own.
+
+**The app icon.** `brand.app_icon` is a 1024×1024 PNG. A full-bleed square
+(the artwork reaching every edge, opaque corners) is put on macOS's app-icon
+grid for you: an 824-pixel body with continuous rounded corners, centred with
+a 100-pixel margin, and a soft drop shadow, so it sits in the Dock like every
+other app. A PNG whose corners are already transparent is taken as already
+shaped and used as given; draw it on the same grid. For the macOS 26 look,
+compile an Icon Composer `.icon` to an asset catalog elsewhere (Xcode's
+`actool` makes `Assets.car`; Portico does not need Xcode and does not compile
+it) and set `brand.app_icon_assets` to that `Assets.car` and
+`brand.app_icon_name` to the icon's name in it: `bin/install` copies the
+catalog into the bundle and sets `CFBundleIconName`, and the `.icns` made
+from `app_icon` stays as the fallback for older macOS. Set both or neither;
+one without the other, or a catalog that is not there, is skipped with a
+warning.
 
 `bin/doctor` names the Command Line Tools version, the Swift and uv in use,
 the macOS SDK the app was built with, and whether the installed
@@ -91,6 +112,8 @@ agent_name = "Agent"
 accent = "#3B6EF5"                  # optional CSS hex
 icon = "/path/to/icon.png"          # optional
 app_icon = "~/icons/app.png"        # optional 1024x1024 PNG for the .app bundle (bin/install); never sent to the app
+app_icon_assets = "~/icons/Assets.car" # optional precompiled asset catalog (macOS 26 icon); with app_icon_name
+app_icon_name = "AppIcon"           # the icon's name inside app_icon_assets; neither is sent to the app
 
 [update]                            # optional: the deployment's own update commands, run with /bin/sh -c
 check = "my-tool update --check"    # exit 0 and print the version when an update is available

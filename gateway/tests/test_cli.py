@@ -44,6 +44,29 @@ def test_config_value_prints_the_value_or_nothing(tmp_path: Path, capsys: pytest
     assert capsys.readouterr().out == ""
 
 
+def test_config_value_prints_the_asset_catalog_keys(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "home"
+    write_config(
+        home,
+        '[brand]\nname = "Front Door"\nagent_name = "Helper"\n'
+        'app_icon_assets = "~/icons/Assets.car"\napp_icon_name = "FrontDoor"\n',
+    )
+    assert main(["config-value", "brand.app_icon_assets", "--state", str(home)]) == 0
+    assert capsys.readouterr().out == str(Path("~/icons/Assets.car").expanduser()) + "\n"
+    assert main(["config-value", "brand.app_icon_name", "--state", str(home)]) == 0
+    assert capsys.readouterr().out == "FrontDoor\n"
+
+
+def test_config_value_with_a_brand_missing_agent_name_says_so_and_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    write_config(home, '[brand]\nname = "Front Door"\n')
+    assert main(["config-value", "brand.name", "--state", str(home)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "" and "brand.agent_name" in captured.err
+
+
 def test_config_value_without_a_config_file_prints_defaults(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     home = tmp_path / "home"
     home.mkdir()
