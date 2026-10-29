@@ -264,15 +264,21 @@ enum VoiceChoices {
         (best(voices, language: language)?.quality.rawValue ?? 0) >= VoiceOption.Quality.enhanced.rawValue
     }
 
-    /// The system's voices, as options.
+    /// The system's voices, as options. Siri's voices are listed by the
+    /// system but render no audio for other apps (checked on macOS 27: zero
+    /// frames), so they are left out rather than offered and silent.
     static func installed() -> [VoiceOption] {
-        AVSpeechSynthesisVoice.speechVoices().map { voice in
+        AVSpeechSynthesisVoice.speechVoices().filter { !isSiriVoice($0.identifier) }.map { voice in
             VoiceOption(
                 id: voice.identifier, name: voice.name, language: voice.language,
                 quality: voice.quality == .premium ? .premium : voice.quality == .enhanced ? .enhanced : .standard,
                 personal: voice.voiceTraits.contains(.isPersonalVoice),
                 novelty: voice.voiceTraits.contains(.isNoveltyVoice))
         }
+    }
+
+    static func isSiriVoice(_ identifier: String) -> Bool {
+        identifier.lowercased().hasPrefix("com.apple.siri.")
     }
 
     /// The person's language, as voices name it (`en`).

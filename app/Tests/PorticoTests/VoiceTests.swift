@@ -326,6 +326,8 @@ final class VoiceChoicesTests: XCTestCase {
         XCTAssertEqual(VoiceChoices.best(voices, language: "en")?.quality, .premium)
         XCTAssertFalse(VoiceChoices.hasNaturalVoice([voices[0]], language: "en"))
         XCTAssertTrue(VoiceChoices.hasNaturalVoice(voices, language: "en"))
+        XCTAssertTrue(VoiceChoices.isSiriVoice("com.apple.siri.natural.en-US-G"), "listed, but silent for apps")
+        XCTAssertFalse(VoiceChoices.isSiriVoice("com.apple.voice.premium.en-US.Zoe"))
     }
 
     private let voices: [VoiceOption] = [
