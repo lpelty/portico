@@ -550,3 +550,16 @@ async def test_sdk_engine_context_usage_reads_percentage_and_model() -> None:
     assert await engine.context_usage() is None, "no client yet: unavailable"
     engine._client = Client()  # type: ignore[assignment]
     assert await engine.context_usage() == (62.4, "some-model")
+
+
+def test_a_result_auto_mode_blocked_is_labelled_blocked() -> None:
+    text = "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [no]"
+    blocked = UserMessage(
+        content=[ToolResultBlock(tool_use_id="t1", content=[{"type": "text", "text": text}], is_error=True)]
+    )
+    (event,) = translate(blocked, chat=1, turn=1)
+    assert isinstance(event, ToolFinished) and event.permission == "blocked" and not event.ok
+    # Any other failure, or the same words in a successful result, is not a block.
+    failed = UserMessage(content=[ToolResultBlock(tool_use_id="t2", content="exit 1", is_error=True)])
+    quoted = UserMessage(content=[ToolResultBlock(tool_use_id="t3", content=text, is_error=False)])
+    assert [e.permission for e in translate(failed, 1, 1) + translate(quoted, 1, 1)] == [None, None]  # type: ignore[union-attr]

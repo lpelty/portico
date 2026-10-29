@@ -124,7 +124,7 @@ from .artifacts import TurnCollector, artifact_for_location
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
-from .engine import Engine, PermissionDecision, history_events, read_history
+from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, history_events, read_history
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
     PROTOCOL_VERSION,
@@ -165,6 +165,7 @@ from .messages import (
     SessionRenewed,
     StatusSet,
     TextDelta,
+    ToolFinished,
     ToolStarted,
     TurnFinished,
     TurnStarted,
@@ -997,6 +998,10 @@ class GatewayServer:
             log.warning("chat %d: engine event for turn %s during turn %d; dropped", chat.number, turn, run.turn)
             return
         if not isinstance(event, TurnFinished):
+            if isinstance(event, ToolStarted):
+                chat.started_tools[event.tool_use_id] = event.tool
+            elif isinstance(event, ToolFinished):
+                event = self._with_permission(chat, event)
             if run is not None:
                 if isinstance(event, ToolStarted):
                     run.collector.note_tool(event.tool, event.input)
@@ -1017,6 +1022,29 @@ class GatewayServer:
         # Its own task: the engine is asked from inside its own event stream.
         if chat.engine is not None:
             self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
+
+    def _with_permission(self, chat: Chat, event: ToolFinished) -> ToolFinished:
+        """``event`` with what became of its permission (v0.3), recorded on the chat.
+
+        In order: auto mode's classifier blocked it (seen in the result);
+        a card's answer, a session allow or a cancel decided it; else, in
+        ``auto`` mode, a tool that is not read-only ran without a card, so
+        auto mode allowed it. Nothing for a read, or a step no one decided.
+        """
+        tool = chat.started_tools.pop(event.tool_use_id, None)
+        if event.permission == "blocked":
+            chat.note_permission(event.tool_use_id, "blocked")
+        else:
+            decided = chat.permissions.get(event.tool_use_id)
+            if decided is not None:
+                event = event.model_copy(update={"permission": decided.outcome, "note": decided.note})
+            elif chat.mode == "auto" and tool is not None and tool not in READ_ONLY_TOOLS:
+                chat.note_permission(event.tool_use_id, "auto")
+                event = event.model_copy(update={"permission": "auto"})
+            else:
+                return event
+        self.registry.persist()
+        return event
 
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
@@ -1123,11 +1151,16 @@ class GatewayServer:
     ) -> PermissionDecision:
         """A permission card, unless a person already allowed the tool for this chat. Never allow by default."""
         if self.cards.allowed(chat, tool, input):
+            chat.note_permission(tool_use_id, "session")
             return "allow"
         run = self._runs.get(chat.number)
         before = set(chat.chat_allows)
         try:
-            return await self.cards.ask_permission(chat, tool, input, suggestions, tool_use_id, self._emit_card)
+            decision = await self.cards.ask_permission(chat, tool, input, suggestions, tool_use_id, self._emit_card)
+            if isinstance(decision, tuple) and decision[0] == "deny" and tool_use_id not in chat.permissions:
+                # Cancelled (turn stopped, nobody there): declined, with the reason.
+                chat.note_permission(tool_use_id, "declined", decision[1])
+            return decision
         finally:
             if chat.chat_allows != before:
                 # On the record at once: a gateway restart keeps the session's allows.
@@ -1163,10 +1196,23 @@ class GatewayServer:
             "chat %d: card %s answered %s%s", chat.number, msg.id,
             msg.answer.get("decision", "submit") if isinstance(msg.answer, dict) else "submit",
             f" scope={msg.scope}" if msg.scope else "")
+        card = next((c for c in self.cards.open_cards(chat) if c.id == msg.id), None)
         self.cards.answer(chat.number, msg.id, msg)
+        closing = CardAnswered(ts=_now(), chat=chat.number, id=msg.id)
+        if card is not None and card.kind == "permission":
+            # One permission unit (v0.3): the closing says what was decided,
+            # for the tool row; ``tool.finished`` carries it again.
+            if msg.answer.get("decision") == "allow":
+                outcome = "once" if msg.scope in (None, "once") else "session"  # ``always`` covers the session too
+                note = None
+            else:
+                outcome, note = "declined", msg.note
+            if card.tool_use_id:
+                chat.note_permission(card.tool_use_id, outcome, note)
+            closing = closing.model_copy(update={"tool_use_id": card.tool_use_id, "outcome": outcome, "note": note})
         # The closing goes in the ring before the engine resumes (and the
         # state goes back to working): a replay closes what it opened.
-        await self.emit(chat, CardAnswered(ts=_now(), chat=chat.number, id=msg.id))
+        await self.emit(chat, closing)
 
     # --- handlers: chats --------------------------------------------------------
 
@@ -1238,7 +1284,7 @@ class GatewayServer:
         if not truncated and (since is not None or not chat.restored):
             return ring, truncated, []
         transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
-        events = history_events(transcript, chat.number)
+        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number)]
         if not events:
             replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
             return ring, truncated and since is not None, [a for a in chat.artifacts if a.id not in replayed]
@@ -1247,6 +1293,16 @@ class GatewayServer:
         if chat.turn == 0 and chat.number not in self._runs:
             chat.turn = turns
         return events, False, list(chat.artifacts)
+
+    @staticmethod
+    def _replayed_permission(chat: Chat, event: ServerMessage) -> ServerMessage:
+        """A transcript's ``tool.finished`` with the outcome recorded for it live."""
+        if not isinstance(event, ToolFinished) or event.permission is not None:
+            return event
+        decided = chat.permissions.get(event.tool_use_id)
+        if decided is None:
+            return event
+        return event.model_copy(update={"permission": decided.outcome, "note": decided.note})
 
     async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)

@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .chats import Chat
 from .engine import PermissionDecision, QuestionDeclined, summarize_tool
@@ -74,16 +75,8 @@ NOBODY_ANSWERED = "nobody was there to answer"
 # stamped copy (the server's ``emit``).
 Send = Callable[[Chat, ServerMessage], Awaitable[ServerMessage]]
 
-_TITLES: dict[str, str] = {
-    "Write": "Write a file",
-    "Edit": "Edit a file",
-    "MultiEdit": "Edit a file",
-    "NotebookEdit": "Edit a notebook",
-    "Read": "Read a file",
-    "Bash": "Run a command",
-    "WebFetch": "Fetch a web page",
-    "WebSearch": "Search the web",
-}
+# The longest a command may be in a card's question before it is cut.
+TITLE_COMMAND_LIMIT = 60
 
 
 # Tools whose input is a shell command: a chat-scoped allow for one of these
@@ -112,19 +105,47 @@ def _new_id() -> str:
 # --- building cards --------------------------------------------------------------
 
 
-def title_for(tool: str) -> str:
-    """The card title for a permission request: a plain verb phrase, or ``Use <tool>``."""
-    return _TITLES.get(tool, f"Use {tool}")
+def title_for(tool: str, input: dict[str, Any] | None = None) -> str:
+    """The card title for a permission request: a plain question about the step (v0.3).
+
+    ``Create notes.md?`` (a ``Write`` to a file that does not exist yet),
+    ``Save changes to notes.md?`` (any other file edit), ``Run git status?``
+    (a command's first line, cut at ``TITLE_COMMAND_LIMIT``), ``Open
+    example.com?`` (a fetch), else ``Use <tool>?``. The app shows the tool
+    name beside it as a tag.
+    """
+    input = input or {}
+    if tool in EDIT_TOOLS:
+        path = input.get("file_path") or input.get("notebook_path")
+        if isinstance(path, str) and path.strip():
+            name = Path(path).name or path
+            if tool == "Write" and not Path(path).expanduser().exists():
+                return f"Create {name}?"
+            return f"Save changes to {name}?"
+    elif tool in COMMAND_TOOLS:
+        command = input.get("command")
+        if isinstance(command, str) and command.strip():
+            line = command.strip().split("\n", 1)[0].strip()
+            if len(line) > TITLE_COMMAND_LIMIT:
+                line = line[: TITLE_COMMAND_LIMIT - 1].rstrip() + "…"
+            return f"Run {line}?"
+    elif tool == "WebFetch":
+        url = input.get("url")
+        host = urlsplit(url).hostname if isinstance(url, str) else None
+        if host:
+            return f"Open {host}?"
+    return f"Use {tool}?"
 
 
-def permission_card(chat: int, tool: str, input: dict[str, Any]) -> CardAsk:
+def permission_card(chat: int, tool: str, input: dict[str, Any], tool_use_id: str | None = None) -> CardAsk:
     return CardAsk(
         ts=_now(),
         chat=chat,
         id=_new_id(),
         kind="permission",
-        title=title_for(tool),
+        title=title_for(tool, input),
         permission=Permission(tool=tool, summary=summarize_tool(tool, input), input=dict(input)),
+        tool_use_id=tool_use_id or None,
     )
 
 
@@ -352,7 +373,7 @@ class CardBroker:
         """A permission card for ``tool``, unless the chat already allows it; returns the engine's decision."""
         if self.allowed(chat, tool, input):
             return "allow"
-        answer = await self.ask(chat, permission_card(chat.number, tool, input), send)
+        answer = await self.ask(chat, permission_card(chat.number, tool, input, tool_use_id), send)
         if _is_cancelled(answer) or answer.answer.get("decision") != "allow":
             return ("deny", answer.note)
         if answer.scope == "chat":

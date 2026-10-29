@@ -56,6 +56,21 @@ CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
 SUMMARY_LIMIT = 80
 
+# Tools that only read (or keep the engine's own notes): auto mode never has
+# anything to decide for them, so their rows carry no permission outcome.
+READ_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "TodoRead", "ToolSearch",
+        "Task", "Agent", "TaskOutput", "BashOutput", "Skill", "AskUserQuestion",
+        "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool", "ReadMcpResourceTool",
+    }
+)
+
+# What the engine's tool result says when auto mode's classifier refused a
+# step ("Permission for this action was denied by the Claude Code auto mode
+# classifier. Reason: ..."); matched case-insensitively.
+AUTO_MODE_BLOCK_MARK = "auto mode classifier"
+
 # What ``on_permission`` returns. ``"allow"`` for once/chat (the chat layer
 # remembers chat-wide allows itself), ``("allow", "always")`` persists the
 # engine's local-settings suggestion, ``"deny"`` or ``("deny", note)`` refuses
@@ -154,6 +169,21 @@ def _result_summary(content: str | list[dict[str, Any]] | None) -> str:
     return ""
 
 
+def _result_text(content: str | list[dict[str, Any]] | None) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    return "\n".join(
+        block["text"] for block in content if isinstance(block, dict) and isinstance(block.get("text"), str)
+    )
+
+
+def blocked_by_auto_mode(is_error: bool | None, content: str | list[dict[str, Any]] | None) -> bool:
+    """Whether a tool result is auto mode's classifier refusing the step."""
+    return bool(is_error) and AUTO_MODE_BLOCK_MARK in _result_text(content).lower()
+
+
 def translate(msg: Message, chat: int, turn: int) -> list[ServerMessage]:
     """SDK message -> protocol events for ``chat``/``turn``. Pure; ``seq`` is left to the chat.
 
@@ -200,6 +230,7 @@ def translate(msg: Message, chat: int, turn: int) -> list[ServerMessage]:
                         tool_use_id=block.tool_use_id,
                         ok=not bool(block.is_error),
                         summary=_result_summary(block.content),
+                        permission="blocked" if blocked_by_auto_mode(block.is_error, block.content) else None,
                     )
                 )
     elif isinstance(msg, ResultMessage):
@@ -538,6 +569,9 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         tool_use_id=str(block.get("tool_use_id") or ""),
                         ok=not bool(block.get("is_error")),
                         summary=_result_summary(block.get("content")),
+                        permission="blocked"
+                        if blocked_by_auto_mode(block.get("is_error"), block.get("content"))
+                        else None,
                     )
                 )
         elif role == "assistant":

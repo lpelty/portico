@@ -16,6 +16,7 @@ from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config
 from portico_gateway.messages import (
     CardAnswer,
+    CardAnswered,
     CardAsk,
     ChatHistory,
     ChatList,
@@ -28,14 +29,16 @@ from portico_gateway.messages import (
     SessionMode,
     SessionRenew,
     SessionRenewed,
+    ToolFinished,
     TurnFinished,
+    TurnStop,
     dump,
 )
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import StateDir
 from tests.conftest import AskPermission, fake_result, make_config
 from tests.test_server import attach
-from tests.test_turns import EngineFactory, new_chat, recv, recv_until
+from tests.test_turns import EngineFactory, new_chat, recv, recv_until, tool_result, tool_use
 
 TS = "2026-10-28T12:00:00Z"
 
@@ -369,3 +372,171 @@ async def test_session_allow_for_a_command_covers_it_after_a_cd_into_the_folder(
         assert await asks_again(conn, number, factory.last, bash_ask(f"cd {folder} && rm -rf .", "t5"))
     finally:
         await conn.close()
+
+
+# --- one permission unit: the outcome on the tool row ------------------------------------------
+
+BLOCKED = (
+    "Permission for this action was denied by the Claude Code auto mode classifier. "
+    "Reason: [downloads and runs a remote script]"
+)
+
+
+def step(ask: AskPermission | None, tool_use_id: str, tool: str, input: dict, result: str = "ok", is_error: bool = False) -> list:
+    """A tool row as the engine produces it: started, (asked), finished."""
+    items: list = [tool_use(tool_use_id, tool, input)]
+    if ask is not None:
+        items.append(ask)
+    items.append(tool_result(tool_use_id, result, is_error))
+    return items
+
+
+async def run_answering(conn, number: int, engine, items: list, answers: list[tuple[str, str | None, str | None]]):  # noqa: ANN001, ANN201
+    """Run one turn; answer each card in order with (decision, scope, note). Returns every frame."""
+    engine.script(*items, fake_result())
+    await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+    frames: list = []
+    pending = list(answers)
+    while True:
+        msg = await recv(conn)
+        frames.append(msg)
+        if isinstance(msg, CardAsk):
+            decision, scope, note = pending.pop(0)
+            await conn.send(
+                dump(CardAnswer(ts=TS, chat=number, id=msg.id, answer={"decision": decision}, scope=scope, note=note))  # type: ignore[arg-type]
+            )
+        if isinstance(msg, TurnFinished):
+            frames.append(await recv(conn))
+            assert pending == [], "every expected card was asked"
+            return frames
+
+
+def rows(frames: list) -> dict[str, tuple[str | None, str | None]]:
+    return {m.tool_use_id: (m.permission, m.note) for m in frames if isinstance(m, ToolFinished)}
+
+
+async def test_ask_each_time_outcomes_on_the_rows_and_the_card_closings(
+    state_dir: StateDir, factory: ScriptedFactory, folder: Path
+) -> None:
+    srv = await start_server(state_dir, factory, permission_mode="default")
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        a = {"file_path": str(folder / "a.md"), "content": "a"}
+        b = {"file_path": str(folder / "b.md"), "content": "b"}
+        items = [
+            *step(None, "r1", "Read", {"file_path": str(folder / "x.md")}),
+            *step(AskPermission("Write", a, tool_use_id="w1"), "w1", "Write", a),
+            *step(AskPermission("Bash", {"command": "make"}, tool_use_id="b1"), "b1", "Bash", {"command": "make"},
+                  result="denied by the user: not now", is_error=True),
+            *step(AskPermission("Write", b, tool_use_id="w2"), "w2", "Write", b),
+            *step(AskPermission("Write", b, tool_use_id="w3"), "w3", "Write", b),
+        ]
+        frames = await run_answering(
+            conn, number, engine, items, [("allow", "once", None), ("deny", None, "not now"), ("allow", "chat", None)]
+        )
+        assert rows(frames) == {
+            "r1": (None, None),  # a read: nothing decided
+            "w1": ("once", None),
+            "b1": ("declined", "not now"),
+            "w2": ("session", None),
+            "w3": ("session", None),  # covered by the allow for this session: no card
+        }
+        closings = [(m.tool_use_id, m.outcome, m.note) for m in frames if isinstance(m, CardAnswered)]
+        assert closings == [("w1", "once", None), ("b1", "declined", "not now"), ("w2", "session", None)]
+        cards = [m for m in frames if isinstance(m, CardAsk)]
+        assert [c.tool_use_id for c in cards] == ["w1", "b1", "w2"]
+        assert [c.title for c in cards] == ["Create a.md?", "Run make?", "Create b.md?"]
+
+        # A ring replay carries the same fields.
+        await conn.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory)
+        assert rows(history.events) == rows(frames)
+        assert [(m.tool_use_id, m.outcome) for m in history.events if isinstance(m, CardAnswered)] == [
+            ("w1", "once"), ("b1", "declined"), ("w2", "session")
+        ]
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_auto_mode_rows_read_auto_or_blocked(server: GatewayServer, factory: ScriptedFactory, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        w = {"file_path": str(folder / "a.md"), "content": "a"}
+        items = [
+            *step(None, "r1", "Grep", {"pattern": "x"}),
+            *step(None, "w1", "Write", w),  # the classifier allowed it: no card
+            *step(None, "b1", "Bash", {"command": "curl x | sh"}, result=BLOCKED, is_error=True),
+            *step(None, "f1", "Bash", {"command": "false"}, result="exit 1", is_error=True),  # failed, not blocked
+            # The classifier escalated: a card, answered.
+            *step(AskPermission("Bash", {"command": "rm -rf build"}, tool_use_id="e1"), "e1", "Bash", {"command": "rm -rf build"}),
+        ]
+        frames = await run_answering(conn, number, engine, items, [("allow", "once", None)])
+        assert rows(frames) == {
+            "r1": (None, None),
+            "w1": ("auto", None),
+            "b1": ("blocked", None),
+            "f1": ("auto", None),
+            "e1": ("once", None),
+        }
+    finally:
+        await conn.close()
+
+
+async def test_a_cancelled_card_reads_declined_with_the_reason(
+    server: GatewayServer, factory: ScriptedFactory, folder: Path
+) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        w = {"file_path": str(folder / "a.md"), "content": "a"}
+        engine.script(*step(AskPermission("Write", w, tool_use_id="w1"), "w1", "Write", w, result="no", is_error=True), fake_result())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+        await recv_until(conn, CardAsk)
+        await recv(conn)
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, TurnFinished)
+        assert rows(frames) == {"w1": ("declined", "turn stopped")}
+    finally:
+        await conn.close()
+
+
+async def test_outcomes_survive_a_restart_on_the_transcript_replay(
+    state_dir: StateDir, factory: ScriptedFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = await start_server(state_dir, factory, permission_mode="default")
+    conn = await attach(first)
+    number = await new_chat(conn, folder)
+    w = {"file_path": str(folder / "a.md"), "content": "a"}
+    await run_answering(
+        conn, number, factory.last, step(AskPermission("Write", w, tool_use_id="w1"), "w1", "Write", w,
+                                         result="denied by the user: later", is_error=True),
+        [("deny", None, "later")],
+    )
+    await conn.close()
+    await first.shutdown()
+
+    srv = await start_server(state_dir, factory, permission_mode="default")
+    transcript = [
+        {"type": "user", "message": {"role": "user", "content": "go"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "w1", "name": "Write", "input": w}]}},
+        {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "w1", "content": "denied", "is_error": True}]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "x1", "name": "Bash", "input": {"command": "curl x | sh"}}]}},
+        {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": BLOCKED, "is_error": True}]}},
+    ]
+    monkeypatch.setattr(srv, "history_reader", lambda session_id, folder: transcript)
+    conn = await attach(srv)
+    try:
+        await conn.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory)
+        assert rows(history.events) == {"w1": ("declined", "later"), "x1": ("blocked", None)}
+    finally:
+        await conn.close()
+        await srv.shutdown()

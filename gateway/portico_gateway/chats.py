@@ -28,12 +28,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
 from .messages import Artifact, ChatState, ChatStateWord, ChatSummary, PermissionMode, ServerMessage
-from .state import ChatRecord, Index, StateDir
+from .state import ChatRecord, Index, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .engine import Engine
 
 STATE_WORDS: frozenset[str] = frozenset(get_args(ChatStateWord))
+
+# How many tool uses' permission outcomes a chat record keeps (newest).
+TOOL_PERMISSIONS_KEPT = 500
 
 # A session's title: the first line of its first message, at most this long.
 TITLE_LIMIT = 60
@@ -100,6 +103,7 @@ class Chat:
         context_percent: float | None = None,
         mode: PermissionMode | None = None,
         allows: list[str] | None = None,
+        permissions: dict[str, ToolPermission] | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -131,6 +135,14 @@ class Chat:
         # command tool (``cards.CardBroker.chat_allow_keys``). Kept on the
         # record (v0.3), so they last as long as the session does.
         self.chat_allows: set[str] = set(allows or [])
+        # Permission outcomes by ``tool_use_id`` (v0.3): what a card's answer,
+        # a session allow, a cancel, auto mode or its classifier decided.
+        # Recorded when decided, attached to ``tool.finished``, kept on the
+        # record for replays from the transcript.
+        self.permissions: dict[str, ToolPermission] = dict(permissions or {})
+        # The tool of every ``tool.started`` this launch, by ``tool_use_id``,
+        # until its ``tool.finished``.
+        self.started_tools: dict[str, str] = {}
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from
@@ -171,6 +183,17 @@ class Chat:
         self.state = _checked_state(word)
         return self.stamp(ChatState(chat=self.number, state=self.state, mode=self.mode, ts=_now()))  # type: ignore[return-value]
 
+    # --- permission outcomes ----------------------------------------------------
+
+    def note_permission(self, tool_use_id: str, outcome: str, note: str | None = None) -> None:
+        """Record what became of ``tool_use_id``'s permission; the oldest go past ``TOOL_PERMISSIONS_KEPT``."""
+        if not tool_use_id:
+            return
+        self.permissions.pop(tool_use_id, None)
+        self.permissions[tool_use_id] = ToolPermission(outcome=outcome, note=note)  # type: ignore[arg-type]
+        while len(self.permissions) > TOOL_PERMISSIONS_KEPT:
+            del self.permissions[next(iter(self.permissions))]
+
     # --- views ----------------------------------------------------------------
 
     def _session_facts(self) -> dict[str, object]:
@@ -204,6 +227,7 @@ class Chat:
             created=self.created,
             artifacts=list(self.artifacts),
             allows=sorted(self.chat_allows),
+            permissions=dict(self.permissions),
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -227,6 +251,7 @@ class Chat:
             context_percent=record.context_percent,
             mode=record.mode,
             allows=record.allows,
+            permissions=record.permissions,
         )
         chat.restored = record.session_id is not None
         return chat
