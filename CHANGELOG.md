@@ -63,7 +63,9 @@
   `services.restart_all` capability in `hello`; the next
   `services.status` (none goes out meanwhile) is the answer, plus `error
   code=services.restart_failed` when it failed. A `service.restart` sent
-  while it runs is refused with `services.busy`. Plug-ins can provide both
+  while it runs is refused with `services.busy`. A single service whose
+  restart command fails now answers `services.restart_failed` with the
+  reason too (after its fresh status), so the menu can say why. Plug-ins can provide both
   with the new hooks `services_status()` and `restart_services()`, which
   take precedence over the config.
 - Protocol: additive only (a new request an older app never sends, a new

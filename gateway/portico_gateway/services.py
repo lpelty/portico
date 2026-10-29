@@ -453,7 +453,10 @@ class ServiceMonitor:
         """Run the service's ``restart`` (``checking`` meanwhile), then check it again.
 
         The ``services.status`` that follows is the answer: the state always
-        changes to ``checking`` and back, so the app hears both.
+        changes to ``checking`` and back, so the app hears both. A restart
+        command that fails (non-zero exit, timeout, cannot start) raises
+        ``services.restart_failed`` with the reason after that status (v0.8),
+        as a restart of all services does.
         """
         service = self.check_restart(service_id)
         assert service.restart is not None
@@ -467,20 +470,25 @@ class ServiceMonitor:
                 nonlocal last
                 last = line
 
+            failure: str | None = None
             try:
                 code = await run_command(service.restart, seen, self.timeout)
                 if code != 0:
-                    log.warning("service %s: restart exited %d%s", service.id, code, f": {last}" if last else "")
+                    failure = f"exited {code}" + (f": {last}" if last else "")
             except TimeoutError:
-                log.warning("service %s: restart did not finish within %g s and was stopped", service.id, self.timeout)
+                failure = f"did not finish within {self.timeout:g} s and was stopped"
             except OSError as e:
-                log.warning("service %s: restart could not start: %s", service.id, e)
+                failure = f"could not start: {e}"
+            if failure is not None:
+                log.warning("service %s: restart %s", service.id, failure)
             log.info("service %s: restarted; checking it again", service.id)
             if self.status_source is None:
                 await self._run_check(service)
         if self.status_source is not None:
             await self.read_status()
         await self._publish_if_changed()
+        if failure is not None:
+            raise ProtocolError("services.restart_failed", f"{service.name}: restart {failure}")
 
     async def restart_all(self) -> None:
         """Restart all the deployment's services (v0.8), then read everything again.

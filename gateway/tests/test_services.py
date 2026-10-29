@@ -218,7 +218,10 @@ async def test_a_restart_that_does_not_help_stays_down_from_the_first_outage() -
     )
     await mon.check_all()
     outage = rec.calls[-1][0]
-    await mon.restart("memory")
+    # v0.8: a restart command that fails says why, after the fresh status.
+    with pytest.raises(ProtocolError) as e:
+        await mon.restart("memory")
+    assert e.value.code == "services.restart_failed" and "exited 3" in e.value.message
     after = rec.calls[-1][0]
     assert after.state == "down"
     assert after.since == outage.since and after.detail == outage.detail, "the outage began before the restart"
@@ -237,8 +240,10 @@ async def test_restart_refusals() -> None:
 
 async def test_a_restart_that_hangs_is_killed_and_the_service_rechecked() -> None:
     mon, rec = monitor([svc("memory", "true", restart="sleep 30")], timeout=0.3)
-    await mon.restart("memory")
-    assert rec.calls[-1][0].state == "up"
+    with pytest.raises(ProtocolError) as e:
+        await mon.restart("memory")
+    assert e.value.code == "services.restart_failed" and "did not finish" in e.value.message
+    assert rec.calls[-1][0].state == "up", "rechecked and published before the failure is reported"
 
 
 # --- the server -------------------------------------------------------------------

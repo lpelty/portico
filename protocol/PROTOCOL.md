@@ -352,7 +352,9 @@ group, killed after `command_timeout_seconds`), then checks the service
 again. The answer is the `services.status` frames that follow: the
 service goes to `checking` (detail `restarting`) while the command runs,
 then to what the check finds. A restart command that fails or times out
-is logged; the re-check says how the service is. Errors:
+is logged; the re-check says how the service is, and (v0.8) after that
+status an `error` with code `services.restart_failed`, the request's
+`id` and the reason follows. Errors:
 `service.unknown` (no service with that id), `service.no_restart` (the
 service has no `restart` command: `can_restart` is false), v0.8:
 `services.busy` (a `services.restart_all` is running: try again once its
