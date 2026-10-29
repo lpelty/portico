@@ -129,12 +129,57 @@ extension AppModel {
 
     func isRestarting(service: String) -> Bool { restartingServices[service] != nil }
 
-    /// A row's Restart: `service.restart`; the row shows progress until
-    /// the next `services.status`.
+    /// A row's Restart: `service.restart`; the row shows progress until a
+    /// `services.status` moves that service.
     func restartService(_ service: String) {
         guard connection == .connected, !isRestarting(service: service) else { return }
         let id = Self.requestId()
         restartingServices[service] = id
+        restartBaselines[service] = services?.first { $0.id == service }
         send(.serviceRestart(ServiceRestart(service: service, id: id)))
+    }
+
+    /// A `services.status`: the list, and the restarts it answers. A status
+    /// is broadcast whenever any service changes, so one about another
+    /// service leaves a restart spinning; the restarted service answers
+    /// when it goes to `checking` (the command runs) or its state or
+    /// detail moves, or when it is gone from the list.
+    func applyServicesStatus(_ status: ServicesStatus) {
+        services = status.services
+        for service in Array(restartingServices.keys) {
+            let now = status.services.first { $0.id == service }
+            let before = restartBaselines[service]
+            let answered = now.map { $0.state == .checking || $0.state != before?.state || $0.detail != before?.detail } ?? true
+            if answered {
+                restartingServices[service] = nil
+                restartBaselines[service] = nil
+            }
+        }
+    }
+
+    /// After a `chat.list`, while no `services.status` has come on this
+    /// connection: wait `servicesFallbackDelay`, then draw the Gateway row
+    /// alone rather than "Checking…" for good.
+    func awaitServicesStatus() {
+        guard services == nil, servicesFallback == nil else { return }
+        let delay = servicesFallbackDelay
+        servicesFallback = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.servicesFallback = nil
+            if self.services == nil { self.services = [] }
+        }
+    }
+
+    /// Whether a gateway of this version sends `services.status` (v0.4 and
+    /// later). Read loosely: the leading numbers of `0.4.0`, `v0.4`,
+    /// `0.4.0-dev`; a version that does not read as one is taken as new.
+    static func gatewaySendsServices(_ version: String) -> Bool {
+        var text = Substring(version.trimmingCharacters(in: .whitespaces))
+        if text.first == "v" || text.first == "V" { text = text.dropFirst() }
+        let numbers = text.prefix { $0.isNumber || $0 == "." }.split(separator: ".", omittingEmptySubsequences: false)
+        guard let major = numbers.first.flatMap({ Int($0) }) else { return true }
+        let minor = numbers.count > 1 ? Int(numbers[1]) ?? 0 : 0
+        return (major, minor) >= (0, 4)
     }
 }

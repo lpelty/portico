@@ -25,9 +25,9 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
     }
 
     /// A v0.4 gateway: single presentation, sessions, and `log` in the commands when it can log.
-    private func hello(canLog: Bool = true, speaksLog: Bool = true) -> HelloServer {
+    private func hello(canLog: Bool = true, speaksLog: Bool = true, version: String = "0.4.0", epoch: String = "e") -> HelloServer {
         HelloServer(
-            protocol: protocolVersion, gatewayVersion: "0.4.0", epoch: "e",
+            protocol: protocolVersion, gatewayVersion: version, epoch: epoch,
             brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [],
             commands: canLog && speaksLog ? ["new", "log"] : ["new"],
             capabilities: ["files", "sessions", "context"], presentation: "single", canLog: canLog)
@@ -154,6 +154,83 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         // A new hello: checked afresh.
         model.apply(.hello(hello()))
         XCTAssertEqual(model.servicesPresentation(gateway: .running(port: 2)).label, "Checking…")
+    }
+
+    func testARestartIsAnsweredOnlyByAStatusThatMovesItsService() throws {
+        let (model, _) = try model()
+        model.setConnection(.connected)
+        model.apply(.hello(hello()))
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            service("memory", "Memory", .down, detail: "not responding since 9:41", restart: true),
+            service("search", "Search", .down, detail: "not responding since 9:40", restart: true),
+        ])))
+        model.restartService("memory")
+        model.restartService("search")
+
+        // A broadcast about another service (or nothing new) leaves both spinning.
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            service("memory", "Memory", .down, detail: "not responding since 9:41", restart: true),
+            service("search", "Search", .down, detail: "not responding since 9:40", restart: true),
+            service("web", "Web", .up),
+        ])))
+        XCTAssertTrue(model.isRestarting(service: "memory"))
+        XCTAssertTrue(model.isRestarting(service: "search"))
+
+        // Memory's restart runs (checking): memory stops spinning, search does not.
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            service("memory", "Memory", .checking, detail: "restarting", restart: true),
+            service("search", "Search", .down, detail: "not responding since 9:40", restart: true),
+        ])))
+        XCTAssertFalse(model.isRestarting(service: "memory"))
+        XCTAssertTrue(model.isRestarting(service: "search"))
+
+        // Search's detail changes (still down): that answers it.
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            service("memory", "Memory", .up, restart: true),
+            service("search", "Search", .down, detail: "not responding since 9:40 · port in use", restart: true),
+        ])))
+        XCTAssertFalse(model.isRestarting(service: "search"))
+    }
+
+    func testAGatewayOlderThanV04HasNoServicesToWaitFor() throws {
+        XCTAssertTrue(AppModel.gatewaySendsServices("0.4.0"))
+        XCTAssertTrue(AppModel.gatewaySendsServices("0.4"))
+        XCTAssertTrue(AppModel.gatewaySendsServices("v0.4.1-dev"))
+        XCTAssertTrue(AppModel.gatewaySendsServices("0.10.0"))
+        XCTAssertTrue(AppModel.gatewaySendsServices("1.0.0"))
+        XCTAssertFalse(AppModel.gatewaySendsServices("0.3.9"))
+        XCTAssertFalse(AppModel.gatewaySendsServices("0.3.0+local"))
+        XCTAssertFalse(AppModel.gatewaySendsServices("0.1"))
+        XCTAssertTrue(AppModel.gatewaySendsServices(""), "unknown: assume new")
+        XCTAssertTrue(AppModel.gatewaySendsServices("dev"), "unparseable: assume new")
+
+        let (model, _) = try model()
+        model.setConnection(.connected)
+        model.apply(.hello(hello(version: "0.3.2")))
+        XCTAssertEqual(model.services, [])
+        XCTAssertEqual(model.servicesPresentation(gateway: .running(port: 2)).label, "All services up", "the Gateway row alone")
+        model.apply(.hello(hello(version: "0.4.0")))
+        XCTAssertNil(model.services, "a v0.4 gateway: Checking… until it says")
+    }
+
+    func testNoServicesStatusAfterTheChatListMeansNoServices() async throws {
+        let (model, _) = try model()
+        model.servicesFallbackDelay = .milliseconds(50)
+        model.setConnection(.connected)
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1)])))
+        XCTAssertNil(model.services)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.services, [], "the wait gave up: the Gateway row alone")
+
+        // A status that does come cancels the wait.
+        let (prompt, _) = try self.model()
+        prompt.servicesFallbackDelay = .milliseconds(50)
+        prompt.apply(.hello(hello()))
+        prompt.apply(.chatList(ChatList(chats: [session(1)])))
+        prompt.apply(.servicesStatus(ServicesStatus(services: [service("memory", "Memory", .checking)])))
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(prompt.services?.map(\.id), ["memory"])
     }
 
     // MARK: - the strip
@@ -308,5 +385,56 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertNil(old.askingToLog)
         guard case .sessionRenew(let oldRenew)? = oldSent.frames.last else { return XCTFail() }
         XCTAssertTrue(oldRenew.log)
+    }
+
+    // MARK: - review fixes: unlogged on chat.state, pending commands on a new hello
+
+    func testAChatStateCarriesUnloggedAndNewAsks() throws {
+        let (model, sent) = try model()
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1, unlogged: false)])))
+
+        guard case .chatState(let state) = try decode("""
+            {"type":"chat.state","ts":"2026-10-28T12:00:00Z","chat":1,"state":"idle","seq":4,"unlogged":true}
+            """) else { return XCTFail() }
+        XCTAssertEqual(state.unlogged, true)
+        model.apply(.chatState(state))
+        XCTAssertEqual(model.summary(of: 1)?.hasUnloggedWork, true)
+
+        model.requestNew(chat: 1)
+        XCTAssertEqual(model.askingToLog, 1, "an ordinary turn left work unlogged: New asks")
+        XCTAssertFalse(sent.types().contains("session.renew"))
+
+        // A chat.state without the field (an older gateway) leaves the record alone.
+        model.answerAskToLog(log: nil)
+        model.apply(.chatState(ChatState(chat: 1, state: .working, seq: 5)))
+        XCTAssertEqual(model.summary(of: 1)?.hasUnloggedWork, true)
+        model.apply(.chatState(ChatState(chat: 1, state: .idle, unlogged: false, seq: 6)))
+        XCTAssertEqual(model.summary(of: 1)?.hasUnloggedWork, false)
+    }
+
+    func testANewHelloClearsAPendingLogOrRenewal() throws {
+        let (model, sent) = try model()
+        model.setConnection(.connected)
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1, unlogged: true), session(2, unlogged: true)])))
+        model.logSession(chat: 1)
+        model.renew(chat: 2, log: false)
+        XCTAssertTrue(model.isLogging(chat: 1))
+        XCTAssertNotNil(model.renewing[2])
+
+        // The connection dropped and a restarted gateway (new epoch) said hello.
+        model.apply(.hello(hello(epoch: "e2")))
+        XCTAssertFalse(model.isLogging(chat: 1), "not \"Logging…\" for good")
+        XCTAssertNil(model.renewing[2])
+        XCTAssertFalse(model.isSessionCommandPending(chat: 1))
+
+        // The same gateway again: likewise; the session can be logged anew.
+        model.logSession(chat: 1)
+        model.apply(.hello(hello(epoch: "e2")))
+        XCTAssertFalse(model.isLogging(chat: 1))
+        model.apply(.chatList(ChatList(chats: [session(1, unlogged: true)])))
+        model.logSession(chat: 1)
+        XCTAssertEqual(sent.types().filter { $0 == "session.log" }.count, 3)
     }
 }
