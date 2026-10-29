@@ -227,7 +227,9 @@ struct StartView: View {
     /// bordered buttons the size of the suggestion chips (v0.7 decision 2,
     /// AA1), so they read as clickable.
     private func continuingLine(_ live: ChatSummary) -> some View {
-        HStack(spacing: 8) {
+        // The words on one line, the two buttons under them (AA1): side by
+        // side they crowd the 720-point column and the words truncate.
+        VStack(spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
                     .font(.system(size: 11))
@@ -240,12 +242,14 @@ struct StartView: View {
                 }
             }
             .foregroundStyle(Theme.text3)
-            SmallBorderedButton(title: "View Session \(live.chat)") { model.open(chat: live.chat) }
-                .help("Show Session \(live.chat)'s conversation")
-            if model.canRenew(chat: live.chat) {
-                SmallBorderedButton(title: "Start a new session") { model.requestNew(chat: live.chat) }
-                    .disabled(!connected || model.isSessionCommandPending(chat: live.chat))
-                    .help("End Session \(live.chat) and start the next")
+            HStack(spacing: 8) {
+                SmallBorderedButton(title: "View Session \(live.chat)") { model.open(chat: live.chat) }
+                    .help("Show Session \(live.chat)'s conversation")
+                if model.canRenew(chat: live.chat) {
+                    SmallBorderedButton(title: "Start a new session") { model.requestNew(chat: live.chat) }
+                        .disabled(!connected || model.isSessionCommandPending(chat: live.chat))
+                        .help("End Session \(live.chat) and start the next")
+                }
             }
         }
     }
