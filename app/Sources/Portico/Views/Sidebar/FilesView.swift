@@ -76,8 +76,8 @@ struct FilesView: View {
                 } else {
                     matches
                 }
-            case .quick:
-                QuickFilesView(chat: chat)
+            case .bookmarks:
+                BookmarksView(chat: chat)
             }
         }
     }
@@ -381,7 +381,7 @@ struct FileRow: View {
                     .help("Attach to the next message")
                 Divider()
             }
-            Button(model.isPinned(path) ? "Unpin" : "Pin") { model.togglePin(path) }
+            Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
             if !node.dir {
                 Button("Open in Obsidian") { Obsidian.open(path: path) }
                     .disabled(!Obsidian.isInstalled)
@@ -438,64 +438,41 @@ struct HeaderIcon: View {
     }
 }
 
-// MARK: - Quick (F2)
+// MARK: - Bookmarks (F2, v0.4's words)
 
-/// The Files pane's Quick tab: PINNED (from settings, by absolute path)
-/// then TOUCHED THIS SESSION (from the session's tool calls: "wrote" in
-/// green, "read" dim, reads folded past four).
-struct QuickFilesView: View {
+/// The Files pane's Bookmarks tab: BOOKMARKS (from settings, by absolute
+/// path) then CHANGED THIS SESSION (the files the agent created or edited,
+/// newest change first, each with the time it last changed; no reads).
+struct BookmarksView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
-    @State private var allReads = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                let pinned = model.settings.pinnedFiles
-                SidebarSectionLabel("Pinned")
+                let bookmarks = model.settings.pinnedFiles
+                SidebarSectionLabel("Bookmarks")
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
-                if pinned.isEmpty {
-                    hint("Pin a file from its menu or the document view.")
+                if bookmarks.isEmpty {
+                    hint("Bookmark a file from its menu or the document view.")
                 }
-                ForEach(pinned, id: \.self) { path in
-                    QuickFileRow(chat: chat, path: path, verb: nil)
+                ForEach(bookmarks, id: \.self) { path in
+                    BookmarkRow(chat: chat, path: path, time: nil)
                 }
                 // In single presentation "this session" is the live one,
                 // even while an earlier session is open read-only.
                 let session = model.isSinglePresentation ? (model.liveSession?.chat ?? chat) : chat
-                let touched = model.touchedFiles(chat: session)
-                let list = allReads ? TouchedList(shown: touched, moreRead: 0) : TouchedList(touched)
-                SidebarSectionLabel("Touched this session")
+                let changed = model.changedFiles(chat: session)
+                SidebarSectionLabel("Changed this session")
                     .padding(.horizontal, 16)
                     .padding(.top, 18)
                     .padding(.bottom, 6)
-                if touched.isEmpty {
-                    hint("Files the agent reads or writes show here.")
+                if changed.isEmpty {
+                    hint("Files the agent creates or edits show here.")
                 }
-                ForEach(list.shown, id: \.path) { file in
-                    QuickFileRow(chat: chat, path: file.path, verb: file)
-                }
-                if list.moreRead > 0 {
-                    Button {
-                        allReads = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.text3)
-                                .frame(width: 16)
-                            Text("… \(list.moreRead) more read")
-                                .font(.system(size: 13))
-                                .foregroundStyle(Theme.text2)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 18)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.hover)
-                    .help("Show every file read this session")
+                ForEach(changed, id: \.path) { file in
+                    BookmarkRow(chat: chat, path: file.path, time: file.time())
                 }
             }
             .padding(.bottom, 12)
@@ -511,21 +488,14 @@ struct QuickFilesView: View {
     }
 }
 
-extension TouchedList {
-    /// Every touched file, unfolded ("… N more read" clicked).
-    init(shown: [TouchedFile], moreRead: Int) {
-        self.shown = shown
-        self.moreRead = moreRead
-    }
-}
-
-/// One Quick row: icon, name, and for a touched file its verb. A click
-/// shows a file where the person is looking (viewer or document view); a
-/// pinned folder is revealed in Finder.
-struct QuickFileRow: View {
+/// One Bookmarks-tab row: icon, name, and for a changed file the time it
+/// last changed. A click shows a file where the person is looking (viewer
+/// or document view); a bookmarked folder is revealed in Finder.
+struct BookmarkRow: View {
     let chat: Int
     let path: String
-    let verb: TouchedFile?
+    /// `9:14` for a changed file; nil for a bookmark.
+    let time: String?
     @EnvironmentObject private var model: AppModel
 
     private var name: String { URL(fileURLWithPath: path).lastPathComponent }
@@ -549,10 +519,10 @@ struct QuickFileRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if let verb {
-                Text(verb.verb)
-                    .font(.system(size: 11))
-                    .foregroundStyle(verb.wrote ? Theme.working : Theme.text3)
+            if let time, !time.isEmpty {
+                Text(time)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.text3)
             }
         }
         .padding(.vertical, 5)
@@ -577,7 +547,7 @@ struct QuickFileRow: View {
                     .disabled(!Obsidian.isInstalled)
                 Divider()
             }
-            Button(model.isPinned(path) ? "Unpin" : "Pin") { model.togglePin(path) }
+            Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
         }
         .draggable(URL(fileURLWithPath: path))
@@ -585,7 +555,7 @@ struct QuickFileRow: View {
 }
 
 /// The SF Symbol a file's name gets, by media kind (shared by the tree,
-/// Quick, quick open and the document view).
+/// Bookmarks, quick open and the document view).
 enum FileIcon {
     static func systemName(for name: String) -> String {
         switch Media.of(path: name) {
@@ -601,7 +571,7 @@ enum FileIcon {
 }
 
 
-/// The Folder | Quick switch under the FILES header (F1/F2): two halves
+/// The Folder | Bookmarks switch under the FILES header (F1/F2): two halves
 /// spanning the sidebar. A segmented `Picker` keeps its own narrow width on
 /// macOS, so this is drawn by hand.
 struct FilesTabSwitch: View {
@@ -610,7 +580,7 @@ struct FilesTabSwitch: View {
     var body: some View {
         HStack(spacing: 2) {
             item("Folder", .folder)
-            item("Quick", .quick)
+            item("Bookmarks", .bookmarks)
         }
         .padding(2)
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 6))

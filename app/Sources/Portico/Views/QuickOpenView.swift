@@ -113,7 +113,7 @@ struct QuickOpenView: View {
                 .truncationMode(.head)
             Spacer(minLength: 4)
             if item.pinned {
-                Label("pinned", systemImage: "pin")
+                Label("bookmarked", systemImage: "bookmark")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text3)
             } else if item.touched {

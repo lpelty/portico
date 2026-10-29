@@ -10,6 +10,8 @@ import Foundation
 extension AppModel {
     /// What the composer treats as "renew the session" in single presentation.
     static let renewCommand = "/new"
+    /// What the composer treats as "log the session without ending it" (v0.4).
+    static let logCommand = "/log"
 
     /// The nudge (S2) shows at this context percent…
     static let nudgePercent: Double = 80
@@ -97,13 +99,85 @@ extension AppModel {
 
     func isRenewing(chat: Int) -> Bool { renewing[chat] != nil }
 
-    /// "Log and start new" / "Start new" / `/new`: `session.renew`, with
-    /// `log` when the deployment has a log step. One at a time per session.
+    func isLogging(chat: Int) -> Bool { logging[chat] != nil }
+
+    /// A renewal or a log is out: the card's buttons wait, and so do sends.
+    func isSessionCommandPending(chat: Int) -> Bool {
+        isRenewing(chat: chat) || isLogging(chat: chat)
+    }
+
+    /// The deployment has a log step (`hello.can_log`).
+    var canLog: Bool { hello?.canLog == true }
+
+    /// The gateway can log a live session without ending it: it has a
+    /// log step and speaks `session.log` (v0.4 lists `log` in `commands`;
+    /// a v0.3 gateway, which only logs on renewal, does not).
+    var canLogWithoutEnding: Bool {
+        canLog && hello?.commands.contains("log") == true
+    }
+
+    /// The card's Log session and `/log` are offered for this session.
+    func canLogSession(chat: Int) -> Bool {
+        canRenew(chat: chat) && canLogWithoutEnding
+    }
+
+    /// The nudge's "Log and start new": `session.renew`, with `log` when
+    /// the deployment has a log step. One at a time per session.
     func renew(chat: Int) {
-        guard canRenew(chat: chat), !isRenewing(chat: chat) else { return }
+        renew(chat: chat, log: canLog)
+    }
+
+    /// `session.renew` with `log` as given (a deployment without a log
+    /// step never logs). One renewal or log at a time per session.
+    func renew(chat: Int, log: Bool) {
+        guard canRenew(chat: chat), !isSessionCommandPending(chat: chat) else { return }
         let id = Self.requestId()
         renewing[chat] = id
-        send(.sessionRenew(SessionRenew(chat: chat, log: hello?.canLog ?? false, id: id)))
+        send(.sessionRenew(SessionRenew(chat: chat, log: log && canLog, id: id)))
+    }
+
+    /// The card's New and `/new` (W2): ask "Log Session N first?" only
+    /// when skipping the log would lose something — the deployment logs
+    /// and the gateway says the session has unlogged work. Otherwise the
+    /// next session starts at once, without a pointless log. A v0.3
+    /// gateway (no `session.log`, no `unlogged`) logs on renewal as before.
+    func requestNew(chat: Int) {
+        guard canRenew(chat: chat), !isSessionCommandPending(chat: chat) else { return }
+        if canLogWithoutEnding {
+            if summary(of: chat)?.hasUnloggedWork == true {
+                askingToLog = chat
+            } else {
+                renew(chat: chat, log: false)
+            }
+        } else {
+            renew(chat: chat, log: canLog)
+        }
+    }
+
+    /// The W2 dialog's answer: `nil` is Cancel, else whether to log first.
+    func answerAskToLog(log: Bool?) {
+        guard let chat = askingToLog else { return }
+        askingToLog = nil
+        if let log { renew(chat: chat, log: log) }
+    }
+
+    /// Log session / `/log`: `session.log`, the deployment's log step run
+    /// in the live session without ending it. One at a time per session.
+    func logSession(chat: Int) {
+        guard canLogSession(chat: chat), !isSessionCommandPending(chat: chat) else { return }
+        let id = Self.requestId()
+        logging[chat] = id
+        send(.sessionLog(SessionLog(chat: chat, id: id)))
+    }
+
+    /// `session.logged`: the record as the gateway now has it, the log no
+    /// longer pending.
+    func applyLogged(_ logged: SessionLogged) {
+        upsertSummary(logged.chat)
+        logging[logged.chat.chat] = nil
+        if let id = logged.id {
+            logging = logging.filter { $0.value != id }
+        }
     }
 
     /// `session.renewed`: both records as the gateway now has them, the

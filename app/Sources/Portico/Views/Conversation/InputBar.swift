@@ -31,8 +31,10 @@ struct InputBar: View {
     /// A `session.renew` is out: the session is logging and the next one
     /// is not there yet, so nothing is sent until it is.
     private var renewing: Bool { model.isRenewing(chat: chat) }
+    /// A `session.log` is out (v0.4): typing goes on, sending waits.
+    private var logging: Bool { model.isLogging(chat: chat) }
     private var canSend: Bool {
-        connected && !busy && !sending && !renewing
+        connected && !busy && !sending && !renewing && !logging
             && !draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -134,6 +136,7 @@ struct InputBar: View {
     private var placeholder: String {
         if !connected { return "Not connected" }
         if renewing { return "Starting the next session…" }
+        if logging { return "Logging the session…" }
         if sending { return "Sending…" }
         if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
         return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
@@ -192,7 +195,7 @@ struct InputBar: View {
                     }
                     .buttonStyle(.hoverCapsule)
                     .help(action.text)
-                    .disabled(!connected || busy || sending || renewing)
+                    .disabled(!connected || busy || sending || renewing || logging)
                 }
             }
         }
