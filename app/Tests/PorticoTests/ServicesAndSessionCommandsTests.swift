@@ -254,20 +254,57 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertEqual(strip.servicesLabel(at: .full), "All services up")
         XCTAssertEqual(strip.servicesLabel(at: .compact), "Services")
 
-        // Seven points a character, so the arithmetic is the test's own.
-        let measure: (String) -> CGFloat = { CGFloat($0.count * 7) }
-        let full = strip.width(at: .full, restart: false, update: "0.3.1", measure: measure)
-        let compact = strip.width(at: .compact, restart: false, update: "0.3.1", measure: measure)
-        let minimal = strip.width(at: .minimal, restart: false, update: "0.3.1", measure: measure)
+        // Seven points a character (eight with monospaced digits), a
+        // symbol two wider than its size: the arithmetic is the test's own.
+        let metrics = Self.metrics
+        let full = strip.width(at: .full, restart: false, update: "0.3.1", metrics: metrics)
+        let compact = strip.width(at: .compact, restart: false, update: "0.3.1", metrics: metrics)
+        let minimal = strip.width(at: .minimal, restart: false, update: "0.3.1", metrics: metrics)
         XCTAssertGreaterThan(full, compact)
         XCTAssertGreaterThan(compact, minimal)
-        XCTAssertEqual(strip.fit(width: 1200, restart: false, update: "0.3.1", measure: measure), .full)
-        XCTAssertEqual(strip.fit(width: full - 1, restart: false, update: "0.3.1", measure: measure), .compact)
-        XCTAssertEqual(strip.fit(width: compact - 1, restart: false, update: "0.3.1", measure: measure), .minimal)
-        XCTAssertEqual(strip.fit(width: 10, restart: false, update: nil, measure: measure), .minimal, "never wider than minimal")
+        XCTAssertEqual(strip.fit(width: 1200, restart: false, update: "0.3.1", metrics: metrics), .full)
+        XCTAssertEqual(strip.fit(width: full - 1, restart: false, update: "0.3.1", metrics: metrics), .compact)
+        XCTAssertEqual(strip.fit(width: compact - 1, restart: false, update: "0.3.1", metrics: metrics), .minimal)
+        XCTAssertEqual(strip.fit(width: 10, restart: false, update: nil, metrics: metrics), .minimal, "never wider than minimal")
         XCTAssertGreaterThan(
-            strip.width(at: .full, restart: true, update: nil, measure: measure),
-            strip.width(at: .full, restart: false, update: nil, measure: measure), "the stale-config button takes room")
+            strip.width(at: .full, restart: true, update: nil, metrics: metrics),
+            strip.width(at: .full, restart: false, update: nil, metrics: metrics), "the stale-config button takes room")
+    }
+
+    static let metrics = StatusStripPresentation.Metrics(
+        text: { CGFloat($0.count * 7) }, digits: { CGFloat($0.count * 8) }, symbol: { $0.size + 2 })
+
+    func testTheStripFitsAtItsBoundary() {
+        let strip = StatusStripPresentation(
+            modelText: "Claude Opus 5.5", contextPercent: 62,
+            services: ServicesPresentation(gateway: gatewayUp, services: []), gatewayText: "")
+        let metrics = Self.metrics
+        let full = strip.width(at: .full, restart: true, update: "0.4.1", metrics: metrics)
+        // Every piece counted: padding, icons at their own sizes and gaps,
+        // the context in digit widths, the services chrome, the slack.
+        let M = StatusStripPresentation.Measure.self
+        let expected = 2 * M.sidePadding
+            + (13 + M.iconGap + 15 * 7)  // cpu · Claude Opus 5.5
+            + (13 + M.iconGap + 11 * 8)  // gauge · 62% context, monospaced digits
+            + (M.servicesChrome + 15 * 7 + 10)  // All services up ⌄
+            + (12 + M.iconGap + CGFloat(StatusStripPresentation.restartText.count * 7))
+            + (13 + M.iconGap + CGFloat(StatusStripPresentation.updateText("0.4.1").count * 7))
+            + 5 * M.spacing + M.slack
+        XCTAssertEqual(full, expected)
+        XCTAssertEqual(strip.fit(width: full, restart: true, update: "0.4.1", metrics: metrics), .full, "exactly enough fits")
+        XCTAssertEqual(strip.fit(width: full - 0.5, restart: true, update: "0.4.1", metrics: metrics), .compact)
+        let compact = strip.width(at: .compact, restart: true, update: "0.4.1", metrics: metrics)
+        XCTAssertEqual(strip.fit(width: compact, restart: true, update: "0.4.1", metrics: metrics), .compact)
+        XCTAssertEqual(strip.fit(width: compact - 0.5, restart: true, update: "0.4.1", metrics: metrics), .minimal)
+        // Not measured yet (the first frame): the full strip, not a flash of minimal.
+        XCTAssertEqual(strip.fit(width: nil, restart: true, update: "0.4.1", metrics: metrics), .full)
+        // The context is measured as drawn, in digit widths.
+        let wideDigits = StatusStripPresentation.Metrics(
+            text: metrics.text, digits: { CGFloat($0.count * 9) }, symbol: metrics.symbol)
+        XCTAssertGreaterThan(strip.width(at: .full, restart: false, update: nil, metrics: wideDigits),
+            strip.width(at: .full, restart: false, update: nil, metrics: metrics))
+        XCTAssertGreaterThan(StatusStripPresentation.symbolWidth(M.modelIcon), 0)
+        XCTAssertGreaterThan(StatusStripPresentation.digitWidth("62% context"), 0)
     }
 
     // MARK: - Log session and /log
