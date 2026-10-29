@@ -269,25 +269,25 @@ def test_v03_keys_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path.write_text(
         'permission_mode = "acceptEdits"\n'
         "[brand]\n"
-        'name = "ethOS"\n'
-        'agent_name = "Atlas"\n'
-        'app_icon = "~/icons/ethos.png"\n'
+        'name = "Front Door"\n'
+        'agent_name = "Helper"\n'
+        'app_icon = "~/icons/front-door.png"\n'
         "[update]\n"
-        'check = "atlas update --check"\n'
-        'run = "atlas update"\n'
+        'check = "deploy-tool update --check"\n'
+        'run = "deploy-tool update"\n'
     )
     config = load_config(path)
     assert config.permission_mode == "acceptEdits"
-    assert config.brand.app_icon == str(tmp_path / "icons" / "ethos.png")
-    assert config.update.check == "atlas update --check" and config.update.run == "atlas update"
+    assert config.brand.app_icon == str(tmp_path / "icons" / "front-door.png")
+    assert config.update.check == "deploy-tool update --check" and config.update.run == "deploy-tool update"
 
 
 def test_hello_never_carries_the_app_icon_and_says_it_can_update() -> None:
     config = Config.model_validate(
-        {"brand": {"name": "ethOS", "agent_name": "Atlas", "app_icon": "/icons/ethos.png"}, "update": {"run": "atlas update"}}
+        {"brand": {"name": "Front Door", "agent_name": "Helper", "app_icon": "/icons/front-door.png"}, "update": {"run": "deploy-tool update"}}
     )
     hello = hello_for(config, epoch="e", gateway_version="0.3.0", config_stale=True)
-    assert hello.brand == Brand(name="ethOS", agent_name="Atlas")
+    assert hello.brand == Brand(name="Front Door", agent_name="Helper")
     assert "app_icon" not in dump(hello)
     assert hello.can_update is True and hello.config_stale is True
     assert parse_server(dump(hello)) == hello
@@ -312,8 +312,8 @@ def test_bad_v03_keys_are_refused_naming_the_key(tmp_path: Path, text: str, key:
 def test_config_value_reads_dotted_keys() -> None:
     from portico_gateway.config import config_value
 
-    config = Config.model_validate({"brand": {"name": "ethOS", "agent_name": "Atlas", "app_icon": "/i.png"}})
-    assert config_value(config, "brand.name") == "ethOS"
+    config = Config.model_validate({"brand": {"name": "Front Door", "agent_name": "Helper", "app_icon": "/i.png"}})
+    assert config_value(config, "brand.name") == "Front Door"
     assert config_value(config, "brand.app_icon") == "/i.png"
     assert config_value(config, "brand.accent") is None
     assert config_value(config, "update.run") is None

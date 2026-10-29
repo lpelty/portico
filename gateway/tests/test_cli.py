@@ -33,11 +33,11 @@ def write_config(home: Path, text: str) -> Path:
 
 def test_config_value_prints_the_value_or_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     home = tmp_path / "home"
-    write_config(home, '[brand]\nname = "ethOS"\nagent_name = "Atlas"\napp_icon = "/icons/ethos.png"\n')
+    write_config(home, '[brand]\nname = "Front Door"\nagent_name = "Helper"\napp_icon = "/icons/front-door.png"\n')
     assert main(["config-value", "brand.name", "--state", str(home)]) == 0
-    assert capsys.readouterr().out == "ethOS\n"
+    assert capsys.readouterr().out == "Front Door\n"
     assert main(["config-value", "brand.app_icon", "--state", str(home)]) == 0
-    assert capsys.readouterr().out == "/icons/ethos.png\n"
+    assert capsys.readouterr().out == "/icons/front-door.png\n"
     assert main(["config-value", "brand.accent", "--state", str(home)]) == 0
     assert capsys.readouterr().out == ""
     assert main(["config-value", "nothing.here", "--state", str(home)]) == 0

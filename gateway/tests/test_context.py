@@ -156,16 +156,16 @@ def test_friendly_model_name_from_the_deployment_env() -> None:
     from portico_gateway.engine import friendly_model_name
 
     env = {
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "us.anthropic.claude-opus-5-5-v1:0",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Claude Opus 5.5 via Bedrock",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Claude Haiku via Bedrock",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "us.anthropic.claude-sonnet-5-v1:0",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "provider.claude-opus-5-5-v1:0",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Claude Opus 5.5 via the provider",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Claude Haiku (provider)",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "provider.claude-sonnet-5-v1:0",
     }
-    assert friendly_model_name("us.anthropic.claude-opus-5-5-v1:0", env) == "Claude Opus 5.5 via Bedrock"
-    assert friendly_model_name("us.anthropic.claude-opus-5-5-v1:0[1m]", env) == "Claude Opus 5.5 via Bedrock"
-    assert friendly_model_name("opus", env) == "Claude Opus 5.5 via Bedrock"
-    assert friendly_model_name("haiku", env) == "Claude Haiku via Bedrock"  # the alias, no model id set
-    assert friendly_model_name("us.anthropic.claude-sonnet-5-v1:0", env) is None  # no name for it
+    assert friendly_model_name("provider.claude-opus-5-5-v1:0", env) == "Claude Opus 5.5 via the provider"
+    assert friendly_model_name("provider.claude-opus-5-5-v1:0[1m]", env) == "Claude Opus 5.5 via the provider"
+    assert friendly_model_name("opus", env) == "Claude Opus 5.5 via the provider"
+    assert friendly_model_name("haiku", env) == "Claude Haiku (provider)"  # the alias, no model id set
+    assert friendly_model_name("provider.claude-sonnet-5-v1:0", env) is None  # no name for it
     assert friendly_model_name("claude-something-else", env) is None
     assert friendly_model_name(None, env) is None
     assert friendly_model_name("opus", {}) is None
@@ -174,15 +174,15 @@ def test_friendly_model_name_from_the_deployment_env() -> None:
 async def test_context_usage_carries_the_model_name(
     server: GatewayServer, factory: EngineFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "arn:aws:bedrock:us-east-1:1:inference-profile/opus")
-    monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "Claude Opus 5.5 via Bedrock")
+    monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "provider-profile/opus")
+    monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "Claude Opus 5.5 via the provider")
     conn = await attach(server)
     try:
         number = await new_chat(conn, folder)
-        factory.last.context = (10.0, "arn:aws:bedrock:us-east-1:1:inference-profile/opus")
+        factory.last.context = (10.0, "provider-profile/opus")
         await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
         usage = (await recv_until(conn, ContextUsage))[-1]
-        assert usage.model_name == "Claude Opus 5.5 via Bedrock"  # type: ignore[union-attr]
+        assert usage.model_name == "Claude Opus 5.5 via the provider"  # type: ignore[union-attr]
         factory.last.context = (11.0, "another-model")
         await conn.send(dump(MessageSend(ts=TS, chat=number, text="again")))
         usage = (await recv_until(conn, ContextUsage))[-1]
