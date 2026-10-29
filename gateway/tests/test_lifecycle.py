@@ -482,3 +482,31 @@ async def test_sigterm_runs_on_stop_persists_index_clears_ledger_and_exits_zero(
     assert marker.read_text().strip() == "services stopped"
     assert not (home / "ledger.json").exists()
     assert (home / "index.json").exists()
+
+
+def test_single_instance_waits_out_a_status_probe_holding_the_lock_for_an_instant(state_dir: StateDir) -> None:
+    import fcntl
+    import threading
+
+    # What ``status`` does while probing: take the free lock on its own descriptor, briefly.
+    fd = os.open(state_dir.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    release = threading.Timer(0.12, lambda: (fcntl.flock(fd, fcntl.LOCK_UN), os.close(fd)))
+    release.start()
+    try:
+        single_instance(state_dir)  # would be refused without the retry
+    finally:
+        release.join()
+        state_dir.release_lock()
+
+
+def test_single_instance_still_refuses_a_lock_that_stays_held(state_dir: StateDir) -> None:
+    import fcntl
+
+    fd = os.open(state_dir.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        with pytest.raises(AlreadyRunning):
+            single_instance(state_dir, attempts=3, delay=0.01)
+    finally:
+        os.close(fd)

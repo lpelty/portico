@@ -30,8 +30,8 @@ def running_pid(state: StateDir) -> int | None:
     """The pid of the gateway holding ``state``'s lock, or ``None`` when no gateway runs there.
 
     Probing takes the lock for an instant when it is free; a gateway that
-    starts in exactly that instant is refused as a second copy and can be
-    started again.
+    starts in exactly that instant tries again for a moment
+    (``lifecycle.single_instance``) rather than refusing as a second copy.
     """
     try:
         fd = os.open(state.lock_path, os.O_RDONLY)
