@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.0 (unreleased)
+## v0.3.0 (2026-10-28)
 
 ### What a person gets (gateway)
 
