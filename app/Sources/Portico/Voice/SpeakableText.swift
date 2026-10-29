@@ -25,6 +25,7 @@ enum SpeakableText {
     /// The string to speak for a reply's Markdown; empty when there is
     /// nothing to say.
     static func speech(fromMarkdown markdown: String) -> String {
+        let markdown = expandingColonForm(markdown)
         if let parts = markedParts(markdown) {
             let spoken = parts.map { prose(displayed($0)) }.filter { !$0.isEmpty }
             // Markers around nothing: the reply's prose, rather than silence.
@@ -36,13 +37,24 @@ enum SpeakableText {
     /// The reply as drawn (decision 3): the `[TTS]` and `[/TTS]` tags
     /// removed, the text inside them kept. Any case (`[tts]`).
     static func displayed(_ text: String) -> String {
-        guard text.range(of: "tts]", options: .caseInsensitive) != nil else { return text }
-        var out = text
+        guard text.range(of: "tts", options: .caseInsensitive) != nil else { return text }
+        var out = expandingColonForm(text)
         for marker in [openMarker, closeMarker] {
             out = out.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
         }
         return out
     }
+
+    /// `[TTS: words]`, the shorthand other agents already write, as
+    /// `[TTS]words[/TTS]`: the part runs to the first `]` after the colon,
+    /// and the space after the colon is dropped. Any case.
+    static func expandingColonForm(_ text: String) -> String {
+        guard text.range(of: "[tts:", options: .caseInsensitive) != nil else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        return colonForm.stringByReplacingMatches(in: text, range: range, withTemplate: "\(openMarker)$1\(closeMarker)")
+    }
+
+    private static let colonForm = try! NSRegularExpression(pattern: #"\[TTS:[ \t]*([^\]]*?)[ \t]*\]"#, options: [.caseInsensitive])
 
     /// The text inside each `[TTS]…[/TTS]`, in order; nil when the reply
     /// has no open marker.

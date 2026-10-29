@@ -296,8 +296,8 @@ Settings › Voice (the system voices, and your Personal Voice once you
 allow it there). Code is never read: a code block is "See the code below.",
 a table "See the table below."; links are read as their text.
 
-**Spoken parts.** When a reply holds `[TTS]…[/TTS]` parts, Read aloud
-speaks only those, in order. The tags are never shown; the text inside
+**Spoken parts.** When a reply holds `[TTS]…[/TTS]` parts, or the
+shorthand `[TTS: …]`, Read aloud speaks only those, in order. The tags are never shown; the text inside
 them reads as part of the reply. Portico only honours the tags: asking the
 agent to write them is the deployment's, in its system prompt or the
 folder's agent instructions. A suggested instruction:

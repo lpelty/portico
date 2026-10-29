@@ -167,4 +167,16 @@ final class SpeakableTextTests: XCTestCase {
             blocks,
             [.paragraph("Intro."), .paragraph("Summary line."), .list([MarkdownListItem(level: 0, number: nil, text: "item")])])
     }
+
+    func testTheColonFormIsTheSameAsTheTagPair() {
+        // `[TTS: …]`, the form other agents of the same person already
+        // write, is one spoken part, like `[TTS]…[/TTS]` (v0.9 decision 2).
+        let reply = "Here is the diff.\n\n```swift\nlet x = 1\n```\n\n[TTS: Done. The card is warmer now.]"
+        XCTAssertEqual(SpeakableText.speech(fromMarkdown: reply), "Done. The card is warmer now.")
+        XCTAssertEqual(
+            SpeakableText.displayed(reply), "Here is the diff.\n\n```swift\nlet x = 1\n```\n\nDone. The card is warmer now.")
+        XCTAssertEqual(SpeakableText.speech(fromMarkdown: "[tts:  Lower case works. ] and the rest"), "Lower case works.")
+        XCTAssertEqual(
+            SpeakableText.speech(fromMarkdown: "[TTS: One.] middle [TTS]Two.[/TTS]"), "One. Two.", "both forms, in order")
+    }
 }

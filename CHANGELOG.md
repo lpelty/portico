@@ -4,6 +4,8 @@
 
 ### What a person gets (app)
 
+- **`[TTS: …]` counts too.** The shorthand some agents already write is
+  one spoken part, the same as `[TTS]…[/TTS]`; its marker is hidden too.
 - **Talk to the message box.** A mic in the conversation's and the
   welcome's message box: press it and speak, and your words appear as
   they are recognised, after what you had typed; press again or Esc to
