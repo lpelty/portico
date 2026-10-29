@@ -609,6 +609,8 @@ final class AppModelTests: XCTestCase {
         model.openArtifact(file: "/tmp/demo/shot.PNG", in: 1)
         XCTAssertEqual(model.current[1]?.media, .image)
         model.openArtifact(file: "/tmp/demo/data.csv", in: 1)
+        XCTAssertEqual(model.current[1]?.media, .text, "v0.5: a CSV is text (a table in the viewer)")
+        model.openArtifact(file: "/tmp/demo/proposal.docx", in: 1)
         XCTAssertEqual(model.current[1]?.media, .other)
         model.openArtifact(file: "/tmp/demo/readme.txt", in: 1)
         XCTAssertEqual(model.current[1]?.media, .text)
@@ -622,7 +624,7 @@ final class AppModelTests: XCTestCase {
         // the gateway never lists it, so it must not vanish on reattach.
         model.apply(.chatHistory(ChatHistory(chat: 1, events: [], truncated: false)))
         XCTAssertEqual(model.current[1]?.location, "/tmp/demo/notes/report.md")
-        XCTAssertEqual(model.artifacts[1]?.count, 4)
+        XCTAssertEqual(model.artifacts[1]?.count, 5)
     }
 
     func testTheChatFolderIsNotBrowsedTwiceWhenARootIsTheSameFolder() {

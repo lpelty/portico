@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import Portico
@@ -179,6 +180,119 @@ final class ViewerFilesTests: XCTestCase {
         XCTAssertFalse(whole.truncated)
 
         XCTAssertNil(TextFileRead.read(URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString)"), limit: 10))
+    }
+
+    // MARK: - review fixes (v0.5)
+
+    func testACutReadEndsAtAnUnclosedQuoteAndKeepsTheRecordsBeforeIt() throws {
+        // A cell spanning lines, cut after its first line by the size limit.
+        let csv = "name,note\nalpha,one\nbeta,\"first line\nsecond line\"\ngamma,three\n"
+        XCTAssertNil(DelimitedTable.parse("name,note\nalpha,one\nbeta,\"first line\n", separator: ","), "a whole file with an open quote is still not a table")
+        let partial = try XCTUnwrap(DelimitedTable.parse("name,note\nalpha,one\nbeta,\"first line\n", separator: ",", partial: true))
+        XCTAssertEqual(partial.rows, [["alpha", "one"]])
+
+        // Through the loader: 40 bytes lands inside beta's quoted cell.
+        let url = try tempFile("notes.csv", csv)
+        guard case .table(let table, _, let note) = TableLoad.load(url, separator: ",", byteLimit: 40) else {
+            return XCTFail("a cut CSV should still be a table")
+        }
+        XCTAssertEqual(table.rows, [["alpha", "one"]])
+        XCTAssertEqual(note?.hasPrefix("Showing 1 rows from the first 40 bytes of "), true, note ?? "")
+    }
+
+    func testACancelledParseGivesUp() async throws {
+        let csv = "n\n" + (1...20_000).map(String.init).joined(separator: "\n")
+        let task = Task.detached { () -> DelimitedTable? in
+            while !Task.isCancelled { await Task.yield() }
+            return DelimitedTable.parse(csv, separator: ",")
+        }
+        task.cancel()
+        let result = await task.value
+        XCTAssertNil(result)
+        XCTAssertNotNil(DelimitedTable.parse(csv, separator: ","), "uncancelled, the same text parses")
+    }
+
+    func testOffMainWorkIsCancelledWithItsCaller() async {
+        let saw = Task {
+            await offMain { () -> Bool in
+                let deadline = Date().addingTimeInterval(5)
+                while Date() < deadline {
+                    if Task.isCancelled { return true }
+                    usleep(1_000)
+                }
+                return false
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        saw.cancel()
+        let cancelled = await saw.value
+        XCTAssertTrue(cancelled, "the detached work saw its caller's cancellation")
+    }
+
+    func testVeryWideTablesDrawTheFirstColumnsAndSaySo() throws {
+        let count = 250
+        let header = (1...count).map { "c\($0)" }.joined(separator: ",")
+        let row = (1...count).map(String.init).joined(separator: ",")
+        let url = try tempFile("wide.csv", header + "\n" + row + "\n")
+        guard case .table(let table, let widths, let note) = TableLoad.load(url, separator: ",") else {
+            return XCTFail("should be a table")
+        }
+        XCTAssertEqual(table.columnCount, count)
+        XCTAssertEqual(widths.count, DelimitedTable.maxDrawnColumns)
+        XCTAssertEqual(note, "Showing the first 200 of 250 columns. Open it externally for the rest.")
+    }
+
+    func testVeryLongLinesAreBrokenForDisplay() {
+        let short = "one\r\ntwo\n"
+        XCTAssertEqual(TextFileRead.hardBreak(short).text, short, "nothing long: the text is untouched")
+        XCTAssertFalse(TextFileRead.hardBreak(short).broke)
+
+        let long = String(repeating: "é", count: 25_000)
+        let shown = TextFileRead.hardBreak("head\n" + long + "\ntail", limit: 10_000)
+        XCTAssertTrue(shown.broke)
+        let lines = shown.text.split(separator: "\n", omittingEmptySubsequences: false).map(\.count)
+        XCTAssertEqual(lines, [4, 10_000, 10_000, 5_000, 4])
+
+        let read = TextFileRead(text: "", totalBytes: 0, truncated: false)
+        XCTAssertNil(TextBody.note(read: read, broke: false))
+        XCTAssertEqual(TextBody.note(read: read, broke: true), "Lines longer than 10,000 characters are broken to fit.")
+    }
+
+    @MainActor
+    func testARewrittenFileGetsANewIdentity() throws {
+        let url = try tempFile("notes.txt", "first")
+        let shown = ArtifactPresentation(artifact: DocumentView.artifact(for: url.path))
+        let before = shown.contentIdentity
+        XCTAssertEqual(shown.contentIdentity, before, "unchanged on disk: the same")
+        try "second version".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(10)], ofItemAtPath: url.path)
+        XCTAssertNotEqual(shown.contentIdentity, before, "a change on disk reloads the pane")
+        XCTAssertTrue(before.hasPrefix(AppModel.localArtifactPrefix + url.path))
+    }
+
+    func testTheTableExtensionsAreTextExtensions() {
+        XCTAssertEqual(DelimitedTable.separator(forExtension: "TSV"), "\t")
+        XCTAssertNil(DelimitedTable.separator(forExtension: "tab"), "not a text extension, so it never reaches the table")
+        for ext in ["csv", "tsv"] {
+            XCTAssertTrue(Media.textExtensions.contains(ext), ext)
+        }
+    }
+
+    /// 20,000 rows by 30 columns lay out in an ordinary window's worth of
+    /// space quickly: the rows must draw lazily (a stack that built them all
+    /// would take minutes) with the header pinned in the same scroll view.
+    @MainActor
+    func testABigTableLaysOutLazily() throws {
+        let columns = 30, rowCount = 20_000
+        let header = (1...columns).map { "Column \($0)" }
+        let rows = (0..<rowCount).map { r in (0..<columns).map { "r\(r)c\($0)" } }
+        let table = DelimitedTable(header: header, rows: rows, rowLimitHit: false, numeric: Array(repeating: false, count: columns))
+        let widths = Array(repeating: CGFloat(120), count: columns)
+        let started = Date()
+        let host = NSHostingView(rootView: TableBody(table: table, widths: widths, note: nil))
+        host.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        host.layoutSubtreeIfNeeded()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "laid out lazily")
     }
 
     // MARK: - media and presentation

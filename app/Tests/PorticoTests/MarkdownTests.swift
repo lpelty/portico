@@ -379,6 +379,12 @@ final class MarkdownTests: XCTestCase {
         let elsewhere = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
         SelectableTextView.deselect(in: elsewhere, except: nil)
         XCTAssertEqual(first.selectedRange().length, 5)
+
+        // A click on a scroll bar (the transcript's, say) keeps it.
+        let scroller = NSScroller(frame: NSRect(x: 385, y: 0, width: 15, height: 300))
+        content.addSubview(scroller)
+        SelectableTextView.deselect(in: window, except: scroller)
+        XCTAssertEqual(first.selectedRange().length, 5, "a click on a scroller keeps the selection")
         window.contentView = nil
     }
 }
