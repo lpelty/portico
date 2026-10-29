@@ -53,7 +53,7 @@ final class MarkdownTests: XCTestCase {
         for block in blocks {
             let text: String
             switch block {
-            case .paragraph(let t), .quote(let t): text = shown(t)
+            case .paragraph(let t): text = shown(t)
             case .list(let items): text = items.map { shown($0.text) }.joined(separator: "\n")
             default: continue
             }
@@ -118,7 +118,7 @@ final class MarkdownTests: XCTestCase {
                 MarkdownListItem(level: 1, number: nil, text: "nested two"),
                 MarkdownListItem(level: 0, number: "3.", text: "Third"),
             ]),
-            .quote("quoted **line**\nsecond line"),
+            .quote([.paragraph("quoted **line**\nsecond line")]),
             .rule,
             .code(language: "swift", text: "let x = 1\n    indented()", closed: true),
             .paragraph("after"),
@@ -147,21 +147,37 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(shown("**unclosed"), "**unclosed", "an unclosed marker is shown as typed")
     }
 
-    func testTablesAreAMonospacedBlockWithColumnsLinedUp() {
+    func testTablesAreRowsOfCells() {
         let source = """
             | Name | Size |
             |:-----|-----:|
             | a.md | 12 |
-            | longer.md | 3 |
+            | longer.md |
             """
-        XCTAssertEqual(MarkdownParser.parse(source), [.table("""
-            Name       Size
-            ─────────  ────
-            a.md       12
-            longer.md  3
-            """)])
+        XCTAssertEqual(MarkdownParser.parse(source), [.table(
+            header: ["Name", "Size"],
+            rows: [["a.md", "12"], ["longer.md", ""]])])
         // Pipes without a delimiter row are just text.
         XCTAssertEqual(MarkdownParser.parse("a | b"), [.paragraph("a | b")])
+    }
+
+    func testTableCellsAreInlineMarkdown() {
+        guard case .table(let header, let rows) = MarkdownParser.parse("| **Key** | `v` |\n|---|---|\n| *a* | **b** `c` |").first
+        else { return XCTFail() }
+        XCTAssertEqual(header.map(shown), ["Key", "v"])
+        XCTAssertEqual(rows[0].map(shown), ["a", "b c"], "no raw markers in a cell")
+    }
+
+    func testATableNeedsARealDelimiterRow() {
+        // `---` under text with a pipe is a setext heading, not a table
+        // that eats the pipe.
+        XCTAssertEqual(MarkdownParser.parse("Use a | b here\n---"), [.heading(level: 2, text: "Use a | b here")])
+        XCTAssertEqual(MarkdownParser.parse("Title\n==="), [.heading(level: 1, text: "Title")])
+        XCTAssertEqual(MarkdownParser.parse("a | b\n|-x-|"), [.paragraph("a | b\n|-x-|")])
+        // A delimiter row needs a pipe; with one, a lone column is a table.
+        XCTAssertEqual(MarkdownParser.parse("| a |\n| :-: |"), [.table(header: ["a"], rows: [])])
+        // A rule after a blank line stays a rule.
+        XCTAssertEqual(MarkdownParser.parse("text\n\n---"), [.paragraph("text"), .rule])
     }
 
     func testListsThatAreNotLists() {
@@ -176,5 +192,103 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(MarkdownParser.parse("- a\n  more of a"), [
             .list([MarkdownListItem(level: 0, number: nil, text: "a\nmore of a")]),
         ])
+    }
+
+    func testAClosingHashRunNeedsASpaceBeforeIt() {
+        XCTAssertEqual(MarkdownParser.parse("## Why C#"), [.heading(level: 2, text: "Why C#")])
+        XCTAssertEqual(MarkdownParser.parse("## Title ##"), [.heading(level: 2, text: "Title")])
+        XCTAssertEqual(MarkdownParser.parse("# F# and C# #"), [.heading(level: 1, text: "F# and C#")])
+        XCTAssertEqual(MarkdownParser.parse("### ###"), [.heading(level: 3, text: "")])
+    }
+
+    func testAFenceUnderAListItemBelongsToIt() {
+        let source = """
+            1. Build it:
+               ```sh
+               swift build
+                 --verbose
+               ```
+               Then run it.
+            2. Next
+            - bullet
+              ```
+              x
+              ```
+            """
+        XCTAssertEqual(MarkdownParser.parse(source), [
+            .list([
+                MarkdownListItem(level: 0, number: "1.", text: "Build it:", blocks: [
+                    .code(language: "sh", text: "swift build\n  --verbose", closed: true),
+                    .paragraph("Then run it."),
+                ]),
+                MarkdownListItem(level: 0, number: "2.", text: "Next"),
+                MarkdownListItem(level: 0, number: nil, text: "bullet", blocks: [.code(language: nil, text: "x", closed: true)]),
+            ]),
+        ])
+    }
+
+    func testAFenceIndentedFourUnderANumberedItemAfterABlankLine() {
+        // `10. ` puts the item's text at column 4; a fence at 4 or more
+        // (up to 7) is still the item's, not indented code, and the list
+        // is not split by it.
+        let source = "10. Step\n\n    ```\n    a\n      b\n    ```\n\n11. After\n\n    more of 11"
+        XCTAssertEqual(MarkdownParser.parse(source), [
+            .list([
+                MarkdownListItem(level: 0, number: "10.", text: "Step", blocks: [.code(language: nil, text: "a\n  b", closed: true)]),
+                MarkdownListItem(level: 0, number: "11.", text: "After", blocks: [.paragraph("more of 11")]),
+            ]),
+        ])
+        // Streaming: the item's fence is still open.
+        XCTAssertEqual(MarkdownParser.parse("- a\n  ```\n  x"), [
+            .list([MarkdownListItem(level: 0, number: nil, text: "a", blocks: [.code(language: nil, text: "x", closed: false)])]),
+        ])
+        // A fence at the margin ends the list.
+        XCTAssertEqual(MarkdownParser.parse("- a\n```\nx\n```"), [
+            .list([MarkdownListItem(level: 0, number: nil, text: "a")]),
+            .code(language: nil, text: "x", closed: true),
+        ])
+    }
+
+    func testAFenceDropsItsOwnIndentFromItsLines() {
+        XCTAssertEqual(MarkdownParser.parse("  ```\n  a\n    b\nc\n  ```"), [
+            .code(language: nil, text: "a\n  b\nc", closed: true),
+        ])
+    }
+
+    func testOnlyAListStartingAtOneInterruptsAParagraph() {
+        XCTAssertEqual(MarkdownParser.parse("Released in\n2024. It was good"), [.paragraph("Released in\n2024. It was good")])
+        XCTAssertEqual(MarkdownParser.parse("Steps:\n1. one\n2. two"), [
+            .paragraph("Steps:"),
+            .list([MarkdownListItem(level: 0, number: "1.", text: "one"), MarkdownListItem(level: 0, number: "2.", text: "two")]),
+        ])
+        XCTAssertEqual(MarkdownParser.parse("Items:\n- one"), [
+            .paragraph("Items:"), .list([MarkdownListItem(level: 0, number: nil, text: "one")]),
+        ])
+        // Not after a paragraph, any number starts a list.
+        XCTAssertEqual(MarkdownParser.parse("3. three"), [.list([MarkdownListItem(level: 0, number: "3.", text: "three")])])
+    }
+
+    func testAQuoteHoldsBlocks() {
+        XCTAssertEqual(MarkdownParser.parse("> - one\n> - two\n>\n> ## Head\n> ```\n> code\n> ```"), [
+            .quote([
+                .list([MarkdownListItem(level: 0, number: nil, text: "one"), MarkdownListItem(level: 0, number: nil, text: "two")]),
+                .heading(level: 2, text: "Head"),
+                .code(language: nil, text: "code", closed: true),
+            ]),
+        ])
+        XCTAssertEqual(MarkdownParser.parse("> > nested"), [.quote([.quote([.paragraph("nested")])])])
+    }
+
+    @MainActor
+    func testParsedBlocksAreCachedByText() {
+        let text = "cached \(UUID().uuidString)\n- a\n- b"
+        let before = MarkdownCache.parses
+        let first = MarkdownCache.blocks(for: text)
+        let second = MarkdownCache.blocks(for: text)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first, MarkdownParser.parse(text))
+        XCTAssertEqual(MarkdownCache.parses - before, 1, "the same text is parsed once")
+        _ = MarkdownCache.blocks(for: text + "c")
+        XCTAssertEqual(MarkdownCache.parses - before, 2, "a streamed delta is new text")
     }
 }
