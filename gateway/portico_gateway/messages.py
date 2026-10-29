@@ -271,6 +271,8 @@ class HelloServer(Envelope):
     config_stale: bool = False
     # The deployment has an update command (``portico-gateway update`` runs it).
     can_update: bool = False
+    # Where a new session works when the person has not chosen a folder.
+    default_folder: str | None = None
 
 
 class ChatList(Envelope):
@@ -668,6 +670,7 @@ def example_messages() -> dict[str, BaseModel]:
             can_log=True,
             config_stale=False,
             can_update=True,
+            default_folder="/Users/someone/projects",
         ),
         ChatList(
             ts=_TS,

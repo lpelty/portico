@@ -910,10 +910,12 @@ final class AppModel: ObservableObject {
 
     /// The folder the start screen offers: the person's choice, else the
     /// folder the last chat started in (when it still exists), else the
-    /// deployment's first root. `nil` when there is nothing to offer.
+    /// deployment's `default_folder`, else its first root. `nil` when there
+    /// is nothing to offer.
     var startFolder: URL? {
         if let chosen = chosenStartFolder { return chosen }
         if let last = settings.lastFolder, Self.isDirectory(last) { return URL(fileURLWithPath: last) }
+        if let folder = hello?.defaultFolder, Self.isDirectory(folder) { return URL(fileURLWithPath: folder) }
         if let root = hello?.roots.first, Self.isDirectory(root.path) { return URL(fileURLWithPath: root.path) }
         return nil
     }

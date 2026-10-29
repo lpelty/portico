@@ -320,3 +320,11 @@ def test_config_value_reads_dotted_keys() -> None:
     assert config_value(config, "permission_mode") == "auto"
     assert config_value(config, "no.such.key") is None
     assert config_value(config, "brand.name.deeper") is None
+
+
+def test_hello_carries_default_folder_expanded(tmp_path: Path) -> None:
+    from portico_gateway.config import Config, hello_for
+
+    assert hello_for(Config(), "e", "0.3.0").default_folder is None
+    hello = hello_for(Config(default_folder="~/work"), "e", "0.3.0")
+    assert hello.default_folder == str(Path("~/work").expanduser())

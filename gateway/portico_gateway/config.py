@@ -220,6 +220,7 @@ def hello_for(
         can_log=bool(config.log_prompt) or (plugins is not None and plugins.renew is not None),
         config_stale=config_stale,
         can_update=bool(config.update.run),
+        default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

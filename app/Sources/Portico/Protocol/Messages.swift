@@ -406,6 +406,8 @@ struct HelloServer: Codable, Equatable, Sendable {
     var configStale: Bool? = nil
     /// The deployment has an update command (v0.3).
     var canUpdate: Bool? = nil
+    /// Where a new session works when the person has not chosen (v0.3).
+    var defaultFolder: String? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -417,6 +419,7 @@ struct HelloServer: Codable, Equatable, Sendable {
         case canLog = "can_log"
         case configStale = "config_stale"
         case canUpdate = "can_update"
+        case defaultFolder = "default_folder"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }

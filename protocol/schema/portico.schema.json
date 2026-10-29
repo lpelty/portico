@@ -2189,6 +2189,18 @@
           "title": "Config Stale",
           "type": "boolean"
         },
+        "default_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Folder"
+        },
         "epoch": {
           "title": "Epoch",
           "type": "string"

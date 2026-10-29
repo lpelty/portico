@@ -321,7 +321,9 @@ v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
 changed after the gateway started, so a restart is needed to apply it);
 `can_update: bool` (the deployment configured an update command, which
-`portico-gateway update` runs).
+`portico-gateway update` runs); `default_folder?` (config `default_folder`,
+`~` expanded: where a new session works when the person has not chosen a
+folder; after the folder the person last used, before the first root).
 
 ### `chat.list` — `ChatList`
 `chats: [{chat, folder, alias?, state, created}]`. Sent after `hello` and

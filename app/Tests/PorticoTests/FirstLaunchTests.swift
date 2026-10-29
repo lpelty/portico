@@ -67,4 +67,20 @@ final class FirstLaunchTests: XCTestCase {
         XCTAssertEqual(model.startFolder?.path, other.path)
         XCTAssertTrue(model.workingFolderLine.hasPrefix("Working in \(other.lastPathComponent)"))
     }
+
+    func testTheDeploymentsDefaultFolderIsOfferedBeforeTheFirstRoot() throws {
+        let model = try model()
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("portico-default-\(UUID().uuidString)")
+        let folder = base.appendingPathComponent("Research vault")
+        let root = base.appendingPathComponent("root")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: base) }
+        var h = hello("single", roots: [Root(name: "root", path: root.path)])
+        h.defaultFolder = folder.path
+        model.apply(.hello(h))
+        XCTAssertEqual(model.startFolder?.path, folder.path)
+        XCTAssertTrue(model.workingFolderLine.hasPrefix("Working in Research vault"))
+    }
 }
