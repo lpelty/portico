@@ -276,7 +276,8 @@ class SessionLog(Envelope):
 class ServiceRestart(Envelope):
     """Run a service's ``restart`` command, then check it again (v0.4).
 
-    Answered by the ``services.status`` that follows.
+    Answered by the ``services.status`` that follows. v0.8: refused with
+    ``services.busy`` while a ``services.restart_all`` runs.
     """
 
     type: Literal["service.restart"] = "service.restart"

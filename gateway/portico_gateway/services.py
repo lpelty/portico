@@ -37,7 +37,9 @@ A row's Restart comes from the ``[[services]]`` entry with the same id.
 publishes the result as the one ``services.status`` between the request
 and that point (the app ends its progress on the next one it gets: no
 interim list goes out meanwhile); a restart that fails raises
-``services.restart_failed`` after that.
+``services.restart_failed`` after that. A row's restart meanwhile is
+refused with ``services.busy``. The status command's stdout is the JSON;
+its stderr only names the reason when it fails.
 """
 
 from __future__ import annotations
@@ -115,29 +117,39 @@ def parse_status(raw: Any) -> list[StatusRow]:
     return rows
 
 
-async def _run_source_command(command: str, timeout: float) -> list[str]:
-    """Run a deployment command; its output lines, or ``SourceFailed`` saying why it did not work."""
+async def _run_source_command(command: str, timeout: float, stdout_only: bool = False) -> list[str]:
+    """Run a deployment command; its output lines, or ``SourceFailed`` saying why it did not work.
+
+    ``stdout_only`` (the status command, whose stdout is JSON): the lines
+    are stdout's; stderr is kept apart and only gives the reason a failed
+    run names (its last line, else stdout's).
+    """
     lines: list[str] = []
+    errors: list[str] = []
 
     async def seen(line: str) -> None:
         lines.append(line)
 
+    async def said(line: str) -> None:
+        errors.append(line)
+
     try:
-        code = await run_command(command, seen, timeout)
+        code = await run_command(command, seen, timeout, on_stderr=said if stdout_only else None)
     except TimeoutError:
         raise SourceFailed(f"timed out after {timeout:g} s") from None
     except OSError as e:
         raise SourceFailed(f"could not start: {e}") from None
     if code != 0:
-        raise SourceFailed(f"exited {code}" + (f": {_short(lines[-1])}" if lines else ""))
+        last = (errors or lines or [None])[-1]
+        raise SourceFailed(f"exited {code}" + (f": {_short(last)}" if last else ""))
     return lines
 
 
 def command_status(command: str, timeout: float) -> StatusSource:
-    """``[deployment] status`` as a status source: the command's whole output."""
+    """``[deployment] status`` as a status source: the command's stdout (stderr is not part of the JSON)."""
 
     async def status() -> Any:
-        return "\n".join(await _run_source_command(command, timeout))
+        return "\n".join(await _run_source_command(command, timeout, stdout_only=True))
 
     return status
 
@@ -428,6 +440,15 @@ class ServiceMonitor:
             raise ProtocolError("service.no_restart", f"service {service_id!r} has no restart command")
         return service
 
+    def check_not_restarting_all(self) -> None:
+        """``services.busy`` while a restart of all services runs: a row's restart waits for it.
+
+        Its ``checking`` frame would be held back with everything else, so
+        the app would never see its restart answered.
+        """
+        if self._restarting_all.locked():
+            raise ProtocolError("services.busy", "a restart of all services is running; try again when it is done")
+
     async def restart(self, service_id: str) -> None:
         """Run the service's ``restart`` (``checking`` meanwhile), then check it again.
 
@@ -436,6 +457,7 @@ class ServiceMonitor:
         """
         service = self.check_restart(service_id)
         assert service.restart is not None
+        self.check_not_restarting_all()
         async with self._locks[service.id]:
             self._set(service.id, "checking", "restarting")
             await self._publish_if_changed()

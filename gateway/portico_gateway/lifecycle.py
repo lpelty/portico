@@ -54,42 +54,49 @@ class CommandFailed(RuntimeError):
 
 
 class _LineProtocol(asyncio.SubprocessProtocol):
-    """Splits the merged output into lines on a queue; ``exited`` is set when the process itself exits."""
+    """Splits the output into ``(fd, line)`` on a queue; ``exited`` is set when the process itself exits.
 
-    def __init__(self) -> None:
-        self.lines: asyncio.Queue[str | None] = asyncio.Queue()
+    With stderr merged into stdout every line comes as fd 1; with stderr
+    piped on its own (``on_stderr``), its lines come as fd 2. ``None`` on
+    the queue is the end of every pipe.
+    """
+
+    def __init__(self, pipes: int = 1) -> None:
+        self.lines: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue()
         self.exited = asyncio.Event()
-        self._buf = bytearray()
-        self._eof = False
+        self._bufs: dict[int, bytearray] = {}
+        self._open = pipes
 
     def pipe_data_received(self, fd: int, data: bytes) -> None:
-        self._buf.extend(data)
+        buf = self._bufs.setdefault(fd, bytearray())
+        buf.extend(data)
         while True:
-            cut = self._buf.find(b"\n")
+            cut = buf.find(b"\n")
             if cut < 0:
                 break
-            raw = bytes(self._buf[:cut])
-            del self._buf[: cut + 1]
-            self._put(raw)
-        if len(self._buf) > LINE_LIMIT:
-            self._put(bytes(self._buf[:LINE_LIMIT]))
-            del self._buf[:]
+            raw = bytes(buf[:cut])
+            del buf[: cut + 1]
+            self._put(fd, raw)
+        if len(buf) > LINE_LIMIT:
+            self._put(fd, bytes(buf[:LINE_LIMIT]))
+            del buf[:]
 
     def pipe_connection_lost(self, fd: int, exc: Exception | None) -> None:
-        if self._buf:
-            self._put(bytes(self._buf))
-            del self._buf[:]
-        if not self._eof:
-            self._eof = True
+        buf = self._bufs.get(fd)
+        if buf:
+            self._put(fd, bytes(buf))
+            del buf[:]
+        self._open -= 1
+        if self._open == 0:
             self.lines.put_nowait(None)
 
     def process_exited(self) -> None:
         self.exited.set()
 
-    def _put(self, raw: bytes) -> None:
+    def _put(self, fd: int, raw: bytes) -> None:
         line = raw.decode("utf-8", errors="replace").rstrip("\r")
         if line.strip():
-            self.lines.put_nowait(line)
+            self.lines.put_nowait((fd, line))
 
 
 def _kill_group(pid: int) -> None:
@@ -98,32 +105,40 @@ def _kill_group(pid: int) -> None:
         os.killpg(pid, signal.SIGKILL)
 
 
-async def run_command(command: str, on_line: OnLine, timeout: float) -> int:
+async def run_command(command: str, on_line: OnLine, timeout: float, on_stderr: OnLine | None = None) -> int:
     """Run ``command`` through the shell; ``await on_line(line)`` for each output line; return its exit code.
 
-    stdout and stderr are merged, in order. Blank lines are skipped. On
-    ``timeout`` seconds the whole process group is killed and
-    ``TimeoutError`` is raised; the lines already seen were delivered.
+    stdout and stderr are merged, in order, unless ``on_stderr`` is given:
+    then ``on_line`` sees stdout only and ``on_stderr`` each stderr line
+    (v0.8: a command whose stdout is data, such as ``[deployment]
+    status``). Blank lines are skipped. On ``timeout`` seconds the whole
+    process group is killed and ``TimeoutError`` is raised; the lines
+    already seen were delivered.
     """
     loop = asyncio.get_running_loop()
     transport: asyncio.SubprocessTransport
     protocol: _LineProtocol
+    split = on_stderr is not None
     transport, protocol = await loop.subprocess_shell(  # type: ignore[assignment]
-        _LineProtocol,
+        lambda: _LineProtocol(pipes=2 if split else 1),
         command,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stderr=asyncio.subprocess.PIPE if split else asyncio.subprocess.STDOUT,
         start_new_session=True,
     )
     pid = transport.get_pid()
 
     async def pump() -> None:
         while True:
-            line = await protocol.lines.get()
-            if line is None:
+            item = await protocol.lines.get()
+            if item is None:
                 return
-            await on_line(line)
+            fd, line = item
+            if fd == 2 and on_stderr is not None:
+                await on_stderr(line)
+            else:
+                await on_line(line)
 
     pump_task = asyncio.create_task(pump(), name="portico-command-output")
     try:

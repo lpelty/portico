@@ -163,6 +163,11 @@ class Chat:
         # cannot hold what happened before this launch, so a replay from
         # the beginning comes from the engine's transcript.
         self.restored = False
+        # v0.8: whether a ``message.send`` has started an agent turn on this
+        # chat this launch: the first one may title the session. An unknown
+        # command's empty turn or a log step does not count. Not persisted: a
+        # chat with a session comes back ``restored`` and is never titled.
+        self.sent_turn = False
 
     def __repr__(self) -> str:
         return f"Chat({self.number}, {str(self.folder)!r}, state={self.state!r}, seq={self.seq})"

@@ -61,7 +61,7 @@ async def _run_server(config, state, port: int, engine_factory=None, plugins=Non
     if config.titles == "generated":
         from portico_gateway.titles import sdk_titler
 
-        titler = sdk_titler(state.path)
+        titler = sdk_titler(state.path, config.setting_sources)
     registry = ChatRegistry(
         index=state.load_index(), state=state, history_buffer=config.history_buffer, default_mode=config.permission_mode
     )

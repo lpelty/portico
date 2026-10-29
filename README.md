@@ -129,7 +129,8 @@ run = "my-tool update"              # performs it; the app's "Update available" 
 [deployment]                        # optional (v0.8): one restart and one status for all the services
 restart = "my-tool restart-all"     # /bin/sh -c, bounded by command_timeout_seconds; exit 0 = done;
                                     # the services menu ends with Restart all services
-status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": true|false, "detail"?}]};
+status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": true|false, "detail"?}]} on stdout
+                                    # (stderr is not read as JSON; it only names the reason when it fails);
                                     # when set, its rows replace the [[services]] checks; a row offers
                                     # Restart when a [[services]] entry with the same id gives one
 
@@ -152,9 +153,16 @@ path = "~/projects"                 # absolute; a leading ~ is expanded
 ```
 
 A title call goes through the Agent SDK to the same provider, with the
-same credentials, as the agent: one turn, no tools, no settings files,
-from the state directory, given ten seconds. A session that already has
-an alias is not titled, and a generated title is never replaced.
+same credentials, as the agent: the gateway's environment plus the `env`
+blocks of the settings files the agent reads (`setting_sources`: user,
+then the session folder's project and local settings). The files
+themselves are not loaded, so the call runs none of their hooks, servers
+or instructions: one turn, no tools, from the state directory, given
+twenty seconds. A provider set up through another settings key (an API
+key helper, a cloud credential refresh) reaches the agent but not the
+title call; put what it needs in `env`, or set `titles = "first_line"`.
+A session that already has an alias is not titled, and a generated title
+is never replaced.
 
 A status command that fails, times out or prints something else becomes
 one row in the menu, "status command failed · <reason>".

@@ -354,7 +354,9 @@ service goes to `checking` (detail `restarting`) while the command runs,
 then to what the check finds. A restart command that fails or times out
 is logged; the re-check says how the service is. Errors:
 `service.unknown` (no service with that id), `service.no_restart` (the
-service has no `restart` command: `can_restart` is false).
+service has no `restart` command: `can_restart` is false), v0.8:
+`services.busy` (a `services.restart_all` is running: try again once its
+`services.status` came).
 
 v0.8: with a deployment status (see Services), the service is read
 again through that status after its restart command, not through a check.
@@ -466,7 +468,7 @@ replay. The app's welcome says "last reply 12 min ago" from it.
 session's first message (cut to 60 characters). v0.8: with config
 `titles = "generated"` (the default), once the session's first turn
 finishes `done` the gateway asks a small model for a title of at most six
-words and, when one comes back within ten seconds, replaces the first
+words and, when one comes back within twenty seconds, replaces the first
 line with it and sends `chat.list`. No new field or frame: an older app
 simply shows the better title. Only a `message.send`'s first turn counts
 (never a log step's turn, nor an unknown command's empty turn); a session
@@ -754,7 +756,9 @@ session that has ended), `session.cannot_log` (v0.4: `session.log` and the
 deployment has no log step), `service.unknown` (v0.4: `service.restart`
 names no configured service), `service.no_restart` (v0.4: the service has
 no `restart` command), `services.no_restart_all`, `services.busy`,
-`services.restart_failed` (v0.8: `services.restart_all`; see there),
+`services.restart_failed` (v0.8: `services.restart_all`; see there;
+`services.busy` also answers a `service.restart` sent while a restart of
+all services runs),
 `session.live` (`chat.new` in single presentation while a session
 is live; renew it instead),
 `lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
@@ -809,7 +813,9 @@ status = "my-tool status --json"  # optional: prints the services as JSON
 ```
 
 `status` prints `{"services": [{"id": "memory", "name": "Memory", "up":
-true, "detail": "recall and capture"}]}` (`detail` optional). When it is
+true, "detail": "recall and capture"}]}` (`detail` optional) on stdout;
+its stderr is kept apart (a warning there never breaks the JSON) and only
+gives the reason when the command fails. When it is
 set, the gateway runs it at start and every `services_interval_seconds`
 instead of each `[[services]]` check; `[[services]]` entries then only give
 rows their Restart, matched by id. Both commands run with `/bin/sh -c`, in

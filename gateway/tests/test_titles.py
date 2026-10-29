@@ -23,8 +23,12 @@ from portico_gateway.state import ChatRecord, Index, StateDir
 from portico_gateway.titles import (
     DEFAULT_TITLE_MODEL,
     REPLY_CHARS,
+    SYSTEM_PROMPT,
+    TITLE_TIMEOUT,
     clean_title,
     generate_title,
+    sdk_titler,
+    settings_env,
     title_prompt,
 )
 from tests.conftest import FakeEngine, fake_result, make_config
@@ -35,17 +39,19 @@ TS = "2026-10-29T12:00:00Z"
 
 
 class Titler:
-    """The server's ``titler``: records each ``(prompt, model)``; answers ``answer``, raises, or waits for ``gate``."""
+    """The server's ``titler``: records each ``(prompt, model)`` and the folder; answers ``answer``, raises, or waits for ``gate``."""
 
     def __init__(self, answer: str = "Interview codebook for Q3 synthesis", error: Exception | None = None) -> None:
         self.answer = answer
         self.error = error
         self.gate: asyncio.Event | None = None
         self.calls: list[tuple[str, str]] = []
+        self.folders: list[Path | None] = []
         self.called = asyncio.Event()
 
-    async def __call__(self, prompt: str, model: str) -> str:
+    async def __call__(self, prompt: str, model: str, folder: Path | None) -> str:
         self.calls.append((prompt, model))
+        self.folders.append(folder)
         self.called.set()
         if self.gate is not None:
             await self.gate.wait()
@@ -432,3 +438,136 @@ async def test_without_a_titler_the_first_line_stays(state_dir: StateDir, factor
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+async def test_a_first_message_after_an_unknown_command_is_titled(state_dir: StateDir, titler: Titler, folder: Path) -> None:
+    def knows_nothing() -> FakeEngine:
+        engine = FakeEngine()
+        engine.commands = set()
+        return engine
+
+    srv = await start(state_dir, knows_nothing, titler)
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="/nope")))
+        await recv_until(conn, TurnFinished)
+        await recv(conn)  # chat.state idle
+        await send(conn, number, "Plan the interview codebook")
+        await asyncio.wait_for(titler.called.wait(), 5)
+        await settle()
+        assert srv.registry.get(number).title == "Interview codebook for Q3 synthesis"
+    finally:
+        await conn.close()
+        await srv.shutdown()
+    assert [p for p, _ in titler.calls if "Plan the interview codebook" in p], "titled from the message, not the command"
+    assert titler.folders == [folder], "the titler is told the session's folder"
+
+
+# --- the SDK call -------------------------------------------------------------------
+
+
+def test_the_title_timeout_is_twenty_seconds() -> None:
+    assert TITLE_TIMEOUT == 20.0
+
+
+def write_settings(path: Path, env: dict[str, str], **other: object) -> None:
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"env": env, **other}))
+
+
+def test_settings_env_reads_the_agents_sources_in_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    folder = tmp_path / "folder"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    write_settings(home / "settings.json", {"PROVIDER_URL": "user", "ONLY_USER": "1"})
+    write_settings(folder / ".claude" / "settings.json", {"PROVIDER_URL": "project", "ONLY_PROJECT": "1"})
+    write_settings(folder / ".claude" / "settings.local.json", {"PROVIDER_URL": "local"})
+
+    assert settings_env(["project"], folder) == {"PROVIDER_URL": "project", "ONLY_PROJECT": "1"}
+    assert settings_env(["user", "project", "local"], folder) == {
+        "PROVIDER_URL": "local",
+        "ONLY_USER": "1",
+        "ONLY_PROJECT": "1",
+    }
+    assert settings_env(["user", "project"], None) == {"PROVIDER_URL": "user", "ONLY_USER": "1"}, "no folder: user only"
+    assert settings_env([], folder) == {}
+
+
+def test_settings_env_skips_what_cannot_be_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "home"))
+    folder = tmp_path / "folder"
+    (folder / ".claude").mkdir(parents=True)
+    (folder / ".claude" / "settings.json").write_text("{not json")
+    (folder / ".claude" / "settings.local.json").write_text('{"env": {"N": 3, "S": "x"}}')
+    assert settings_env(["user", "project", "local"], folder) == {"S": "x"}, "only text values; bad files are skipped"
+
+
+class FakeQuery:
+    """``claude_agent_sdk.query`` for the titler: records the options; yields ``messages``; notes being closed."""
+
+    def __init__(self, *messages: object) -> None:
+        self.messages = messages
+        self.options: object = None
+        self.closed = False
+
+    def __call__(self, *, prompt: str, options: object):  # noqa: ANN204 - an async generator
+        self.options = options
+
+        async def gen():  # noqa: ANN202
+            try:
+                for message in self.messages:
+                    yield message
+                await asyncio.Event().wait()  # never ends on its own
+            finally:
+                self.closed = True
+
+        return gen()
+
+
+def result(is_error: bool = False, text: str | None = None) -> object:
+    from claude_agent_sdk import ResultMessage
+
+    return ResultMessage(
+        subtype="error_during_execution" if is_error else "success",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=is_error,
+        num_turns=1,
+        session_id="s",
+        result=text,
+    )
+
+
+async def test_the_title_call_sees_the_agents_provider_env_but_none_of_its_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    folder = tmp_path / "folder"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    write_settings(home / "settings.json", {"ANTHROPIC_BASE_URL": "https://user.example"})
+    write_settings(
+        folder / ".claude" / "settings.json",
+        {"ANTHROPIC_BASE_URL": "https://provider.example", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "small-x"},
+        hooks={"Stop": []},
+    )
+    fake = FakeQuery(result(text="Codebook plan"))
+    titler = sdk_titler(tmp_path / "state", ["project", "user"], query=fake)
+    # The result ends the call; the fake would otherwise wait for good.
+    assert await titler("prompt", "haiku", folder) == "Codebook plan"
+    options = fake.options
+    assert options is not None
+    assert options.env == {"ANTHROPIC_BASE_URL": "https://provider.example", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "small-x"}
+    assert options.setting_sources == [], "no hooks, servers or instructions from the settings files"
+    assert options.tools == [] and options.max_turns == 1 and options.strict_mcp_config and options.mcp_servers == {}
+    assert options.cwd == str(tmp_path / "state") and options.model == "haiku" and options.system_prompt == SYSTEM_PROMPT
+
+
+async def test_the_title_call_closes_the_query_when_it_fails(tmp_path: Path) -> None:
+    fake = FakeQuery(result(is_error=True))
+    titler = sdk_titler(tmp_path, [], query=fake)
+    with pytest.raises(RuntimeError):
+        await titler("prompt", "haiku", None)
+    assert fake.closed, "closed at once, not left to the garbage collector"

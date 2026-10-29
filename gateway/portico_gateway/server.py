@@ -1329,7 +1329,7 @@ class GatewayServer:
         assert self.titler is not None and run.title_message is not None
         try:
             title = await generate_title(
-                self.titler, run.title_message, run.reply, self.config.title_model, self.title_timeout
+                self.titler, run.title_message, run.reply, self.config.title_model, self.title_timeout, chat.folder
             )
         except Exception:
             log.exception("chat %d: generating a title failed", chat.number)
@@ -1821,10 +1821,12 @@ class GatewayServer:
     async def on_service_restart(self, msg: ServiceRestart, conn: ServerConnection) -> None:
         """Restart one service and check it again; the ``services.status`` frames that follow are the answer.
 
-        Refusals (``service.unknown``, ``service.no_restart``) are checked
+        Refusals (``service.unknown``, ``service.no_restart``, and v0.8
+        ``services.busy`` while a restart of all services runs) are checked
         here; the restart itself runs as a task so other frames keep moving.
         """
         self.services.check_restart(msg.service)
+        self.services.check_not_restarting_all()
         self._spawn(self._restart_task(msg, conn), name=f"portico-restart-{msg.service}")
 
     async def _restart_task(self, msg: ServiceRestart, conn: ServerConnection) -> None:
@@ -1907,11 +1909,14 @@ class GatewayServer:
             await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
             return
         title = None
-        first = chat.title is None and chat.turn == 0 and not chat.restored
+        # First: no message.send has started an agent turn on this chat yet
+        # (an unknown command's empty turn does not count, v0.8).
+        first = chat.title is None and not chat.sent_turn and not chat.restored
         if first:
             title = title_from(msg.text)
         text = with_attachments(msg.text, attachments)
         run = await self._echo_turn(chat, text)
+        chat.sent_turn = True
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text

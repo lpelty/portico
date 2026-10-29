@@ -8,6 +8,7 @@ are throwaway modules in ``tmp_path``. The server tests use a real
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -401,6 +402,74 @@ async def test_restart_all_refusals_and_failure_over_the_socket(tmp_path: Path, 
         assert isinstance(err, Error) and err.code == "services.restart_failed" and err.id == "req-fail"
         assert "exited 3: denied" in err.message
         assert any(isinstance(m, ServicesStatus) for m in got), "the status after the attempt comes first"
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_a_status_command_reads_stdout_only_and_its_stderr_noise_is_ignored(tmp_path: Path) -> None:
+    script = tmp_path / "status.sh"
+    script.write_text(
+        "echo 'warning: something deprecated' >&2\n"
+        f"echo '{status_json({'id': 'a', 'name': 'A', 'up': True})}'\n"
+        "echo 'another warning' >&2\n"
+    )
+    mon, rec = status_monitor(f"sh {script}")
+    await mon.check_all()
+    assert [(s.id, s.state) for s in rec.calls[-1]] == [("a", "up")]
+
+
+async def test_a_failing_status_command_gives_its_stderr_as_the_reason(tmp_path: Path) -> None:
+    script = tmp_path / "status.sh"
+    script.write_text("echo 'partial output'\necho 'cannot reach the supervisor' >&2\nexit 5\n")
+    mon, rec = status_monitor(f"sh {script}")
+    await mon.check_all()
+    assert rec.calls[-1][0].detail == "status command failed · exited 5: cannot reach the supervisor"
+
+
+# --- a row's restart while everything restarts ---------------------------------------
+
+
+async def test_a_row_restart_while_restart_all_runs_is_busy(tmp_path: Path) -> None:
+    gate = tmp_path / "gate"
+    ran = tmp_path / "row-restarted"
+    mon = ServiceMonitor(
+        [svc("files", "true", restart=f"touch {ran}")],
+        interval=30,
+        timeout=5,
+        publish=Recorder(),
+        restart_all=command_restart(f"while [ ! -f {gate} ]; do sleep 0.02; done", 5),
+    )
+    task = asyncio.create_task(mon.restart_all())
+    await asyncio.sleep(0.1)
+    with pytest.raises(ProtocolError) as e:
+        await mon.restart("files")
+    assert e.value.code == "services.busy"
+    gate.write_text("")
+    await task
+    assert not ran.exists()
+
+
+async def test_a_row_restart_while_restart_all_runs_is_refused_over_the_socket(tmp_path: Path, state_dir: StateDir) -> None:
+    from portico_gateway.messages import ServiceRestart
+
+    gate = tmp_path / "gate"
+    srv = await start(
+        state_dir,
+        services=[{"id": "files", "name": "Files", "check": "true", "restart": "true"}],
+        deployment={"restart": f"while [ ! -f {gate} ]; do sleep 0.02; done"},
+    )
+    conn = await attach(srv)
+    try:
+        await conn.send(dump(ServicesRestartAll(ts=TS, id="req-all")))
+        for _ in range(100):
+            if srv.services.restarting_all:
+                break
+            await asyncio.sleep(0.02)
+        await conn.send(dump(ServiceRestart(ts=TS, id="req-row", service="files")))
+        err = (await recv_until(conn, Error))[-1]
+        assert isinstance(err, Error) and err.code == "services.busy" and err.id == "req-row"
+        gate.write_text("")
     finally:
         await conn.close()
         await srv.shutdown()
