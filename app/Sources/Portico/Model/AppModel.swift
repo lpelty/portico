@@ -80,8 +80,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var hello: HelloServer?
     /// The sidebar, exactly as the gateway last listed it.
     @Published private(set) var chats: [ChatSummary] = []
-    /// The chat shown in the conversation pane.
-    @Published var selected: Int?
+    /// The chat shown in the conversation pane. Showing another ends focus.
+    @Published var selected: Int? {
+        didSet { if let focus = viewerFocus, focus.chat != selected { endFocus() } }
+    }
     /// Per chat, what the conversation pane renders.
     @Published private(set) var transcripts: [Int: [TranscriptItem]] = [:]
     /// Per chat, the cards still waiting for an answer, in arrival order.
@@ -98,6 +100,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var viewerVisible: [Int: Bool] = [:]
     /// Whether the sidebar column (chats and files) is shown.
     @Published var sidebarVisible: Bool = true
+    /// Focus (V3): the viewer has most of the window and the sidebar is
+    /// hidden; holds what to put back. Not remembered across launches.
+    @Published private(set) var viewerFocus: ViewerFocus?
+
+    struct ViewerFocus: Equatable, Sendable {
+        var chat: Int
+        var sidebarWasVisible: Bool
+    }
     /// Per chat, the last `status.set` line (or the last error's message).
     @Published private(set) var status: [Int: String] = [:]
     /// The last chat-less `status.set` line: lifecycle command output, "stopping".
@@ -845,9 +855,38 @@ final class AppModel: ObservableObject {
         viewerVisible[chat] ?? !(artifacts[chat] ?? []).isEmpty
     }
 
-    /// Open or collapse the viewer column for `chat` by hand.
+    /// Open or collapse the viewer column for `chat` by hand. Collapsing
+    /// it ends focus.
     func setViewer(visible: Bool, for chat: Int) {
         viewerVisible[chat] = visible
+        if !visible, viewerFocus?.chat == chat { endFocus() }
+    }
+
+    /// Focus is on for the chat shown.
+    func isFocused(chat: Int) -> Bool { viewerFocus?.chat == chat }
+
+    /// The Focus button (⌘⇧↩): hide the sidebar and give the viewer most of
+    /// the window; again, put the sidebar back as it was. The remembered
+    /// column widths are never touched, so they come back exactly.
+    func toggleFocus(chat: Int) {
+        if viewerFocus != nil {
+            endFocus()
+        } else {
+            viewerFocus = ViewerFocus(chat: chat, sidebarWasVisible: sidebarVisible)
+            sidebarVisible = false
+            viewerVisible[chat] = true
+        }
+    }
+
+    func endFocus() {
+        guard let focus = viewerFocus else { return }
+        viewerFocus = nil
+        sidebarVisible = focus.sidebarWasVisible
+    }
+
+    /// The artifacts menu's heading: `Made in this session` (or chat).
+    var madeHereLabel: String {
+        isSinglePresentation ? "Made in this session" : "Made in this chat"
     }
 
     // MARK: - sidebar actions
