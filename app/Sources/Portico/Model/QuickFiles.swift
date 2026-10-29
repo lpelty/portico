@@ -130,6 +130,13 @@ extension AppModel {
         return files
     }
 
+    /// The Files pane's CHANGED THIS SESSION for the chat on screen: in
+    /// single presentation "this session" is the live one, even while an
+    /// earlier session is open read-only.
+    func changedThisSession(chat: Int) -> [ChangedFile] {
+        changedFiles(chat: isSinglePresentation ? (liveSession?.chat ?? chat) : chat)
+    }
+
     /// A write that may have happened: not failed, and its permission
     /// not declined or blocked. A declined write can still finish `ok`
     /// (the engine reports the refusal as a result), so the outcome is
