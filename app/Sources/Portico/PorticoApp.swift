@@ -49,7 +49,7 @@ struct PorticoApp: App {
 
     private var viewerShown: Bool {
         guard !model.documentMode else { return false }
-        return model.selected.map { model.isViewerShown(for: $0) } ?? false
+        return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
     }
 
     var body: some Scene {
@@ -72,6 +72,9 @@ struct PorticoApp: App {
                     // Quit honours the setting (spec §5.5, D19): keep the
                     // agent running (detach only) or stop everything.
                     delegate.quitHandler = { [model, settings] in
+                        // The viewer comes back next launch only with
+                        // something in it (v0.6).
+                        model.rememberViewerForNextLaunch()
                         await model.prepareToQuit(behaviour: settings.quitBehaviour)
                     }
                     await model.run(supervisor: supervisor, settings: settings, appVersion: Self.version)
@@ -86,10 +89,10 @@ struct PorticoApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 Button(viewerShown ? "Hide Viewer" : "Show Viewer") {
-                    if let chat = model.selected { model.setViewer(visible: !viewerShown, for: chat) }
+                    if let chat = model.shownChat { model.setViewer(visible: !viewerShown, for: chat) }
                 }
                 .keyboardShortcut("v", modifiers: [.command, .control])
-                .disabled(model.selected == nil || model.documentMode)
+                .disabled(model.shownChat == nil || model.documentMode)
                 Divider()
                 Button("Quick Open…") { model.quickOpenShown = true }
                     .keyboardShortcut("p", modifiers: .command)

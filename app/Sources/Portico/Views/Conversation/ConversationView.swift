@@ -16,6 +16,20 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             transcript
+                // Y2: pinned over an earlier session's transcript, so the
+                // way back is in view however long it is (v0.6; it used to
+                // sit at the end, where the composer would be). An inset,
+                // not a row above: the transcript's first item starts below
+                // the bar, and what scrolls up goes under it.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if model.showsEarlierBar(chat: chat) {
+                        EndedSessionBar(chat: chat)
+                            .padding(.horizontal, Self.sideInset)
+                            .padding(.top, 16)
+                            .padding(.bottom, 4)
+                            .background(Theme.window)
+                    }
+                }
             if !model.pinnedCards(for: chat).isEmpty {
                 pinnedCards
             }
@@ -29,11 +43,8 @@ struct ConversationView: View {
                     .padding(.horizontal, Self.sideInset)
                     .padding(.bottom, 8)
             }
-            if model.isSinglePresentation && model.isEnded(chat: chat) {
-                EndedSessionBar(chat: chat)
-                    .padding(.horizontal, Self.sideInset)
-                    .padding(.bottom, 16)
-            } else {
+            if !model.showsEarlierBar(chat: chat) {
+                // An ended session is read-only: no composer.
                 InputBar(chat: chat)
                     .id(chat)
                     .padding(.horizontal, Self.sideInset)
@@ -288,28 +299,49 @@ struct NoticeLine: View {
     }
 }
 
-/// Instead of the composer, for an ended session opened from "Earlier":
-/// it is read-only, and the live one is a click away.
+/// Over an ended session opened from "Earlier" (Y2): which session, when
+/// it ended, that it is read-only, and the way back to the live one as
+/// the primary button.
 struct EndedSessionBar: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "lock")
+            Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.text3)
-            Text("Session \(chat) has ended. It is read-only.")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.text2)
+            TimelineView(.everyMinute) { context in
+                Text(line(now: context.date))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 0)
-            if let live = model.liveSession {
-                Button("Back to Session \(live.chat)") { model.open(chat: live.chat) }
-                    .buttonStyle(PillButtonStyle(kind: .quiet))
+            if let live = model.backTarget(from: chat) {
+                Button { model.open(chat: live) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.left")
+                        Text("Back to Session \(live)")
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                .help("Go back to Session \(live)")
             }
         }
-        .padding(EdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14))
+        .padding(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 10))
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.border, lineWidth: 1))
+    }
+}
+
+extension EndedSessionBar {
+    /// `Session 2 · ended yesterday · read-only`.
+    private func line(now: Date) -> String {
+        guard let summary = model.summary(of: chat) else { return "Session \(chat) · read-only" }
+        return SessionPresentation(summary: summary).endedBarLine(now: now)
     }
 }

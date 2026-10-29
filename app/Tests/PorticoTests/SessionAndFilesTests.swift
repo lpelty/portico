@@ -69,11 +69,13 @@ final class SessionAndFilesTests: XCTestCase {
 
     // MARK: - launch
 
-    func testSingleLaunchOpensTheLiveSessionDirectly() throws {
+    func testSingleLaunchContinuesTheLiveSessionFromTheWelcome() throws {
         let (model, sent) = try model()
         model.apply(.hello(hello()))
         model.apply(.chatList(ChatList(chats: [session(12, ended: "2026-10-26T10:00:00Z", logged: true), session(14), session(13, ended: "2026-10-27T11:40:00Z")])))
-        XCTAssertEqual(model.selected, 14)
+        // v0.6 (Y1): the welcome continues Session 14; it is loaded, not shown.
+        XCTAssertNil(model.selected)
+        XCTAssertEqual(model.continuingSession, 14)
         XCTAssertEqual(sent.types().last, "chat.open")
         XCTAssertEqual(model.earlierSessions.map(\.chat), [13, 12], "ended sessions, newest first")
     }

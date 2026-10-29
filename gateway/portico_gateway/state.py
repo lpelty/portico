@@ -88,6 +88,9 @@ class ChatRecord(BaseModel):
     # finished since (``None`` in an older index: the registry infers it).
     logged_at: str | None = None
     work_since_log: bool | None = None
+    # v0.6: when a turn last finished (``None`` before the first, or in an
+    # older index).
+    last_reply: str | None = None
 
 
 class Index(BaseModel):

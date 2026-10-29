@@ -9,14 +9,31 @@ import UniformTypeIdentifiers
 /// works — the folder is chosen once (at setup, or the deployment's
 /// default) and changed in Settings, not here. Enter (or Send) starts the
 /// session in that folder and sends the message in one motion.
+///
+/// With a live session at launch (v0.6, frame "Y1 · Launch with a live
+/// session") the same screen continues it instead: the composer and the
+/// suggestions send to that session and show its conversation, and the
+/// quiet line says which session, with View and Start a new session.
 struct StartView: View {
     @EnvironmentObject private var model: AppModel
     @FocusState private var focused: Bool
 
     private var connected: Bool { model.connection == .connected }
+    /// The live session this welcome continues, if it does.
+    private var continuing: ChatSummary? { model.continuingSession.flatMap { model.summary(of: $0) } }
     private var canSend: Bool {
-        connected && model.startFolder != nil && !model.isStarting
-            && !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard connected, !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if let live = continuing?.chat { return !model.isSessionCommandPending(chat: live) }
+        return model.startFolder != nil && !model.isStarting
+    }
+    /// A suggestion can go now: to the continued session when it is free,
+    /// else to a new session in the start folder.
+    private var canSuggest: Bool {
+        guard connected else { return false }
+        if let live = continuing?.chat {
+            return !model.isBusy(chat: live) && !model.isSending(chat: live) && !model.isSessionCommandPending(chat: live)
+        }
+        return model.startFolder != nil && !model.isStarting
     }
 
     var body: some View {
@@ -34,7 +51,11 @@ struct StartView: View {
             if let actions = model.hello?.actions, !actions.isEmpty {
                 suggestions(actions)
             }
-            folderLine
+            if let live = continuing {
+                continuingLine(live)
+            } else {
+                folderLine
+            }
         }
         .frame(maxWidth: 720)
         .padding(EdgeInsets(top: 32, leading: 48, bottom: 120, trailing: 48))
@@ -143,11 +164,21 @@ struct StartView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.hover)
-                .help("Attach files to the first message")
-                ModeChip(
-                    mode: model.startModeShown, agentName: model.hello?.brand.agentName ?? model.brand.name,
-                    enabled: connected && !model.isStarting
-                ) { model.startMode = $0 }
+                .help(continuing == nil ? "Attach files to the first message" : "Attach files to the message")
+                if let live = continuing {
+                    // The continued session's own mode, changed on it.
+                    if let mode = model.mode(of: live.chat) {
+                        ModeChip(
+                            mode: mode, agentName: model.hello?.brand.agentName ?? model.brand.name,
+                            enabled: connected
+                        ) { model.setMode($0, for: live.chat) }
+                    }
+                } else {
+                    ModeChip(
+                        mode: model.startModeShown, agentName: model.hello?.brand.agentName ?? model.brand.name,
+                        enabled: connected && !model.isStarting
+                    ) { model.startMode = $0 }
+                }
                 Spacer(minLength: 0)
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -160,7 +191,7 @@ struct StartView: View {
                 }
                 .buttonStyle(.hover)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help(model.startFolder == nil ? "Choose a folder in Settings first" : "Start and send (Enter)")
+                .help(sendHelp)
                 .disabled(!canSend)
             }
         }
@@ -177,8 +208,55 @@ struct StartView: View {
 
     private var placeholder: String {
         if !connected { return "Not connected" }
+        if let live = continuing {
+            // As the conversation's input bar says while a log or renewal is out.
+            if model.isRenewing(chat: live.chat) { return "Starting the next session…" }
+            if model.isLogging(chat: live.chat) { return "Logging the session…" }
+            return "Continue Session \(live.chat) — what next?"
+        }
         if model.isStarting { return "Starting…" }
         return "What should we work on? Ask anything, or drop a file here"
+    }
+
+    private var sendHelp: String {
+        if let live = continuing { return "Send to Session \(live.chat) (Enter)" }
+        return model.startFolder == nil ? "Choose a folder in Settings first" : "Start and send (Enter)"
+    }
+
+    /// Y1's quiet line in place of the folder line: which session the
+    /// composer continues, when it started and last answered, then View
+    /// (its conversation, nothing sent) and Start a new session (New,
+    /// which asks to log first when there is unlogged work).
+    private func continuingLine(_ live: ChatSummary) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "folder")
+                .font(.system(size: 11))
+            // Re-read each minute so "last reply … ago" moves.
+            TimelineView(.everyMinute) { context in
+                Text(SessionPresentation(summary: live).continuingLine(now: context.date))
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Text("·").font(.system(size: 12))
+            Button("View Session \(live.chat)") { model.open(chat: live.chat) }
+                .buttonStyle(.hoverText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.text2)
+                .fixedSize()
+                .help("Show Session \(live.chat)'s conversation")
+            if model.canRenew(chat: live.chat) {
+                Text("·").font(.system(size: 12))
+                Button("Start a new session") { model.requestNew(chat: live.chat) }
+                    .buttonStyle(.hoverText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.text2)
+                    .fixedSize()
+                    .disabled(!connected || model.isSessionCommandPending(chat: live.chat))
+                    .help("End Session \(live.chat) and start the next")
+            }
+        }
+        .foregroundStyle(Theme.text3)
     }
 
     /// V4's quiet line: where the agent works, and that Settings changes it.
@@ -223,7 +301,11 @@ struct StartView: View {
         HStack(spacing: 8) {
             ForEach(Array(actions.prefix(4).enumerated()), id: \.offset) { _, action in
                 Button {
-                    model.startChat(text: action.text, fromComposer: false)
+                    if let live = continuing?.chat {
+                        model.continueSession(chat: live, action: action.text)
+                    } else {
+                        model.startChat(text: action.text, fromComposer: false)
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
@@ -241,7 +323,7 @@ struct StartView: View {
                 }
                 .buttonStyle(.hoverCapsule)
                 .help(action.text)
-                .disabled(!connected || model.startFolder == nil || model.isStarting)
+                .disabled(!canSuggest)
             }
         }
     }
@@ -250,7 +332,11 @@ struct StartView: View {
 
     private func send() {
         guard canSend else { return }
-        model.startChat(text: model.startDraft)
+        if let live = continuing?.chat {
+            model.continueSession(chat: live, text: model.startDraft)
+        } else {
+            model.startChat(text: model.startDraft)
+        }
     }
 
     private func pickAttachments() {

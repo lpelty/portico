@@ -57,6 +57,7 @@ final class Settings: ObservableObject {
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
         static let earlierHeight = "earlierHeight"
+        static let viewerAtQuit = "viewerAtQuit"
     }
 
     private let defaults: UserDefaults
@@ -109,6 +110,25 @@ final class Settings: ObservableObject {
         didSet {
             if let earlierHeight { defaults.set(Double(earlierHeight), forKey: Key.earlierHeight) }
             else { defaults.removeObject(forKey: Key.earlierHeight) }
+        }
+    }
+
+    /// The artifact the viewer showed when the app last quit, and in which
+    /// session (v0.6); `nil` when it was closed or empty. Read at launch to
+    /// decide whether the viewer comes back.
+    var viewerAtQuit: SavedViewer? {
+        get {
+            guard let saved = defaults.dictionary(forKey: Key.viewerAtQuit),
+                let chat = saved["chat"] as? Int, let artifact = saved["artifact"] as? String, !artifact.isEmpty
+            else { return nil }
+            return SavedViewer(chat: chat, artifact: artifact)
+        }
+        set {
+            if let newValue {
+                defaults.set(["chat": newValue.chat, "artifact": newValue.artifact], forKey: Key.viewerAtQuit)
+            } else {
+                defaults.removeObject(forKey: Key.viewerAtQuit)
+            }
         }
     }
 
