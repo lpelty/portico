@@ -195,9 +195,19 @@ final class AppModel: ObservableObject {
     /// status that moves it (to `checking`, or another state or detail)
     /// answers that restart.
     var restartBaselines: [String: Service] = [:]
+    /// Per service, the id of its last `service.restart`, kept after a
+    /// status ends the spinner: an `error` for it comes after that status.
+    var lastRestartIds: [String: String] = [:]
+    /// Per service, the gateway's reason its last restart failed (an
+    /// `error` with its id), shown under the row until the next try.
+    @Published var restartErrors: [String: String] = [:]
     /// The `services.restart_all` sent and not yet answered (v0.8 decision
     /// 4): its request id. The menu's Restart all services spins meanwhile.
     @Published var restartingAll: String?
+    /// The id of the last `services.restart_all`, kept after the status that
+    /// answers it ends the spinner: the gateway sends that status first and
+    /// then, when the restart failed, the `error` carrying this id.
+    var lastRestartAllId: String?
     /// The gateway's reason the last Restart all services failed (an
     /// `error` with its id), shown under it in the menu until the next try.
     @Published var restartAllError: String?
@@ -448,7 +458,10 @@ final class AppModel: ObservableObject {
             services = Self.gatewaySendsServices(hello.gatewayVersion) ? nil : []
             restartingServices = [:]
             restartBaselines = [:]
+            lastRestartIds = [:]
+            restartErrors = [:]
             restartingAll = nil
+            lastRestartAllId = nil
             restartAllError = nil
             servicesFallback?.cancel()
             servicesFallback = nil
@@ -572,13 +585,20 @@ final class AppModel: ObservableObject {
             if let id = error.id, let chat = logging.first(where: { $0.value == id })?.key {
                 logging[chat] = nil
             }
-            if let id = error.id, let service = restartingServices.first(where: { $0.value == id })?.key {
+            // A refused or failed row restart: the row says why (v0.8), even
+            // when a status already ended its spinner.
+            if let id = error.id, let service = lastRestartIds.first(where: { $0.value == id })?.key {
                 restartingServices[service] = nil
                 restartBaselines[service] = nil
+                lastRestartIds[service] = nil
+                restartErrors[service] = error.message
             }
-            // A failed Restart all services (v0.8 decision 4): the menu says why.
-            if let id = error.id, id == restartingAll {
+            // A failed Restart all services (v0.8 decision 4): the menu says
+            // why. The gateway's status comes first and ends the spinner, so
+            // the error is matched against the last request, not the pending one.
+            if let id = error.id, id == lastRestartAllId {
                 restartingAll = nil
+                lastRestartAllId = nil
                 restartAllError = error.message
             }
             if let id = error.id, fileSearch?.pending[id] != nil {

@@ -129,12 +129,25 @@ extension AppModel {
 
     func isRestarting(service: String) -> Bool { restartingServices[service] != nil }
 
+    /// Whether a row's Restart can be pressed: connected, and not while
+    /// Restart all services runs (v0.8: the gateway would refuse it with
+    /// `services.busy`, and holds back the status that would answer it).
+    func canRestart(service: String) -> Bool {
+        connection == .connected && restartingAll == nil && !isRestarting(service: service)
+    }
+
+    /// The gateway's reason a row's last restart failed, until the next try.
+    func restartError(service: String) -> String? { restartErrors[service] }
+
     /// A row's Restart: `service.restart`; the row shows progress until a
-    /// `services.status` moves that service.
+    /// `services.status` moves that service, or the gateway's reason when
+    /// an `error` carries this request's id.
     func restartService(_ service: String) {
-        guard connection == .connected, !isRestarting(service: service) else { return }
+        guard canRestart(service: service) else { return }
         let id = Self.requestId()
         restartingServices[service] = id
+        lastRestartIds[service] = id
+        restartErrors[service] = nil
         restartBaselines[service] = services?.first { $0.id == service }
         send(.serviceRestart(ServiceRestart(service: service, id: id)))
     }
@@ -146,7 +159,10 @@ extension AppModel {
     /// detail moves, or when it is gone from the list.
     func applyServicesStatus(_ status: ServicesStatus) {
         services = status.services
-        // A fresh status after Restart all services is its answer (v0.8 decision 4).
+        // A fresh status after Restart all services is its answer (v0.8
+        // decision 4); `lastRestartAllId` stays for the error that may follow.
+        // A status already on its way before the gateway took the request
+        // ends the spinner early too: nothing in the frame tells them apart.
         restartingAll = nil
         for service in Array(restartingServices.keys) {
             let now = status.services.first { $0.id == service }
@@ -209,10 +225,11 @@ extension ServicesPresentation {
     }
 
     /// Whether a Gateway row button can be pressed now: none during a
-    /// restart; Start not while the gateway is starting (as in Settings).
+    /// restart; Start and Restart not while the gateway is starting (as in
+    /// Settings).
     static func gatewayControlEnabled(_ control: GatewayControl, gateway: ServiceRow, restarting: Bool) -> Bool {
         if restarting { return false }
-        if control == .start { return gateway.state != .checking }
+        if control == .start || control == .restart { return gateway.state != .checking }
         return true
     }
 
@@ -349,6 +366,7 @@ extension AppModel {
         guard connection == .connected, offersRestartAll, restartingAll == nil else { return }
         let id = Self.requestId()
         restartingAll = id
+        lastRestartAllId = id
         restartAllError = nil
         send(.servicesRestartAll(ServicesRestartAll(id: id)))
     }

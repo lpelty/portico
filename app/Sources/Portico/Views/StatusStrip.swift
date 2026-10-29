@@ -422,7 +422,9 @@ struct ServicesMenu: View {
 }
 
 /// One service in the menu. A down row is tinted; Restart sends
-/// `service.restart` and spins until the next status. The Gateway row has
+/// `service.restart` and spins until the next status; when it fails, the
+/// gateway's reason shows under the row, tinted the same, until the next
+/// try (v0.8). Restart waits while Restart all services runs. The Gateway row has
 /// Stop (while it runs) or Start, and Restart, the same actions as
 /// Settings › Gateway (v0.8 decision 3).
 struct ServiceRowView: View {
@@ -445,6 +447,13 @@ struct ServiceRowView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text2)
                     .fixedSize(horizontal: false, vertical: true)
+                if let reason = restartError {
+                    // As Restart all's reason: the whole of it, wrapped.
+                    Text(reason)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.text2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if row.isGateway {
@@ -457,15 +466,26 @@ struct ServiceRowView: View {
                     Button("Restart") { model.restartService(row.id) }
                         .buttonStyle(PillButtonStyle(kind: .quiet))
                         .controlSize(.small)
-                        .disabled(model.connection != .connected)
+                        .disabled(!model.canRestart(service: row.id))
                         .help("Run the deployment's restart command for \(row.name)")
                 }
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(row.state == .down ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(
+            Self.tinted(state: row.state, error: restartError) ? Theme.waitSoft : .clear,
+            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement(children: .combine)
+    }
+
+    private var restartError: String? {
+        row.isGateway ? nil : model.restartError(service: row.id)
+    }
+
+    /// A down row, or one whose last restart failed, is tinted.
+    static func tinted(state: ServiceState, error: String?) -> Bool {
+        state == .down || error != nil
     }
 
     @ViewBuilder

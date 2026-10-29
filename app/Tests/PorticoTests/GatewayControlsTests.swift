@@ -61,11 +61,16 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertEqual([GatewayControl.start, .stop, .restart].map(\.title), ["Start", "Stop", "Restart"])
     }
 
-    func testStartWaitsWhileStartingAndNothingIsPressableDuringARestart() {
+    func testStartAndRestartWaitWhileStartingAndNothingIsPressableDuringARestart() {
         let starting = ServicesPresentation.gatewayRow(.starting, connection: .connecting)
         let stopped = ServicesPresentation.gatewayRow(.stopped, connection: .disconnected)
+        let up = ServicesPresentation.gatewayRow(.running(port: 54675), connection: .connected)
         XCTAssertFalse(ServicesPresentation.gatewayControlEnabled(.start, gateway: starting, restarting: false))
-        XCTAssertTrue(ServicesPresentation.gatewayControlEnabled(.restart, gateway: starting, restarting: false))
+        XCTAssertFalse(ServicesPresentation.gatewayControlEnabled(.restart, gateway: starting, restarting: false),
+                       "not while it is still starting, as Start")
+        XCTAssertTrue(ServicesPresentation.gatewayControlEnabled(.restart, gateway: stopped, restarting: false))
+        XCTAssertTrue(ServicesPresentation.gatewayControlEnabled(.restart, gateway: up, restarting: false))
+        XCTAssertTrue(ServicesPresentation.gatewayControlEnabled(.stop, gateway: up, restarting: false))
         XCTAssertTrue(ServicesPresentation.gatewayControlEnabled(.start, gateway: stopped, restarting: false))
         for control in [GatewayControl.start, .stop, .restart] {
             XCTAssertFalse(ServicesPresentation.gatewayControlEnabled(control, gateway: stopped, restarting: true))
@@ -197,9 +202,19 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertEqual(model.restartingAll, id)
         XCTAssertNil(model.restartAllError)
 
+        // The gateway's order: the status read after the attempt, then the error.
+        model.apply(.servicesStatus(ServicesStatus(services: [Service(id: "memory", name: "Memory", state: .down)])))
+        XCTAssertNil(model.restartingAll, "the status ends the spinner")
         model.apply(.error(ErrorMessage(code: "services.restart_failed", message: "restart exited 1: unit not found", id: id)))
         XCTAssertNil(model.restartingAll)
         XCTAssertEqual(model.restartAllError, "restart exited 1: unit not found")
+
+        // A refusal before anything ran (no status first) says why too.
+        model.restartAllServices()
+        guard case .servicesRestartAll(let again)? = sent.frames.last, let busyId = again.id else { return XCTFail() }
+        model.apply(.error(ErrorMessage(code: "services.busy", message: "already running", id: busyId)))
+        XCTAssertNil(model.restartingAll)
+        XCTAssertEqual(model.restartAllError, "already running")
 
         model.restartAllServices()
         XCTAssertNil(model.restartAllError, "cleared on the next try")
@@ -208,6 +223,67 @@ final class GatewayControlsTests: XCTestCase {
         // A new gateway (the restart may have restarted it too) starts clean.
         model.apply(.hello(hello(restartAll: true, epoch: "e2")))
         XCTAssertNil(model.restartingAll)
+    }
+
+    // MARK: - a row's Restart beside Restart all services
+
+    private func withRestartableMemory(_ model: AppModel) {
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            Service(id: "memory", name: "Memory", state: .down, detail: "not responding since 9:41", canRestart: true),
+        ])))
+    }
+
+    func testARowRestartWaitsWhileAllServicesRestart() throws {
+        let (model, sent) = try model()
+        connected(model)
+        withRestartableMemory(model)
+        XCTAssertTrue(model.canRestart(service: "memory"))
+        model.restartAllServices()
+        XCTAssertFalse(model.canRestart(service: "memory"), "the row's Restart is disabled meanwhile")
+        model.restartService("memory")
+        XCTAssertEqual(sent.types().filter { $0 == "service.restart" }, [], "not sent")
+        XCTAssertFalse(model.isRestarting(service: "memory"))
+
+        withRestartableMemory(model)  // Restart all's answer
+        XCTAssertTrue(model.canRestart(service: "memory"))
+        model.restartService("memory")
+        XCTAssertEqual(sent.types().filter { $0 == "service.restart" }.count, 1)
+    }
+
+    func testAFailedRowRestartSaysWhyUnderTheRowUntilTheNextTry() throws {
+        let (model, sent) = try model()
+        connected(model)
+        withRestartableMemory(model)
+        model.restartService("memory")
+        guard case .serviceRestart(let request)? = sent.frames.last, let id = request.id else { return XCTFail() }
+
+        // Someone else's error says nothing under the row.
+        model.apply(.error(ErrorMessage(code: "gateway.error", message: "other", id: "not-ours")))
+        XCTAssertNil(model.restartError(service: "memory"))
+
+        // As for Restart all: the status that answers it, then the error.
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            Service(id: "memory", name: "Memory", state: .checking, detail: "restarting", canRestart: true),
+        ])))
+        XCTAssertFalse(model.isRestarting(service: "memory"))
+        model.apply(.error(ErrorMessage(code: "gateway.error", message: "service.restart failed: boom", id: id)))
+        XCTAssertEqual(model.restartError(service: "memory"), "service.restart failed: boom")
+        XCTAssertTrue(ServiceRowView.tinted(state: .up, error: model.restartError(service: "memory")),
+                      "tinted like a down row while it says why")
+        XCTAssertFalse(ServiceRowView.tinted(state: .up, error: nil))
+        XCTAssertTrue(ServiceRowView.tinted(state: .down, error: nil))
+
+        // A refusal (nothing ran, no status first) says why too.
+        model.restartService("memory")
+        XCTAssertNil(model.restartError(service: "memory"), "cleared on the next try")
+        guard case .serviceRestart(let again)? = sent.frames.last, let busyId = again.id else { return XCTFail() }
+        model.apply(.error(ErrorMessage(code: "services.busy", message: "restarting all", id: busyId)))
+        XCTAssertFalse(model.isRestarting(service: "memory"))
+        XCTAssertEqual(model.restartError(service: "memory"), "restarting all")
+
+        // A new gateway starts clean.
+        model.apply(.hello(hello(restartAll: true, epoch: "e2")))
+        XCTAssertNil(model.restartError(service: "memory"))
     }
 
     func testRestartAllIsNotSentWithoutTheCapabilityOrTheSocket() throws {
