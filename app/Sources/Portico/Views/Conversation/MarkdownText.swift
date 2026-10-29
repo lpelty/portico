@@ -335,8 +335,7 @@ struct MarkdownText: View {
         case .paragraph(let text):
             inlineText(text)
         case .heading(let level, let text):
-            inlineText(text)
-                .font(.system(size: Self.bodySize + (level == 1 ? 3 : level == 2 ? 2 : 1), weight: .semibold))
+            inlineText(text, font: .system(size: Self.bodySize + (level == 1 ? 3 : level == 2 ? 2 : 1), weight: .semibold))
                 .padding(.top, first ? 0 : 4)
         case .list(let items):
             VStack(alignment: .leading, spacing: 6) {
@@ -361,9 +360,10 @@ struct MarkdownText: View {
         }
     }
 
-    private func inlineText(_ text: String) -> some View {
+    /// `font` is applied here, not after: an outer `.font` loses to this one.
+    private func inlineText(_ text: String, font: Font = .system(size: bodySize)) -> some View {
         Text(MarkdownParser.inline(text, codeBackground: Theme.surface))
-            .font(.system(size: Self.bodySize))
+            .font(font)
             .lineSpacing(Self.lineSpacing)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)

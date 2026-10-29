@@ -271,6 +271,8 @@ struct SessionCard: View {
                                 }
                             }
                             .lineLimit(1)
+                            // Never "Log ses…": the label keeps its width, New gives way.
+                            .fixedSize()
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
