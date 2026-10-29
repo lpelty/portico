@@ -47428,7 +47428,7 @@
       "y": 9640,
       "name": "Row label",
       "fill": "#E6EDF3",
-      "content": "X · v0.5 — Daedalus-Smartsheet's nine (10-29): viewer file types, Log session without a log step, Changed this session under Folder, services wrap",
+      "content": "X · v0.5 — the first deployment's nine (10-29): viewer file types, Log session without a log step, Changed this session under Folder, services wrap",
       "fontFamily": "$font",
       "fontSize": 28,
       "fontWeight": "600"
@@ -48272,7 +48272,7 @@
                           "id": "i6pGd",
                           "name": "Line",
                           "fill": "$text-3",
-                          "content": "# ethOS gateway",
+                          "content": "# a deployment's gateway",
                           "fontFamily": "IBM Plex Mono",
                           "fontSize": 12,
                           "fontWeight": "normal"
@@ -48302,7 +48302,7 @@
                           "id": "gb8w1",
                           "name": "Line",
                           "fill": "$text",
-                          "content": "default_folder = \"~/ethos/agents/primary\"",
+                          "content": "default_folder = \"~/acme/agents/primary\"",
                           "fontFamily": "IBM Plex Mono",
                           "fontSize": 12,
                           "fontWeight": "normal"
@@ -48332,7 +48332,7 @@
                           "id": "JXWEn",
                           "name": "Line",
                           "fill": "$text",
-                          "content": "name = \"ethOS\"",
+                          "content": "name = \"Acme Agent\"",
                           "fontFamily": "IBM Plex Mono",
                           "fontSize": 12,
                           "fontWeight": "normal"
@@ -48342,7 +48342,7 @@
                           "id": "xtZ3N",
                           "name": "Line",
                           "fill": "$text",
-                          "content": "app_icon = \"~/ethos/brand/icon-1024.png\"",
+                          "content": "app_icon = \"~/acme/brand/icon-1024.png\"",
                           "fontFamily": "IBM Plex Mono",
                           "fontSize": 12,
                           "fontWeight": "normal"
@@ -48572,7 +48572,7 @@
                           "id": "gzkeH",
                           "name": "Path",
                           "fill": "$text-3",
-                          "content": "~/ethos/agents/primary/test.csv",
+                          "content": "~/acme/agents/primary/test.csv",
                           "fontFamily": "IBM Plex Mono",
                           "fontSize": 11,
                           "fontWeight": "normal"
