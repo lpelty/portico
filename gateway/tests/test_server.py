@@ -322,3 +322,33 @@ async def test_status_route_needs_the_token_and_names_the_live_session(server: G
     assert got["version"] == 1 and got["running"] is True and got["pid"] == os.getpid() and got["port"] == server.port
     assert (got["session"], got["folder"], got["state"], got["mode"]) == (live.number, str(tmp_path), "idle", "default")
     assert got["config_stale"] is False and "started_at" in got
+
+
+async def test_update_check_at_start_reaches_the_app_now_and_later(state_dir: StateDir, tmp_path: Path) -> None:
+    from portico_gateway.messages import UpdateAvailable
+    from tests.conftest import make_config
+
+    gate = tmp_path / "go"
+    config = make_config(update={"check": f"while [ ! -f {gate} ]; do sleep 0.05; done; echo 0.3.1", "run": "true"})
+    srv = make_server(state_dir, config)
+    await srv.serve(0)
+    try:
+        conn = await connect(ws_url(srv, srv.token))
+        await conn.send(dump(HelloClient(ts=TS, app_version="0.3.0")))
+        hello = parse_server(await conn.recv())
+        assert isinstance(hello, HelloServer) and hello.can_update is True
+        await conn.recv()  # chat.list: the check runs in the background and blocks nothing
+        gate.write_text("")
+        found = parse_server(await asyncio.wait_for(conn.recv(), 5))
+        assert isinstance(found, UpdateAvailable) and found.version == "0.3.1"
+        await conn.close()
+
+        again = await connect(ws_url(srv, srv.token))
+        await again.send(dump(HelloClient(ts=TS, app_version="0.3.0")))
+        assert isinstance(parse_server(await again.recv()), HelloServer)
+        assert isinstance(parse_server(await again.recv()), ChatList)
+        later = parse_server(await again.recv())
+        assert isinstance(later, UpdateAvailable) and later.version == "0.3.1"
+        await again.close()
+    finally:
+        await srv.shutdown()

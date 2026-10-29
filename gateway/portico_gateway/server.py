@@ -173,6 +173,7 @@ from .messages import (
     TurnFinished,
     TurnStarted,
     TurnStop,
+    UpdateAvailable,
     UserText,
     dump,
     parse_client,
@@ -180,6 +181,7 @@ from .messages import (
 from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .state import StateDir
+from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
 
@@ -580,6 +582,8 @@ class GatewayServer:
         self.config_mtime = self._config_mtime()
         self._config_stale_sent = False
         self.started_at = _now()
+        # The version the deployment's update check last found, if any.
+        self.update_version: str | None = None
         self.plugins = plugins if plugins is not None else Plugins.none()
         self.state = state
         self.registry = registry
@@ -661,6 +665,8 @@ class GatewayServer:
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
         if self.config_path is not None:
             self._spawn(self._watch_config(), name="portico-config-watch")
+        if self.config.update.check:
+            self._spawn(self._watch_updates(), name="portico-update-check")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -783,6 +789,27 @@ class GatewayServer:
             await asyncio.sleep(CONFIG_CHECK_SECONDS)
             await self.check_config()
 
+    async def check_update(self) -> None:
+        """Run the deployment's update check once; a newly found version goes to the app as ``update.available``."""
+        command = self.config.update.check
+        if not command:
+            return
+        version = await check_for_update(command, float(self.config.command_timeout_seconds))
+        if version is None or version == self.update_version:
+            return
+        self.update_version = version
+        log.info("update available: %s", version)
+        await self.broadcast(UpdateAvailable(ts=_now(), version=version))
+
+    async def _watch_updates(self) -> None:
+        """At start, then every ``UPDATE_CHECK_SECONDS``; in the background, never in anyone's way."""
+        while True:
+            try:
+                await self.check_update()
+            except Exception:
+                log.exception("update check failed")
+            await asyncio.sleep(UPDATE_CHECK_SECONDS)
+
     def status(self) -> dict[str, Any]:
         """What ``GET /v1/status`` answers (``portico-gateway status --json``): the live session, if any.
 
@@ -902,6 +929,9 @@ class GatewayServer:
             self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
         await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
         await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
+        if self.update_version is not None:
+            # Found before this app attached: it hears it now.
+            await self._send(conn, UpdateAvailable(ts=_now(), version=self.update_version))
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while
         # the worker is inside a slow handler (a hung ``before_first_chat``).

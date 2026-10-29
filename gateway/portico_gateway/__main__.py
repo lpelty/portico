@@ -195,6 +195,52 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if status["running"] else EXIT_NONE_RUNNING
 
 
+# Exit code of the ``update`` commands when the deployment configured no update command.
+EXIT_NOT_CONFIGURED = 2
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """``--check``: the deployment's ``update.check`` (0 + the version, 1 none, 2 not configured).
+
+    Without it: stop a running gateway (as ``stop``), run ``update.run`` with
+    its output streamed to stdout, exit with its code (2 when not configured).
+    """
+    import subprocess
+
+    from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.status import stop_gateway
+    from portico_gateway.update import SHELL, check_for_update
+
+    state, config_path = _state_and_config_path(args)
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    if args.check:
+        if not config.update.check:
+            print("portico-gateway: no update check configured ([update] check in config.toml)", file=sys.stderr)
+            return EXIT_NOT_CONFIGURED
+        version = asyncio.run(check_for_update(config.update.check, float(config.command_timeout_seconds)))
+        if version is None:
+            return 1
+        print(version)
+        return 0
+    if not config.update.run:
+        print("portico-gateway: no update command configured ([update] run in config.toml)", file=sys.stderr)
+        return EXIT_NOT_CONFIGURED
+    try:
+        pid = stop_gateway(state, float(config.command_timeout_seconds) + 30.0)
+    except TimeoutError as e:
+        print(f"portico-gateway: {e}; not updating", file=sys.stderr)
+        return 1
+    if pid is not None:
+        print(f"stopped the gateway (pid {pid})", flush=True)
+    sys.stdout.flush()
+    done = subprocess.run([SHELL, "-c", config.update.run], stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT, check=False)
+    return done.returncode
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
     p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("update", help="run the deployment's update (stops the gateway first); --check only asks")
+    p.add_argument("--check", action="store_true", help="exit 0 and print the version when an update is available, 1 when none")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--config", help="config file (default: <state>/config.toml)")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("config-value", help="print one config value (e.g. brand.name, brand.app_icon), or nothing")
     p.add_argument("key", help="dotted key: brand.name, brand.app_icon, update.run, ...")

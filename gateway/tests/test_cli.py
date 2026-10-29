@@ -138,3 +138,53 @@ async def test_status_and_stop_with_and_without_a_gateway(tmp_path: Path) -> Non
     assert code == 3 and json.loads(out)["running"] is False
     code, _ = await cli("stop", "--state", str(home))
     assert code == 3
+
+
+# --- update -------------------------------------------------------------------------
+
+
+def test_update_check_exit_codes(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "home"
+    write_config(home, "")
+    assert main(["update", "--check", "--state", str(home)]) == 2
+    assert "no update check configured" in capfd.readouterr().err
+
+    write_config(home, '[update]\ncheck = "echo checking >&2; echo; echo 0.3.1"\n')
+    assert main(["update", "--check", "--state", str(home)]) == 0
+    assert capfd.readouterr().out == "0.3.1\n"
+
+    write_config(home, '[update]\ncheck = "exit 1"\n')
+    assert main(["update", "--check", "--state", str(home)]) == 1
+    assert capfd.readouterr().out == ""
+
+    write_config(home, '[update]\ncheck = "true"\n')  # exit 0 but no version: none
+    assert main(["update", "--check", "--state", str(home)]) == 1
+
+
+async def test_update_stops_the_gateway_then_streams_the_run_and_exits_with_its_code(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    write_config(home, "")
+    assert await asyncio.to_thread(main, ["update", "--state", str(home)]) == 2
+    assert "no update command configured" in capfd.readouterr().err
+
+    write_config(home, '[update]\nrun = "echo updating; echo to stderr >&2; exit 7"\n')
+    proc = await _spawn_gateway(home)
+    try:
+        code = await asyncio.to_thread(main, ["update", "--state", str(home)])
+        assert code == 7
+        out = capfd.readouterr().out
+        assert f"stopped the gateway (pid {proc.pid})" in out
+        assert "updating" in out and "to stderr" in out
+        await asyncio.wait_for(proc.wait(), 30)
+        assert proc.returncode == 0
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+
+    # No gateway running: the update just runs.
+    write_config(home, '[update]\nrun = "echo done"\n')
+    assert await asyncio.to_thread(main, ["update", "--state", str(home)]) == 0
+    assert "done" in capfd.readouterr().out
