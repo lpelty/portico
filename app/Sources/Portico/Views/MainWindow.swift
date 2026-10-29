@@ -32,7 +32,9 @@ struct MainWindow: View {
                 }
                 MainColumn()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if let chat = model.selected, let viewer = widths.viewer {
+                // The shown chat's viewer: the conversation's, or (Y1) the
+                // live session's beside the welcome that continues it.
+                if let chat = model.shownChat, let viewer = widths.viewer {
                     ColumnDivider(
                         onDrag: { dx in
                             // In focus the split is fixed; the widths to come back to stay as they were.
@@ -75,17 +77,17 @@ struct MainWindow: View {
 
     private var viewerShown: Bool {
         guard !model.documentMode else { return false }
-        return model.selected.map { model.isViewerShown(for: $0) } ?? false
+        return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
     }
 
     /// The viewer's fit: the current artifact's, reading when nothing is shown.
     private var viewerFit: ColumnWidths.Fit {
-        ColumnWidths.Fit(media: model.selected.flatMap { model.current[$0]?.media })
+        ColumnWidths.Fit(media: model.shownChat.flatMap { model.current[$0]?.media })
     }
 
     /// Focus (V3) is on for the chat shown and its viewer is up.
     private var focused: Bool {
-        guard let chat = model.selected else { return false }
+        guard let chat = model.shownChat else { return false }
         return model.isFocused(chat: chat) && viewerShown
     }
 
@@ -169,11 +171,18 @@ struct MainColumn: View {
     private var content: some View {
         if model.documentMode, let chat = model.filesChat {
             DocumentView(chat: chat)
-        } else if let chat = model.selected {
-            ConversationView(chat: chat)
-                .id(chat)
         } else {
-            StartView()
+            // Decided from state before drawing (v0.6): never a welcome
+            // that then jumps to a conversation.
+            switch model.mainScreen {
+            case .conversation(let chat):
+                ConversationView(chat: chat)
+                    .id(chat)
+            case .start, .continuing:
+                StartView()
+            case .waiting:
+                Color.clear
+            }
         }
     }
 }
@@ -214,7 +223,7 @@ struct MainToolbar: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
-            if let chat = model.selected, !model.documentMode {
+            if let chat = model.shownChat, !model.documentMode {
                 let shown = model.isViewerShown(for: chat)
                 PanelToggle(shown: shown, side: .trailing, help: shown ? "Hide the viewer" : "Show the viewer") {
                     model.setViewer(visible: !shown, for: chat)
@@ -238,7 +247,7 @@ struct MainToolbar: View {
             guard let root else { return "Files" }
             return "Files · " + (root.name == AppModel.chatRoot ? URL(fileURLWithPath: root.path).lastPathComponent : root.name)
         }
-        guard let id = model.selected else { return model.startTitle }
+        guard let id = model.shownChat else { return model.mainScreen == .waiting ? nil : model.startTitle }
         if model.isSinglePresentation {
             return "Session \(id)"
         }

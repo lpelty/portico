@@ -193,11 +193,15 @@ struct ChatSummary: Codable, Equatable, Sendable {
     /// the last log, or none ran and a turn finished. Computed by the
     /// gateway; absent means false.
     var unlogged: Bool? = nil
+    /// When a turn last finished (v0.6): the welcome's "last reply 12 min
+    /// ago". Absent before the first turn, and from an older gateway.
+    var lastReply: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case chat, folder, alias, state, created, title, ended, logged, parent, compactions, mode, unlogged
         case contextPercent = "context_percent"
         case loggedAt = "logged_at"
+        case lastReply = "last_reply"
     }
 
     /// `unlogged`, absent read as false.

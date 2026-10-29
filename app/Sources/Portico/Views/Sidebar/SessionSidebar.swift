@@ -103,13 +103,23 @@ struct SessionSidebar: View {
 
 /// One ended session: number, title, logged check / not-logged amber dot /
 /// nothing when unknown, and when it ended. A click opens it read-only.
+/// Plain until hovered (v0.6, Y2): no box at rest, the hover tint, and
+/// when selected the tint with a brighter, medium-weight title. No focus
+/// ring: a clicked row must not keep the system's outline.
 struct EarlierRow: View {
     let summary: ChatSummary
     let selected: Bool
     let action: () -> Void
 
+    /// The title's colour and weight: brighter and medium when selected.
+    static func titleStyle(selected: Bool, untitled: Bool) -> (color: Color, weight: Font.Weight) {
+        if untitled { return (Theme.text3, selected ? .medium : .regular) }
+        return selected ? (Theme.text, .medium) : (Theme.text2, .regular)
+    }
+
     var body: some View {
         let shown = SessionPresentation(summary: summary)
+        let title = Self.titleStyle(selected: selected, untitled: shown.title == nil)
         Button(action: action) {
             HStack(spacing: 10) {
                 Text("\(summary.chat)")
@@ -117,8 +127,8 @@ struct EarlierRow: View {
                     .foregroundStyle(Theme.text3)
                     .frame(minWidth: 18, alignment: .leading)
                 Text(shown.title ?? "Untitled")
-                    .font(.system(size: 13))
-                    .foregroundStyle(shown.title == nil ? Theme.text3 : Theme.text2)
+                    .font(.system(size: 13, weight: title.weight))
+                    .foregroundStyle(title.color)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -131,8 +141,9 @@ struct EarlierRow: View {
             .padding(.horizontal, 10)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.hover)
+        .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
         .background(selected ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .focusEffectDisabled()
         .help(summary.logged == true ? "Logged" : summary.logged == false ? "Not logged" : "")
     }
 
@@ -156,9 +167,16 @@ struct EarlierRow: View {
 /// New; or the nudge (S2) when the
 /// session is long: amber, the sentence, primary "Log and start new" and
 /// "Not now".
+///
+/// While something else has the main column (an earlier session, the
+/// welcome, the document view) the card itself is a button to the live
+/// session (v0.6, Y2): the hand and a stronger edge on hover, help "Go
+/// back to Session M". Its own buttons keep their clicks: a tap lands on
+/// the innermost button, and the card's tap takes the rest.
 struct SessionCard: View {
     let summary: ChatSummary
     @EnvironmentObject private var model: AppModel
+    @State private var hovering = false
 
     private var chat: Int { summary.chat }
     private var nudging: Bool { model.shouldNudge(chat: chat) }
@@ -169,9 +187,29 @@ struct SessionCard: View {
     private var canLogSession: Bool { model.canLogSession(chat: chat) }
     private var renewLabel: String { canLog ? "Log and start new" : "Start new" }
 
+    /// The card opens the live session now.
+    private var opensLive: Bool { model.cardOpensLiveSession(live: chat) }
+    /// An earlier session is open: the card is the way back (Y2's hint).
+    private var goesBack: Bool { opensLive && model.selected.map { model.isEnded(chat: $0) } == true }
+    private var cardHelp: String {
+        guard opensLive else { return "" }
+        return goesBack ? "Go back to Session \(chat)" : "Show Session \(chat)"
+    }
+
     var body: some View {
+        card
+            .contentShape(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+            .onTapGesture { if opensLive { model.openLiveSession(chat) } }
+            .onHover { hovering = $0 }
+            .pointerStyle(opensLive && hovering ? .link : nil)
+            .help(cardHelp)
+            .accessibilityAddTraits(opensLive ? .isButton : [])
+            .accessibilityAction(named: "Go back to Session \(chat)") { model.openLiveSession(chat) }
+    }
+
+    private var card: some View {
         let shown = SessionPresentation(summary: summary)
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Circle().fill(stateColor).frame(width: 7, height: 7)
                 Text(shown.number)
@@ -201,7 +239,11 @@ struct SessionCard: View {
             }
             contextRow
             buttons
-            if !nudging && model.canRenew(chat: chat) {
+            if goesBack && !nudging {
+                Text("Click to go back to it")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.text3)
+            } else if !nudging && model.canRenew(chat: chat) {
                 Text(hint)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.text3)
@@ -210,9 +252,16 @@ struct SessionCard: View {
         }
         .padding(12)
         .background(nudging ? Theme.waitSoft : Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .overlay {
+            if opensLive && hovering {
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                    .fill(Theme.hoverTint)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
-                .stroke(nudging ? Theme.wait : Theme.border, lineWidth: 1))
+                .stroke(nudging ? Theme.wait : opensLive && hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .accessibilityElement(children: .contain)
     }
 

@@ -205,11 +205,12 @@ struct StatusStripPresentation: Equatable, Sendable {
 }
 
 extension AppModel {
-    /// The strip for the selected chat and the supervisor's view of the gateway.
+    /// The strip for the shown chat (or the session the welcome continues)
+    /// and the supervisor's view of the gateway.
     func statusStrip(gateway: GatewaySupervisor.Status) -> StatusStripPresentation {
         StatusStripPresentation(
-            modelText: selected.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
-            contextPercent: selected.flatMap { contextPercent(for: $0) },
+            modelText: shownChat.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
+            contextPercent: shownChat.flatMap { contextPercent(for: $0) },
             services: servicesPresentation(gateway: gateway),
             gatewayText: StatusStripPresentation.gatewayText(gateway))
     }

@@ -81,12 +81,79 @@ extension AppModel {
         summary(of: chat)?.ended != nil
     }
 
-    /// Single presentation at launch (and after the selection went away):
-    /// open the live session directly, so the start screen shows only
-    /// when there is no session yet.
+    /// Single presentation, after a `chat.list`, with nothing selected.
+    /// At launch (no conversation shown yet in this run) the welcome
+    /// continues the live session (Y1): its events are asked for without
+    /// showing it, so View and the first send find it loaded, and the
+    /// viewer is put back only if it was showing something at quit. Once a
+    /// conversation has been shown, losing the selection (the gateway
+    /// restarted and no longer lists it) goes to the live session, never
+    /// back to the welcome: only a launch shows the welcome.
     func openLiveSessionIfNeeded() {
         guard isSinglePresentation, selected == nil, !isStarting, let live = liveSession else { return }
-        open(chat: live.chat)
+        if conversationShown {
+            open(chat: live.chat)
+        } else if !openedChats.contains(live.chat) {
+            restoreViewerAtLaunch(chat: live.chat)
+            load(chat: live.chat)
+        }
+    }
+
+    /// What the main column shows now (`MainScreen.decide`).
+    var mainScreen: MainScreen {
+        MainScreen.decide(
+            selected: selected, listed: chatsListed, gaveUp: gaveUpConnecting,
+            single: isSinglePresentation, live: liveSession?.chat)
+    }
+
+    /// The live session the welcome continues (Y1), when it does.
+    var continuingSession: Int? {
+        if case .continuing(let chat) = mainScreen { return chat }
+        return nil
+    }
+
+    /// The chat the window is about: the one shown, else the one the
+    /// welcome continues. The viewer, the toolbar's title and viewer
+    /// button, and the status strip follow it.
+    var shownChat: Int? { selected ?? continuingSession }
+
+    /// The connection loop has stopped trying for now (a failure, or the
+    /// person stopped the gateway): the welcome shows, saying so, rather
+    /// than an empty column waiting for a list that is not coming.
+    var gaveUpConnecting: Bool {
+        switch connection {
+        case .failed: true
+        case .disconnected: !autoStartGateway
+        case .connecting, .connected: false
+        }
+    }
+
+    // MARK: the way back (v0.6, Y2)
+
+    /// The bar pinned over the conversation (Y2): shown over an ended
+    /// session in single presentation, where the composer would be.
+    func showsEarlierBar(chat: Int) -> Bool {
+        isSinglePresentation && isEnded(chat: chat)
+    }
+
+    /// The bar's "Back to Session M": the live session, when there is one.
+    func backTarget(from chat: Int) -> Int? {
+        guard showsEarlierBar(chat: chat), let live = liveSession?.chat, live != chat else { return nil }
+        return live
+    }
+
+    /// The THIS SESSION card is a button to the live session whenever
+    /// something else has the main column: an earlier session, or the
+    /// welcome. On the live session's own conversation it is just a card.
+    func cardOpensLiveSession(live: Int) -> Bool {
+        selected != live || documentMode
+    }
+
+    /// The card's click: the live session's conversation, out of the
+    /// document view if that had the window.
+    func openLiveSession(_ live: Int) {
+        if documentMode { toggleDocumentView() }
+        open(chat: live)
     }
 
     // MARK: renewing
@@ -288,6 +355,33 @@ enum SessionTime {
         return "\(hours / 24) d"
     }
 
+    /// How long ago, in words: `just now`, `12 min ago`, `3 h ago`, `2 d ago`.
+    static func ago(_ date: Date, now: Date = Date()) -> String {
+        let minutes = max(0, Int(now.timeIntervalSince(date) / 60))
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes) min ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours) h ago" }
+        return "\(hours / 24) d ago"
+    }
+
+    /// When a session ended, for the bar over it: `12 min ago` within the
+    /// hour, `today at 9:14`, `yesterday`, the weekday this week (`on
+    /// Tuesday`), else the date (`on Oct 3`).
+    static func endedWhen(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let elapsed = now.timeIntervalSince(date)
+        if elapsed >= 0 && elapsed < 3600 { return ago(date, now: now) }
+        if calendar.isDate(date, inSameDayAs: now) { return "today at \(clock(date, calendar: calendar))" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        if days == 1 { return "yesterday" }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = (2..<7).contains(days) ? "EEEE" : "MMM d"
+        return "on " + formatter.string(from: date)
+    }
+
     /// An Earlier row's time: the clock today, the weekday this week,
     /// else the month and day.
     static func relativeDay(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
@@ -366,9 +460,82 @@ struct SessionPresentation: Equatable {
         return parts.joined(separator: " · ")
     }
 
+    /// The welcome's quiet line while it continues this session (Y1):
+    /// `Continuing Session 3 · started 9:14 · last reply 12 min ago`; the
+    /// last reply only when the gateway says (v0.6 `last_reply`).
+    func continuingLine(now: Date = Date(), calendar: Calendar = .current) -> String {
+        var parts = ["Continuing \(number)"]
+        if let start = SessionTime.parse(summary.created) {
+            parts.append("started \(SessionTime.clock(start, calendar: calendar))")
+        }
+        if let reply = SessionTime.parse(summary.lastReply) {
+            parts.append("last reply \(SessionTime.ago(reply, now: now))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The bar over an earlier session (Y2): `Session 2 · ended yesterday · read-only`.
+    func endedBarLine(now: Date = Date(), calendar: Calendar = .current) -> String {
+        var parts = [number]
+        if let ended = SessionTime.parse(summary.ended) {
+            parts.append("ended \(SessionTime.endedWhen(ended, now: now, calendar: calendar))")
+        } else {
+            parts.append("ended")
+        }
+        parts.append("read-only")
+        return parts.joined(separator: " · ")
+    }
+
     /// The divider's second line: `Session 14 · started 11:42`.
     func startedSecondLine(calendar: Calendar = .current) -> String {
         guard let start = SessionTime.parse(summary.created) else { return number }
         return "\(number) · started \(SessionTime.clock(start, calendar: calendar))"
+    }
+}
+
+// MARK: - What the main column shows (v0.6)
+
+/// The main column's content, decided from state before anything is drawn
+/// (Y1): the app never draws a welcome and then jumps away from it.
+enum MainScreen: Equatable {
+    /// Nothing yet: the gateway has not listed its sessions, so whether
+    /// the welcome starts or continues one is not known.
+    case waiting
+    /// The welcome, which starts a session with the first message.
+    case start
+    /// The welcome, whose composer continues this live session (Y1).
+    case continuing(Int)
+    /// A conversation.
+    case conversation(Int)
+
+    /// A selected chat is shown. Without one: wait for the first
+    /// `chat.list` unless the connection has given up (then the welcome
+    /// says "Not connected"); in single presentation with a live session
+    /// the welcome continues it; otherwise it starts one.
+    static func decide(selected: Int?, listed: Bool, gaveUp: Bool, single: Bool, live: Int?) -> MainScreen {
+        if let selected { return .conversation(selected) }
+        if !listed && !gaveUp { return .waiting }
+        if single, let live { return .continuing(live) }
+        return .start
+    }
+}
+
+// MARK: - The viewer across a quit (v0.6)
+
+/// The artifact the viewer was showing when the app quit, and in which
+/// session; stored in `Settings`.
+struct SavedViewer: Equatable, Sendable {
+    var chat: Int
+    var artifact: String
+}
+
+enum ViewerRestore {
+    /// The artifact to reopen in `chat`'s viewer at launch: the one that
+    /// was showing in that session at quit; `nil` (the viewer stays
+    /// closed, the chat full width) when the viewer was closed or empty,
+    /// or was showing another session's.
+    static func artifact(saved: SavedViewer?, chat: Int) -> String? {
+        guard let saved, saved.chat == chat else { return nil }
+        return saved.artifact
     }
 }
