@@ -23,14 +23,16 @@ struct StartView: View {
     private var continuing: ChatSummary? { model.continuingSession.flatMap { model.summary(of: $0) } }
     private var canSend: Bool {
         guard connected, !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        if continuing != nil { return true }
+        if let live = continuing?.chat { return !model.isSessionCommandPending(chat: live) }
         return model.startFolder != nil && !model.isStarting
     }
     /// A suggestion can go now: to the continued session when it is free,
     /// else to a new session in the start folder.
     private var canSuggest: Bool {
         guard connected else { return false }
-        if let live = continuing?.chat { return !model.isBusy(chat: live) && !model.isSending(chat: live) }
+        if let live = continuing?.chat {
+            return !model.isBusy(chat: live) && !model.isSending(chat: live) && !model.isSessionCommandPending(chat: live)
+        }
         return model.startFolder != nil && !model.isStarting
     }
 
@@ -206,7 +208,12 @@ struct StartView: View {
 
     private var placeholder: String {
         if !connected { return "Not connected" }
-        if let live = continuing { return "Continue Session \(live.chat) — what next?" }
+        if let live = continuing {
+            // As the conversation's input bar says while a log or renewal is out.
+            if model.isRenewing(chat: live.chat) { return "Starting the next session…" }
+            if model.isLogging(chat: live.chat) { return "Logging the session…" }
+            return "Continue Session \(live.chat) — what next?"
+        }
         if model.isStarting { return "Starting…" }
         return "What should we work on? Ask anything, or drop a file here"
     }

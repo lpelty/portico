@@ -102,7 +102,7 @@ extension AppModel {
     /// What the main column shows now (`MainScreen.decide`).
     var mainScreen: MainScreen {
         MainScreen.decide(
-            selected: selected, listed: chatsListed, gaveUp: gaveUpConnecting,
+            selected: selected, listed: chatsListed, gaveUp: gaveUpConnecting || gaveUpBeforeList,
             single: isSinglePresentation, live: liveSession?.chat)
     }
 
