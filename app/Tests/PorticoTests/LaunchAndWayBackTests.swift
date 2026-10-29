@@ -248,12 +248,122 @@ final class LaunchAndWayBackTests: XCTestCase {
         first.rememberViewerForNextLaunch()
         XCTAssertEqual(first.settings.viewerAtQuit, SavedViewer(chat: 3, artifact: "a2"))
 
+        // v0.8 decision 1: the welcome stands alone; going into the
+        // conversation brings the viewer back, on the artifact.
         let (next, _) = make()
         launched(next)
-        XCTAssertFalse(next.isViewerShown(for: 3), "closed until the artifact is listed again")
         next.apply(.chatHistory(ChatHistory(chat: 3, events: [artifact("a1"), artifact("a2")], truncated: false)))
+        XCTAssertEqual(next.mainScreen, .continuing(3))
+        XCTAssertFalse(next.isViewerShown(for: 3), "never beside the welcome")
+        XCTAssertNil(next.current[3])
+        next.open(chat: 3)  // View Session 3
         XCTAssertEqual(next.current[3]?.id, "a2")
         XCTAssertTrue(next.isViewerShown(for: 3))
+    }
+
+    // MARK: - v0.8 decision 2: a generated title arrives in a later chat.list
+
+    func testALaterTitleUpdatesTheEarlierRowTheCardAndTheDivider() throws {
+        let (model, _) = try model()
+        func listed(_ earlier: String, _ live: String) -> ServerMessage {
+            .chatList(ChatList(chats: [
+                ChatSummary(
+                    chat: 2, folder: "/tmp/demo", alias: nil, state: .stopped, created: "2026-10-28T09:14:00Z",
+                    title: earlier, ended: "2026-10-28T17:00:00Z"),
+                ChatSummary(
+                    chat: 3, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-10-29T09:14:00Z",
+                    title: live, parent: 2),
+            ]))
+        }
+        model.setConnection(.connected)
+        model.apply(.hello(hello()))
+        model.apply(listed("can you look at the interview notes from", "next: the codebook"))
+        model.apply(listed("Interview notes review", "Codebook draft"))
+
+        XCTAssertEqual(model.earlierSessions.map { SessionPresentation(summary: $0).title }, ["Interview notes review"])
+        XCTAssertEqual(model.earlierSessions(matching: "notes review").map(\.chat), [2], "the search reads the new title")
+        let card = SessionPresentation(summary: try XCTUnwrap(model.summary(of: 3)))
+        XCTAssertTrue(card.startedLine(calendar: utc, locale: us).hasSuffix(" · Codebook draft"))
+        let parent = SessionPresentation(summary: try XCTUnwrap(model.summary(of: 2)))
+        XCTAssertEqual(parent.parentLine(calendar: utc, locale: us), "Session 2 · Interview notes review · not logged")
+
+        // A replayed first message does not put the first line back.
+        model.apply(.userText(UserText(chat: 3, turn: 1, text: "next: the codebook", seq: 1, ts: "2026-10-29T09:15:00Z")))
+        XCTAssertEqual(SessionPresentation(summary: try XCTUnwrap(model.summary(of: 3))).title, "Codebook draft")
+    }
+
+    // MARK: - v0.8 decision 1: the welcome on its own
+
+    private func rememberedA2() throws {
+        let (first, _) = try model()
+        first.settings.viewerAtQuit = SavedViewer(chat: 3, artifact: "a2")
+    }
+
+    func testTheQuitRuleKeepsWhatWasRememberedWhileTheRestoreIsHeld() {
+        let saved = SavedViewer(chat: 3, artifact: "a2")
+        let showing = SavedViewer(chat: 3, artifact: "a5")
+        XCTAssertEqual(ViewerRestore.toRemember(showing: nil, saved: saved, held: true), saved, "quit from the welcome")
+        XCTAssertNil(ViewerRestore.toRemember(showing: nil, saved: saved, held: false), "closed in the conversation")
+        XCTAssertEqual(ViewerRestore.toRemember(showing: showing, saved: saved, held: true), showing)
+        XCTAssertEqual(ViewerRestore.toRemember(showing: showing, saved: nil, held: false), showing)
+    }
+
+    func testQuittingFromTheWelcomeKeepsTheRememberedArtifact() throws {
+        try rememberedA2()
+        let (model, _) = make()
+        launched(model)
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: [artifact("a1"), artifact("a2")], truncated: false)))
+        XCTAssertFalse(model.isViewerShown(for: 3))
+        model.rememberViewerForNextLaunch()
+        XCTAssertEqual(model.settings.viewerAtQuit, SavedViewer(chat: 3, artifact: "a2"), "not lost by quitting from the welcome")
+
+        // And again the launch after that: still there for the conversation.
+        let (next, _) = make()
+        launched(next)
+        next.apply(.chatHistory(ChatHistory(chat: 3, events: [artifact("a1"), artifact("a2")], truncated: false)))
+        next.open(chat: 3)
+        XCTAssertEqual(next.current[3]?.id, "a2")
+    }
+
+    func testViewingBeforeTheEventsArriveRestoresWhenTheArtifactIsListed() throws {
+        try rememberedA2()
+        let (model, _) = make()
+        launched(model)
+        model.open(chat: 3)
+        XCTAssertFalse(model.isViewerShown(for: 3), "closed until the artifact is listed again")
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: [artifact("a1"), artifact("a2")], truncated: false)))
+        XCTAssertEqual(model.current[3]?.id, "a2")
+        XCTAssertTrue(model.isViewerShown(for: 3))
+    }
+
+    func testASendFromTheWelcomeRestoresTheViewer() throws {
+        try rememberedA2()
+        let (model, _) = make()
+        launched(model)
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: [artifact("a1"), artifact("a2")], truncated: false)))
+        model.apply(.chatLive(ChatLive(chat: 3)))
+        model.continueSession(chat: 3, text: "next step")
+        XCTAssertEqual(model.mainScreen, .conversation(3))
+        XCTAssertEqual(model.current[3]?.id, "a2")
+        XCTAssertTrue(model.isViewerShown(for: 3))
+    }
+
+    func testPickingAnotherSessionHoldsTheRestoreForTheLiveOne() throws {
+        try rememberedA2()
+        let (model, _) = make()
+        launched(model)
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: [artifact("a1"), artifact("a2")], truncated: false)))
+        model.open(chat: 2)
+        XCTAssertNil(model.current[3])
+        model.rememberViewerForNextLaunch()
+        XCTAssertEqual(model.settings.viewerAtQuit, SavedViewer(chat: 3, artifact: "a2"), "still held for Session 3")
+        model.open(chat: 3)
+        XCTAssertEqual(model.current[3]?.id, "a2")
+
+        // Once restored, a closed viewer at quit remembers nothing, as before.
+        model.setViewer(visible: false, for: 3)
+        model.rememberViewerForNextLaunch()
+        XCTAssertNil(model.settings.viewerAtQuit)
     }
 
     func testQuittingWithTheViewerClosedOrEmptyRemembersNothing() throws {
@@ -277,6 +387,8 @@ final class LaunchAndWayBackTests: XCTestCase {
         let (model, _) = try model()
         model.settings.viewerAtQuit = SavedViewer(chat: 3, artifact: AppModel.localArtifactPrefix + file.path)
         launched(model)
+        XCTAssertNil(model.current[3], "not beside the welcome (v0.8 decision 1)")
+        model.open(chat: 3)
         XCTAssertEqual(model.current[3]?.location, file.path)
         XCTAssertTrue(model.isViewerShown(for: 3))
     }

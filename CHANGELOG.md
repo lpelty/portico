@@ -2,6 +2,29 @@
 
 ## v0.8.0 — unreleased
 
+### What a person gets (app)
+
+- **The welcome shows on its own.** An artifact that was showing at quit
+  no longer opens beside the welcome; it comes back when you go into the
+  conversation (View Session N, a send from the welcome, or picking the
+  session). Quitting from the welcome keeps it for next time.
+- **Gateway controls in the services menu.** The Gateway row has Stop
+  while the gateway runs, Start while it doesn't, and always Restart: the
+  same actions as Settings › Gateway. Restart stops the gateway and starts
+  it again, so a config change no longer needs a terminal. Settings ›
+  Gateway now always offers Restart too.
+- **Stop and Restart ask first during a turn**: "A turn is running in
+  Session 3. Restart anyway?" (several sessions are named together). The
+  status strip's Restart for a stale config asks the same way.
+- **Restart all services.** When the deployment has one restart command
+  (`services.restart_all` in `hello.capabilities`), the services menu ends
+  with Restart all services. It asks first, sends `services.restart_all`,
+  spins until a fresh `services.status`, and shows the gateway's reason
+  under it when an `error` comes back for the request.
+- **Generated titles need nothing new in the app**: a title that changes
+  in a later `chat.list` updates the Earlier row, the session card and the
+  divider (tested).
+
 ### Gateway
 
 - **Generated session titles.** After a session's first turn finishes

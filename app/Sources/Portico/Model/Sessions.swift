@@ -85,7 +85,8 @@ extension AppModel {
     /// At launch (no conversation shown yet in this run) the welcome
     /// continues the live session (Y1): its events are asked for without
     /// showing it, so View and the first send find it loaded, and the
-    /// viewer is put back only if it was showing something at quit. Once a
+    /// viewer is put back only if it was showing something at quit, once
+    /// the conversation shows (v0.8 decision 1). Once a
     /// conversation has been shown, losing the selection (the gateway
     /// restarted and no longer lists it) goes to the live session, never
     /// back to the welcome: only a launch shows the welcome.
@@ -572,5 +573,12 @@ enum ViewerRestore {
     static func artifact(saved: SavedViewer?, chat: Int) -> String? {
         guard let saved, saved.chat == chat else { return nil }
         return saved.artifact
+    }
+
+    /// What to store at quit (v0.8 decision 1): what the viewer shows; when
+    /// it shows nothing and the launch's restore is still `held` (the
+    /// person never went into the conversation), what was remembered.
+    static func toRemember(showing: SavedViewer?, saved: SavedViewer?, held: Bool) -> SavedViewer? {
+        showing ?? (held ? saved : nil)
     }
 }

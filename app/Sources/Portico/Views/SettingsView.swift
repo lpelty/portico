@@ -144,7 +144,7 @@ struct GatewaySettingsTab: View {
                             .foregroundStyle(Theme.wait)
                         Spacer()
                         Button(model.restarting ? "Restarting…" : "Restart") {
-                            Task { await model.restartGateway() }
+                            model.request(.restart, from: .settings)
                         }
                         .disabled(model.restarting)
                     }
@@ -152,13 +152,20 @@ struct GatewaySettingsTab: View {
                 HStack {
                     Button("Start") { model.startGateway() }
                         .disabled(model.connection == .connected || supervisor.status == .starting)
-                    Button("Stop") { Task { await model.stopGateway() } }
+                    // Stop and Restart ask first while a turn runs (v0.8 decision 3).
+                    Button("Stop") { model.request(.stop, from: .settings) }
                         .disabled(model.connection != .connected)
+                    // Always offered (v0.8 decision 3); with the config
+                    // stale it is the one beside the warning above.
+                    if !model.configStale {
+                        Button(model.restarting ? "Restarting…" : "Restart") { model.request(.restart, from: .settings) }
+                            .disabled(model.restarting)
+                    }
                     Spacer()
                     Button(doctorRunning ? "Checking…" : "Doctor") { runDoctor() }
                         .disabled(doctorRunning)
                 }
-                Text("Stop interrupts every running turn, runs the deployment's stop command, and exits the gateway. Doctor checks this machine, the state directory and the config, one line per check.")
+                Text("Stop interrupts every running turn, runs the deployment's stop command, and exits the gateway. Restart stops it and starts it again, reading the config afresh. Doctor checks this machine, the state directory and the config, one line per check.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -179,6 +186,7 @@ struct GatewaySettingsTab: View {
             }
         }
         .formStyle(.grouped)
+        .gatewayConfirmDialog(model, place: .settings)
     }
 
     private func runDoctor() {

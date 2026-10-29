@@ -404,6 +404,17 @@ struct ServiceRestart: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// Run the deployment's one restart command for all its services (v0.8
+/// decision 4), offered when `hello.capabilities` has
+/// `services.restart_all`. Answered by a fresh `services.status`, or an
+/// `error` with this `id` (`services.restart_failed`).
+struct ServicesRestartAll: Codable, Equatable, Sendable {
+    static let messageType = "services.restart_all"
+    static let capability = "services.restart_all"
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 /// Change the session's permission mode; answered with `chat.state`
 /// carrying `mode`.
 struct SessionMode: Codable, Equatable, Sendable {
@@ -899,6 +910,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case sessionMode(SessionMode)
     case sessionLog(SessionLog)
     case serviceRestart(ServiceRestart)
+    case servicesRestartAll(ServicesRestartAll)
 
     var type: String {
         switch self {
@@ -919,6 +931,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionMode: SessionMode.messageType
         case .sessionLog: SessionLog.messageType
         case .serviceRestart: ServiceRestart.messageType
+        case .servicesRestartAll: ServicesRestartAll.messageType
         }
     }
 
@@ -942,6 +955,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SessionMode.messageType: self = .sessionMode(try SessionMode(from: decoder))
         case SessionLog.messageType: self = .sessionLog(try SessionLog(from: decoder))
         case ServiceRestart.messageType: self = .serviceRestart(try ServiceRestart(from: decoder))
+        case ServicesRestartAll.messageType: self = .servicesRestartAll(try ServicesRestartAll(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -967,6 +981,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionMode(let m): try m.encode(to: encoder)
         case .sessionLog(let m): try m.encode(to: encoder)
         case .serviceRestart(let m): try m.encode(to: encoder)
+        case .servicesRestartAll(let m): try m.encode(to: encoder)
         }
     }
 }

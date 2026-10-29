@@ -270,7 +270,8 @@ struct StatusStrip: View {
 
     private func restartButton(compact: Bool) -> some View {
         Button {
-            Task { await model.restartGateway() }
+            // Asks first while a turn runs (v0.8 decision 3).
+            model.request(.restart)
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: StatusStripPresentation.Measure.restartIcon.name)
@@ -350,7 +351,8 @@ struct ServicesControl: View {
             // A popover is its own window: hand it what the menu reads.
             // The strip is one line (`.lineLimit(1)` above), and that
             // reaches into the popover: undo it so details wrap.
-            ServicesMenu()
+            // A question the menu asks closes it: the sheet is the window's.
+            ServicesMenu(closeMenu: { shown = false })
                 .lineLimit(nil)
                 .environmentObject(model)
                 .environmentObject(supervisor)
@@ -379,9 +381,13 @@ enum ServiceColors {
 }
 
 /// The services menu (W3): SERVICES, a row per service (dot, name, one
-/// line of detail, Restart when the deployment has a restart command),
+/// line of detail, Restart when the deployment has a restart command; the
+/// Gateway row's Stop or Start and Restart, v0.8 decision 3), Restart all
+/// services when the deployment has one command for it (v0.8 decision 4),
 /// and a footer line. Reads the model itself so it stays current while open.
 struct ServicesMenu: View {
+    /// Closes the popover, so a confirmation sheet is not hidden behind it.
+    var closeMenu: () -> Void = {}
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var supervisor: GatewaySupervisor
 
@@ -392,10 +398,15 @@ struct ServicesMenu: View {
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
             ForEach(services.rows) { row in
-                ServiceRowView(row: row)
+                ServiceRowView(row: row, closeMenu: closeMenu)
             }
             Rectangle().fill(Theme.border).frame(height: 1)
                 .padding(.vertical, 6)
+            if model.offersRestartAll {
+                RestartAllRow(closeMenu: closeMenu)
+                Rectangle().fill(Theme.border).frame(height: 1)
+                    .padding(.vertical, 6)
+            }
             Text(ServicesPresentation.footer)
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
@@ -411,9 +422,12 @@ struct ServicesMenu: View {
 }
 
 /// One service in the menu. A down row is tinted; Restart sends
-/// `service.restart` and spins until the next status.
+/// `service.restart` and spins until the next status. The Gateway row has
+/// Stop (while it runs) or Start, and Restart, the same actions as
+/// Settings › Gateway (v0.8 decision 3).
 struct ServiceRowView: View {
     let row: ServiceRow
+    var closeMenu: () -> Void = {}
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -433,7 +447,9 @@ struct ServiceRowView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if row.canRestart && !row.isGateway {
+            if row.isGateway {
+                gatewayControls
+            } else if row.canRestart {
                 if model.isRestarting(service: row.id) {
                     ProgressView().controlSize(.small)
                         .help("Restarting \(row.name)…")
@@ -449,6 +465,82 @@ struct ServiceRowView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(row.state == .down ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var gatewayControls: some View {
+        if model.restarting {
+            ProgressView().controlSize(.small)
+                .help("Restarting the gateway…")
+        } else {
+            HStack(spacing: 6) {
+                ForEach(ServicesPresentation.gatewayControls(row), id: \.title) { control in
+                    Button(control.title) { press(control) }
+                        .buttonStyle(PillButtonStyle(kind: .quiet))
+                        .controlSize(.small)
+                        .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
+                        .help(Self.help(control))
+                }
+            }
+        }
+    }
+
+    private func press(_ control: GatewayControl) {
+        switch control {
+        case .start: model.startGateway()
+        case .stop: if model.request(.stop) { closeMenu() }
+        case .restart: if model.request(.restart) { closeMenu() }
+        }
+    }
+
+    static func help(_ control: GatewayControl) -> String {
+        switch control {
+        case .start: "Start the gateway"
+        case .stop: "Stop the gateway: running turns are interrupted"
+        case .restart: "Stop the gateway and start it again, reading the config afresh"
+        }
+    }
+}
+
+/// The menu's last control when the deployment has one restart command
+/// (v0.8 decision 4): asks first, sends `services.restart_all`, spins until
+/// a fresh `services.status`, and shows the gateway's reason when it fails.
+struct RestartAllRow: View {
+    var closeMenu: () -> Void = {}
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text(ServicesPresentation.restartAllTitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if model.restartingAll != nil {
+                    ProgressView().controlSize(.small)
+                        .help("Restarting all services…")
+                } else {
+                    Button("Restart all") {
+                        if model.request(.restartAll) { closeMenu() }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .quiet))
+                    .controlSize(.small)
+                    .disabled(model.connection != .connected)
+                    .help("Run the deployment's restart command for all its services")
+                }
+            }
+            if let reason = model.restartAllError {
+                // As a down row's reason: the whole of it, wrapped.
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(model.restartAllError != nil ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 }
