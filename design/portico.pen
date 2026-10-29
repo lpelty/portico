@@ -66271,6 +66271,1209 @@
           ]
         }
       ]
+    },
+    {
+      "type": "text",
+      "id": "yaTUk",
+      "x": 4680,
+      "y": 14600,
+      "name": "Row label",
+      "fill": "#E6EDF3",
+      "content": "AC · v0.8 (10-29): gateway Stop/Start/Restart in the services menu, Restart all services, asking first during a turn",
+      "fontFamily": "$font",
+      "fontSize": 28,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "P8OGm",
+      "x": 4680,
+      "y": 14700,
+      "name": "AC1 · Services menu with gateway controls",
+      "theme": {
+        "mode": "dark"
+      },
+      "width": 1000,
+      "fill": "#161616",
+      "cornerRadius": 10,
+      "gap": 24,
+      "padding": 24,
+      "children": [
+        {
+          "type": "frame",
+          "id": "oOyYw",
+          "name": "SERVICES MENU — deployment with a one-command restart",
+          "width": 420,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "Rp0ZY",
+              "name": "Caption",
+              "fill": "$text-3",
+              "content": "SERVICES MENU — deployment with a one-command restart",
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "600",
+              "letterSpacing": 0.4
+            },
+            {
+              "type": "frame",
+              "id": "v0O9R",
+              "name": "Menu",
+              "width": "fill_container",
+              "fill": "$panel",
+              "cornerRadius": 10,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 2,
+              "padding": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "LEYeE",
+                  "name": "Gateway",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "pX73c",
+                      "name": "Dot",
+                      "fill": "$working",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "frame",
+                      "id": "XbdMD",
+                      "name": "T",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "UqhGC",
+                          "name": "N",
+                          "fill": "$text",
+                          "content": "Gateway",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "sjLdh",
+                          "name": "D",
+                          "fill": "$text-2",
+                          "content": "running · port 54675",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "QxuOC",
+                      "name": "Stop",
+                      "fill": "$control",
+                      "cornerRadius": 5,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "v5oqY",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Stop",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "HJ3zM",
+                      "name": "Restart",
+                      "fill": "$control",
+                      "cornerRadius": 5,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Sw1LI",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Restart",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "aaSZo",
+                  "name": "Memory",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "R7qUw",
+                      "name": "Dot",
+                      "fill": "$working",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "frame",
+                      "id": "PlILe",
+                      "name": "T",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zAbjL",
+                          "name": "N",
+                          "fill": "$text",
+                          "content": "Memory",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "x9ZpT",
+                          "name": "D",
+                          "fill": "$text-2",
+                          "content": "up · 71,946 facts",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rS6RN",
+                  "name": "Search",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "YJVMV",
+                      "name": "Dot",
+                      "fill": "$working",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "frame",
+                      "id": "EYlqx",
+                      "name": "T",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "CzX0q",
+                          "name": "N",
+                          "fill": "$text",
+                          "content": "Search",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "nSjeo",
+                          "name": "D",
+                          "fill": "$text-2",
+                          "content": "up · 10 collections",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pxXRw",
+                  "name": "Agent router",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "rwLgM",
+                      "name": "Dot",
+                      "fill": "$wait",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hHblK",
+                      "name": "T",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "SglAQ",
+                          "name": "N",
+                          "fill": "$text",
+                          "content": "Agent router",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "o2eEY",
+                          "name": "D",
+                          "fill": "$text-2",
+                          "content": "not responding since 4:02 PM",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "wqJs5",
+                      "name": "Restart",
+                      "fill": "$control",
+                      "cornerRadius": 5,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Wn8eh",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Restart",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "veBO0",
+                  "name": "Rule",
+                  "fill": "$border",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "ncPFl",
+                  "name": "Restart all services",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "r4dcHT",
+                      "name": "Dot",
+                      "fill": "$text-3",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hj6N9",
+                      "name": "T",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "RkcRP",
+                          "name": "N",
+                          "fill": "$text",
+                          "content": "Restart all services",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "N7QsJh",
+                      "name": "Restart all",
+                      "fill": "$control",
+                      "cornerRadius": 5,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "l8dYd",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Restart all",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "FhzI5",
+                  "name": "Rule",
+                  "fill": "$border",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "E3nIUL",
+                  "name": "Footer",
+                  "width": "fill_container",
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "X9KeCI",
+                      "name": "F",
+                      "fill": "$text-3",
+                      "content": "Checked 4:05 PM · from the deployment's status command",
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "prZYi",
+          "name": "ASKS FIRST — only while a turn is running",
+          "width": 460,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "ADLvE",
+              "name": "Caption",
+              "fill": "$text-3",
+              "content": "ASKS FIRST — only while a turn is running",
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "600",
+              "letterSpacing": 0.4
+            },
+            {
+              "type": "frame",
+              "id": "mSqdq",
+              "name": "Dialog",
+              "width": "fill_container",
+              "fill": "$panel",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "X0mxz",
+                  "name": "H",
+                  "fill": "$text",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "A turn is running in Session 4. Restart anyway?",
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "PFF9B",
+                  "name": "B",
+                  "fill": "$text-2",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Restarting the gateway interrupts every running turn. It starts again with the config as it is now.",
+                  "lineHeight": 1.45,
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "eQ5RI",
+                  "name": "Buttons",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "zX6Er",
+                      "name": "Cancel",
+                      "fill": "$control",
+                      "cornerRadius": 5,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tdnm0",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Cancel",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Zbtmv",
+                      "name": "Restart gateway",
+                      "fill": "$accent",
+                      "cornerRadius": 5,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "evJe0",
+                          "name": "L",
+                          "fill": "$on-accent",
+                          "content": "Restart gateway",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "x0JQs",
+              "name": "Note",
+              "fill": "$text-3",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Stop asks the same way. Restart all always asks (it restarts every service). Settings › Gateway keeps Start, Stop, Restart; Restart is always there now.",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "pAWQd",
+      "x": 4680,
+      "y": 15180,
+      "name": "Row label",
+      "fill": "#E6EDF3",
+      "content": "AD · v0.9 draft (10-29): voice — talk into the composer (on-device), Read aloud on replies; code becomes a pointer; [TTS] parts only when present",
+      "fontFamily": "$font",
+      "fontSize": 28,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "pevZP",
+      "x": 4680,
+      "y": 15280,
+      "name": "AD1 · Voice, phases 1 and 2",
+      "theme": {
+        "mode": "dark"
+      },
+      "width": 1240,
+      "fill": "#161616",
+      "cornerRadius": 10,
+      "gap": 24,
+      "padding": 24,
+      "children": [
+        {
+          "type": "frame",
+          "id": "wkb2r",
+          "name": "PHASE 1 — TALK: mic in the composer",
+          "width": 560,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "VuMUg",
+              "name": "Caption",
+              "fill": "$text-3",
+              "content": "PHASE 1 — TALK: mic in the composer",
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "600",
+              "letterSpacing": 0.4
+            },
+            {
+              "type": "frame",
+              "id": "uH0N6",
+              "name": "Composer",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": [
+                12,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "e7sn1",
+                  "name": "Text",
+                  "fill": "$text-3",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Ask Wren, or drop a file here",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "g8i3op",
+                  "name": "Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "V24VI",
+                      "name": "Icon",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "E78gGT",
+                      "name": "Mode",
+                      "fill": "$control",
+                      "cornerRadius": 12,
+                      "gap": 4,
+                      "padding": [
+                        3,
+                        8
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "JwNQk",
+                          "name": "Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "shield-check",
+                          "library": "lucide",
+                          "fill": "$text-2"
+                        },
+                        {
+                          "type": "text",
+                          "id": "S2U8I8",
+                          "name": "T",
+                          "fill": "$text-2",
+                          "content": "Auto",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eoFLz",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YvCyD",
+                      "name": "Mic",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "$control",
+                      "cornerRadius": 15,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "j9zgQ",
+                          "name": "Icon",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "mic",
+                          "library": "lucide",
+                          "fill": "$text-2"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "WA48v",
+                      "name": "Send",
+                      "opacity": 0.5,
+                      "fill": "$accent",
+                      "cornerRadius": 6,
+                      "padding": [
+                        5,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "vhbIu",
+                          "name": "T",
+                          "fill": "$on-accent",
+                          "content": "Send",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "neaVD",
+              "name": "Composer",
+              "width": "fill_container",
+              "fill": "$surface",
+              "cornerRadius": 12,
+              "stroke": "$accent",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": [
+                12,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "o8XnKE",
+                  "name": "Text",
+                  "fill": "$text",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Make the featured card warmer, it's a sunrise hike, and",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "gySu4",
+                  "name": "Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mbVe8",
+                      "name": "Icon",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "I5JOCD",
+                      "name": "Mode",
+                      "fill": "$control",
+                      "cornerRadius": 12,
+                      "gap": 4,
+                      "padding": [
+                        3,
+                        8
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "JbFdF",
+                          "name": "Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "shield-check",
+                          "library": "lucide",
+                          "fill": "$text-2"
+                        },
+                        {
+                          "type": "text",
+                          "id": "U8l2P",
+                          "name": "T",
+                          "fill": "$text-2",
+                          "content": "Auto",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "SGCUc",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cs5JK",
+                      "name": "Listening",
+                      "gap": 3,
+                      "padding": [
+                        0,
+                        6
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "bzRPO",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 6
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "ESsZQ",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 12
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "wES3q",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 18
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "jj9jo",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 10
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "NrvAt",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 14
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "W2cqOV",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 8
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.5,
+                          "id": "t53qib",
+                          "name": "Bar",
+                          "fill": "$accent",
+                          "width": 3,
+                          "height": 4
+                        },
+                        {
+                          "type": "text",
+                          "id": "Va2oM",
+                          "name": "T",
+                          "fill": "$text-2",
+                          "content": "Listening — release to stop",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Q4ZaYY",
+                      "name": "Mic",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "$accent",
+                      "cornerRadius": 15,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "FFniD",
+                          "name": "Icon",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "mic",
+                          "library": "lucide",
+                          "fill": "$on-accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pcl41",
+                      "name": "Send",
+                      "fill": "$accent",
+                      "cornerRadius": 6,
+                      "padding": [
+                        5,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "p84s3",
+                          "name": "T",
+                          "fill": "$on-accent",
+                          "content": "Send",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "dBiVI",
+              "name": "N",
+              "fill": "$text-3",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "On-device transcription (Speech framework, macOS 26). Words land in the composer as they are recognised; stop leaves them to glance at and Send. Setting: Send when I stop talking (off).",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "mMrsj",
+          "name": "PHASE 2 — LISTEN: Read aloud on a reply",
+          "width": 600,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "qondG",
+              "name": "Caption",
+              "fill": "$text-3",
+              "content": "PHASE 2 — LISTEN: Read aloud on a reply",
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "600",
+              "letterSpacing": 0.4
+            },
+            {
+              "type": "frame",
+              "id": "oRFbu",
+              "name": "Reply",
+              "width": "fill_container",
+              "fill": "$panel",
+              "cornerRadius": 10,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "A7S9J",
+                  "name": "Hover actions",
+                  "width": "fill_container",
+                  "gap": 6,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "OHxa9",
+                      "name": "Read aloud (speaking)",
+                      "fill": "$accent",
+                      "cornerRadius": 5,
+                      "gap": 5,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "sql4O",
+                          "name": "Icon",
+                          "width": 10,
+                          "height": 10,
+                          "icon": "square",
+                          "library": "lucide",
+                          "fill": "$on-accent"
+                        },
+                        {
+                          "type": "text",
+                          "id": "E4NQMj",
+                          "name": "L",
+                          "fill": "$on-accent",
+                          "content": "Stop reading",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "BRHsg",
+                      "name": "Copy",
+                      "fill": "$control",
+                      "cornerRadius": 5,
+                      "gap": 5,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "lZm88",
+                          "name": "Icon",
+                          "width": 11,
+                          "height": 11,
+                          "icon": "copy",
+                          "library": "lucide",
+                          "fill": "$text-2"
+                        },
+                        {
+                          "type": "text",
+                          "id": "GKE0t",
+                          "name": "L",
+                          "fill": "$text-2",
+                          "content": "Copy",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Dhe55",
+                  "name": "Spoken part",
+                  "width": "fill_container",
+                  "fill": "#3B6EF51A",
+                  "cornerRadius": 6,
+                  "padding": [
+                    6,
+                    8
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "RMy3L",
+                      "name": "P",
+                      "fill": "$text",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Done. The featured card now uses a sunrise sky over the ridge, and a saved trail's heart fills coral.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "a5JVc",
+                  "name": "Code",
+                  "width": "fill_container",
+                  "fill": "$surface",
+                  "cornerRadius": 6,
+                  "layout": "vertical",
+                  "gap": 3,
+                  "padding": [
+                    8,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mNBOK",
+                      "name": "L",
+                      "fill": "$text-2",
+                      "content": ".featured { background: linear-gradient(180deg, #FBD38D, #E07A5F); }",
+                      "fontFamily": "IBM Plex Mono",
+                      "fontSize": 11.5,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "fsRKT",
+                      "name": "L",
+                      "fill": "$text-2",
+                      "content": ".heart.saved { color: #E4573D; }",
+                      "fontFamily": "IBM Plex Mono",
+                      "fontSize": 11.5,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "hqSu7",
+              "name": "N",
+              "fill": "$text-3",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Spoken: the reply's [TTS] parts when it has them (tags hidden on screen; the highlight shows what is being read); otherwise the prose, each code block as \"See the code below.\" and each table as \"See the table below.\" On-device voice (AVSpeechSynthesizer; Personal Voice if allowed). Esc stops.",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {
