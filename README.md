@@ -109,6 +109,10 @@ titles = "generated"                # the default: after a session's first clean
                                     # (six words at most; the first line until then, and if the call fails);
                                     # "first_line": the first line of the first message, no extra model call
 title_model = "my-small-model"      # optional: the model for titles; default "haiku", the provider's small model
+system_prompt = "claude_code"       # the default: Claude Code's own system prompt, so the agent behaves as in a
+                                    # terminal; "none": the SDK's empty prompt (as before v0.10). See Showing
+                                    # the agent's work and The agent's system prompt
+system_prompt_append = "~/my-deployment/prompt.md" # optional absolute path: the deployment's text, after it
 
 [brand]
 name = "Portico"
@@ -271,6 +275,18 @@ to files in that folder; outside the folder, that one file; given on a
 command, that command (or the prefix the engine suggests, never with a
 second command, a substitution or a redirection appended).
 
+## Subagents and workflows
+
+When the agent hands work to subagents or runs a workflow (v0.10), the
+gateway follows the engine's task reports and sends each agent's start,
+current step ("Read transcripts/p11.md"), step count, time and outcome,
+and a workflow's phases as they advance (`agent.*`, `workflow.*` in
+`protocol/PROTOCOL.md`). A subagent's own tool calls come as tool rows
+marked with its `agent_id`. All of it goes only to an app that lists
+`agents.v1` in its `hello`; an older app sees the conversation as before,
+with one `Agent` row per subagent. Shell and monitor tasks are not shown
+as agents. Nothing to configure.
+
 ## Voice
 
 Voice is all in the app and all on the Mac (macOS 26 or later): nothing
@@ -345,6 +361,37 @@ bin/update --channel main   # follow main instead (fast-forward pull), then the 
 `bin/update` refuses to run over local changes in the checkout and says
 so; move the change into a plug-in, or ask upstream for it. `bin/doctor`
 prints the tag or commit the checkout is on.
+
+## The agent's system prompt
+
+The agent starts from Claude Code's own system prompt
+(`system_prompt = "claude_code"`, the default): its tool habits, the date
+and the working folder, so it behaves as it does in a terminal. A
+deployment makes it its own with `system_prompt_append`, a file of its
+text added after Claude Code's (kept outside this checkout). The file is
+read each time a session's engine starts, so an edit applies to the next
+new or renewed session, no gateway restart. A file missing at load is a
+config error; one that can't be read later is logged and the session
+starts without it. `system_prompt = "none"` drops Claude Code's prompt:
+the agent gets only the append file's text (or nothing), as every
+deployment did before v0.10.
+
+Either way the folder's `CLAUDE.md`, skills and hooks still load through
+`setting_sources`; they are not part of the system prompt. Session titles
+keep their own prompt.
+
+## Showing the agent's work
+
+The agent shows files in the viewer, not in another app. The gateway
+gives it a `show_in_viewer(path)` tool (in-process, no permission card in
+any mode) for a viewable file (HTML, markdown, images, PDF) inside the
+session's folder or a configured root, and appends one line to its system
+prompt saying so (always last, after the deployment's text). A plain
+`open <path>` (or `open <path> <path>`) of such a file in its shell is
+not run: the file goes to the viewer and the agent is told it was shown.
+URLs, flags, anything chained or globbed, and files outside the folders
+run as before. **Open externally** in the viewer's
+header still hands the file to its default app.
 
 ## The producer endpoint
 

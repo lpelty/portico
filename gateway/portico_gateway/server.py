@@ -146,13 +146,24 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
-from .artifacts import TurnCollector, artifact_for_location
+from .agents import AgentTracker
+from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
-from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, friendly_model_name, history_events, read_history
+from .engine import (
+    READ_ONLY_TOOLS,
+    Engine,
+    PermissionDecision,
+    deployment_system_prompt,
+    friendly_model_name,
+    history_events,
+    read_history,
+)
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
+    AGENT_FRAME_TYPES,
+    AGENTS_CAPABILITY,
     PROTOCOL_VERSION,
     Artifact,
     ArtifactCreated,
@@ -367,6 +378,44 @@ def _entry_key(entry: Entry) -> tuple[str, str]:
     return (entry.name.casefold(), entry.name)
 
 
+# --- what an app is sent (v0.10) ------------------------------------------------
+
+_CAPABILITIES_ATTR = "portico_capabilities"
+
+
+def _set_capabilities(conn: ServerConnection, capabilities: list[str]) -> None:
+    setattr(conn, _CAPABILITIES_ATTR, frozenset(capabilities))
+
+
+def _capabilities(conn: ServerConnection) -> frozenset[str]:
+    return getattr(conn, _CAPABILITIES_ATTR, frozenset())
+
+
+def _is_agent_frame(msg: Any) -> bool:
+    """A v0.10 subagent or workflow frame, or a tool row from inside a subagent."""
+    if getattr(msg, "type", None) in AGENT_FRAME_TYPES:
+        return True
+    return isinstance(msg, (ToolStarted, ToolFinished)) and msg.agent_id is not None
+
+
+def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
+    """``msg`` as an app with ``capabilities`` may be sent it; ``None`` when it may not.
+
+    An app that did not declare ``agents.v1`` is sent no ``agent.*`` or
+    ``workflow.*`` frame and no tool row from inside a subagent, live or in
+    a ``chat.history`` (an older app's decoder refuses a whole history
+    holding a type it does not know). The ring keeps everything; ``seq``
+    gaps are harmless, the app only skips what it has already seen.
+    """
+    if AGENTS_CAPABILITY in capabilities:
+        return msg
+    if _is_agent_frame(msg):
+        return None
+    if isinstance(msg, ChatHistory) and any(_is_agent_frame(e) for e in msg.events):
+        return msg.model_copy(update={"events": [e for e in msg.events if not _is_agent_frame(e)]})
+    return msg
+
+
 @dataclass
 class TurnRun:
     """One turn in flight on a chat."""
@@ -410,6 +459,9 @@ class ChatCallbacks:
 
     async def on_compacted(self, trigger: str) -> None:
         await self.server.compacted(self.chat, trigger)
+
+    async def on_show(self, paths: list[str]) -> str | None:
+        return await self.server.show_files(self.chat, paths)
 
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
@@ -661,6 +713,9 @@ class GatewayServer:
         self._renewing: set[int] = set()
         # Chats with a ``session.log`` in flight (v0.4): the same rule.
         self._logging: set[int] = set()
+        # v0.10: file writes that started with no turn in flight (a
+        # background agent's), by chat and tool use, reported when they finish.
+        self._loose_writes: dict[tuple[int, str], tuple[str, dict[str, Any]]] = {}
         # Whether a summary can be ``unlogged`` depends on the deployment having a log step.
         self.registry.can_log = self.has_log_step()
         # Asks a small model for a session's title (v0.8; ``titles.sdk_titler``
@@ -1022,6 +1077,8 @@ class GatewayServer:
             await conn.close(CLOSE_PROTOCOL_ERROR, "hello required")
             return
 
+        # v0.10: what the app declared it can show; frames it did not declare are never sent to it.
+        _set_capabilities(conn, first.capabilities or [])
         await self._attach(conn)
         stale = self.config_stale()
         if stale:
@@ -1171,6 +1228,7 @@ class GatewayServer:
         engine = self.engine_factory()
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
+        engine.system_prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
         session = await engine.start(
             chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
         )
@@ -1191,12 +1249,19 @@ class GatewayServer:
             self.registry.persist()
 
     async def _close_engine(self, chat: Chat) -> None:
-        """Interrupt and close the chat's engine; any turn in flight is forgotten (the caller reports it)."""
+        """Interrupt and close the chat's engine; any turn in flight is forgotten (the caller reports it).
+
+        The engine's background work goes with it (v0.10): every agent and
+        workflow still open is reported finished ``stopped`` (the tracker's
+        ``close_all``), so nothing is left working on the app's screen.
+        """
         engine, chat.engine = chat.engine, None
         run = self._runs.pop(chat.number, None)
         if run is not None:
             run.stop_requested = True
             run.finished.set()
+        for key in [k for k in self._loose_writes if k[0] == chat.number]:
+            del self._loose_writes[key]
         if engine is None:
             return
         try:
@@ -1205,13 +1270,52 @@ class GatewayServer:
             await engine.close()
         except Exception:
             log.exception("closing engine for chat %d failed", chat.number)
+        tracker = getattr(engine, "agents", None)
+        if isinstance(tracker, AgentTracker):
+            for event in tracker.close_all(chat.number, _now()):
+                await self.emit(chat, event)
+
+    async def _unsent_turn(self, chat: Chat, event: TurnStarted) -> None:
+        """The engine began a turn nobody sent (v0.10): run it as a turn of its own.
+
+        The engine answers on its own when background work it started
+        finishes. The turn gets the chat's next number (the engine is told,
+        so its events carry it), ``turn.started`` with no ``user.text``,
+        ``chat.state working``, and a run, so its artifacts are collected
+        and its ``turn.finished`` ends it like any turn. A send meanwhile is
+        ``chat.busy``, as during any turn. A send already echoed and on its
+        way to the engine has the turn: what the engine says joins it.
+        """
+        engine = chat.engine
+        if engine is None or chat.ended is not None:
+            log.debug("chat %d: engine began a turn with no engine on record; dropped", chat.number)
+            return
+        run = self._runs.get(chat.number)
+        if run is not None:
+            engine.turn = run.turn
+            return
+        chat.turn += 1
+        engine.turn = chat.turn
+        run = TurnRun(turn=chat.turn, collector=TurnCollector(chat), sent=True)
+        self._runs[chat.number] = run
+        log.info("chat %d: the engine began turn %d on its own", chat.number, run.turn)
+        await self.emit(chat, TurnStarted(ts=event.ts, chat=chat.number, turn=run.turn))
+        await self.set_state(chat, "working")
 
     async def engine_event(self, chat: Chat, event: ServerMessage) -> None:
-        """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn."""
+        """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn.
+
+        The engine's own ``turn.started`` is a turn nobody sent (``_unsent_turn``).
+        """
         self._sync_session(chat)
+        if isinstance(event, TurnStarted):
+            await self._unsent_turn(chat, event)
+            return
         run = self._runs.get(chat.number)
         turn = getattr(event, "turn", None)
-        if run is not None and turn is not None and turn != run.turn:
+        if run is not None and turn is not None and turn != run.turn and not _is_agent_frame(event):
+            # (A subagent's or workflow's frames keep the turn that started
+            # them; background ones arrive during later turns and are kept.)
             # The gateway ended an earlier turn itself (the stop grace ran out)
             # and the engine is only now finishing it: that must not touch
             # the turn that is running now.
@@ -1229,7 +1333,14 @@ class GatewayServer:
                     run.collector.note_text(event.text)
                     if run.title_message is not None and len(run.reply) < REPLY_CHARS:
                         run.reply = (run.reply + event.text)[:REPLY_CHARS]
+            elif isinstance(event, ToolStarted) and from_tool(event.tool, event.input) is not None:
+                # No turn to collect it: reported when the write is done.
+                self._loose_writes[(chat.number, event.tool_use_id)] = (event.tool, dict(event.input))
             await self.emit(chat, event)
+            if isinstance(event, ToolFinished):
+                write = self._loose_writes.pop((chat.number, event.tool_use_id), None)
+                if write is not None and event.ok:
+                    await self._report_write(chat, *write)
             return
         if run is None:
             # The turn was already ended by the gateway (chat.stop, or the stop grace ran out).
@@ -1370,13 +1481,77 @@ class GatewayServer:
 
     async def _report_artifacts(self, chat: Chat, run: TurnRun) -> None:
         """Settle the turn's collector and send one ``artifact.created`` per artifact (newest viewable opens)."""
-        artifacts = run.collector.finish(chat.folder)
+        await self._report_collected(chat, run.collector)
+
+    async def _report_write(self, chat: Chat, tool: str, input: dict[str, Any]) -> None:
+        """A file written with no turn in flight (v0.10), reported now as a turn would report it alone."""
+        collector = TurnCollector(chat)
+        collector.note_tool(tool, input)
+        await self._report_collected(chat, collector)
+
+    async def _report_collected(self, chat: Chat, collector: TurnCollector) -> None:
+        artifacts = collector.finish(chat.folder)
         if not artifacts:
             return
         for artifact in artifacts:
             chat.artifacts.append(artifact)
             await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
         self.registry.persist()
+
+    def _shown_folders(self, chat: Chat) -> list[Path]:
+        """Where a file may be shown from: the chat's folder and the deployment's roots."""
+        folders = [chat.folder, *(Path(root.path) for root in self.config.roots)]
+        out: list[Path] = []
+        for folder in folders:
+            try:
+                out.append(Path(folder).expanduser().resolve())
+            except OSError:
+                continue
+        return out
+
+    def _showable(self, chat: Chat, raw: str) -> Path | str:
+        """``raw`` as a file the viewer may show (resolved), or why not."""
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = chat.folder / candidate
+        try:
+            candidate = candidate.resolve()
+        except OSError:
+            return f"Not shown: there is no file at {raw}."
+        if not candidate.is_file():
+            return f"Not shown: there is no file at {raw}."
+        if not any(candidate.is_relative_to(folder) for folder in self._shown_folders(chat)):
+            return f"Not shown: {raw} is outside this session's folders."
+        if not is_viewable(media_for(candidate)):
+            return f"Not shown: the viewer shows pages, markdown, images and PDFs, and {candidate.name} is not one."
+        return candidate
+
+    async def show_files(self, chat: Chat, paths: list[str]) -> str | None:
+        """Show ``paths`` in the viewer (v0.10 decision 6), all or none: ``None`` when shown, else why not.
+
+        The agent's ``show_in_viewer`` and a caught ``open`` come here. Each
+        file is reported as an artifact with ``open=true``, as a written
+        file is at the end of a turn (same ids, media, ring and index), and
+        the turn's collector is told, so the end of the turn does not
+        report it again.
+        """
+        shown: list[Path] = []
+        for raw in paths:
+            checked = self._showable(chat, raw)
+            if isinstance(checked, str):
+                return checked
+            shown.append(checked)
+        if not shown:
+            return "Not shown: give the path of a file."
+        run = self._runs.get(chat.number)
+        for path in shown:
+            artifact = artifact_for_location(str(path), source="tool", open=True)
+            chat.artifacts.append(artifact)
+            await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
+            if run is not None:
+                run.collector.note_shown(path)
+        self.registry.persist()
+        return None
 
     async def _producer(self, request: HttpRequest) -> HttpResponse:
         """``POST /v1/artifact`` ``{chat, location, title?}``: report an artifact now, ``open=true``."""
@@ -1710,7 +1885,12 @@ class GatewayServer:
             if logged:
                 chat.note_logged(_now())
         await self.cards.cancel_all(chat, "session ended", self.emit)
+        # A turn the engine began on its own after the log step ends with the session.
+        run = self._runs.get(chat.number)
         await self._close_engine(chat)
+        if run is not None:
+            await self._report_artifacts(chat, run)
+            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         chat.ended = _now()
         chat.logged = logged
         await self.set_state(chat, "stopped")
@@ -2104,8 +2284,11 @@ class GatewayServer:
 
     @staticmethod
     async def _send(conn: ServerConnection, msg: ServerMessage | Error) -> None:
+        shown = for_app(msg, _capabilities(conn))
+        if shown is None:
+            return
         try:
-            await conn.send(dump(msg))
+            await conn.send(dump(shown))
         except ConnectionClosed:
             pass
 

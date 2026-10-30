@@ -1,5 +1,149 @@
 # Changelog
 
+## v0.10.0 (2026-10-30)
+
+### What a person gets (app)
+
+- **Subagents in a tray.** When the agent starts subagents, the
+  conversation shows one row where it started them ("Started 3 agents ·
+  details in the tray below"), and a tray sits on the message box, as wide
+  as it: "3 agents · 2 working" and the time, then a row per agent with its
+  status, its description, its current step ("Reading transcripts/p11.md")
+  and its step count ("9 steps", "14 steps · 1 m 52 s" once done). The
+  chevron folds it to one line with the busiest agent's step. It folds
+  itself when every agent is done and goes at the end of the turn.
+- **An agent's steps.** Clicking an agent shows its steps (its tool rows,
+  read-only) in a popover on the row. A subagent's tool rows are its steps,
+  not the conversation's.
+- **Workflows in a box.** A workflow takes the tray's place: its name,
+  "phase 2 of 3 · 7 agents · 4 m 10 s", and Phases (a column per phase,
+  its agents with their step and result, "…and N more" past what fits),
+  Agents and Log. About 290 pt tall; drag its top edge to resize; the
+  chevron folds it to its header line.
+- **The record.** After the turn, the "Started N agents" row becomes a
+  folded block per agent (✓ or ⚠, its description, "14 steps · 1 m 52 s"),
+  which opens to its steps; a workflow leaves one block per phase. Opening
+  the conversation again shows the same record.
+- **Background work outlives its turn.** A background subagent, and a
+  workflow, keep their tray or box after the turn ends and keep reporting
+  while later turns run; they end on their own, not as "stopped" with the
+  turn, and the turn's record fills in when they do. A foreground agent
+  still open at the end of its turn reads stopped, as before.
+- **A failed phase shows ⚠** in the workflow box and in the record. A
+  workflow's end folds its box.
+- **Stopping a chat ends its background work on screen.** When a chat
+  stops or its session ends, any agent or workflow still shown as working
+  reads stopped, so a workflow box can never stay up for good.
+- **The agent's own follow-up is a turn.** When background work finishes
+  and the agent answers on its own, that answer is a turn of its own, with
+  no message bubble above it.
+- **The viewer shows what the agent just made.** An artifact that opens
+  (or one the person picks) now always wins over the one remembered at the
+  last quit: it arrived while the welcome held the remembered one, or
+  before a replay re-listed it, and the remembered one came back over it.
+  **Open externally** stays in the viewer's header.
+- **No repeated artifacts.** A reply that only names a file the chat
+  already lists, unchanged since, no longer adds it to the viewer's history
+  again (the agent's follow-up turns after background work named the same
+  files over and over); a file written again still gets a new entry.
+- **Plainer agent steps.** An agent's step no longer appears twice in a
+  row, and its last step reads "Reporting back" instead of the engine's
+  internal tool name.
+
+### For deployments
+
+- **The agent starts from Claude Code's system prompt.** New config
+  `system_prompt = "claude_code" | "none"` (default `claude_code`) and
+  `system_prompt_append` (a file of the deployment's, added after it, read
+  at each engine start). Until v0.10 the gateway set none, so the agent ran
+  on the SDK's empty prompt; `system_prompt = "none"` keeps that. Expect
+  replies to change on upgrade: the agent now behaves as Claude Code does
+  in a terminal. See "The agent's system prompt" in the README.
+- The app's `hello` carries `capabilities: ["agents.v1"]` (new, optional).
+  A gateway older than v0.10 refuses the field; the app then says hello
+  again without it and works as before.
+- The app reads `agent.started` (with `background`), `agent.progress`,
+  `agent.finished`, `workflow.started` (sent again with the same `id`
+  replaces its phases), `workflow.phase` (`pending|running|done|failed`),
+  `workflow.finished` and `agent_id` on tool rows. An
+  event it cannot read inside a `chat.history` is now skipped instead of
+  failing the whole replay.
+
+### Gateway
+
+- **Subagents and workflows are reported.** The engine's task messages
+  become `agent.started`, `agent.progress` and `agent.finished` for each
+  subagent (its type, description, current step from its latest call,
+  step count, elapsed seconds, outcome and the first line of its report),
+  and `workflow.started`, `workflow.phase` and `workflow.finished` for a
+  workflow, with its agents as `agent.*` frames carrying `workflow_id` and
+  `phase`. Phases come from the engine's own workflow progress reports.
+  A subagent's own tool calls are tool rows with `agent_id`. Everything is
+  stamped, kept in the ring and replayed.
+- Background subagents end on a terminal `task_updated` alone; a
+  foreground one waits for the notification's summary, and one still open
+  when the turn's result arrives is ended with it. Background work that
+  reports after its turn is kept under the turn that started it.
+- Shell and monitor tasks are not shown as agents.
+- **Closing an engine ends its background work.** `chat.stop`, a stop's
+  grace running out, a renewal, removing a chat, stopping the gateway, or
+  the engine's process dying sends `agent.finished` / `workflow.finished`
+  `stopped` for everything still open, instead of leaving it working.
+- **A turn nobody sent.** When the engine speaks on its own after a
+  background task finishes (a fresh init, text and a second result), the
+  gateway runs it as a turn of its own: `turn.started` (no `user.text`),
+  `chat.state working`, its artifacts, `turn.finished`, `idle`. Before, its
+  result was a second `turn.finished` for the turn already over, and a send
+  during it could be ended early by it. A send meanwhile is `chat.busy`. A
+  turn's result now ends only that turn's foreground agents.
+- `workflow.finished` carries the summary from the notification that
+  follows the terminal `task_updated` (held up to 5 seconds for it).
+- **`open` follows the shell's directory.** A relative path in a caught
+  `open` resolves against the Bash tool's working directory (the hook
+  input's `cwd`), not the chat folder; without one, only absolute paths
+  are caught. `show_in_viewer` still takes paths relative to the folder.
+- A file a background subagent writes while no turn runs is reported when
+  the write finishes (`artifact.created`, `open` as a turn would decide).
+- The ring keeps only each agent's latest `agent.progress`, so progress
+  frames no longer push the conversation out of the ring.
+- A subagent's own subagent (`spawn_depth` 2+) is no longer reported as a
+  new top-level batch; it shows as its parent's `Agent` step.
+- **`show_in_viewer`.** The agent gets an in-process tool that shows a
+  file in the viewer at once (`artifact.created`, `open: true`): a viewable
+  file inside the session's folder or a configured root, otherwise a clear
+  refusal. Allowed outright, so no permission card in any mode. One line
+  is appended to the agent's system prompt (the SDK's default, which is
+  empty) telling it to use the tool rather than `open` or a browser.
+- **A plain `open <file>` is shown, not run.** A `PreToolUse` hook on
+  `Bash` catches `open <path> [<path> …]` of such files, denies it with
+  "Shown in Portico's viewer instead of opening it." and shows the files.
+  Flags, URLs, globs, chains and files outside the folders run as before.
+  Hooks run in every permission mode, auto included.
+- A file shown during a turn is not reported again at the turn's end, and
+  nothing older opens over it.
+- **A file the reply only names no longer takes `open`.** One unchanged
+  since the turn began is listed with `open: false`; before, a reply that
+  named an earlier page after the new one opened the earlier page.
+
+### Protocol (still version 1; additions only)
+
+- `hello` from the app gains `capabilities: [string]`; `agents.v1` asks
+  for the new frames. The gateway's `hello.capabilities` lists `agents.v1`.
+- An app without `agents.v1` is sent none of the new frames and no tool
+  row with `agent_id`, live or in `chat.history`: an older app sees the
+  conversation as before.
+- New frames `agent.started`, `agent.progress`, `agent.finished`,
+  `workflow.started` (sent again when its phases become known),
+  `workflow.phase`, `workflow.finished`; `agent_id?` on `tool.started` and
+  `tool.finished`. Schema and examples regenerated.
+- A gateway before v0.10 refuses a `hello` with `capabilities` (it is
+  strict about fields).
+- No new frame or field for the review fixes; documented behaviour:
+  `turn.started` without `user.text` for a turn nobody sent; finishes sent
+  for open work when an engine closes (and the app's backstop on `chat.state
+  stopped` / `session.renewed`); only the latest `agent.progress` per agent
+  kept in the ring (skipped `seq`s, never `truncated` for it).
+
 ## v0.9.0 (2026-10-29)
 
 ### What a person gets (app)

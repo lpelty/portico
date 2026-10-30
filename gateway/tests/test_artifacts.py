@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -301,10 +303,130 @@ def test_artifact_outside_folder_is_still_reported(tmp_path: Path) -> None:
     assert not (folder / "draft.md").exists()  # the chat folder is untouched
 
 
+def _aged(path: Path, seconds: float = 3600) -> Path:
+    """``path`` last changed ``seconds`` ago: a file from before the turn."""
+    when = time.time() - seconds
+    os.utime(path, (when, when))
+    return path
+
+
+def test_written_page_opens_over_an_earlier_page_the_reply_names(tmp_path: Path) -> None:
+    # v0.10 decision 6, the report: the agent wrote login.html, ran `open login.html`, and its reply named
+    # mobile-ui.html (an earlier page) last. The earlier page took `open` and the viewer showed it.
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    earlier = _aged(touch(folder / "mobile-ui.html"))
+    login = touch(folder / "login.html")
+    collector = TurnCollector(make_chat(folder))
+    collector.note_tool("Write", {"file_path": str(login), "content": "<html>"})
+    collector.note_tool("Bash", {"command": "open login.html"})
+    collector.note_text("Created login.html and opened it; it follows the style of mobile-ui.html.")
+    artifacts = collector.finish(folder)
+    assert [(Path(a.location).name, a.source, a.open) for a in artifacts] == [
+        ("login.html", "tool", True),
+        (earlier.name, "text", False),
+    ]
+
+
+def test_a_named_file_from_before_the_turn_is_listed_but_never_opens(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    old = _aged(touch(folder / "notes.md"))
+    collector = TurnCollector(make_chat(folder))
+    collector.note_text("As notes.md says, nothing changed.")
+    assert [(a.location, a.open) for a in collector.finish(folder)] == [(str(old), False)]
+
+
+def test_a_named_file_the_turn_changed_still_opens(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    collector = TurnCollector(make_chat(folder), started=time.time())
+    report = touch(folder / "report.md")  # a script the shell ran wrote it
+    collector.note_text("The report is at report.md.")
+    assert [(a.location, a.source, a.open) for a in collector.finish(folder)] == [(str(report), "text", True)]
+
+
+def test_a_file_shown_during_the_turn_is_not_reported_again(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    page = touch(folder / "page.html")
+    notes = touch(folder / "notes.md")
+    collector = TurnCollector(make_chat(folder))
+    collector.note_tool("Write", {"file_path": str(notes), "content": ""})
+    collector.note_tool("Write", {"file_path": str(page), "content": ""})
+    collector.note_shown(page.resolve())
+    collector.note_text("Shown page.html in the viewer.")
+    # page.html went out when it was shown; notes.md is older and does not open over it.
+    assert [(a.location, a.open) for a in collector.finish(folder)] == [(str(notes), False)]
+
+
+def test_a_file_written_after_one_shown_opens(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    page = touch(folder / "page.html")
+    later = touch(folder / "later.md")
+    collector = TurnCollector(make_chat(folder))
+    collector.note_shown(page)
+    collector.note_tool("Write", {"file_path": str(later), "content": ""})
+    assert [(a.location, a.open) for a in collector.finish(folder)] == [(str(later), True)]
+
+
 def test_empty_turn_yields_nothing(tmp_path: Path) -> None:
     collector = TurnCollector(make_chat(tmp_path))
     collector.note_text("Just a reply, nothing produced.")
     assert collector.finish(tmp_path) == []
+
+
+def _turn(chat: Chat, folder: Path, *, text: str | None = None, write: Path | None = None) -> list:
+    """One turn's artifacts, stored on the chat as the server stores them."""
+    collector = TurnCollector(chat)
+    if write is not None:
+        collector.note_tool("Write", {"file_path": str(write), "content": ""})
+    if text is not None:
+        collector.note_text(text)
+    artifacts = collector.finish(folder)
+    chat.artifacts.extend(artifacts)
+    return artifacts
+
+
+def test_a_listed_file_named_again_unchanged_makes_no_new_entry(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    chat = make_chat(folder)
+    log = touch(folder / "session-log.md")
+    summary = touch(folder / "summary.md")
+    first = _turn(chat, folder, write=summary, text="Wrote summary.md; see session-log.md.")
+    assert sorted(a.title for a in first) == ["session-log.md", "summary.md"]
+    # Follow-up turns (as the CLI's own after background agents finish) name them again.
+    for _ in range(5):
+        assert _turn(chat, folder, text="Done: summary.md and session-log.md are unchanged.") == []
+        assert _turn(chat, folder, text="See [the summary](summary.md).") == []
+    assert len(chat.artifacts) == 2
+    del log
+
+
+def test_a_listed_file_written_again_makes_a_new_entry(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    chat = make_chat(folder)
+    summary = touch(folder / "summary.md")
+    _turn(chat, folder, write=summary)
+    touch(summary, "longer content now")
+    again = _turn(chat, folder, write=summary)
+    assert [(a.title, a.open) for a in again] == [("summary.md", True)]
+    assert again[0].id != chat.artifacts[0].id
+    assert _turn(chat, folder, text="summary.md is final.") == []
+
+
+def test_a_stored_artifact_without_a_stamp_is_not_repeated_when_unchanged(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    chat = make_chat(folder)
+    notes = _aged(touch(folder / "notes.md"))
+    _turn(chat, folder, text="See notes.md.")
+    chat.artifact_stamps.clear()  # as after a restart: stored artifacts, no stamps
+    assert _turn(chat, folder, text="notes.md again.") == []
+    del notes
 
 
 # --- through the server -------------------------------------------------------

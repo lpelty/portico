@@ -29,7 +29,9 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 
 # What this gateway can do beyond the protocol's baseline; the app keys
 # optional UI on these.
-CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context"]
+# v0.10: ``agents.v1`` — this gateway sends subagent and workflow frames to an
+# app that lists the same capability in its ``hello``.
+CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1"]
 
 # v0.8: advertised when the deployment can restart all its services at once
 # (``[deployment] restart`` or a plug-in's ``restart_services``); the app
@@ -223,6 +225,13 @@ class Config(BaseModel):
     # model, by the alias ``haiku``).
     titles: Literal["generated", "first_line"] = "generated"
     title_model: str | None = None
+    # v0.10: the agent's system prompt. ``claude_code`` is Claude Code's own
+    # (the agent behaves as in a terminal); ``none`` is the SDK's empty
+    # prompt, as before v0.10. ``system_prompt_append`` is a file of the
+    # deployment's (outside the checkout) added after it, read at each
+    # engine start. The viewer line always comes last.
+    system_prompt: Literal["claude_code", "none"] = "claude_code"
+    system_prompt_append: str | None = None
 
     @field_validator("title_model")
     @classmethod
@@ -271,6 +280,19 @@ class Config(BaseModel):
             out.append(Root(name=root.name, path=str(path)))
         return out
 
+    @field_validator("system_prompt_append")
+    @classmethod
+    def _append_file_exists(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        path = Path(value.strip()).expanduser()
+        if not path.is_absolute():
+            raise ConfigError(
+                f"system_prompt_append: {value!r} is relative; it must be an absolute path (~ is expanded)"
+            )
+        if not path.is_file():
+            raise ConfigError(f"system_prompt_append: {path} is not a file")
+        return str(path)
 
     @field_validator("plugin_paths")
     @classmethod

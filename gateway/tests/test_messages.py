@@ -17,6 +17,12 @@ TS = "2026-10-27T00:00:00Z"
 
 # One entry per message type per direction (Task 1 inventory).
 EXPECTED_KEYS = {
+    "server.agent.started",
+    "server.agent.progress",
+    "server.agent.finished",
+    "server.workflow.started",
+    "server.workflow.phase",
+    "server.workflow.finished",
     "client.hello",
     "client.chat.new",
     "client.chat.open",
@@ -72,8 +78,9 @@ def test_every_type_has_schema_def_and_example():
         assert type(msg).__name__ in schema["$defs"], key
     # v0.1's 30, v0.2's 6, v0.3's session.mode, chat.notice, config.stale,
     # update.available, v0.4's session.log, service.restart, session.logged, services.status,
-    # v0.8's services.restart_all
-    assert len(ex) == 45
+    # v0.8's services.restart_all, v0.10's agent.started, agent.progress, agent.finished,
+    # workflow.started, workflow.phase, workflow.finished
+    assert len(ex) == 51
     assert set(ex) == EXPECTED_KEYS
 
 

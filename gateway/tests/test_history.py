@@ -24,6 +24,9 @@ from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config
 from portico_gateway.engine import history_events, read_history
 from portico_gateway.messages import (
+    AgentFinished,
+    AgentProgress,
+    AgentStarted,
     Artifact,
     ArtifactCreated,
     ChatHistory,
@@ -578,3 +581,77 @@ async def test_a_restored_chat_replays_this_launchs_notices_with_its_transcript(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+def test_a_task_notification_is_a_turn_nobody_sent() -> None:
+    # Background work reporting back (v0.10): the engine writes it as a user
+    # message; it is never the person's words, and the reply is its own turn.
+    note = "<task-notification>\n<task-id>t1</task-id>\n<status>completed</status>\n</task-notification>"
+    events = history_events(
+        [
+            user([text("Fan out.")]),
+            assistant(text("Started them.")),
+            user(note),
+            assistant(text("One is done.")),
+        ],
+        chat=1,
+    )
+    kinds = [type(e).__name__ for e in events]
+    assert kinds == [
+        "TurnStarted", "UserText", "TextDelta", "TurnFinished",
+        "TurnStarted", "TextDelta", "TurnFinished",
+    ]
+    assert [e.text for e in events if isinstance(e, UserText)] == ["Fan out."]
+    assert history_events([user([text(note)])], chat=1) == [
+        TurnStarted(ts=events[0].ts, chat=1, turn=1),
+        TurnFinished(ts=events[0].ts, chat=1, turn=1, outcome="done"),
+    ]
+
+
+def test_two_messages_of_text_in_a_turn_stay_paragraphs() -> None:
+    events = history_events([user([text("Go.")]), assistant(text("First.")), assistant(text("Second."))], chat=1)
+    assert [e.text for e in events if isinstance(e, TextDelta)] == ["First.", "\n\nSecond."]
+
+
+def agent_call(call_id: str, description: str) -> dict[str, Any]:
+    return {"type": "tool_use", "id": call_id, "name": "Agent", "input": {"description": description, "prompt": "…"}}
+
+
+def result(call_id: str, content: str, is_error: bool = False) -> dict[str, Any]:
+    return {"type": "tool_result", "tool_use_id": call_id, "content": content, "is_error": is_error}
+
+
+def test_the_agent_record_is_rebuilt_from_the_transcript() -> None:
+    # v0.10: after a gateway restart the replay comes from the transcript,
+    # which has no agent frames; the record is rebuilt from the calls, their
+    # results and the notifications (whose usage gives steps and time).
+    note = (
+        "<task-notification>\n<task-id>t1</task-id>\n<tool-use-id>a1</tool-use-id>\n"
+        "<status>completed</status>\n<summary>Agent \"Read app\" finished</summary>\n"
+        "<result>It said <status>failed</status> and <tool_uses>99</tool_uses>.</result>\n"
+        "<usage><subagent_tokens>8114</subagent_tokens><tool_uses>2</tool_uses><duration_ms>4789</duration_ms></usage>\n"
+        "</task-notification>"
+    )
+    events = history_events(
+        [
+            user([text("Fan out.")]),
+            assistant(agent_call("a1", "Read app"), agent_call("a2", "Read config"), agent_call("a3", "Check")),
+            user([result("a1", "Async agent launched successfully."), result("a2", "Async agent launched successfully.")]),
+            user([result("a3", "It broke.", is_error=True)]),
+            assistant(text("Started them.")),
+            user(note),
+            assistant(text("One is done.")),
+        ],
+        chat=1,
+    )
+    started = [e for e in events if isinstance(e, AgentStarted)]
+    assert [(e.id, e.tool_use_id, e.description, e.turn) for e in started] == [
+        ("a1", "a1", "Read app", 1), ("a2", "a2", "Read config", 1), ("a3", "a3", "Check", 1),
+    ]
+    finished = {e.id: e for e in events if isinstance(e, AgentFinished)}
+    assert finished["a3"].outcome == "failed" and finished["a3"].summary == "It broke."
+    assert finished["a1"].outcome == "done"
+    progress = [e for e in events if isinstance(e, AgentProgress)]
+    assert [(e.id, e.steps, e.elapsed) for e in progress] == [("a1", 2, 4.789)]
+    # Never seen to end: over, since the engine that ran it is gone.
+    assert finished["a2"].outcome == "done" and events[-1] == finished["a2"]

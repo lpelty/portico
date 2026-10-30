@@ -17,9 +17,10 @@ from typing import Any
 import pytest
 from claude_agent_sdk import ResultMessage
 
+from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
-from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, translate
-from portico_gateway.messages import Action, Brand, Root, ServerMessage
+from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
+from portico_gateway.messages import Action, Brand, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.state import StateDir
 
 # --- script items -------------------------------------------------------------
@@ -40,6 +41,13 @@ class AskQuestion:
     """Mid-turn: the engine asks ``on_question``."""
 
     questions: list[dict[str, Any]]
+
+
+@dataclass
+class Show:
+    """Mid-turn: the engine's ``show_in_viewer`` (or a caught ``open``) asks ``on_show`` (v0.10)."""
+
+    paths: list[str]
 
 
 @dataclass
@@ -88,6 +96,13 @@ class RecordingCallbacks:
         self.permissions: list[tuple[str, dict[str, Any], list[dict[str, Any]], str]] = []
         self.questions: list[list[dict[str, Any]]] = []
         self.compactions: list[str] = []
+        # v0.10: every ``on_show`` call, and what it answers (``None``: shown).
+        self.shown: list[list[str]] = []
+        self.show_refusal: str | None = None
+
+    async def on_show(self, paths: list[str]) -> str | None:
+        self.shown.append(list(paths))
+        return self.show_refusal
 
     async def on_compacted(self, trigger: str) -> None:
         self.compactions.append(trigger)
@@ -119,6 +134,8 @@ class FakeEngine:
         self.turn = 0
         self.session_id: str | None = None
         self.permission_mode = "default"
+        # The deployment's system prompt, as the owner set it before ``start``.
+        self.system_prompt: Any = None
         # The slash commands the engine knows; ``None``: it cannot say.
         self.commands: set[str] | None = None
         # Every ``set_permission_mode`` call, in order (not in ``calls``).
@@ -132,6 +149,8 @@ class FakeEngine:
         self.calls: list[tuple[str, Any]] = []
         self.decisions: list[PermissionDecision] = []
         self.answers: list[dict[str, str | list[str]] | tuple[str, str]] = []
+        # What each ``Show`` item's ``on_show`` answered (``None``: shown).
+        self.show_answers: list[str | None] = []
         self.started = False
         self.closed = False
         self._task: asyncio.Task[None] | None = None
@@ -142,6 +161,11 @@ class FakeEngine:
         self.context: tuple[float, str | None] | None = None
         self.context_error: Exception | None = None
         self.context_reads = 0
+        # v0.10: subagents and workflows, as the real engine follows them.
+        self.agents = AgentTracker()
+        # The last turn a result closed: an ``opens_turn`` message after it
+        # begins a turn nobody sent, as in the real adapter.
+        self.finished_turn = 0
 
     def script(self, *items: Any) -> None:
         self.scripts.append(list(items))
@@ -187,16 +211,25 @@ class FakeEngine:
                     self.answers.append(("declined", str(e)))
             elif isinstance(item, Compact):
                 await cb.on_compacted(item.trigger)
+            elif isinstance(item, Show):
+                self.show_answers.append(await cb.on_show(item.paths))  # type: ignore[attr-defined]
             elif isinstance(item, Block):
                 self._blocked.set()
                 if item.stubborn:
                     await asyncio.Event().wait()
                 await self._interrupted.wait()
-                for ev in translate(fake_result(session_id=self.session_id or "fake"), self.chat, self.turn):
+                for ev in translate(fake_result(session_id=self.session_id or "fake"), self.chat, self.turn, self.agents):
+                    if isinstance(ev, TurnFinished):
+                        self.finished_turn = ev.turn
                     await cb.on_event(ev)
                 return
             else:
-                for ev in translate(item, self.chat, self.turn):
+                if 0 < self.turn <= self.finished_turn and opens_turn(item):
+                    self.turn += 1
+                    await cb.on_event(TurnStarted(ts="2026-10-29T12:00:00Z", chat=self.chat, turn=self.turn))
+                for ev in translate(item, self.chat, self.turn, self.agents):
+                    if isinstance(ev, TurnFinished):
+                        self.finished_turn = ev.turn
                     await cb.on_event(ev)
 
     async def context_usage(self) -> tuple[float, str | None] | None:

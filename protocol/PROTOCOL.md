@@ -83,7 +83,15 @@ sequence numbers are stale and it must re-fetch history.
 ## Messages: app → gateway
 
 ### `hello` — `HelloClient`
-First frame on every connection. `protocol: 1`, `app_version: string`.
+First frame on every connection. `protocol: 1`, `app_version: string`;
+v0.10: `capabilities?: [string]`, what the app can show beyond the
+messages every app reads. The one so far is `agents.v1` (see Subagents and
+workflows): without it the gateway sends none of those frames. Absent
+(an older app) is the empty list. A gateway before v0.10 is strict about
+fields and refuses a `hello` carrying `capabilities` with
+`error code=protocol.invalid`; an app that may meet one sends it only to a
+gateway it knows is v0.10 or later, or connects again without it after
+that refusal.
 Anything else first is answered with `error code=protocol.hello_required` and
 the socket is closed (close code 1002); a first frame that does not parse
 gets its `protocol.*` error and the same close. A second `hello` on an
@@ -420,7 +428,8 @@ v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 `capabilities: [string]` (v0.1: `cards.form`,
 `files`, `producer`; v0.8: `services.restart_all` when the deployment can
 restart all its services at once, so the app offers Restart all
-services). Always followed by `chat.list`, so the app has the
+services; v0.10: `agents.v1` when the gateway sends subagent and workflow
+frames to an app that lists the same in its own `hello`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
@@ -507,6 +516,12 @@ original `seq`; events from a transcript replay carry none (see
 `tool.started`, `tool.finished`, `turn.finished outcome=done` per turn.
 Transcript turns count from 1 over the whole session; when no turn has
 run yet in this launch, live turns continue from the last replayed one.
+v0.10: ring events include the subagent and workflow frames and the rows
+with `agent_id`, for an app that declared `agents.v1`; for any other app
+they are left out of the replay as they were left out live (its `seq`
+numbers then skip; nothing else changes). A transcript replay carries
+none of them: after a gateway restart a past fan-out shows as its
+`Agent` tool rows only.
 
 ### `chat.live` — `ChatLive`
 `chat`, `id` (echoing `chat.open`), `seq` (the chat's current sequence
@@ -515,7 +530,21 @@ number, not a new one). History is complete; what follows is live.
 ### `turn.started` — `TurnStarted`
 `chat`, `seq`, `turn: integer` (counts from 1 per gateway launch). Always
 followed by `user.text` and then `chat.state working` (v0.7: before the
-engine starts, when it has to; see `message.send`).
+engine starts, when it has to; see `message.send`) — except a turn
+nobody sent.
+
+*A turn nobody sent (v0.10).* The engine can speak on its own between
+turns, typically when background work it started (a workflow, a
+background subagent) finishes and it answers with what came of it. The
+gateway gives that output a turn of its own: `turn.started` with the
+chat's next `turn`, **no `user.text`**, `chat.state working`, then the
+turn's events, its artifacts and `turn.finished`, then `chat.state idle`,
+as for any turn. An app draws such a turn without a bubble (a transcript
+replay already produces turns that begin with the agent's own output).
+While it runs, `message.send` is refused with `chat.busy` as during any
+turn, and `turn.stop` / `chat.stop` end it as any turn. A send echoed just
+before the engine began speaking keeps its turn: what the engine says
+joins it.
 
 ### `user.text` — `UserText`
 `chat`, `turn`, `text`, `seq` when live. What the person sent to start
@@ -533,9 +562,14 @@ the app appends.
 
 ### `tool.started` — `ToolStarted`
 `chat`, `seq`, `turn`, `tool_use_id`, `tool`, `summary`, `input: object`. *(Task 4)*
+v0.10: `agent_id?` — set when a subagent made the call (the `id` of its
+`agent.started`), so the row belongs in that agent's steps, not in the
+conversation. Rows with `agent_id` go only to an app that declared
+`agents.v1`; their `turn` is the agent's.
 
 ### `tool.finished` — `ToolFinished`
-`chat`, `seq`, `turn`, `tool_use_id`, `ok: bool`, `summary`;
+`chat`, `seq`, `turn`, `tool_use_id`, `ok: bool`, `summary`; `agent_id?` (v0.10, as on
+`tool.started`);
 `permission?` and `note?` (v0.3): what happened to this use's permission,
 drawn on the tool row — `once` (allowed once), `session` (allowed for this
 session, by this answer or an earlier one), `auto` (auto mode allowed it;
@@ -646,6 +680,24 @@ only the newest *viewable* one — `markdown`, `image`, `html`, `pdf`,
 auto-open, so scaffolding a project does not flap the viewer. A producer
 artifact is sent at once with `open: true`. Artifacts are kept with the
 chat in the index, so a later launch still lists them.
+
+Since 0.10 (gateway behaviour; no new frame or field): a file the turn's
+text only names, unchanged since the turn began (an earlier file the reply
+mentions), is listed with `open: false` and never takes `open` from what
+the turn made. The agent can also show a file during the turn: its
+`show_in_viewer` tool, or a plain `open <path>` in its shell that the
+gateway catches, sends the file at once as `artifact.created` with
+`source: tool` and `open: true` — only a viewable file inside the chat's
+folder or a configured root. Such a file is not reported again at the end
+of the turn. A relative path given to `show_in_viewer` is the chat
+folder's; a relative path in a caught `open` is the shell's working
+directory's (the Bash tool's directory persists between calls, so after
+`cd build`, `open report.html` is `build/report.html`); a gateway that
+cannot learn that directory catches only absolute paths. A file a
+background subagent writes while no turn is running is reported when the
+write finishes, as a turn would report that one file (`open: true` when
+it is viewable). The app shows the newest artifact that opens (or that the
+person picks) over the one it remembered from the last quit.
 
 ### `files.list` — `FilesList`
 `root`, `path` (normalised relative path, `""` for the root itself),
@@ -773,6 +825,104 @@ and is not stamped: refusals are replies, not history.
 A bad frame after `hello` (unknown type, unknown field, not JSON) is
 answered with an `error` and the connection stays open; only the first
 frame is fatal.
+
+## Subagents and workflows *(v0.10)*
+
+When the agent hands work to subagents, or runs a workflow, the gateway
+reports them with the frames below. They go only to an app whose `hello`
+declared `agents.v1` (an older app's decoder skips an unknown frame but
+refuses a whole `chat.history` that holds one, so nothing is sent that it
+did not ask for). Each is chat-scoped, stamped with `seq`, kept in the
+ring and replayed by `chat.history` like every other turn event.
+
+### `agent.started` — `AgentStarted`
+`chat`, `seq`, `turn`, `id` (names the agent in the frames that follow),
+`tool_use_id` (the call that started it: the main conversation's `Agent`
+row; a workflow's agents share the workflow's call), `description` (the
+agent's task in a few words), `kind` (the agent type the engine names,
+e.g. `general-purpose`, `Explore`; `agent` when it names none;
+`workflow` for one of a workflow's agents), `workflow_id?` and `phase?`
+(a workflow's agent: the workflow's `id`, and an index from 0 into its
+`phases`, absent when the workflow reports no phases), `background?`
+(`true` when the agent runs on after its turn finishes: background
+subagents and every workflow agent).
+
+### `agent.progress` — `AgentProgress`
+`chat`, `seq`, `id`, `step?` (what it is doing now, one short line: the
+tool and its target from the agent's latest call, e.g. `Read
+transcripts/p11.md`, `Bash grep -rn quote`, `Glob **/*.py`; before its
+first call the engine's own words, e.g. `Reading alpha.md`), `steps`
+(its tool calls so far), `elapsed` (seconds since it started, one
+decimal). Sent on each of its calls and on each of the engine's progress
+reports. Each one says all the one before it did, so the ring keeps only
+an agent's latest `agent.progress`: a replay from the ring (from the
+beginning or `since` a `seq`) carries the latest progress of each agent
+and none of the earlier ones, whose `seq` numbers are skipped. A replaced
+progress is not a loss and never makes a replay `truncated`.
+
+### `agent.finished` — `AgentFinished`
+`chat`, `seq`, `id`, `outcome: done | failed | stopped`, `summary?` (the
+first line of what it reported, at most 120 characters). Exactly one per
+agent. A foreground agent still open when its own turn's engine result
+arrives is ended then (`stopped`, or what the engine last said); another
+turn's result ends none of it. A background agent can finish during a
+later turn, or between turns.
+
+*When the engine goes away (v0.10).* Closing a chat's engine —
+`chat.stop`, a stop whose grace ran out, `session.renew`, `chat.remove`,
+`gateway.stop` — or the engine's process dying ends its background work
+with it: the gateway sends `agent.finished outcome=stopped` for every
+agent still open and `workflow.finished outcome=stopped` for every
+workflow (one already known to have ended keeps its outcome), before the
+turn's `turn.finished` when a turn was running. An app still treats a
+foreground agent open at its turn's `turn.finished` as stopped, and, as
+a backstop for a gateway that sent no such finish, treats every agent
+and workflow still open in a chat as stopped once that chat's
+`chat.state` is `stopped` or its session ended (`session.renewed`).
+
+### `workflow.started` — `WorkflowStarted`
+`chat`, `seq`, `turn`, `id`, `name` (the workflow's own name, else its
+description), `phases: [string]` (the phase titles in order). Sent when
+the workflow starts — usually with `phases: []`, because the engine
+reports them with its first progress — and sent again with the same `id`
+whenever the phase list becomes known or changes: the app replaces what
+it had.
+
+### `workflow.phase` — `WorkflowPhase`
+`chat`, `seq`, `id` (the workflow's), `index` (into `phases`), `state:
+pending | running | done | failed`. Sent when a phase's state changes: it
+is `running` while any of its agents runs, then `done`, or `failed`
+when one of its agents failed; `pending` until its first agent starts.
+
+### `workflow.finished` — `WorkflowFinished`
+`chat`, `seq`, `id`, `outcome: done | failed | stopped`, `summary?` (the
+first line of the engine's report on it, at most 120 characters).
+Any of its agents still open are ended first (`done` when the workflow
+completed, else `stopped`), then their phases' `workflow.phase`. A
+workflow runs in the background: its turn usually finishes first, and
+these frames follow during later turns or between them.
+
+### Where it comes from (reference gateway)
+
+From the Agent SDK's task messages. A task whose type is a subagent
+(`local_agent`; `subagent` and `remote_agent` are taken the same way) is
+an agent; its own tool calls are the messages whose `parent_tool_use_id`
+is its call. A task whose type is a workflow (`local_workflow`,
+`workflow`) is a workflow: `workflow_name` names it, and its progress
+reports' `workflow_progress` lists the phases (`workflow_phase {index,
+title}`) and the agents (`workflow_agent {index, label, phaseIndex,
+state, lastToolName, lastToolSummary, toolCalls, durationMs,
+resultPreview}`); a workflow agent's `id` is `<workflow id>.<index>`, and
+its steps are only what those reports say (it sends no tool rows). A
+task ends with `task_notification`, or for background work possibly only
+with a `task_updated` whose status is terminal (`completed`, `failed`,
+`stopped`, `killed`); either ends it once. A background subagent ends on
+whichever comes first; a foreground subagent's and a workflow's terminal
+`task_updated` waits for the notification, which carries the summary (a
+workflow waits at most 5 seconds, and no longer than the next message
+that is not a task's). A subagent's own subagent (`spawn_depth` above 1)
+is not reported as an agent: its start is the parent's `Agent` step, and
+its own calls are left out. Shell and monitor tasks are not shown.
 
 ## Services *(v0.4)*
 
