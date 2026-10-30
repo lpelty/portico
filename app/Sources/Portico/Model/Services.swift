@@ -13,6 +13,20 @@ struct ServiceRow: Equatable, Identifiable, Sendable {
     var canRestart: Bool = false
     /// The app's own row, from the supervisor and the socket.
     var isGateway: Bool = false
+
+    /// The menu's second line (v0.11, item 60), only when it says
+    /// something the dot does not: the gateway's port, a check's own
+    /// detail ("recall and capture", without the "up"), why it is down.
+    /// A bare "up", "running" or "checking" is `nil`: one line.
+    var menuDetail: String? {
+        let text = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["", "up", "running", "checking"].contains(text) { return nil }
+        if state == .up, text.hasPrefix("up · ") { return String(text.dropFirst("up · ".count)) }
+        return text
+    }
+
+    /// A down row's second line is its error, drawn red.
+    var menuDetailIsError: Bool { state == .down }
 }
 
 /// What the strip's services control and its menu say (spec §2.4): the
@@ -22,7 +36,6 @@ struct ServicesPresentation: Equatable, Sendable {
     enum Tone: Equatable, Sendable { case up, down, checking }
 
     static let gatewayId = "gateway"
-    static let footer = "The gateway reports these. The deployment lists its own services."
 
     var rows: [ServiceRow]
     var label: String
@@ -255,7 +268,17 @@ extension ServicesPresentation {
         capabilities?.contains(ServicesRestartAll.capability) ?? false
     }
 
-    static let restartAllTitle = "Restart all services"
+    /// The menu's one restart control, at its foot (v0.11, item 60).
+    static let restartAllTitle = "Restart all"
+
+    /// What Restart all does: the deployment's restart command for all its
+    /// services when it has one (asks first, v0.8 decision 4); otherwise a
+    /// restart of the gateway, the one thing the app restarts itself (asks
+    /// while a turn runs, AC1). The rows carry no buttons of their own
+    /// (AG3); a row's own Restart, Stop and Start are on its context menu.
+    static func restartAllAction(offersRestartAll: Bool) -> GatewayAction {
+        offersRestartAll ? .restartAll : .restart
+    }
 }
 
 /// An action that may ask first (v0.8 decisions 3, 4).

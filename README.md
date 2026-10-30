@@ -134,11 +134,13 @@ run = "my-tool update"              # performs it; the app's "Update available" 
 
 [deployment]                        # optional (v0.8): one restart and one status for all the services
 restart = "my-tool restart-all"     # /bin/sh -c, bounded by command_timeout_seconds; exit 0 = done;
-                                    # the services menu ends with Restart all services
+                                    # the services menu's Restart all runs it (without it,
+                                    # Restart all restarts the gateway)
 status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": true|false, "detail"?}]} on stdout
                                     # (stderr is not read as JSON; it only names the reason when it fails);
-                                    # when set, its rows replace the [[services]] checks; a row offers
-                                    # Restart when a [[services]] entry with the same id gives one
+                                    # when set, its rows replace the [[services]] checks; a row's
+                                    # context menu offers Restart when a [[services]] entry with the
+                                    # same id gives one
 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
