@@ -274,6 +274,15 @@ def _changed_since(path: Path, started: float) -> bool:
         return False
 
 
+def _stamp(path: Path) -> tuple[float, int] | None:
+    """A file's modification time and size, for telling it was written again."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime, st.st_size)
+
+
 def _same_file(location: str) -> str:
     """A file location in the form two signals for one file agree on."""
     try:
@@ -351,6 +360,7 @@ class TurnCollector:
 
         ordered = sorted(found.items(), key=lambda item: item[1][1])
         artifacts = [artifact_for_location(location, source=source) for location, (source, _) in ordered]
+        artifacts = [a for a in artifacts if not self._already_listed(a)]
         for artifact in reversed(artifacts):
             if not is_viewable(artifact.media):
                 continue
@@ -358,4 +368,27 @@ class TurnCollector:
                 continue
             artifact.open = True
             break
-        return [a for a in artifacts if a.kind != "file" or _same_file(a.location) not in shown]
+        out = [a for a in artifacts if a.kind != "file" or _same_file(a.location) not in shown]
+        for artifact in out:
+            if artifact.kind == "file":
+                stamp = _stamp(Path(artifact.location))
+                if stamp is not None:
+                    self.chat.artifact_stamps[_same_file(artifact.location)] = stamp
+        return out
+
+    def _already_listed(self, artifact: Artifact) -> bool:
+        """A file the chat already lists at this location and not written since: no new entry.
+
+        Unchanged means the same modification time and size as when it was
+        last listed; with none recorded (a stored artifact from before a
+        restart), not changed during this turn.
+        """
+        if artifact.kind != "file":
+            return False
+        key = _same_file(artifact.location)
+        if not any(a.kind == "file" and _same_file(a.location) == key for a in self.chat.artifacts):
+            return False
+        known = self.chat.artifact_stamps.get(key)
+        if known is not None:
+            return _stamp(Path(artifact.location)) == known
+        return not _changed_since(Path(artifact.location), self.started)

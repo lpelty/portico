@@ -377,6 +377,58 @@ def test_empty_turn_yields_nothing(tmp_path: Path) -> None:
     assert collector.finish(tmp_path) == []
 
 
+def _turn(chat: Chat, folder: Path, *, text: str | None = None, write: Path | None = None) -> list:
+    """One turn's artifacts, stored on the chat as the server stores them."""
+    collector = TurnCollector(chat)
+    if write is not None:
+        collector.note_tool("Write", {"file_path": str(write), "content": ""})
+    if text is not None:
+        collector.note_text(text)
+    artifacts = collector.finish(folder)
+    chat.artifacts.extend(artifacts)
+    return artifacts
+
+
+def test_a_listed_file_named_again_unchanged_makes_no_new_entry(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    chat = make_chat(folder)
+    log = touch(folder / "session-log.md")
+    summary = touch(folder / "summary.md")
+    first = _turn(chat, folder, write=summary, text="Wrote summary.md; see session-log.md.")
+    assert sorted(a.title for a in first) == ["session-log.md", "summary.md"]
+    # Follow-up turns (as the CLI's own after background agents finish) name them again.
+    for _ in range(5):
+        assert _turn(chat, folder, text="Done: summary.md and session-log.md are unchanged.") == []
+        assert _turn(chat, folder, text="See [the summary](summary.md).") == []
+    assert len(chat.artifacts) == 2
+    del log
+
+
+def test_a_listed_file_written_again_makes_a_new_entry(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    chat = make_chat(folder)
+    summary = touch(folder / "summary.md")
+    _turn(chat, folder, write=summary)
+    touch(summary, "longer content now")
+    again = _turn(chat, folder, write=summary)
+    assert [(a.title, a.open) for a in again] == [("summary.md", True)]
+    assert again[0].id != chat.artifacts[0].id
+    assert _turn(chat, folder, text="summary.md is final.") == []
+
+
+def test_a_stored_artifact_without_a_stamp_is_not_repeated_when_unchanged(tmp_path: Path) -> None:
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    chat = make_chat(folder)
+    notes = _aged(touch(folder / "notes.md"))
+    _turn(chat, folder, text="See notes.md.")
+    chat.artifact_stamps.clear()  # as after a restart: stored artifacts, no stamps
+    assert _turn(chat, folder, text="notes.md again.") == []
+    del notes
+
+
 # --- through the server -------------------------------------------------------
 
 

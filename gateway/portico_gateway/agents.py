@@ -78,6 +78,19 @@ WORKFLOW_TASK_TYPES: frozenset[str] = frozenset({"local_workflow", "workflow"})
 WORKFLOW_AGENT_KIND = "workflow"
 DEFAULT_AGENT_KIND = "agent"
 STEP_TARGET_LIMIT = 48
+
+# The engine's own internal tools, in plain words when one is a subagent's step.
+INTERNAL_TOOL_WORDS: dict[str, str] = {
+    "SubagentHandback": "Reporting back",
+}
+
+# A progress frame repeating the last one's step and steps is sent only once
+# its elapsed time has moved on by at least this much (seconds).
+PROGRESS_ELAPSED_STEP = 1.0
+
+
+def _tool_word(tool: str) -> str:
+    return INTERNAL_TOOL_WORDS.get(tool, tool)
 SUMMARY_LIMIT = 120
 # The longest a workflow's terminal ``task_updated`` waits for the notification's summary.
 HOLD_SECONDS = 5.0
@@ -116,6 +129,8 @@ def _short_path(path: str) -> str:
 
 def step_text(tool: str, input: Mapping[str, Any]) -> str:
     """One short line for a subagent's step: the tool and its target (a file, a command's head, a pattern)."""
+    if tool in INTERNAL_TOOL_WORDS:
+        return INTERNAL_TOOL_WORDS[tool]
     target: Any = None
     if tool in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead"):
         target = input.get("file_path") or input.get("notebook_path")
@@ -178,6 +193,8 @@ class _Agent:
     finished: bool = False
     # A terminal ``task_updated`` seen for a foreground agent: held for the notification's summary.
     pending_outcome: AgentOutcome | None = None
+    # The last progress frame sent: (step, steps, elapsed).
+    last_sent: tuple[str | None, int, float] | None = None
 
 
 @dataclass
@@ -326,10 +343,10 @@ class AgentTracker:
                 if msg.description and msg.description != agent.description:
                     agent.step = _clip(msg.description, STEP_TARGET_LIMIT + 12)
                 elif msg.last_tool_name:
-                    agent.step = msg.last_tool_name
+                    agent.step = _tool_word(msg.last_tool_name)
             duration = _number(usage.get("duration_ms"))
             agent.elapsed = round(duration / 1000, 1) if duration is not None else self._elapsed(agent)
-            return [self._progress_event(agent, chat, ts)]
+            return self._progress_events(agent, chat, ts)
         wf = self._workflows.get(msg.task_id)
         if wf is not None and not wf.finished:
             report = msg.data.get("workflow_progress") if isinstance(msg.data, Mapping) else None
@@ -362,7 +379,7 @@ class AgentTracker:
             )
         if out and not agent.finished:
             agent.elapsed = max(agent.elapsed, self._elapsed(agent))
-            out.append(self._progress_event(agent, chat, ts))
+            out.extend(self._progress_events(agent, chat, ts))
         return out
 
     def _subagent_results(self, msg: UserMessage, chat: int, ts: str) -> list[ServerMessage]:
@@ -482,7 +499,10 @@ class AgentTracker:
         step = agent.step
         if isinstance(tool, str) and tool:
             target = _summary_target(entry.get("lastToolSummary"))
-            step = f"{tool} {target}" if target else tool
+            if tool in INTERNAL_TOOL_WORDS:
+                step = INTERNAL_TOOL_WORDS[tool]
+            else:
+                step = f"{tool} {target}" if target else tool
         calls = entry.get("toolCalls")
         steps = calls if isinstance(calls, int) and calls > agent.steps else agent.steps
         duration = _number(entry.get("durationMs"))
@@ -495,7 +515,7 @@ class AgentTracker:
             elapsed = agent.elapsed
         if step != agent.step or steps != agent.steps or elapsed != agent.elapsed:
             agent.step, agent.steps, agent.elapsed = step, steps, elapsed
-            out.append(self._progress_event(agent, chat, ts))
+            out.extend(self._progress_events(agent, chat, ts))
         state = entry.get("state")
         outcome = _WORKFLOW_AGENT_OUTCOMES.get(state) if isinstance(state, str) else None
         if outcome is not None:
@@ -543,8 +563,19 @@ class AgentTracker:
         return round(max(0.0, self.clock() - agent.started), 1)
 
     @staticmethod
-    def _progress_event(agent: _Agent, chat: int, ts: str) -> AgentProgress:
-        return AgentProgress(ts=ts, chat=chat, id=agent.id, step=agent.step, steps=agent.steps, elapsed=agent.elapsed)
+    def _progress_events(agent: _Agent, chat: int, ts: str) -> list[ServerMessage]:
+        """The agent's progress frame, unless it would repeat the last one sent.
+
+        A frame goes when the step or the step count changed, or the elapsed
+        time moved on by ``PROGRESS_ELAPSED_STEP``; the engine reports one
+        call both as the subagent's message and as a progress report.
+        """
+        last = agent.last_sent
+        if last is not None and last[0] == agent.step and last[1] == agent.steps:
+            if agent.elapsed - last[2] < PROGRESS_ELAPSED_STEP:
+                return []
+        agent.last_sent = (agent.step, agent.steps, agent.elapsed)
+        return [AgentProgress(ts=ts, chat=chat, id=agent.id, step=agent.step, steps=agent.steps, elapsed=agent.elapsed)]
 
     @staticmethod
     def _finish(agent: _Agent, outcome: AgentOutcome, summary: str | None, chat: int, ts: str) -> AgentFinished:

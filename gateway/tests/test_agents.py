@@ -204,6 +204,37 @@ def test_step_text() -> None:
     assert step_text("Glob", {"pattern": "**/*.py"}) == "Glob **/*.py"
     assert step_text("Mystery", {"x": 1}) == "Mystery"
     assert len(step_text("Bash", {"command": "x" * 200})) <= len("Bash ") + 48
+    assert step_text("SubagentHandback", {"message": "the report"}) == "Reporting back"
+
+
+def test_one_call_reported_twice_is_one_progress_frame() -> None:
+    clock = Clock()
+    tracker = AgentTracker(clock=clock)
+    run([started("t1", "call-1")], tracker)
+    clock.now += 2.0
+    # The engine reports a call as the subagent's own message and again as task_progress.
+    first = of(run([sub_call("call-1", "c1", "Read", {"file_path": "/a/b.md"})], tracker), AgentProgress)
+    again = of(run([progress("t1", tool_uses=1, duration_ms=2000, last_tool="Read")], tracker), AgentProgress)
+    assert [(p.step, p.steps, p.elapsed) for p in first] == [("Read a/b.md", 1, 2.0)]
+    assert again == []
+    # Same step and count, under a second later: still nothing; a second or more: a frame.
+    assert of(run([progress("t1", tool_uses=1, duration_ms=2900)], tracker), AgentProgress) == []
+    later = of(run([progress("t1", tool_uses=1, duration_ms=3100)], tracker), AgentProgress)
+    assert [(p.steps, p.elapsed) for p in later] == [(1, 3.1)]
+    # A new step goes at once.
+    nxt = of(run([sub_call("call-1", "c2", "Grep", {"pattern": "x"})], tracker), AgentProgress)
+    assert [(p.step, p.steps) for p in nxt] == [("Grep x", 2)]
+
+
+def test_the_report_back_tool_is_a_plain_step() -> None:
+    tracker = AgentTracker(clock=Clock())
+    run([started("t1", "call-1")], tracker)
+    events = run([sub_call("call-1", "c1", "SubagentHandback", {"message": "done"})], tracker)
+    assert of(events, AgentProgress)[-1].step == "Reporting back"
+    tracker = AgentTracker(clock=Clock())
+    run([started("t2", "call-2")], tracker)
+    events = run([progress("t2", last_tool="SubagentHandback")], tracker)
+    assert of(events, AgentProgress)[-1].step == "Reporting back"
 
 
 # --- endings --------------------------------------------------------------------------

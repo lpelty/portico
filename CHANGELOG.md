@@ -42,6 +42,13 @@
   last quit: it arrived while the welcome held the remembered one, or
   before a replay re-listed it, and the remembered one came back over it.
   **Open externally** stays in the viewer's header.
+- **No repeated artifacts.** A reply that only names a file the chat
+  already lists, unchanged since, no longer adds it to the viewer's history
+  again (the agent's follow-up turns after background work named the same
+  files over and over); a file written again still gets a new entry.
+- **Plainer agent steps.** An agent's step no longer appears twice in a
+  row, and its last step reads "Reporting back" instead of the engine's
+  internal tool name.
 
 ### For deployments
 

@@ -130,6 +130,9 @@ class Chat:
         # ``agent.progress`` does not count (its replacement says it all).
         self._dropped_through = 0
         self.artifacts: list[Artifact] = list(artifacts or [])
+        # Resolved file location -> (mtime, size) when last listed as an
+        # artifact: a file named again unchanged makes no new entry. Not stored.
+        self.artifact_stamps: dict[str, tuple[float, int]] = {}
         # Session facts: ``ended`` is when a renewal closed this session;
         # ``logged`` whether its log step finished cleanly (``None`` when
         # none ran); ``parent`` the session this one followed.
