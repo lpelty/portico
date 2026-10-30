@@ -134,12 +134,12 @@ enum MarkdownAttributed {
         return (traits?[.weight] as? CGFloat).map { NSFont.Weight($0) } ?? .regular
     }
 
-    /// A code block's text: monospaced 12, 3 of line spacing, as fenced.
+    /// A code block's text: monospaced 14 (v0.11, beside 16 pt prose), 3 of line spacing, as fenced.
     static func code(_ text: String) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 3
         return NSAttributedString(string: text.isEmpty ? " " : text, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+            .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
             .foregroundColor: NSColor(Theme.text),
             .paragraphStyle: style,
         ])

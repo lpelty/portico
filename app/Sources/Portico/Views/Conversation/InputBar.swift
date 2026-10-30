@@ -148,8 +148,9 @@ struct InputBar: View {
             }
         }
         .padding(EdgeInsets(top: 12, leading: 14, bottom: 10, trailing: 14))
-        .background(Theme.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        // v0.11 (AG1): the surface colour, 12 pt corners, 15 pt text.
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.border, lineWidth: 1))
         .slashList {
             if let completion = slashCompletion {
                 SlashCommandList(
@@ -177,13 +178,13 @@ struct InputBar: View {
         ZStack(alignment: .topLeading) {
             if draft.wrappedValue.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 13))
+                    .font(.system(size: 15))
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 5)
                     .allowsHitTesting(false)
             }
             TextEditor(text: draft)
-                .font(.system(size: 13))
+                .font(.system(size: 15))
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
                 .scrollIndicators(.never)
