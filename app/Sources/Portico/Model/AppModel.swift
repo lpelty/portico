@@ -1455,7 +1455,7 @@ final class AppModel: ObservableObject {
     /// word still `idle`, so the state word alone cannot gate the composer.
     ///
     /// In single presentation, `/new` alone is not sent: it does what the
-    /// card's New does (S1's "Same as typing /new"), asking to log first
+    /// card's New does (S1's "New starts fresh"), asking to log first
     /// when that would lose something (W2); `/log` alone logs the session
     /// without ending it, when the deployment can, and otherwise says why
     /// it cannot in a notice. `about` is the document

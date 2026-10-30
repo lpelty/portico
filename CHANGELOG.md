@@ -19,6 +19,8 @@
   icon whenever the strip left its fullest form (so whenever the viewer
   was open); now the strip's other words shrink first and the notice
   becomes an icon only when even the smallest strip has no room for it.
+- **The session card says what its buttons do:** "Log writes it up · New
+  starts fresh", not "Same as typing /log or /new".
 
 ### Gateway
 

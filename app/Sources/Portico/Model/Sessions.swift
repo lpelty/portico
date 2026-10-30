@@ -202,6 +202,19 @@ extension AppModel {
     static let noLogStep = "No log step is set up for this agent, so Log session is off."
     static let logsOnlyOnRenewal = "This gateway logs only when starting new."
 
+    /// The line under the session card's buttons: what they do (v0.11,
+    /// item 65; it said "Same as typing /log or /new"), and, when Log
+    /// session is off, why (X2).
+    static func sessionCardHint(canLogSession: Bool, offReason: String?) -> String {
+        let new = "New starts fresh"
+        if canLogSession { return "Log writes it up · \(new)" }
+        switch offReason {
+        case noLogStep?: return "\(noLogStep) \(new)."
+        case let reason?: return reason
+        case nil: return new
+        }
+    }
+
     /// The nudge's "Log and start new": `session.renew`, with `log` when
     /// the deployment has a log step. One at a time per session.
     func renew(chat: Int) {
