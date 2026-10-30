@@ -237,3 +237,14 @@ def test_the_frame_round_trips() -> None:
     msg = ChatCommands(ts=TS, chat=3, folder="/x", commands=COMMANDS)
     assert parse_server(dump(msg)) == msg
     assert isinstance(parse_server(dump(ServicesStatus(ts=TS))), ServicesStatus)
+
+
+def test_internal_and_removed_commands_are_left_out():
+    from portico_gateway.engine import agent_commands
+
+    got = agent_commands([
+        {"name": "__remote-workflow", "description": "Run the workflow script (builtin)"},
+        {"name": "agents", "description": "(removed) Ask to create subagents (builtin)"},
+        {"name": "review", "description": "Review a change (user)"},
+    ])
+    assert [c.name for c in got] == ["review"]

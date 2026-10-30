@@ -184,7 +184,7 @@ one row in the menu, "status command failed · <reason>".
 
 The gateway reads `config.toml` once, at start. Change it, and the app's
 status strip and Settings say "Settings changed — restart the gateway to
-use them" (`bin/doctor` says the gateway needs a restart):
+apply" (`bin/doctor` says the gateway needs a restart):
 `bin/portico-gateway stop`, and the app starts a fresh one.
 
 ## One session at a time

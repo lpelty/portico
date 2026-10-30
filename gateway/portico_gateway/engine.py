@@ -665,7 +665,9 @@ def agent_commands(raw: Any) -> list[AgentCommand]:
     ends in its source in parentheses ("... (user)"), which becomes
     ``source``. The description keeps its first line and first sentence,
     at most ``COMMAND_DESCRIPTION_LIMIT`` characters. Entries without a
-    usable name, and repeats of a name, are skipped; order is kept.
+    usable name, and repeats of a name, are skipped; order is kept. So are
+    the engine's internal commands (a name starting ``__``) and ones it
+    marks "(removed)": neither is something a person can usefully pick.
     """
     if not isinstance(raw, list):
         return []
@@ -678,11 +680,13 @@ def agent_commands(raw: Any) -> list[AgentCommand]:
         if not isinstance(name, str) or not name.strip().lstrip("/"):
             continue
         name = name.strip().lstrip("/")
-        if name in seen:
+        if name in seen or name.startswith("__"):
             continue
         seen.add(name)
         text = entry.get("description")
         text = text.strip() if isinstance(text, str) else ""
+        if text.lower().startswith("(removed)"):
+            continue
         source: str | None = None
         m = _COMMAND_SOURCE.search(text)
         if m:
