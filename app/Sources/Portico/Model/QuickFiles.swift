@@ -358,6 +358,22 @@ enum Obsidian {
         return NSWorkspace.shared.urlForApplication(toOpen: probe) != nil
     }
 
+    /// The vault a file lives in: the nearest folder above it that holds
+    /// Obsidian's `.obsidian/` settings folder; `nil` outside any vault.
+    /// The viewer offers Open in Obsidian only then (v0.11, item 69).
+    static func vault(containing path: String, fileManager: FileManager = .default) -> String? {
+        var folder = URL(fileURLWithPath: path).standardizedFileURL.deletingLastPathComponent()
+        while true {
+            var isDirectory: ObjCBool = false
+            let settings = folder.appendingPathComponent(".obsidian").path
+            if fileManager.fileExists(atPath: settings, isDirectory: &isDirectory), isDirectory.boolValue {
+                return folder.path
+            }
+            if folder.path == "/" { return nil }
+            folder = folder.deletingLastPathComponent()
+        }
+    }
+
     @MainActor static func open(path: String) {
         guard let url = url(path: path) else { return }
         NSWorkspace.shared.open(url)

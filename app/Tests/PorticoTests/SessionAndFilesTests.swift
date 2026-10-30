@@ -480,6 +480,36 @@ final class SessionAndFilesTests: XCTestCase {
             "obsidian://open?path=%2FUsers%2Fme%2FMy%20Vault%2FQ3%20%26%20notes.md")
     }
 
+    /// v0.11 (69): the viewer offers Open in Obsidian only for a file in
+    /// a vault: some folder above it holds `.obsidian/`.
+    func testObsidianVaultIsTheNearestFolderWithItsSettings() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("portico-vault-\(UUID().uuidString)")
+        let vault = base.appendingPathComponent("Notes")
+        let deep = vault.appendingPathComponent("projects/round-2")
+        try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: vault.appendingPathComponent(".obsidian"), withIntermediateDirectories: true)
+        // A file named .obsidian is not a vault's settings folder.
+        let other = base.appendingPathComponent("Other")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data().write(to: other.appendingPathComponent(".obsidian"))
+        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
+
+        XCTAssertEqual(Obsidian.vault(containing: deep.appendingPathComponent("synthesis.md").path), vault.path)
+        XCTAssertEqual(Obsidian.vault(containing: vault.appendingPathComponent("index.md").path), vault.path)
+        XCTAssertNil(Obsidian.vault(containing: other.appendingPathComponent("a.md").path))
+        XCTAssertNil(Obsidian.vault(containing: base.appendingPathComponent("loose.md").path))
+    }
+
+    /// v0.11 (69): the viewer's buttons keep their words while it is wide
+    /// and turn to icons with tooltips when it is narrow.
+    func testViewerHeaderLabelsOnlyWhenWide() {
+        XCTAssertTrue(ViewerHeaderButtons.labelled(width: 620, obsidian: true))
+        XCTAssertFalse(ViewerHeaderButtons.labelled(width: 500, obsidian: true))
+        XCTAssertTrue(ViewerHeaderButtons.labelled(width: 500, obsidian: false), "one button needs less room")
+        XCTAssertFalse(ViewerHeaderButtons.labelled(width: 380, obsidian: false))
+        XCTAssertTrue(ViewerHeaderButtons.labelled(width: nil, obsidian: true), "not measured yet: words")
+    }
+
     func testTitleFromFirstMessageMatchesTheGatewayRule() {
         XCTAssertEqual(SessionPresentation.title(from: "\n  Pull the themes out  \nsecond line"), "Pull the themes out")
         XCTAssertNil(SessionPresentation.title(from: "  \n \n"))

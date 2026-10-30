@@ -147,11 +147,16 @@ struct ArtifactPresentation: Equatable {
 
 /// The right column: the current artifact full size under a title bar.
 /// The title is a menu of everything made in this session, with a count
-/// (V2/V3); then Open externally, Focus (⌘⇧↩) and collapse.
+/// (V2/V3); then Open in Obsidian (a file in a vault, v0.11 item 69), Open
+/// externally, Focus (⌘⇧↩) and collapse.
 struct ViewerView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
     @State private var menuOpen = false
+    /// The header's width, for whether its buttons keep their words.
+    @State private var headerWidth: CGFloat?
+    /// The vault the shown file is in, looked up once per file.
+    @State private var vault: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -169,25 +174,22 @@ struct ViewerView: View {
         HStack(spacing: 8) {
             titleMenu
             Spacer(minLength: 8)
-            // No Open button for a file that isn't on disk: nothing to open.
+            // No Open buttons for a file that isn't on disk: nothing to open.
             if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
-                Button {
-                    ArtifactPresentation(artifact: current).openExternally()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Open externally")
-                            .font(.system(size: 12))
+                let shown = ArtifactPresentation(artifact: current)
+                let labelled = ViewerHeaderButtons.labelled(width: headerWidth, obsidian: vault != nil)
+                if vault != nil, let path = shown.fileURL?.path {
+                    let installed = Obsidian.isInstalled
+                    headerButton("Open in Obsidian", systemImage: "diamond", labelled: labelled,
+                                 help: installed ? "Open this note in Obsidian" : Obsidian.notInstalledHelp) {
+                        Obsidian.open(path: path)
                     }
-                    .foregroundStyle(Theme.text)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 9)
-                    .background(Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
-                    .contentShape(Rectangle())
+                    .disabled(!installed)
                 }
-                .buttonStyle(.hover)
+                headerButton("Open externally", systemImage: "arrow.up.right", labelled: labelled,
+                             help: shown.openLabel) {
+                    shown.openExternally()
+                }
             }
             focusButton
             Button {
@@ -204,6 +206,39 @@ struct ViewerView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.toolbarHeight)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+        .task(id: model.current[chat]?.location) {
+            vault = model.current[chat].flatMap { ArtifactPresentation(artifact: $0).fileURL }
+                .flatMap { Obsidian.vault(containing: $0.path) }
+        }
+    }
+
+    /// One of the header's open buttons (AG2/AG2b): icon and words on a
+    /// control fill while the viewer is wide; the icon alone, its words in
+    /// the tooltip, when it is narrow.
+    private func headerButton(
+        _ title: String, systemImage: String, labelled: Bool, help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                if labelled {
+                    Text(title)
+                        .font(.system(size: 12))
+                }
+            }
+            .foregroundStyle(Theme.text2)
+            .padding(.vertical, labelled ? 4 : 6)
+            .padding(.horizontal, labelled ? 9 : 6)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+            .fixedSize()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .help(help)
+        .accessibilityLabel(title)
     }
 
     private var focusButton: some View {
@@ -282,6 +317,22 @@ struct ViewerView: View {
                 "Nothing open", systemImage: "rectangle.on.rectangle",
                 description: Text(made.isEmpty ? "What the agent makes opens here." : "Pick something from the menu above."))
         }
+    }
+}
+
+/// Whether the viewer header's open buttons keep their words (v0.11,
+/// item 69): while the viewer is at least `labelledWidth` wide (less when
+/// Open in Obsidian is not there); narrower, they are icons with tooltips.
+/// A width not measured yet keeps the words.
+enum ViewerHeaderButtons {
+    /// Room for the title and both labelled buttons, as AG2 draws them at 620.
+    static let labelledWidth: CGFloat = 560
+    /// Room for the title and Open externally alone.
+    static let labelledWidthAlone: CGFloat = 420
+
+    static func labelled(width: CGFloat?, obsidian: Bool) -> Bool {
+        guard let width else { return true }
+        return width >= (obsidian ? labelledWidth : labelledWidthAlone)
     }
 }
 
