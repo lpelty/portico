@@ -187,6 +187,12 @@ final class AppModel: ObservableObject {
     /// display name when the deployment gives one): the deployment's model
     /// does not change when a session is renewed.
     @Published private(set) var latestModel: String?
+    /// The agent's commands and skills per folder, from `chat.commands`
+    /// (v0.11 item 66), for the composer's slash list.
+    @Published private(set) var commandsByFolder: [String: [AgentCommand]] = [:]
+    /// The folder of the last `chat.commands` heard: its list stands in for
+    /// a folder with none yet (the agent's commands rarely differ by folder).
+    private var latestCommandsFolder: String?
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
     @Published var renewing: [Int: String] = [:]
@@ -589,6 +595,11 @@ final class AppModel: ObservableObject {
             contextUsage[usage.chat] = usage
             if let name = usage.displayModel { latestModel = name }
             noteSeq(of: message)
+
+        case .chatCommands(let commands):
+            let folder = Self.commandsKey(commands.folder)
+            commandsByFolder[folder] = commands.commands
+            latestCommandsFolder = folder
 
         case .sessionRenewed(let renewed):
             applyRenewed(renewed)
@@ -995,7 +1006,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue:
+            .chatQueued, .chatQueue, .chatCommands:
             break
         }
     }
@@ -1504,6 +1515,31 @@ final class AppModel: ObservableObject {
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
         dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
+    }
+
+    /// The agent's commands for the slash list in `folder` (v0.11 item 66):
+    /// that folder's last `chat.commands`, else the last one heard in any
+    /// folder, else none.
+    func agentCommands(folder: String?) -> [AgentCommand] {
+        if let folder, let list = commandsByFolder[Self.commandsKey(folder)] { return list }
+        return latestCommandsFolder.flatMap { commandsByFolder[$0] } ?? []
+    }
+
+    /// The agent's commands for a chat's composer: those of its folder.
+    func agentCommands(chat: Int) -> [AgentCommand] {
+        agentCommands(folder: summary(of: chat)?.folder)
+    }
+
+    /// The welcome's composer: the session it continues, else the folder
+    /// a new session would start in.
+    var startAgentCommands: [AgentCommand] {
+        if let live = continuingSession { return agentCommands(chat: live) }
+        return agentCommands(folder: startFolder?.path)
+    }
+
+    /// One spelling per folder: no trailing `/` (the root aside).
+    private static func commandsKey(_ folder: String) -> String {
+        folder.count > 1 && folder.hasSuffix("/") ? String(folder.dropLast()) : folder
     }
 
     /// A notice the app itself puts in the transcript (not from the

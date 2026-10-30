@@ -34,6 +34,23 @@
 - **Folders.** The Files pane's "Folder" switch reads "Folders".
 - **The session card says what its buttons do:** "Log writes it up · New
   starts fresh", not "Same as typing /log or /new".
+- **Type while the agent works (item 74).** The composer stays usable
+  during a turn and during the log step. A message sent then waits above
+  the composer as a card, "Queued — sends at Acme's next step", with Edit
+  (back into the composer) and Cancel; several wait in order. The gateway
+  writes it into the turn when the agent's current step ends (its next
+  tool result, never a subagent's), and it shows in the conversation as
+  your message at that point; one still waiting when the turn ends goes
+  as the next turn. During the log step it goes into the log step itself,
+  so a rating typed while the close runs reaches it. While nothing is
+  typed, the composer offers Stop alone, as before.
+- **Slash-command completion.** Typing `/` at the start of the composer
+  (the conversation's or the welcome's) lists Portico's own `/log` and
+  `/new`, then the agent's commands and skills with one-line
+  descriptions, filtered as you type (names first, then descriptions).
+  ↑/↓ move, Enter or Tab picks, Esc closes. The gateway sends the list as
+  `chat.commands` when an engine starts and keeps the last one per folder
+  (`commands.json`), so the welcome has it before the first engine runs.
 
 ### For deployments
 
@@ -50,6 +67,15 @@
   works; a file in it still shows. With no roots to show instead, the
   session's folder stays.
 
+- **The engine finds `npx`, `node` and `uvx`.** Started from the app the
+  gateway inherited launchd's bare PATH; with `login_shell_path = true`
+  (the default) it now asks the person's login shell for its PATH and
+  puts it first. A `PATH=` line in the env file goes first of all. See
+  The engine's environment in the README.
+- **`PORTICO_ATTENDED=1`** is in the environment of every engine started
+  for a person's session (title generation never has it), so a
+  deployment's start-up checks can tell someone is present.
+
 ### Gateway
 
 - The index records the `default_folder` the gateway last ran with, so a
@@ -59,6 +85,11 @@
   opens on its own only inside the session's folder or the deployment's
   roots, the same rule `show_in_viewer` keeps; one written anywhere else
   (a scratch file in `/tmp`) is still listed in the viewer's history.
+- **`doctor`** shows where the PATH came from and whether `node`, `npx`
+  and `uvx` resolve, and counts `[deployment] status` rows as the
+  services check.
+- The agent's slash commands are kept per folder in `commands.json` in
+  the state directory (the newest 20 folders).
 
 ### Protocol (still version 1; additions only)
 
@@ -67,24 +98,16 @@
   `chat.list`; `sessions.not_single` in multiple presentation), offered by
   the `sessions.clear` capability in single presentation. Schema and
   examples regenerated.
-### Queued messages
-
-- **Type while the agent works (item 74).** The composer stays usable
-  during a turn and during the log step. A message sent then waits above
-  the composer as a card, "Queued — sends at Acme's next step", with Edit
-  (back into the composer) and Cancel; several wait in order. The gateway
-  writes it into the turn when the agent's current step ends (its next
-  tool result, never a subagent's), and it shows in the conversation as
-  your message at that point; one still waiting when the turn ends goes
-  as the next turn. During the log step it goes into the log step itself,
-  so a rating typed while the close runs reaches it. While nothing is
-  typed, the composer offers Stop alone, as before.
-- **Protocol (additive).** Capability `queue.v1` on both sides. A
+- **Queued messages:** Capability `queue.v1` on both sides. A
   `message.send` during a turn is answered `chat.queued {id}` instead of
   `chat.busy`; `chat.queue {chat, items}` carries the list after every
   change and after `chat.live` on `chat.open`; `chat.unqueue {chat, id}`
   takes one back (`chat.not_queued` once it has gone). An app or gateway
   without `queue.v1` behaves as in v0.10.
+- **Slash commands:** new gateway → app `chat.commands {chat?, folder,
+  commands: [{name, description, source?}]}`, sent when an engine starts
+  and, for the kept lists, on every connection after `services.status`.
+  An older app ignores it.
 
 ## v0.10.0 (2026-10-30)
 

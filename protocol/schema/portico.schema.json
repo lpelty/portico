@@ -19,6 +19,38 @@
       "title": "Action",
       "type": "object"
     },
+    "AgentCommand": {
+      "additionalProperties": false,
+      "description": "One of the agent's slash commands or skills (v0.11 item 66), for the composer's list.\n\n``name`` has no ``/`` (``standup``, ``acme:review``); ``description`` is\none line (its first sentence); ``source`` is where the engine says it\ncomes from (``user``, ``project``, a plug-in's name), when it says.",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "AgentCommand",
+      "type": "object"
+    },
     "AgentFinished": {
       "additionalProperties": false,
       "description": "A subagent ended (v0.10); ``summary`` is the first line of what it reported.",
@@ -870,6 +902,76 @@
         "ts"
       ],
       "title": "ChatAlias",
+      "type": "object"
+    },
+    "ChatCommands": {
+      "additionalProperties": false,
+      "description": "The agent's commands and skills in ``folder``, for slash completion (v0.11 item 66).\n\nSent with ``chat`` after that chat's engine starts; sent without it on\nconnect, from the list the gateway kept for the folder, so the welcome\nhas one before any engine runs. A reading, not history: no ``seq``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "commands": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AgentCommand"
+          },
+          "title": "Commands",
+          "type": "array"
+        },
+        "folder": {
+          "title": "Folder",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.commands",
+          "default": "chat.commands",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "folder"
+      ],
+      "title": "ChatCommands",
       "type": "object"
     },
     "ChatCompacted": {
@@ -3118,6 +3220,9 @@
         },
         {
           "$ref": "#/$defs/ChatQueue"
+        },
+        {
+          "$ref": "#/$defs/ChatCommands"
         },
         {
           "$ref": "#/$defs/Error"

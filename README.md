@@ -83,7 +83,7 @@ is fixed.
 
 | What | Where |
 |---|---|
-| State: token, ledger, index, lock, gateway log | `~/.portico/` (`PORTICO_HOME` moves it) |
+| State: token, ledger, index, lock, gateway log, the agent's last command lists (`commands.json`) | `~/.portico/` (`PORTICO_HOME` moves it) |
 | Config | `~/.portico/config.toml` (optional; defaults apply when absent) |
 | Credential file | `~/.portico/env` (optional) |
 | App settings (auto-open, quit behaviour, appearance, gateway address and token file overrides) | the app's Settings window, stored in `UserDefaults` |
@@ -244,6 +244,15 @@ why. After a deployment's number, Portico's counter carries on from it.
 After every turn the gateway reports how full the agent's context is
 (`context.usage`); when the agent summarizes earlier conversation to make
 room, the app is told (`chat.compacted`) and the record counts it.
+
+**Slash commands** (v0.11). Typing `/` at the start of the composer opens
+a list above it: Portico's own (`/log`, `/new`) first, then the agent's
+commands and skills, each with a one-line description, filtered as you
+type (names first, then descriptions). ↑/↓ move, Enter or Tab puts
+`/name ` in the composer, Esc closes; Enter on `/log` or `/new` does what
+typing it and Enter always did. The gateway reads the agent's list when
+its engine starts (`chat.commands`) and keeps the last one per folder in
+`commands.json`, so the welcome has it before the first engine runs.
 
 ## Plug-ins
 

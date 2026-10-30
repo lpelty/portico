@@ -20,7 +20,7 @@ from claude_agent_sdk import ResultMessage
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
 from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
-from portico_gateway.messages import Action, Brand, Root, ServerMessage, TurnFinished, TurnStarted
+from portico_gateway.messages import Action, AgentCommand, Brand, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.state import StateDir
 
 # --- script items -------------------------------------------------------------
@@ -146,6 +146,10 @@ class FakeEngine:
         self.system_prompt: Any = None
         # The slash commands the engine knows; ``None``: it cannot say.
         self.commands: set[str] | None = None
+        # v0.11 (item 66): the commands with descriptions ``command_list``
+        # answers (``None``: it cannot say); ``command_error`` makes it raise.
+        self.command_entries: list[AgentCommand] | None = None
+        self.command_error: Exception | None = None
         # Every ``set_permission_mode`` call, in order (not in ``calls``).
         self.mode_changes: list[str] = []
         self._session_id = session_id
@@ -180,6 +184,11 @@ class FakeEngine:
 
     def slash_commands(self) -> set[str] | None:
         return set(self.commands) if self.commands is not None else None
+
+    def command_list(self) -> list[AgentCommand] | None:
+        if self.command_error is not None:
+            raise self.command_error
+        return list(self.command_entries) if self.command_entries is not None else None
 
     async def set_permission_mode(self, mode: str) -> None:
         self.mode_changes.append(mode)
