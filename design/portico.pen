@@ -82598,7 +82598,7 @@
           "id": "M531Q",
           "name": "Title",
           "fill": "$text",
-          "content": "AG7 · Tool rows — how quiet? Same rows at real width (707 pt), four treatments. Reply text around them for scale.",
+          "content": "AG7 · Tool rows — how quiet? Same rows at real width (707 pt), five treatments. Reply text around them for scale.",
           "fontFamily": "$font",
           "fontSize": 14,
           "fontWeight": "600"
@@ -84340,6 +84340,447 @@
                 {
                   "type": "text",
                   "id": "UPz3g",
+                  "name": "Reply",
+                  "fill": "$text",
+                  "textGrowth": "fixed-width",
+                  "width": 707,
+                  "content": "When the app starts the gateway, it inherits launchd's PATH, which has none of Homebrew or ~/.local/bin in it.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "i8Hvkd",
+          "name": "Row 3",
+          "width": "fill_container",
+          "gap": 40,
+          "children": [
+            {
+              "type": "frame",
+              "id": "jMtc6",
+              "name": "E · No box, coloured status",
+              "width": 707,
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "EWGxo",
+                  "name": "Name",
+                  "fill": "$text",
+                  "textGrowth": "fixed-width",
+                  "width": 707,
+                  "content": "E · No box, coloured status",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "Oqx9C",
+                  "name": "Desc",
+                  "fill": "$text-2",
+                  "textGrowth": "fixed-width",
+                  "width": 707,
+                  "content": "D, but the status icon keeps its colour: green check when done, red × when a step failed (4th row)",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "JWAKR",
+                  "name": "Reply",
+                  "fill": "$text",
+                  "textGrowth": "fixed-width",
+                  "width": 707,
+                  "content": "Starting with how the gateway launches the engine.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "CTEXQ",
+                  "name": "Tool rows",
+                  "width": 707,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "c2sNW",
+                      "name": "Read gateway/run.py",
+                      "width": "fill_container",
+                      "fill": "#00000000",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "gap": 8,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "V8PB5H",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$working"
+                        },
+                        {
+                          "type": "text",
+                          "id": "OCjRa",
+                          "name": "Verb",
+                          "fill": "$text-2",
+                          "content": "Read",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "N8etsl",
+                          "name": "File",
+                          "fill": "$text-3",
+                          "content": "gateway/run.py",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "kJeHy",
+                          "name": "Extra",
+                          "fill": "$text-3",
+                          "content": "214 lines",
+                          "fontFamily": "$font",
+                          "fontSize": 12.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "p0FK9G",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "icon",
+                          "id": "BrYVJ",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "v282T",
+                      "name": "Search \"PATH\" in gateway/",
+                      "width": "fill_container",
+                      "fill": "#00000000",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "gap": 8,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ILeRX",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$working"
+                        },
+                        {
+                          "type": "text",
+                          "id": "KbClH",
+                          "name": "Verb",
+                          "fill": "$text-2",
+                          "content": "Search",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "e5gJxM",
+                          "name": "File",
+                          "fill": "$text-3",
+                          "content": "\"PATH\" in gateway/",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "y5jhN",
+                          "name": "Extra",
+                          "fill": "$text-3",
+                          "content": "6 matches",
+                          "fontFamily": "$font",
+                          "fontSize": 12.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "PDzuF",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "icon",
+                          "id": "kU1yR",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "oOKM8",
+                      "name": "memory · query documents",
+                      "width": "fill_container",
+                      "fill": "#00000000",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "gap": 8,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Z48Z9m",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$working"
+                        },
+                        {
+                          "type": "text",
+                          "id": "F7BaC",
+                          "name": "Verb",
+                          "fill": "$text-2",
+                          "content": "memory · query documents",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "FTOR6",
+                          "name": "Extra",
+                          "fill": "$text-3",
+                          "content": "\"gateway PATH launchd\" · 3 results",
+                          "fontFamily": "$font",
+                          "fontSize": 12.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Y8qgPk",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "icon",
+                          "id": "pMxKc",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "h6kb1u",
+                      "name": "Run launchctl getenv PATH",
+                      "width": "fill_container",
+                      "fill": "#00000000",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "gap": 8,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "TN9E4",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$deny"
+                        },
+                        {
+                          "type": "text",
+                          "id": "aA7j8",
+                          "name": "Verb",
+                          "fill": "$text-2",
+                          "content": "Run",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "u1QFN",
+                          "name": "File",
+                          "fill": "$text-3",
+                          "content": "launchctl getenv PATH",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "d5ze8c",
+                          "name": "Extra",
+                          "fill": "$deny",
+                          "content": "exit 1 · not found",
+                          "fontFamily": "$font",
+                          "fontSize": 12.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "T9MvO",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "icon",
+                          "id": "EuvSc",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "exALD",
+                      "name": "Read ~/.zprofile",
+                      "width": "fill_container",
+                      "fill": "$panel",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "gap": 8,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "dZuRh",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$working"
+                        },
+                        {
+                          "type": "text",
+                          "id": "cRSB0",
+                          "name": "Verb",
+                          "fill": "$text-2",
+                          "content": "Read",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "PaJrt",
+                          "name": "File",
+                          "fill": "$text-3",
+                          "content": "~/.zprofile",
+                          "fontFamily": "$font",
+                          "fontSize": 13.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "WqoA1",
+                          "name": "Extra",
+                          "fill": "$text-3",
+                          "content": "12 lines",
+                          "fontFamily": "$font",
+                          "fontSize": 12.5,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "a4mGQd",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "icon",
+                          "id": "QL8hR",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "Laii4",
                   "name": "Reply",
                   "fill": "$text",
                   "textGrowth": "fixed-width",
