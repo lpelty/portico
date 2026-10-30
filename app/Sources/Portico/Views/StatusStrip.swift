@@ -2,28 +2,24 @@ import AppKit
 import SwiftUI
 
 /// What the strip under the toolbar says (v0.4, W1): the model · the
-/// context · the services, and on the right the update (and "Settings
-/// changed — restart the gateway to apply" when the config changed). The chat's state word and its folder
-/// are gone: the working line in the conversation says the agent is
-/// working, and the Files pane shows the folder. The gateway is one of the
+/// services, and on the right the update (and "Settings changed — restart
+/// the gateway to apply" when the config changed). The chat's state word
+/// and its folder are gone: the working line in the conversation says the
+/// agent is working, and the Files pane shows the folder. The context is
+/// on the session card only (v0.11, item 64). The gateway is one of the
 /// services (its own row, from the app), not a segment of its own.
 struct StatusStripPresentation: Equatable, Sendable {
     /// The model's name from `context.usage` (A1/S5's Model segment), when known.
     var modelText: String? = nil
-    /// The context window's fullness, 0–100, when the gateway reports it.
-    var contextPercent: Double? = nil
     var services: ServicesPresentation
     /// The supervisor's one line about the gateway, for Settings.
     var gatewayText: String
 
     static let separator = " · "
 
-    /// `62% context`.
-    var contextText: String? { contextPercent.map(Self.contextText) }
-
     /// The whole strip in words, for its tooltip and accessibility.
     var text: String {
-        [modelText, contextText, services.label].compactMap { $0 }.joined(separator: Self.separator)
+        [modelText, services.label].compactMap { $0 }.joined(separator: Self.separator)
     }
 
     /// How much the strip says at its width (W4): full words, then short
@@ -43,12 +39,6 @@ struct StatusStripPresentation: Equatable, Sendable {
         }
     }
 
-    /// The context segment at a fit: `2% context`, else `2%`.
-    func context(at fit: Fit) -> String? {
-        guard let contextPercent else { return nil }
-        return fit == .full ? Self.contextText(contextPercent) : Self.percentText(contextPercent)
-    }
-
     /// The services control's words at a fit: the sentence, else `Services`.
     func servicesLabel(at fit: Fit) -> String {
         fit == .full ? services.label : ServicesPresentation.compactLabel
@@ -65,7 +55,6 @@ struct StatusStripPresentation: Equatable, Sendable {
         static let iconGap: CGFloat = 5
         /// The segments' icons, as drawn.
         static let modelIcon = Symbol(name: "cpu", size: 11)
-        static let contextIcon = Symbol(name: "gauge.with.dots.needle.50percent", size: 11)
         static let chevron = Symbol(name: "chevron.down", size: 8, weight: .semibold)
         static let restartIcon = Symbol(name: "arrow.clockwise", size: 10, weight: .semibold)
         static let updateIcon = Symbol(name: "arrow.down.circle", size: 11)
@@ -89,25 +78,17 @@ struct StatusStripPresentation: Equatable, Sendable {
     struct Metrics {
         /// Words in the strip's font.
         var text: (String) -> CGFloat
-        /// Words with `.monospacedDigit()`, as the context is drawn.
-        var digits: (String) -> CGFloat
         var symbol: (Symbol) -> CGFloat
 
         /// AppKit's measure of the real fonts and symbols.
         static var system: Metrics {
-            Metrics(text: textWidth, digits: digitWidth, symbol: symbolWidth)
+            Metrics(text: textWidth, symbol: symbolWidth)
         }
     }
 
     /// The text's width in the strip's font.
     static func textWidth(_ text: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: Measure.fontSize)
-        return ceil((text as NSString).size(withAttributes: [.font: font]).width)
-    }
-
-    /// The text's width in the strip's font with monospaced digits.
-    static func digitWidth(_ text: String) -> CGFloat {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: Measure.fontSize, weight: .regular)
         return ceil((text as NSString).size(withAttributes: [.font: font]).width)
     }
 
@@ -132,7 +113,6 @@ struct StatusStripPresentation: Equatable, Sendable {
         }
         var segments: [CGFloat] = []
         if let model = model(at: fit) { segments.append(labelled(Measure.modelIcon, metrics.text(model))) }
-        if let context = context(at: fit) { segments.append(labelled(Measure.contextIcon, metrics.digits(context))) }
         segments.append(Measure.servicesChrome + metrics.text(servicesLabel(at: fit)) + metrics.symbol(Measure.chevron))
         segments.append(0)  // the spacer
         if restart {
@@ -209,16 +189,6 @@ struct StatusStripPresentation: Equatable, Sendable {
         "Update available (\(version))"
     }
 
-    /// `62% context`, rounded to a whole percent.
-    static func contextText(_ percent: Double) -> String {
-        "\(percentText(percent)) context"
-    }
-
-    /// `62%`.
-    static func percentText(_ percent: Double) -> String {
-        "\(Int(percent.rounded()))%"
-    }
-
     static func gatewayText(_ status: GatewaySupervisor.Status) -> String {
         switch status {
         case .stopped: "gateway stopped"
@@ -235,7 +205,6 @@ extension AppModel {
     func statusStrip(gateway: GatewaySupervisor.Status) -> StatusStripPresentation {
         StatusStripPresentation(
             modelText: shownChat.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
-            contextPercent: shownChat.flatMap { contextPercent(for: $0) },
             services: servicesPresentation(gateway: gateway),
             gatewayText: StatusStripPresentation.gatewayText(gateway))
     }
@@ -258,9 +227,6 @@ struct StatusStrip: View {
             if let modelText = strip.model(at: fit) {
                 segment(StatusStripPresentation.Measure.modelIcon, modelText, help: strip.modelText)
             }
-            if let context = strip.context(at: fit) {
-                segment(StatusStripPresentation.Measure.contextIcon, context, monospaced: true)
-            }
             ServicesControl(services: strip.services, label: strip.servicesLabel(at: fit), shown: $servicesShown)
             Spacer(minLength: 0)
             if model.configStale {
@@ -280,14 +246,12 @@ struct StatusStrip: View {
         .accessibilityLabel("Status: \(strip.text)")
     }
 
-    private func segment(
-        _ icon: StatusStripPresentation.Symbol, _ text: String, monospaced: Bool = false, help: String? = nil
-    ) -> some View {
+    private func segment(_ icon: StatusStripPresentation.Symbol, _ text: String, help: String? = nil) -> some View {
         HStack(spacing: StatusStripPresentation.Measure.iconGap) {
             Image(systemName: icon.name)
                 .font(.system(size: icon.size))
             Text(text)
-                .font(monospaced ? .system(size: 12).monospacedDigit() : .system(size: 12))
+                .font(.system(size: 12))
         }
         .foregroundStyle(Theme.text2)
         .fixedSize()
@@ -406,11 +370,12 @@ enum ServiceColors {
     }
 }
 
-/// The services menu (W3): SERVICES, a row per service (dot, name, one
-/// line of detail, Restart when the deployment has a restart command; the
-/// Gateway row's Stop or Start and Restart, v0.8 decision 3), Restart all
-/// services when the deployment has one command for it (v0.8 decision 4),
-/// and a footer line. Reads the model itself so it stays current while open.
+/// The services menu (W3; v0.11, item 60, AG3): one line per service,
+/// its dot carrying the state, and a second line only when it says
+/// something (the gateway's port, a check's detail, an error in red). One
+/// Restart all at the foot. No buttons on the rows: a row's own Restart,
+/// and the gateway's Stop or Start, are on its context menu. Reads the
+/// model itself so it stays current while open.
 struct ServicesMenu: View {
     /// Closes the popover, so a confirmation sheet is not hidden behind it.
     var closeMenu: () -> Void = {}
@@ -420,115 +385,92 @@ struct ServicesMenu: View {
     var body: some View {
         let services = model.servicesPresentation(gateway: supervisor.status)
         VStack(alignment: .leading, spacing: 2) {
-            SidebarSectionLabel("Services")
-                .padding(.horizontal, 8)
-                .padding(.bottom, 4)
             ForEach(services.rows) { row in
                 ServiceRowView(row: row, closeMenu: closeMenu)
             }
             Rectangle().fill(Theme.border).frame(height: 1)
-                .padding(.vertical, 6)
-            if model.offersRestartAll {
-                RestartAllRow(closeMenu: closeMenu)
-                Rectangle().fill(Theme.border).frame(height: 1)
-                    .padding(.vertical, 6)
-            }
-            Text(ServicesPresentation.footer)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.text3)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 8)
+                .padding(.top, 4)
+            RestartAllRow(closeMenu: closeMenu)
+                .padding(EdgeInsets(top: 6, leading: 8, bottom: 4, trailing: 8))
         }
-        .padding(10)
-        .frame(width: 340)
+        .padding(8)
+        .frame(width: 420)
         // A popover takes its content's ideal size; without this the
         // wrapped lines above are measured as one line and cut short.
         .fixedSize(horizontal: false, vertical: true)
     }
 }
 
-/// One service in the menu. A down row is tinted; Restart sends
-/// `service.restart` and spins until the next status; when it fails, the
-/// gateway's reason shows under the row, tinted the same, until the next
-/// try (v0.8). Restart waits while Restart all services runs. The Gateway row has
-/// Stop (while it runs) or Start, and Restart, the same actions as
-/// Settings › Gateway (v0.8 decision 3).
+/// One service in the menu: dot, name, and the second line when there is
+/// one (`ServiceRow.menuDetail`), red when it is an error. A restart the
+/// row asked for spins at its end; when it fails, the gateway's reason
+/// shows under the row in red until the next try (v0.8). The context menu
+/// has the row's Restart (a deployment service with a restart command) or
+/// the gateway's Stop or Start and Restart, as Settings › Gateway (v0.8
+/// decision 3).
 struct ServiceRowView: View {
     let row: ServiceRow
     var closeMenu: () -> Void = {}
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 9) {
             Circle()
                 .fill(ServiceColors.row(row.state))
                 .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 1) {
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(row.name)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
-                // The whole detail, wrapped: a down service's reason is
-                // the part worth reading, so it is never cut short (v0.5).
-                Text(row.detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.text2)
-                    .fixedSize(horizontal: false, vertical: true)
+                // The whole line, wrapped: a down service's reason is the
+                // part worth reading, so it is never cut short (v0.5).
+                if let detail = row.menuDetail {
+                    line(detail, error: row.menuDetailIsError)
+                }
                 if let reason = restartError {
-                    // As Restart all's reason: the whole of it, wrapped.
-                    Text(reason)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.text2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    line(reason, error: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if row.isGateway {
-                gatewayControls
-            } else if row.canRestart {
-                if model.isRestarting(service: row.id) {
-                    ProgressView().controlSize(.small)
-                        .help("Restarting \(row.name)…")
-                } else {
-                    Button("Restart") { model.restartService(row.id) }
-                        .buttonStyle(PillButtonStyle(kind: .quiet))
-                        .controlSize(.small)
-                        .disabled(!model.canRestart(service: row.id))
-                        .help("Run the deployment's restart command for \(row.name)")
-                }
+            if restarting {
+                ProgressView().controlSize(.small)
+                    .help("Restarting \(row.name)…")
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            Self.tinted(state: row.state, error: restartError) ? Theme.waitSoft : .clear,
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .contentShape(Rectangle())
+        .contextMenu { actions }
         .accessibilityElement(children: .combine)
+    }
+
+    private func line(_ text: String, error: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(error ? Theme.deny : Theme.text2)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var restartError: String? {
         row.isGateway ? nil : model.restartError(service: row.id)
     }
 
-    /// A down row, or one whose last restart failed, is tinted.
-    static func tinted(state: ServiceState, error: String?) -> Bool {
-        state == .down || error != nil
+    private var restarting: Bool {
+        row.isGateway ? model.restarting : model.isRestarting(service: row.id)
     }
 
     @ViewBuilder
-    private var gatewayControls: some View {
-        if model.restarting {
-            ProgressView().controlSize(.small)
-                .help("Restarting the gateway…")
-        } else {
-            HStack(spacing: 6) {
-                ForEach(ServicesPresentation.gatewayControls(row), id: \.title) { control in
-                    Button(control.title) { press(control) }
-                        .buttonStyle(PillButtonStyle(kind: .quiet))
-                        .controlSize(.small)
-                        .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
-                        .help(Self.help(control))
-                }
+    private var actions: some View {
+        if row.isGateway {
+            ForEach(ServicesPresentation.gatewayControls(row), id: \.title) { control in
+                Button("\(control.title) gateway") { press(control) }
+                    .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
             }
+        } else if row.canRestart {
+            Button("Restart \(row.name)") { model.restartService(row.id) }
+                .disabled(!model.canRestart(service: row.id))
         }
     }
 
@@ -549,44 +491,59 @@ struct ServiceRowView: View {
     }
 }
 
-/// The menu's last control when the deployment has one restart command
-/// (v0.8 decision 4): asks first, sends `services.restart_all`, spins until
-/// a fresh `services.status`, and shows the gateway's reason when it fails.
+/// The menu's one restart control, full width at its foot (v0.11, item
+/// 60): the deployment's restart command for all its services when it has
+/// one (asks first, sends `services.restart_all`, spins until a fresh
+/// `services.status`), else a restart of the gateway (asks while a turn
+/// runs). The gateway's reason shows under it in red when it fails.
 struct RestartAllRow: View {
     var closeMenu: () -> Void = {}
     @EnvironmentObject private var model: AppModel
 
+    private var action: GatewayAction {
+        ServicesPresentation.restartAllAction(offersRestartAll: model.offersRestartAll)
+    }
+
+    private var busy: Bool {
+        action == .restartAll ? model.restartingAll != nil : model.restarting
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
-                Text(ServicesPresentation.restartAllTitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if model.restartingAll != nil {
-                    ProgressView().controlSize(.small)
-                        .help("Restarting all services…")
-                } else {
-                    Button("Restart all") {
-                        if model.request(.restartAll) { closeMenu() }
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                if model.request(action) { closeMenu() }
+            } label: {
+                HStack(spacing: 6) {
+                    if busy {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.text2)
                     }
-                    .buttonStyle(PillButtonStyle(kind: .quiet))
-                    .controlSize(.small)
-                    .disabled(model.connection != .connected)
-                    .help("Run the deployment's restart command for all its services")
+                    Text(busy ? "Restarting…" : ServicesPresentation.restartAllTitle)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.text)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .padding(.horizontal, 10)
+                .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.hover)
+            .disabled(busy || (action == .restartAll && model.connection != .connected))
+            .help(action == .restartAll
+                ? "Run the deployment's restart command for all its services"
+                : ServiceRowView.help(.restart))
             if let reason = model.restartAllError {
-                // As a down row's reason: the whole of it, wrapped.
+                // As a down row's reason: the whole of it, wrapped, red.
                 Text(reason)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.text2)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.deny)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(model.restartAllError != nil ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }

@@ -110,6 +110,34 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
             ServicesPresentation(gateway: gatewayUp, services: [service("m", "Memory", .checking)]).label, "Checking…")
     }
 
+    /// v0.11 (60): the menu's second line is there only when it says
+    /// something: the gateway's port, a check's detail, an error. A bare
+    /// "up" or "running" or "checking" is the dot's job.
+    func testTheMenuSecondLineOnlyWhenItSaysSomething() {
+        let rows = ServicesPresentation(gateway: gatewayUp, services: [
+            service("memory", "Memory", .up, detail: "recall and capture"),
+            service("search", "Search", .up),
+            service("router", "Agent router", .down, detail: "connection refused on localhost:8811"),
+            service("index", "Index", .checking),
+        ]).rows
+        let lines = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.menuDetail) })
+        XCTAssertEqual(lines["gateway"], "running · port 54675")
+        XCTAssertEqual(lines["memory"], "recall and capture", "a check's detail, without the up")
+        XCTAssertEqual(lines["search"], .some(nil), "healthy: one line")
+        XCTAssertEqual(lines["router"], "connection refused on localhost:8811")
+        XCTAssertEqual(lines["index"], .some(nil))
+        XCTAssertEqual(rows.first { $0.id == "router" }?.menuDetailIsError, true, "drawn red")
+        XCTAssertEqual(rows.first { $0.id == "gateway" }?.menuDetailIsError, false)
+
+        XCTAssertEqual(ServicesPresentation.restartAllAction(offersRestartAll: true), .restartAll)
+        XCTAssertEqual(ServicesPresentation.restartAllAction(offersRestartAll: false), .restart, "no command for all: the gateway")
+        XCTAssertEqual(ServicesPresentation.restartAllTitle, "Restart all", "one wording, not \"Restart all services\" beside it")
+
+        XCTAssertNil(ServicesPresentation.gatewayRow(.stopped, connection: .connected).menuDetail, "running, no port: nothing to add")
+        XCTAssertEqual(ServicesPresentation.gatewayRow(.starting, connection: .connecting).menuDetail, "starting")
+        XCTAssertEqual(ServicesPresentation.gatewayRow(.stopped, connection: .disconnected).menuDetail, "stopped")
+    }
+
     func testTheGatewayRowComesFromTheApp() {
         XCTAssertEqual(ServicesPresentation.gatewayRow(.running(port: 1), connection: .connected).detail, "running · port 1")
         XCTAssertEqual(ServicesPresentation.gatewayRow(.stopped, connection: .connected).detail, "running", "a gateway the settings point at")
@@ -244,18 +272,15 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
 
     func testTheStripDropsWordsAsItNarrows() {
         let strip = StatusStripPresentation(
-            modelText: "Claude Opus 5.5", contextPercent: 2.2,
+            modelText: "Claude Opus 5.5",
             services: ServicesPresentation(gateway: gatewayUp, services: []), gatewayText: "")
         XCTAssertEqual(strip.model(at: .full), "Claude Opus 5.5")
         XCTAssertEqual(strip.model(at: .compact), "Opus 5.5")
         XCTAssertNil(strip.model(at: .minimal))
-        XCTAssertEqual(strip.context(at: .full), "2% context")
-        XCTAssertEqual(strip.context(at: .compact), "2%")
         XCTAssertEqual(strip.servicesLabel(at: .full), "All services up")
         XCTAssertEqual(strip.servicesLabel(at: .compact), "Services")
 
-        // Seven points a character (eight with monospaced digits), a
-        // symbol two wider than its size: the arithmetic is the test's own.
+        // Seven points a character, a symbol two wider than its size: the arithmetic is the test's own.
         let metrics = Self.metrics
         let full = strip.width(at: .full, restart: false, update: "0.3.1", metrics: metrics)
         let compact = strip.width(at: .compact, restart: false, update: "0.3.1", metrics: metrics)
@@ -272,24 +297,24 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
     }
 
     static let metrics = StatusStripPresentation.Metrics(
-        text: { CGFloat($0.count * 7) }, digits: { CGFloat($0.count * 8) }, symbol: { $0.size + 2 })
+        text: { CGFloat($0.count * 7) }, symbol: { $0.size + 2 })
 
     func testTheStripFitsAtItsBoundary() {
         let strip = StatusStripPresentation(
-            modelText: "Claude Opus 5.5", contextPercent: 62,
+            modelText: "Claude Opus 5.5",
             services: ServicesPresentation(gateway: gatewayUp, services: []), gatewayText: "")
         let metrics = Self.metrics
         let full = strip.width(at: .full, restart: true, update: "0.4.1", metrics: metrics)
         // Every piece counted: padding, icons at their own sizes and gaps,
-        // the context in digit widths, the services chrome, the slack.
+        // the services chrome, the slack. No context: it is on the session
+        // card (v0.11, item 64).
         let M = StatusStripPresentation.Measure.self
         let expected = 2 * M.sidePadding
             + (13 + M.iconGap + 15 * 7)  // cpu · Claude Opus 5.5
-            + (13 + M.iconGap + 11 * 8)  // gauge · 62% context, monospaced digits
             + (M.servicesChrome + 15 * 7 + 10)  // All services up ⌄
             + (12 + M.iconGap + CGFloat(StatusStripPresentation.restartText.count * 7))
             + (13 + M.iconGap + CGFloat(StatusStripPresentation.updateText("0.4.1").count * 7))
-            + 5 * M.spacing + M.slack
+            + 4 * M.spacing + M.slack
         XCTAssertEqual(full, expected)
         XCTAssertEqual(strip.fit(width: full, restart: true, update: "0.4.1", metrics: metrics), .full, "exactly enough fits")
         XCTAssertEqual(strip.fit(width: full - 0.5, restart: true, update: "0.4.1", metrics: metrics), .compact)
@@ -298,13 +323,7 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertEqual(strip.fit(width: compact - 0.5, restart: true, update: "0.4.1", metrics: metrics), .minimal)
         // Not measured yet (the first frame): the full strip, not a flash of minimal.
         XCTAssertEqual(strip.fit(width: nil, restart: true, update: "0.4.1", metrics: metrics), .full)
-        // The context is measured as drawn, in digit widths.
-        let wideDigits = StatusStripPresentation.Metrics(
-            text: metrics.text, digits: { CGFloat($0.count * 9) }, symbol: metrics.symbol)
-        XCTAssertGreaterThan(strip.width(at: .full, restart: false, update: nil, metrics: wideDigits),
-            strip.width(at: .full, restart: false, update: nil, metrics: metrics))
         XCTAssertGreaterThan(StatusStripPresentation.symbolWidth(M.modelIcon), 0)
-        XCTAssertGreaterThan(StatusStripPresentation.digitWidth("62% context"), 0)
     }
 
     /// v0.11 (71): the stale-config notice keeps its words while the strip
@@ -312,7 +331,7 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
     /// the minimal strip has no room for them.
     func testTheRestartNoticeFoldsOnlyWhenThereIsNoRoom() {
         let strip = StatusStripPresentation(
-            modelText: "Claude Opus 5.5", contextPercent: 62,
+            modelText: "Claude Opus 5.5",
             services: ServicesPresentation(gateway: gatewayUp, services: []), gatewayText: "")
         let metrics = Self.metrics
         let full = strip.width(at: .full, restart: true, update: nil, metrics: metrics)

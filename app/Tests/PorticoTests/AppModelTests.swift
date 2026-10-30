@@ -810,12 +810,12 @@ final class AppModelTests: XCTestCase {
         model.selected = 2
         model.setConnection(.connected)
         model.apply(.contextUsage(ContextUsage(chat: 2, percent: 2.2, model: "claude-opus-5-5", seq: 2)))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · 2% context · Checking…")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · Checking…")
 
         // status.set lines never reach the strip (v0.3).
         model.apply(.statusSet(StatusSet(text: "thinking", chat: 2, seq: 3)))
         model.apply(.servicesStatus(ServicesStatus(services: [])))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · 2% context · All services up")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · All services up")
 
         // The gateway text stays for Settings.
         XCTAssertEqual(model.statusStrip(gateway: .starting).gatewayText, "gateway starting")

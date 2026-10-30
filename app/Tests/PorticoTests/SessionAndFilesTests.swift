@@ -229,8 +229,7 @@ final class SessionAndFilesTests: XCTestCase {
         XCTAssertEqual(strip.modelText, "Claude Sonnet 5.5")
         XCTAssertEqual(StatusStripPresentation.modelDisplayName("claude-opus-4-1-20250805"), "Claude Opus 4.1")
         XCTAssertEqual(StatusStripPresentation.modelDisplayName("gpt-6"), "gpt-6")
-        XCTAssertEqual(strip.contextText, "62% context")
-        XCTAssertTrue(strip.text.contains("62% context"))
+        XCTAssertFalse(strip.text.contains("context"), "the context is on the session card only (v0.11, item 64)")
     }
 
     func testCompactionDrawsALineLiveAndInReplay() throws {
