@@ -52,7 +52,9 @@ struct MainWindow: View {
                         })
                     ViewerView(chat: chat)
                         .frame(width: viewer)
-                        .transition(.move(edge: .trailing))
+                        // v0.11 (67): the panel eases in, fading as it slides,
+                        // rather than appearing all at once.
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
         }
@@ -68,7 +70,7 @@ struct MainWindow: View {
         // first band is where the traffic lights sit.
         .ignoresSafeArea(.container, edges: .top)
         .animation(.easeInOut(duration: 0.18), value: model.sidebarShown)
-        .animation(.easeInOut(duration: 0.18), value: viewerShown)
+        .animation(.easeOut(duration: 0.22), value: viewerShown)
         .animation(.easeInOut(duration: 0.18), value: focused)
         // A prototype after a document: the viewer moves to the width
         // remembered for that fit (not while a divider is being dragged).

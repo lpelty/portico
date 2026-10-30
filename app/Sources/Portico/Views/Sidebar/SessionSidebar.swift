@@ -292,15 +292,10 @@ struct SessionCard: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// The line under the buttons: what typing does the same, and, when
-    /// Log session is off, why (X2).
+    /// The line under the buttons: what they do, and, when Log session is
+    /// off, why (X2; v0.11 item 65).
     private var hint: String {
-        if canLogSession { return "Same as typing \(AppModel.logCommand) or \(AppModel.renewCommand)" }
-        switch model.logSessionOffReason(chat: chat) {
-        case AppModel.noLogStep?: return "\(AppModel.noLogStep) Same as typing \(AppModel.renewCommand)."
-        case let reason?: return reason
-        case nil: return "Same as typing \(AppModel.renewCommand)"
-        }
+        AppModel.sessionCardHint(canLogSession: canLogSession, offReason: model.logSessionOffReason(chat: chat))
     }
 
     /// The frame's sentence, saying what made the session long.

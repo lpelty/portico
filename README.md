@@ -156,6 +156,13 @@ timeout_seconds = 10                # optional, default 10, at least 1: the chec
 [[roots]]                           # folders the files pane can browse
 name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
+
+[sessions]                          # optional (v0.11)
+next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's number (see Session numbers)
+
+[files]                             # optional (v0.11): the Files pane
+hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
+                                    # (it is still where the agent works, and a file in it still shows)
 ```
 
 A title call goes through the Agent SDK to the same provider, with the
@@ -174,7 +181,8 @@ A status command that fails, times out or prints something else becomes
 one row in the menu, "status command failed · <reason>".
 
 The gateway reads `config.toml` once, at start. Change it, and the app's
-Settings and `bin/doctor` say "restart the gateway to apply":
+status strip and Settings say "Settings changed — restart the gateway to
+use them" (`bin/doctor` says the gateway needs a restart):
 `bin/portico-gateway stop`, and the app starts a fresh one.
 
 ## One session at a time
@@ -205,6 +213,33 @@ agent logs itself with the command or skill its folder already has. A
 plug-in's `on_renew` replaces it. With neither, renewing just ends the
 session and opens the next. In single mode `chat.new` is refused while a
 session is live; nothing renews on its own, ever.
+
+When the deployment's `default_folder` changes, the live session follows
+it: at its next start the gateway ends the session working elsewhere
+(without a log step) and starts the next one in the new folder, and the
+conversation says why ("Started a new session in ~/… — the deployment's
+folder changed"). The gateway records the `default_folder` it ran with,
+so a session the person started in a folder of their own choosing keeps
+it while `default_folder` stays the same.
+
+Settings → General → **Clear earlier sessions…** (after a confirmation)
+empties the list of ended sessions. Only Portico's list: the live session
+stays, the agent's transcripts stay on disk, and the numbers are not used
+again.
+
+### Session numbers
+
+Sessions are numbered by Portico's own counter, and a number is never
+handed out twice. The welcome names the number the next session will have
+("Session 17"). A deployment that numbers its sessions itself sets
+`[sessions] next_number` to a command whose stdout is that number (one
+whole number above zero; stderr is ignored). The gateway runs it with
+`/bin/sh -c` when a new session starts (the first one, and each New), and
+once when it starts with no live session, for the welcome's title; so the
+command should read the number, not reserve it. It is given two seconds.
+If it fails, times out, prints anything else, or prints a number Portico
+has already passed, Portico uses its own counter and logs one line saying
+why. After a deployment's number, Portico's counter carries on from it.
 
 After every turn the gateway reports how full the agent's context is
 (`context.usage`); when the agent summarizes earlier conversation to make

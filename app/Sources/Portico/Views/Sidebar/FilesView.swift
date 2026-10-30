@@ -604,15 +604,18 @@ enum FileIcon {
 }
 
 
-/// The Folder | Bookmarks switch under the FILES header (F1/F2): two halves
+/// The Folders | Bookmarks switch under the FILES header (F1/F2; "Folders"
+/// since v0.11, item 61, as it lists more than one): two halves
 /// spanning the sidebar. A segmented `Picker` keeps its own narrow width on
 /// macOS, so this is drawn by hand.
 struct FilesTabSwitch: View {
     @Binding var selection: AppModel.FilesTab
 
+    static let foldersTitle = "Folders"
+
     var body: some View {
         HStack(spacing: 2) {
-            item("Folder", .folder)
+            item(Self.foldersTitle, .folder)
             item("Bookmarks", .bookmarks)
         }
         .padding(2)

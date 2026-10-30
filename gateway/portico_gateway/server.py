@@ -202,6 +202,7 @@ from .messages import (
     Service,
     ServiceRestart,
     ServicesRestartAll,
+    SessionsClear,
     ServicesStatus,
     SessionLog,
     SessionLogged,
@@ -223,6 +224,7 @@ from .messages import (
 from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
+from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
 from .state import StateDir
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
@@ -282,6 +284,22 @@ def slash_command(text: str) -> str | None:
     if "." in word or os.path.lexists("/" + word):
         return None
     return word
+
+
+def _resolved(folder: Path | str) -> Path:
+    """``folder`` resolved, or as given when it cannot be."""
+    try:
+        return Path(folder).expanduser().resolve()
+    except OSError:
+        return Path(folder)
+
+
+def home_relative(path: Path) -> str:
+    """``path`` with the home folder written ``~`` (v0.11), as a person reads it."""
+    try:
+        return "~/" + str(Path(path).relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 def _now() -> str:
@@ -722,6 +740,11 @@ class GatewayServer:
         # from the command line); ``None`` keeps first-line titles.
         self.titler = titler
         self.title_timeout = TITLE_TIMEOUT
+        # v0.11: the deployment's ``[sessions] next_number`` command's bound,
+        # and the number it gave for the welcome when the gateway started
+        # with no live session (``None``: Portico's own counter).
+        self.next_number_timeout = NEXT_NUMBER_TIMEOUT
+        self._next_number_preview: int | None = None
         # The deployment's services (v0.4); started with ``serve``. v0.8: a
         # plug-in's hooks, else ``[deployment]``, give one status and one
         # restart for all of them.
@@ -784,6 +807,7 @@ class GatewayServer:
         self.register("session.log", self.on_session_log)
         self.register("service.restart", self.on_service_restart)
         self.register("services.restart_all", self.on_services_restart_all)
+        self.register("sessions.clear", self.on_sessions_clear)
 
     @property
     def attached(self) -> bool:
@@ -812,6 +836,8 @@ class GatewayServer:
             create_connection=self._make_connection,
         )
         self.port = self._server.sockets[0].getsockname()[1]
+        await self._follow_default_folder()
+        await self._preview_next_number()
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
         if self.config_path is not None:
             self._spawn(self._watch_config(), name="portico-config-watch")
@@ -1084,7 +1110,7 @@ class GatewayServer:
         if stale:
             self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
         await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
-        await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
+        await self._send(conn, self.chat_list())
         # v0.4: every connection hears the services as they stand (an empty
         # list when the deployment lists none: the app has its own Gateway row).
         await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
@@ -1209,7 +1235,86 @@ class GatewayServer:
         return event
 
     async def send_chat_list(self) -> None:
-        await self.broadcast(ChatList(ts=_now(), chats=self.registry.summaries()))
+        await self.broadcast(self.chat_list())
+
+    def chat_list(self) -> ChatList:
+        """The chats, and (v0.11) the number the next new session will have."""
+        return ChatList(ts=_now(), chats=self.registry.summaries(), next_chat=self.next_chat_number())
+
+    # --- session numbers (v0.11, item 55) ---------------------------------------
+
+    def next_chat_number(self) -> int:
+        """The next session's number as the welcome shows it: the deployment's, read at start, unless already passed."""
+        own = self.registry.next_number
+        preview = self._next_number_preview
+        return preview if preview is not None and preview >= own else own
+
+    async def _new_session_number(self) -> int:
+        """The number a session starting now gets: the deployment's ``[sessions] next_number``, else Portico's."""
+        return await next_session_number(
+            self.config.sessions.next_number, self.registry.next_number, self.next_number_timeout
+        )
+
+    # --- the live session follows default_folder (v0.11, item 54) ---------------
+
+    async def _follow_default_folder(self) -> None:
+        """At start, single presentation: a changed ``default_folder`` gets a new live session there.
+
+        The live session working anywhere else is ended (no log step: no
+        engine runs yet, and nothing starts one unasked) and the next one
+        starts in the new folder, both saying why in their conversations.
+        The folder is recorded each start, so a folder the person chose for
+        a session is kept while ``default_folder`` stays the same; an index
+        from before v0.11 recorded none, and counts as changed.
+        """
+        if self.config.presentation != "single" or not self.config.default_folder:
+            return
+        try:
+            folder = Path(self.config.default_folder).expanduser().resolve()
+        except OSError:
+            return
+        if not folder.is_dir():
+            return
+        recorded = self.registry.recorded_default_folder
+        changed = recorded is None or Path(recorded) != folder
+        live = max((c for c in self.registry.chats() if c.ended is None), key=lambda c: c.number, default=None)
+        if changed and live is not None and _resolved(live.folder) != folder:
+            following = self.registry.create(folder, parent=live.number, number=await self._new_session_number())
+            live.ended = _now()
+            live.logged = None
+            await self.set_state(live, "stopped")
+            await self.notice(
+                live, f"Session ended · the deployment's folder changed · continues in Session {following.number}"
+            )
+            await self.set_state(following, "idle")
+            await self.notice(
+                following, f"Started a new session in {home_relative(folder)} — the deployment's folder changed"
+            )
+            log.info(
+                "default_folder is now %s: session %d (in %s) ended; session %d follows there",
+                folder, live.number, live.folder, following.number,
+            )
+        self.registry.record_default_folder(str(folder))
+
+    async def on_sessions_clear(self, msg: SessionsClear, conn: ServerConnection) -> None:
+        """Forget every ended session (v0.11, item 54); the live one stays, and the transcripts on disk."""
+        if self.config.presentation != "single":
+            raise ProtocolError("sessions.not_single", "only a deployment with one live session at a time clears earlier ones")
+        for chat in [c for c in self.registry.chats() if c.ended is not None]:
+            await self.cards.cancel_all(chat, "session cleared", self.emit)
+            await self._close_engine(chat)
+            self.registry.remove(chat.number)
+            self._engine_locks.pop(chat.number, None)
+        log.info("earlier sessions cleared from the list")
+        await self.send_chat_list()
+
+    async def _preview_next_number(self) -> None:
+        """At start, with a ``next_number`` command and no live session in single presentation: ask it once for the welcome."""
+        if not self.config.sessions.next_number or self.config.presentation != "single":
+            return
+        if any(chat.ended is None for chat in self.registry.chats()):
+            return
+        self._next_number_preview = await self._new_session_number()
 
     # --- engines --------------------------------------------------------------
 
@@ -1490,7 +1595,8 @@ class GatewayServer:
         await self._report_collected(chat, collector)
 
     async def _report_collected(self, chat: Chat, collector: TurnCollector) -> None:
-        artifacts = collector.finish(chat.folder)
+        # v0.11 (67): a written file opens only where ``show_in_viewer`` may show one.
+        artifacts = collector.finish(chat.folder, open_within=self._shown_folders(chat))
         if not artifacts:
             return
         for artifact in artifacts:
@@ -1672,7 +1778,7 @@ class GatewayServer:
                     "end it with session.renew to start the next",
                 )
         await self._preflight()
-        chat = self.registry.create(folder)
+        chat = self.registry.create(folder, number=await self._new_session_number())
         try:
             await self._start_engine(chat)
         except Exception as e:
@@ -1894,7 +2000,7 @@ class GatewayServer:
         chat.ended = _now()
         chat.logged = logged
         await self.set_state(chat, "stopped")
-        following = self.registry.create(chat.folder, parent=chat.number)
+        following = self.registry.create(chat.folder, parent=chat.number, number=await self._new_session_number())
         await self.notice(chat, f"Session ended · continues in Session {following.number}")
         await self.set_state(following, "idle")
         await self.notice(following, f"Continues Session {chat.number}")

@@ -100,6 +100,9 @@ final class AppModel: ObservableObject {
     /// main column draws nothing rather than a welcome that may change
     /// (`MainScreen`). A reconnect does not reset it.
     @Published private(set) var chatsListed = false
+    /// The number the gateway will give the next new session (v0.11,
+    /// `chat.list`'s `next_chat`); `nil` from an older gateway.
+    @Published private(set) var nextChat: Int?
     /// A conversation has been shown in this run (v0.6): from then on, no
     /// selection means the live session, not the welcome.
     private(set) var conversationShown = false
@@ -496,6 +499,7 @@ final class AppModel: ObservableObject {
 
         case .chatList(let list):
             chats = list.chats
+            nextChat = list.nextChat
             chatsListed = true
             gaveUpBeforeList = false
             if let selected, !list.chats.contains(where: { $0.chat == selected }) {
@@ -1455,7 +1459,7 @@ final class AppModel: ObservableObject {
     /// word still `idle`, so the state word alone cannot gate the composer.
     ///
     /// In single presentation, `/new` alone is not sent: it does what the
-    /// card's New does (S1's "Same as typing /new"), asking to log first
+    /// card's New does (S1's "New starts fresh"), asking to log first
     /// when that would lose something (W2); `/log` alone logs the session
     /// without ending it, when the deployment can, and otherwise says why
     /// it cannot in a notice. `about` is the document
@@ -1686,13 +1690,17 @@ extension AppModel {
 
     /// The roots to browse and list: `fileRoots` without the chat's own
     /// folder when a deployment root is that same folder, so it is not
-    /// shown twice. Paths still resolve through `fileRoots`.
+    /// shown twice, or when the deployment hides it (v0.11, `[files]
+    /// hide_session_folder`) and has roots of its own to show instead.
+    /// Paths still resolve through `fileRoots`.
     func browsableRoots(for chat: Int) -> [Root] {
         let roots = fileRoots(for: chat)
         guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
+        let others = roots.filter { $0.name != Self.chatRoot }
+        if hello?.hideSessionFolder == true, !others.isEmpty { return others }
         let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
-        let shared = roots.contains { $0.name != Self.chatRoot && URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
-        return shared ? roots.filter { $0.name != Self.chatRoot } : roots
+        let shared = others.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        return shared ? others : roots
     }
 
     /// The absolute directory a root name stands for, or `nil` for a name
@@ -2042,7 +2050,7 @@ extension AppModel {
         }
     }
 
-    /// "Restart the gateway to apply": stop it (`gateway.stop`, as Stop
+    /// "Settings changed — restart the gateway to use them": stop it (`gateway.stop`, as Stop
     /// does) and start it again; the new gateway's `hello` clears the
     /// stale mark.
     func restartGateway(timeout: Duration = .seconds(10)) async {

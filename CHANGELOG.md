@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.11.0 — unreleased
+
+### What a person gets (app)
+
+- **Opening a file keeps your place.** When the viewer opens (on its own
+  or by hand) the conversation stays where it was: at the bottom it stays
+  at the bottom, otherwise the same message stays at the top. It used to
+  slide away as the narrower column wrapped every line again. The viewer
+  panel eases in.
+- **MCP tools read once, plainly.** A tool from an MCP server shows as
+  "memory · query documents" (the server, then the tool's name with
+  spaces), not its raw id twice.
+- **The restart notice says why.** "Restart the gateway to apply" reads
+  "Settings changed — restart the gateway to use them", still in the wait
+  colour with a restart arrow, apart from Update available.
+- **The notice keeps its words while there is room.** It folded to a bare
+  icon whenever the strip left its fullest form (so whenever the viewer
+  was open); now the strip's other words shrink first and the notice
+  becomes an icon only when even the smallest strip has no room for it.
+- **The live session follows the deployment's folder.** When
+  `default_folder` changes, the next launch ends the session working in
+  the old folder and starts one in the new one, and the conversation says
+  why: "Started a new session in ~/… — the deployment's folder changed".
+  A folder the person chose for a session is kept while `default_folder`
+  stays the same.
+- **Clear earlier sessions…** in Settings → General (single presentation;
+  asks first) empties the list of ended sessions. The live session and
+  every transcript on disk stay.
+- **The welcome names the real next session.** With no sessions yet it
+  said "Session 1" whatever the gateway's counter said; it now shows the
+  number the session will get.
+- **Folders.** The Files pane's "Folder" switch reads "Folders".
+- **The session card says what its buttons do:** "Log writes it up · New
+  starts fresh", not "Same as typing /log or /new".
+
+### For deployments
+
+- **`[sessions] next_number = "<command>"`**: the command's stdout is the
+  next session's number, run (`/bin/sh -c`, two seconds) when a new
+  session starts, and once at start with no live session for the
+  welcome. A failure, anything but a whole number, or a number Portico has
+  already passed falls back to Portico's own counter, logged. See Session
+  numbers in the README.
+
+- **`[files] hide_session_folder = true`** (default `false`) leaves the
+  session's own folder out of the Files pane (and quick open), for a
+  deployment whose roots already cover it. It is still where the agent
+  works; a file in it still shows. With no roots to show instead, the
+  session's folder stays.
+
+### Gateway
+
+- The index records the `default_folder` the gateway last ran with, so a
+  change is told from a folder the person chose. An index from before
+  v0.11 has none: a live session outside `default_folder` follows it once.
+- **A file the agent writes outside the session opens no more.** A file
+  opens on its own only inside the session's folder or the deployment's
+  roots, the same rule `show_in_viewer` keeps; one written anywhere else
+  (a scratch file in `/tmp`) is still listed in the viewer's history.
+
+### Protocol (still version 1; additions only)
+
+- `hello` gains `hide_session_folder` (default `false`); `chat.list`
+  gains `next_chat?`. New app → gateway `sessions.clear` (answered with
+  `chat.list`; `sessions.not_single` in multiple presentation), offered by
+  the `sessions.clear` capability in single presentation. Schema and
+  examples regenerated.
+
 ## v0.10.0 (2026-10-30)
 
 ### What a person gets (app)

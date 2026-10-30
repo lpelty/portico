@@ -43,6 +43,17 @@ final class FirstLaunchTests: XCTestCase {
         XCTAssertFalse(model.sidebarShown, "and the person can still hide it")
     }
 
+    /// v0.11 (55): the welcome names the number the gateway will give the
+    /// first session, not always 1.
+    func testTheWelcomeNamesTheRealNextNumber() throws {
+        let model = try model()
+        model.apply(.hello(hello("single")))
+        model.apply(.chatList(ChatList(chats: [], nextChat: 78)))
+        XCTAssertEqual(model.startTitle, "Session 78")
+        model.apply(.chatList(ChatList(chats: [])))
+        XCTAssertEqual(model.startTitle, "Session 1", "an older gateway says nothing: 1")
+    }
+
     func testMultiplePresentationKeepsItsSidebarAndTitle() throws {
         let model = try model()
         model.apply(.hello(hello("multiple")))

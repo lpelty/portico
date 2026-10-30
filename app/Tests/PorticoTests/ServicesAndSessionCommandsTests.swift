@@ -307,6 +307,29 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertGreaterThan(StatusStripPresentation.digitWidth("62% context"), 0)
     }
 
+    /// v0.11 (71): the stale-config notice keeps its words while the strip
+    /// narrows (the viewer opening) and folds to an icon only when even
+    /// the minimal strip has no room for them.
+    func testTheRestartNoticeFoldsOnlyWhenThereIsNoRoom() {
+        let strip = StatusStripPresentation(
+            modelText: "Claude Opus 5.5", contextPercent: 62,
+            services: ServicesPresentation(gateway: gatewayUp, services: []), gatewayText: "")
+        let metrics = Self.metrics
+        let full = strip.width(at: .full, restart: true, update: nil, metrics: metrics)
+        let compact = strip.width(at: .compact, restart: true, update: nil, metrics: metrics)
+        let minimal = strip.width(at: .minimal, restart: true, update: nil, metrics: metrics)
+        let bare = strip.width(at: .minimal, restart: true, restartWords: false, update: nil, metrics: metrics)
+        XCTAssertGreaterThan(minimal, bare)
+        XCTAssertEqual(strip.layout(width: full - 1, restart: true, update: nil, metrics: metrics),
+            .init(fit: .compact, restartWords: true), "narrower than full: the words stay")
+        XCTAssertEqual(strip.layout(width: compact - 1, restart: true, update: nil, metrics: metrics),
+            .init(fit: .minimal, restartWords: true))
+        XCTAssertEqual(strip.layout(width: minimal - 1, restart: true, update: nil, metrics: metrics),
+            .init(fit: .minimal, restartWords: false), "only now is there no room")
+        XCTAssertEqual(strip.layout(width: nil, restart: true, update: nil, metrics: metrics),
+            .init(fit: .full, restartWords: true))
+    }
+
     // MARK: - Log session and /log
 
     func testLogSessionLogsWithoutEnding() throws {
@@ -375,6 +398,16 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertEqual(plain.draft(for: 1), "")
         guard case .notice(_, let text)? = plain.transcripts[1]?.last else { return XCTFail("no notice") }
         XCTAssertEqual(text, "No log step is set up for this agent, so Log session is off.")
+    }
+
+    /// v0.11 (65): the card's hint says what the buttons do.
+    func testTheSessionCardHintSaysWhatTheButtonsDo() {
+        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: true, offReason: nil), "Log writes it up · New starts fresh")
+        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: nil), "New starts fresh")
+        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: AppModel.noLogStep),
+            "No log step is set up for this agent, so Log session is off. New starts fresh.")
+        XCTAssertEqual(AppModel.sessionCardHint(canLogSession: false, offReason: AppModel.logsOnlyOnRenewal),
+            AppModel.logsOnlyOnRenewal)
     }
 
     func testLogSessionOffReason() throws {

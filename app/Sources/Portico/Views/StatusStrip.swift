@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// What the strip under the toolbar says (v0.4, W1): the model · the
-/// context · the services, and on the right the update (and "restart to
-/// apply" when the config changed). The chat's state word and its folder
+/// context · the services, and on the right the update (and "Settings
+/// changed — restart the gateway to use them" when the config changed). The chat's state word and its folder
 /// are gone: the working line in the conversation says the agent is
 /// working, and the Files pane shows the folder. The gateway is one of the
 /// services (its own row, from the app), not a segment of its own.
@@ -122,9 +122,11 @@ struct StatusStripPresentation: Equatable, Sendable {
     }
 
     /// The width the strip needs at a fit, the right-hand items included
-    /// (`restart`: the stale-config button shows; `update`: the version
-    /// offered).
-    func width(at fit: Fit, restart: Bool, update: String?, metrics: Metrics = .system) -> CGFloat {
+    /// (`restart`: the stale-config button shows, with its words unless
+    /// `restartWords` is false; `update`: the version offered).
+    func width(
+        at fit: Fit, restart: Bool, restartWords: Bool = true, update: String?, metrics: Metrics = .system
+    ) -> CGFloat {
         func labelled(_ icon: Symbol, _ text: CGFloat) -> CGFloat {
             metrics.symbol(icon) + Measure.iconGap + text
         }
@@ -135,7 +137,7 @@ struct StatusStripPresentation: Equatable, Sendable {
         segments.append(0)  // the spacer
         if restart {
             segments.append(
-                fit == .full
+                restartWords
                     ? labelled(Measure.restartIcon, metrics.text(Self.restartText)) : metrics.symbol(Measure.restartIcon))
         }
         if let update {
@@ -148,12 +150,32 @@ struct StatusStripPresentation: Equatable, Sendable {
         return 2 * Measure.sidePadding + segments.reduce(0, +) + gaps + Measure.slack
     }
 
-    /// The fullest fit that fits `width`; `minimal` when none does. A
-    /// width not measured yet (the first frame) is the full strip, so it
-    /// does not flash minimal first.
+    /// What the strip draws at a width: its fit, and whether the
+    /// stale-config notice keeps its words (v0.11, item 71).
+    struct Layout: Equatable, Sendable {
+        var fit: Fit
+        var restartWords: Bool
+    }
+
+    /// The fullest layout that fits `width`. The other segments shrink
+    /// first; the stale-config notice keeps its words through every fit
+    /// and becomes a bare icon only when even the minimal strip has no
+    /// room for them (v0.11, item 71: it used to fold as soon as the strip
+    /// left full, so whenever the viewer was open). A width not measured
+    /// yet (the first frame) is the full strip, so it does not flash
+    /// minimal first.
+    func layout(width: CGFloat?, restart: Bool, update: String?, metrics: Metrics = .system) -> Layout {
+        guard let width else { return Layout(fit: .full, restartWords: true) }
+        for fit in Fit.allCases
+        where self.width(at: fit, restart: restart, update: update, metrics: metrics) <= width {
+            return Layout(fit: fit, restartWords: true)
+        }
+        return Layout(fit: .minimal, restartWords: !restart)
+    }
+
+    /// The fullest fit that fits `width`; `minimal` when none does.
     func fit(width: CGFloat?, restart: Bool, update: String?, metrics: Metrics = .system) -> Fit {
-        guard let width else { return .full }
-        return Fit.allCases.first { self.width(at: $0, restart: restart, update: update, metrics: metrics) <= width } ?? .minimal
+        layout(width: width, restart: restart, update: update, metrics: metrics).fit
     }
 
     // MARK: words
@@ -178,7 +200,10 @@ struct StatusStripPresentation: Equatable, Sendable {
         return words.dropFirst().joined(separator: " ")
     }
 
-    static let restartText = "Restart the gateway to apply"
+    /// The stale-config notice (v0.11, item 63): it names its cause, and
+    /// wears the wait colour and a restart arrow where Update available
+    /// wears the accent and a download arrow.
+    static let restartText = "Settings changed — restart the gateway to use them"
 
     static func updateText(_ version: String) -> String {
         "Update available (\(version))"
@@ -227,7 +252,8 @@ struct StatusStrip: View {
 
     var body: some View {
         let strip = model.statusStrip(gateway: supervisor.status)
-        let fit = strip.fit(width: width, restart: model.configStale, update: model.offeredUpdate)
+        let layout = strip.layout(width: width, restart: model.configStale, update: model.offeredUpdate)
+        let fit = layout.fit
         HStack(spacing: StatusStripPresentation.Measure.spacing) {
             if let modelText = strip.model(at: fit) {
                 segment(StatusStripPresentation.Measure.modelIcon, modelText, help: strip.modelText)
@@ -238,7 +264,7 @@ struct StatusStrip: View {
             ServicesControl(services: strip.services, label: strip.servicesLabel(at: fit), shown: $servicesShown)
             Spacer(minLength: 0)
             if model.configStale {
-                restartButton(compact: fit != .full)
+                restartButton(compact: !layout.restartWords)
             }
             if let version = model.offeredUpdate {
                 updateButton(version, compact: fit != .full)
@@ -287,7 +313,7 @@ struct StatusStrip: View {
         }
         .buttonStyle(.hover)
         .disabled(model.restarting)
-        .help("The config file changed after the gateway started. Restart it to apply the change.")
+        .help("The settings file changed after the gateway started. Restart the gateway to use them.")
         .accessibilityLabel(StatusStripPresentation.restartText)
     }
 

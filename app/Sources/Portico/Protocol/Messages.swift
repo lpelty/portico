@@ -424,6 +424,17 @@ struct ServicesRestartAll: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// Forget the ended sessions, keeping the live one (v0.11; single
+/// presentation, when `hello.capabilities` has `sessions.clear`). Only
+/// Portico's list is cleared: the transcripts on disk stay. Answered with
+/// `chat.list`.
+struct SessionsClear: Codable, Equatable, Sendable {
+    static let messageType = "sessions.clear"
+    static let capability = "sessions.clear"
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 /// Change the session's permission mode; answered with `chat.state`
 /// carrying `mode`.
 struct SessionMode: Codable, Equatable, Sendable {
@@ -491,6 +502,9 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The mode a new session starts in (config `permission_mode`, v0.3):
     /// what the start screen's chip shows until the person picks one.
     var permissionMode: PermissionMode? = nil
+    /// The Files pane leaves out the session's own folder (v0.11, config
+    /// `[files] hide_session_folder`); it still resolves.
+    var hideSessionFolder: Bool? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -504,6 +518,7 @@ struct HelloServer: Codable, Equatable, Sendable {
         case canUpdate = "can_update"
         case defaultFolder = "default_folder"
         case permissionMode = "permission_mode"
+        case hideSessionFolder = "hide_session_folder"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
@@ -515,10 +530,18 @@ struct HelloServer: Codable, Equatable, Sendable {
 struct ChatList: Codable, Equatable, Sendable {
     static let messageType = "chat.list"
     var chats: [ChatSummary]
+    /// The number the next new session will have (v0.11), so the welcome
+    /// names it. Absent from an older gateway.
+    var nextChat: Int? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chats, chat, id, seq, ts
+        case nextChat = "next_chat"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
@@ -1122,6 +1145,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case sessionLog(SessionLog)
     case serviceRestart(ServiceRestart)
     case servicesRestartAll(ServicesRestartAll)
+    case sessionsClear(SessionsClear)
 
     var type: String {
         switch self {
@@ -1143,6 +1167,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionLog: SessionLog.messageType
         case .serviceRestart: ServiceRestart.messageType
         case .servicesRestartAll: ServicesRestartAll.messageType
+        case .sessionsClear: SessionsClear.messageType
         }
     }
 
@@ -1167,6 +1192,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SessionLog.messageType: self = .sessionLog(try SessionLog(from: decoder))
         case ServiceRestart.messageType: self = .serviceRestart(try ServiceRestart(from: decoder))
         case ServicesRestartAll.messageType: self = .servicesRestartAll(try ServicesRestartAll(from: decoder))
+        case SessionsClear.messageType: self = .sessionsClear(try SessionsClear(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1193,6 +1219,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionLog(let m): try m.encode(to: encoder)
         case .serviceRestart(let m): try m.encode(to: encoder)
         case .servicesRestartAll(let m): try m.encode(to: encoder)
+        case .sessionsClear(let m): try m.encode(to: encoder)
         }
     }
 }

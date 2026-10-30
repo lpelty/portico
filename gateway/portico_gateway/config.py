@@ -38,6 +38,10 @@ CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files
 # then offers Restart all services and sends ``services.restart_all``.
 RESTART_ALL_CAPABILITY = "services.restart_all"
 
+# v0.11: advertised in single presentation; the app's Settings then offers
+# Clear earlier sessions… and sends ``sessions.clear``.
+CLEAR_SESSIONS_CAPABILITY = "sessions.clear"
+
 
 class ConfigError(ValueError):
     """``config.toml`` cannot be used; the message says which key and why.
@@ -180,6 +184,39 @@ class DeploymentConfig(BaseModel):
         return value if value is not None and value.strip() else None
 
 
+class FilesConfig(BaseModel):
+    """``[files]`` (v0.11): what the app's Files pane lists.
+
+    ``hide_session_folder`` leaves the session's own folder (the ``chat``
+    root) out of the pane, for a deployment whose roots already cover it.
+    The folder still resolves: a path in it shows, and the agent works in it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hide_session_folder: bool = False
+
+
+class SessionsConfig(BaseModel):
+    """``[sessions]`` (v0.11): how sessions are numbered.
+
+    ``next_number`` is a command (``/bin/sh -c``) whose stdout is the next
+    session's number, run when a new session starts (and, for the
+    welcome's title, when the gateway starts with no live session),
+    bounded by two seconds. A failure, or anything but a whole number at or
+    above Portico's own next number, falls back to Portico's counter.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    next_number: str | None = None
+
+    @field_validator("next_number")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -237,6 +274,10 @@ class Config(BaseModel):
     # puts it first, so the engine and its MCP servers find npx, node, uvx
     # and the like. ``false`` keeps the inherited PATH.
     login_shell_path: bool = True
+    # v0.11: the Files pane (``[files] hide_session_folder``).
+    files: FilesConfig = FilesConfig()
+    # v0.11: the deployment's own session numbers (``[sessions] next_number``).
+    sessions: SessionsConfig = SessionsConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -371,14 +412,18 @@ def hello_for(
     then sees the result, in list order. ``config_stale`` is the server's
     reading of the config file's modification time; ``can_update`` is
     whether ``[update] run`` is set; ``permission_mode`` is the mode a new
-    session starts in; ``commands`` lists ``log`` when the deployment can log.
+    session starts in; ``commands`` lists ``log`` when the deployment can log;
+    ``hide_session_folder`` (v0.11) is ``[files] hide_session_folder``.
     ``capabilities`` (v0.8) adds ``services.restart_all`` when the
-    deployment can restart all its services.
+    deployment can restart all its services, and (v0.11) ``sessions.clear``
+    in single presentation.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
     if can_restart_all(config, plugins):
         capabilities.append(RESTART_ALL_CAPABILITY)
+    if config.presentation == "single":
+        capabilities.append(CLEAR_SESSIONS_CAPABILITY)
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,
@@ -396,6 +441,7 @@ def hello_for(
         can_update=bool(config.update.run),
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
         permission_mode=config.permission_mode,
+        hide_session_folder=config.files.hide_session_folder,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

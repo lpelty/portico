@@ -29,7 +29,7 @@ extension AppModel {
 
     /// First launch (V4): no session has started yet in single
     /// presentation (or nothing is known yet), so there is nothing for a
-    /// sidebar to list; it appears with the first message of Session 1.
+    /// sidebar to list; it appears with the first session's first message.
     var awaitingFirstSession: Bool {
         chats.isEmpty && (hello == nil || isSinglePresentation)
     }
@@ -38,11 +38,14 @@ extension AppModel {
     /// session for it to show.
     var sidebarShown: Bool { sidebarVisible && !awaitingFirstSession }
 
-    /// The toolbar's title with no session selected: `Session 1` before the
-    /// first, `New session` after, `New chat` in multiple presentation.
+    /// The toolbar's title with no session selected: `Session N` before the
+    /// first, N the number the gateway will give it (v0.11, item 55: it said
+    /// `Session 1` whatever the gateway's counter, or the deployment's own
+    /// numbering, said; 1 from an older gateway), `New session` after,
+    /// `New chat` in multiple presentation.
     var startTitle: String {
         guard isSinglePresentation || hello == nil else { return "New chat" }
-        return chats.isEmpty ? "Session 1" : "New session"
+        return chats.isEmpty ? "Session \(nextChat ?? 1)" : "New session"
     }
 
     /// The quiet line under the start screen's composer: where the agent
@@ -201,6 +204,35 @@ extension AppModel {
 
     static let noLogStep = "No log step is set up for this agent, so Log session is off."
     static let logsOnlyOnRenewal = "This gateway logs only when starting new."
+
+    /// The line under the session card's buttons: what they do (v0.11,
+    /// item 65; it said "Same as typing /log or /new"), and, when Log
+    /// session is off, why (X2).
+    static func sessionCardHint(canLogSession: Bool, offReason: String?) -> String {
+        let new = "New starts fresh"
+        if canLogSession { return "Log writes it up · \(new)" }
+        switch offReason {
+        case noLogStep?: return "\(noLogStep) \(new)."
+        case let reason?: return reason
+        case nil: return new
+        }
+    }
+
+    // MARK: clearing earlier sessions (v0.11, item 54)
+
+    /// Settings → General offers Clear earlier sessions…: single
+    /// presentation, on a gateway that can.
+    var canClearEarlierSessions: Bool {
+        isSinglePresentation && offers(SessionsClear.capability)
+    }
+
+    /// Clear earlier sessions… once confirmed: the gateway forgets the
+    /// ended sessions (the live one stays, and every transcript on disk)
+    /// and answers with `chat.list`.
+    func clearEarlierSessions() {
+        guard canClearEarlierSessions, !earlierSessions.isEmpty else { return }
+        send(.sessionsClear(SessionsClear(id: Self.requestId())))
+    }
 
     /// The nudge's "Log and start new": `session.renew`, with `log` when
     /// the deployment has a log step. One at a time per session.

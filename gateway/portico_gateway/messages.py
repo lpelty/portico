@@ -310,6 +310,18 @@ class ServicesRestartAll(Envelope):
     type: Literal["services.restart_all"] = "services.restart_all"
 
 
+class SessionsClear(Envelope):
+    """Forget the ended sessions, keeping the live one (v0.11, single presentation only).
+
+    Only when ``hello.capabilities`` has ``sessions.clear``. Only Portico's
+    list is cleared: the engine's transcripts on disk stay, and the numbers
+    are never handed out again. Answered with ``chat.list``; refused with
+    ``sessions.not_single`` in multiple presentation.
+    """
+
+    type: Literal["sessions.clear"] = "sessions.clear"
+
+
 class FilesSearch(Envelope):
     """Search names and text under a root; answered with ``files.results``."""
 
@@ -353,11 +365,17 @@ class HelloServer(Envelope):
     # The mode a new session starts in (config ``permission_mode``), so the
     # start screen shows the mode the session will really run in (v0.3).
     permission_mode: PermissionMode | None = None
+    # v0.11: the Files pane leaves out the session's own folder (the
+    # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
+    hide_session_folder: bool = False
 
 
 class ChatList(Envelope):
     type: Literal["chat.list"] = "chat.list"
     chats: list[ChatSummary] = []
+    # v0.11: the number the next new session will have, so the welcome
+    # names it ("Session 42") before it exists. Absent from an older gateway.
+    next_chat: int | None = None
 
 
 class ChatState(Envelope):
@@ -712,6 +730,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SessionLog,
     ServiceRestart,
     ServicesRestartAll,
+    SessionsClear,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -871,6 +890,7 @@ def example_messages() -> dict[str, BaseModel]:
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
+        SessionsClear(ts=_TS, id="req-9"),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -887,6 +907,7 @@ def example_messages() -> dict[str, BaseModel]:
             can_update=True,
             default_folder="/Users/someone/projects",
             permission_mode="auto",
+            hide_session_folder=False,
         ),
         ChatList(
             ts=_TS,
@@ -897,6 +918,7 @@ def example_messages() -> dict[str, BaseModel]:
                 ),
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],
+            next_chat=3,
         ),
         ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default", unlogged=True),
         ChatHistory(

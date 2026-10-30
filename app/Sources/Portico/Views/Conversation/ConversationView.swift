@@ -7,6 +7,10 @@ import SwiftUI
 struct ConversationView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
+    /// The message at the top of the transcript's view (v0.11, item 67).
+    @State private var topItem: String?
+    /// Where the transcript was seen, put back when its width changes (v0.11, item 67).
+    @State private var scrollMemory = ConversationScrollMemory()
 
     private var items: [TranscriptItem] { model.transcripts[chat] ?? [] }
 
@@ -88,10 +92,28 @@ struct ConversationView: View {
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, Self.sideInset)
                 .padding(.top, 24)
                 .padding(.bottom, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollPosition(id: $topItem, anchor: .top)
+            // v0.11 (67): opening the viewer narrows the column and every
+            // line wraps again; put the conversation back where it was seen
+            // (the bottom stays the bottom, else the same top message).
+            .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+                TranscriptGeometry(
+                    width: geometry.containerSize.width,
+                    atBottom: ConversationScrollMemory.isAtBottom(
+                        offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
+                        content: geometry.contentSize.height))
+            } action: { _, now in
+                switch scrollMemory.widthChanged(to: now.width) {
+                case .bottom: proxy.scrollTo("bottom", anchor: .bottom)
+                case .item(let id): proxy.scrollTo(id, anchor: .top)
+                case nil: scrollMemory.seen(atBottom: now.atBottom, topItem: topItem, width: now.width)
+                }
             }
             .onChange(of: scrollKey) { _, _ in
                 proxy.scrollTo("bottom", anchor: .bottom)
@@ -139,6 +161,13 @@ struct ConversationView: View {
                 .foregroundStyle(Theme.text2)
         }
     }
+}
+
+/// The transcript's width and whether it is at its end, as its scroll
+/// geometry changes (v0.11, item 67).
+private struct TranscriptGeometry: Equatable {
+    var width: CGFloat
+    var atBottom: Bool
 }
 
 /// One transcript item, by kind.
