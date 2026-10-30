@@ -1490,7 +1490,8 @@ class GatewayServer:
         await self._report_collected(chat, collector)
 
     async def _report_collected(self, chat: Chat, collector: TurnCollector) -> None:
-        artifacts = collector.finish(chat.folder)
+        # v0.11 (67): a written file opens only where ``show_in_viewer`` may show one.
+        artifacts = collector.finish(chat.folder, open_within=self._shown_folders(chat))
         if not artifacts:
             return
         for artifact in artifacts:

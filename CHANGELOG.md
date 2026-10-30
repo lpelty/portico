@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.11.0 — unreleased
+
+### What a person gets (app)
+
+- **Opening a file keeps your place.** When the viewer opens (on its own
+  or by hand) the conversation stays where it was: at the bottom it stays
+  at the bottom, otherwise the same message stays at the top. It used to
+  slide away as the narrower column wrapped every line again. The viewer
+  panel eases in.
+
+### Gateway
+
+- **A file the agent writes outside the session opens no more.** A file
+  opens on its own only inside the session's folder or the deployment's
+  roots, the same rule `show_in_viewer` keeps; one written anywhere else
+  (a scratch file in `/tmp`) is still listed in the viewer's history.
+
 ## v0.10.0 (2026-10-30)
 
 ### What a person gets (app)

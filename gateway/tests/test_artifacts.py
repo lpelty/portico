@@ -292,7 +292,9 @@ def test_text_mention_of_a_tool_written_file_keeps_tool_source(tmp_path: Path) -
 
 
 def test_artifact_outside_folder_is_still_reported(tmp_path: Path) -> None:
-    # Review Focus 1: a file written outside the chat's folder opens like any other.
+    # Review Focus 1: a file written outside the chat's folder is reported
+    # like any other. Without ``open_within`` it opens; v0.11 (67) the
+    # server always passes the session's folders, so it does not.
     folder = tmp_path / "proj"
     folder.mkdir()
     outside = touch(tmp_path / "scratch" / "draft.md")
@@ -301,6 +303,10 @@ def test_artifact_outside_folder_is_still_reported(tmp_path: Path) -> None:
     artifacts = collector.finish(folder)
     assert [(a.location, a.media, a.open) for a in artifacts] == [(str(outside), "markdown", True)]
     assert not (folder / "draft.md").exists()  # the chat folder is untouched
+    collector = TurnCollector(make_chat(folder))
+    collector.note_tool("Write", {"file_path": str(outside), "content": ""})
+    artifacts = collector.finish(folder, open_within=[folder.resolve()])
+    assert [(a.location, a.open) for a in artifacts] == [(str(outside), False)]
 
 
 def _aged(path: Path, seconds: float = 3600) -> Path:
@@ -598,3 +604,64 @@ async def test_artifacts_persist_in_index(
         assert [a.location for a in registry.get(number).artifacts] == [str(report)]
     finally:
         await conn.close()
+
+
+# --- v0.11 decision 6 (item 67): a written file opens only where show_in_viewer may show ---
+
+
+async def test_a_file_written_outside_the_session_folders_is_listed_but_never_opens(
+    server: GatewayServer, factory: EngineFactory, folder: Path, tmp_path: Path
+) -> None:
+    # v0.11 (67): the hypothesis was that the write path skipped the folder
+    # check ``show_in_viewer`` makes; it did, so a scratch file opened.
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        outside = touch(tmp_path / "scratch" / "draft.md")
+        frames = await run_turn(conn, number, engine, write_tool(outside, "toolu_1"), tool_result("toolu_1", "ok"))
+        created = [m for m in frames if isinstance(m, ArtifactCreated)]
+        assert [(m.artifact.location, m.artifact.open) for m in created] == [(str(outside), False)]
+    finally:
+        await conn.close()
+
+
+async def test_an_inside_file_opens_over_a_newer_outside_one(
+    server: GatewayServer, factory: EngineFactory, folder: Path, tmp_path: Path
+) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        inside = touch(folder / "report.md")
+        outside = touch(tmp_path / "scratch" / "draft.md")
+        frames = await run_turn(
+            conn, number, engine,
+            write_tool(inside, "toolu_1"), tool_result("toolu_1", "ok"),
+            write_tool(outside, "toolu_2"), tool_result("toolu_2", "ok"),
+        )
+        created = [m for m in frames if isinstance(m, ArtifactCreated)]
+        assert [(m.artifact.location, m.artifact.open) for m in created] == [(str(inside), True), (str(outside), False)]
+    finally:
+        await conn.close()
+
+
+async def test_a_file_written_under_a_deployment_root_opens(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "vault"
+    root.mkdir()
+    config: Config = make_config(roots=[{"name": "vault", "path": str(root)}])
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        written = touch(root / "notes" / "page.md")
+        frames = await run_turn(conn, number, factory.last, write_tool(written, "toolu_1"), tool_result("toolu_1", "ok"))
+        created = [m for m in frames if isinstance(m, ArtifactCreated)]
+        assert [(m.artifact.location, m.artifact.open) for m in created] == [(str(written), True)]
+    finally:
+        await conn.close()
+        await srv.shutdown()
