@@ -19,8 +19,8 @@ from claude_agent_sdk import ResultMessage
 
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
-from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, translate
-from portico_gateway.messages import Action, Brand, Root, ServerMessage
+from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
+from portico_gateway.messages import Action, Brand, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.state import StateDir
 
 # --- script items -------------------------------------------------------------
@@ -161,6 +161,9 @@ class FakeEngine:
         self.context_reads = 0
         # v0.10: subagents and workflows, as the real engine follows them.
         self.agents = AgentTracker()
+        # The last turn a result closed: an ``opens_turn`` message after it
+        # begins a turn nobody sent, as in the real adapter.
+        self.finished_turn = 0
 
     def script(self, *items: Any) -> None:
         self.scripts.append(list(items))
@@ -214,10 +217,17 @@ class FakeEngine:
                     await asyncio.Event().wait()
                 await self._interrupted.wait()
                 for ev in translate(fake_result(session_id=self.session_id or "fake"), self.chat, self.turn, self.agents):
+                    if isinstance(ev, TurnFinished):
+                        self.finished_turn = ev.turn
                     await cb.on_event(ev)
                 return
             else:
+                if 0 < self.turn <= self.finished_turn and opens_turn(item):
+                    self.turn += 1
+                    await cb.on_event(TurnStarted(ts="2026-10-29T12:00:00Z", chat=self.chat, turn=self.turn))
                 for ev in translate(item, self.chat, self.turn, self.agents):
+                    if isinstance(ev, TurnFinished):
+                        self.finished_turn = ev.turn
                     await cb.on_event(ev)
 
     async def context_usage(self) -> tuple[float, str | None] | None:

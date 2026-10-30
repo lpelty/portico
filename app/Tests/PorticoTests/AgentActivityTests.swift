@@ -655,6 +655,66 @@ final class AgentActivityTests: XCTestCase {
         XCTAssertEqual(activity.recordStatus(ofPhase: 0, in: activity.workflow("w")!), .done)
     }
 
+    func testAStoppedChatStopsTheWorkStillOpenSoTheBoxCannotHangOn() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(.workflowStarted(WorkflowStarted(chat: 1, turn: 1, id: "w", name: "audit", phases: ["Find"], seq: next(), ts: ts)))
+        model.apply(started("w.0", "find", workflow: "w", phase: .index(0)))
+        model.apply(started("bg", "Watch", background: true))
+        model.apply(turnFinished(1))
+        XCTAssertEqual(model.agentActivity[1]?.liveWorkflow?.id, "w")
+
+        // No workflow.finished ever comes (an older gateway, a lost frame):
+        // the chat stopping is enough.
+        model.apply(.chatState(ChatState(chat: 1, state: .stopped, seq: next())))
+        let activity = model.agentActivity[1]!
+        XCTAssertNil(activity.liveWorkflow)
+        XCTAssertFalse(activity.showsTray)
+        XCTAssertEqual(activity.workflow("w")?.outcome, .stopped)
+        XCTAssertEqual(activity.status(of: activity.agent("w.0")!), .stopped)
+        XCTAssertEqual(activity.status(of: activity.agent("bg")!), .stopped)
+        XCTAssertFalse(activity.isLive(groups(model)[0]))
+    }
+
+    func testAnIdleOrWorkingChatLeavesBackgroundWorkRunning() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(started("bg", "Watch", background: true))
+        model.apply(turnFinished(1))
+        model.apply(.chatState(ChatState(chat: 1, state: .idle, seq: next())))
+        XCTAssertEqual(model.agentActivity[1].map { $0.status(of: $0.agent("bg")!) }, .working)
+    }
+
+    func testARenewedSessionStopsItsOpenWork() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(started("bg", "Watch", background: true))
+        model.apply(turnFinished(1))
+        func summary(_ chat: Int, ended: String? = nil) -> ChatSummary {
+            ChatSummary(chat: chat, folder: "/tmp/demo", state: ended == nil ? .idle : .stopped, created: ts, ended: ended)
+        }
+        model.apply(.sessionRenewed(SessionRenewed(ended: summary(1, ended: ts), next: summary(2))))
+        XCTAssertEqual(model.agentActivity[1].map { $0.status(of: $0.agent("bg")!) }, .stopped)
+    }
+
+    func testATurnNobodySentReadsAsATurnWithoutABubble() {
+        // v0.10: the engine answers on its own after background work; the
+        // gateway sends turn.started with no user.text.
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(.userText(UserText(chat: 1, turn: 1, text: "Run it", seq: next(), ts: ts)))
+        model.apply(turnFinished(1))
+        model.apply(turnStarted(2))
+        XCTAssertNotNil(model.turnStartedAt[1], "the working line runs")
+        model.apply(.textDelta(TextDelta(chat: 1, turn: 2, text: "The workflow finished.", seq: next(), ts: ts)))
+        model.apply(turnFinished(2))
+        let items = model.transcripts[1] ?? []
+        let texts = items.compactMap { if case .assistantText(_, let text) = $0 { text } else { nil } }
+        XCTAssertEqual(texts, ["The workflow finished."])
+        XCTAssertEqual(items.filter { if case .userText = $0 { true } else { false } }.count, 1)
+        XCTAssertNil(model.turnStartedAt[1])
+    }
+
     func testProgressTakesTheGatewaysFractionalElapsedAndTheEnginesOwnWords() throws {
         guard case .agentProgress(let example) = try example("server.agent.progress.json") else { return XCTFail() }
         XCTAssertEqual(example.elapsed, 12.5)

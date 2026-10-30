@@ -20,14 +20,22 @@ them for one engine and turns them into protocol events:
   its agents (``workflow.phase``); the task's end is ``workflow.finished``.
   A workflow's agents send no messages of their own: their steps are only
   what the progress reports say.
+- A subagent's own subagent (``spawn_depth`` above 1) is not an agent of
+  its own: its start is the parent's ``Agent`` step, and its messages are
+  kept out like any subagent the gateway never heard start.
 - Shell and monitor tasks, and anything else, are left alone.
 
 A task ends with a ``task_notification`` (which carries the summary) or,
 for background work, possibly only with a ``task_updated`` whose status is
-terminal. A foreground subagent's ``task_updated`` comes just before its
-notification, so it is held for the summary; whatever the turn's result
-finds still open in the foreground is ended then. Background agents and
-workflows end on whichever comes first and may outlive their turn.
+terminal. A foreground subagent's or a workflow's ``task_updated`` comes
+just before its notification, so it is held for the summary; whatever the
+turn's result finds still open in the foreground of that turn is ended
+then. A workflow held longer than ``HOLD_SECONDS``, or past the next
+message that is not a task's, ends without the summary. Background agents
+end on whichever comes first; they and workflows may outlive their turn.
+
+``close_all`` ends everything still open, for an engine that is going
+away (closed, or its process gone): background work dies with it.
 """
 
 from __future__ import annotations
@@ -71,6 +79,8 @@ WORKFLOW_AGENT_KIND = "workflow"
 DEFAULT_AGENT_KIND = "agent"
 STEP_TARGET_LIMIT = 48
 SUMMARY_LIMIT = 120
+# The longest a workflow's terminal ``task_updated`` waits for the notification's summary.
+HOLD_SECONDS = 5.0
 
 # A task's end status (``task_notification`` or a terminal ``task_updated``) -> outcome.
 _TASK_OUTCOMES: dict[str, AgentOutcome] = {
@@ -180,6 +190,9 @@ class _Workflow:
     phase_states: list[PhaseState] = field(default_factory=list)
     agents: dict[int, _Agent] = field(default_factory=dict)  # by the engine's agent index
     finished: bool = False
+    # A terminal ``task_updated`` seen: held for the notification's summary since ``held_at``.
+    pending_outcome: AgentOutcome | None = None
+    held_at: float = 0.0
 
 
 class AgentTracker:
@@ -213,8 +226,40 @@ class AgentTracker:
         if isinstance(msg, UserMessage) and msg.parent_tool_use_id is not None:
             return self._subagent_results(msg, chat, ts)
         if isinstance(msg, ResultMessage):
-            return self._turn_ended(chat, ts)
+            return self._turn_ended(chat, turn, ts)
         return None
+
+    def overdue(self, msg: Message, chat: int, ts: str) -> list[ServerMessage]:
+        """Before ``msg``: end the held workflows whose notification is not coming (no summary).
+
+        A notification follows its ``task_updated`` at once, so a held
+        workflow ends without one at the first message that is not a task's,
+        or once it has waited ``HOLD_SECONDS``.
+        """
+        task_message = isinstance(msg, (TaskStartedMessage, TaskProgressMessage, TaskNotificationMessage, TaskUpdatedMessage))
+        now = self.clock()
+        out: list[ServerMessage] = []
+        for wf in self._workflows.values():
+            if wf.finished or wf.pending_outcome is None:
+                continue
+            if not task_message or now - wf.held_at >= HOLD_SECONDS:
+                out.extend(self._finish_workflow(wf, wf.pending_outcome, None, chat, ts))
+        return out
+
+    def close_all(self, chat: int, ts: str, outcome: AgentOutcome = "stopped") -> list[ServerMessage]:
+        """End every agent and workflow still open: the engine is going away and its work with it.
+
+        Something already known to have ended (a held ``task_updated``)
+        ends as it did; the rest ends ``outcome``. Idempotent.
+        """
+        out: list[ServerMessage] = []
+        for wf in self._workflows.values():
+            if not wf.finished:
+                out.extend(self._finish_workflow(wf, wf.pending_outcome or outcome, None, chat, ts))
+        for agent in self._agents.values():
+            if not agent.finished:
+                out.append(self._finish(agent, agent.pending_outcome or outcome, None, chat, ts))
+        return out
 
     # --- subagents ----------------------------------------------------------------
 
@@ -224,6 +269,9 @@ class AgentTracker:
         if kind in SUBAGENT_TASK_TYPES:
             if msg.task_id in self._agents:
                 return []
+            depth = data.get("spawn_depth")
+            if isinstance(depth, int) and not isinstance(depth, bool) and depth > 1:
+                return []  # a subagent's own: its parent's Agent step stands for it
             subagent_type = data.get("subagent_type")
             agent = _Agent(
                 id=msg.task_id,
@@ -352,14 +400,18 @@ class AgentTracker:
             return [self._finish(agent, outcome, summary, chat, ts)]
         wf = self._workflows.get(task_id)
         if wf is not None and not wf.finished:
+            if not notified:
+                if wf.pending_outcome is None:
+                    wf.pending_outcome, wf.held_at = outcome, self.clock()
+                return []  # its notification follows with the summary
             return self._finish_workflow(wf, outcome, summary, chat, ts)
         return []
 
-    def _turn_ended(self, chat: int, ts: str) -> list[ServerMessage]:
-        """The turn's result: a foreground subagent still open ended with it."""
+    def _turn_ended(self, chat: int, turn: int, ts: str) -> list[ServerMessage]:
+        """Turn ``turn``'s result: a foreground subagent of that turn still open ended with it."""
         out: list[ServerMessage] = []
         for agent in self._agents.values():
-            if not agent.finished and not agent.background:
+            if not agent.finished and not agent.background and agent.turn == turn:
                 out.append(self._finish(agent, agent.pending_outcome or "stopped", None, chat, ts))
         return out
 

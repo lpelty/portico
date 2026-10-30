@@ -146,7 +146,8 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
-from .artifacts import TurnCollector, artifact_for_location, is_viewable, media_for
+from .agents import AgentTracker
+from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
@@ -704,6 +705,9 @@ class GatewayServer:
         self._renewing: set[int] = set()
         # Chats with a ``session.log`` in flight (v0.4): the same rule.
         self._logging: set[int] = set()
+        # v0.10: file writes that started with no turn in flight (a
+        # background agent's), by chat and tool use, reported when they finish.
+        self._loose_writes: dict[tuple[int, str], tuple[str, dict[str, Any]]] = {}
         # Whether a summary can be ``unlogged`` depends on the deployment having a log step.
         self.registry.can_log = self.has_log_step()
         # Asks a small model for a session's title (v0.8; ``titles.sdk_titler``
@@ -1236,12 +1240,19 @@ class GatewayServer:
             self.registry.persist()
 
     async def _close_engine(self, chat: Chat) -> None:
-        """Interrupt and close the chat's engine; any turn in flight is forgotten (the caller reports it)."""
+        """Interrupt and close the chat's engine; any turn in flight is forgotten (the caller reports it).
+
+        The engine's background work goes with it (v0.10): every agent and
+        workflow still open is reported finished ``stopped`` (the tracker's
+        ``close_all``), so nothing is left working on the app's screen.
+        """
         engine, chat.engine = chat.engine, None
         run = self._runs.pop(chat.number, None)
         if run is not None:
             run.stop_requested = True
             run.finished.set()
+        for key in [k for k in self._loose_writes if k[0] == chat.number]:
+            del self._loose_writes[key]
         if engine is None:
             return
         try:
@@ -1250,10 +1261,47 @@ class GatewayServer:
             await engine.close()
         except Exception:
             log.exception("closing engine for chat %d failed", chat.number)
+        tracker = getattr(engine, "agents", None)
+        if isinstance(tracker, AgentTracker):
+            for event in tracker.close_all(chat.number, _now()):
+                await self.emit(chat, event)
+
+    async def _unsent_turn(self, chat: Chat, event: TurnStarted) -> None:
+        """The engine began a turn nobody sent (v0.10): run it as a turn of its own.
+
+        The engine answers on its own when background work it started
+        finishes. The turn gets the chat's next number (the engine is told,
+        so its events carry it), ``turn.started`` with no ``user.text``,
+        ``chat.state working``, and a run, so its artifacts are collected
+        and its ``turn.finished`` ends it like any turn. A send meanwhile is
+        ``chat.busy``, as during any turn. A send already echoed and on its
+        way to the engine has the turn: what the engine says joins it.
+        """
+        engine = chat.engine
+        if engine is None or chat.ended is not None:
+            log.debug("chat %d: engine began a turn with no engine on record; dropped", chat.number)
+            return
+        run = self._runs.get(chat.number)
+        if run is not None:
+            engine.turn = run.turn
+            return
+        chat.turn += 1
+        engine.turn = chat.turn
+        run = TurnRun(turn=chat.turn, collector=TurnCollector(chat), sent=True)
+        self._runs[chat.number] = run
+        log.info("chat %d: the engine began turn %d on its own", chat.number, run.turn)
+        await self.emit(chat, TurnStarted(ts=event.ts, chat=chat.number, turn=run.turn))
+        await self.set_state(chat, "working")
 
     async def engine_event(self, chat: Chat, event: ServerMessage) -> None:
-        """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn."""
+        """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn.
+
+        The engine's own ``turn.started`` is a turn nobody sent (``_unsent_turn``).
+        """
         self._sync_session(chat)
+        if isinstance(event, TurnStarted):
+            await self._unsent_turn(chat, event)
+            return
         run = self._runs.get(chat.number)
         turn = getattr(event, "turn", None)
         if run is not None and turn is not None and turn != run.turn and not _is_agent_frame(event):
@@ -1276,7 +1324,14 @@ class GatewayServer:
                     run.collector.note_text(event.text)
                     if run.title_message is not None and len(run.reply) < REPLY_CHARS:
                         run.reply = (run.reply + event.text)[:REPLY_CHARS]
+            elif isinstance(event, ToolStarted) and from_tool(event.tool, event.input) is not None:
+                # No turn to collect it: reported when the write is done.
+                self._loose_writes[(chat.number, event.tool_use_id)] = (event.tool, dict(event.input))
             await self.emit(chat, event)
+            if isinstance(event, ToolFinished):
+                write = self._loose_writes.pop((chat.number, event.tool_use_id), None)
+                if write is not None and event.ok:
+                    await self._report_write(chat, *write)
             return
         if run is None:
             # The turn was already ended by the gateway (chat.stop, or the stop grace ran out).
@@ -1417,7 +1472,16 @@ class GatewayServer:
 
     async def _report_artifacts(self, chat: Chat, run: TurnRun) -> None:
         """Settle the turn's collector and send one ``artifact.created`` per artifact (newest viewable opens)."""
-        artifacts = run.collector.finish(chat.folder)
+        await self._report_collected(chat, run.collector)
+
+    async def _report_write(self, chat: Chat, tool: str, input: dict[str, Any]) -> None:
+        """A file written with no turn in flight (v0.10), reported now as a turn would report it alone."""
+        collector = TurnCollector(chat)
+        collector.note_tool(tool, input)
+        await self._report_collected(chat, collector)
+
+    async def _report_collected(self, chat: Chat, collector: TurnCollector) -> None:
+        artifacts = collector.finish(chat.folder)
         if not artifacts:
             return
         for artifact in artifacts:
@@ -1812,7 +1876,12 @@ class GatewayServer:
             if logged:
                 chat.note_logged(_now())
         await self.cards.cancel_all(chat, "session ended", self.emit)
+        # A turn the engine began on its own after the log step ends with the session.
+        run = self._runs.get(chat.number)
         await self._close_engine(chat)
+        if run is not None:
+            await self._report_artifacts(chat, run)
+            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
         chat.ended = _now()
         chat.logged = logged
         await self.set_state(chat, "stopped")

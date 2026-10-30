@@ -286,6 +286,27 @@ struct AgentActivity: Equatable, Sendable {
         }
     }
 
+    /// The chat stopped, or its session ended: the engine and its
+    /// background work are gone. Anything still open reads stopped, so a
+    /// workflow whose `workflow.finished` never came cannot hold the box
+    /// (`liveWorkflow`) or the tray forever. The gateway sends those
+    /// finishes itself (v0.10); this is the app's backstop.
+    mutating func stopOpenWork() {
+        clock += 1
+        for index in agents.indices where agents[index].outcome == nil {
+            agents[index].outcome = .stopped
+            agents[index].moved = clock
+            endedTurns.insert(agents[index].turn)
+        }
+        for index in workflows.indices where workflows[index].outcome == nil {
+            workflows[index].outcome = .stopped
+            endedTurns.insert(workflows[index].turn)
+        }
+        if let turn { endedTurns.insert(turn) }
+        trayCollapsed = nil
+        boxCollapsed = nil
+    }
+
     // MARK: reading
 
     func agent(_ id: String) -> AgentRun? {

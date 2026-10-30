@@ -10,6 +10,9 @@ next ``seq`` and kept in a ring of the newest ``history_buffer`` events.
 ``events_since`` is how a reattaching app catches up: it gets the events
 after the last ``seq`` it saw, and a ``truncated`` flag when the ring has
 already dropped some of what it asked for (so it should refetch history).
+A subagent's ``agent.progress`` (v0.10) replaces its previous one in the
+ring: each says everything the one before did, so only the latest is kept,
+and the ``seq`` gap it leaves is not a loss (an app skips what it never got).
 
 The ring, ``seq``, ``turn`` and the engine belong to one gateway launch. What survives in ``index.json`` is the ``ChatRecord``:
 number, folder, engine session id, alias, state word, creation time,
@@ -29,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
-from .messages import Artifact, ChatState, ChatStateWord, ChatSummary, PermissionMode, ServerMessage
+from .messages import AgentProgress, Artifact, ChatState, ChatStateWord, ChatSummary, PermissionMode, ServerMessage
 from .state import ChatRecord, Index, StateDir, ToolPermission
 
 if TYPE_CHECKING:
@@ -123,6 +126,9 @@ class Chat:
         self.turn = 0
         self.seq = 0
         self.ring: deque[ServerMessage] = deque(maxlen=history_buffer)
+        # The newest ``seq`` the ring has dropped for room; a replaced
+        # ``agent.progress`` does not count (its replacement says it all).
+        self._dropped_through = 0
         self.artifacts: list[Artifact] = list(artifacts or [])
         # Session facts: ``ended`` is when a renewal closed this session;
         # ``logged`` whether its log step finished cleanly (``None`` when
@@ -178,8 +184,20 @@ class Chat:
         """Assign the next ``seq`` to a copy of ``msg``, keep it in the ring, return it."""
         self.seq += 1
         stamped = msg.model_copy(update={"seq": self.seq})
+        if isinstance(stamped, AgentProgress):
+            self._drop_progress(stamped.id)
+        if self.ring.maxlen is not None and len(self.ring) == self.ring.maxlen:
+            self._dropped_through = self.ring[0].seq or self._dropped_through
         self.ring.append(stamped)
         return stamped
+
+    def _drop_progress(self, agent: str | None) -> None:
+        """Remove the ring's earlier ``agent.progress`` for ``agent`` (at most one is ever kept)."""
+        for i in range(len(self.ring) - 1, -1, -1):
+            kept = self.ring[i]
+            if isinstance(kept, AgentProgress) and kept.id == agent:
+                del self.ring[i]
+                return
 
     def events_since(self, since: int | None) -> tuple[list[ServerMessage], bool]:
         """Events with ``seq`` after ``since`` (``None`` = from the beginning).
@@ -191,9 +209,7 @@ class Chat:
         base = 0 if since is None else max(since, 0)
         if base >= self.seq:
             return [], False
-        oldest = self.ring[0].seq if self.ring else self.seq + 1
-        assert oldest is not None
-        truncated = oldest > base + 1
+        truncated = base < self._dropped_through
         return [m for m in self.ring if m.seq is not None and m.seq > base], truncated
 
     # --- state ----------------------------------------------------------------

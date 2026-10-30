@@ -38,18 +38,25 @@ from portico_gateway.messages import (
     AgentFinished,
     AgentProgress,
     AgentStarted,
+    ArtifactCreated,
     ChatHistory,
     ChatList,
     ChatLive,
     ChatOpen,
+    ChatState,
+    ChatStop,
+    Error,
     HelloClient,
     HelloServer,
     MessageSend,
     ServerMessage,
     ServicesStatus,
     ToolFinished,
+    TextDelta,
     ToolStarted,
     TurnFinished,
+    TurnStarted,
+    TurnStop,
     WorkflowFinished,
     WorkflowPhase,
     WorkflowStarted,
@@ -60,9 +67,9 @@ from portico_gateway.messages import (
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import StateDir
 
-from .conftest import fake_result, make_config
+from .conftest import Block, fake_result, make_config
 from .test_server import ws_url
-from .test_turns import EngineFactory, new_chat, recv, recv_until
+from .test_turns import EngineFactory, new_chat, recv, recv_until, text_delta
 
 TS = "2026-10-27T12:00:00Z"
 FIXTURE = Path(__file__).parent / "fixtures" / "sdk_agents_probe.json"
@@ -300,8 +307,10 @@ def test_workflow_without_phases_has_agents_without_a_phase() -> None:
     events = run([progress("w", workflow_progress=report)], tracker)
     assert of(events, AgentProgress)[0].steps == 3
     assert [(f.id, f.outcome) for f in of(events, AgentFinished)] == [("w.1", "failed")]
-    events = run([updated("w", "failed")], tracker)
-    assert [(w.id, w.outcome) for w in of(events, WorkflowFinished)] == [("w", "failed")]
+    # The terminal task_updated waits for the notification's summary.
+    assert run([updated("w", "failed")], tracker) == []
+    events = run([notified("w", "failed", "x")], tracker)
+    assert [(w.id, w.outcome, w.summary) for w in of(events, WorkflowFinished)] == [("w", "failed", "x")]
     assert run([notified("w", "failed", "x")], tracker) == []
 
 
@@ -399,7 +408,11 @@ async def test_a_capable_app_gets_the_agents_live_and_in_replay(server: GatewayS
 
         history = await open_chat(conn, number)
         replayed = [e for e in history.events if e.seq in set(seqs)]
-        assert [dump(e) for e in replayed] == [dump(f) for f in frames]  # the ring kept them, as sent
+        # The ring kept them as sent, but only each agent's latest progress.
+        latest = {f.id: f.seq for f in of(frames, AgentProgress)}
+        kept = [f for f in frames if not isinstance(f, AgentProgress) or latest[f.id] == f.seq]
+        assert len(kept) < len(frames)
+        assert [dump(e) for e in replayed] == [dump(f) for f in kept]
     finally:
         await conn.close()
 
@@ -443,5 +456,211 @@ async def test_background_workflow_frames_after_the_turn_are_kept(server: Gatewa
         later = await recv_until(conn, WorkflowFinished)
         assert {a.turn for a in of(later, AgentStarted)} == {1}
         assert len(of(later, AgentFinished)) == 3
+    finally:
+        await conn.close()
+
+
+# --- review fixes: endings, nesting, a turn nobody sent ------------------------------------------
+
+
+def test_the_recorded_workflow_finishes_with_its_notifications_summary() -> None:
+    events = run(recorded("workflow"))
+    (ended,) = of(events, WorkflowFinished)
+    assert ended.outcome == "done"
+    assert ended.summary and ended.summary.startswith('Dynamic workflow "Read alpha.md and beta.md')
+
+
+def test_a_held_workflow_ends_without_a_summary_when_no_notification_comes() -> None:
+    clock = Clock()
+    tracker = AgentTracker(clock=clock)
+    run([started("w", "c-w", task_type="local_workflow", workflow_name="sweep")], tracker)
+    assert run([updated("w", "completed")], tracker) == []
+    # Another task's message: still held, inside the wait.
+    assert not of(run([progress("other")], tracker), WorkflowFinished)
+    # The first message that is not a task's ends it.
+    events = run([AssistantMessage(content=[], model="m")], tracker)
+    assert [(w.id, w.outcome, w.summary) for w in of(events, WorkflowFinished)] == [("w", "done", None)]
+    assert run([notified("w", "completed", "late")], tracker) == []
+
+    tracker = AgentTracker(clock=clock)
+    run([started("w2", "c-w2", task_type="local_workflow")], tracker)
+    run([updated("w2", "failed")], tracker)
+    clock.now += 6  # past HOLD_SECONDS, even with only task messages arriving
+    events = run([progress("other")], tracker)
+    assert [(w.id, w.outcome) for w in of(events, WorkflowFinished)] == [("w2", "failed")]
+
+
+def test_close_all_ends_every_open_agent_and_workflow_once() -> None:
+    tracker = AgentTracker()
+    messages = recorded("workflow")
+    first_result = next(i for i, m in enumerate(messages) if type(m).__name__ == "ResultMessage")
+    run(messages[: first_result + 3], tracker)  # the workflow and its first agents are running
+    run([started("bg", "c-bg", is_backgrounded=True), started("held", "c-h", task_type="local_workflow")], tracker)
+    run([updated("held", "failed")], tracker)
+    events = tracker.close_all(chat=1, ts=TS)
+    flows = {w.id: w.outcome for w in of(events, WorkflowFinished)}
+    wid = of(run(messages[:first_result], AgentTracker()), WorkflowStarted)[0].id
+    assert flows == {wid: "stopped", "held": "failed"}, "a held ending keeps its outcome"
+    agents = {f.id: f.outcome for f in of(events, AgentFinished)}
+    assert agents["bg"] == "stopped" and all(o == "stopped" for o in agents.values())
+    assert all(k == "bg" or k.startswith(f"{wid}.") for k in agents)
+    assert tracker.close_all(chat=1, ts=TS) == []
+
+
+def test_a_turns_result_ends_only_that_turns_foreground_agents() -> None:
+    tracker = AgentTracker()
+    run([started("a1", "c1")], tracker, turn=1)
+    run([started("a2", "c2")], tracker, turn=2)
+    events = run([fake_result()], tracker, turn=2)
+    assert [f.id for f in of(events, AgentFinished)] == ["a2"]
+    events = run([fake_result()], tracker, turn=1)
+    assert [f.id for f in of(events, AgentFinished)] == ["a1"]
+
+
+def test_a_subagents_own_subagent_is_not_an_agent_of_its_own() -> None:
+    tracker = AgentTracker()
+    events = run([started("a", "c-a", spawn_depth=1), sub_call("c-a", "c-nested", "Agent", {"description": "dig"})], tracker)
+    assert [s.id for s in of(events, AgentStarted)] == ["a"]
+    assert of(events, AgentProgress)[-1].step == "Agent dig", "the nested start is the parent's step"
+    events = run(
+        [
+            started("n", "c-nested", spawn_depth=2),
+            progress("n", tool_uses=1),
+            sub_call("c-nested", "c-n1", "Read", {"file_path": "/x/y.md"}),
+            sub_result("c-nested", "c-n1"),
+            notified("n", "completed", "deep"),
+        ],
+        tracker,
+    )
+    assert events == []
+
+
+async def test_a_turn_nobody_sent_after_the_workflow_is_a_turn_of_its_own(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_app(server, [AGENTS_CAPABILITY])
+    try:
+        number = await new_chat(conn, folder)
+        engine = server.registry.get(number).engine
+        messages = recorded("workflow")
+        engine.script(*messages[:-1], text_delta("Both reads are done."), messages[-1])  # type: ignore[union-attr]
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r1", text="run it")))
+        first = await recv_until(conn, TurnFinished)
+        assert isinstance(await recv(conn), ChatState)  # idle
+        ended = await recv_until(conn, WorkflowFinished)
+        assert ended[-1].summary and ended[-1].summary.startswith("Dynamic workflow")
+        later = await recv_until(conn, TurnFinished)
+        idle = await recv(conn)
+        assert [f.turn for f in of(first, TurnFinished)] == [1]
+        assert isinstance(later[0], TurnStarted) and later[0].turn == 2
+        assert not [f for f in later if f.type == "user.text"], "nobody sent it"
+        working = [f for f in later if isinstance(f, ChatState)]
+        assert [s.state for s in working] == ["working"]
+        assert [(d.turn, d.text) for d in of(later, TextDelta)] == [(2, "Both reads are done.")]
+        assert [(f.turn, f.outcome) for f in of(later, TurnFinished)] == [(2, "done")]
+        assert isinstance(idle, ChatState) and idle.state == "idle"
+        assert number not in server._runs
+        # The next send is turn 3.
+        engine.script(fake_result())  # type: ignore[union-attr]
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r2", text="thanks")))
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[0], TurnStarted) and frames[0].turn == 3
+        assert [f.turn for f in of(frames, TurnFinished)] == [3]
+    finally:
+        await conn.close()
+
+
+async def test_a_send_during_a_turn_nobody_sent_is_busy(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_app(server, [AGENTS_CAPABILITY])
+    try:
+        number = await new_chat(conn, folder)
+        engine = server.registry.get(number).engine
+        messages = recorded("workflow")
+        engine.script(*messages[:-1], Block())  # type: ignore[union-attr]
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r1", text="run it")))
+        await recv_until(conn, WorkflowFinished)
+        frames = await recv_until(conn, ChatState)
+        assert isinstance(frames[0], TurnStarted) and frames[0].turn == 2 and frames[-1].state == "working"
+        await engine.wait_blocked()  # type: ignore[union-attr]
+
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r2", text="me too")))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "chat.busy" and err.id == "r2"
+        assert [c for c in engine.calls if c[0] == "send"] == [("send", "run it")]  # type: ignore[union-attr]
+
+        # It stops like any turn.
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, TurnFinished)
+        assert (frames[-1].turn, frames[-1].outcome) == (2, "stopped")
+    finally:
+        await conn.close()
+
+
+async def test_closing_the_engine_ends_its_background_work(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_app(server, [AGENTS_CAPABILITY])
+    try:
+        number = await new_chat(conn, folder)
+        engine = server.registry.get(number).engine
+        messages = recorded("workflow")
+        first_result = next(i for i, m in enumerate(messages) if type(m).__name__ == "ResultMessage")
+        # The workflow and a background agent are still running when the turn ends.
+        engine.script(*messages[:first_result], started("bg", "c-bg", is_backgrounded=True), messages[first_result])  # type: ignore[union-attr]
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r1", text="run it")))
+        await recv_until(conn, TurnFinished)
+        assert isinstance(await recv(conn), ChatState)
+        await engine.wait_idle()  # type: ignore[union-attr]
+        await conn.send(dump(ChatStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, ChatState)
+        while frames[-1].state != "stopped":  # type: ignore[attr-defined]
+            frames += await recv_until(conn, ChatState)
+        flows = of(frames, WorkflowFinished)
+        assert [w.outcome for w in flows] == ["stopped"]
+        assert of(frames, AgentFinished) and all(f.outcome == "stopped" for f in of(frames, AgentFinished))
+        assert frames.index(flows[0]) < len(frames) - 1
+    finally:
+        await conn.close()
+
+
+async def test_a_background_write_with_no_turn_running_is_reported_when_done(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_app(server, [AGENTS_CAPABILITY])
+    try:
+        number = await new_chat(conn, folder)
+        engine = server.registry.get(number).engine
+        page = folder / "report.html"
+        engine.script(  # type: ignore[union-attr]
+            started("bg", "c-bg", is_backgrounded=True),
+            fake_result(),
+            sub_call("c-bg", "w1", "Write", {"file_path": str(page), "content": "<p>x</p>"}),
+        )
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r1", text="go")))
+        await recv_until(conn, TurnFinished)
+        await engine.wait_idle()  # type: ignore[union-attr]
+        await recv_until(conn, ToolStarted)
+        page.write_text("<p>x</p>")
+        cb = engine.callbacks  # type: ignore[union-attr]
+        for event in translate(sub_result("c-bg", "w1"), number, 1, engine.agents):  # type: ignore[union-attr]
+            await cb.on_event(event)
+        frames = await recv_until(conn, ArtifactCreated)
+        (created,) = of(frames, ArtifactCreated)
+        assert created.artifact.location == str(page) and created.artifact.open
+        assert [a.location for a in server.registry.get(number).artifacts] == [str(page)]
+    finally:
+        await conn.close()
+
+
+async def test_renewing_during_a_turn_nobody_sent_ends_that_turn_and_its_work(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_app(server, [AGENTS_CAPABILITY])
+    try:
+        number = await new_chat(conn, folder)
+        engine = server.registry.get(number).engine
+        messages = recorded("workflow")
+        engine.script(*messages[:-1], Block())  # type: ignore[union-attr]
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="r1", text="run it")))
+        await recv_until(conn, WorkflowFinished)
+        await recv_until(conn, ChatState)
+        await engine.wait_blocked()  # type: ignore[union-attr]
+        chat = server.registry.get(number)
+        following = await server.renew(chat, log_first=False)
+        ring = list(chat.ring)
+        assert [(f.turn, f.outcome) for f in of(ring, TurnFinished)] == [(1, "done"), (2, "stopped")]
+        assert number not in server._runs and chat.ended is not None and following.number != number
     finally:
         await conn.close()

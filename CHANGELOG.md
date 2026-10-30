@@ -31,6 +31,12 @@
   still open at the end of its turn reads stopped, as before.
 - **A failed phase shows ⚠** in the workflow box and in the record. A
   workflow's end folds its box.
+- **Stopping a chat ends its background work on screen.** When a chat
+  stops or its session ends, any agent or workflow still shown as working
+  reads stopped, so a workflow box can never stay up for good.
+- **The agent's own follow-up is a turn.** When background work finishes
+  and the agent answers on its own, that answer is a turn of its own, with
+  no message bubble above it.
 - **The viewer shows what the agent just made.** An artifact that opens
   (or one the person picks) now always wins over the one remembered at the
   last quit: it arrived while the welcome held the remembered one, or
@@ -65,6 +71,29 @@
   when the turn's result arrives is ended with it. Background work that
   reports after its turn is kept under the turn that started it.
 - Shell and monitor tasks are not shown as agents.
+- **Closing an engine ends its background work.** `chat.stop`, a stop's
+  grace running out, a renewal, removing a chat, stopping the gateway, or
+  the engine's process dying sends `agent.finished` / `workflow.finished`
+  `stopped` for everything still open, instead of leaving it working.
+- **A turn nobody sent.** When the engine speaks on its own after a
+  background task finishes (a fresh init, text and a second result), the
+  gateway runs it as a turn of its own: `turn.started` (no `user.text`),
+  `chat.state working`, its artifacts, `turn.finished`, `idle`. Before, its
+  result was a second `turn.finished` for the turn already over, and a send
+  during it could be ended early by it. A send meanwhile is `chat.busy`. A
+  turn's result now ends only that turn's foreground agents.
+- `workflow.finished` carries the summary from the notification that
+  follows the terminal `task_updated` (held up to 5 seconds for it).
+- **`open` follows the shell's directory.** A relative path in a caught
+  `open` resolves against the Bash tool's working directory (the hook
+  input's `cwd`), not the chat folder; without one, only absolute paths
+  are caught. `show_in_viewer` still takes paths relative to the folder.
+- A file a background subagent writes while no turn runs is reported when
+  the write finishes (`artifact.created`, `open` as a turn would decide).
+- The ring keeps only each agent's latest `agent.progress`, so progress
+  frames no longer push the conversation out of the ring.
+- A subagent's own subagent (`spawn_depth` 2+) is no longer reported as a
+  new top-level batch; it shows as its parent's `Agent` step.
 - **`show_in_viewer`.** The agent gets an in-process tool that shows a
   file in the viewer at once (`artifact.created`, `open: true`): a viewable
   file inside the session's folder or a configured root, otherwise a clear
@@ -95,6 +124,11 @@
   `tool.finished`. Schema and examples regenerated.
 - A gateway before v0.10 refuses a `hello` with `capabilities` (it is
   strict about fields).
+- No new frame or field for the review fixes; documented behaviour:
+  `turn.started` without `user.text` for a turn nobody sent; finishes sent
+  for open work when an engine closes (and the app's backstop on `chat.state
+  stopped` / `session.renewed`); only the latest `agent.progress` per agent
+  kept in the ring (skipped `seq`s, never `truncated` for it).
 
 ## v0.9.0 (2026-10-29)
 

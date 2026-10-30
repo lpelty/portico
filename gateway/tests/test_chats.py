@@ -8,6 +8,7 @@ import pytest
 
 from portico_gateway.chats import Chat, ChatRegistry, UnknownChat
 from portico_gateway.messages import (
+    AgentProgress,
     Artifact,
     ChatState,
     ChatSummary,
@@ -33,6 +34,36 @@ def registry_for(state: StateDir, history_buffer: int = 2000) -> ChatRegistry:
 
 def delta(chat: int, text: str, turn: int = 1) -> TextDelta:
     return TextDelta(chat=chat, turn=turn, text=text, ts=TS)
+
+
+def test_the_ring_keeps_only_the_latest_progress_per_agent(state: StateDir) -> None:
+    reg = registry_for(state, history_buffer=5)
+    chat = reg.create(Path(FOLDER_A))
+
+    def progress(agent: str, steps: int) -> AgentProgress:
+        return AgentProgress(chat=chat.number, id=agent, steps=steps, ts=TS)
+
+    chat.stamp(delta(chat.number, "a"))  # 1
+    for steps in range(1, 4):
+        chat.stamp(progress("x", steps))  # 2, 4, 6
+        chat.stamp(progress("y", steps))  # 3, 5, 7
+    chat.stamp(delta(chat.number, "b"))  # 8
+    kept = [(m.seq, getattr(m, "steps", None)) for m in chat.ring]
+    assert kept == [(1, None), (6, 3), (7, 3), (8, None)], "older progress replaced, not pushing the record out"
+    # Nothing fell off for room: from the beginning is whole, ending with each agent's latest.
+    events, truncated = chat.events_since(None)
+    assert [m.seq for m in events] == [1, 6, 7, 8] and truncated is False
+    # Catching up from inside the replaced run still ends with the latest.
+    events, truncated = chat.events_since(2)
+    assert [m.seq for m in events] == [6, 7, 8] and truncated is False
+    events, truncated = chat.events_since(6)
+    assert [m.seq for m in events] == [7, 8] and truncated is False
+    # Room is still made from the oldest, and that is a loss.
+    for t in "cd":
+        chat.stamp(delta(chat.number, t))  # 9, 10: the ring holds 5
+    assert [m.seq for m in chat.ring] == [6, 7, 8, 9, 10]
+    assert chat.events_since(None)[1] is True and chat.events_since(1)[1] is False
+    assert chat.events_since(0)[1] is True
 
 
 # --- numbering ----------------------------------------------------------------

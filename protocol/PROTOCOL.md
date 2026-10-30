@@ -530,7 +530,21 @@ number, not a new one). History is complete; what follows is live.
 ### `turn.started` — `TurnStarted`
 `chat`, `seq`, `turn: integer` (counts from 1 per gateway launch). Always
 followed by `user.text` and then `chat.state working` (v0.7: before the
-engine starts, when it has to; see `message.send`).
+engine starts, when it has to; see `message.send`) — except a turn
+nobody sent.
+
+*A turn nobody sent (v0.10).* The engine can speak on its own between
+turns, typically when background work it started (a workflow, a
+background subagent) finishes and it answers with what came of it. The
+gateway gives that output a turn of its own: `turn.started` with the
+chat's next `turn`, **no `user.text`**, `chat.state working`, then the
+turn's events, its artifacts and `turn.finished`, then `chat.state idle`,
+as for any turn. An app draws such a turn without a bubble (a transcript
+replay already produces turns that begin with the agent's own output).
+While it runs, `message.send` is refused with `chat.busy` as during any
+turn, and `turn.stop` / `chat.stop` end it as any turn. A send echoed just
+before the engine began speaking keeps its turn: what the engine says
+joins it.
 
 ### `user.text` — `UserText`
 `chat`, `turn`, `text`, `seq` when live. What the person sent to start
@@ -675,7 +689,14 @@ the turn made. The agent can also show a file during the turn: its
 gateway catches, sends the file at once as `artifact.created` with
 `source: tool` and `open: true` — only a viewable file inside the chat's
 folder or a configured root. Such a file is not reported again at the end
-of the turn. The app shows the newest artifact that opens (or that the
+of the turn. A relative path given to `show_in_viewer` is the chat
+folder's; a relative path in a caught `open` is the shell's working
+directory's (the Bash tool's directory persists between calls, so after
+`cd build`, `open report.html` is `build/report.html`); a gateway that
+cannot learn that directory catches only absolute paths. A file a
+background subagent writes while no turn is running is reported when the
+write finishes, as a turn would report that one file (`open: true` when
+it is viewable). The app shows the newest artifact that opens (or that the
 person picks) over the one it remembered from the last quit.
 
 ### `files.list` — `FilesList`
@@ -833,17 +854,31 @@ transcripts/p11.md`, `Bash grep -rn quote`, `Glob **/*.py`; before its
 first call the engine's own words, e.g. `Reading alpha.md`), `steps`
 (its tool calls so far), `elapsed` (seconds since it started, one
 decimal). Sent on each of its calls and on each of the engine's progress
-reports.
+reports. Each one says all the one before it did, so the ring keeps only
+an agent's latest `agent.progress`: a replay from the ring (from the
+beginning or `since` a `seq`) carries the latest progress of each agent
+and none of the earlier ones, whose `seq` numbers are skipped. A replaced
+progress is not a loss and never makes a replay `truncated`.
 
 ### `agent.finished` — `AgentFinished`
 `chat`, `seq`, `id`, `outcome: done | failed | stopped`, `summary?` (the
 first line of what it reported, at most 120 characters). Exactly one per
-agent. A foreground agent still open when its turn's engine result
-arrives is ended then (`stopped`, or what the engine last said); a turn
-the gateway ends itself (a stop's grace running out, `chat.stop`) can
-leave one without it, so an app treats a foreground agent still open at
-its turn's `turn.finished` as stopped. A background agent can finish
-during a later turn, or between turns.
+agent. A foreground agent still open when its own turn's engine result
+arrives is ended then (`stopped`, or what the engine last said); another
+turn's result ends none of it. A background agent can finish during a
+later turn, or between turns.
+
+*When the engine goes away (v0.10).* Closing a chat's engine —
+`chat.stop`, a stop whose grace ran out, `session.renew`, `chat.remove`,
+`gateway.stop` — or the engine's process dying ends its background work
+with it: the gateway sends `agent.finished outcome=stopped` for every
+agent still open and `workflow.finished outcome=stopped` for every
+workflow (one already known to have ended keeps its outcome), before the
+turn's `turn.finished` when a turn was running. An app still treats a
+foreground agent open at its turn's `turn.finished` as stopped, and, as
+a backstop for a gateway that sent no such finish, treats every agent
+and workflow still open in a chat as stopped once that chat's
+`chat.state` is `stopped` or its session ended (`session.renewed`).
 
 ### `workflow.started` — `WorkflowStarted`
 `chat`, `seq`, `turn`, `id`, `name` (the workflow's own name, else its
@@ -860,7 +895,8 @@ is `running` while any of its agents runs, then `done`, or `failed`
 when one of its agents failed; `pending` until its first agent starts.
 
 ### `workflow.finished` — `WorkflowFinished`
-`chat`, `seq`, `id`, `outcome: done | failed | stopped`, `summary?`.
+`chat`, `seq`, `id`, `outcome: done | failed | stopped`, `summary?` (the
+first line of the engine's report on it, at most 120 characters).
 Any of its agents still open are ended first (`done` when the workflow
 completed, else `stopped`), then their phases' `workflow.phase`. A
 workflow runs in the background: its turn usually finishes first, and
@@ -880,8 +916,13 @@ resultPreview}`); a workflow agent's `id` is `<workflow id>.<index>`, and
 its steps are only what those reports say (it sends no tool rows). A
 task ends with `task_notification`, or for background work possibly only
 with a `task_updated` whose status is terminal (`completed`, `failed`,
-`stopped`, `killed`); either ends it once. Shell and monitor tasks are
-not shown.
+`stopped`, `killed`); either ends it once. A background subagent ends on
+whichever comes first; a foreground subagent's and a workflow's terminal
+`task_updated` waits for the notification, which carries the summary (a
+workflow waits at most 5 seconds, and no longer than the next message
+that is not a task's). A subagent's own subagent (`spawn_depth` above 1)
+is not reported as an agent: its start is the parent's `Agent` step, and
+its own calls are left out. Shell and monitor tasks are not shown.
 
 ## Services *(v0.4)*
 

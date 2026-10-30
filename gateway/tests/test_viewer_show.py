@@ -58,8 +58,12 @@ class PlainCallbacks:
     async def on_compacted(self, trigger: str) -> None: ...
 
 
-def bash(command: str) -> dict[str, Any]:
-    return {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "t1"}
+def bash(command: str, cwd: str | None = "/tmp/demo") -> dict[str, Any]:
+    """The hook input the engine sends; ``cwd`` is the Bash tool's working directory then (``None``: left out)."""
+    input: dict[str, Any] = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "t1"}
+    if cwd is not None:
+        input["cwd"] = cwd
+    return input
 
 
 # --- the options -----------------------------------------------------------------
@@ -169,7 +173,23 @@ async def test_a_caught_open_is_denied_with_the_reason_after_showing() -> None:
         }
     }
     assert OPEN_SHOWN_REASON == "Shown in Portico's viewer instead of opening it."
-    assert cb.shown == [["login.html"]]
+    # A relative path is the shell's working directory's, from the hook input.
+    assert cb.shown == [["/tmp/demo/login.html"]]
+
+
+async def test_a_relative_open_follows_the_shells_directory_and_without_one_runs_as_before() -> None:
+    cb = RecordingCallbacks()
+    hook = build_open_hook(cb)
+    out = await hook(bash("open report.html ../notes.md /tmp/x/a.png", cwd="/tmp/demo/build"), "t1", {"signal": None})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert cb.shown == [["/tmp/demo/build/report.html", "/tmp/demo/build/../notes.md", "/tmp/x/a.png"]]
+    # No working directory said: only absolute paths are caught.
+    assert await hook(bash("open report.html", cwd=None), "t1", {"signal": None}) == {"continue_": True}
+    assert await hook(bash("open /tmp/demo/a.html report.html", cwd=None), "t1", {"signal": None}) == {"continue_": True}
+    assert cb.shown == [["/tmp/demo/build/report.html", "/tmp/demo/build/../notes.md", "/tmp/x/a.png"]]
+    out = await hook(bash("open /tmp/demo/a.html", cwd=None), "t1", {"signal": None})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert cb.shown[-1] == ["/tmp/demo/a.html"]
 
 
 async def test_an_open_the_owner_refuses_runs_as_before() -> None:
@@ -290,10 +310,18 @@ async def test_a_caught_open_through_the_server_shows_the_file(server: GatewaySe
         page = touch(folder / "login.html")
         hook = build_open_hook(ChatCallbacks(server, chat))
 
-        out = await hook(bash("open login.html"), "t1", {"signal": None})
+        out = await hook(bash("open login.html", cwd=str(folder)), "t1", {"signal": None})
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
         event = await recv(conn)
         assert isinstance(event, ArtifactCreated) and event.artifact.location == str(page.resolve()) and event.artifact.open
+
+        # After `cd build`, `open report.html` is build/report.html, not the folder's own.
+        touch(folder / "report.html")
+        built = touch(folder / "build" / "report.html")
+        out = await hook(bash("open report.html", cwd=str(folder / "build")), "t1", {"signal": None})
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+        event = await recv(conn)
+        assert isinstance(event, ArtifactCreated) and event.artifact.location == str(built.resolve())
 
         # Outside the folders, or a URL: runs as before, nothing shown.
         assert await hook(bash("open /etc/hosts"), "t1", {"signal": None}) == {"continue_": True}

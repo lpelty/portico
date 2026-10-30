@@ -34,7 +34,17 @@ from portico_gateway.engine import (
     to_permission_result,
     translate,
 )
-from portico_gateway.messages import TextDelta, ToolFinished, ToolStarted, TurnFinished, parse_server, dump
+from portico_gateway.messages import (
+    AgentFinished,
+    TextDelta,
+    ToolFinished,
+    ToolStarted,
+    TurnFinished,
+    TurnStarted,
+    WorkflowFinished,
+    dump,
+    parse_server,
+)
 
 from .conftest import AskPermission, AskQuestion, Block, FakeEngine, RecordingCallbacks
 
@@ -585,3 +595,66 @@ async def test_slash_commands_come_from_initialize_and_the_init_message(tmp_path
         await eng.close()
     finally:
         _FakeSDKClient.next_server_info = None
+
+
+# --- a turn nobody sent (v0.10) -------------------------------------------------------
+
+
+async def test_the_engine_speaking_after_its_turn_begins_a_turn_of_its_own(tmp_path: Path, sdk_client: Any) -> None:
+    # The recorded workflow: its turn ends, the workflow finishes in the
+    # background, and the CLI answers with a fresh init, text and a second result.
+    from .test_agents import recorded
+
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    assert eng.turn == 0 and not [e for e in cb.events if isinstance(e, TurnStarted)], "the init at connect begins nothing"
+    messages = recorded("workflow")
+    client.script = [*messages[:-1], _text_delta("Done."), messages[-1]]
+    await eng.send("run it")
+    await _until(lambda: len(_finished(cb)) == 2)
+    starts = [e for e in cb.events if isinstance(e, TurnStarted)]
+    assert [s.turn for s in starts] == [2]
+    assert [(f.turn, f.outcome) for f in _finished(cb)] == [(1, "done"), (2, "done")]
+    began = cb.events.index(starts[0])
+    assert cb.events.index(next(e for e in cb.events if isinstance(e, WorkflowFinished))) < began
+    assert [(d.turn, d.text) for d in cb.events[began:] if isinstance(d, TextDelta)] == [(2, "Done.")]
+    assert eng.turn == 2
+    await eng.close()
+
+
+async def test_the_owner_may_renumber_a_turn_nobody_sent(tmp_path: Path, sdk_client: Any) -> None:
+    class Renumbering(RecordingCallbacks):
+        async def on_event(self, event: Any) -> None:
+            if isinstance(event, TurnStarted):
+                eng.turn = 5
+            await super().on_event(event)
+
+    cb = Renumbering()
+    eng, client = await _started_engine(tmp_path, cb)
+    client.script = [_result()]
+    await eng.send("go")
+    await _until(lambda: len(_finished(cb)) == 1)
+    client.push(_text_delta("Later."))
+    client.push(_result())
+    await _until(lambda: len(_finished(cb)) == 2)
+    assert [(d.turn, d.text) for d in cb.events if isinstance(d, TextDelta)] == [(5, "Later.")]
+    assert [f.turn for f in _finished(cb)] == [1, 5]
+    await eng.close()
+
+
+async def test_pump_ending_ends_the_open_background_work_before_the_turn(tmp_path: Path, sdk_client: Any) -> None:
+    from .test_agents import recorded
+
+    cb = RecordingCallbacks()
+    eng, client = await _started_engine(tmp_path, cb)
+    messages = recorded("workflow")
+    first_result = next(i for i, m in enumerate(messages) if isinstance(m, ResultMessage))
+    client.script = [*messages[: first_result + 1], _END]
+    await eng.send("run it")
+    await _until(lambda: eng._pump is not None and eng._pump.done())
+    ended = [e for e in cb.events if isinstance(e, (WorkflowFinished, AgentFinished))]
+    assert [w.outcome for w in ended if isinstance(w, WorkflowFinished)] == ["stopped"]
+    assert ended and all(e.outcome == "stopped" for e in ended)
+    assert [f.outcome for f in _finished(cb)] == ["done"], "the turn had ended: nothing more for it"
+    await eng.close()
+    assert [e for e in cb.events if isinstance(e, (WorkflowFinished, AgentFinished))] == ended, "closing adds nothing"

@@ -240,9 +240,10 @@ def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = 
     ts = _now()
     out: list[ServerMessage] = []
     if agents is not None:
+        out.extend(agents.overdue(msg, chat, ts))
         handled = agents.translate(msg, chat, turn, ts)
         if handled is not None and not isinstance(msg, ResultMessage):
-            return handled
+            return out + handled
         if handled:
             out.extend(handled)
     if isinstance(msg, StreamEvent):
@@ -289,6 +290,20 @@ def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = 
         out.append(TurnFinished(ts=ts, chat=chat, turn=turn, outcome="error" if msg.is_error else "done"))
     # SystemMessage, RateLimitEvent, ConversationResetMessage and the rest carry nothing for the app.
     return out
+
+
+def opens_turn(msg: Message) -> bool:
+    """Whether ``msg`` is the engine speaking in the conversation: its ``init``, or its own (not a subagent's) output.
+
+    Arriving while no turn is in flight, it begins a turn nobody sent (the
+    engine answering a background task that finished). A tool result, a
+    task message or a result does not: none of them begins anything.
+    """
+    if isinstance(msg, SystemMessage):
+        return msg.subtype == "init"
+    if isinstance(msg, (AssistantMessage, StreamEvent)):
+        return msg.parent_tool_use_id is None
+    return False
 
 
 # --- permissions and questions -------------------------------------------------
@@ -432,17 +447,36 @@ def build_show_tool(callbacks: EngineCallbacks):
     return show_in_viewer
 
 
+def resolve_open_paths(paths: list[str], cwd: Any) -> list[str] | None:
+    """``open``'s paths as the shell would find them: a relative one against ``cwd``; ``None`` when that cannot be known.
+
+    The Bash tool's working directory persists between calls (after ``cd
+    build``, ``open report.html`` means ``build/report.html``), and the hook
+    input's ``cwd`` is that directory. Without one, only absolute paths
+    are caught: a relative ``open`` runs as before.
+    """
+    if isinstance(cwd, str) and cwd.strip() and Path(cwd).is_absolute():
+        return [p if Path(p).is_absolute() else str(Path(cwd) / p) for p in paths]
+    if all(Path(p).is_absolute() for p in paths):
+        return paths
+    return None
+
+
 def build_open_hook(callbacks: EngineCallbacks):
     """The ``PreToolUse`` hook on ``Bash``: a plain ``open`` of files the owner may show is shown, not run.
 
     Runs in every permission mode (hooks come before the permission
-    decision). Anything else, and any ``open`` the owner refuses, runs as before.
+    decision). A relative path is the shell's working directory's (the
+    hook input's ``cwd``), never the chat folder's. Anything else, and any
+    ``open`` the owner refuses, runs as before.
     """
 
     async def open_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
         tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
         command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
         paths = open_command_paths(command)
+        if paths is not None:
+            paths = resolve_open_paths(paths, input.get("cwd") if isinstance(input, Mapping) else None)
         if paths is None:
             return {"continue_": True}
         try:
@@ -561,8 +595,17 @@ class SDKEngine:
 
     If the pump dies mid-turn (the CLI process exits, the stream raises),
     the owner hears ``turn.finished outcome=error`` for the turn in
-    flight, so a chat is never left ``working`` with nothing on screen.
-    A deliberate ``close`` reports nothing: the owner ended the turn.
+    flight, so a chat is never left ``working`` with nothing on screen;
+    whenever it dies, every agent and workflow still open is ended
+    (``AgentTracker.close_all``) first. A deliberate ``close`` reports
+    nothing: the owner ended the turn (and ends the work, v0.10).
+
+    A turn nobody sent (v0.10): when the engine speaks (``opens_turn``)
+    with no turn in flight, after a turn has run, it is answering on its
+    own, typically a background task that finished. The adapter advances
+    ``turn`` and reports ``turn.started`` for it before that message's
+    events; the owner may renumber it (set ``turn``) while handling that
+    event. Its result ends it like any turn.
     """
 
     def __init__(self, chat: int = 0, init_timeout: float = 5.0) -> None:
@@ -604,6 +647,9 @@ class SDKEngine:
         try:
             async for msg in self._client.receive_messages():
                 self._note_session(msg)
+                if self._between_turns() and opens_turn(msg):
+                    self.turn += 1
+                    await self._callbacks.on_event(TurnStarted(ts=_now(), chat=self.chat, turn=self.turn))
                 for event in translate(msg, self.chat, self.turn, self.agents):
                     if isinstance(event, TurnFinished):
                         self._finished_turn = event.turn
@@ -613,9 +659,25 @@ class SDKEngine:
         except Exception:
             log.exception("chat %s: engine pump stopped", self.chat)
         # The stream is gone, by failure or because the CLI exited: release a
-        # waiting ``start`` and settle any turn still in flight.
+        # waiting ``start``, end the work that died with it, and settle any
+        # turn still in flight.
         self._init_seen.set()
+        await self._report_lost_work()
         await self._report_lost_turn()
+
+    def _between_turns(self) -> bool:
+        """A turn has run and none is in flight (the last one's result has come)."""
+        return not self._closing and 0 < self.turn <= self._finished_turn
+
+    async def _report_lost_work(self) -> None:
+        """The pump ended: the agents and workflows still open went with the engine."""
+        if self._closing or self._callbacks is None:
+            return
+        try:
+            for event in self.agents.close_all(self.chat, _now()):
+                await self._callbacks.on_event(event)
+        except Exception:
+            log.exception("chat %s: could not report the lost agents", self.chat)
 
     async def _report_lost_turn(self) -> None:
         """The pump ended mid-turn: tell the owner the turn ended in error."""

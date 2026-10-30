@@ -513,6 +513,7 @@ final class AppModel: ObservableObject {
                 if let mode = state.mode { chats[index].mode = mode }
                 if let unlogged = state.unlogged { chats[index].unlogged = unlogged }
             }
+            if state.state == .stopped { stopOpenWork(chat: state.chat) }
             if let id = state.id, pendingNewChats.remove(id) != nil {
                 // The new session runs in what the start screen's chip
                 // showed: the pick, else the deployment's mode. Should the
@@ -984,6 +985,12 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - agents and workflows (v0.10)
+
+    /// The chat stopped or its session ended: its background work went
+    /// with the engine (v0.10 backstop).
+    func stopOpenWork(chat: Int) {
+        agentActivity[chat]?.stopOpenWork()
+    }
 
     /// Feed a frame to the chat's agent activity.
     private func applyAgentEvent(_ event: ServerMessage, to chat: Int) {
