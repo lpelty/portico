@@ -35,7 +35,7 @@ final class UpdateAndStaleConfigTests: XCTestCase {
         model.apply(.hello(hello(configStale: true, epoch: "g")))
         XCTAssertTrue(model.configStale, "hello carries the same fact on connect")
         // v0.11 (63): the notice names its cause, and reads nothing like the update offer.
-        XCTAssertEqual(StatusStripPresentation.restartText, "Settings changed — restart the gateway to use them")
+        XCTAssertEqual(StatusStripPresentation.restartText, "Settings changed — restart the gateway to apply")
         XCTAssertFalse(StatusStripPresentation.restartText.contains("Update"))
         XCTAssertNotEqual(StatusStripPresentation.Measure.restartIcon.name, StatusStripPresentation.Measure.updateIcon.name)
     }

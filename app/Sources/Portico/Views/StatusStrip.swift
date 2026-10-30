@@ -3,7 +3,7 @@ import SwiftUI
 
 /// What the strip under the toolbar says (v0.4, W1): the model · the
 /// context · the services, and on the right the update (and "Settings
-/// changed — restart the gateway to use them" when the config changed). The chat's state word and its folder
+/// changed — restart the gateway to apply" when the config changed). The chat's state word and its folder
 /// are gone: the working line in the conversation says the agent is
 /// working, and the Files pane shows the folder. The gateway is one of the
 /// services (its own row, from the app), not a segment of its own.
@@ -203,7 +203,7 @@ struct StatusStripPresentation: Equatable, Sendable {
     /// The stale-config notice (v0.11, item 63): it names its cause, and
     /// wears the wait colour and a restart arrow where Update available
     /// wears the accent and a download arrow.
-    static let restartText = "Settings changed — restart the gateway to use them"
+    static let restartText = "Settings changed — restart the gateway to apply"
 
     static func updateText(_ version: String) -> String {
         "Update available (\(version))"
