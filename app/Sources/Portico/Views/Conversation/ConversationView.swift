@@ -51,6 +51,8 @@ struct ConversationView: View {
                 // The running turn's agents or workflow sit on the composer,
                 // as wide as it (v0.10 decisions 1 and 2, AF2 and AF3).
                 AgentDock(chat: chat, sideInset: Self.sideInset)
+                // What the person sent while the agent works, waiting for its next step (v0.11, AG5).
+                QueuedMessages(chat: chat, sideInset: Self.sideInset)
                 // An ended session is read-only: no composer.
                 InputBar(chat: chat)
                     .id(chat)

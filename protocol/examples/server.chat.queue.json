@@ -1,0 +1,12 @@
+{
+  "chat": 1,
+  "items": [
+    {
+      "attachments": [],
+      "id": "req-9",
+      "text": "Also check that uvx resolves — the search server needs it too."
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "chat.queue"
+}

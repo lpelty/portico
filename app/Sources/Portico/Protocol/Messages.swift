@@ -307,8 +307,9 @@ struct HelloClient: Codable, Equatable, Sendable {
         case appVersion = "app_version"
     }
 
-    /// Everything this app names in `capabilities`.
-    static let appCapabilities = [AgentActivity.capability]
+    /// Everything this app names in `capabilities` (v0.11: `queue.v1`,
+    /// messages typed while the agent works).
+    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability]
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
@@ -432,6 +433,16 @@ struct SessionsClear: Codable, Equatable, Sendable {
     static let messageType = "sessions.clear"
     static let capability = "sessions.clear"
     var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Take a queued message back before it goes to the agent (v0.11, item
+/// 74): `id` as `chat.queued` named it. Answered with `chat.queue`, or
+/// `error code=chat.not_queued` when it has already gone.
+struct ChatUnqueue: Codable, Equatable, Sendable {
+    static let messageType = "chat.unqueue"
+    var chat: Int
+    var id: String
     var ts: String = ProtocolClock.now()
 }
 
@@ -915,6 +926,40 @@ struct ChatNotice: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// A message the gateway holds for the agent until its next step (v0.11).
+struct QueuedMessage: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var text: String
+    var attachments: [String] = []
+}
+
+/// The answer to a `message.send` made during a turn (v0.11): held, not
+/// refused; `id` is the request's, the queued message's from now on.
+struct ChatQueued: Codable, Equatable, Sendable {
+    static let messageType = "chat.queued"
+    var chat: Int
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// What a chat holds for the agent, oldest first, after every change and
+/// on every `chat.open` (v0.11). Replaces whatever the app had.
+struct ChatQueue: Codable, Equatable, Sendable {
+    static let messageType = "chat.queue"
+    /// Both sides list it in `hello` for a send during a turn to be queued.
+    static let capability = "queue.v1"
+    var chat: Int
+    var items: [QueuedMessage] = []
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The config file changed after the gateway started; restart to apply it.
 struct ConfigStale: Codable, Equatable, Sendable {
     static let messageType = "config.stale"
@@ -1146,6 +1191,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case serviceRestart(ServiceRestart)
     case servicesRestartAll(ServicesRestartAll)
     case sessionsClear(SessionsClear)
+    case chatUnqueue(ChatUnqueue)
 
     var type: String {
         switch self {
@@ -1168,6 +1214,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .serviceRestart: ServiceRestart.messageType
         case .servicesRestartAll: ServicesRestartAll.messageType
         case .sessionsClear: SessionsClear.messageType
+        case .chatUnqueue: ChatUnqueue.messageType
         }
     }
 
@@ -1193,6 +1240,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case ServiceRestart.messageType: self = .serviceRestart(try ServiceRestart(from: decoder))
         case ServicesRestartAll.messageType: self = .servicesRestartAll(try ServicesRestartAll(from: decoder))
         case SessionsClear.messageType: self = .sessionsClear(try SessionsClear(from: decoder))
+        case ChatUnqueue.messageType: self = .chatUnqueue(try ChatUnqueue(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1220,6 +1268,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .serviceRestart(let m): try m.encode(to: encoder)
         case .servicesRestartAll(let m): try m.encode(to: encoder)
         case .sessionsClear(let m): try m.encode(to: encoder)
+        case .chatUnqueue(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1260,6 +1309,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case workflowStarted(WorkflowStarted)
     case workflowPhase(WorkflowPhase)
     case workflowFinished(WorkflowFinished)
+    case chatQueued(ChatQueued)
+    case chatQueue(ChatQueue)
 
     var type: String {
         switch self {
@@ -1296,6 +1347,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .workflowStarted: WorkflowStarted.messageType
         case .workflowPhase: WorkflowPhase.messageType
         case .workflowFinished: WorkflowFinished.messageType
+        case .chatQueued: ChatQueued.messageType
+        case .chatQueue: ChatQueue.messageType
         }
     }
 
@@ -1334,6 +1387,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .workflowStarted(let m): m.envelope
         case .workflowPhase(let m): m.envelope
         case .workflowFinished(let m): m.envelope
+        case .chatQueued(let m): m.envelope
+        case .chatQueue(let m): m.envelope
         }
     }
 
@@ -1373,6 +1428,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case WorkflowStarted.messageType: self = .workflowStarted(try WorkflowStarted(from: decoder))
         case WorkflowPhase.messageType: self = .workflowPhase(try WorkflowPhase(from: decoder))
         case WorkflowFinished.messageType: self = .workflowFinished(try WorkflowFinished(from: decoder))
+        case ChatQueued.messageType: self = .chatQueued(try ChatQueued(from: decoder))
+        case ChatQueue.messageType: self = .chatQueue(try ChatQueue(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1414,6 +1471,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .workflowStarted(let m): try m.encode(to: encoder)
         case .workflowPhase(let m): try m.encode(to: encoder)
         case .workflowFinished(let m): try m.encode(to: encoder)
+        case .chatQueued(let m): try m.encode(to: encoder)
+        case .chatQueue(let m): try m.encode(to: encoder)
         }
     }
 }

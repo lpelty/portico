@@ -41,6 +41,12 @@ PhaseState = Literal["pending", "running", "done", "failed"]
 # ``workflow.*`` frames and the tool rows of a subagent's own steps.
 AGENTS_CAPABILITY = "agents.v1"
 
+# v0.11 (item 74): the capability, on both sides, for messages typed while
+# the agent works. A gateway that lists it queues a ``message.send`` that
+# arrives during a turn (``chat.queued``) instead of refusing it, but only
+# for an app that lists it too; only such an app is sent ``chat.queue``.
+QUEUE_CAPABILITY = "queue.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -170,6 +176,18 @@ class Hit(Strict):
     snippet: str | None = None
 
 
+class QueuedMessage(Strict):
+    """A message the person sent during a turn, held by the gateway until it goes (v0.11).
+
+    ``id`` is the ``message.send`` request's ``id`` (one the gateway made
+    up when the request had none); ``text`` and ``attachments`` are as sent.
+    """
+
+    id: str
+    text: str
+    attachments: list[str] = []
+
+
 # --- envelope ----------------------------------------------------------------
 
 
@@ -228,6 +246,19 @@ class MessageSend(Envelope):
     chat: int
     text: str
     attachments: list[str] = []
+
+
+class ChatUnqueue(Envelope):
+    """Take a queued message (``id``, as ``chat.queued`` named it) off the queue before it goes (v0.11).
+
+    Answered with the ``chat.queue`` that follows, or ``error
+    code=chat.not_queued`` when it has already gone to the agent (or was
+    never queued). An edit is this, then a new ``message.send``.
+    """
+
+    type: Literal["chat.unqueue"] = "chat.unqueue"
+    chat: int
+    id: str
 
 
 class SessionMode(Envelope):
@@ -565,6 +596,33 @@ class ChatNotice(Envelope):
     text: str
 
 
+class ChatQueued(Envelope):
+    """The answer to a ``message.send`` that arrived during a turn or the log step (v0.11).
+
+    The message is held, not refused: ``id`` is the request's (the queued
+    message's id from now on). Only to an app that declared ``queue.v1``;
+    an older app still gets ``error code=chat.busy``.
+    """
+
+    type: Literal["chat.queued"] = "chat.queued"
+    chat: int
+    id: str
+
+
+class ChatQueue(Envelope):
+    """The messages a chat holds for the agent, oldest first, after every change (v0.11).
+
+    Sent when one is queued, unqueued, or goes to the agent, and after
+    ``chat.live`` on every ``chat.open`` (an empty list too), so a
+    reconnecting app sees what is still waiting. Not in the ring: the list
+    as it stands replaces whatever the app had.
+    """
+
+    type: Literal["chat.queue"] = "chat.queue"
+    chat: int
+    items: list[QueuedMessage] = []
+
+
 class ConfigStale(Envelope):
     """The config file changed after the gateway started; restart the gateway to apply it."""
 
@@ -731,6 +789,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ServiceRestart,
     ServicesRestartAll,
     SessionsClear,
+    ChatUnqueue,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -766,6 +825,8 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     WorkflowStarted,
     WorkflowPhase,
     WorkflowFinished,
+    ChatQueued,
+    ChatQueue,
     Error,
 )
 
@@ -859,7 +920,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.10.0", capabilities=["agents.v1"]),
+        HelloClient(ts=_TS, app_version="0.11.0", capabilities=["agents.v1", "queue.v1"]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -891,6 +952,7 @@ def example_messages() -> dict[str, BaseModel]:
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
         SessionsClear(ts=_TS, id="req-9"),
+        ChatUnqueue(ts=_TS, chat=1, id="req-10"),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -1058,6 +1120,12 @@ def example_messages() -> dict[str, BaseModel]:
         WorkflowStarted(ts=_TS, chat=1, seq=57, turn=3, id="w9k2m4", name="audit-quotes", phases=["find", "verify", "report"]),
         WorkflowPhase(ts=_TS, chat=1, seq=58, id="w9k2m4", index=1, state="running"),
         WorkflowFinished(ts=_TS, chat=1, seq=59, id="w9k2m4", outcome="done", summary="Workflow audit-quotes completed"),
+        ChatQueued(ts=_TS, chat=1, id="req-9"),
+        ChatQueue(
+            ts=_TS,
+            chat=1,
+            items=[QueuedMessage(id="req-9", text="Also check that uvx resolves — the search server needs it too.")],
+        ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

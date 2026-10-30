@@ -68,6 +68,14 @@ class Compact:
     trigger: str = "auto"
 
 
+@dataclass
+class Pause:
+    """Mid-turn: the engine waits here until the test sets ``go`` (v0.11); ``reached`` says it got here."""
+
+    go: asyncio.Event = field(default_factory=asyncio.Event)
+    reached: asyncio.Event = field(default_factory=asyncio.Event)
+
+
 def fake_result(is_error: bool = False, session_id: str = "fake-session") -> ResultMessage:
     return ResultMessage(
         subtype="error_during_execution" if is_error else "success",
@@ -213,6 +221,9 @@ class FakeEngine:
                 await cb.on_compacted(item.trigger)
             elif isinstance(item, Show):
                 self.show_answers.append(await cb.on_show(item.paths))  # type: ignore[attr-defined]
+            elif isinstance(item, Pause):
+                item.reached.set()
+                await item.go.wait()
             elif isinstance(item, Block):
                 self._blocked.set()
                 if item.stubborn:
@@ -231,6 +242,12 @@ class FakeEngine:
                     if isinstance(ev, TurnFinished):
                         self.finished_turn = ev.turn
                     await cb.on_event(ev)
+
+    async def inject(self, text: str) -> None:
+        """A message written into the turn in flight (v0.11): recorded; the script goes on as it was."""
+        self.calls.append(("inject", text))
+        if self.callbacks is None:
+            raise RuntimeError("FakeEngine.inject before start")
 
     async def context_usage(self) -> tuple[float, str | None] | None:
         self.context_reads += 1  # not in ``calls``: tests read ``calls[-1]`` as the last send

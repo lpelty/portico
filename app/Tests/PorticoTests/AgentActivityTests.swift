@@ -123,10 +123,11 @@ final class AgentActivityTests: XCTestCase {
     // MARK: - the client hello
 
     func testTheClientHelloNamesAgentsV1() throws {
-        XCTAssertEqual(HelloClient.appCapabilities, ["agents.v1"])
+        // v0.11 adds queue.v1 (messages typed while the agent works).
+        XCTAssertEqual(HelloClient.appCapabilities, ["agents.v1", "queue.v1"])
         let hello = HelloClient(appVersion: "0.10.0", capabilities: HelloClient.appCapabilities, ts: "2026-10-27T12:00:00Z")
         let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ClientMessage.hello(hello))) as? [String: Any]
-        XCTAssertEqual(raw?["capabilities"] as? [String], ["agents.v1"])
+        XCTAssertEqual(raw?["capabilities"] as? [String], ["agents.v1", "queue.v1"])
         // Without capabilities the field is not sent at all.
         let bare = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ClientMessage.hello(HelloClient(appVersion: "0.10.0")))) as? [String: Any]
         XCTAssertNil(bare?["capabilities"])
@@ -139,7 +140,7 @@ final class AgentActivityTests: XCTestCase {
         let client = GatewayClient()
         _ = try await client.connect(url: gateway.url, token: "tok", appVersion: "0.10.0-test")
         let first = try XCTUnwrap(gateway.received.first)
-        XCTAssertEqual(first["capabilities"] as? [String], ["agents.v1"])
+        XCTAssertEqual(first["capabilities"] as? [String], ["agents.v1", "queue.v1"])
         await client.disconnect()
     }
 
