@@ -560,6 +560,32 @@ class UpdateAvailable(Envelope):
     version: str
 
 
+class AgentCommand(Strict):
+    """One of the agent's slash commands or skills (v0.11 item 66), for the composer's list.
+
+    ``name`` has no ``/`` (``standup``, ``acme:review``); ``description`` is
+    one line (its first sentence); ``source`` is where the engine says it
+    comes from (``user``, ``project``, a plug-in's name), when it says.
+    """
+
+    name: str
+    description: str = ""
+    source: str | None = None
+
+
+class ChatCommands(Envelope):
+    """The agent's commands and skills in ``folder``, for slash completion (v0.11 item 66).
+
+    Sent with ``chat`` after that chat's engine starts; sent without it on
+    connect, from the list the gateway kept for the folder, so the welcome
+    has one before any engine runs. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["chat.commands"] = "chat.commands"
+    folder: str
+    commands: list[AgentCommand] = []
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -747,6 +773,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     WorkflowStarted,
     WorkflowPhase,
     WorkflowFinished,
+    ChatCommands,
     Error,
 )
 
@@ -1036,6 +1063,15 @@ def example_messages() -> dict[str, BaseModel]:
         WorkflowStarted(ts=_TS, chat=1, seq=57, turn=3, id="w9k2m4", name="audit-quotes", phases=["find", "verify", "report"]),
         WorkflowPhase(ts=_TS, chat=1, seq=58, id="w9k2m4", index=1, state="running"),
         WorkflowFinished(ts=_TS, chat=1, seq=59, id="w9k2m4", outcome="done", summary="Workflow audit-quotes completed"),
+        ChatCommands(
+            ts=_TS,
+            chat=1,
+            folder=_FOLDER,
+            commands=[
+                AgentCommand(name="standup", description="Draft a standup from today's log.", source="user"),
+                AgentCommand(name="acme:review", description="Review a change before it ships", source="acme-tools"),
+            ],
+        ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

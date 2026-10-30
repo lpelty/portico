@@ -9,6 +9,10 @@ import UniformTypeIdentifiers
 /// or `waiting on you`. Enter sends, Shift+Enter adds a line. File URLs
 /// dropped anywhere on the bar become chips; the Files pane adds chips
 /// through `AppModel.attach`.
+///
+/// v0.11 (item 66, AG4): `/` at the start opens the slash list above the
+/// box — Portico's own commands, then the agent's — filtered as one types;
+/// ↑/↓ move, Enter or Tab pick, Esc closes.
 struct InputBar: View {
     let chat: Int
     /// The document view's open file (F3): the placeholder asks about it
@@ -17,6 +21,7 @@ struct InputBar: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var dictation: Dictation
     @FocusState private var editorFocused: Bool
+    @State private var slash = SlashListState()
 
     /// The editor's text lives in the model (per chat) so it survives
     /// switching chats and comes back when the gateway refuses a send.
@@ -35,6 +40,11 @@ struct InputBar: View {
     /// A `session.log` is out (v0.4): typing goes on, sending waits.
     private var logging: Bool { model.isLogging(chat: chat) }
     private var canSend: Bool { InputBar.canSend(model, chat: chat, text: draft.wrappedValue) }
+    /// The slash list for what is typed, when it is open (v0.11 item 66).
+    private var slashCompletion: SlashCompletion? {
+        guard connected, !renewing else { return nil }
+        return slash.completion(text: draft.wrappedValue, agentCommands: model.agentCommands(chat: chat))
+    }
 
     static func canSend(_ model: AppModel, chat: Int, text: String) -> Bool {
         model.connection == .connected && !model.isBusy(chat: chat) && !model.isSending(chat: chat)
@@ -128,6 +138,17 @@ struct InputBar: View {
         .padding(EdgeInsets(top: 12, leading: 14, bottom: 10, trailing: 14))
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        .slashList {
+            if let completion = slashCompletion {
+                SlashCommandList(
+                    completion: completion, selection: slash.selection,
+                    agentName: model.hello?.brand.agentName ?? model.brand.name
+                ) { item in
+                    pickSlash(item, send: item.group == .portico)
+                }
+            }
+        }
+        .onChange(of: SlashCompletion.query(in: draft.wrappedValue)) { _, query in slash.queryChanged(to: query) }
     }
 
     private var editor: some View {
@@ -149,9 +170,33 @@ struct InputBar: View {
                 .focused($editorFocused)
                 .disabled(renewing)
                 .onKeyPress(.return, phases: .down) { press in
-                    InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
+                    if slashCompletion != nil, press.modifiers.isEmpty, !InputBar.isComposing() {
+                        return slashKey(.enter)
+                    }
+                    return InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
+                }
+                .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: .down) { press in
+                    guard let key = SlashCompletion.Key(press.key), press.modifiers.isEmpty || key != .tab else { return .ignored }
+                    return slashKey(key)
                 }
         }
+    }
+
+    /// A key while the slash list is open (v0.11 item 66); ignored when it is closed.
+    private func slashKey(_ key: SlashCompletion.Key) -> KeyPress.Result {
+        guard let completion = slashCompletion else { return .ignored }
+        if let picked = slash.apply(completion.handle(key, selection: slash.selection)) {
+            pickSlash(picked.item, send: picked.send)
+        }
+        return .handled
+    }
+
+    /// Put the picked command in the composer; send it when it is one of
+    /// Portico's own picked with Enter (as Enter on a typed `/log` did).
+    private func pickSlash(_ item: SlashCompletion.Item, send andSend: Bool) {
+        draft.wrappedValue = item.completion
+        editorFocused = true
+        if andSend { send() }
     }
 
     private var placeholder: String {

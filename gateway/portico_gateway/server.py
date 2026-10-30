@@ -165,6 +165,7 @@ from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
     PROTOCOL_VERSION,
+    AgentCommand,
     Artifact,
     ArtifactCreated,
     ArtifactOpened,
@@ -172,6 +173,7 @@ from .messages import (
     CardAnswered,
     CardAsk,
     ChatAlias,
+    ChatCommands,
     ChatCompacted,
     ChatHistory,
     ChatList,
@@ -716,6 +718,10 @@ class GatewayServer:
         # v0.10: file writes that started with no turn in flight (a
         # background agent's), by chat and tool use, reported when they finish.
         self._loose_writes: dict[tuple[int, str], tuple[str, dict[str, Any]]] = {}
+        # v0.11 (item 66): the agent's commands, last list per folder (newest
+        # last), kept in ``commands.json`` so an app hears one before any
+        # engine of this launch has started.
+        self.command_lists: dict[str, list[AgentCommand]] = state.load_commands()
         # Whether a summary can be ``unlogged`` depends on the deployment having a log step.
         self.registry.can_log = self.has_log_step()
         # Asks a small model for a session's title (v0.8; ``titles.sdk_titler``
@@ -1091,6 +1097,9 @@ class GatewayServer:
         if self.update_version is not None:
             # Found before this app attached: it hears it now.
             await self._send(conn, UpdateAvailable(ts=_now(), version=self.update_version))
+        # v0.11 (item 66): the agent's commands as last seen, for the composer.
+        for commands in self._commands_on_connect():
+            await self._send(conn, commands)
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while
         # the worker is inside a slow handler (a hung ``before_first_chat``).
@@ -1236,7 +1245,46 @@ class GatewayServer:
         if session:
             chat.session_id = session
         self.registry.persist()
+        await self._report_commands(chat, engine)
         return engine
+
+    async def _report_commands(self, chat: Chat, engine: Engine) -> None:
+        """After an engine starts: its commands as ``chat.commands``, kept for the folder (v0.11 item 66).
+
+        Never breaks a start: an engine that cannot say (``None``) sends
+        nothing, and one that fails is logged at WARNING and skipped.
+        """
+        try:
+            commands = engine.command_list()
+        except Exception as e:
+            log.warning("chat %d: could not read the commands: %s", chat.number, e)
+            return
+        if commands is None:
+            return
+        folder = str(chat.folder)
+        if self.command_lists.get(folder) != commands:
+            self.command_lists.pop(folder, None)
+            self.command_lists[folder] = commands
+            try:
+                self.state.save_commands(self.command_lists)
+            except OSError as e:
+                log.warning("could not keep the commands for %s: %s", folder, e)
+        await self.broadcast(ChatCommands(ts=_now(), chat=chat.number, folder=folder, commands=commands))
+
+    def _commands_on_connect(self) -> list[ChatCommands]:
+        """The kept lists an app hears on connect (v0.11 item 66): the default folder's and each live session's."""
+        folders: list[str] = []
+        default = hello_for(self.config, self.epoch, self.version, self.plugins).default_folder
+        if default:
+            folders.append(default)
+        for chat in self.registry.chats():
+            if chat.ended is None and str(chat.folder) not in folders:
+                folders.append(str(chat.folder))
+        return [
+            ChatCommands(ts=_now(), folder=folder, commands=self.command_lists[folder])
+            for folder in folders
+            if folder in self.command_lists
+        ]
 
     def _sync_session(self, chat: Chat) -> None:
         """Copy a session id the engine learned after ``start`` into the chat and the index."""

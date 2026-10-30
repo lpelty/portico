@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.11.0 — unreleased
+
+- **Slash-command completion.** Typing `/` at the start of the composer
+  (the conversation's or the welcome's) lists Portico's own `/log` and
+  `/new`, then the agent's commands and skills with one-line
+  descriptions, filtered as you type (names first, then descriptions).
+  ↑/↓ move, Enter or Tab picks, Esc closes. The gateway sends the list as
+  `chat.commands` when an engine starts and keeps the last one per folder
+  (`commands.json`), so the welcome has it before the first engine runs.
+
 ## v0.10.0 (2026-10-30)
 
 ### What a person gets (app)

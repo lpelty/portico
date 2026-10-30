@@ -855,6 +855,44 @@ struct ServicesStatus: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// One of the agent's slash commands or skills (v0.11 item 66): `name`
+/// without the `/`, a one-line `description`, and where the engine says it
+/// comes from (`user`, `project`, a plug-in), when it says.
+struct AgentCommand: Codable, Equatable, Hashable, Sendable {
+    var name: String
+    var description: String = ""
+    var source: String? = nil
+
+    init(name: String, description: String = "", source: String? = nil) {
+        self.name = name
+        self.description = description
+        self.source = source
+    }
+
+    /// `description` may be left out (the gateway's default is empty).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+    }
+}
+
+/// The agent's commands and skills in `folder`, for the composer's slash
+/// list (v0.11 item 66). With `chat` after that chat's engine starts;
+/// without it on connect, from the list the gateway kept for the folder.
+struct ChatCommands: Codable, Equatable, Sendable {
+    static let messageType = "chat.commands"
+    var folder: String
+    var commands: [AgentCommand]
+    var chat: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The answer to `files.search`.
 struct FilesResults: Codable, Equatable, Sendable {
     static let messageType = "files.results"
@@ -1233,6 +1271,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case workflowStarted(WorkflowStarted)
     case workflowPhase(WorkflowPhase)
     case workflowFinished(WorkflowFinished)
+    case chatCommands(ChatCommands)
 
     var type: String {
         switch self {
@@ -1269,6 +1308,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .workflowStarted: WorkflowStarted.messageType
         case .workflowPhase: WorkflowPhase.messageType
         case .workflowFinished: WorkflowFinished.messageType
+        case .chatCommands: ChatCommands.messageType
         }
     }
 
@@ -1307,6 +1347,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .workflowStarted(let m): m.envelope
         case .workflowPhase(let m): m.envelope
         case .workflowFinished(let m): m.envelope
+        case .chatCommands(let m): m.envelope
         }
     }
 
@@ -1346,6 +1387,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case WorkflowStarted.messageType: self = .workflowStarted(try WorkflowStarted(from: decoder))
         case WorkflowPhase.messageType: self = .workflowPhase(try WorkflowPhase(from: decoder))
         case WorkflowFinished.messageType: self = .workflowFinished(try WorkflowFinished(from: decoder))
+        case ChatCommands.messageType: self = .chatCommands(try ChatCommands(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1387,6 +1429,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .workflowStarted(let m): try m.encode(to: encoder)
         case .workflowPhase(let m): try m.encode(to: encoder)
         case .workflowFinished(let m): try m.encode(to: encoder)
+        case .chatCommands(let m): try m.encode(to: encoder)
         }
     }
 }

@@ -1,0 +1,18 @@
+{
+  "chat": 1,
+  "commands": [
+    {
+      "description": "Draft a standup from today's log.",
+      "name": "standup",
+      "source": "user"
+    },
+    {
+      "description": "Review a change before it ships",
+      "name": "acme:review",
+      "source": "acme-tools"
+    }
+  ],
+  "folder": "/Users/someone/projects/demo",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "chat.commands"
+}

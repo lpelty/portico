@@ -60,6 +60,7 @@ from claude_agent_sdk import (
 
 from .agents import AgentTracker
 from .messages import (
+    AgentCommand,
     AgentFinished,
     AgentProgress,
     AgentStarted,
@@ -98,6 +99,13 @@ VIEWER_PROMPT = (
 CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
 SUMMARY_LIMIT = 80
+# v0.11 (item 66): the longest one-line description a command carries to the
+# app's completion list; the app truncates further to fit its row.
+COMMAND_DESCRIPTION_LIMIT = 160
+# The source the engine appends to a command's description: "... (user)".
+_COMMAND_SOURCE = re.compile(r"\s*\(([^()]+)\)\s*$")
+# Where a description's first sentence ends: a stop, then a capital.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 # Tools that only read (or keep the engine's own notes): auto mode never has
 # anything to decide for them, so their rows carry no permission outcome.
@@ -180,6 +188,10 @@ class Engine(Protocol):
 
     def slash_commands(self) -> set[str] | None:
         """The slash commands the running engine knows (names without ``/``); ``None`` when it cannot say."""
+        ...
+
+    def command_list(self) -> list[AgentCommand] | None:
+        """The running engine's commands and skills with descriptions (v0.11 item 66); ``None`` when it cannot say."""
         ...
 
     async def close(self) -> None: ...
@@ -638,6 +650,44 @@ def friendly_model_name(model: str | None, environ: Mapping[str, str]) -> str | 
     return None
 
 
+def agent_commands(raw: Any) -> list[AgentCommand]:
+    """The engine's ``commands`` (``get_server_info()``) as the composer's list (v0.11 item 66).
+
+    Each entry is ``{name, description, argumentHint}``; the description
+    ends in its source in parentheses ("... (user)"), which becomes
+    ``source``. The description keeps its first line and first sentence,
+    at most ``COMMAND_DESCRIPTION_LIMIT`` characters. Entries without a
+    usable name, and repeats of a name, are skipped; order is kept.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[AgentCommand] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip().lstrip("/"):
+            continue
+        name = name.strip().lstrip("/")
+        if name in seen:
+            continue
+        seen.add(name)
+        text = entry.get("description")
+        text = text.strip() if isinstance(text, str) else ""
+        source: str | None = None
+        m = _COMMAND_SOURCE.search(text)
+        if m:
+            source = m.group(1).strip() or None
+            text = text[: m.start()]
+        text = text.strip().split("\n", 1)[0].strip()
+        text = _SENTENCE_END.split(text, 1)[0]
+        if len(text) > COMMAND_DESCRIPTION_LIMIT:
+            text = text[: COMMAND_DESCRIPTION_LIMIT - 1].rstrip() + "…"
+        out.append(AgentCommand(name=name, description=text, source=source))
+    return out
+
+
 # --- the SDK adapter -------------------------------------------------------------
 
 
@@ -683,6 +733,9 @@ class SDKEngine:
         # Slash command names (no ``/``) from the engine's initialize answer
         # and its ``init`` message; ``None`` until either has said.
         self._commands: set[str] | None = None
+        # v0.11 (item 66): the same commands with descriptions, from the
+        # initialize answer only (``init`` carries names alone).
+        self._command_list: list[AgentCommand] | None = None
         # v0.10: this engine's subagents and workflows.
         self.agents = AgentTracker()
 
@@ -756,6 +809,7 @@ class SDKEngine:
         commands = info.get("commands") if isinstance(info, Mapping) else None
         if isinstance(commands, list):
             self._add_commands(c.get("name") if isinstance(c, Mapping) else c for c in commands)
+            self._command_list = agent_commands(commands)
 
     def _add_commands(self, names: Iterable[Any]) -> None:
         found = {n.strip().lstrip("/") for n in names if isinstance(n, str) and n.strip()}
@@ -763,6 +817,9 @@ class SDKEngine:
 
     def slash_commands(self) -> set[str] | None:
         return set(self._commands) if self._commands is not None else None
+
+    def command_list(self) -> list[AgentCommand] | None:
+        return list(self._command_list) if self._command_list is not None else None
 
     def _note_session(self, msg: Message) -> None:
         sid: str | None = None

@@ -14,10 +14,20 @@ import UniformTypeIdentifiers
 /// session") the same screen continues it instead: the composer and the
 /// suggestions send to that session and show its conversation, and the
 /// quiet line says which session, with View and Start a new session.
+///
+/// v0.11 (item 66): the composer has the conversation's slash list, from
+/// the commands the gateway kept for the folder, before any engine runs.
 struct StartView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var dictation: Dictation
     @FocusState private var focused: Bool
+    @State private var slash = SlashListState()
+
+    /// The slash list for what is typed, when it is open (v0.11 item 66).
+    private var slashCompletion: SlashCompletion? {
+        guard connected else { return nil }
+        return slash.completion(text: model.startDraft, agentCommands: model.startAgentCommands)
+    }
 
     private var connected: Bool { model.connection == .connected }
     /// The live session this welcome continues, if it does.
@@ -149,7 +159,14 @@ struct StartView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
                     .onKeyPress(.return, phases: .down) { press in
-                        InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
+                        if slashCompletion != nil, press.modifiers.isEmpty, !InputBar.isComposing() {
+                            return slashKey(.enter)
+                        }
+                        return InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
+                    }
+                    .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: .down) { press in
+                        guard let key = SlashCompletion.Key(press.key), press.modifiers.isEmpty || key != .tab else { return .ignored }
+                        return slashKey(key)
                     }
             }
             HStack(spacing: 8) {
@@ -210,6 +227,34 @@ struct StartView: View {
             model.attachToStart(files)
             return true
         }
+        .slashList {
+            if let completion = slashCompletion {
+                SlashCommandList(
+                    completion: completion, selection: slash.selection,
+                    agentName: model.hello?.brand.agentName ?? model.brand.name
+                ) { item in
+                    pickSlash(item, send: item.group == .portico)
+                }
+            }
+        }
+        .onChange(of: SlashCompletion.query(in: model.startDraft)) { _, query in slash.queryChanged(to: query) }
+    }
+
+    /// A key while the slash list is open (v0.11 item 66); ignored when it is closed.
+    private func slashKey(_ key: SlashCompletion.Key) -> KeyPress.Result {
+        guard let completion = slashCompletion else { return .ignored }
+        if let picked = slash.apply(completion.handle(key, selection: slash.selection)) {
+            pickSlash(picked.item, send: picked.send)
+        }
+        return .handled
+    }
+
+    /// Put the picked command in the composer; send it when it is one of
+    /// Portico's own picked with Enter, as the conversation's composer does.
+    private func pickSlash(_ item: SlashCompletion.Item, send andSend: Bool) {
+        model.startDraft = item.completion
+        focused = true
+        if andSend { send() }
     }
 
     private var placeholder: String {

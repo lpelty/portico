@@ -430,7 +430,8 @@ v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 restart all its services at once, so the app offers Restart all
 services; v0.10: `agents.v1` when the gateway sends subagent and workflow
 frames to an app that lists the same in its own `hello`). Always followed by `chat.list`, so the app has the
-sidebar before anything else arrives, and then (v0.4) `services.status`.
+sidebar before anything else arrives, and then (v0.4) `services.status`
+and (v0.11) any kept `chat.commands`.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
@@ -787,6 +788,29 @@ read is one `down` row, id `status`, name `Services status`, detail
 plug-in's). Rows appear with the first reading; there are no `checking`
 rows before it. `can_restart` is true for a row whose id matches a
 `[[services]]` entry with a `restart`.
+
+### `chat.commands` — `ChatCommands` *(v0.11)*
+`chat?`, `folder`, `commands: [{name, description, source?}]`. The
+agent's slash commands and skills in `folder`, for the composer's slash
+list: `name` without the `/` (`standup`, `acme:review`), `description`
+one line (default empty), `source` where the engine says the command
+comes from (`user`, `project`, a plug-in's name), when it says.
+
+Sent with `chat` after that chat's engine starts, when the engine can
+list its commands; an engine that cannot sends nothing, and a failure to
+read them is logged, never fatal. The gateway keeps the last list per
+folder (`commands.json` in the state directory, the newest 20 folders),
+and on every connection sends, after `services.status`, the kept list for
+the default folder and for each live session's folder, without `chat`, so
+the welcome has one before any engine of this launch has started. Not
+stamped (a reading, not history). An older app ignores it.
+
+Reference gateway: the list is the SDK's `get_server_info()["commands"]`
+(`{name, description, argumentHint}`). The description's trailing source
+in parentheses ("... (user)") becomes `source`; the rest keeps its first
+line and first sentence, at most 160 characters (cut with `…`); the app
+truncates further to fit a row. Repeated names keep the first.
+`argumentHint` is not sent (argument completion is not in v0.11).
 
 ### `files.results` — `FilesResults`
 `id`, `root`, `query`, `hits: [{path, snippet?}]` with `path` relative to
