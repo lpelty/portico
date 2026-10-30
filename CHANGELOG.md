@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.10.0 — unreleased
+## v0.10.0 (2026-10-30)
 
 ### What a person gets (app)
 
