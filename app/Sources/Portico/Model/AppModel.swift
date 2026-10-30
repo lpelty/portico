@@ -557,6 +557,10 @@ final class AppModel: ObservableObject {
 
         case .chatQueue(let list):
             queued[list.chat] = list.items.isEmpty ? nil : list.items
+            // Stop gave them back (v0.11, Larry 10-30): into the composer, to send again or delete.
+            if let returned = list.returned, !returned.isEmpty {
+                putBack(returned, chat: list.chat)
+            }
 
         case .chatLive(let liveMarker):
             live.insert(liveMarker.chat)
@@ -1628,11 +1632,21 @@ final class AppModel: ObservableObject {
     func editQueued(chat: Int, id: String) {
         guard let item = queuedMessages(chat: chat).first(where: { $0.id == id }) else { return }
         cancelQueued(chat: chat, id: id)
+        putBack([item], chat: chat)
+    }
+
+    /// Put taken-back messages in the composer, oldest first, ahead of
+    /// anything typed since: their texts joined by blank lines, their files
+    /// back as chips ahead of any attached since. Edit's one message and
+    /// what a Stop returns (`chat.queue` `returned`, v0.11) both land here.
+    func putBack(_ items: [QueuedMessage], chat: Int) {
+        guard !items.isEmpty else { return }
+        let text = items.map(\.text).joined(separator: "\n\n")
         let typedSince = draft(for: chat)
-        drafts[chat] = typedSince.isEmpty ? item.text : item.text + "\n" + typedSince
+        drafts[chat] = typedSince.isEmpty ? text : text + "\n" + typedSince
         let attachedSince = draftAttachments[chat] ?? []
         draftAttachments[chat] = nil
-        attach(item.attachments + attachedSince, to: chat)
+        attach(items.flatMap(\.attachments) + attachedSince, to: chat)
     }
 
     /// Interrupt the running turn; the gateway answers with

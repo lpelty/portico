@@ -132,8 +132,11 @@ held messages into the turn (``Engine.inject``) and each becomes a
 turn, one at a time, in order (after the log step, when one runs; in the
 following session, after a renewal). A message that starts with a slash
 command is never written mid-turn: it waits for the turn's end, as do the
-ones behind it. ``chat.unqueue`` takes one back; ``chat.stop`` and
-``chat.remove`` drop the queue. ``chat.open`` sends ``chat.queue`` after
+ones behind it. ``chat.unqueue`` takes one back. ``turn.stop`` hands every
+held message back (``chat.queue`` with ``returned``, for the app's
+composer), and the stopped turn's end does the same for any queued while it
+wound down: nothing held goes on its own after a stop (Larry, 10-30).
+``chat.stop`` and ``chat.remove`` drop the queue. ``chat.open`` sends ``chat.queue`` after
 ``chat.live``.
 """
 
@@ -1580,7 +1583,10 @@ class GatewayServer:
         self._sync_session(chat)
         await self.set_state(chat, "idle")
         run.finished.set()
-        if self._queues.get(chat.number):
+        if run.stop_requested:
+            # Queued while the stopped turn wound down: back to the composer, not sent (v0.11).
+            await self._return_queued(chat)
+        elif self._queues.get(chat.number):
             # Its own task: a log step waiting on ``finished`` runs first.
             self._spawn(self._send_queued(chat), name=f"portico-queued-{chat.number}")
 
@@ -2387,6 +2393,19 @@ class GatewayServer:
             self._queues.pop(chat.number, None)
         await self.broadcast(self._queue_frame(chat))
 
+    async def _return_queued(self, chat: Chat) -> None:
+        """A stop: hand everything held back to the app, oldest first, for its composer (v0.11, Larry 10-30).
+
+        One ``chat.queue`` with no items and the messages as ``returned``;
+        nothing when nothing is held. With no app attached the frame is
+        dropped, as any is, and the messages with it.
+        """
+        held = self._queues.pop(chat.number, None)
+        if not held:
+            return
+        log.info("chat %d: a stop returned %d queued message(s) to the app", chat.number, len(held))
+        await self.broadcast(ChatQueue(ts=_now(), chat=chat.number, items=[], returned=held))
+
     async def _deliver_queued(self, chat: Chat, run: TurnRun) -> None:
         """The main agent's step ended: write what is held into the turn, in order.
 
@@ -2401,7 +2420,7 @@ class GatewayServer:
         if not held or engine is None or self._runs.get(chat.number) is not run:
             return
         if run.stop_requested:
-            return  # an interrupted turn may drop the write; it goes as the next turn instead
+            return  # an interrupted turn may drop the write; the stopped turn's end returns it
         while held and slash_command(held[0].text) is None:
             item = held[0]
             text = with_attachments(item.text, item.attachments)
@@ -2585,7 +2604,9 @@ class GatewayServer:
         await self._finish_run(chat, run)
 
     async def on_turn_stop(self, msg: TurnStop, conn: ServerConnection) -> None:
+        """Interrupt the running turn; what is held goes back to the app's composer at once (v0.11, Larry 10-30)."""
         chat = self.registry.get(msg.chat)
+        await self._return_queued(chat)
         run = self._runs.get(chat.number)
         if run is None:
             return  # nothing running: a stop is harmless

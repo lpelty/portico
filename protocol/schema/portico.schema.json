@@ -1489,7 +1489,7 @@
     },
     "ChatQueue": {
       "additionalProperties": false,
-      "description": "The messages a chat holds for the agent, oldest first, after every change (v0.11).\n\nSent when one is queued, unqueued, or goes to the agent, and after\n``chat.live`` on every ``chat.open`` (an empty list too), so a\nreconnecting app sees what is still waiting. Not in the ring: the list\nas it stands replaces whatever the app had.",
+      "description": "The messages a chat holds for the agent, oldest first, after every change (v0.11).\n\nSent when one is queued, unqueued, or goes to the agent, and after\n``chat.live`` on every ``chat.open`` (an empty list too), so a\nreconnecting app sees what is still waiting. Not in the ring: the list\nas it stands replaces whatever the app had.\n\n``returned`` (v0.11, Larry 10-30): messages taken out of the queue by\n``turn.stop``, oldest first, for the app to put back in the composer\n(text and attachments) to send again or delete. Absent otherwise.",
       "properties": {
         "chat": {
           "title": "Chat",
@@ -1514,6 +1514,21 @@
           },
           "title": "Items",
           "type": "array"
+        },
+        "returned": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/QueuedMessage"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Returned"
         },
         "seq": {
           "anyOf": [

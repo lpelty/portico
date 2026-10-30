@@ -240,7 +240,9 @@ and closes that engine, since one that ignored an interrupt is in no known
 state; the next send then starts a fresh engine on the same session, as
 after `chat.stop`) and the chat returns to `idle`. When the engine did
 finish in time it stays up for the next send. A stop when nothing is
-running does nothing and answers nothing.
+running does nothing and answers nothing. v0.11: messages queued for the
+chat come back to the app (`chat.queue` with `returned`; see Messages
+while the agent works), running or not.
 
 ### `card.answer` — `CardAnswer`
 `chat`, `id` (the card's id), `answer: object`, `scope: once | chat | always | absent`,
@@ -908,7 +910,7 @@ that arrives while a turn or a log step runs is held instead of refused:
   without it; the engine reads it at its next step and answers within the
   same turn. A message that starts with a slash command is never written
   mid-turn: it, and everything queued behind it, waits for the turn's end.
-- One still held when the turn ends (any outcome, `stopped` too) is sent
+- One still held when the turn ends (`done` or `error`) is sent
   as the next turn — `turn.started`, `user.text`, … as for a
   `message.send` — one message at a time, in order; the rest wait for
   that turn's next step or its end. During a log step they wait for the
@@ -917,6 +919,14 @@ that arrives while a turn or a log step runs is held instead of refused:
 - `chat.unqueue {chat, id}` takes one back; answered with `chat.queue`,
   or `error code=chat.not_queued` when it has gone already. An edit is an
   unqueue and a new send (which queues at the end).
+- `turn.stop` hands back everything held, at once: one `chat.queue`
+  with no `items` and the messages, oldest first, as `returned`. The app
+  puts them back in the composer (text and attachments), to send again
+  or delete, as a terminal agent does on interrupt. A message queued
+  after the stop, while the stopped turn winds down, is never written
+  into that turn; when it ends (`turn.finished outcome=stopped`) it comes
+  back the same way. Nothing held goes on its own after a stop. With no
+  app attached at that moment the frame, and the messages, are dropped.
 - `chat.stop` and `chat.remove` drop the queue (`chat.queue` with no
   items after a stop). The queue lives in the gateway's memory: stopping
   the gateway drops it.
@@ -935,7 +945,9 @@ Without `queue.v1` on both sides nothing changes: a send during a turn is
 ### `chat.queue` — `ChatQueue`
 `chat`, `items: [{id, text, attachments}]`, oldest first: what the chat
 holds for the agent, after every change. Not stamped and not in the ring:
-each one replaces the list the app had.
+each one replaces the list the app had. `returned?: [{id, text,
+attachments}]`, oldest first: messages a `turn.stop` took out of the
+queue, for the composer (absent otherwise).
 
 ## Subagents and workflows *(v0.10)*
 

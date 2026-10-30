@@ -6,7 +6,10 @@ carries the list after every change and on ``chat.open``. The gateway
 writes held messages into the turn at the main agent's next tool result
 (``Engine.inject``: same turn, a ``user.text`` there), or sends the first
 as the next turn when the turn ends with them still held. ``chat.unqueue``
-takes one back. An app without ``queue.v1`` still gets ``chat.busy``
+takes one back. ``turn.stop`` hands every held message back to the app
+(``chat.queue`` with ``returned``) for the composer, as does the end of the
+stopped turn for any queued while it wound down: nothing held goes on its
+own after a stop (Larry, 10-30). An app without ``queue.v1`` still gets ``chat.busy``
 (``test_turns.test_send_while_working_is_busy_error``).
 """
 
@@ -320,7 +323,39 @@ async def test_chat_stop_drops_the_queue(server: GatewayServer, factory: EngineF
         await conn.close()
 
 
-async def test_a_stopped_turn_still_sends_what_was_held(
+async def test_a_stopped_turn_returns_what_was_held(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    # v0.11 (Larry, 10-30): Stop gives back everything still queued, in
+    # order, for the composer; nothing held goes on its own after it.
+    from tests.conftest import Block
+
+    conn = await attach_queueing(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.script(Block())
+        await busy_turn(conn, number)
+        await engine.wait_blocked()
+        await queue(conn, number, "do this instead", "req-2")
+        await queue(conn, number, "and this", "req-3")
+
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, ChatQueue)
+        listing = frames[-1]
+        assert isinstance(listing, ChatQueue)
+        assert listing.items == []
+        assert [(i.id, i.text) for i in listing.returned or []] == [("req-2", "do this instead"), ("req-3", "and this")]
+        frames = await recv_until(conn, TurnFinished)
+        assert frames[-1].outcome == "stopped"  # type: ignore[union-attr]
+        await asyncio.sleep(0.2)
+        assert server.queued(number) == []
+        assert not [c for c in engine.calls if c[0] == "inject" or c in (("send", "do this instead"), ("send", "and this"))]
+    finally:
+        await conn.close()
+
+
+async def test_a_stop_with_nothing_held_sends_no_queue_frame(
     server: GatewayServer, factory: EngineFactory, folder: Path
 ) -> None:
     from tests.conftest import Block
@@ -332,12 +367,10 @@ async def test_a_stopped_turn_still_sends_what_was_held(
         engine.script(Block())
         await busy_turn(conn, number)
         await engine.wait_blocked()
-        await queue(conn, number, "do this instead", "req-2")
 
         await conn.send(dump(TurnStop(ts=TS, chat=number)))
-        frames = await recv_until(conn, UserText)
-        assert next(m for m in frames if isinstance(m, TurnFinished)).outcome == "stopped"
-        assert frames[-1].text == "do this instead"  # type: ignore[union-attr]
+        frames = await recv_until(conn, TurnFinished)
+        assert not any(isinstance(m, ChatQueue) for m in frames)
     finally:
         await conn.close()
 
@@ -428,10 +461,13 @@ async def test_a_message_held_through_a_renewal_goes_to_the_next_session(
         await conn.close()
 
 
-async def test_a_step_ending_after_stop_does_not_write_into_the_stopping_turn(
+async def test_a_message_queued_while_the_stop_winds_down_returns_too(
     server: GatewayServer, factory: EngineFactory, folder: Path
 ) -> None:
-    # An interrupted turn may drop a write, losing the message; it goes as the next turn instead.
+    # Typed between Stop and the stopped turn's end (the person pressed Stop
+    # moments before): never written into the stopping turn (an interrupted
+    # turn may drop the write) and not sent after it; it comes back to the
+    # composer when the stopped turn ends.
     conn = await attach_queueing(server)
     try:
         number = await new_chat(conn, folder)
@@ -440,17 +476,22 @@ async def test_a_step_ending_after_stop_does_not_write_into_the_stopping_turn(
         engine.script(tool_use("toolu_1", "Read", {"file_path": "/tmp/x"}), pause, tool_result("toolu_1", "ok"), fake_result())
         await busy_turn(conn, number)
         await asyncio.wait_for(pause.reached.wait(), 5)
-        await queue(conn, number, "after the stop", "req-2")
 
         await conn.send(dump(TurnStop(ts=TS, chat=number)))
-        for _ in range(200):  # the stop lands before the step ends
+        for _ in range(200):  # the stop lands before the send
             if server._runs[number].stop_requested:
                 break
             await asyncio.sleep(0.01)
+        await queue(conn, number, "after the stop", "req-2")
         pause.go.set()
-        frames = await recv_until(conn, UserText)
-        assert not any(call[0] == "inject" for call in engine.calls)
-        assert frames[-1].text == "after the stop"  # type: ignore[union-attr]
-        assert any(isinstance(m, TurnFinished) for m in frames)  # the stopped turn ended first
+        frames = await recv_until(conn, TurnFinished)
+        assert frames[-1].outcome == "stopped"  # type: ignore[union-attr]
+        frames = await recv_until(conn, ChatQueue)
+        listing = frames[-1]
+        assert isinstance(listing, ChatQueue) and listing.items == []
+        assert [i.text for i in listing.returned or []] == ["after the stop"]
+        await asyncio.sleep(0.2)
+        assert server.queued(number) == []
+        assert not any(call[0] == "inject" or call == ("send", "after the stop") for call in engine.calls)
     finally:
         await conn.close()
