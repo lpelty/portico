@@ -20,16 +20,23 @@ enum MarkdownPage {
         }
     }
 
-    /// The page for `source`, titled `title`.
+    /// The page for `source`, titled `title`. Front matter at the top is
+    /// taken out and drawn as the Properties block (v0.11, item 68); only
+    /// the body reaches the renderer.
     static func html(source: String, title: String) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
+        let split = FrontMatter.split(source)
+        // The block goes in first, its braces as entities, so a value that
+        // reads `{{SOURCE}}` is not taken for the next placeholder.
+        let properties = (split.frontMatter?.html() ?? "").replacingOccurrences(of: "{", with: "&#123;")
         return template
+            .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
             .replacingOccurrences(of: "{{CSS}}", with: css)
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
-            .replacingOccurrences(of: "{{SOURCE}}", with: jsString(source))
+            .replacingOccurrences(of: "{{SOURCE}}", with: jsString(split.body))
     }
 
     /// The markdown as a JavaScript string literal. JSON encoding handles

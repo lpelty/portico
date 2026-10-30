@@ -74,6 +74,64 @@ final class WebPaneRenderTests: XCTestCase {
         XCTAssertEqual(result["escapeWidth"] as? Int, 0, "a reference above the markdown's directory is not served")
     }
 
+    /// v0.11 (68): front matter draws as the Properties block, folds to
+    /// one line, and never turns into a heading or a rule.
+    func testFrontMatterDrawsAsPropertiesNotAHeading() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-fm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let markdown = dir.appendingPathComponent("note.md")
+        try "---\ntitle: Round 2\nstatus: draft\ntags: [a, b]\n---\n# Round 2\n\nBody.\n"
+            .write(to: markdown, atomically: true, encoding: .utf8)
+
+        let coordinator = WebPane.Coordinator()
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.markdown(markdown), to: view)
+        try await poll("the page renders") {
+            !view.isLoading && view.url?.scheme == RenderedPageHandler.scheme
+        }
+        // The renderer runs after the load finishes: wait for its heading.
+        for _ in 0..<200 {
+            if try await evaluate("({n: document.querySelectorAll('h1').length})", in: view)["n"] as? Int == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let open = try await evaluate(
+            """
+            ({
+              headings: [...document.querySelectorAll('h1,h2,h3')].map(h => h.textContent),
+              rules: document.querySelectorAll('hr').length,
+              keys: [...document.querySelectorAll('.fm-key')].map(k => k.textContent),
+              tags: document.querySelectorAll('.fm-tag').length,
+              summaryShown: getComputedStyle(document.querySelector('.fm-summary')).display,
+              height: document.querySelector('details.fm').getBoundingClientRect().height
+            })
+            """, in: view)
+        XCTAssertEqual(open["headings"] as? [String], ["Round 2"], "no setext heading from the closing ---: \(open)")
+        XCTAssertEqual(open["rules"] as? Int, 0)
+        XCTAssertEqual(open["keys"] as? [String], ["title", "status", "tags"])
+        XCTAssertEqual(open["tags"] as? Int, 2)
+        XCTAssertEqual(open["summaryShown"] as? String, "none", "open, the folded words hide")
+
+        let folded = try await evaluate(
+            """
+            document.querySelector('details.fm').open = false;
+            ({
+              summary: document.querySelector('.fm-summary').textContent,
+              summaryShown: getComputedStyle(document.querySelector('.fm-summary')).display,
+              height: document.querySelector('details.fm').getBoundingClientRect().height
+            })
+            """, in: view)
+        XCTAssertEqual(folded["summary"] as? String, "· 3 — draft, 2 tags")
+        XCTAssertNotEqual(folded["summaryShown"] as? String, "none", "folded, the words show")
+        let openHeight = open["height"] as? Double ?? 0
+        let foldedHeight = folded["height"] as? Double ?? 0
+        XCTAssertGreaterThan(foldedHeight, 0)
+        XCTAssertLessThan(foldedHeight, 40, "folded to one line (open it was \(openHeight))")
+        XCTAssertGreaterThan(openHeight, foldedHeight + 40)
+    }
+
     func testFailedNavigationIsAskedForAgainOnlyThroughTheRetryLink() async throws {
         // A URL nobody serves (the dev server went away). The pane shows
         // why once; SwiftUI's redraws, which call apply with the same load

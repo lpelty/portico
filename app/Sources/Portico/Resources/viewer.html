@@ -1,8 +1,9 @@
 <!doctype html>
 <!--
-  The markdown viewer page. `MarkdownPage` (WebPane.swift) fills the three
-  placeholders: the stylesheet, the vendored renderer, and the markdown
-  source as a JSON string. Everything is inlined: the page is served to the
+  The markdown viewer page. `MarkdownPage` (WebPane.swift) fills the
+  placeholders: the stylesheet, the vendored renderer, the markdown body as
+  a JSON string, and the front matter's Properties block (v0.11, item 68;
+  empty when the file has none). Everything is inlined: the page is served to the
   web view under the app's own scheme (RenderedPageHandler) with the
   markdown file's directory as its root, so relative images resolve and
   nothing else is fetched.
@@ -17,7 +18,7 @@
 </style>
 </head>
 <body>
-<article id="content"></article>
+<article id="content">{{PROPERTIES}}<div id="body"></div></article>
 <script>
 {{MARKED}}
 </script>
@@ -25,7 +26,7 @@
 (function () {
   var source = {{SOURCE}};
   var html = marked.parse(source, { gfm: true, breaks: false });
-  document.getElementById("content").innerHTML = html;
+  document.getElementById("body").innerHTML = html;
 })();
 </script>
 </body>
