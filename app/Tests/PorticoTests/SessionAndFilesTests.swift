@@ -509,6 +509,14 @@ final class SessionAndFilesTests: XCTestCase {
         XCTAssertTrue(ViewerHeaderButtons.labelled(width: nil, obsidian: true), "not measured yet: words")
     }
 
+    /// v0.11 (70): CHANGED THIS SESSION shows five rows in the folder
+    /// list, the rest behind "N more".
+    func testChangedThisSessionShowsFiveUntilAskedForMore() {
+        XCTAssertEqual(ChangedFiles.shown(count: 3, expanded: false), 3)
+        XCTAssertEqual(ChangedFiles.shown(count: 9, expanded: false), 5)
+        XCTAssertEqual(ChangedFiles.shown(count: 9, expanded: true), 9)
+    }
+
     func testTitleFromFirstMessageMatchesTheGatewayRule() {
         XCTAssertEqual(SessionPresentation.title(from: "\n  Pull the themes out  \nsecond line"), "Pull the themes out")
         XCTAssertNil(SessionPresentation.title(from: "  \n \n"))
