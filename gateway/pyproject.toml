@@ -1,6 +1,6 @@
 [project]
 name = "portico-gateway"
-version = "0.10.0"
+version = "0.11.0"
 description = "Portico reference gateway: the agent side of the Portico app protocol"
 authors = [
     { name = "Bill", email = "lpelty@gmail.com" }
