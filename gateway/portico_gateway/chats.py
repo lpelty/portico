@@ -379,9 +379,20 @@ class ChatRegistry:
     def chats(self) -> list[Chat]:
         return [self._chats[n] for n in sorted(self._chats)]
 
-    def create(self, folder: Path, parent: int | None = None) -> Chat:
-        """A new chat on ``folder`` with the next number; saved to the index at once."""
-        number = self._index.next_chat
+    @property
+    def next_number(self) -> int:
+        """The number Portico's own counter gives the next chat."""
+        return self._index.next_chat
+
+    def create(self, folder: Path, parent: int | None = None, number: int | None = None) -> Chat:
+        """A new chat on ``folder`` with the next number; saved to the index at once.
+
+        ``number`` (v0.11, the deployment's ``[sessions] next_number``) is
+        taken when it is at or above the next number, so no number is ever
+        handed out twice; the counter continues after it.
+        """
+        if number is None or number < self._index.next_chat:
+            number = self._index.next_chat
         self._index.next_chat = number + 1
         chat = Chat(number, Path(folder), self._history_buffer, parent=parent, mode=self.default_mode)
         chat.can_log = self._can_log

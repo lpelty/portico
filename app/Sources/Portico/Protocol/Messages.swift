@@ -519,10 +519,18 @@ struct HelloServer: Codable, Equatable, Sendable {
 struct ChatList: Codable, Equatable, Sendable {
     static let messageType = "chat.list"
     var chats: [ChatSummary]
+    /// The number the next new session will have (v0.11), so the welcome
+    /// names it. Absent from an older gateway.
+    var nextChat: Int? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chats, chat, id, seq, ts
+        case nextChat = "next_chat"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }

@@ -458,6 +458,14 @@ change to the set of chats or their aliases (`chat.new`, `chat.alias`, `chat.rem
 title arrives. State changes alone travel as
 `chat.state`. Not chat-scoped: no `seq`, not replayed in `chat.history`.
 
+`next_chat?` *(v0.11)* is the number the next new session will have, so
+the app's welcome can name it ("Session 17") before it exists: the
+gateway's own counter, or (reference gateway) the number its `[sessions]
+next_number` command gave when the gateway started with no live session,
+when that is not below the counter. The session's real number is the one
+`chat.state` and `chat.list` report once it exists. Absent from an older
+gateway.
+
 `ChatSummary.logged_at?` *(v0.4)* is when the session was last logged
 (UTC, ISO 8601): a `session.log`, or a renewal's log step, that finished
 `done`. `ChatSummary.unlogged` *(v0.4, default `false`)* is computed by the

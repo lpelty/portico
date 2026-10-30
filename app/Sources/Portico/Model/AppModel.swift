@@ -100,6 +100,9 @@ final class AppModel: ObservableObject {
     /// main column draws nothing rather than a welcome that may change
     /// (`MainScreen`). A reconnect does not reset it.
     @Published private(set) var chatsListed = false
+    /// The number the gateway will give the next new session (v0.11,
+    /// `chat.list`'s `next_chat`); `nil` from an older gateway.
+    @Published private(set) var nextChat: Int?
     /// A conversation has been shown in this run (v0.6): from then on, no
     /// selection means the live session, not the welcome.
     private(set) var conversationShown = false
@@ -496,6 +499,7 @@ final class AppModel: ObservableObject {
 
         case .chatList(let list):
             chats = list.chats
+            nextChat = list.nextChat
             chatsListed = true
             gaveUpBeforeList = false
             if let selected, !list.chats.contains(where: { $0.chat == selected }) {

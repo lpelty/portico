@@ -157,6 +157,9 @@ timeout_seconds = 10                # optional, default 10, at least 1: the chec
 name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
 
+[sessions]                          # optional (v0.11)
+next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's number (see Session numbers)
+
 [files]                             # optional (v0.11): the Files pane
 hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
                                     # (it is still where the agent works, and a file in it still shows)
@@ -210,6 +213,20 @@ agent logs itself with the command or skill its folder already has. A
 plug-in's `on_renew` replaces it. With neither, renewing just ends the
 session and opens the next. In single mode `chat.new` is refused while a
 session is live; nothing renews on its own, ever.
+
+### Session numbers
+
+Sessions are numbered by Portico's own counter, and a number is never
+handed out twice. The welcome names the number the next session will have
+("Session 17"). A deployment that numbers its sessions itself sets
+`[sessions] next_number` to a command whose stdout is that number (one
+whole number above zero; stderr is ignored). The gateway runs it with
+`/bin/sh -c` when a new session starts (the first one, and each New), and
+once when it starts with no live session, for the welcome's title; so the
+command should read the number, not reserve it. It is given two seconds.
+If it fails, times out, prints anything else, or prints a number Portico
+has already passed, Portico uses its own counter and logs one line saying
+why. After a deployment's number, Portico's counter carries on from it.
 
 After every turn the gateway reports how full the agent's context is
 (`context.usage`); when the agent summarizes earlier conversation to make

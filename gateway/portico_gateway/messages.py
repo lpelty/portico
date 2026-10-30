@@ -361,6 +361,9 @@ class HelloServer(Envelope):
 class ChatList(Envelope):
     type: Literal["chat.list"] = "chat.list"
     chats: list[ChatSummary] = []
+    # v0.11: the number the next new session will have, so the welcome
+    # names it ("Session 42") before it exists. Absent from an older gateway.
+    next_chat: int | None = None
 
 
 class ChatState(Envelope):
@@ -901,6 +904,7 @@ def example_messages() -> dict[str, BaseModel]:
                 ),
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],
+            next_chat=3,
         ),
         ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default", unlogged=True),
         ChatHistory(

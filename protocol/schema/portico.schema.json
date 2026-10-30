@@ -1118,6 +1118,18 @@
           "default": null,
           "title": "Id"
         },
+        "next_chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Chat"
+        },
         "seq": {
           "anyOf": [
             {

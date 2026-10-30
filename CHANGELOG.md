@@ -19,11 +19,21 @@
   icon whenever the strip left its fullest form (so whenever the viewer
   was open); now the strip's other words shrink first and the notice
   becomes an icon only when even the smallest strip has no room for it.
+- **The welcome names the real next session.** With no sessions yet it
+  said "Session 1" whatever the gateway's counter said; it now shows the
+  number the session will get.
 - **Folders.** The Files pane's "Folder" switch reads "Folders".
 - **The session card says what its buttons do:** "Log writes it up · New
   starts fresh", not "Same as typing /log or /new".
 
 ### For deployments
+
+- **`[sessions] next_number = "<command>"`**: the command's stdout is the
+  next session's number, run (`/bin/sh -c`, two seconds) when a new
+  session starts, and once at start with no live session for the
+  welcome. A failure, anything but a whole number, or a number Portico has
+  already passed falls back to Portico's own counter, logged. See Session
+  numbers in the README.
 
 - **`[files] hide_session_folder = true`** (default `false`) leaves the
   session's own folder out of the Files pane (and quick open), for a
@@ -40,8 +50,8 @@
 
 ### Protocol (still version 1; additions only)
 
-- `hello` gains `hide_session_folder` (default `false`). Schema and
-  examples regenerated.
+- `hello` gains `hide_session_folder` (default `false`); `chat.list`
+  gains `next_chat?`. Schema and examples regenerated.
 
 ## v0.10.0 (2026-10-30)
 

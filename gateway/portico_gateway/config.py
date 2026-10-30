@@ -193,6 +193,26 @@ class FilesConfig(BaseModel):
     hide_session_folder: bool = False
 
 
+class SessionsConfig(BaseModel):
+    """``[sessions]`` (v0.11): how sessions are numbered.
+
+    ``next_number`` is a command (``/bin/sh -c``) whose stdout is the next
+    session's number, run when a new session starts (and, for the
+    welcome's title, when the gateway starts with no live session),
+    bounded by two seconds. A failure, or anything but a whole number at or
+    above Portico's own next number, falls back to Portico's counter.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    next_number: str | None = None
+
+    @field_validator("next_number")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -252,6 +272,8 @@ class Config(BaseModel):
     login_shell_path: bool = True
     # v0.11: the Files pane (``[files] hide_session_folder``).
     files: FilesConfig = FilesConfig()
+    # v0.11: the deployment's own session numbers (``[sessions] next_number``).
+    sessions: SessionsConfig = SessionsConfig()
 
     @field_validator("title_model")
     @classmethod

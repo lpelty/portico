@@ -223,6 +223,7 @@ from .messages import (
 from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
+from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
 from .state import StateDir
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
@@ -722,6 +723,11 @@ class GatewayServer:
         # from the command line); ``None`` keeps first-line titles.
         self.titler = titler
         self.title_timeout = TITLE_TIMEOUT
+        # v0.11: the deployment's ``[sessions] next_number`` command's bound,
+        # and the number it gave for the welcome when the gateway started
+        # with no live session (``None``: Portico's own counter).
+        self.next_number_timeout = NEXT_NUMBER_TIMEOUT
+        self._next_number_preview: int | None = None
         # The deployment's services (v0.4); started with ``serve``. v0.8: a
         # plug-in's hooks, else ``[deployment]``, give one status and one
         # restart for all of them.
@@ -812,6 +818,7 @@ class GatewayServer:
             create_connection=self._make_connection,
         )
         self.port = self._server.sockets[0].getsockname()[1]
+        await self._preview_next_number()
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
         if self.config_path is not None:
             self._spawn(self._watch_config(), name="portico-config-watch")
@@ -1084,7 +1091,7 @@ class GatewayServer:
         if stale:
             self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
         await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
-        await self._send(conn, ChatList(ts=_now(), chats=self.registry.summaries()))
+        await self._send(conn, self.chat_list())
         # v0.4: every connection hears the services as they stand (an empty
         # list when the deployment lists none: the app has its own Gateway row).
         await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
@@ -1209,7 +1216,33 @@ class GatewayServer:
         return event
 
     async def send_chat_list(self) -> None:
-        await self.broadcast(ChatList(ts=_now(), chats=self.registry.summaries()))
+        await self.broadcast(self.chat_list())
+
+    def chat_list(self) -> ChatList:
+        """The chats, and (v0.11) the number the next new session will have."""
+        return ChatList(ts=_now(), chats=self.registry.summaries(), next_chat=self.next_chat_number())
+
+    # --- session numbers (v0.11, item 55) ---------------------------------------
+
+    def next_chat_number(self) -> int:
+        """The next session's number as the welcome shows it: the deployment's, read at start, unless already passed."""
+        own = self.registry.next_number
+        preview = self._next_number_preview
+        return preview if preview is not None and preview >= own else own
+
+    async def _new_session_number(self) -> int:
+        """The number a session starting now gets: the deployment's ``[sessions] next_number``, else Portico's."""
+        return await next_session_number(
+            self.config.sessions.next_number, self.registry.next_number, self.next_number_timeout
+        )
+
+    async def _preview_next_number(self) -> None:
+        """At start, with a ``next_number`` command and no live session in single presentation: ask it once for the welcome."""
+        if not self.config.sessions.next_number or self.config.presentation != "single":
+            return
+        if any(chat.ended is None for chat in self.registry.chats()):
+            return
+        self._next_number_preview = await self._new_session_number()
 
     # --- engines --------------------------------------------------------------
 
@@ -1673,7 +1706,7 @@ class GatewayServer:
                     "end it with session.renew to start the next",
                 )
         await self._preflight()
-        chat = self.registry.create(folder)
+        chat = self.registry.create(folder, number=await self._new_session_number())
         try:
             await self._start_engine(chat)
         except Exception as e:
@@ -1895,7 +1928,7 @@ class GatewayServer:
         chat.ended = _now()
         chat.logged = logged
         await self.set_state(chat, "stopped")
-        following = self.registry.create(chat.folder, parent=chat.number)
+        following = self.registry.create(chat.folder, parent=chat.number, number=await self._new_session_number())
         await self.notice(chat, f"Session ended · continues in Session {following.number}")
         await self.set_state(following, "idle")
         await self.notice(following, f"Continues Session {chat.number}")

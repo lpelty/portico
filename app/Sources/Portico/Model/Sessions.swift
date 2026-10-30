@@ -29,7 +29,7 @@ extension AppModel {
 
     /// First launch (V4): no session has started yet in single
     /// presentation (or nothing is known yet), so there is nothing for a
-    /// sidebar to list; it appears with the first message of Session 1.
+    /// sidebar to list; it appears with the first session's first message.
     var awaitingFirstSession: Bool {
         chats.isEmpty && (hello == nil || isSinglePresentation)
     }
@@ -38,11 +38,14 @@ extension AppModel {
     /// session for it to show.
     var sidebarShown: Bool { sidebarVisible && !awaitingFirstSession }
 
-    /// The toolbar's title with no session selected: `Session 1` before the
-    /// first, `New session` after, `New chat` in multiple presentation.
+    /// The toolbar's title with no session selected: `Session N` before the
+    /// first, N the number the gateway will give it (v0.11, item 55: it said
+    /// `Session 1` whatever the gateway's counter, or the deployment's own
+    /// numbering, said; 1 from an older gateway), `New session` after,
+    /// `New chat` in multiple presentation.
     var startTitle: String {
         guard isSinglePresentation || hello == nil else { return "New chat" }
-        return chats.isEmpty ? "Session 1" : "New session"
+        return chats.isEmpty ? "Session \(nextChat ?? 1)" : "New session"
     }
 
     /// The quiet line under the start screen's composer: where the agent
