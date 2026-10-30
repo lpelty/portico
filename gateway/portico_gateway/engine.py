@@ -10,6 +10,12 @@ Nothing here names a model, a provider, or a credential: the SDK reads
 those from the environment. ``verbatim_prompts`` is never set, so slash
 text in a message keeps dispatching the folder's commands.
 
+The viewer (v0.10 decision 6): every engine gets an in-process tool,
+``show_in_viewer(path)``, and a ``PreToolUse`` hook on ``Bash`` that
+catches a plain ``open <file>``; both hand the files to
+``callbacks.on_show``, which decides whether they may be shown and shows
+them. One line appended to the system prompt tells the agent to use it.
+
 History (Task 10): ``read_history`` reads a session's transcript through
 the SDK's ``get_session_messages`` and ``history_events`` translates it
 into the same events a live turn produces (plus ``user.text`` for what the
@@ -22,6 +28,9 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import re
+import shlex
+import warnings
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +38,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from claude_agent_sdk import (
     AssistantMessage,
+    CanUseToolShadowedWarning,
     ClaudeAgentOptions,
     ClaudeSDKClient,
     HookMatcher,
@@ -43,7 +53,9 @@ from claude_agent_sdk import (
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
+    create_sdk_mcp_server,
     get_session_messages,
+    tool,
 )
 
 from .agents import AgentTracker
@@ -52,6 +64,19 @@ from .messages import PermissionMode, ServerMessage, TextDelta, ToolFinished, To
 log = logging.getLogger(__name__)
 
 QUESTION_TOOL = "AskUserQuestion"
+# The in-process tool that shows a file in the viewer, and the name the
+# engine knows it by (``mcp__<server>__<tool>``).
+SHOW_SERVER = "portico"
+SHOW_TOOL = "show_in_viewer"
+SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
+SHOWN_TEXT = "Shown in the viewer."
+# What the agent sees when its ``open <file>`` was shown instead of run.
+OPEN_SHOWN_REASON = "Shown in Portico's viewer instead of opening it."
+# Appended to the system prompt, never replacing it.
+VIEWER_PROMPT = (
+    "The person sees files in Portico's viewer beside this conversation. To show a file, "
+    "call show_in_viewer with its path; don't open files with the `open` command or a browser."
+)
 # The longest the adapter waits for the engine's context reading.
 CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
@@ -64,6 +89,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "TodoRead", "ToolSearch",
         "Task", "Agent", "TaskOutput", "BashOutput", "Skill", "AskUserQuestion",
         "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool", "ReadMcpResourceTool",
+        SHOW_TOOL_NAME,
     }
 )
 
@@ -100,6 +126,12 @@ class EngineCallbacks(Protocol):
     async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]: ...
 
     async def on_compacted(self, trigger: str) -> None: ...
+
+    # Optional (v0.10), so not part of the checked protocol:
+    # ``async def on_show(self, paths: list[str]) -> str | None`` shows the
+    # files in the viewer, all or none, and answers ``None`` when shown,
+    # else why not (a relative path is the chat folder's). An owner without
+    # it gives the engine no show tool and no ``open`` hook.
 
 
 @runtime_checkable
@@ -154,6 +186,10 @@ def summarize_tool(tool: str, input: dict[str, Any]) -> str:
     """The one-line summary shown on a tool row and a permission card."""
     if tool in ("Write", "Edit", "MultiEdit", "Read", "NotebookEdit"):
         path = input.get("file_path") or input.get("notebook_path")
+        if isinstance(path, str) and path:
+            return path
+    elif tool == SHOW_TOOL_NAME:
+        path = input.get("path")
         if isinstance(path, str) and path:
             return path
     elif tool == "Bash":
@@ -321,6 +357,119 @@ def build_compact_hook(callbacks: EngineCallbacks):
     return pre_compact
 
 
+# --- the viewer: show_in_viewer and a caught `open` (v0.10) -------------------
+
+# Anything in a command beyond words separated by spaces: pipes, chains,
+# redirections, substitutions, globs, quotes, escapes, home and variables.
+_SHELL_SPECIAL = re.compile(r"[|&;<>()$`*?\[\]{}~\\'\"\n!#=]")
+# A URL or any other ``scheme:`` argument (``http:``, ``file:``, ``x-man-page:``).
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_OPEN_PROGRAMS = ("open", "/usr/bin/open")
+
+
+def open_command_paths(command: Any) -> list[str] | None:
+    """The paths of a plain macOS ``open <path> [<path> ...]``; ``None`` for any other command.
+
+    Only the simple form is caught: no flags, no URLs, nothing the shell
+    would expand or chain. Whether the paths may be shown is the owner's
+    call (``on_show``).
+    """
+    if not isinstance(command, str) or _SHELL_SPECIAL.search(command):
+        return None
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return None
+    if len(words) < 2 or words[0] not in _OPEN_PROGRAMS:
+        return None
+    paths = words[1:]
+    if any(p.startswith("-") or _SCHEME.match(p) for p in paths):
+        return None
+    return paths
+
+
+def with_viewer_prompt(system_prompt: Any) -> Any:
+    """``system_prompt`` (as ``ClaudeAgentOptions`` takes it) with ``VIEWER_PROMPT`` appended.
+
+    ``None`` is the SDK's default, an empty prompt: the line becomes the
+    prompt. A preset keeps its ``append`` and gets the line after it; a
+    custom prompt gets the line after its text. A prompt file cannot be
+    appended to and is left as it is.
+    """
+    if system_prompt is None:
+        return VIEWER_PROMPT
+    if isinstance(system_prompt, str):
+        return f"{system_prompt}\n\n{VIEWER_PROMPT}" if system_prompt else VIEWER_PROMPT
+    if isinstance(system_prompt, Mapping):
+        kind = system_prompt.get("type")
+        if kind == "preset":
+            before = system_prompt.get("append") or ""
+            return {**system_prompt, "append": f"{before}\n\n{VIEWER_PROMPT}" if before else VIEWER_PROMPT}
+        if kind == "custom":
+            before = system_prompt.get("prompt") or ""
+            return {**system_prompt, "prompt": f"{before}\n\n{VIEWER_PROMPT}" if before else VIEWER_PROMPT}
+    return system_prompt
+
+
+def build_show_tool(callbacks: EngineCallbacks):
+    """The ``show_in_viewer`` tool: the file goes to the viewer, or the agent hears why not."""
+
+    @tool(
+        SHOW_TOOL,
+        "Show a file in the viewer beside this conversation, where the person sees it. "
+        "The path may be relative to the session's folder.",
+        {"path": str},
+    )
+    async def show_in_viewer(args: dict[str, Any]) -> dict[str, Any]:
+        path = args.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return {"content": [{"type": "text", "text": "Not shown: give the path of a file."}], "is_error": True}
+        refusal = await callbacks.on_show([path.strip()])
+        if refusal is not None:
+            return {"content": [{"type": "text", "text": refusal}], "is_error": True}
+        return {"content": [{"type": "text", "text": SHOWN_TEXT}]}
+
+    return show_in_viewer
+
+
+def build_open_hook(callbacks: EngineCallbacks):
+    """The ``PreToolUse`` hook on ``Bash``: a plain ``open`` of files the owner may show is shown, not run.
+
+    Runs in every permission mode (hooks come before the permission
+    decision). Anything else, and any ``open`` the owner refuses, runs as before.
+    """
+
+    async def open_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
+        paths = open_command_paths(command)
+        if paths is None:
+            return {"continue_": True}
+        try:
+            refusal = await callbacks.on_show(paths)
+        except Exception:
+            log.exception("showing %s in the viewer failed", paths)
+            return {"continue_": True}
+        if refusal is not None:
+            return {"continue_": True}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": OPEN_SHOWN_REASON,
+            }
+        }
+
+    return open_hook
+
+
+# The show tool is allowed outright on purpose (it only shows a file), so the
+# SDK's advisory that ``can_use_tool`` will not see it is expected.
+warnings.filterwarnings(
+    "ignore", message=rf"can_use_tool will not be invoked for: {re.escape(SHOW_TOOL_NAME)}\.", category=CanUseToolShadowedWarning
+)
+
+
 def build_options(
     folder: Path,
     resume: str | None,
@@ -335,7 +484,21 @@ def build_options(
     allows file edits, ``auto`` lets the engine's classifier decide and only
     asks when it escalates. ``bypassPermissions`` and ``dontAsk`` are never
     passed: the protocol does not offer them.
+
+    With an owner that can show files (``on_show``, v0.10): the
+    ``show_in_viewer`` tool (allowed outright, so no card in any mode), the
+    ``open`` hook on ``Bash``, and ``VIEWER_PROMPT`` appended to the
+    system prompt (the SDK's default here).
     """
+    pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
+    extra: dict[str, Any] = {}
+    if callable(getattr(callbacks, "on_show", None)):
+        pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
+        extra = {
+            "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=[build_show_tool(callbacks)])},
+            "allowed_tools": [SHOW_TOOL_NAME],
+            "system_prompt": with_viewer_prompt(None),
+        }
     return ClaudeAgentOptions(
         cwd=str(folder),
         resume=resume,
@@ -344,9 +507,10 @@ def build_options(
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
         hooks={
-            "PreToolUse": [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])],
+            "PreToolUse": pre_tool_use,
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
         },
+        **extra,
     )
 
 

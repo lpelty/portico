@@ -31,6 +31,11 @@
   still open at the end of its turn reads stopped, as before.
 - **A failed phase shows ⚠** in the workflow box and in the record. A
   workflow's end folds its box.
+- **The viewer shows what the agent just made.** An artifact that opens
+  (or one the person picks) now always wins over the one remembered at the
+  last quit: it arrived while the welcome held the remembered one, or
+  before a replay re-listed it, and the remembered one came back over it.
+  **Open externally** stays in the viewer's header.
 
 ### For deployments
 
@@ -60,6 +65,22 @@
   when the turn's result arrives is ended with it. Background work that
   reports after its turn is kept under the turn that started it.
 - Shell and monitor tasks are not shown as agents.
+- **`show_in_viewer`.** The agent gets an in-process tool that shows a
+  file in the viewer at once (`artifact.created`, `open: true`): a viewable
+  file inside the session's folder or a configured root, otherwise a clear
+  refusal. Allowed outright, so no permission card in any mode. One line
+  is appended to the agent's system prompt (the SDK's default, which is
+  empty) telling it to use the tool rather than `open` or a browser.
+- **A plain `open <file>` is shown, not run.** A `PreToolUse` hook on
+  `Bash` catches `open <path> [<path> …]` of such files, denies it with
+  "Shown in Portico's viewer instead of opening it." and shows the files.
+  Flags, URLs, globs, chains and files outside the folders run as before.
+  Hooks run in every permission mode, auto included.
+- A file shown during a turn is not reported again at the turn's end, and
+  nothing older opens over it.
+- **A file the reply only names no longer takes `open`.** One unchanged
+  since the turn began is listed with `open: false`; before, a reply that
+  named an earlier page after the new one opened the earlier page.
 
 ### Protocol (still version 1; additions only)
 

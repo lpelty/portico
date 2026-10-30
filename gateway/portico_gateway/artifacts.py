@@ -21,13 +21,22 @@ viewable one — or on none. Everything else is listed for the history and
 never auto-opens: source files, configs, plain text, anything the viewer
 cannot render.
 
+v0.10 decision 6: a file the text merely names that was not changed
+during the turn (an earlier file the reply mentions in passing) is listed
+but never takes ``open`` from what the turn made. A file the agent showed
+during the turn (``show_in_viewer``, or a caught ``open``) was reported
+then: it is not reported again, and when it is the newest, nothing else
+opens over it.
+
 The gateway never diffs the folder. A deployment that needs more is a
 producer.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import time
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
@@ -253,13 +262,42 @@ def artifact_for_location(
 # --- the per-turn collector ---------------------------------------------------------
 
 
+# How much older than the turn's start a named file's modification time may
+# be and still count as changed during the turn (file systems round it).
+MTIME_SLACK_SECONDS = 2.0
+
+
+def _changed_since(path: Path, started: float) -> bool:
+    try:
+        return os.stat(path).st_mtime >= started - MTIME_SLACK_SECONDS
+    except OSError:
+        return False
+
+
+def _same_file(location: str) -> str:
+    """A file location in the form two signals for one file agree on."""
+    try:
+        return str(Path(location).resolve())
+    except OSError:
+        return location
+
+
 class TurnCollector:
     """Gathers one turn's artifact signals; ``finish`` settles them into artifacts."""
 
-    def __init__(self, chat: Chat) -> None:
+    def __init__(self, chat: Chat, started: float | None = None) -> None:
         self.chat = chat
-        # In arrival order: ("tool", Path) for a file-writing tool call, ("text", str) for a text delta.
+        # When the turn began (wall clock), for telling a file the turn
+        # changed from one the text only names.
+        self.started = time.time() if started is None else started
+        # In arrival order: ("tool", Path) for a file-writing tool call,
+        # ("text", str) for a text delta, ("shown", Path) for a file shown
+        # in the viewer during the turn.
         self._signals: list[tuple[str, Any]] = []
+
+    def note_shown(self, path: Path) -> None:
+        """A file was shown in the viewer during the turn (already reported, ``open``)."""
+        self._signals.append(("shown", Path(path)))
 
     def note_tool(self, tool: str, input: dict[str, Any]) -> None:
         path = from_tool(tool, input)
@@ -297,20 +335,27 @@ class TurnCollector:
             for _, location in sorted(mentions, key=lambda item: item[0]):
                 note(location, "text")
 
+        shown: set[str] = set()
         for kind, value in self._signals:
             if kind == "text":
                 pending_text.append(value)
                 continue
             flush_text()
             path: Path = value
-            if path.is_file():
+            if kind == "shown":
+                shown.add(_same_file(str(path)))
+                note(str(path), "tool")
+            elif path.is_file():
                 note(str(path), "tool")
         flush_text()
 
         ordered = sorted(found.items(), key=lambda item: item[1][1])
         artifacts = [artifact_for_location(location, source=source) for location, (source, _) in ordered]
         for artifact in reversed(artifacts):
-            if is_viewable(artifact.media):
-                artifact.open = True
-                break
-        return artifacts
+            if not is_viewable(artifact.media):
+                continue
+            if artifact.source == "text" and artifact.kind == "file" and not _changed_since(Path(artifact.location), self.started):
+                continue
+            artifact.open = True
+            break
+        return [a for a in artifacts if a.kind != "file" or _same_file(a.location) not in shown]

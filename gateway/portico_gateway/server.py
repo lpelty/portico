@@ -146,7 +146,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
-from .artifacts import TurnCollector, artifact_for_location
+from .artifacts import TurnCollector, artifact_for_location, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
@@ -450,6 +450,9 @@ class ChatCallbacks:
 
     async def on_compacted(self, trigger: str) -> None:
         await self.server.compacted(self.chat, trigger)
+
+    async def on_show(self, paths: list[str]) -> str | None:
+        return await self.server.show_files(self.chat, paths)
 
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
@@ -1421,6 +1424,61 @@ class GatewayServer:
             chat.artifacts.append(artifact)
             await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
         self.registry.persist()
+
+    def _shown_folders(self, chat: Chat) -> list[Path]:
+        """Where a file may be shown from: the chat's folder and the deployment's roots."""
+        folders = [chat.folder, *(Path(root.path) for root in self.config.roots)]
+        out: list[Path] = []
+        for folder in folders:
+            try:
+                out.append(Path(folder).expanduser().resolve())
+            except OSError:
+                continue
+        return out
+
+    def _showable(self, chat: Chat, raw: str) -> Path | str:
+        """``raw`` as a file the viewer may show (resolved), or why not."""
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = chat.folder / candidate
+        try:
+            candidate = candidate.resolve()
+        except OSError:
+            return f"Not shown: there is no file at {raw}."
+        if not candidate.is_file():
+            return f"Not shown: there is no file at {raw}."
+        if not any(candidate.is_relative_to(folder) for folder in self._shown_folders(chat)):
+            return f"Not shown: {raw} is outside this session's folders."
+        if not is_viewable(media_for(candidate)):
+            return f"Not shown: the viewer shows pages, markdown, images and PDFs, and {candidate.name} is not one."
+        return candidate
+
+    async def show_files(self, chat: Chat, paths: list[str]) -> str | None:
+        """Show ``paths`` in the viewer (v0.10 decision 6), all or none: ``None`` when shown, else why not.
+
+        The agent's ``show_in_viewer`` and a caught ``open`` come here. Each
+        file is reported as an artifact with ``open=true``, as a written
+        file is at the end of a turn (same ids, media, ring and index), and
+        the turn's collector is told, so the end of the turn does not
+        report it again.
+        """
+        shown: list[Path] = []
+        for raw in paths:
+            checked = self._showable(chat, raw)
+            if isinstance(checked, str):
+                return checked
+            shown.append(checked)
+        if not shown:
+            return "Not shown: give the path of a file."
+        run = self._runs.get(chat.number)
+        for path in shown:
+            artifact = artifact_for_location(str(path), source="tool", open=True)
+            chat.artifacts.append(artifact)
+            await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
+            if run is not None:
+                run.collector.note_shown(path)
+        self.registry.persist()
+        return None
 
     async def _producer(self, request: HttpRequest) -> HttpResponse:
         """``POST /v1/artifact`` ``{chat, location, title?}``: report an artifact now, ``open=true``."""

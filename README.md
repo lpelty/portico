@@ -358,6 +358,18 @@ bin/update --channel main   # follow main instead (fast-forward pull), then the 
 so; move the change into a plug-in, or ask upstream for it. `bin/doctor`
 prints the tag or commit the checkout is on.
 
+## Showing the agent's work
+
+The agent shows files in the viewer, not in another app. The gateway
+gives it a `show_in_viewer(path)` tool (in-process, no permission card in
+any mode) for a viewable file (HTML, markdown, images, PDF) inside the
+session's folder or a configured root, and appends one line to its system
+prompt saying so. A plain `open <path>` (or `open <path> <path>`) of such
+a file in its shell is not run: the file goes to the viewer and the agent
+is told it was shown. URLs, flags, anything chained or globbed, and files
+outside the folders run as before. **Open externally** in the viewer's
+header still hands the file to its default app.
+
 ## The producer endpoint
 
 Anything on the machine can push an artifact into a chat's viewer. The

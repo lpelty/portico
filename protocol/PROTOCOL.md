@@ -667,6 +667,17 @@ auto-open, so scaffolding a project does not flap the viewer. A producer
 artifact is sent at once with `open: true`. Artifacts are kept with the
 chat in the index, so a later launch still lists them.
 
+Since 0.10 (gateway behaviour; no new frame or field): a file the turn's
+text only names, unchanged since the turn began (an earlier file the reply
+mentions), is listed with `open: false` and never takes `open` from what
+the turn made. The agent can also show a file during the turn: its
+`show_in_viewer` tool, or a plain `open <path>` in its shell that the
+gateway catches, sends the file at once as `artifact.created` with
+`source: tool` and `open: true` — only a viewable file inside the chat's
+folder or a configured root. Such a file is not reported again at the end
+of the turn. The app shows the newest artifact that opens (or that the
+person picks) over the one it remembered from the last quit.
+
 ### `files.list` — `FilesList`
 `root`, `path` (normalised relative path, `""` for the root itself),
 `entries: [{name, dir, size?}]`, `id` and `chat` echoing the request.

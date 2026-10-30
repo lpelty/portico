@@ -44,6 +44,13 @@ class AskQuestion:
 
 
 @dataclass
+class Show:
+    """Mid-turn: the engine's ``show_in_viewer`` (or a caught ``open``) asks ``on_show`` (v0.10)."""
+
+    paths: list[str]
+
+
+@dataclass
 class Block:
     """Mid-turn: the engine hangs until ``interrupt()``; then the turn ends.
 
@@ -89,6 +96,13 @@ class RecordingCallbacks:
         self.permissions: list[tuple[str, dict[str, Any], list[dict[str, Any]], str]] = []
         self.questions: list[list[dict[str, Any]]] = []
         self.compactions: list[str] = []
+        # v0.10: every ``on_show`` call, and what it answers (``None``: shown).
+        self.shown: list[list[str]] = []
+        self.show_refusal: str | None = None
+
+    async def on_show(self, paths: list[str]) -> str | None:
+        self.shown.append(list(paths))
+        return self.show_refusal
 
     async def on_compacted(self, trigger: str) -> None:
         self.compactions.append(trigger)
@@ -133,6 +147,8 @@ class FakeEngine:
         self.calls: list[tuple[str, Any]] = []
         self.decisions: list[PermissionDecision] = []
         self.answers: list[dict[str, str | list[str]] | tuple[str, str]] = []
+        # What each ``Show`` item's ``on_show`` answered (``None``: shown).
+        self.show_answers: list[str | None] = []
         self.started = False
         self.closed = False
         self._task: asyncio.Task[None] | None = None
@@ -190,6 +206,8 @@ class FakeEngine:
                     self.answers.append(("declined", str(e)))
             elif isinstance(item, Compact):
                 await cb.on_compacted(item.trigger)
+            elif isinstance(item, Show):
+                self.show_answers.append(await cb.on_show(item.paths))  # type: ignore[attr-defined]
             elif isinstance(item, Block):
                 self._blocked.set()
                 if item.stubborn:
