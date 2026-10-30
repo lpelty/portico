@@ -148,6 +148,8 @@ class Engine(Protocol):
     # How the engine decides on tool use; the owner sets it before ``start``
     # and changes it while running with ``set_permission_mode``.
     permission_mode: PermissionMode
+    # The deployment's system prompt, set before ``start`` (v0.10 decision 7).
+    system_prompt: Any
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str: ...
 
@@ -403,6 +405,26 @@ def open_command_paths(command: Any) -> list[str] | None:
     return paths
 
 
+def deployment_system_prompt(kind: str, append: str | None) -> Any:
+    """The system prompt the deployment's config asks for, as ``ClaudeAgentOptions`` takes it.
+
+    ``claude_code`` is Claude Code's own prompt with the text of ``append``
+    after it; ``none`` is the SDK's empty prompt (``None``), or ``append``'s
+    text alone when set. ``append`` is read here, at each engine start, so an
+    edit applies to the next session; a file that can't be read is logged
+    and left out (v0.10 decision 7).
+    """
+    text = ""
+    if append:
+        try:
+            text = Path(append).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as e:
+            log.error("system_prompt_append %s could not be read; starting without it: %s", append, e)
+    if kind == "none":
+        return text or None
+    return {"type": "preset", "preset": "claude_code", **({"append": text} if text else {})}
+
+
 def with_viewer_prompt(system_prompt: Any) -> Any:
     """``system_prompt`` (as ``ClaudeAgentOptions`` takes it) with ``VIEWER_PROMPT`` appended.
 
@@ -510,6 +532,7 @@ def build_options(
     setting_sources: list[str],
     callbacks: EngineCallbacks,
     permission_mode: PermissionMode = "default",
+    system_prompt: Any = None,
 ) -> ClaudeAgentOptions:
     """The SDK options for one chat. Never sets ``verbatim_prompts``.
 
@@ -521,17 +544,18 @@ def build_options(
 
     With an owner that can show files (``on_show``, v0.10): the
     ``show_in_viewer`` tool (allowed outright, so no card in any mode), the
-    ``open`` hook on ``Bash``, and ``VIEWER_PROMPT`` appended to the
-    system prompt (the SDK's default here).
+    ``open`` hook on ``Bash``, and ``VIEWER_PROMPT`` appended to
+    ``system_prompt`` (the deployment's, ``deployment_system_prompt``;
+    ``None`` is the SDK's empty prompt).
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
     if callable(getattr(callbacks, "on_show", None)):
         pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=[build_show_tool(callbacks)])},
             "allowed_tools": [SHOW_TOOL_NAME],
-            "system_prompt": with_viewer_prompt(None),
+            "system_prompt": with_viewer_prompt(system_prompt),
         }
     return ClaudeAgentOptions(
         cwd=str(folder),
@@ -613,6 +637,8 @@ class SDKEngine:
         self.turn = 0
         self.session_id: str | None = None
         self.permission_mode: PermissionMode = "default"
+        # The deployment's system prompt (``deployment_system_prompt``); ``None`` is empty.
+        self.system_prompt: Any = None
         self.init_timeout = init_timeout
         self._client: ClaudeSDKClient | None = None
         self._callbacks: EngineCallbacks | None = None
@@ -632,7 +658,9 @@ class SDKEngine:
             raise RuntimeError("engine already started")
         self._callbacks = callbacks
         self.session_id = resume
-        self._client = ClaudeSDKClient(build_options(folder, resume, setting_sources, callbacks, self.permission_mode))
+        self._client = ClaudeSDKClient(
+            build_options(folder, resume, setting_sources, callbacks, self.permission_mode, self.system_prompt)
+        )
         await self._client.connect()
         self._note_commands_from_server_info(await self._client.get_server_info())
         self._pump = asyncio.create_task(self._run_pump(), name=f"portico-engine-{self.chat}")

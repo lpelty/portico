@@ -151,7 +151,15 @@ from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewa
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import Config, hello_for
-from .engine import READ_ONLY_TOOLS, Engine, PermissionDecision, friendly_model_name, history_events, read_history
+from .engine import (
+    READ_ONLY_TOOLS,
+    Engine,
+    PermissionDecision,
+    deployment_system_prompt,
+    friendly_model_name,
+    history_events,
+    read_history,
+)
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .messages import (
     AGENT_FRAME_TYPES,
@@ -1220,6 +1228,7 @@ class GatewayServer:
         engine = self.engine_factory()
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
+        engine.system_prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
         session = await engine.start(
             chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
         )

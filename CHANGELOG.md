@@ -52,6 +52,13 @@
 
 ### For deployments
 
+- **The agent starts from Claude Code's system prompt.** New config
+  `system_prompt = "claude_code" | "none"` (default `claude_code`) and
+  `system_prompt_append` (a file of the deployment's, added after it, read
+  at each engine start). Until v0.10 the gateway set none, so the agent ran
+  on the SDK's empty prompt; `system_prompt = "none"` keeps that. Expect
+  replies to change on upgrade: the agent now behaves as Claude Code does
+  in a terminal. See "The agent's system prompt" in the README.
 - The app's `hello` carries `capabilities: ["agents.v1"]` (new, optional).
   A gateway older than v0.10 refuses the field; the app then says hello
   again without it and works as before.

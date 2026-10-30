@@ -134,6 +134,8 @@ class FakeEngine:
         self.turn = 0
         self.session_id: str | None = None
         self.permission_mode = "default"
+        # The deployment's system prompt, as the owner set it before ``start``.
+        self.system_prompt: Any = None
         # The slash commands the engine knows; ``None``: it cannot say.
         self.commands: set[str] | None = None
         # Every ``set_permission_mode`` call, in order (not in ``calls``).
