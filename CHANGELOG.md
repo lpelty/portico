@@ -9,6 +9,9 @@
   at the bottom, otherwise the same message stays at the top. It used to
   slide away as the narrower column wrapped every line again. The viewer
   panel eases in.
+- **MCP tools read once, plainly.** A tool from an MCP server shows as
+  "memory · query documents" (the server, then the tool's name with
+  spaces), not its raw id twice.
 
 ### Gateway
 

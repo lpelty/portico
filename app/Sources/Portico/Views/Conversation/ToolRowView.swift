@@ -17,6 +17,33 @@ struct ToolRowPresentation: Equatable {
 
     var icon: String { Self.toolIcon }
 
+    /// The tool's name as the row reads it (v0.11, item 59). An MCP tool's
+    /// id (`mcp__memory__query_documents`) reads `memory · query documents`:
+    /// the server, then the tool with its underscores as spaces. The
+    /// `mcp__<server>__<tool>` shape is the engine's naming, not a tool the
+    /// app knows. Any other name reads as it came.
+    static func title(for tool: String) -> String {
+        let prefix = "mcp__"
+        guard tool.hasPrefix(prefix) else { return tool }
+        let rest = tool.dropFirst(prefix.count)
+        guard let split = rest.range(of: "__"), split.lowerBound > rest.startIndex else { return tool }
+        let server = rest[..<split.lowerBound]
+        let name = rest[split.upperBound...].replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return tool }
+        return "\(server) · \(name)"
+    }
+
+    var title: String { Self.title(for: row.tool) }
+
+    /// What the row shows after the title: the start's summary, or nothing
+    /// when it only repeats the tool's id (an MCP tool with no better
+    /// summary, which read `mcp__x__y mcp__x__y` before v0.11).
+    var summaryText: String? {
+        let summary = row.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty || summary == row.tool ? nil : row.summary
+    }
+
     /// `running` until the finish arrives; then the finish summary, or
     /// `failed: <summary>` when the call did not go well.
     var stateText: String {
@@ -117,14 +144,18 @@ struct ToolRowView: View {
                 HStack(spacing: 8) {
                     stateIcon
                         .frame(width: 14, height: 14)
-                    Text(row.tool)
+                    Text(shown.title)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.text)
-                    Text(Self.display(row.summary, in: folder))
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.text2)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .help(row.tool)
+                    if let summary = shown.summaryText {
+                        Text(Self.display(summary, in: folder))
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     Spacer(minLength: 8)
                     if let outcome = shown.outcomeText(waiting: waiting) {
                         Text(outcome)

@@ -316,6 +316,19 @@ final class ConversationTests: XCTestCase {
 
     // MARK: - tool row presentation
 
+    /// v0.11 (59): an MCP tool's row names it once, readably.
+    func testAnMCPToolRowReadsServerAndToolOnce() {
+        XCTAssertEqual(ToolRowPresentation.title(for: "mcp__memory__query_documents"), "memory · query documents")
+        XCTAssertEqual(ToolRowPresentation.title(for: "mcp__acme_docs__search"), "acme_docs · search")
+        XCTAssertEqual(ToolRowPresentation.title(for: "Read"), "Read")
+        XCTAssertEqual(ToolRowPresentation.title(for: "mcp__odd"), "mcp__odd", "not the MCP shape: as it came")
+        XCTAssertEqual(ToolRowPresentation.title(for: "mcp____x"), "mcp____x")
+        let mcp = ToolRow(toolUseId: "x", turn: 1, tool: "mcp__memory__query_documents", summary: "mcp__memory__query_documents", input: [:])
+        XCTAssertNil(ToolRowPresentation(row: mcp).summaryText, "the id is not repeated as the summary")
+        let read = ToolRow(toolUseId: "y", turn: 1, tool: "Read", summary: "/a/notes.md", input: [:])
+        XCTAssertEqual(ToolRowPresentation(row: read).summaryText, "/a/notes.md")
+    }
+
     func testToolRowPresentationIconAndPrettyInput() {
         let row = ToolRow(
             toolUseId: "tu-1", turn: 1, tool: "Read", summary: "/tmp/demo/a.md",
