@@ -28,6 +28,11 @@ during the turn (``show_in_viewer``, or a caught ``open``) was reported
 then: it is not reported again, and when it is the newest, nothing else
 opens over it.
 
+v0.11 decision 6 (item 67): only a file inside the session's folder or
+the deployment's roots (``open_within``, the folders ``show_in_viewer``
+may show from) takes ``open``; one written anywhere else is listed and
+the newest viewable file inside them opens instead.
+
 The gateway never diffs the folder. A deployment that needs more is a
 producer.
 """
@@ -291,6 +296,12 @@ def _same_file(location: str) -> str:
         return location
 
 
+def _inside(location: str, folders: list[Path]) -> bool:
+    """Whether the file at ``location`` (resolved) is under one of ``folders`` (already resolved)."""
+    resolved = Path(_same_file(location))
+    return any(resolved.is_relative_to(folder) for folder in folders)
+
+
 class TurnCollector:
     """Gathers one turn's artifact signals; ``finish`` settles them into artifacts."""
 
@@ -317,8 +328,12 @@ class TurnCollector:
         if text:
             self._signals.append(("text", text))
 
-    def finish(self, folder: Path) -> list[Artifact]:
-        """The turn's artifacts, one per location, ``open`` on the newest viewable one only."""
+    def finish(self, folder: Path, open_within: list[Path] | None = None) -> list[Artifact]:
+        """The turn's artifacts, one per location, ``open`` on the newest viewable one only.
+
+        ``open_within`` (v0.11, resolved folders): a file outside every one of
+        them never opens; ``None`` lets any file open.
+        """
         folder = Path(folder)
         # location -> (source, last position); insertion order is the first mention.
         found: dict[str, tuple[str, int]] = {}
@@ -365,6 +380,8 @@ class TurnCollector:
             if not is_viewable(artifact.media):
                 continue
             if artifact.source == "text" and artifact.kind == "file" and not _changed_since(Path(artifact.location), self.started):
+                continue
+            if artifact.kind == "file" and open_within is not None and not _inside(artifact.location, open_within):
                 continue
             artifact.open = True
             break

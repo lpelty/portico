@@ -7,6 +7,12 @@ import SwiftUI
 struct ConversationView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
+    /// The message at the top of the transcript's view (v0.11, item 67).
+    @State private var topItem: String?
+    /// Where the transcript was seen, put back when its width changes (v0.11, item 67).
+    @State private var scrollMemory = ConversationScrollMemory()
+    /// The transcript's width, for the reading column's (v0.11, item 58).
+    @State private var transcriptWidth: CGFloat?
 
     private var items: [TranscriptItem] { model.transcripts[chat] ?? [] }
 
@@ -25,6 +31,7 @@ struct ConversationView: View {
                     if model.showsEarlierBar(chat: chat) {
                         EndedSessionBar(chat: chat)
                             .padding(.horizontal, Self.sideInset)
+                            .inConversationColumn()
                             .padding(.top, 16)
                             .padding(.bottom, 4)
                             .background(Theme.window)
@@ -42,16 +49,26 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Self.sideInset)
                     .padding(.bottom, 8)
+                    .inConversationColumn()
             }
             if !model.showsEarlierBar(chat: chat) {
                 // The running turn's agents or workflow sit on the composer,
                 // as wide as it (v0.10 decisions 1 and 2, AF2 and AF3).
                 AgentDock(chat: chat, sideInset: Self.sideInset)
+                    .inConversationColumn()
+                // What the person sent while the agent works, waiting for its next step (v0.11, AG5).
+                QueuedMessages(chat: chat, sideInset: Self.sideInset)
+                    .inConversationColumn()
                 // An ended session is read-only: no composer.
+                // The composer draws above the queued cards and the dock:
+                // its slash list (v0.11 item 66) rises from the box's top
+                // edge and floats over them while it is open.
                 InputBar(chat: chat)
                     .id(chat)
                     .padding(.horizontal, Self.sideInset)
+                    .inConversationColumn()
                     .padding(.bottom, 16)
+                    .zIndex(1)
             }
         }
     }
@@ -88,10 +105,35 @@ struct ConversationView: View {
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
+                .scrollTargetLayout()
+                // v0.11 (58): the reading column, centred; its items size
+                // themselves from its width (`conversationColumn`).
+                .frame(maxWidth: ConversationColumn.maxWidth, alignment: .leading)
                 .padding(.horizontal, Self.sideInset)
                 .padding(.top, 24)
                 .padding(.bottom, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
+            .environment(
+                \.conversationColumn,
+                transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset) })
+            .scrollPosition(id: $topItem, anchor: .top)
+            // v0.11 (67): opening the viewer narrows the column and every
+            // line wraps again; put the conversation back where it was seen
+            // (the bottom stays the bottom, else the same top message).
+            .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+                TranscriptGeometry(
+                    width: geometry.containerSize.width,
+                    atBottom: ConversationScrollMemory.isAtBottom(
+                        offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
+                        content: geometry.contentSize.height))
+            } action: { _, now in
+                switch scrollMemory.widthChanged(to: now.width) {
+                case .bottom: proxy.scrollTo("bottom", anchor: .bottom)
+                case .item(let id): proxy.scrollTo(id, anchor: .top)
+                case nil: scrollMemory.seen(atBottom: now.atBottom, topItem: topItem, width: now.width)
+                }
             }
             .onChange(of: scrollKey) { _, _ in
                 proxy.scrollTo("bottom", anchor: .bottom)
@@ -113,6 +155,7 @@ struct ConversationView: View {
             }
             .padding(.horizontal, Self.sideInset)
             .padding(.bottom, 12)
+            .inConversationColumn()
         }
         .frame(maxHeight: 320)
     }
@@ -141,6 +184,13 @@ struct ConversationView: View {
     }
 }
 
+/// The transcript's width and whether it is at its end, as its scroll
+/// geometry changes (v0.11, item 67).
+private struct TranscriptGeometry: Equatable {
+    var width: CGFloat
+    var atBottom: Bool
+}
+
 /// One transcript item, by kind.
 struct TranscriptItemView: View {
     let item: TranscriptItem
@@ -149,18 +199,28 @@ struct TranscriptItemView: View {
     /// permission card is still open.
     var chat: Int? = nil
     @EnvironmentObject private var model: AppModel
+    /// The reading column's width, once measured (v0.11, item 58).
+    @Environment(\.conversationColumn) private var column
+
+    /// Replies and tool rows: 92% of the column, the whole width until it is measured.
+    private var replyWidth: CGFloat {
+        column.map(ConversationColumn.replyWidth) ?? .infinity
+    }
 
     var body: some View {
         switch item {
         case .userText(let user):
-            UserBubble(text: user.text)
+            UserBubble(text: user.text, maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth)
         case .assistantText(let id, let text):
             MarkdownText(text: text, id: id)
+                .frame(maxWidth: replyWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
             ToolRowView(
                 row: row, folder: folder,
                 waiting: chat.map { model.permissionCard(chat: $0, toolUseId: row.toolUseId) != nil } ?? false)
+                .frame(maxWidth: replyWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
         case .card(let card):
             CardInlineView(card: card, status: model.cardStatus(chat: card.chat, id: card.id))
         case .turnMarker(let marker):
@@ -179,23 +239,27 @@ struct TranscriptItemView: View {
 
 /// What the person sent, right-aligned on a tinted background. The text
 /// is the gateway's `user.text`: what the engine received, attachments
-/// listed under it.
+/// listed under it. v0.11 (58, AG1): the replies' 16-point text, 10 by 16
+/// padding, at most 70% of the reading column; a short message hugs.
 struct UserBubble: View {
     let text: String
+    /// The bubble's widest (`ConversationColumn.bubbleMaxWidth`).
+    var maxWidth: CGFloat = fallbackMaxWidth
+
+    /// Before the column is measured: 70% of the widest column.
+    static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 60)
-            Text(text)
-                .font(.system(size: 13))
-                .lineSpacing(6)
-                .foregroundStyle(Theme.text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .frame(maxWidth: 440, alignment: .trailing)
-        }
+        Text(text)
+            .font(.system(size: MarkdownText.bodySize))
+            .lineSpacing(MarkdownText.lineSpacing)
+            .foregroundStyle(Theme.text)
+            .textSelection(.enabled)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(maxWidth: maxWidth, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 
@@ -357,5 +421,30 @@ extension EndedSessionBar {
     private func line(now: Date) -> String {
         guard let summary = model.summary(of: chat) else { return "Session \(chat) · read-only" }
         return SessionPresentation(summary: summary).endedBarLine(now: now)
+    }
+}
+
+// MARK: - The reading column (v0.11, item 58)
+
+private struct ConversationColumnKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    /// The conversation's reading column width (`ConversationColumn`),
+    /// `nil` until the transcript has been measured.
+    var conversationColumn: CGFloat? {
+        get { self[ConversationColumnKey.self] }
+        set { self[ConversationColumnKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Cap something that pads itself by the conversation's side insets at
+    /// the reading column plus those insets, centred: the composer, the
+    /// queued cards, the dock and the status line line up with the replies.
+    func inConversationColumn(sideInset: CGFloat = ConversationView.sideInset) -> some View {
+        frame(maxWidth: ConversationColumn.outerWidth(sideInset: sideInset))
+            .frame(maxWidth: .infinity)
     }
 }

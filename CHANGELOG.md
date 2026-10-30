@@ -1,5 +1,161 @@
 # Changelog
 
+## v0.11.0 (2026-10-30)
+
+### What a person gets (app)
+
+- **Opening a file keeps your place.** When the viewer opens (on its own
+  or by hand) the conversation stays where it was: at the bottom it stays
+  at the bottom, otherwise the same message stays at the top. It used to
+  slide away as the narrower column wrapped every line again. The viewer
+  panel eases in.
+- **MCP tools read once, plainly.** A tool from an MCP server shows as
+  "memory · query documents" (the server, then the tool's name with
+  spaces), not its raw id twice.
+- **The restart notice says why.** "Restart the gateway to apply" reads
+  "Settings changed — restart the gateway to apply", still in the wait
+  colour with a restart arrow, apart from Update available.
+- **The notice keeps its words while there is room.** It folded to a bare
+  icon whenever the strip left its fullest form (so whenever the viewer
+  was open); now the strip's other words shrink first and the notice
+  becomes an icon only when even the smallest strip has no room for it.
+- **The live session follows the deployment's folder.** When
+  `default_folder` changes, the next launch ends the session working in
+  the old folder and starts one in the new one, and the conversation says
+  why: "Started a new session in ~/… — the deployment's folder changed".
+  A folder the person chose for a session is kept while `default_folder`
+  stays the same.
+- **Clear earlier sessions…** in Settings → General (single presentation;
+  asks first) empties the list of ended sessions. The live session and
+  every transcript on disk stay.
+- **The welcome names the real next session.** With no sessions yet it
+  said "Session 1" whatever the gateway's counter said; it now shows the
+  number the session will get.
+- **Folders.** The Files pane's "Folder" switch reads "Folders".
+- **The session card says what its buttons do:** "Log writes it up · New
+  starts fresh", not "Same as typing /log or /new".
+- **Type while the agent works (item 74).** The composer stays usable
+  during a turn and during the log step. A message sent then waits above
+  the composer as a card, "Queued — sends at Acme's next step", with Edit
+  (back into the composer) and Cancel; several wait in order. The gateway
+  writes it into the turn when the agent's current step ends (its next
+  tool result, never a subagent's), and it shows in the conversation as
+  your message at that point; one still waiting when the turn ends goes
+  as the next turn. During the log step it goes into the log step itself,
+  so a rating typed while the close runs reaches it. While nothing is
+  typed, the composer offers Stop alone, as before. **Stop gives queued
+  messages back:** pressing Stop puts everything still waiting back in
+  the composer, in order, with its files, ready to send or delete (as
+  Claude Code does); one sent while the stop takes effect comes back too.
+  Nothing waiting goes on its own after a stop.
+- **Slash-command completion.** Typing `/` at the start of the composer
+  (the conversation's or the welcome's) lists Portico's own `/log` and
+  `/new`, then the agent's commands and skills with one-line
+  descriptions, filtered as you type (names first, then descriptions).
+  ↑/↓ move, Enter or Tab picks, Esc closes. The gateway sends the list as
+  `chat.commands` when an engine starts and keeps the last one per folder
+  (`commands.json`), so the welcome has it before the first engine runs.
+  Arrows, Return and Tab with ⌘, ⌥, ⌃ or Shift held, and any key while
+  an input method is composing, stay the text's.
+- **A reading column (item 58).** Replies, tool rows, your messages, the
+  composer (the welcome's too), its slash list and the queued cards share
+  one centred column at most 768 pt wide; a narrower window uses all of
+  it. Replies and tool rows take 92% of it; your message at most 70%,
+  right-aligned.
+- **Easier reading (item 73).** Replies and your messages are 16 pt
+  regular (they were 13); bold is semibold and shows; list bullets and
+  numbers are full-size in the text colour.
+- **Quieter tool rows (item 59).** No fill or border until the pointer is
+  on one; the tool's name in secondary text, what it touched in tertiary.
+  The status icon keeps its colour, and a failed step's words follow on
+  the row in red.
+- **The composer's `+` and mic** light up in the same 28 pt box, 6 pt
+  corners, as Send (item 72).
+
+- **Front matter reads as Properties (item 68).** A Markdown file's YAML
+  front matter shows as a quiet Properties block at the top of the
+  viewer (keys and values; lists as small tags; a status with a dot),
+  foldable to one line: "Properties · 4 — draft, Oct 28, 3 tags". It
+  used to come out as text with its last line made a heading.
+- **Open in Obsidian in the viewer (item 69)**, beside Open externally,
+  for a file inside an Obsidian vault. When the viewer is narrow both
+  are icons, their words in the tooltip.
+- **The services menu, quieter (item 60).** One line per service with
+  its dot; a second line only when it says something (the gateway's
+  port, a check's detail, an error in red). One Restart all at the foot
+  (the deployment's command for all its services, or the gateway when it
+  has none). A row's own Restart, and the gateway's Stop or Start, moved
+  to the row's right-click menu. The developer note at the foot is gone.
+- **Context on the session card only (item 64).** The status strip
+  keeps the model and the services.
+- **Changed this session (item 70)** sits in the Folders list as its
+  first section, its rows the same as the folders' rows, with the time
+  each changed; five show, the rest behind "N more".
+- **The empty Bookmarks tab (item 62)** says "No bookmarks yet." and how
+  to add one, from the pane's left edge, without a second "Bookmarks"
+  heading.
+
+### For deployments
+
+- **`[sessions] next_number = "<command>"`**: the command's stdout is the
+  next session's number, run (`/bin/sh -c`, two seconds) when a new
+  session starts, and once at start with no live session for the
+  welcome. A failure, anything but a whole number, or a number Portico has
+  already passed falls back to Portico's own counter, logged. See Session
+  numbers in the README.
+
+- **`[files] hide_session_folder = true`** (default `false`) leaves the
+  session's own folder out of the Files pane (and quick open), for a
+  deployment whose roots already cover it. It is still where the agent
+  works; a file in it still shows. With no roots to show instead, the
+  session's folder stays.
+
+- **The engine finds `npx`, `node` and `uvx`.** Started from the app the
+  gateway inherited launchd's bare PATH; with `login_shell_path = true`
+  (the default) it now asks the person's login shell for its PATH and
+  puts it first. A `PATH=` line in the env file goes first of all. See
+  The engine's environment in the README.
+- **`PORTICO_ATTENDED=1`** is in the environment of every engine started
+  for a person's session (title generation never has it), so a
+  deployment's start-up checks can tell someone is present.
+
+### Gateway
+
+- The index records the `default_folder` the gateway last ran with, so a
+  change is told from a folder the person chose. An index from before
+  v0.11 has none: a live session outside `default_folder` follows it once.
+- **A file the agent writes outside the session opens no more.** A file
+  opens on its own only inside the session's folder or the deployment's
+  roots, the same rule `show_in_viewer` keeps; one written anywhere else
+  (a scratch file in `/tmp`) is still listed in the viewer's history.
+- **`doctor`** shows where the PATH came from and whether `node`, `npx`
+  and `uvx` resolve, and counts `[deployment] status` rows as the
+  services check.
+- The agent's slash commands are kept per folder in `commands.json` in
+  the state directory (the newest 20 folders).
+
+### Protocol (still version 1; additions only)
+
+- `hello` gains `hide_session_folder` (default `false`); `chat.list`
+  gains `next_chat?`. New app → gateway `sessions.clear` (answered with
+  `chat.list`; `sessions.not_single` in multiple presentation), offered by
+  the `sessions.clear` capability in single presentation. Schema and
+  examples regenerated.
+- **Queued messages:** Capability `queue.v1` on both sides. A
+  `message.send` during a turn is answered `chat.queued {id}` instead of
+  `chat.busy`; `chat.queue {chat, items}` carries the list after every
+  change and after `chat.live` on `chat.open`; `chat.unqueue {chat, id}`
+  takes one back (`chat.not_queued` once it has gone). `turn.stop`
+  empties the queue into `chat.queue`'s new `returned: [{id, text,
+  attachments}]` (absent otherwise), for the app's composer; one queued
+  while the stopped turn winds down is returned when it ends, never sent.
+  `chat.stop` still drops the queue. An app or gateway without `queue.v1`
+  behaves as in v0.10.
+- **Slash commands:** new gateway → app `chat.commands {chat?, folder,
+  commands: [{name, description, source?}]}`, sent when an engine starts
+  and, for the kept lists, on every connection after `services.status`.
+  An older app ignores it.
+
 ## v0.10.0 (2026-10-30)
 
 ### What a person gets (app)

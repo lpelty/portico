@@ -83,7 +83,7 @@ is fixed.
 
 | What | Where |
 |---|---|
-| State: token, ledger, index, lock, gateway log | `~/.portico/` (`PORTICO_HOME` moves it) |
+| State: token, ledger, index, lock, gateway log, the agent's last command lists (`commands.json`) | `~/.portico/` (`PORTICO_HOME` moves it) |
 | Config | `~/.portico/config.toml` (optional; defaults apply when absent) |
 | Credential file | `~/.portico/env` (optional) |
 | App settings (auto-open, quit behaviour, appearance, gateway address and token file overrides) | the app's Settings window, stored in `UserDefaults` |
@@ -113,6 +113,8 @@ system_prompt = "claude_code"       # the default: Claude Code's own system prom
                                     # terminal; "none": the SDK's empty prompt (as before v0.10). See Showing
                                     # the agent's work and The agent's system prompt
 system_prompt_append = "~/my-deployment/prompt.md" # optional absolute path: the deployment's text, after it
+login_shell_path = true             # the default: the engine gets the person's login-shell PATH first (see
+                                    # The engine's environment); false keeps the PATH the gateway inherited
 
 [brand]
 name = "Portico"
@@ -132,11 +134,13 @@ run = "my-tool update"              # performs it; the app's "Update available" 
 
 [deployment]                        # optional (v0.8): one restart and one status for all the services
 restart = "my-tool restart-all"     # /bin/sh -c, bounded by command_timeout_seconds; exit 0 = done;
-                                    # the services menu ends with Restart all services
+                                    # the services menu's Restart all runs it (without it,
+                                    # Restart all restarts the gateway)
 status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": true|false, "detail"?}]} on stdout
                                     # (stderr is not read as JSON; it only names the reason when it fails);
-                                    # when set, its rows replace the [[services]] checks; a row offers
-                                    # Restart when a [[services]] entry with the same id gives one
+                                    # when set, its rows replace the [[services]] checks; a row's
+                                    # context menu offers Restart when a [[services]] entry with the
+                                    # same id gives one
 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
@@ -154,6 +158,13 @@ timeout_seconds = 10                # optional, default 10, at least 1: the chec
 [[roots]]                           # folders the files pane can browse
 name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
+
+[sessions]                          # optional (v0.11)
+next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's number (see Session numbers)
+
+[files]                             # optional (v0.11): the Files pane
+hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
+                                    # (it is still where the agent works, and a file in it still shows)
 ```
 
 A title call goes through the Agent SDK to the same provider, with the
@@ -172,7 +183,8 @@ A status command that fails, times out or prints something else becomes
 one row in the menu, "status command failed · <reason>".
 
 The gateway reads `config.toml` once, at start. Change it, and the app's
-Settings and `bin/doctor` say "restart the gateway to apply":
+status strip and Settings say "Settings changed — restart the gateway to
+apply" (`bin/doctor` says the gateway needs a restart):
 `bin/portico-gateway stop`, and the app starts a fresh one.
 
 ## One session at a time
@@ -204,9 +216,45 @@ plug-in's `on_renew` replaces it. With neither, renewing just ends the
 session and opens the next. In single mode `chat.new` is refused while a
 session is live; nothing renews on its own, ever.
 
+When the deployment's `default_folder` changes, the live session follows
+it: at its next start the gateway ends the session working elsewhere
+(without a log step) and starts the next one in the new folder, and the
+conversation says why ("Started a new session in ~/… — the deployment's
+folder changed"). The gateway records the `default_folder` it ran with,
+so a session the person started in a folder of their own choosing keeps
+it while `default_folder` stays the same.
+
+Settings → General → **Clear earlier sessions…** (after a confirmation)
+empties the list of ended sessions. Only Portico's list: the live session
+stays, the agent's transcripts stay on disk, and the numbers are not used
+again.
+
+### Session numbers
+
+Sessions are numbered by Portico's own counter, and a number is never
+handed out twice. The welcome names the number the next session will have
+("Session 17"). A deployment that numbers its sessions itself sets
+`[sessions] next_number` to a command whose stdout is that number (one
+whole number above zero; stderr is ignored). The gateway runs it with
+`/bin/sh -c` when a new session starts (the first one, and each New), and
+once when it starts with no live session, for the welcome's title; so the
+command should read the number, not reserve it. It is given two seconds.
+If it fails, times out, prints anything else, or prints a number Portico
+has already passed, Portico uses its own counter and logs one line saying
+why. After a deployment's number, Portico's counter carries on from it.
+
 After every turn the gateway reports how full the agent's context is
 (`context.usage`); when the agent summarizes earlier conversation to make
 room, the app is told (`chat.compacted`) and the record counts it.
+
+**Slash commands** (v0.11). Typing `/` at the start of the composer opens
+a list above it: Portico's own (`/log`, `/new`) first, then the agent's
+commands and skills, each with a one-line description, filtered as you
+type (names first, then descriptions). ↑/↓ move, Enter or Tab puts
+`/name ` in the composer, Esc closes; Enter on `/log` or `/new` does what
+typing it and Enter always did. The gateway reads the agent's list when
+its engine starts (`chat.commands`) and keeps the last one per folder in
+`commands.json`, so the welcome has it before the first engine runs.
 
 ## Plug-ins
 
@@ -379,6 +427,24 @@ deployment did before v0.10.
 Either way the folder's `CLAUDE.md`, skills and hooks still load through
 `setting_sources`; they are not part of the system prompt. Session titles
 keep their own prompt.
+
+## The engine's environment
+
+Started from the app, the gateway inherits launchd's bare PATH
+(`/usr/bin:/bin:/usr/sbin:/sbin`), so `npx`, `node`, `uvx` and anything in
+Homebrew or `~/.local/bin` would be missing for the agent and its MCP
+servers. With `login_shell_path = true` (the default) the gateway asks the
+person's login shell (`$SHELL -l -i -c`, 5 s at most) for its PATH and puts
+it first, keeping the inherited entries it lacks. If the shell can't be read
+it logs one line and keeps the inherited PATH. A `PATH=` line in the env
+file goes first of all: the deployment's explicit choice wins. `doctor`
+shows where the PATH came from and whether `node`, `npx` and `uvx` resolve.
+
+Every engine started for a person's session has `PORTICO_ATTENDED=1` in its
+environment (title generation never does). The Agent SDK marks its engines
+as automated (`CLAUDE_CODE_ENTRYPOINT=sdk-py`); a deployment whose start-up
+checks skip work when nobody is present can read `PORTICO_ATTENDED` to know
+someone is. Portico sets no Claude Code variable of its own.
 
 ## Showing the agent's work
 

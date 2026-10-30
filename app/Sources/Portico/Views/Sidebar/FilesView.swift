@@ -70,7 +70,6 @@ struct FilesView: View {
                 .padding(.bottom, 8)
             switch model.filesTab {
             case .folder:
-                FolderChangedSection(chat: chat)
                 header
                 if filter.trimmingCharacters(in: .whitespaces).isEmpty {
                     tree
@@ -115,7 +114,7 @@ struct FilesView: View {
     // MARK: the outline
 
     private var tree: some View {
-        FileTree(chat: chat)
+        FileTree(chat: chat, showsChanged: true)
     }
 
     // MARK: the filter's flat list
@@ -167,9 +166,14 @@ struct FilesView: View {
 /// the middle, and hovering shows the whole path.
 struct FileTree: View {
     let chat: Int
+    /// CHANGED THIS SESSION as the list's first section, in the sidebar's
+    /// Folders tab (v0.11, item 70); not in the document view's tree.
+    var showsChanged: Bool = false
     @EnvironmentObject private var model: AppModel
     /// Open directories, as `root|path`.
     @State private var expanded: Set<String> = []
+    /// Whether CHANGED THIS SESSION shows all its files.
+    @State private var allChanged = false
 
     /// One drawn line: an entry or a directory's placeholder, and how deep it sits.
     struct Line: Identifiable {
@@ -186,6 +190,9 @@ struct FileTree: View {
 
     var body: some View {
         List {
+            if showsChanged {
+                changedSection
+            }
             ForEach(model.browsableRoots(for: chat), id: \.name) { root in
                 Section {
                     ForEach(lines(root: root.name, path: "", depth: 0)) { line in
@@ -201,6 +208,39 @@ struct FileTree: View {
         .overlay {
             if model.browsableRoots(for: chat).isEmpty {
                 ContentUnavailableView("No folders", systemImage: "folder", description: Text("The chat's folder appears once the gateway lists the chat."))
+            }
+        }
+    }
+
+    /// The files the agent created or edited this session, newest change
+    /// first, in the same list and the same rows as the folders below
+    /// (v0.11, item 70: they sat in a box of their own), each with the
+    /// time it last changed. The first `ChangedFiles.collapsedCount` show;
+    /// the rest behind "N more". Nothing at all when nothing changed.
+    @ViewBuilder
+    private var changedSection: some View {
+        let changed = model.changedThisSession(chat: chat)
+        if !changed.isEmpty {
+            let shown = ChangedFiles.shown(count: changed.count, expanded: allChanged)
+            Section {
+                ForEach(changed.prefix(shown), id: \.path) { file in
+                    ChangedFileRow(chat: chat, path: file.path, at: file.at)
+                }
+                if changed.count > ChangedFiles.collapsedCount {
+                    Button {
+                        allChanged.toggle()
+                    } label: {
+                        Text(allChanged ? "Show fewer" : "\(changed.count - shown) more")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, FileRow.disclosureWidth + 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text("Changed this session")
             }
         }
     }
@@ -310,34 +350,10 @@ struct FileRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            if toggle != nil {
-                HStack(spacing: 0) {
-                    Color.clear.frame(width: FileTree.indent(depth: depth), height: 1)
-                    Image(systemName: expanded == true ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Theme.text3)
-                        .opacity(expanded == nil ? 0 : 1)
-                        .frame(width: Self.disclosureWidth)
-                }
-                .padding(.trailing, -4)
-            }
-            Image(systemName: icon)
-                .foregroundStyle(node.dir ? Color.accentColor : .secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(node.name)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            Spacer(minLength: 4)
+        FileLine(
+            icon: icon, folder: node.dir, name: node.name, subtitle: subtitle,
+            disclosure: toggle == nil ? nil : (depth: depth, expanded: expanded), selected: isShown
+        ) {
             if !node.dir, let size = node.size {
                 Text(Self.sizeText(size))
                     .font(.caption)
@@ -345,11 +361,6 @@ struct FileRow: View {
                     .monospacedDigit()
             }
         }
-        .padding(.vertical, 1)
-        .background(isShown ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        // The whole line answers, arrow and indent included.
-        .contentShape(Rectangle())
-        .hoverHighlight()
         .help(absolutePath ?? node.name)
         .onTapGesture {
             if node.dir { toggle?(); return }
@@ -361,16 +372,7 @@ struct FileRow: View {
     }
 
     private var icon: String {
-        if node.dir { return "folder" }
-        switch Media.of(path: node.name) {
-        case .markdown: return "doc.richtext"
-        case .image: return "photo"
-        case .html: return "globe"
-        case .pdf: return "doc.text"
-        case .text: return "doc.plaintext"
-        case .url: return "link"
-        case .other: return "doc"
-        }
+        node.dir ? "folder" : FileIcon.systemName(for: node.name)
     }
 
     @ViewBuilder
@@ -399,6 +401,110 @@ struct FileRow: View {
     /// `1.2 KB`, `640 B`.
     static func sizeText(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+}
+
+/// The look every file row in the Files pane shares (the tree, the
+/// filter's list, CHANGED THIS SESSION; v0.11, item 70): the disclosure
+/// column when it sits in the tree, the icon, the name (and a subtitle),
+/// something at the trailing end, the selected fill and the hover tint.
+struct FileLine<Trailing: View>: View {
+    let icon: String
+    var folder: Bool = false
+    let name: String
+    var subtitle: String? = nil
+    /// In the tree: how deep, and whether a directory is open (`nil` for a
+    /// file, which keeps the column so names line up). `nil` in a flat list.
+    var disclosure: (depth: Int, expanded: Bool?)? = nil
+    var selected: Bool = false
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let disclosure {
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: FileTree.indent(depth: disclosure.depth), height: 1)
+                    Image(systemName: disclosure.expanded == true ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.text3)
+                        .opacity(disclosure.expanded == nil ? 0 : 1)
+                        .frame(width: FileRow.disclosureWidth)
+                }
+                .padding(.trailing, -4)
+            }
+            Image(systemName: icon)
+                .foregroundStyle(folder ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            Spacer(minLength: 4)
+            trailing()
+        }
+        .padding(.vertical, 1)
+        .background(selected ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        // The whole line answers, arrow and indent included.
+        .contentShape(Rectangle())
+        .hoverHighlight()
+    }
+}
+
+/// How many of CHANGED THIS SESSION show (v0.11, item 70): the first
+/// `collapsedCount`, or every one once "N more" is pressed; so a busy
+/// session does not push the folders far down the list.
+enum ChangedFiles {
+    static let collapsedCount = 5
+
+    static func shown(count: Int, expanded: Bool) -> Int {
+        expanded ? count : min(count, collapsedCount)
+    }
+}
+
+/// A file in CHANGED THIS SESSION, drawn as the tree's file rows are
+/// (`FileLine`), with the time it last changed at the end (compact; the
+/// full date and time as a tooltip, v0.7 decision 1). A click shows it
+/// where the person is looking; the menu is a file row's.
+struct ChangedFileRow: View {
+    let chat: Int
+    let path: String
+    let at: Date?
+    @EnvironmentObject private var model: AppModel
+
+    private var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    private var isShown: Bool {
+        model.documentMode ? model.documentFile == path : model.current[chat]?.location == path
+    }
+
+    var body: some View {
+        FileLine(
+            icon: FileIcon.systemName(for: name), name: name,
+            disclosure: (depth: 0, expanded: nil), selected: isShown
+        ) {
+            if let at { CompactTime(date: at) }
+        }
+        .help(path)
+        .onTapGesture { model.reveal(file: path, in: chat) }
+        .contextMenu {
+            Button("Open in viewer") { model.reveal(file: path, in: chat) }
+            Button("Add to chat") { model.attach([path], to: chat) }
+                .help("Attach to the next message")
+            Divider()
+            Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
+            Button("Open in Obsidian") { Obsidian.open(path: path) }
+                .disabled(!Obsidian.isInstalled)
+            Button("Open externally") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+        }
+        .draggable(URL(fileURLWithPath: path))
     }
 }
 
@@ -444,23 +550,30 @@ struct HeaderIcon: View {
 /// The Files pane's Bookmarks tab: BOOKMARKS (from settings, by absolute
 /// path) then CHANGED THIS SESSION (the files the agent created or edited,
 /// newest change first, each with the time it last changed; no reads;
-/// hidden when there are none, v0.5).
+/// hidden when there are none, v0.5). With no bookmarks it says so, left
+/// at the pane's edge, without a BOOKMARKS heading under the Bookmarks tab
+/// (v0.11, item 62; AG6).
 struct BookmarksView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
+
+    /// The empty tab's two lines (AG6).
+    static let emptyTitle = "No bookmarks yet."
+    static let emptyHint = "Right-click a file or folder and choose Bookmark to keep it here."
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 let bookmarks = model.settings.pinnedFiles
-                SidebarSectionLabel("Bookmarks")
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
                 if bookmarks.isEmpty {
-                    hint("Bookmark a file from its menu or the document view.")
-                }
-                ForEach(bookmarks, id: \.self) { path in
-                    BookmarkRow(chat: chat, path: path, at: nil)
+                    empty
+                } else {
+                    SidebarSectionLabel("Bookmarks")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                    ForEach(bookmarks, id: \.self) { path in
+                        BookmarkRow(chat: chat, path: path, at: nil)
+                    }
                 }
                 let changed = model.changedThisSession(chat: chat)
                 if !changed.isEmpty {
@@ -473,52 +586,27 @@ struct BookmarksView: View {
                     }
                 }
             }
+            // The column spans the pane, so the words start at its edge
+            // rather than in a narrow column centred in it.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 12)
         }
     }
 
-    private func hint(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.text3)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 2)
-    }
-}
-
-/// CHANGED THIS SESSION at the head of the Folder tab (v0.5, X2), above
-/// the filter and the tree, as on Bookmarks; nothing at all when the agent
-/// has changed nothing. At most `visibleRows` show at once and the rest
-/// scroll, so a busy session never pushes the tree off the sidebar.
-struct FolderChangedSection: View {
-    let chat: Int
-    @EnvironmentObject private var model: AppModel
-
-    static let visibleRows = 5
-    /// One BookmarkRow: 13-point text and 5 above and below.
-    static let rowHeight: CGFloat = 26
-
-    var body: some View {
-        let changed = model.changedThisSession(chat: chat)
-        if !changed.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                SidebarSectionLabel("Changed this session")
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 4)
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(changed, id: \.path) { file in
-                            BookmarkRow(chat: chat, path: file.path, at: file.at)
-                        }
-                    }
-                }
-                .frame(height: CGFloat(min(changed.count, Self.visibleRows)) * Self.rowHeight)
-                .scrollBounceBehavior(.basedOnSize)
-                Rectangle().fill(Theme.border).frame(height: 1)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-            }
+    private var empty: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Self.emptyTitle)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text2)
+            Text(Self.emptyHint)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
     }
 }
 
@@ -604,15 +692,18 @@ enum FileIcon {
 }
 
 
-/// The Folder | Bookmarks switch under the FILES header (F1/F2): two halves
+/// The Folders | Bookmarks switch under the FILES header (F1/F2; "Folders"
+/// since v0.11, item 61, as it lists more than one): two halves
 /// spanning the sidebar. A segmented `Picker` keeps its own narrow width on
 /// macOS, so this is drawn by hand.
 struct FilesTabSwitch: View {
     @Binding var selection: AppModel.FilesTab
 
+    static let foldersTitle = "Folders"
+
     var body: some View {
         HStack(spacing: 2) {
-            item("Folder", .folder)
+            item(Self.foldersTitle, .folder)
             item("Bookmarks", .bookmarks)
         }
         .padding(2)

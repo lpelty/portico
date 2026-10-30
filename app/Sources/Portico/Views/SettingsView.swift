@@ -41,6 +41,8 @@ struct AutoOpenKindPresentation: Equatable, Sendable, Identifiable {
 struct GeneralSettingsTab: View {
     @EnvironmentObject private var settings: Settings
     @EnvironmentObject private var model: AppModel
+    /// Clear earlier sessions… asks first (v0.11, item 54).
+    @State private var confirmingClear = false
 
     var body: some View {
         Form {
@@ -67,8 +69,25 @@ struct GeneralSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if model.canClearEarlierSessions {
+                Section("Sessions") {
+                    LabeledContent(ClearEarlierSessions.label(count: model.earlierSessions.count)) {
+                        Button("Clear earlier sessions…") { confirmingClear = true }
+                            .disabled(model.earlierSessions.isEmpty)
+                    }
+                    Text(ClearEarlierSessions.note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
+        .confirmationDialog(ClearEarlierSessions.question, isPresented: $confirmingClear) {
+            Button("Clear", role: .destructive) { model.clearEarlierSessions() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(ClearEarlierSessions.note)
+        }
     }
 
     private func chooseFolder() {
@@ -90,6 +109,21 @@ struct GeneralSettingsTab: View {
             set: { on in
                 if on { settings.autoOpenKinds.insert(kind) } else { settings.autoOpenKinds.remove(kind) }
             })
+    }
+}
+
+/// The words of Settings → General's Clear earlier sessions… (v0.11, item 54).
+enum ClearEarlierSessions {
+    static let question = "Clear earlier sessions?"
+    static let note = "Only the list of earlier sessions is cleared. The live session stays, and every session's transcript stays on disk."
+
+    /// `No earlier sessions`, `1 earlier session`, `12 earlier sessions`.
+    static func label(count: Int) -> String {
+        switch count {
+        case 0: "No earlier sessions"
+        case 1: "1 earlier session"
+        default: "\(count) earlier sessions"
+        }
     }
 }
 

@@ -20,7 +20,7 @@ from claude_agent_sdk import ResultMessage
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
 from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
-from portico_gateway.messages import Action, Brand, Root, ServerMessage, TurnFinished, TurnStarted
+from portico_gateway.messages import Action, AgentCommand, Brand, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.state import StateDir
 
 # --- script items -------------------------------------------------------------
@@ -66,6 +66,14 @@ class Compact:
     """Mid-turn: the engine is about to summarize earlier conversation (its ``PreCompact`` hook fires)."""
 
     trigger: str = "auto"
+
+
+@dataclass
+class Pause:
+    """Mid-turn: the engine waits here until the test sets ``go`` (v0.11); ``reached`` says it got here."""
+
+    go: asyncio.Event = field(default_factory=asyncio.Event)
+    reached: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 def fake_result(is_error: bool = False, session_id: str = "fake-session") -> ResultMessage:
@@ -138,6 +146,10 @@ class FakeEngine:
         self.system_prompt: Any = None
         # The slash commands the engine knows; ``None``: it cannot say.
         self.commands: set[str] | None = None
+        # v0.11 (item 66): the commands with descriptions ``command_list``
+        # answers (``None``: it cannot say); ``command_error`` makes it raise.
+        self.command_entries: list[AgentCommand] | None = None
+        self.command_error: Exception | None = None
         # Every ``set_permission_mode`` call, in order (not in ``calls``).
         self.mode_changes: list[str] = []
         self._session_id = session_id
@@ -172,6 +184,11 @@ class FakeEngine:
 
     def slash_commands(self) -> set[str] | None:
         return set(self.commands) if self.commands is not None else None
+
+    def command_list(self) -> list[AgentCommand] | None:
+        if self.command_error is not None:
+            raise self.command_error
+        return list(self.command_entries) if self.command_entries is not None else None
 
     async def set_permission_mode(self, mode: str) -> None:
         self.mode_changes.append(mode)
@@ -213,6 +230,9 @@ class FakeEngine:
                 await cb.on_compacted(item.trigger)
             elif isinstance(item, Show):
                 self.show_answers.append(await cb.on_show(item.paths))  # type: ignore[attr-defined]
+            elif isinstance(item, Pause):
+                item.reached.set()
+                await item.go.wait()
             elif isinstance(item, Block):
                 self._blocked.set()
                 if item.stubborn:
@@ -231,6 +251,12 @@ class FakeEngine:
                     if isinstance(ev, TurnFinished):
                         self.finished_turn = ev.turn
                     await cb.on_event(ev)
+
+    async def inject(self, text: str) -> None:
+        """A message written into the turn in flight (v0.11): recorded; the script goes on as it was."""
+        self.calls.append(("inject", text))
+        if self.callbacks is None:
+            raise RuntimeError("FakeEngine.inject before start")
 
     async def context_usage(self) -> tuple[float, str | None] | None:
         self.context_reads += 1  # not in ``calls``: tests read ``calls[-1]`` as the last send

@@ -60,6 +60,7 @@ from claude_agent_sdk import (
 
 from .agents import AgentTracker
 from .messages import (
+    AgentCommand,
     AgentFinished,
     AgentProgress,
     AgentStarted,
@@ -80,6 +81,11 @@ QUESTION_TOOL = "AskUserQuestion"
 # engine knows it by (``mcp__<server>__<tool>``).
 SHOW_SERVER = "portico"
 SHOW_TOOL = "show_in_viewer"
+
+# v0.11 (item 56): set in every engine started for a person's chat (never for
+# titles). The SDK marks its engines ``CLAUDE_CODE_ENTRYPOINT=sdk-py``, which a
+# deployment's start-up checks may read as nobody present; this says someone is.
+ATTENDED_ENV = "PORTICO_ATTENDED"
 SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
 # What the agent sees when its ``open <file>`` was shown instead of run.
@@ -93,6 +99,13 @@ VIEWER_PROMPT = (
 CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
 SUMMARY_LIMIT = 80
+# v0.11 (item 66): the longest one-line description a command carries to the
+# app's completion list; the app truncates further to fit its row.
+COMMAND_DESCRIPTION_LIMIT = 160
+# The source the engine appends to a command's description: "... (user)".
+_COMMAND_SOURCE = re.compile(r"\s*\(([^()]+)\)\s*$")
+# Where a description's first sentence ends: a stop, then a capital.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 # Tools that only read (or keep the engine's own notes): auto mode never has
 # anything to decide for them, so their rows carry no permission outcome.
@@ -167,6 +180,14 @@ class Engine(Protocol):
 
     async def send(self, text: str) -> None: ...
 
+    async def inject(self, text: str) -> None:
+        """Write a person's message into the turn in flight (v0.11, item 74); ``turn`` does not move.
+
+        The engine reads it at its next step, inside the same turn; written
+        after its last step, it may run it as a further turn of its own.
+        """
+        ...
+
     async def interrupt(self) -> None: ...
 
     async def set_permission_mode(self, mode: PermissionMode) -> None:
@@ -175,6 +196,10 @@ class Engine(Protocol):
 
     def slash_commands(self) -> set[str] | None:
         """The slash commands the running engine knows (names without ``/``); ``None`` when it cannot say."""
+        ...
+
+    def command_list(self) -> list[AgentCommand] | None:
+        """The running engine's commands and skills with descriptions (v0.11 item 66); ``None`` when it cannot say."""
         ...
 
     async def close(self) -> None: ...
@@ -571,6 +596,9 @@ def build_options(
     ``open`` hook on ``Bash``, and ``VIEWER_PROMPT`` appended to
     ``system_prompt`` (the deployment's, ``deployment_system_prompt``;
     ``None`` is the SDK's empty prompt).
+
+    ``PORTICO_ATTENDED=1`` is always in the engine's environment: a person
+    drives this chat (v0.11).
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
     extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
@@ -588,6 +616,7 @@ def build_options(
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
+        env={ATTENDED_ENV: "1"},
         hooks={
             "PreToolUse": pre_tool_use,
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
@@ -627,6 +656,48 @@ def friendly_model_name(model: str | None, environ: Mapping[str, str]) -> str | 
         if (configured and bare(configured) == wanted) or wanted.lower() == family.lower():
             return name
     return None
+
+
+def agent_commands(raw: Any) -> list[AgentCommand]:
+    """The engine's ``commands`` (``get_server_info()``) as the composer's list (v0.11 item 66).
+
+    Each entry is ``{name, description, argumentHint}``; the description
+    ends in its source in parentheses ("... (user)"), which becomes
+    ``source``. The description keeps its first line and first sentence,
+    at most ``COMMAND_DESCRIPTION_LIMIT`` characters. Entries without a
+    usable name, and repeats of a name, are skipped; order is kept. So are
+    the engine's internal commands (a name starting ``__``) and ones it
+    marks "(removed)": neither is something a person can usefully pick.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[AgentCommand] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip().lstrip("/"):
+            continue
+        name = name.strip().lstrip("/")
+        if name in seen or name.startswith("__"):
+            continue
+        seen.add(name)
+        text = entry.get("description")
+        text = text.strip() if isinstance(text, str) else ""
+        if text.lower().startswith("(removed)"):
+            continue
+        source: str | None = None
+        m = _COMMAND_SOURCE.search(text)
+        if m:
+            source = m.group(1).strip() or None
+            text = text[: m.start()]
+        text = text.strip().split("\n", 1)[0].strip()
+        text = _SENTENCE_END.split(text, 1)[0]
+        if len(text) > COMMAND_DESCRIPTION_LIMIT:
+            text = text[: COMMAND_DESCRIPTION_LIMIT - 1].rstrip() + "…"
+        out.append(AgentCommand(name=name, description=text, source=source))
+    return out
 
 
 # --- the SDK adapter -------------------------------------------------------------
@@ -674,6 +745,9 @@ class SDKEngine:
         # Slash command names (no ``/``) from the engine's initialize answer
         # and its ``init`` message; ``None`` until either has said.
         self._commands: set[str] | None = None
+        # v0.11 (item 66): the same commands with descriptions, from the
+        # initialize answer only (``init`` carries names alone).
+        self._command_list: list[AgentCommand] | None = None
         # v0.10: this engine's subagents and workflows.
         self.agents = AgentTracker()
 
@@ -747,6 +821,7 @@ class SDKEngine:
         commands = info.get("commands") if isinstance(info, Mapping) else None
         if isinstance(commands, list):
             self._add_commands(c.get("name") if isinstance(c, Mapping) else c for c in commands)
+            self._command_list = agent_commands(commands)
 
     def _add_commands(self, names: Iterable[Any]) -> None:
         found = {n.strip().lstrip("/") for n in names if isinstance(n, str) and n.strip()}
@@ -754,6 +829,9 @@ class SDKEngine:
 
     def slash_commands(self) -> set[str] | None:
         return set(self._commands) if self._commands is not None else None
+
+    def command_list(self) -> list[AgentCommand] | None:
+        return list(self._command_list) if self._command_list is not None else None
 
     def _note_session(self, msg: Message) -> None:
         sid: str | None = None
@@ -772,6 +850,12 @@ class SDKEngine:
         if self._client is None:
             raise RuntimeError("engine not started")
         self.turn += 1
+        await self._client.query(text)
+
+    async def inject(self, text: str) -> None:
+        """``query`` mid-turn: checked live 10-30, the engine takes it at its next step, in the same turn."""
+        if self._client is None:
+            raise RuntimeError("engine not started")
         await self._client.query(text)
 
     async def interrupt(self) -> None:

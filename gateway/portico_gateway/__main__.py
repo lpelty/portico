@@ -38,6 +38,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     except (ConfigError, PluginError, StateError, AlreadyRunning, OSError) as e:
         print(f"portico-gateway: {e}", file=sys.stderr)
         return 1
+    if config.login_shell_path:
+        import os
+
+        from portico_gateway.shellpath import apply_login_shell_path
+
+        if apply_login_shell_path(os.environ):
+            _env_file_path_first(args)
     try:
         return asyncio.run(_run_server(config, state, args.port, plugins=plugins, config_path=config_path))
     except StateError as e:
@@ -328,7 +335,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _load_env_file(args: argparse.Namespace) -> None:
     """Load ``<state>/env`` into this process's environment before ``run`` or ``doctor``.
 
-    Values are literal (never sourced by a shell). Variables already set win. A
+    Values are literal (never sourced by a shell). Variables already set win,
+    except PATH, whose entries from the file go first. A
     malformed file loads nothing and is named by line number on stderr; the
     doctor then reports it as its ``env`` check, so this never stops the command.
     """
@@ -345,6 +353,21 @@ def _load_env_file(args: argparse.Namespace) -> None:
         print(f"portico-gateway: {path} not loaded: {e}; run bin/doctor", file=sys.stderr)
     except OSError as e:
         print(f"portico-gateway: {path} not loaded: {e}; run bin/doctor", file=sys.stderr)
+
+
+def _env_file_path_first(args: argparse.Namespace) -> None:
+    """After the login shell's PATH: the env file's PATH entries first again, so a deployment's explicit PATH wins."""
+    import os
+
+    from portico_gateway.doctor import ENV_FILE, EnvFileError, apply_env_file
+    from portico_gateway.state import StateDir
+
+    state_arg = getattr(args, "state", None)
+    path = (Path(state_arg).expanduser() if state_arg else StateDir.default_path()) / ENV_FILE
+    try:
+        apply_env_file(path, os.environ)
+    except (EnvFileError, OSError):
+        pass  # already reported when the file first loaded
 
 
 def main(argv: list[str] | None = None) -> int:

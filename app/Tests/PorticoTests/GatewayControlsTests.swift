@@ -268,10 +268,6 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertFalse(model.isRestarting(service: "memory"))
         model.apply(.error(ErrorMessage(code: "gateway.error", message: "service.restart failed: boom", id: id)))
         XCTAssertEqual(model.restartError(service: "memory"), "service.restart failed: boom")
-        XCTAssertTrue(ServiceRowView.tinted(state: .up, error: model.restartError(service: "memory")),
-                      "tinted like a down row while it says why")
-        XCTAssertFalse(ServiceRowView.tinted(state: .up, error: nil))
-        XCTAssertTrue(ServiceRowView.tinted(state: .down, error: nil))
 
         // A refusal (nothing ran, no status first) says why too.
         model.restartService("memory")

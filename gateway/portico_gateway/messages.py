@@ -41,6 +41,12 @@ PhaseState = Literal["pending", "running", "done", "failed"]
 # ``workflow.*`` frames and the tool rows of a subagent's own steps.
 AGENTS_CAPABILITY = "agents.v1"
 
+# v0.11 (item 74): the capability, on both sides, for messages typed while
+# the agent works. A gateway that lists it queues a ``message.send`` that
+# arrives during a turn (``chat.queued``) instead of refusing it, but only
+# for an app that lists it too; only such an app is sent ``chat.queue``.
+QUEUE_CAPABILITY = "queue.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -170,6 +176,18 @@ class Hit(Strict):
     snippet: str | None = None
 
 
+class QueuedMessage(Strict):
+    """A message the person sent during a turn, held by the gateway until it goes (v0.11).
+
+    ``id`` is the ``message.send`` request's ``id`` (one the gateway made
+    up when the request had none); ``text`` and ``attachments`` are as sent.
+    """
+
+    id: str
+    text: str
+    attachments: list[str] = []
+
+
 # --- envelope ----------------------------------------------------------------
 
 
@@ -228,6 +246,19 @@ class MessageSend(Envelope):
     chat: int
     text: str
     attachments: list[str] = []
+
+
+class ChatUnqueue(Envelope):
+    """Take a queued message (``id``, as ``chat.queued`` named it) off the queue before it goes (v0.11).
+
+    Answered with the ``chat.queue`` that follows, or ``error
+    code=chat.not_queued`` when it has already gone to the agent (or was
+    never queued). An edit is this, then a new ``message.send``.
+    """
+
+    type: Literal["chat.unqueue"] = "chat.unqueue"
+    chat: int
+    id: str
 
 
 class SessionMode(Envelope):
@@ -310,6 +341,18 @@ class ServicesRestartAll(Envelope):
     type: Literal["services.restart_all"] = "services.restart_all"
 
 
+class SessionsClear(Envelope):
+    """Forget the ended sessions, keeping the live one (v0.11, single presentation only).
+
+    Only when ``hello.capabilities`` has ``sessions.clear``. Only Portico's
+    list is cleared: the engine's transcripts on disk stay, and the numbers
+    are never handed out again. Answered with ``chat.list``; refused with
+    ``sessions.not_single`` in multiple presentation.
+    """
+
+    type: Literal["sessions.clear"] = "sessions.clear"
+
+
 class FilesSearch(Envelope):
     """Search names and text under a root; answered with ``files.results``."""
 
@@ -353,11 +396,17 @@ class HelloServer(Envelope):
     # The mode a new session starts in (config ``permission_mode``), so the
     # start screen shows the mode the session will really run in (v0.3).
     permission_mode: PermissionMode | None = None
+    # v0.11: the Files pane leaves out the session's own folder (the
+    # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
+    hide_session_folder: bool = False
 
 
 class ChatList(Envelope):
     type: Literal["chat.list"] = "chat.list"
     chats: list[ChatSummary] = []
+    # v0.11: the number the next new session will have, so the welcome
+    # names it ("Session 42") before it exists. Absent from an older gateway.
+    next_chat: int | None = None
 
 
 class ChatState(Envelope):
@@ -547,6 +596,38 @@ class ChatNotice(Envelope):
     text: str
 
 
+class ChatQueued(Envelope):
+    """The answer to a ``message.send`` that arrived during a turn or the log step (v0.11).
+
+    The message is held, not refused: ``id`` is the request's (the queued
+    message's id from now on). Only to an app that declared ``queue.v1``;
+    an older app still gets ``error code=chat.busy``.
+    """
+
+    type: Literal["chat.queued"] = "chat.queued"
+    chat: int
+    id: str
+
+
+class ChatQueue(Envelope):
+    """The messages a chat holds for the agent, oldest first, after every change (v0.11).
+
+    Sent when one is queued, unqueued, or goes to the agent, and after
+    ``chat.live`` on every ``chat.open`` (an empty list too), so a
+    reconnecting app sees what is still waiting. Not in the ring: the list
+    as it stands replaces whatever the app had.
+
+    ``returned`` (v0.11, Larry 10-30): messages taken out of the queue by
+    ``turn.stop``, oldest first, for the app to put back in the composer
+    (text and attachments) to send again or delete. Absent otherwise.
+    """
+
+    type: Literal["chat.queue"] = "chat.queue"
+    chat: int
+    items: list[QueuedMessage] = []
+    returned: list[QueuedMessage] | None = None
+
+
 class ConfigStale(Envelope):
     """The config file changed after the gateway started; restart the gateway to apply it."""
 
@@ -558,6 +639,32 @@ class UpdateAvailable(Envelope):
 
     type: Literal["update.available"] = "update.available"
     version: str
+
+
+class AgentCommand(Strict):
+    """One of the agent's slash commands or skills (v0.11 item 66), for the composer's list.
+
+    ``name`` has no ``/`` (``standup``, ``acme:review``); ``description`` is
+    one line (its first sentence); ``source`` is where the engine says it
+    comes from (``user``, ``project``, a plug-in's name), when it says.
+    """
+
+    name: str
+    description: str = ""
+    source: str | None = None
+
+
+class ChatCommands(Envelope):
+    """The agent's commands and skills in ``folder``, for slash completion (v0.11 item 66).
+
+    Sent with ``chat`` after that chat's engine starts; sent without it on
+    connect, from the list the gateway kept for the folder, so the welcome
+    has one before any engine runs. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["chat.commands"] = "chat.commands"
+    folder: str
+    commands: list[AgentCommand] = []
 
 
 class Error(Envelope):
@@ -712,6 +819,8 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SessionLog,
     ServiceRestart,
     ServicesRestartAll,
+    SessionsClear,
+    ChatUnqueue,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -747,6 +856,9 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     WorkflowStarted,
     WorkflowPhase,
     WorkflowFinished,
+    ChatQueued,
+    ChatQueue,
+    ChatCommands,
     Error,
 )
 
@@ -840,7 +952,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.10.0", capabilities=["agents.v1"]),
+        HelloClient(ts=_TS, app_version="0.11.0", capabilities=["agents.v1", "queue.v1"]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -871,6 +983,8 @@ def example_messages() -> dict[str, BaseModel]:
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
+        SessionsClear(ts=_TS, id="req-9"),
+        ChatUnqueue(ts=_TS, chat=1, id="req-10"),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -887,6 +1001,7 @@ def example_messages() -> dict[str, BaseModel]:
             can_update=True,
             default_folder="/Users/someone/projects",
             permission_mode="auto",
+            hide_session_folder=False,
         ),
         ChatList(
             ts=_TS,
@@ -897,6 +1012,7 @@ def example_messages() -> dict[str, BaseModel]:
                 ),
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
             ],
+            next_chat=3,
         ),
         ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default", unlogged=True),
         ChatHistory(
@@ -1036,6 +1152,21 @@ def example_messages() -> dict[str, BaseModel]:
         WorkflowStarted(ts=_TS, chat=1, seq=57, turn=3, id="w9k2m4", name="audit-quotes", phases=["find", "verify", "report"]),
         WorkflowPhase(ts=_TS, chat=1, seq=58, id="w9k2m4", index=1, state="running"),
         WorkflowFinished(ts=_TS, chat=1, seq=59, id="w9k2m4", outcome="done", summary="Workflow audit-quotes completed"),
+        ChatQueued(ts=_TS, chat=1, id="req-9"),
+        ChatQueue(
+            ts=_TS,
+            chat=1,
+            items=[QueuedMessage(id="req-9", text="Also check that uvx resolves — the search server needs it too.")],
+        ),
+        ChatCommands(
+            ts=_TS,
+            chat=1,
+            folder=_FOLDER,
+            commands=[
+                AgentCommand(name="standup", description="Draft a standup from today's log.", source="user"),
+                AgentCommand(name="acme:review", description="Review a change before it ships", source="acme-tools"),
+            ],
+        ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

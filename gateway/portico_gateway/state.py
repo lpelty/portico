@@ -7,6 +7,8 @@ Everything the gateway keeps between launches lives in one directory,
 - ``ledger.json``  host, port, pid, epoch of the running gateway — a hint the
                    app probes with ``hello`` and the token, never trusted
 - ``index.json``   the chats: numbers, folders, engine session ids, artifacts
+- ``commands.json`` the agent's slash commands, last list per folder (v0.11
+                   item 66) — a cache: unreadable is empty, never an error
 - ``gateway.lock`` flock that refuses a second gateway on the same directory
 - ``config.toml``  the deployment's configuration (read by ``config.py``)
 """
@@ -21,10 +23,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .messages import Artifact, ChatStateWord, PermissionMode, PermissionOutcome
+from .messages import AgentCommand, Artifact, ChatStateWord, PermissionMode, PermissionOutcome
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
+# v0.11 (item 66): how many folders' command lists ``commands.json`` keeps,
+# newest last; older folders are dropped when it is written.
+COMMAND_FOLDERS_KEPT = 20
 
 
 class StateError(Exception):
@@ -98,6 +103,16 @@ class Index(BaseModel):
 
     chats: list[ChatRecord] = []
     next_chat: int = 1
+    # v0.11: the ``default_folder`` (resolved) the gateway last ran with, so
+    # a change can be told from a folder the person chose (``None`` in an
+    # older index).
+    default_folder: str | None = None
+
+
+class CommandLists(BaseModel):
+    """``commands.json``: the agent's commands, last list per folder, oldest first (v0.11 item 66)."""
+
+    folders: dict[str, list[AgentCommand]] = {}
 
 
 class StateDir:
@@ -127,6 +142,10 @@ class StateDir:
     @property
     def index_path(self) -> Path:
         return self.path / "index.json"
+
+    @property
+    def commands_path(self) -> Path:
+        return self.path / "commands.json"
 
     @property
     def lock_path(self) -> Path:
@@ -199,6 +218,24 @@ class StateDir:
     def save_index(self, index: Index) -> None:
         """Write the whole index through a temp file and rename, so a crash never leaves half a file."""
         self._atomic_write(self.index_path, index.model_dump_json(indent=2) + "\n")
+
+    # --- commands (v0.11 item 66) ------------------------------------------------
+
+    def load_commands(self) -> dict[str, list[AgentCommand]]:
+        """The kept command lists by folder, oldest first; empty when missing or unreadable (a cache)."""
+        try:
+            raw = self.commands_path.read_text(encoding="utf-8")
+        except (FileNotFoundError, UnicodeDecodeError):
+            return {}
+        try:
+            return CommandLists.model_validate_json(raw).folders
+        except ValidationError:
+            return {}
+
+    def save_commands(self, lists: dict[str, list[AgentCommand]]) -> None:
+        """Write the lists (insertion order, newest last), keeping the newest ``COMMAND_FOLDERS_KEPT``."""
+        kept = dict(list(lists.items())[-COMMAND_FOLDERS_KEPT:])
+        self._atomic_write(self.commands_path, CommandLists(folders=kept).model_dump_json(indent=2) + "\n")
 
     # --- lock -----------------------------------------------------------------
 

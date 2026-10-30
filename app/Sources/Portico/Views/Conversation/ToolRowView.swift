@@ -17,6 +17,33 @@ struct ToolRowPresentation: Equatable {
 
     var icon: String { Self.toolIcon }
 
+    /// The tool's name as the row reads it (v0.11, item 59). An MCP tool's
+    /// id (`mcp__memory__query_documents`) reads `memory · query documents`:
+    /// the server, then the tool with its underscores as spaces. The
+    /// `mcp__<server>__<tool>` shape is the engine's naming, not a tool the
+    /// app knows. Any other name reads as it came.
+    static func title(for tool: String) -> String {
+        let prefix = "mcp__"
+        guard tool.hasPrefix(prefix) else { return tool }
+        let rest = tool.dropFirst(prefix.count)
+        guard let split = rest.range(of: "__"), split.lowerBound > rest.startIndex else { return tool }
+        let server = rest[..<split.lowerBound]
+        let name = rest[split.upperBound...].replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return tool }
+        return "\(server) · \(name)"
+    }
+
+    var title: String { Self.title(for: row.tool) }
+
+    /// What the row shows after the title: the start's summary, or nothing
+    /// when it only repeats the tool's id (an MCP tool with no better
+    /// summary, which read `mcp__x__y mcp__x__y` before v0.11).
+    var summaryText: String? {
+        let summary = row.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty || summary == row.tool ? nil : row.summary
+    }
+
     /// `running` until the finish arrives; then the finish summary, or
     /// `failed: <summary>` when the call did not go well.
     var stateText: String {
@@ -57,6 +84,14 @@ struct ToolRowPresentation: Equatable {
         }
     }
 
+    /// What a failed call said, on the row in the deny colour (v0.11, 59,
+    /// AG7 option E: "exit 1 · not found"); `nil` unless it failed with words.
+    var failureDetail: String? {
+        guard row.finished, row.ok == false else { return nil }
+        let result = (row.result ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? nil : result
+    }
+
     /// The line under a declined row: the note the person gave, if any.
     var noteLine: String? {
         guard row.permission == .declined, let note = row.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty else {
@@ -75,12 +110,18 @@ struct ToolRowPresentation: Equatable {
 /// tool's name, what it touched (relative to the chat's folder when it is
 /// inside it), and a chevron. Disclosing it shows the input as JSON and,
 /// once finished, the result line.
+///
+/// v0.11 (59, AG7 option E): no fill and no border at rest, the panel fill
+/// under the pointer (and while open, so the input reads on it); the name
+/// in secondary text, what it touched in tertiary; the state icon keeps its
+/// colour, and a failure's words follow on the row in the deny colour.
 struct ToolRowView: View {
     let row: ToolRow
     var folder: String? = nil
     /// Its permission card is open (pinned above the composer).
     var waiting: Bool = false
     @State private var expanded = false
+    @State private var hovering = false
 
     private var shown: ToolRowPresentation { ToolRowPresentation(row: row) }
 
@@ -117,14 +158,25 @@ struct ToolRowView: View {
                 HStack(spacing: 8) {
                     stateIcon
                         .frame(width: 14, height: 14)
-                    Text(row.tool)
+                    Text(shown.title)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                    Text(Self.display(row.summary, in: folder))
-                        .font(.system(size: 13))
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .help(row.tool)
+                    if let summary = shown.summaryText {
+                        Text(Self.display(summary, in: folder))
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.text3)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if let failure = shown.failureDetail {
+                        Text(failure)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.deny)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                     Spacer(minLength: 8)
                     if let outcome = shown.outcomeText(waiting: waiting) {
                         Text(outcome)
@@ -141,7 +193,9 @@ struct ToolRowView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.hover)
+            // The row's own fill answers the pointer (below), not a tint on the label.
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
             if expanded {
                 Text(shown.prettyInput)
                     .font(.system(size: 11, design: .monospaced))
@@ -153,14 +207,16 @@ struct ToolRowView: View {
                 if row.finished {
                     Text(shown.stateText)
                         .font(.system(size: 12))
-                        .foregroundStyle(row.ok == false ? .red : Theme.text2)
+                        .foregroundStyle(row.ok == false ? Theme.deny : Theme.text2)
                         .textSelection(.enabled)
                 }
             }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 10)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(hovering || expanded ? Theme.panel : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onHover { hovering = $0 }
         .help(shown.stateText)
     }
 
@@ -184,7 +240,7 @@ struct ToolRowView: View {
         } else if row.ok == false {
             Image(systemName: "xmark")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.red)
+                .foregroundStyle(Theme.deny)
         } else {
             Image(systemName: "checkmark")
                 .font(.system(size: 11, weight: .semibold))

@@ -66,6 +66,10 @@ struct HoverButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == HoverButtonStyle {
     /// `HoverButtonStyle` with the rounded-rectangle tint.
     static var hover: HoverButtonStyle { HoverButtonStyle() }
+    /// `HoverButtonStyle` in the composer's button box: radius 6, as Send (v0.11, 72).
+    static var hoverBox: HoverButtonStyle {
+        HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: InputBar.iconButtonCorner, style: .continuous)))
+    }
     /// `HoverButtonStyle` tinting a capsule (chips).
     static var hoverCapsule: HoverButtonStyle { HoverButtonStyle(shape: AnyShape(Capsule())) }
     /// `HoverButtonStyle` for a button that is only words.

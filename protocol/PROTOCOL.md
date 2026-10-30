@@ -85,8 +85,9 @@ sequence numbers are stale and it must re-fetch history.
 ### `hello` — `HelloClient`
 First frame on every connection. `protocol: 1`, `app_version: string`;
 v0.10: `capabilities?: [string]`, what the app can show beyond the
-messages every app reads. The one so far is `agents.v1` (see Subagents and
-workflows): without it the gateway sends none of those frames. Absent
+messages every app reads: `agents.v1` (see Subagents and
+workflows): without it the gateway sends none of those frames; v0.11:
+`queue.v1` (see Messages while the agent works). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -213,7 +214,8 @@ first, exactly as the send would. An engine that cannot say what it knows
 gets the message as typed.
 
 A send while a turn is running (state `working` or `waiting on you`) is
-refused with `error code=chat.busy`. Every attachment must be an absolute
+refused with `error code=chat.busy` — v0.11: unless both sides list
+`queue.v1`, when it is queued instead (see Messages while the agent works). Every attachment must be an absolute
 path to an existing file: a path that does not exist, or names a
 directory, is refused with `error code=attachment.missing` and nothing is
 sent to the engine. A send on a `stopped` chat restarts its engine first.
@@ -238,7 +240,9 @@ and closes that engine, since one that ignored an interrupt is in no known
 state; the next send then starts a fresh engine on the same session, as
 after `chat.stop`) and the chat returns to `idle`. When the engine did
 finish in time it stays up for the next send. A stop when nothing is
-running does nothing and answers nothing.
+running does nothing and answers nothing. v0.11: messages queued for the
+chat come back to the app (`chat.queue` with `returned`; see Messages
+while the agent works), running or not.
 
 ### `card.answer` — `CardAnswer`
 `chat`, `id` (the card's id), `answer: object`, `scope: once | chat | always | absent`,
@@ -317,8 +321,9 @@ ending this session"; once it has ended, "Session ended · continues in
 Session M". In the next session, its first event: "Continues Session N".
 All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
 renew is running), `session.ended` (already ended). While a renew runs,
-`message.send` to that session is `chat.busy`; `turn.stop` stops the log
-turn; `card.answer` answers its cards.
+`message.send` to that session is `chat.busy` (v0.11: queued, for an app
+with `queue.v1`; one still held when the session ends goes to the next
+session); `turn.stop` stops the log turn; `card.answer` answers its cards.
 
 A log step that finishes `done` also sets the ending session's
 `logged_at` (v0.4).
@@ -341,7 +346,8 @@ logged". A refused `session.log` writes none. Errors: `chat.unknown`, `session.e
 ended), `session.cannot_log` (the deployment has no log step:
 `hello.can_log` is false), `chat.busy` (a turn, a renewal or another log
 is running). While a log runs, `message.send`, `session.renew` and
-`session.log` to that session are `chat.busy`; `turn.stop` stops the log
+`session.log` to that session are `chat.busy` (v0.11: `message.send` is
+queued for an app with `queue.v1`, and can go into the log turn itself); `turn.stop` stops the log
 turn; `card.answer` answers its cards. The app turns a typed `/log` into
 this request; should `/log` arrive as message text, the gateway treats it
 as a known command (like `/new`) and passes it to the engine as typed.
@@ -387,6 +393,16 @@ request's `id` and the reason. Errors before anything runs:
 services), `services.busy` (one is already running). An app that never
 sends it is unaffected.
 
+### `sessions.clear` — `SessionsClear` *(v0.11)*
+`id`. Only when `hello.capabilities` has `sessions.clear` (the reference
+gateway lists it in single presentation). The gateway forgets every ended
+session, keeping the live one, and answers with `chat.list`. Only the
+gateway's list is cleared: the engine's transcripts on disk stay, and the
+numbers are never handed out again (`chat.list.next_chat` does not go
+back). In multiple presentation it is refused with
+`error code=sessions.not_single`. An app that never sends it is
+unaffected.
+
 ### `files.search` — `FilesSearch`
 `root` (named as for `files.list`; `chat` with `chat` set), `query`, `id`.
 Reply: `files.results`, or `error` with the `files.list` root codes or
@@ -429,8 +445,12 @@ v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 `files`, `producer`; v0.8: `services.restart_all` when the deployment can
 restart all its services at once, so the app offers Restart all
 services; v0.10: `agents.v1` when the gateway sends subagent and workflow
-frames to an app that lists the same in its own `hello`). Always followed by `chat.list`, so the app has the
-sidebar before anything else arrives, and then (v0.4) `services.status`.
+frames to an app that lists the same in its own `hello`; v0.11:
+`sessions.clear` in single presentation, so the app offers Clear earlier
+sessions…; v0.11: `queue.v1` when it queues a send made during a turn for
+an app that lists the same). Always followed by `chat.list`, so the app has the
+sidebar before anything else arrives, and then (v0.4) `services.status`
+and (v0.11) any kept `chat.commands`.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
@@ -443,6 +463,11 @@ folder; after the folder the person last used, before the first root);
 starts in — the start screen shows it, and a new session the person did
 not pick a mode for runs in it).
 
+v0.11: `hide_session_folder: bool` (default `false`; config `[files]
+hide_session_folder`): the app's Files pane leaves out the chat's own
+folder (the `chat` root) when the deployment has roots of its own to show.
+The `chat` root still resolves for `files.list` and paths in it still show.
+
 ### `chat.list` — `ChatList`
 `chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
 plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,
@@ -452,6 +477,14 @@ change to the set of chats or their aliases (`chat.new`, `chat.alias`, `chat.rem
 `session.renew`, `session.log`), and (v0.8) when a session's generated
 title arrives. State changes alone travel as
 `chat.state`. Not chat-scoped: no `seq`, not replayed in `chat.history`.
+
+`next_chat?` *(v0.11)* is the number the next new session will have, so
+the app's welcome can name it ("Session 17") before it exists: the
+gateway's own counter, or (reference gateway) the number its `[sessions]
+next_number` command gave when the gateway started with no live session,
+when that is not below the counter. The session's real number is the one
+`chat.state` and `chat.list` report once it exists. Absent from an older
+gateway.
 
 `ChatSummary.logged_at?` *(v0.4)* is when the session was last logged
 (UTC, ISO 8601): a `session.log`, or a renewal's log step, that finished
@@ -554,7 +587,10 @@ kept in the ring, so a replay from the ring shows the person's side of
 the conversation; a transcript replay (`chat.history` after a gateway
 restart or past the ring) carries it too, without `seq`. The app renders
 the one `user.text` per turn as the bubble and does not add a second from
-the `message.send` it sent.
+the `message.send` it sent. v0.11: a queued message written into a
+running turn is a further `user.text` in that turn, at the point it went
+(see Messages while the agent works); a transcript replay shows it as the
+start of a turn of its own.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
@@ -670,7 +706,8 @@ every artifact. `text` never auto-opens.
 address, or named a viewable file that exists when the turn ends), or
 `producer` (the HTTP endpoint). `title` is the file name or the URL
 unless a producer gave one. A file is reported wherever it lives — a
-scratch directory outside the chat's folder opens like any other.
+scratch directory outside the chat's folder is listed like any other (and,
+since 0.11, never opens; see below).
 
 Every artifact goes in the history. `open` is true on the artifact the
 app should show now: the turn's artifacts are sent together just before
@@ -698,6 +735,12 @@ background subagent writes while no turn is running is reported when the
 write finishes, as a turn would report that one file (`open: true` when
 it is viewable). The app shows the newest artifact that opens (or that the
 person picks) over the one it remembered from the last quit.
+
+Since 0.11 (gateway behaviour; no new frame or field): a file the turn
+wrote or named takes `open: true` only when it is inside the chat's folder
+or a configured root, the rule `show_in_viewer` keeps. A file outside them
+is listed with `open: false`, and the newest viewable file inside them
+opens instead. URLs and producer artifacts are unchanged.
 
 ### `files.list` — `FilesList`
 `root`, `path` (normalised relative path, `""` for the root itself),
@@ -788,6 +831,29 @@ plug-in's). Rows appear with the first reading; there are no `checking`
 rows before it. `can_restart` is true for a row whose id matches a
 `[[services]]` entry with a `restart`.
 
+### `chat.commands` — `ChatCommands` *(v0.11)*
+`chat?`, `folder`, `commands: [{name, description, source?}]`. The
+agent's slash commands and skills in `folder`, for the composer's slash
+list: `name` without the `/` (`standup`, `acme:review`), `description`
+one line (default empty), `source` where the engine says the command
+comes from (`user`, `project`, a plug-in's name), when it says.
+
+Sent with `chat` after that chat's engine starts, when the engine can
+list its commands; an engine that cannot sends nothing, and a failure to
+read them is logged, never fatal. The gateway keeps the last list per
+folder (`commands.json` in the state directory, the newest 20 folders),
+and on every connection sends, after `services.status`, the kept list for
+the default folder and for each live session's folder, without `chat`, so
+the welcome has one before any engine of this launch has started. Not
+stamped (a reading, not history). An older app ignores it.
+
+Reference gateway: the list is the SDK's `get_server_info()["commands"]`
+(`{name, description, argumentHint}`). The description's trailing source
+in parentheses ("... (user)") becomes `source`; the rest keeps its first
+line and first sentence, at most 160 characters (cut with `…`); the app
+truncates further to fit a row. Repeated names keep the first.
+`argumentHint` is not sent (argument completion is not in v0.11).
+
 ### `files.results` — `FilesResults`
 `id`, `root`, `query`, `hits: [{path, snippet?}]` with `path` relative to
 the root. A direct reply: no `seq`.
@@ -800,7 +866,8 @@ the socket is closed),
 `protocol.unsupported` (a known type this gateway has no handler for),
 `session.replaced`, `chat.unknown` (no chat with that number),
 `chat.folder_invalid` (`chat.new` on a path that is not an existing
-directory), `chat.busy`, `attachment.missing`, `engine.start_failed`
+directory), `chat.busy`, `chat.not_queued` (v0.11: `chat.unqueue` for a
+message that has gone to the agent, or was never queued), `attachment.missing`, `engine.start_failed`
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
 `card.stale`, `card.invalid_answer`, `files.unknown_root`, `files.outside_root`,
@@ -825,6 +892,62 @@ and is not stamped: refusals are replies, not history.
 A bad frame after `hello` (unknown type, unknown field, not JSON) is
 answered with an `error` and the connection stays open; only the first
 frame is fatal.
+
+## Messages while the agent works *(v0.11)*
+
+A person can type while the agent works, as in a terminal. When the
+gateway's `hello` and the app's both list `queue.v1`, a `message.send`
+that arrives while a turn or a log step runs is held instead of refused:
+
+- The gateway answers `chat.queued` (the request's `id`, which names the
+  message from now on; the gateway makes one up when the request had
+  none) and sends `chat.queue` with the chat's list. Attachments are
+  checked at once (`attachment.missing`), as for any send.
+- At the main agent's next tool result (`tool.finished` without
+  `agent_id`: a subagent's step does not count) the gateway writes the
+  held messages, oldest first, into the running turn. Each becomes a
+  `user.text` in **that turn**, stamped, right after a `chat.queue`
+  without it; the engine reads it at its next step and answers within the
+  same turn. A message that starts with a slash command is never written
+  mid-turn: it, and everything queued behind it, waits for the turn's end.
+- One still held when the turn ends (`done` or `error`) is sent
+  as the next turn — `turn.started`, `user.text`, … as for a
+  `message.send` — one message at a time, in order; the rest wait for
+  that turn's next step or its end. During a log step they wait for the
+  step to finish; held through a renewal, they go in the session that
+  follows.
+- `chat.unqueue {chat, id}` takes one back; answered with `chat.queue`,
+  or `error code=chat.not_queued` when it has gone already. An edit is an
+  unqueue and a new send (which queues at the end).
+- `turn.stop` hands back everything held, at once: one `chat.queue`
+  with no `items` and the messages, oldest first, as `returned`. The app
+  puts them back in the composer (text and attachments), to send again
+  or delete, as a terminal agent does on interrupt. A message queued
+  after the stop, while the stopped turn winds down, is never written
+  into that turn; when it ends (`turn.finished outcome=stopped`) it comes
+  back the same way. Nothing held goes on its own after a stop. With no
+  app attached at that moment the frame, and the messages, are dropped.
+- `chat.stop` and `chat.remove` drop the queue (`chat.queue` with no
+  items after a stop). The queue lives in the gateway's memory: stopping
+  the gateway drops it.
+- `chat.open` sends `chat.queue` after `chat.live` (an empty list too), so
+  a reconnecting app shows exactly what is still waiting.
+
+Without `queue.v1` on both sides nothing changes: a send during a turn is
+`chat.busy`, and the gateway sends neither frame below.
+
+### `chat.unqueue` — `ChatUnqueue` *(app → gateway)*
+`chat`, `id` (as `chat.queued` named it).
+
+### `chat.queued` — `ChatQueued`
+`chat`, `id`. The answer to a `message.send` that was queued. Not stamped.
+
+### `chat.queue` — `ChatQueue`
+`chat`, `items: [{id, text, attachments}]`, oldest first: what the chat
+holds for the agent, after every change. Not stamped and not in the ring:
+each one replaces the list the app had. `returned?: [{id, text,
+attachments}]`, oldest first: messages a `turn.stop` took out of the
+queue, for the composer (absent otherwise).
 
 ## Subagents and workflows *(v0.10)*
 

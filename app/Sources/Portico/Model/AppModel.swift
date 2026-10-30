@@ -100,6 +100,9 @@ final class AppModel: ObservableObject {
     /// main column draws nothing rather than a welcome that may change
     /// (`MainScreen`). A reconnect does not reset it.
     @Published private(set) var chatsListed = false
+    /// The number the gateway will give the next new session (v0.11,
+    /// `chat.list`'s `next_chat`); `nil` from an older gateway.
+    @Published private(set) var nextChat: Int?
     /// A conversation has been shown in this run (v0.6): from then on, no
     /// selection means the live session, not the welcome.
     private(set) var conversationShown = false
@@ -184,6 +187,12 @@ final class AppModel: ObservableObject {
     /// display name when the deployment gives one): the deployment's model
     /// does not change when a session is renewed.
     @Published private(set) var latestModel: String?
+    /// The agent's commands and skills per folder, from `chat.commands`
+    /// (v0.11 item 66), for the composer's slash list.
+    @Published private(set) var commandsByFolder: [String: [AgentCommand]] = [:]
+    /// The folder of the last `chat.commands` heard: its list stands in for
+    /// a folder with none yet (the agent's commands rarely differ by folder).
+    private var latestCommandsFolder: String?
     /// Per chat, the id of a `session.renew` the gateway has not answered:
     /// the card shows it busy and the composer waits.
     @Published var renewing: [Int: String] = [:]
@@ -333,6 +342,9 @@ final class AppModel: ObservableObject {
     }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
+    /// Per chat, the messages the gateway holds for the agent's next step
+    /// (v0.11, item 74), oldest first, as its last `chat.queue` listed them.
+    @Published private(set) var queued: [Int: [QueuedMessage]] = [:]
     /// The artifact to put back in a chat's viewer when it is listed: the
     /// one showing when the app last quit (v0.6, `restoreViewerAtLaunch`).
     private var launchViewer: [Int: String] = [:]
@@ -416,6 +428,8 @@ final class AppModel: ObservableObject {
             // A restarted gateway never saw (or will never answer) a send in
             // flight; the replay from the beginning carries any turn that ran.
             pendingSends = [:]
+            // Its queue went with it (v0.11); `chat.open` says what is held.
+            queued = [:]
         }
         // A send still in flight went out before the opens below: their
         // replays may hold it (or the old connection lost it).
@@ -496,6 +510,7 @@ final class AppModel: ObservableObject {
 
         case .chatList(let list):
             chats = list.chats
+            nextChat = list.nextChat
             chatsListed = true
             gaveUpBeforeList = false
             if let selected, !list.chats.contains(where: { $0.chat == selected }) {
@@ -532,6 +547,20 @@ final class AppModel: ObservableObject {
 
         case .chatHistory(let history):
             applyHistory(history)
+
+        case .chatQueued(let accepted):
+            // Held for the agent's next step (v0.11): the send is answered;
+            // the card comes with the `chat.queue` that follows.
+            if let id = accepted.id, pendingSends[accepted.chat]?.id == id {
+                pendingSends[accepted.chat] = nil
+            }
+
+        case .chatQueue(let list):
+            queued[list.chat] = list.items.isEmpty ? nil : list.items
+            // Stop gave them back (v0.11, Larry 10-30): into the composer, to send again or delete.
+            if let returned = list.returned, !returned.isEmpty {
+                putBack(returned, chat: list.chat)
+            }
 
         case .chatLive(let liveMarker):
             live.insert(liveMarker.chat)
@@ -570,6 +599,11 @@ final class AppModel: ObservableObject {
             contextUsage[usage.chat] = usage
             if let name = usage.displayModel { latestModel = name }
             noteSeq(of: message)
+
+        case .chatCommands(let commands):
+            let folder = Self.commandsKey(commands.folder)
+            commandsByFolder[folder] = commands.commands
+            latestCommandsFolder = folder
 
         case .sessionRenewed(let renewed):
             applyRenewed(renewed)
@@ -975,7 +1009,8 @@ final class AppModel: ObservableObject {
             break
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
-            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus:
+            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
+            .chatQueued, .chatQueue, .chatCommands:
             break
         }
     }
@@ -1455,7 +1490,7 @@ final class AppModel: ObservableObject {
     /// word still `idle`, so the state word alone cannot gate the composer.
     ///
     /// In single presentation, `/new` alone is not sent: it does what the
-    /// card's New does (S1's "Same as typing /new"), asking to log first
+    /// card's New does (S1's "New starts fresh"), asking to log first
     /// when that would lose something (W2); `/log` alone logs the session
     /// without ending it, when the deployment can, and otherwise says why
     /// it cannot in a notice. `about` is the document
@@ -1484,6 +1519,31 @@ final class AppModel: ObservableObject {
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
         dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
+    }
+
+    /// The agent's commands for the slash list in `folder` (v0.11 item 66):
+    /// that folder's last `chat.commands`, else the last one heard in any
+    /// folder, else none.
+    func agentCommands(folder: String?) -> [AgentCommand] {
+        if let folder, let list = commandsByFolder[Self.commandsKey(folder)] { return list }
+        return latestCommandsFolder.flatMap { commandsByFolder[$0] } ?? []
+    }
+
+    /// The agent's commands for a chat's composer: those of its folder.
+    func agentCommands(chat: Int) -> [AgentCommand] {
+        agentCommands(folder: summary(of: chat)?.folder)
+    }
+
+    /// The welcome's composer: the session it continues, else the folder
+    /// a new session would start in.
+    var startAgentCommands: [AgentCommand] {
+        if let live = continuingSession { return agentCommands(chat: live) }
+        return agentCommands(folder: startFolder?.path)
+    }
+
+    /// One spelling per folder: no trailing `/` (the root aside).
+    private static func commandsKey(_ folder: String) -> String {
+        folder.count > 1 && folder.hasSuffix("/") ? String(folder.dropLast()) : folder
     }
 
     /// A notice the app itself puts in the transcript (not from the
@@ -1538,6 +1598,57 @@ final class AppModel: ObservableObject {
         drafts[chat] = text.isEmpty ? nil : text
     }
 
+    // MARK: - queued messages (v0.11, item 74)
+
+    /// Whether a send while the agent works is queued rather than refused:
+    /// the gateway listed `queue.v1` (so it queues for this app, which
+    /// lists it too). An older gateway keeps the composer's Stop-only rule.
+    var queuesWhileWorking: Bool {
+        hello?.capabilities.contains(ChatQueue.capability) == true
+    }
+
+    /// The messages waiting for the agent's next step in `chat`, oldest first.
+    func queuedMessages(chat: Int) -> [QueuedMessage] {
+        queued[chat] ?? []
+    }
+
+    /// The card's line: "Queued — sends at Acme's next step".
+    func queuedLine(chat: Int) -> String {
+        "Queued — sends at \(hello?.brand.agentName ?? brand.name)'s next step"
+    }
+
+    /// Cancel: take the message back before it goes. Off the card at once;
+    /// the gateway's `chat.queue` confirms, or `chat.not_queued` says it
+    /// had already gone (the status line carries that).
+    func cancelQueued(chat: Int, id: String) {
+        let kept = queuedMessages(chat: chat).filter { $0.id != id }
+        queued[chat] = kept.isEmpty ? nil : kept
+        send(.chatUnqueue(ChatUnqueue(chat: chat, id: id)))
+    }
+
+    /// Edit: take the message back and put it in the composer (ahead of
+    /// anything typed since, its files back as chips); sending it again
+    /// queues it anew, at the end.
+    func editQueued(chat: Int, id: String) {
+        guard let item = queuedMessages(chat: chat).first(where: { $0.id == id }) else { return }
+        cancelQueued(chat: chat, id: id)
+        putBack([item], chat: chat)
+    }
+
+    /// Put taken-back messages in the composer, oldest first, ahead of
+    /// anything typed since: their texts joined by blank lines, their files
+    /// back as chips ahead of any attached since. Edit's one message and
+    /// what a Stop returns (`chat.queue` `returned`, v0.11) both land here.
+    func putBack(_ items: [QueuedMessage], chat: Int) {
+        guard !items.isEmpty else { return }
+        let text = items.map(\.text).joined(separator: "\n\n")
+        let typedSince = draft(for: chat)
+        drafts[chat] = typedSince.isEmpty ? text : text + "\n" + typedSince
+        let attachedSince = draftAttachments[chat] ?? []
+        draftAttachments[chat] = nil
+        attach(items.flatMap(\.attachments) + attachedSince, to: chat)
+    }
+
     /// Interrupt the running turn; the gateway answers with
     /// `turn.finished outcome=stopped` (nothing, when nothing is running).
     func stopTurn(chat: Int) {
@@ -1582,6 +1693,7 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = nil
         drafts[chat] = nil
         pendingSends[chat] = nil
+        queued[chat] = nil
         transcripts[chat] = nil
         openCards[chat] = nil
         artifacts[chat] = nil
@@ -1686,13 +1798,17 @@ extension AppModel {
 
     /// The roots to browse and list: `fileRoots` without the chat's own
     /// folder when a deployment root is that same folder, so it is not
-    /// shown twice. Paths still resolve through `fileRoots`.
+    /// shown twice, or when the deployment hides it (v0.11, `[files]
+    /// hide_session_folder`) and has roots of its own to show instead.
+    /// Paths still resolve through `fileRoots`.
     func browsableRoots(for chat: Int) -> [Root] {
         let roots = fileRoots(for: chat)
         guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
+        let others = roots.filter { $0.name != Self.chatRoot }
+        if hello?.hideSessionFolder == true, !others.isEmpty { return others }
         let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
-        let shared = roots.contains { $0.name != Self.chatRoot && URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
-        return shared ? roots.filter { $0.name != Self.chatRoot } : roots
+        let shared = others.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        return shared ? others : roots
     }
 
     /// The absolute directory a root name stands for, or `nil` for a name
@@ -2042,7 +2158,7 @@ extension AppModel {
         }
     }
 
-    /// "Restart the gateway to apply": stop it (`gateway.stop`, as Stop
+    /// "Settings changed — restart the gateway to apply": stop it (`gateway.stop`, as Stop
     /// does) and start it again; the new gateway's `hello` clears the
     /// stale mark.
     func restartGateway(timeout: Duration = .seconds(10)) async {

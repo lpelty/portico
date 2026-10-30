@@ -627,6 +627,26 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.artifacts[1]?.count, 5)
     }
 
+    /// v0.11 (61): `[files] hide_session_folder` leaves the session's folder
+    /// out of the Files pane; it still resolves, and with no roots of the
+    /// deployment's to show instead it stays.
+    func testTheDeploymentCanHideTheSessionFolderFromTheFilesPane() {
+        let (model, _) = model()
+        var hello = hello()
+        hello.roots = [Root(name: "projects", path: "/Users/someone/projects")]
+        hello.hideSessionFolder = true
+        model.apply(.hello(hello))
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        XCTAssertEqual(model.browsableRoots(for: 1).map(\.name), ["projects"])
+        XCTAssertEqual(model.rootPath(root: "chat", chat: 1), "/tmp/demo", "the chat root still resolves")
+
+        hello.roots = []
+        hello.epoch = "epoch-B"
+        model.apply(.hello(hello))
+        XCTAssertEqual(model.browsableRoots(for: 1).map(\.name), ["chat"], "nothing else to show: it stays")
+        XCTAssertEqual(FilesTabSwitch.foldersTitle, "Folders")
+    }
+
     func testTheChatFolderIsNotBrowsedTwiceWhenARootIsTheSameFolder() {
         let (model, _) = model()
         var hello = hello()
@@ -790,12 +810,12 @@ final class AppModelTests: XCTestCase {
         model.selected = 2
         model.setConnection(.connected)
         model.apply(.contextUsage(ContextUsage(chat: 2, percent: 2.2, model: "claude-opus-5-5", seq: 2)))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · 2% context · Checking…")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · Checking…")
 
         // status.set lines never reach the strip (v0.3).
         model.apply(.statusSet(StatusSet(text: "thinking", chat: 2, seq: 3)))
         model.apply(.servicesStatus(ServicesStatus(services: [])))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · 2% context · All services up")
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 4321)).text, "Claude Opus 5.5 · All services up")
 
         // The gateway text stays for Settings.
         XCTAssertEqual(model.statusStrip(gateway: .starting).gatewayText, "gateway starting")
