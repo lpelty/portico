@@ -74288,10 +74288,14 @@
                 {
                   "type": "frame",
                   "id": "pfTDf",
-                  "name": "Reading column · 720",
-                  "width": 720,
+                  "name": "Reading column · 768 max",
+                  "width": 768,
                   "layout": "vertical",
                   "gap": 14,
+                  "padding": [
+                    0,
+                    16
+                  ],
                   "children": [
                     {
                       "type": "frame",
@@ -74304,7 +74308,7 @@
                           "type": "frame",
                           "id": "ufUPI",
                           "name": "Bubble",
-                          "width": 576,
+                          "width": 538,
                           "fill": "$surface",
                           "cornerRadius": 14,
                           "padding": [
@@ -74322,7 +74326,7 @@
                               "content": "Started from the app, the gateway can't find npx, so two of the MCP servers never come up. Find out why and fix it, and tell me what you changed.",
                               "lineHeight": 1.5,
                               "fontFamily": "$font",
-                              "fontSize": 15,
+                              "fontSize": 16,
                               "fontWeight": "normal"
                             }
                           ]
@@ -74339,7 +74343,7 @@
                       "content": "Starting with how the gateway launches the engine.",
                       "lineHeight": 1.5,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -74727,7 +74731,7 @@
                       "content": "When the app starts the gateway, it inherits launchd's PATH, which has none of Homebrew or ~/.local/bin in it. Three things follow:",
                       "lineHeight": 1.5,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -74759,7 +74763,7 @@
                               "content": "•",
                               "lineHeight": 1.5,
                               "fontFamily": "$font",
-                              "fontSize": 15,
+                              "fontSize": 16,
                               "fontWeight": "normal"
                             },
                             {
@@ -74775,7 +74779,7 @@
                                   "content": "npx and node",
                                   "lineHeight": 1.5,
                                   "fontFamily": "$font",
-                                  "fontSize": 15,
+                                  "fontSize": 16,
                                   "fontWeight": "600"
                                 },
                                 {
@@ -74786,7 +74790,7 @@
                                   "content": " are missing, so the two Node MCP servers exit at launch.",
                                   "lineHeight": 1.5,
                                   "fontFamily": "$font",
-                                  "fontSize": 15,
+                                  "fontSize": 16,
                                   "fontWeight": "normal"
                                 }
                               ]
@@ -74808,7 +74812,7 @@
                               "content": "•",
                               "lineHeight": 1.5,
                               "fontFamily": "$font",
-                              "fontSize": 15,
+                              "fontSize": 16,
                               "fontWeight": "normal"
                             },
                             {
@@ -74824,7 +74828,7 @@
                                   "content": "uvx",
                                   "lineHeight": 1.5,
                                   "fontFamily": "$font",
-                                  "fontSize": 15,
+                                  "fontSize": 16,
                                   "fontWeight": "600"
                                 },
                                 {
@@ -74835,7 +74839,7 @@
                                   "content": " is missing too, so the search server never starts.",
                                   "lineHeight": 1.5,
                                   "fontFamily": "$font",
-                                  "fontSize": 15,
+                                  "fontSize": 16,
                                   "fontWeight": "normal"
                                 }
                               ]
@@ -74857,7 +74861,7 @@
                               "content": "•",
                               "lineHeight": 1.5,
                               "fontFamily": "$font",
-                              "fontSize": 15,
+                              "fontSize": 16,
                               "fontWeight": "normal"
                             },
                             {
@@ -74873,7 +74877,7 @@
                                   "content": "Your shell",
                                   "lineHeight": 1.5,
                                   "fontFamily": "$font",
-                                  "fontSize": 15,
+                                  "fontSize": 16,
                                   "fontWeight": "600"
                                 },
                                 {
@@ -74884,7 +74888,7 @@
                                   "content": " has all three; only the app's launch path doesn't.",
                                   "lineHeight": 1.5,
                                   "fontFamily": "$font",
-                                  "fontSize": 15,
+                                  "fontSize": 16,
                                   "fontWeight": "normal"
                                 }
                               ]
@@ -75063,7 +75067,7 @@
                       "content": "Fixed. On start, the gateway now asks your login shell for its PATH and puts it first; if that fails it logs one line and keeps the old one.",
                       "lineHeight": 1.5,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "normal"
                     },
                     {
@@ -75076,7 +75080,7 @@
                       "content": "Restart the gateway to pick it up.",
                       "lineHeight": 1.5,
                       "fontFamily": "$font",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "600"
                     }
                   ]
@@ -75100,7 +75104,7 @@
                   "type": "frame",
                   "id": "i1jGs",
                   "name": "Composer",
-                  "width": 720,
+                  "width": 768,
                   "fill": "$surface",
                   "cornerRadius": 12,
                   "stroke": "$border",
