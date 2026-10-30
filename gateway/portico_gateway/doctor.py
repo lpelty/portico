@@ -114,15 +114,24 @@ def env_file_bad_lines(path: Path) -> list[int]:
 def apply_env_file(path: Path, environ: MutableMapping[str, str]) -> list[str]:
     """Load ``path`` into ``environ`` without overriding variables already set; returns the keys set.
 
+    ``PATH`` is the exception (v0.11): it is always set, so the file's
+    entries go first and the rest of the PATH is kept after them. Applying
+    the same file twice changes nothing more.
+
     A missing file sets nothing. A malformed file sets nothing and raises
     EnvFileError, so a partial load can never happen.
     """
+    from .shellpath import merged
+
     if not path.is_file():
         return []
     pairs = parse_env_file(path)
     applied: list[str] = []
     for key, value in pairs.items():
-        if key not in environ:
+        if key == "PATH":
+            environ[key] = merged(value, environ.get(key, ""))
+            applied.append(key)
+        elif key not in environ:
             environ[key] = value
             applied.append(key)
     return applied
@@ -540,14 +549,43 @@ def check_services(config_path: Path) -> Check:
         if e.keys & SERVICES_KEYS:
             return Check("services", False, _one_line(str(e)))
         return Check("services", True, "not checked: the config does not load (see the config check)")
+    status = config.deployment.status
     if not config.services:
+        if status:
+            return Check("services", True, f"listed by [deployment] status, every {config.services_interval_seconds} s")
         return Check("services", True, "none configured; the app shows the Gateway row only")
     names = ", ".join(s.id for s in config.services)
+    source = "; rows from [deployment] status" if status else ""
     return Check(
         "services",
         True,
-        f"{len(config.services)} configured ({names}), checked every {config.services_interval_seconds} s",
+        f"{len(config.services)} configured ({names}), checked every {config.services_interval_seconds} s{source}",
     )
+
+
+PATH_TOOLS = ("node", "npx", "uvx")
+
+
+def check_path(config_path: Path, env: Mapping[str, str] | None = None, read: Callable[[Mapping[str, str]], str | None] | None = None) -> Check:
+    """The PATH the gateway gives the engine (v0.11), and whether the usual MCP launchers are on it."""
+    from portico_gateway.shellpath import login_shell_path, merged
+
+    env = os.environ if env is None else env
+    inherited = env.get("PATH", "")
+    try:
+        use_login = load_config(config_path).login_shell_path
+    except ConfigError:
+        use_login = True
+    path, source = inherited, "inherited"
+    if use_login:
+        shell = (read or login_shell_path)(env)
+        if shell is None:
+            source = "inherited (the login shell's could not be read)"
+        else:
+            path, source = merged(shell, inherited), "from the login shell"
+    missing = [tool for tool in PATH_TOOLS if shutil.which(tool, path=path) is None]
+    found = "all of node, npx, uvx found" if not missing else f"not found: {', '.join(missing)}"
+    return Check("path", True, f"{source}; {found}", warn=bool(missing) or source.startswith("inherited ("))
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -600,6 +638,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_setting_sources(config_path),
         *check_plugins(config_path),
         check_services(config_path),
+        check_path(config_path),
         check_token(state),
         check_env_file(state),
         check_ledger(state),

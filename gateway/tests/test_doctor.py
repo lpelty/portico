@@ -469,3 +469,11 @@ def test_doctor_does_not_blame_services_for_another_key_that_mentions_them(
     got = by_name(doctor(state_dir, state_dir.config_path))
     assert not got["config"].ok and "services" in got["config"].line
     assert got["services"].ok and "not checked" in got["services"].line
+
+
+def test_doctor_counts_the_deployment_status_as_services(state_dir: StateDir, with_credential: None) -> None:
+    # v0.11 (item 60): a deployment that lists its services by ``[deployment] status`` has services.
+    state_dir.config_path.write_text('[deployment]\nstatus = "echo {}"\n')
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert got["services"].ok and "listed by [deployment] status" in got["services"].line
+    assert "none configured" not in got["services"].line

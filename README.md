@@ -113,6 +113,8 @@ system_prompt = "claude_code"       # the default: Claude Code's own system prom
                                     # terminal; "none": the SDK's empty prompt (as before v0.10). See Showing
                                     # the agent's work and The agent's system prompt
 system_prompt_append = "~/my-deployment/prompt.md" # optional absolute path: the deployment's text, after it
+login_shell_path = true             # the default: the engine gets the person's login-shell PATH first (see
+                                    # The engine's environment); false keeps the PATH the gateway inherited
 
 [brand]
 name = "Portico"
@@ -379,6 +381,24 @@ deployment did before v0.10.
 Either way the folder's `CLAUDE.md`, skills and hooks still load through
 `setting_sources`; they are not part of the system prompt. Session titles
 keep their own prompt.
+
+## The engine's environment
+
+Started from the app, the gateway inherits launchd's bare PATH
+(`/usr/bin:/bin:/usr/sbin:/sbin`), so `npx`, `node`, `uvx` and anything in
+Homebrew or `~/.local/bin` would be missing for the agent and its MCP
+servers. With `login_shell_path = true` (the default) the gateway asks the
+person's login shell (`$SHELL -l -i -c`, 5 s at most) for its PATH and puts
+it first, keeping the inherited entries it lacks. If the shell can't be read
+it logs one line and keeps the inherited PATH. A `PATH=` line in the env
+file goes first of all: the deployment's explicit choice wins. `doctor`
+shows where the PATH came from and whether `node`, `npx` and `uvx` resolve.
+
+Every engine started for a person's session has `PORTICO_ATTENDED=1` in its
+environment (title generation never does). The Agent SDK marks its engines
+as automated (`CLAUDE_CODE_ENTRYPOINT=sdk-py`); a deployment whose start-up
+checks skip work when nobody is present can read `PORTICO_ATTENDED` to know
+someone is. Portico sets no Claude Code variable of its own.
 
 ## Showing the agent's work
 

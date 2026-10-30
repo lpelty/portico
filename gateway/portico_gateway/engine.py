@@ -80,6 +80,11 @@ QUESTION_TOOL = "AskUserQuestion"
 # engine knows it by (``mcp__<server>__<tool>``).
 SHOW_SERVER = "portico"
 SHOW_TOOL = "show_in_viewer"
+
+# v0.11 (item 56): set in every engine started for a person's chat (never for
+# titles). The SDK marks its engines ``CLAUDE_CODE_ENTRYPOINT=sdk-py``, which a
+# deployment's start-up checks may read as nobody present; this says someone is.
+ATTENDED_ENV = "PORTICO_ATTENDED"
 SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
 # What the agent sees when its ``open <file>`` was shown instead of run.
@@ -571,6 +576,9 @@ def build_options(
     ``open`` hook on ``Bash``, and ``VIEWER_PROMPT`` appended to
     ``system_prompt`` (the deployment's, ``deployment_system_prompt``;
     ``None`` is the SDK's empty prompt).
+
+    ``PORTICO_ATTENDED=1`` is always in the engine's environment: a person
+    drives this chat (v0.11).
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
     extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
@@ -588,6 +596,7 @@ def build_options(
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
+        env={ATTENDED_ENV: "1"},
         hooks={
             "PreToolUse": pre_tool_use,
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],

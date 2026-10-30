@@ -232,6 +232,11 @@ class Config(BaseModel):
     # engine start. The viewer line always comes last.
     system_prompt: Literal["claude_code", "none"] = "claude_code"
     system_prompt_append: str | None = None
+    # v0.11: started from the app, the gateway has launchd's bare PATH. With
+    # ``login_shell_path`` it asks the person's login shell for theirs and
+    # puts it first, so the engine and its MCP servers find npx, node, uvx
+    # and the like. ``false`` keeps the inherited PATH.
+    login_shell_path: bool = True
 
     @field_validator("title_model")
     @classmethod
