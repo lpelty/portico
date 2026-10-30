@@ -122,6 +122,19 @@ and a failure leaves the first line. ``titles = "first_line"`` or no
 ``restart_services``, else ``[deployment] restart``, and is answered by
 the ``services.status`` that follows (plus ``error
 code=services.restart_failed`` when it failed).
+
+Messages while the agent works (v0.11, item 74): a ``message.send`` during
+a turn or the log step, from an app that declared ``queue.v1``, is held
+(``chat.queued``, then ``chat.queue`` with the list) instead of refused
+``chat.busy``. At the main agent's next tool result the gateway writes the
+held messages into the turn (``Engine.inject``) and each becomes a
+``user.text`` there; one still held when the turn ends is sent as the next
+turn, one at a time, in order (after the log step, when one runs; in the
+following session, after a renewal). A message that starts with a slash
+command is never written mid-turn: it waits for the turn's end, as do the
+ones behind it. ``chat.unqueue`` takes one back; ``chat.stop`` and
+``chat.remove`` drop the queue. ``chat.open`` sends ``chat.queue`` after
+``chat.live``.
 """
 
 from __future__ import annotations
@@ -165,6 +178,7 @@ from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
     PROTOCOL_VERSION,
+    QUEUE_CAPABILITY,
     Artifact,
     ArtifactCreated,
     ArtifactOpened,
@@ -179,11 +193,14 @@ from .messages import (
     ChatNotice,
     ChatNew,
     ChatOpen,
+    ChatQueue,
+    ChatQueued,
     ChatRemove,
     ChatState,
     ChatStateWord,
     ConfigStale,
     ChatStop,
+    ChatUnqueue,
     ClientMessage,
     ContextUsage,
     Entry,
@@ -198,6 +215,7 @@ from .messages import (
     MessageSend,
     Outcome,
     ProtocolError,
+    QueuedMessage,
     ServerMessage,
     Service,
     ServiceRestart,
@@ -406,7 +424,10 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     a ``chat.history`` (an older app's decoder refuses a whole history
     holding a type it does not know). The ring keeps everything; ``seq``
     gaps are harmless, the app only skips what it has already seen.
+    ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     """
+    if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
+        return None  # v0.11: an app that cannot show a queue never had one
     if AGENTS_CAPABILITY in capabilities:
         return msg
     if _is_agent_frame(msg):
@@ -716,6 +737,9 @@ class GatewayServer:
         # v0.10: file writes that started with no turn in flight (a
         # background agent's), by chat and tool use, reported when they finish.
         self._loose_writes: dict[tuple[int, str], tuple[str, dict[str, Any]]] = {}
+        # v0.11: per chat, the messages sent during a turn and not yet given
+        # to the agent, oldest first. In memory only: a gateway stop drops them.
+        self._queues: dict[int, list[QueuedMessage]] = {}
         # Whether a summary can be ``unlogged`` depends on the deployment having a log step.
         self.registry.can_log = self.has_log_step()
         # Asks a small model for a session's title (v0.8; ``titles.sdk_titler``
@@ -775,6 +799,7 @@ class GatewayServer:
         self.register("chat.alias", self.on_chat_alias)
         self.register("chat.remove", self.on_chat_remove)
         self.register("message.send", self.on_message_send)
+        self.register("chat.unqueue", self.on_chat_unqueue)
         self.register("turn.stop", self.on_turn_stop)
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
@@ -1341,6 +1366,9 @@ class GatewayServer:
                 write = self._loose_writes.pop((chat.number, event.tool_use_id), None)
                 if write is not None and event.ok:
                     await self._report_write(chat, *write)
+                if run is not None and event.agent_id is None:
+                    # The main agent's step ended: what the person queued goes now.
+                    await self._deliver_queued(chat, run)
             return
         if run is None:
             # The turn was already ended by the gateway (chat.stop, or the stop grace ran out).
@@ -1394,6 +1422,9 @@ class GatewayServer:
         self._sync_session(chat)
         await self.set_state(chat, "idle")
         run.finished.set()
+        if self._queues.get(chat.number):
+            # Its own task: a log step waiting on ``finished`` runs first.
+            self._spawn(self._send_queued(chat), name=f"portico-queued-{chat.number}")
 
     async def _report_context(self, chat: Chat, engine: Engine) -> None:
         """After a turn: how full the context is, as ``context.usage``; kept on the record.
@@ -1704,6 +1735,8 @@ class GatewayServer:
         # Open cards again, as sent (same id and seq): the app de-duplicates by id.
         for card in self.cards.open_cards(chat):
             await self._send(conn, card)
+        # v0.11: what is still waiting to go, an empty list too (it replaces the app's).
+        await self._send(conn, self._queue_frame(chat))
 
     async def _history(self, chat: Chat, since: int | None) -> tuple[list[ServerMessage], bool, list[Artifact]]:
         """What ``chat.open`` replays: ring events, or the transcript when the ring cannot serve.
@@ -1794,6 +1827,9 @@ class GatewayServer:
     async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
         run = self._runs.get(chat.number)
+        if self._queues.pop(chat.number, None):
+            # A stop is a stop: nothing held goes to the agent after it (v0.11).
+            await self.broadcast(self._queue_frame(chat))
         await self.cards.cancel_all(chat, "chat stopped", self.emit)
         await self._close_engine(chat)
         if run is not None:
@@ -1813,6 +1849,7 @@ class GatewayServer:
         chat = self.registry.get(msg.chat)
         await self.cards.cancel_all(chat, "chat removed", self.emit)
         await self._close_engine(chat)
+        self._queues.pop(chat.number, None)
         self.registry.remove(chat.number)
         self._engine_locks.pop(chat.number, None)
         await self.send_chat_list()
@@ -1855,8 +1892,11 @@ class GatewayServer:
         self._spawn(self._renew_task(chat, msg, conn), name=f"portico-renew-{chat.number}")
 
     async def _renew_task(self, chat: Chat, msg: SessionRenew, conn: ServerConnection) -> None:
+        # Where anything the person queued meanwhile goes once this is over
+        # (v0.11): the following session, or this one if the renewal failed.
+        settled = chat
         try:
-            await self.renew(chat, msg.log, msg.id)
+            settled = await self.renew(chat, msg.log, msg.id)
         except ProtocolError as e:
             await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
         except Exception as e:
@@ -1864,6 +1904,8 @@ class GatewayServer:
             await self._send(conn, self.error("gateway.error", f"session.renew failed: {e}", chat=chat.number, id=msg.id))
         finally:
             self._renewing.discard(chat.number)
+            if self._queues.get(settled.number):
+                self._spawn(self._send_queued(settled), name=f"portico-queued-{settled.number}")
 
     async def renew(self, chat: Chat, log_first: bool, id: str | None = None) -> Chat:
         """Run the log step (when asked and one exists), end ``chat``, create the next; returns it.
@@ -1895,6 +1937,12 @@ class GatewayServer:
         chat.logged = logged
         await self.set_state(chat, "stopped")
         following = self.registry.create(chat.folder, parent=chat.number)
+        # v0.11: what the person queued during the log step and is still held
+        # was meant for the agent: it goes in the session that follows.
+        held = self._queues.pop(chat.number, None)
+        if held:
+            self._queues[following.number] = held
+            await self.broadcast(self._queue_frame(chat))
         await self.notice(chat, f"Session ended · continues in Session {following.number}")
         await self.set_state(following, "idle")
         await self.notice(following, f"Continues Session {chat.number}")
@@ -1968,6 +2016,9 @@ class GatewayServer:
             await self._send(conn, self.error("gateway.error", f"session.log failed: {e}", chat=chat.number, id=msg.id))
         finally:
             self._logging.discard(chat.number)
+            # Held through the log step (v0.11): the next turn, now that it is over.
+            if self._queues.get(chat.number):
+                self._spawn(self._send_queued(chat), name=f"portico-queued-{chat.number}")
 
     async def log_session(self, chat: Chat, id: str | None = None) -> None:
         """The log step in the live session; ``chat.state``, ``session.logged`` (with ``id``), then ``chat.list``.
@@ -2076,6 +2127,13 @@ class GatewayServer:
 
     async def on_message_send(self, msg: MessageSend, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
+        if self._busy(chat) and chat.ended is None and QUEUE_CAPABILITY in _capabilities(conn):
+            await self._enqueue(chat, msg, conn)
+            return
+        await self._send_message(chat, msg, conn)
+
+    async def _send_message(self, chat: Chat, msg: MessageSend, conn: ServerConnection | None) -> None:
+        """A ``message.send`` as a turn of its own; ``conn`` hears a refusal (``None``: whichever app is attached)."""
         self._check_can_send(chat)
         attachments = check_attachments(msg.attachments)
         # The session's title: the first line of the first thing the person
@@ -2106,23 +2164,122 @@ class GatewayServer:
         self._spawn(self._send_task(chat, run, text, title, msg, conn), name=f"portico-send-{chat.number}")
 
     async def _send_task(
-        self, chat: Chat, run: TurnRun, text: str, title: str | None, msg: MessageSend, conn: ServerConnection
+        self, chat: Chat, run: TurnRun, text: str, title: str | None, msg: MessageSend, conn: ServerConnection | None
     ) -> None:
         """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``."""
         try:
             await self._begin_turn(chat, run, text)
         except ProtocolError as e:
-            await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
+            await self._reply(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
             return
         except Exception as e:
             log.exception("chat %d: message.send failed", chat.number)
             if self._runs.get(chat.number) is run:
                 await self._fail_turn(chat, run)
-            await self._send(conn, self.error("gateway.error", f"message.send failed: {e}", chat=chat.number, id=msg.id))
+            await self._reply(conn, self.error("gateway.error", f"message.send failed: {e}", chat=chat.number, id=msg.id))
             return
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
+
+    async def _reply(self, conn: ServerConnection | None, msg: ServerMessage | Error) -> None:
+        """To ``conn``; with none (a queued message the gateway sends itself), to the attached app."""
+        if conn is None:
+            await self.broadcast(msg)  # type: ignore[arg-type]
+        else:
+            await self._send(conn, msg)
+
+    # --- the queue (v0.11, item 74) ---------------------------------------------
+
+    def _busy(self, chat: Chat) -> bool:
+        """A turn or a log step is running: a send now would be ``chat.busy`` (or queued)."""
+        return chat.number in self._runs or chat.number in self._renewing or chat.number in self._logging
+
+    def queued(self, chat: int) -> list[QueuedMessage]:
+        """The messages ``chat`` holds for the agent, oldest first."""
+        return list(self._queues.get(chat, []))
+
+    def _queue_frame(self, chat: Chat) -> ChatQueue:
+        return ChatQueue(ts=_now(), chat=chat.number, items=self.queued(chat.number))
+
+    async def _enqueue(self, chat: Chat, msg: MessageSend, conn: ServerConnection) -> None:
+        """Hold a send made during a turn: ``chat.queued`` to the sender, then ``chat.queue`` to the app.
+
+        Its attachments are checked now, as a send's are: a missing file is
+        refused at once, not when the message would go.
+        """
+        check_attachments(msg.attachments)
+        item = QueuedMessage(id=msg.id or str(uuid.uuid4()), text=msg.text, attachments=list(msg.attachments))
+        self._queues.setdefault(chat.number, []).append(item)
+        log.info("chat %d: a message was queued during a turn (%d waiting)", chat.number, len(self._queues[chat.number]))
+        await self._send(conn, ChatQueued(ts=_now(), chat=chat.number, id=item.id))
+        await self.broadcast(self._queue_frame(chat))
+
+    async def on_chat_unqueue(self, msg: ChatUnqueue, conn: ServerConnection) -> None:
+        """Take a held message back; ``chat.not_queued`` when it has gone (or never was)."""
+        chat = self.registry.get(msg.chat)
+        held = self._queues.get(chat.number, [])
+        kept = [item for item in held if item.id != msg.id]
+        if len(kept) == len(held):
+            raise ProtocolError("chat.not_queued", "that message is not waiting: it has gone to the agent already")
+        if kept:
+            self._queues[chat.number] = kept
+        else:
+            self._queues.pop(chat.number, None)
+        await self.broadcast(self._queue_frame(chat))
+
+    async def _deliver_queued(self, chat: Chat, run: TurnRun) -> None:
+        """The main agent's step ended: write what is held into the turn, in order.
+
+        Each goes to the engine with ``inject`` and becomes the person's
+        ``user.text`` in this turn. A slash command is not something to
+        write mid-turn (the engine reads commands only as a turn's message):
+        it, and everything behind it, waits for the turn's end. A write the
+        engine refuses stays queued, for the turn's end.
+        """
+        held = self._queues.get(chat.number)
+        engine = chat.engine
+        if not held or engine is None or self._runs.get(chat.number) is not run:
+            return
+        while held and slash_command(held[0].text) is None:
+            item = held[0]
+            text = with_attachments(item.text, item.attachments)
+            try:
+                await engine.inject(text)
+            except Exception:
+                log.exception("chat %d: writing a queued message into turn %d failed; it waits", chat.number, run.turn)
+                break
+            held.pop(0)
+            log.info("chat %d: a queued message went into turn %d", chat.number, run.turn)
+            if not held:
+                self._queues.pop(chat.number, None)
+            await self.broadcast(self._queue_frame(chat))
+            await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=run.turn, text=text))
+
+    async def _send_queued(self, chat: Chat) -> None:
+        """No turn running and something held: the oldest goes as the next turn.
+
+        Nothing while a log step or renewal holds the chat (it calls again
+        when done) or once the session has ended. The rest stay queued for
+        that turn's next step or its end.
+        """
+        if self._busy(chat) or chat.ended is not None:
+            return
+        held = self._queues.get(chat.number)
+        if not held:
+            return
+        item = held.pop(0)
+        if not held:
+            self._queues.pop(chat.number, None)
+        await self.broadcast(self._queue_frame(chat))
+        send = MessageSend(ts=_now(), chat=chat.number, id=item.id, text=item.text, attachments=item.attachments)
+        try:
+            await self._send_message(chat, send, None)
+        except ProtocolError as e:
+            await self.broadcast(self.error(e.code, e.message, chat=chat.number, id=item.id))
+        except Exception as e:
+            log.exception("chat %d: sending a queued message failed", chat.number)
+            await self.broadcast(self.error("gateway.error", f"message.send failed: {e}", chat=chat.number, id=item.id))
 
     def deployment_commands(self) -> set[str]:
         """Command names (no ``/``) the deployment offers: ``hello.commands`` and its actions' slash text."""
@@ -2182,7 +2339,7 @@ class GatewayServer:
     def _check_can_send(self, chat: Chat) -> None:
         if chat.ended is not None:
             raise ProtocolError("session.ended", f"session {chat.number} has ended; send to the session that followed it")
-        if chat.number in self._runs or chat.number in self._renewing or chat.number in self._logging:
+        if self._busy(chat):
             raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
 
     async def start_turn(self, chat: Chat, text: str) -> TurnRun:

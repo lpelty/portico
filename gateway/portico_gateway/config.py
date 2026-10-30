@@ -31,7 +31,11 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 # optional UI on these.
 # v0.10: ``agents.v1`` — this gateway sends subagent and workflow frames to an
 # app that lists the same capability in its ``hello``.
-CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1"]
+# v0.11: ``queue.v1`` — a send during a turn is queued, not refused, for an
+# app that lists it too (``messages.QUEUE_CAPABILITY``).
+CAPABILITIES: list[str] = [
+    "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
+]
 
 # v0.8: advertised when the deployment can restart all its services at once
 # (``[deployment] restart`` or a plug-in's ``restart_services``); the app

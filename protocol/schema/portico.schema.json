@@ -1373,6 +1373,107 @@
       "title": "ChatOpen",
       "type": "object"
     },
+    "ChatQueue": {
+      "additionalProperties": false,
+      "description": "The messages a chat holds for the agent, oldest first, after every change (v0.11).\n\nSent when one is queued, unqueued, or goes to the agent, and after\n``chat.live`` on every ``chat.open`` (an empty list too), so a\nreconnecting app sees what is still waiting. Not in the ring: the list\nas it stands replaces whatever the app had.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "items": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/QueuedMessage"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.queue",
+          "default": "chat.queue",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "ChatQueue",
+      "type": "object"
+    },
+    "ChatQueued": {
+      "additionalProperties": false,
+      "description": "The answer to a ``message.send`` that arrived during a turn or the log step (v0.11).\n\nThe message is held, not refused: ``id`` is the request's (the queued\nmessage's id from now on). Only to an app that declared ``queue.v1``;\nan older app still gets ``error code=chat.busy``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.queued",
+          "default": "chat.queued",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts"
+      ],
+      "title": "ChatQueued",
+      "type": "object"
+    },
     "ChatRemove": {
       "additionalProperties": false,
       "properties": {
@@ -1718,6 +1819,49 @@
       "title": "ChatSummary",
       "type": "object"
     },
+    "ChatUnqueue": {
+      "additionalProperties": false,
+      "description": "Take a queued message (``id``, as ``chat.queued`` named it) off the queue before it goes (v0.11).\n\nAnswered with the ``chat.queue`` that follows, or ``error\ncode=chat.not_queued`` when it has already gone to the agent (or was\nnever queued). An edit is this, then a new ``message.send``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "chat.unqueue",
+          "default": "chat.unqueue",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts"
+      ],
+      "title": "ChatUnqueue",
+      "type": "object"
+    },
     "ClientMessage": {
       "description": "Any app -> gateway message, discriminated on type.",
       "oneOf": [
@@ -1774,6 +1918,9 @@
         },
         {
           "$ref": "#/$defs/ServicesRestartAll"
+        },
+        {
+          "$ref": "#/$defs/ChatUnqueue"
         }
       ]
     },
@@ -2800,6 +2947,34 @@
       "title": "Question",
       "type": "object"
     },
+    "QueuedMessage": {
+      "additionalProperties": false,
+      "description": "A message the person sent during a turn, held by the gateway until it goes (v0.11).\n\n``id`` is the ``message.send`` request's ``id`` (one the gateway made\nup when the request had none); ``text`` and ``attachments`` are as sent.",
+      "properties": {
+        "attachments": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "title": "QueuedMessage",
+      "type": "object"
+    },
     "Root": {
       "additionalProperties": false,
       "properties": {
@@ -2917,6 +3092,12 @@
         },
         {
           "$ref": "#/$defs/WorkflowFinished"
+        },
+        {
+          "$ref": "#/$defs/ChatQueued"
+        },
+        {
+          "$ref": "#/$defs/ChatQueue"
         },
         {
           "$ref": "#/$defs/Error"

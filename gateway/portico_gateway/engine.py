@@ -172,6 +172,14 @@ class Engine(Protocol):
 
     async def send(self, text: str) -> None: ...
 
+    async def inject(self, text: str) -> None:
+        """Write a person's message into the turn in flight (v0.11, item 74); ``turn`` does not move.
+
+        The engine reads it at its next step, inside the same turn; written
+        after its last step, it may run it as a further turn of its own.
+        """
+        ...
+
     async def interrupt(self) -> None: ...
 
     async def set_permission_mode(self, mode: PermissionMode) -> None:
@@ -781,6 +789,12 @@ class SDKEngine:
         if self._client is None:
             raise RuntimeError("engine not started")
         self.turn += 1
+        await self._client.query(text)
+
+    async def inject(self, text: str) -> None:
+        """``query`` mid-turn: checked live 10-30, the engine takes it at its next step, in the same turn."""
+        if self._client is None:
+            raise RuntimeError("engine not started")
         await self._client.query(text)
 
     async def interrupt(self) -> None:

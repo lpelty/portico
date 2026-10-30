@@ -183,7 +183,7 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     assert hello.actions == config.actions
     assert hello.roots == config.roots
     assert hello.commands == []
-    assert hello.capabilities == ["cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1"]
+    assert hello.capabilities == ["cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1"]
     assert hello.presentation == "single"
     assert hello.can_log is False
     assert hello.config_stale is False and hello.can_update is False
