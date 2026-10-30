@@ -616,11 +616,16 @@ class ChatQueue(Envelope):
     ``chat.live`` on every ``chat.open`` (an empty list too), so a
     reconnecting app sees what is still waiting. Not in the ring: the list
     as it stands replaces whatever the app had.
+
+    ``returned`` (v0.11, Larry 10-30): messages taken out of the queue by
+    ``turn.stop``, oldest first, for the app to put back in the composer
+    (text and attachments) to send again or delete. Absent otherwise.
     """
 
     type: Literal["chat.queue"] = "chat.queue"
     chat: int
     items: list[QueuedMessage] = []
+    returned: list[QueuedMessage] | None = None
 
 
 class ConfigStale(Envelope):

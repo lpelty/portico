@@ -5,7 +5,8 @@ import SwiftUI
 /// wide as it. Each says "Queued — sends at Acme's next step" with Edit
 /// (back into the composer) and Cancel, then the message. A card goes
 /// when the gateway's `chat.queue` no longer lists it: the message is in
-/// the conversation by then, as the person's, where it went.
+/// the conversation by then, as the person's, where it went, or (after
+/// Stop) back in the composer.
 struct QueuedMessages: View {
     let chat: Int
     /// The composer's side margins, so a card is exactly its width.

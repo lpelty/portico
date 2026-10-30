@@ -991,6 +991,9 @@ struct ChatQueue: Codable, Equatable, Sendable {
     static let capability = "queue.v1"
     var chat: Int
     var items: [QueuedMessage] = []
+    /// What a `turn.stop` took out of the queue, oldest first, for the
+    /// composer (v0.11, Larry 10-30); absent otherwise.
+    var returned: [QueuedMessage]? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()

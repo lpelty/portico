@@ -43,7 +43,11 @@
   your message at that point; one still waiting when the turn ends goes
   as the next turn. During the log step it goes into the log step itself,
   so a rating typed while the close runs reaches it. While nothing is
-  typed, the composer offers Stop alone, as before.
+  typed, the composer offers Stop alone, as before. **Stop gives queued
+  messages back:** pressing Stop puts everything still waiting back in
+  the composer, in order, with its files, ready to send or delete (as
+  Claude Code does); one sent while the stop takes effect comes back too.
+  Nothing waiting goes on its own after a stop.
 - **Slash-command completion.** Typing `/` at the start of the composer
   (the conversation's or the welcome's) lists Portico's own `/log` and
   `/new`, then the agent's commands and skills with one-line
@@ -102,8 +106,12 @@
   `message.send` during a turn is answered `chat.queued {id}` instead of
   `chat.busy`; `chat.queue {chat, items}` carries the list after every
   change and after `chat.live` on `chat.open`; `chat.unqueue {chat, id}`
-  takes one back (`chat.not_queued` once it has gone). An app or gateway
-  without `queue.v1` behaves as in v0.10.
+  takes one back (`chat.not_queued` once it has gone). `turn.stop`
+  empties the queue into `chat.queue`'s new `returned: [{id, text,
+  attachments}]` (absent otherwise), for the app's composer; one queued
+  while the stopped turn winds down is returned when it ends, never sent.
+  `chat.stop` still drops the queue. An app or gateway without `queue.v1`
+  behaves as in v0.10.
 - **Slash commands:** new gateway → app `chat.commands {chat?, folder,
   commands: [{name, description, source?}]}`, sent when an engine starts
   and, for the kept lists, on every connection after `services.status`.
