@@ -169,6 +169,12 @@ def test_summarize_tool_rules() -> None:
     assert summarize_tool("Bash", {"command": "echo hi\nmore"}) == "echo hi"
     assert summarize_tool("WebSearch", {"query": "q"}) == "WebSearch"
     assert summarize_tool("Write", {}) == "Write"
+    # v0.10: an agent's row names its work; a tool search names what it looks for.
+    assert summarize_tool("Agent", {"description": "Summarize app.py", "prompt": "…"}) == "Summarize app.py"
+    assert summarize_tool("Task", {"description": "Check quotes"}) == "Check quotes"
+    assert summarize_tool("ToolSearch", {"query": "select:show_in_viewer"}) == "select:show_in_viewer"
+    assert summarize_tool("Agent", {}) == "Agent"
+    assert summarize_tool("Skill", {"skill": "session-close"}) == "session-close"
 
 
 # --- permissions and questions -----------------------------------------------

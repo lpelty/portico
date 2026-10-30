@@ -59,7 +59,19 @@ from claude_agent_sdk import (
 )
 
 from .agents import AgentTracker
-from .messages import PermissionMode, ServerMessage, TextDelta, ToolFinished, ToolStarted, TurnFinished, TurnStarted, UserText
+from .messages import (
+    AgentFinished,
+    AgentProgress,
+    AgentStarted,
+    PermissionMode,
+    ServerMessage,
+    TextDelta,
+    ToolFinished,
+    ToolStarted,
+    TurnFinished,
+    TurnStarted,
+    UserText,
+)
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +210,18 @@ def summarize_tool(tool: str, input: dict[str, Any]) -> str:
         command = input.get("command")
         if isinstance(command, str) and command:
             return _first_line(command)
+    elif tool in ("Agent", "Task"):
+        description = input.get("description")
+        if isinstance(description, str) and description:
+            return _first_line(description)
+    elif tool == "ToolSearch":
+        query = input.get("query")
+        if isinstance(query, str) and query:
+            return _first_line(query)
+    elif tool == "Skill":
+        skill = input.get("skill")
+        if isinstance(skill, str) and skill:
+            return _first_line(skill)
     return tool
 
 
@@ -796,7 +820,15 @@ class SDKEngine:
 # and the "[Request interrupted by user]" marker (also its "... for tool use]"
 # form) the CLI writes as a user message after a stop. The SDK's own session
 # reader classes the same strings as scaffolding.
-_HIDDEN_USER_TEXT_PREFIXES = ("<system-reminder>", "<local-command-", "<command-", "[Request interrupted by user")
+# The engine's note to itself that a background task ended (v0.10).
+TASK_NOTIFICATION_PREFIX = "<task-notification>"
+_HIDDEN_USER_TEXT_PREFIXES = (
+    "<system-reminder>",
+    "<local-command-",
+    "<command-",
+    "[Request interrupted by user",
+    TASK_NOTIFICATION_PREFIX,
+)
 
 
 def read_history(session_id: str | None, folder: Path) -> list[dict[str, Any]]:
@@ -838,6 +870,40 @@ def _user_text(blocks: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+def _is_task_notification(blocks: list[dict[str, Any]]) -> bool:
+    """Whether a user message is the engine telling itself a background task ended."""
+    return any(
+        block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+        and block["text"].lstrip().startswith(TASK_NOTIFICATION_PREFIX)
+        for block in blocks
+    )
+
+
+# The tools that start a subagent, and the start of the result a background
+# one answers at once (it reports later, in a task notification).
+AGENT_TOOLS = ("Agent", "Task")
+ASYNC_AGENT_RESULT = "Async agent launched"
+_NOTIFICATION_FIELD = re.compile(r"<(tool-use-id|status|summary|tool_uses|duration_ms)>(.*?)</\1>", re.DOTALL)
+_NOTIFICATION_RESULT = re.compile(r"<result>.*?</result>", re.DOTALL)
+_NOTIFICATION_OUTCOMES = {"completed": "done", "failed": "failed", "killed": "stopped", "stopped": "stopped"}
+
+
+def _notification_fields(blocks: list[dict[str, Any]]) -> dict[str, str]:
+    """The fields of a task notification's text that a replay uses (tool use id, status, summary, usage)."""
+    for block in blocks:
+        text = block.get("text")
+        if block.get("type") == "text" and isinstance(text, str) and text.lstrip().startswith(TASK_NOTIFICATION_PREFIX):
+            # Not inside the agent's own output: what it said may contain the
+            # same tags (usage comes after it). The first of each wins.
+            outside = _NOTIFICATION_RESULT.sub("", text)
+            fields: dict[str, str] = {}
+            for key, value in _NOTIFICATION_FIELD.findall(outside):
+                fields.setdefault(key, value.strip())
+            return fields
+    return {}
+
+
 def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1) -> list[ServerMessage]:
     """Transcript messages (``read_history``'s dicts, or ``SessionMessage``-like) -> replay events. Pure.
 
@@ -852,6 +918,9 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
     out: list[ServerMessage] = []
     turn = first_turn - 1
     open_turn = False
+    # Subagents started and not yet ended (v0.10): their record is rebuilt
+    # from the calls that started them and the notifications that ended them.
+    running: set[str] = set()
 
     def begin() -> None:
         nonlocal turn, open_turn
@@ -880,6 +949,28 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                 end()
                 begin()
                 out.append(UserText(ts=ts, chat=chat, turn=turn, text=text))
+            elif _is_task_notification(blocks):
+                # Background work reporting back (v0.10): the engine's own
+                # message, never the person's; its reply is a turn nobody sent.
+                end()
+                begin()
+                note = _notification_fields(blocks)
+                agent = note.get("tool-use-id", "")
+                if agent in running:
+                    running.discard(agent)
+                    steps, elapsed = note.get("tool_uses", ""), note.get("duration_ms", "")
+                    if steps.isdigit() or elapsed.isdigit():
+                        out.append(
+                            AgentProgress(
+                                ts=ts,
+                                chat=chat,
+                                id=agent,
+                                steps=int(steps) if steps.isdigit() else 0,
+                                elapsed=int(elapsed) / 1000 if elapsed.isdigit() else 0.0,
+                            )
+                        )
+                    outcome = _NOTIFICATION_OUTCOMES.get(note.get("status", ""), "done")
+                    out.append(AgentFinished(ts=ts, chat=chat, id=agent, outcome=outcome))  # type: ignore[arg-type]
             for block in blocks:
                 if block.get("type") != "tool_result":
                     continue
@@ -898,6 +989,19 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         else None,
                     )
                 )
+                agent = str(block.get("tool_use_id") or "")
+                summary = result_summary(block.get("content"))
+                if agent in running and not summary.startswith(ASYNC_AGENT_RESULT):
+                    running.discard(agent)
+                    out.append(
+                        AgentFinished(
+                            ts=ts,
+                            chat=chat,
+                            id=agent,
+                            outcome="failed" if block.get("is_error") else "done",
+                            summary=summary or None,
+                        )
+                    )
         elif role == "assistant":
             for block in blocks:
                 kind = block.get("type")
@@ -907,12 +1011,18 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         continue
                     if not open_turn:
                         begin()
+                    elif isinstance(out[-1], TextDelta):
+                        # Another message's text straight after this one's (the
+                        # engine speaking twice in a turn): a paragraph apart,
+                        # not run together.
+                        text = "\n\n" + text
                     out.append(TextDelta(ts=ts, chat=chat, turn=turn, text=text))
                 elif kind == "tool_use":
                     if not open_turn:
                         begin()
                     name = str(block.get("name") or "")
-                    input = block.get("input") if isinstance(block.get("input"), Mapping) else {}
+                    raw_input = block.get("input")
+                    input: Mapping[str, Any] = raw_input if isinstance(raw_input, Mapping) else {}
                     out.append(
                         ToolStarted(
                             ts=ts,
@@ -924,6 +1034,26 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                             input=dict(input),
                         )
                     )
+                    if name in AGENT_TOOLS and block.get("id"):
+                        agent = str(block["id"])
+                        running.add(agent)
+                        agent_type = input.get("subagent_type")
+                        out.append(
+                            AgentStarted(
+                                ts=ts,
+                                chat=chat,
+                                turn=turn,
+                                id=agent,
+                                tool_use_id=agent,
+                                description=summarize_tool(name, dict(input)),
+                                kind=agent_type if isinstance(agent_type, str) and agent_type else "general-purpose",
+                                background=True if input.get("run_in_background") else None,
+                            )
+                        )
                 # thinking and anything else: not part of the conversation
     end()
+    # Whatever the transcript never saw end is over: the engine that ran it
+    # is gone (a replay from the transcript follows a gateway restart).
+    for agent in sorted(running):
+        out.append(AgentFinished(ts=ts, chat=chat, id=agent, outcome="done"))
     return out
