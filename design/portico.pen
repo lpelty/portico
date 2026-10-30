@@ -78373,10 +78373,7 @@
               "fill": "$control",
               "cornerRadius": 6,
               "gap": 5,
-              "padding": [
-                4,
-                9
-              ],
+              "padding": 6,
               "alignItems": "center",
               "children": [
                 {
@@ -78392,7 +78389,10 @@
                 {
                   "type": "text",
                   "id": "tk0e6",
+                  "x": 26,
+                  "y": 4,
                   "name": "T",
+                  "enabled": false,
                   "fill": "$text-2",
                   "content": "Open in Obsidian",
                   "fontFamily": "$font",
@@ -78408,10 +78408,7 @@
               "fill": "$control",
               "cornerRadius": 6,
               "gap": 5,
-              "padding": [
-                4,
-                9
-              ],
+              "padding": 6,
               "alignItems": "center",
               "children": [
                 {
@@ -78427,7 +78424,10 @@
                 {
                   "type": "text",
                   "id": "etWSv",
+                  "x": 26,
+                  "y": 4,
                   "name": "T",
+                  "enabled": false,
                   "fill": "$text-2",
                   "content": "Open externally",
                   "fontFamily": "$font",
@@ -79299,7 +79299,7 @@
       "fill": "$text-2",
       "textGrowth": "fixed-width",
       "width": 620,
-      "content": "AG2b · Folded: one line — \"Properties · 4 — draft, Oct 28, 3 tags\". Click the line to unfold.",
+      "content": "AG2b · Narrow viewer: front matter folded to one line; Open in Obsidian and Open externally drop to icon buttons (tooltips carry the words). Wide viewers keep the labelled buttons (AG2).",
       "lineHeight": 1.45,
       "fontFamily": "$font",
       "fontSize": 14,
@@ -79460,7 +79460,7 @@
                       "id": "zgElz",
                       "name": "T",
                       "fill": "$wait",
-                      "content": "Settings changed — restart the gateway to use them",
+                      "content": "Settings changed — restart the gateway to apply",
                       "fontFamily": "$font",
                       "fontSize": 12,
                       "fontWeight": "normal"
