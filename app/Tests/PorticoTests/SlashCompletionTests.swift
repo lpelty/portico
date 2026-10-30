@@ -120,6 +120,48 @@ final class SlashCompletionTests: XCTestCase {
         XCTAssertEqual(picked?.send, true)
     }
 
+    // MARK: - the composer's key path
+
+    /// Both composers (`InputBar`, `StartView`) route an editor key press
+    /// through `SlashCompletion.Key(_:modifiers:composing:)` while the list
+    /// is open: `nil` leaves the press to the text editor.
+    func testTheListTakesItsKeysFromTheEditorUnlessAModifierOrAnInputMethodHasThem() {
+        typealias Key = SlashCompletion.Key
+        XCTAssertEqual(Key(.upArrow, modifiers: [], composing: false), .up)
+        XCTAssertEqual(Key(.downArrow, modifiers: [], composing: false), .down)
+        // macOS marks the arrows as function and keypad keys; Caps Lock changes nothing.
+        XCTAssertEqual(Key(.downArrow, modifiers: [.function, .numericPad], composing: false), .down)
+        XCTAssertEqual(Key(.upArrow, modifiers: [.function, .numericPad, .capsLock], composing: false), .up)
+        XCTAssertEqual(Key(.return, modifiers: [], composing: false), .enter)
+        XCTAssertEqual(Key(.tab, modifiers: [], composing: false), .tab)
+        XCTAssertEqual(Key(.escape, modifiers: [], composing: false), .escape)
+
+        XCTAssertNil(Key(.return, modifiers: .shift, composing: false), "Shift+Enter adds a line")
+        XCTAssertNil(Key(.tab, modifiers: .shift, composing: false))
+        XCTAssertNil(Key(.downArrow, modifiers: [.command, .function, .numericPad], composing: false), "⌘↓ goes to the end of the text")
+        XCTAssertNil(Key(.upArrow, modifiers: [.option, .function, .numericPad], composing: false))
+        XCTAssertNil(Key(.return, modifiers: [], composing: true), "Return commits the input method's text")
+        XCTAssertNil(Key(.downArrow, modifiers: [.function, .numericPad], composing: true), "the candidate window has the arrows")
+        XCTAssertNil(Key("a", modifiers: [], composing: false))
+    }
+
+    /// A walk through a long list as the composer drives it: the keys move
+    /// the selection through `SlashListState`, which the list scrolls to.
+    func testALongListWalksDownAndBackAndPicksWhatIsSelected() throws {
+        let many = (1...12).map { AgentCommand(name: String(format: "cmd%02d", $0), description: "") }
+        var state = SlashListState()
+        let c = try XCTUnwrap(state.completion(text: "/", agentCommands: many))
+        XCTAssertGreaterThan(c.items.count, SlashCompletion.visibleRows, "it scrolls")
+        for _ in 0..<20 {
+            XCTAssertNil(state.apply(c.handle(try XCTUnwrap(SlashCompletion.Key(.downArrow, modifiers: [.function], composing: false)), selection: state.selection)))
+        }
+        XCTAssertEqual(state.selection, c.items.count - 1, "stops at the last row")
+        XCTAssertNil(state.apply(c.handle(.up, selection: state.selection)))
+        let picked = try XCTUnwrap(state.apply(c.handle(.tab, selection: state.selection)))
+        XCTAssertEqual(picked.item, c.items[c.items.count - 2])
+        XCTAssertFalse(picked.send)
+    }
+
     // MARK: - the model
 
     private func model() -> AppModel {

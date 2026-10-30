@@ -335,7 +335,7 @@ final class MarkdownTests: XCTestCase {
         let text = MarkdownAttributed.prose(MarkdownParser.parse("**Done.** See [docs](https://example.com)\nnext line\n\n- one\n- `two`"))
         XCTAssertEqual(text.string, "Done. See docs\u{2028}next line\n•\tone\n•\ttwo")
         let bold = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-        XCTAssertTrue(bold?.fontDescriptor.symbolicTraits.contains(.bold) == true)
+        XCTAssertEqual(bold.map(MarkdownAttributed.weight(of:)), MarkdownAttributed.boldWeight)
         let link = text.attribute(.link, at: (text.string as NSString).range(of: "docs").location, effectiveRange: nil) as? URL
         XCTAssertEqual(link?.absoluteString, "https://example.com")
     }

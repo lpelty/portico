@@ -109,10 +109,10 @@ struct InputBar: View {
                     Image(systemName: "plus")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.text2)
-                        .frame(width: 20, height: 20)
+                        .frame(width: InputBar.iconButtonSide, height: InputBar.iconButtonSide)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.hover)
+                .buttonStyle(.hoverBox)
                 .help("Attach files to the next message")
                 .disabled(!connected)
                 if let mode = model.mode(of: chat) {
@@ -128,7 +128,7 @@ struct InputBar: View {
                     .foregroundStyle(Theme.text3)
                     .lineLimit(1)
                     .layoutPriority(-1)
-                MicButton(composer: voiceComposer)
+                MicButton(composer: voiceComposer, side: InputBar.iconButtonSide, corner: InputBar.iconButtonCorner)
                     .disabled(renewing && !queues)
                 if busy {
                     let typing = InputBar.showsSendWhileBusy(queues: queues, text: draft.wrappedValue)
@@ -192,13 +192,17 @@ struct InputBar: View {
                 .focused($editorFocused)
                 .disabled(renewing && !queues)
                 .onKeyPress(.return, phases: .down) { press in
-                    if slashCompletion != nil, press.modifiers.isEmpty, !InputBar.isComposing() {
-                        return slashKey(.enter)
+                    if slashCompletion != nil,
+                        let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing())
+                    {
+                        return slashKey(key)
                     }
                     return InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
                 }
                 .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: .down) { press in
-                    guard let key = SlashCompletion.Key(press.key), press.modifiers.isEmpty || key != .tab else { return .ignored }
+                    guard let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing()) else {
+                        return .ignored
+                    }
                     return slashKey(key)
                 }
         }
@@ -290,6 +294,11 @@ struct InputBar: View {
     }
 
     static let enterHint = "Enter to send · Shift+Enter for a new line"
+
+    /// v0.11 (72, AG6): `+` and the mic answer the pointer in Send's box,
+    /// 28 tall with 6 corners (Send is `PillButtonStyle`: 6 + 16 + 6).
+    static let iconButtonSide: CGFloat = 28
+    static let iconButtonCorner: CGFloat = 6
 
     /// Enter sends; Shift+Enter (or Option+Enter) is left to the editor,
     /// which adds a line. While an input method is composing (marked

@@ -450,7 +450,10 @@ struct MarkdownText: View {
     /// The message's id: Read aloud knows the reply by it.
     var id: String? = nil
 
-    static let bodySize: CGFloat = 13
+    /// v0.11 (73, AG1): 16-point regular, the desktop app's reading size,
+    /// so bold (`MarkdownAttributed.boldWeight`) reads as bold; with the
+    /// spacing a line is about 1.5 times the size.
+    static let bodySize: CGFloat = 16
     static let lineSpacing: CGFloat = 5
 
     @State private var hovering = false
@@ -599,7 +602,8 @@ struct MarkdownBlockView: View {
                         .font(.system(size: Self.bodySize))
                 }
             }
-            .foregroundStyle(Theme.text3)
+            // v0.11 (73): full-size, in the text colour, not faint.
+            .foregroundStyle(secondary ? Theme.text2 : Theme.text)
             .frame(minWidth: 10, alignment: .trailing)
             VStack(alignment: .leading, spacing: 8) {
                 SelectableText(text: MarkdownAttributed.prose([.paragraph(item.text)], secondary: secondary))

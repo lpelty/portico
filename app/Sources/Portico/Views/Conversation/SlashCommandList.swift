@@ -47,6 +47,21 @@ extension SlashCompletion.Key {
         default: return nil
         }
     }
+
+    /// The modifiers that make a key the editor's: Shift+Enter adds a line,
+    /// Shift+Tab, ⌥↑, ⌘↓ and the rest move or select as they always have.
+    /// Arrow keys arrive with `.function` and `.numericPad` set, and Caps
+    /// Lock may be on; those three change nothing.
+    static let editorModifiers: EventModifiers = [.shift, .control, .option, .command]
+
+    /// The list's key for a press in a composer's editor while the list is
+    /// open, or `nil` when the press belongs to the editor: another key, a
+    /// key with an editing modifier, or any key while an input method is
+    /// composing (its candidate window takes the arrows and Return).
+    init?(_ key: KeyEquivalent, modifiers: EventModifiers, composing: Bool) {
+        guard !composing, modifiers.isDisjoint(with: Self.editorModifiers) else { return nil }
+        self.init(key)
+    }
 }
 
 /// The slash list over a composer, frame AG4 (v0.11 item 66): a PORTICO
@@ -90,9 +105,15 @@ struct SlashCommandList: View {
                 }
                 .scrollIndicators(.automatic)
                 .frame(height: listHeight)
+                // The least scroll that shows the whole selected row (a nil anchor).
                 .onChange(of: selection) { _, new in
                     let items = completion.items
                     if items.indices.contains(new) { proxy.scrollTo(items[new].id) }
+                }
+                // A new query starts at its first row, even when the
+                // selection was already 0 and a scroll had moved it away.
+                .onChange(of: completion.query) { _, _ in
+                    if let first = completion.items.first { proxy.scrollTo(first.id, anchor: .top) }
                 }
             }
             Rectangle().fill(Theme.border).frame(height: 1)
