@@ -12,6 +12,13 @@
 - **MCP tools read once, plainly.** A tool from an MCP server shows as
   "memory · query documents" (the server, then the tool's name with
   spaces), not its raw id twice.
+- **The restart notice says why.** "Restart the gateway to apply" reads
+  "Settings changed — restart the gateway to use them", still in the wait
+  colour with a restart arrow, apart from Update available.
+- **The notice keeps its words while there is room.** It folded to a bare
+  icon whenever the strip left its fullest form (so whenever the viewer
+  was open); now the strip's other words shrink first and the notice
+  becomes an icon only when even the smallest strip has no room for it.
 
 ### Gateway
 

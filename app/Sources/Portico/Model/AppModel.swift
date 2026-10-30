@@ -2042,7 +2042,7 @@ extension AppModel {
         }
     }
 
-    /// "Restart the gateway to apply": stop it (`gateway.stop`, as Stop
+    /// "Settings changed — restart the gateway to use them": stop it (`gateway.stop`, as Stop
     /// does) and start it again; the new gateway's `hello` clears the
     /// stale mark.
     func restartGateway(timeout: Duration = .seconds(10)) async {
