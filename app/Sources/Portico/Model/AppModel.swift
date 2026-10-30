@@ -1686,13 +1686,17 @@ extension AppModel {
 
     /// The roots to browse and list: `fileRoots` without the chat's own
     /// folder when a deployment root is that same folder, so it is not
-    /// shown twice. Paths still resolve through `fileRoots`.
+    /// shown twice, or when the deployment hides it (v0.11, `[files]
+    /// hide_session_folder`) and has roots of its own to show instead.
+    /// Paths still resolve through `fileRoots`.
     func browsableRoots(for chat: Int) -> [Root] {
         let roots = fileRoots(for: chat)
         guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
+        let others = roots.filter { $0.name != Self.chatRoot }
+        if hello?.hideSessionFolder == true, !others.isEmpty { return others }
         let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
-        let shared = roots.contains { $0.name != Self.chatRoot && URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
-        return shared ? roots.filter { $0.name != Self.chatRoot } : roots
+        let shared = others.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        return shared ? others : roots
     }
 
     /// The absolute directory a root name stands for, or `nil` for a name

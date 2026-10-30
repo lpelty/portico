@@ -491,6 +491,9 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The mode a new session starts in (config `permission_mode`, v0.3):
     /// what the start screen's chip shows until the person picks one.
     var permissionMode: PermissionMode? = nil
+    /// The Files pane leaves out the session's own folder (v0.11, config
+    /// `[files] hide_session_folder`); it still resolves.
+    var hideSessionFolder: Bool? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -504,6 +507,7 @@ struct HelloServer: Codable, Equatable, Sendable {
         case canUpdate = "can_update"
         case defaultFolder = "default_folder"
         case permissionMode = "permission_mode"
+        case hideSessionFolder = "hide_session_folder"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }

@@ -156,6 +156,10 @@ timeout_seconds = 10                # optional, default 10, at least 1: the chec
 [[roots]]                           # folders the files pane can browse
 name = "projects"
 path = "~/projects"                 # absolute; a leading ~ is expanded
+
+[files]                             # optional (v0.11): the Files pane
+hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
+                                    # (it is still where the agent works, and a file in it still shows)
 ```
 
 A title call goes through the Agent SDK to the same provider, with the

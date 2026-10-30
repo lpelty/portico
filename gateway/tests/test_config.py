@@ -478,3 +478,29 @@ def test_a_relative_header_image_stops_the_load(tmp_path: Path) -> None:
         load_config(path)
     path.write_text('[brand]\nname = "Front Door"\nagent_name = "Helper"\nheader_image = "~/lockup.svg"\n')
     assert load_config(path).brand.for_hello().header_image == str(Path("~/lockup.svg").expanduser())
+
+
+# --- v0.11: [files] -------------------------------------------------------------
+
+
+def test_files_hide_session_folder_loads_and_goes_out_in_hello(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[files]\nhide_session_folder = true\n")
+    config = load_config(path)
+    assert config.files.hide_session_folder is True
+    hello = hello_for(config, epoch="e", gateway_version="0.11.0")
+    assert hello.hide_session_folder is True
+    assert parse_server(dump(hello)) == hello
+
+
+def test_files_shows_the_session_folder_by_default() -> None:
+    assert Config().files.hide_session_folder is False
+    assert hello_for(Config(), epoch="e", gateway_version="0.11.0").hide_session_folder is False
+
+
+def test_an_unknown_files_key_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[files]\nhide_chat = true\n")
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "files" in e.value.keys

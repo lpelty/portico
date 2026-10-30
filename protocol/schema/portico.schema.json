@@ -2551,6 +2551,11 @@
           "title": "Gateway Version",
           "type": "string"
         },
+        "hide_session_folder": {
+          "default": false,
+          "title": "Hide Session Folder",
+          "type": "boolean"
+        },
         "id": {
           "anyOf": [
             {

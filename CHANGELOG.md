@@ -19,8 +19,17 @@
   icon whenever the strip left its fullest form (so whenever the viewer
   was open); now the strip's other words shrink first and the notice
   becomes an icon only when even the smallest strip has no room for it.
+- **Folders.** The Files pane's "Folder" switch reads "Folders".
 - **The session card says what its buttons do:** "Log writes it up · New
   starts fresh", not "Same as typing /log or /new".
+
+### For deployments
+
+- **`[files] hide_session_folder = true`** (default `false`) leaves the
+  session's own folder out of the Files pane (and quick open), for a
+  deployment whose roots already cover it. It is still where the agent
+  works; a file in it still shows. With no roots to show instead, the
+  session's folder stays.
 
 ### Gateway
 
@@ -28,6 +37,11 @@
   opens on its own only inside the session's folder or the deployment's
   roots, the same rule `show_in_viewer` keeps; one written anywhere else
   (a scratch file in `/tmp`) is still listed in the viewer's history.
+
+### Protocol (still version 1; additions only)
+
+- `hello` gains `hide_session_folder` (default `false`). Schema and
+  examples regenerated.
 
 ## v0.10.0 (2026-10-30)
 

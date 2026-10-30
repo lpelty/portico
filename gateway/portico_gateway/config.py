@@ -180,6 +180,19 @@ class DeploymentConfig(BaseModel):
         return value if value is not None and value.strip() else None
 
 
+class FilesConfig(BaseModel):
+    """``[files]`` (v0.11): what the app's Files pane lists.
+
+    ``hide_session_folder`` leaves the session's own folder (the ``chat``
+    root) out of the pane, for a deployment whose roots already cover it.
+    The folder still resolves: a path in it shows, and the agent works in it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hide_session_folder: bool = False
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -237,6 +250,8 @@ class Config(BaseModel):
     # puts it first, so the engine and its MCP servers find npx, node, uvx
     # and the like. ``false`` keeps the inherited PATH.
     login_shell_path: bool = True
+    # v0.11: the Files pane (``[files] hide_session_folder``).
+    files: FilesConfig = FilesConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -371,7 +386,8 @@ def hello_for(
     then sees the result, in list order. ``config_stale`` is the server's
     reading of the config file's modification time; ``can_update`` is
     whether ``[update] run`` is set; ``permission_mode`` is the mode a new
-    session starts in; ``commands`` lists ``log`` when the deployment can log.
+    session starts in; ``commands`` lists ``log`` when the deployment can log;
+    ``hide_session_folder`` (v0.11) is ``[files] hide_session_folder``.
     ``capabilities`` (v0.8) adds ``services.restart_all`` when the
     deployment can restart all its services.
     """
@@ -396,6 +412,7 @@ def hello_for(
         can_update=bool(config.update.run),
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
         permission_mode=config.permission_mode,
+        hide_session_folder=config.files.hide_session_folder,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

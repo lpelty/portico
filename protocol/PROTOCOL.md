@@ -443,6 +443,11 @@ folder; after the folder the person last used, before the first root);
 starts in — the start screen shows it, and a new session the person did
 not pick a mode for runs in it).
 
+v0.11: `hide_session_folder: bool` (default `false`; config `[files]
+hide_session_folder`): the app's Files pane leaves out the chat's own
+folder (the `chat` root) when the deployment has roots of its own to show.
+The `chat` root still resolves for `files.list` and paths in it still show.
+
 ### `chat.list` — `ChatList`
 `chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
 plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,
@@ -670,7 +675,8 @@ every artifact. `text` never auto-opens.
 address, or named a viewable file that exists when the turn ends), or
 `producer` (the HTTP endpoint). `title` is the file name or the URL
 unless a producer gave one. A file is reported wherever it lives — a
-scratch directory outside the chat's folder opens like any other.
+scratch directory outside the chat's folder is listed like any other (and,
+since 0.11, never opens; see below).
 
 Every artifact goes in the history. `open` is true on the artifact the
 app should show now: the turn's artifacts are sent together just before
@@ -698,6 +704,12 @@ background subagent writes while no turn is running is reported when the
 write finishes, as a turn would report that one file (`open: true` when
 it is viewable). The app shows the newest artifact that opens (or that the
 person picks) over the one it remembered from the last quit.
+
+Since 0.11 (gateway behaviour; no new frame or field): a file the turn
+wrote or named takes `open: true` only when it is inside the chat's folder
+or a configured root, the rule `show_in_viewer` keeps. A file outside them
+is listed with `open: false`, and the newest viewable file inside them
+opens instead. URLs and producer artifacts are unchanged.
 
 ### `files.list` — `FilesList`
 `root`, `path` (normalised relative path, `""` for the root itself),

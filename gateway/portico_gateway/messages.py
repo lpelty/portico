@@ -353,6 +353,9 @@ class HelloServer(Envelope):
     # The mode a new session starts in (config ``permission_mode``), so the
     # start screen shows the mode the session will really run in (v0.3).
     permission_mode: PermissionMode | None = None
+    # v0.11: the Files pane leaves out the session's own folder (the
+    # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
+    hide_session_folder: bool = False
 
 
 class ChatList(Envelope):
@@ -887,6 +890,7 @@ def example_messages() -> dict[str, BaseModel]:
             can_update=True,
             default_folder="/Users/someone/projects",
             permission_mode="auto",
+            hide_session_folder=False,
         ),
         ChatList(
             ts=_TS,
