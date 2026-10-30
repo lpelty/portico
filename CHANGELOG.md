@@ -52,6 +52,29 @@
   `chat.commands` when an engine starts and keeps the last one per folder
   (`commands.json`), so the welcome has it before the first engine runs.
 
+- **Front matter reads as Properties (item 68).** A Markdown file's YAML
+  front matter shows as a quiet Properties block at the top of the
+  viewer (keys and values; lists as small tags; a status with a dot),
+  foldable to one line: "Properties · 4 — draft, Oct 28, 3 tags". It
+  used to come out as text with its last line made a heading.
+- **Open in Obsidian in the viewer (item 69)**, beside Open externally,
+  for a file inside an Obsidian vault. When the viewer is narrow both
+  are icons, their words in the tooltip.
+- **The services menu, quieter (item 60).** One line per service with
+  its dot; a second line only when it says something (the gateway's
+  port, a check's detail, an error in red). One Restart all at the foot
+  (the deployment's command for all its services, or the gateway when it
+  has none). A row's own Restart, and the gateway's Stop or Start, moved
+  to the row's right-click menu. The developer note at the foot is gone.
+- **Context on the session card only (item 64).** The status strip
+  keeps the model and the services.
+- **Changed this session (item 70)** sits in the Folders list as its
+  first section, its rows the same as the folders' rows, with the time
+  each changed; five show, the rest behind "N more".
+- **The empty Bookmarks tab (item 62)** says "No bookmarks yet." and how
+  to add one, from the pane's left edge, without a second "Bookmarks"
+  heading.
+
 ### For deployments
 
 - **`[sessions] next_number = "<command>"`**: the command's stdout is the
