@@ -55,6 +55,22 @@
   ↑/↓ move, Enter or Tab picks, Esc closes. The gateway sends the list as
   `chat.commands` when an engine starts and keeps the last one per folder
   (`commands.json`), so the welcome has it before the first engine runs.
+  Arrows, Return and Tab with ⌘, ⌥, ⌃ or Shift held, and any key while
+  an input method is composing, stay the text's.
+- **A reading column (item 58).** Replies, tool rows, your messages, the
+  composer (the welcome's too), its slash list and the queued cards share
+  one centred column at most 768 pt wide; a narrower window uses all of
+  it. Replies and tool rows take 92% of it; your message at most 70%,
+  right-aligned.
+- **Easier reading (item 73).** Replies and your messages are 16 pt
+  regular (they were 13); bold is semibold and shows; list bullets and
+  numbers are full-size in the text colour.
+- **Quieter tool rows (item 59).** No fill or border until the pointer is
+  on one; the tool's name in secondary text, what it touched in tertiary.
+  The status icon keeps its colour, and a failed step's words follow on
+  the row in red.
+- **The composer's `+` and mic** light up in the same 28 pt box, 6 pt
+  corners, as Send (item 72).
 
 ### For deployments
 

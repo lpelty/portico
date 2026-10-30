@@ -6,9 +6,12 @@ import SwiftUI
 /// Going away ends a talk into its composer (unsent).
 struct MicButton: View {
     let composer: Dictation.Composer
-    /// The side of the glyph's frame: 20 in the conversation, 30 on the welcome.
+    /// The side of the glyph's frame: 28 in the conversation (v0.11), 30 on the welcome.
     var side: CGFloat = 20
     var bordered = false
+    /// The hover box's and the listening fill's corner; `nil`: in proportion
+    /// to `side`, as before v0.11 (the composer passes Send's 6, item 72).
+    var corner: CGFloat? = nil
     @EnvironmentObject private var dictation: Dictation
     @EnvironmentObject private var settings: Settings
     @EnvironmentObject private var model: AppModel
@@ -27,7 +30,7 @@ struct MicButton: View {
                     if active {
                         LevelMeter(level: dictation.level, starting: dictation.phase == .starting)
                             .padding(side * 0.18)
-                            .background(model.brand.accent ?? Theme.accent, in: RoundedRectangle(cornerRadius: side * 0.27, style: .continuous))
+                            .background(model.brand.accent ?? Theme.accent, in: RoundedRectangle(cornerRadius: corner ?? side * 0.27, style: .continuous))
                     } else {
                         Image(systemName: "mic")
                             .font(.system(size: 14))
@@ -42,7 +45,7 @@ struct MicButton: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.hover)
+            .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: corner ?? 5, style: .continuous))))
             .help(active ? Dictation.listeningLine : "Talk: your words become text on this Mac")
             .accessibilityLabel(active ? "Stop listening" : "Talk")
             .onAppear { dictation.shown(shown) }

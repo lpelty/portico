@@ -41,15 +41,19 @@ enum MarkdownRun: Equatable {
 // MARK: - Attributed text
 
 /// Prose blocks as AppKit attributed text, laid out like the SwiftUI
-/// blocks they replace: body 13 with 5 of line spacing, 10 between blocks,
-/// 6 between list items, heads semibold a little larger.
+/// blocks they replace: body 16 regular with 5 of line spacing, 10 between
+/// blocks, 6 between list items, heads semibold a little larger (v0.11, 73).
 @MainActor
 enum MarkdownAttributed {
     static let bodySize = MarkdownText.bodySize
     static let lineSpacing = MarkdownText.lineSpacing
     /// Where an outer list item's text starts, and how much a nested one adds.
-    static let listIndent: CGFloat = 24
+    static let listIndent: CGFloat = 28
     static let nestedIndent: CGFloat = 26
+    /// Room for an item's marker before its text: "10." at the body size.
+    static let markerWidth: CGFloat = 24
+    /// `**bold**` (v0.11, 73, AG1's 600): a step that shows against the regular body.
+    static let boldWeight: NSFont.Weight = .semibold
 
     static func prose(_ blocks: [MarkdownBlock], first: Bool = true, spacing: CGFloat = 10, secondary: Bool = false) -> NSAttributedString {
         let color = NSColor(secondary ? Theme.text2 : Theme.text)
@@ -70,13 +74,14 @@ enum MarkdownAttributed {
                     let lastItem = itemIndex == items.count - 1
                     let start = listIndent + (item.level == 0 ? 0 : nestedIndent)
                     let marker = item.number ?? (item.level == 0 ? "•" : "◦")
+                    // v0.11 (73): the marker full-size in the text's colour, not faint.
                     let line = NSMutableAttributedString(
                         string: marker + "\t",
                         attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: bodySize, weight: .regular),
-                                     .foregroundColor: NSColor(Theme.text3)])
+                                     .foregroundColor: color])
                     line.append(inline(item.text, color: color))
                     let paragraph = style(after: lastItem ? after : 6)
-                    paragraph.firstLineHeadIndent = start - 18
+                    paragraph.firstLineHeadIndent = start - markerWidth
                     paragraph.headIndent = start
                     paragraph.tabStops = [NSTextTab(textAlignment: .left, location: start)]
                     appendParagraph(line, to: out, style: paragraph, last: last && lastItem)
@@ -100,7 +105,15 @@ enum MarkdownAttributed {
             var runFont = intent.contains(.code)
                 ? NSFont.monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular) : font
             var traits: NSFontDescriptor.SymbolicTraits = []
-            if intent.contains(.stronglyEmphasized) { traits.insert(.bold) }
+            if intent.contains(.stronglyEmphasized) {
+                // An explicit weight, not the bold trait: in a regular body
+                // it is `boldWeight`; in a semibold head, a step further.
+                if intent.contains(.code) {
+                    traits.insert(.bold)
+                } else {
+                    runFont = .systemFont(ofSize: runFont.pointSize, weight: weight(of: runFont) >= boldWeight ? .bold : boldWeight)
+                }
+            }
             if intent.contains(.emphasized) { traits.insert(.italic) }
             if !traits.isEmpty {
                 let descriptor = runFont.fontDescriptor.withSymbolicTraits(runFont.fontDescriptor.symbolicTraits.union(traits))
@@ -113,6 +126,12 @@ enum MarkdownAttributed {
             out.append(NSAttributedString(string: string, attributes: attributes))
         }
         return out
+    }
+
+    /// A system font's weight, from its traits (regular when it has none).
+    static func weight(of font: NSFont) -> NSFont.Weight {
+        let traits = font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        return (traits?[.weight] as? CGFloat).map { NSFont.Weight($0) } ?? .regular
     }
 
     /// A code block's text: monospaced 12, 3 of line spacing, as fenced.

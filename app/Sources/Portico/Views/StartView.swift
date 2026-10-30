@@ -68,7 +68,8 @@ struct StartView: View {
                 folderLine
             }
         }
-        .frame(maxWidth: 720)
+        // v0.11 (58): the conversation's reading column.
+        .frame(maxWidth: ConversationColumn.maxWidth)
         .padding(EdgeInsets(top: 32, leading: 48, bottom: 120, trailing: 48))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { focused = true }
@@ -159,13 +160,17 @@ struct StartView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
                     .onKeyPress(.return, phases: .down) { press in
-                        if slashCompletion != nil, press.modifiers.isEmpty, !InputBar.isComposing() {
-                            return slashKey(.enter)
+                        if slashCompletion != nil,
+                            let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing())
+                        {
+                            return slashKey(key)
                         }
                         return InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
                     }
                     .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: .down) { press in
-                        guard let key = SlashCompletion.Key(press.key), press.modifiers.isEmpty || key != .tab else { return .ignored }
+                        guard let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing()) else {
+                            return .ignored
+                        }
                         return slashKey(key)
                     }
             }
