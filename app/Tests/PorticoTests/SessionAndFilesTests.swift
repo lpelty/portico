@@ -51,6 +51,41 @@ final class SessionAndFilesTests: XCTestCase {
         return calendar
     }
 
+    // MARK: - clearing earlier sessions (v0.11, item 54)
+
+    func testClearEarlierSessionsIsOfferedInSinglePresentationOnAGatewayThatCan() throws {
+        let (model, sent) = try model()
+        model.apply(.hello(hello(capabilities: ["sessions", "sessions.clear"])))
+        model.apply(.chatList(ChatList(chats: [session(13, ended: "2026-10-27T11:40:00Z"), session(14, parent: 13)])))
+        XCTAssertTrue(model.canClearEarlierSessions)
+        sent.frames.removeAll()
+        model.clearEarlierSessions()
+        XCTAssertEqual(sent.types(), ["sessions.clear"])
+
+        // The gateway answers with the list: the earlier one is gone, the live one stays.
+        model.apply(.chatList(ChatList(chats: [session(14, parent: 13)])))
+        XCTAssertTrue(model.earlierSessions.isEmpty)
+        XCTAssertEqual(model.liveSession?.chat, 14)
+        sent.frames.removeAll()
+        model.clearEarlierSessions()
+        XCTAssertTrue(sent.frames.isEmpty, "nothing to clear: nothing sent")
+        XCTAssertEqual(ClearEarlierSessions.label(count: 0), "No earlier sessions")
+        XCTAssertEqual(ClearEarlierSessions.label(count: 1), "1 earlier session")
+        XCTAssertEqual(ClearEarlierSessions.label(count: 12), "12 earlier sessions")
+    }
+
+    func testClearEarlierSessionsIsNotOfferedWithoutTheCapabilityOrInMultiplePresentation() throws {
+        let (model, sent) = try model()
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(13, ended: "2026-10-27T11:40:00Z"), session(14)])))
+        XCTAssertFalse(model.canClearEarlierSessions, "an older gateway cannot")
+        model.apply(.hello(hello(single: false, capabilities: ["sessions.clear"])))
+        XCTAssertFalse(model.canClearEarlierSessions, "multiple presentation has no earlier sessions")
+        sent.frames.removeAll()
+        model.clearEarlierSessions()
+        XCTAssertTrue(sent.frames.isEmpty)
+    }
+
     // MARK: - protocol tolerance
 
     func testV01HelloAndRecordsDecodeWithDefaults() throws {

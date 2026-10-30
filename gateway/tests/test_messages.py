@@ -68,6 +68,7 @@ EXPECTED_KEYS = {
     "client.services.restart_all",
     "server.session.logged",
     "server.services.status",
+    "client.sessions.clear",
 }
 
 
@@ -79,8 +80,8 @@ def test_every_type_has_schema_def_and_example():
     # v0.1's 30, v0.2's 6, v0.3's session.mode, chat.notice, config.stale,
     # update.available, v0.4's session.log, service.restart, session.logged, services.status,
     # v0.8's services.restart_all, v0.10's agent.started, agent.progress, agent.finished,
-    # workflow.started, workflow.phase, workflow.finished
-    assert len(ex) == 51
+    # workflow.started, workflow.phase, workflow.finished, v0.11's sessions.clear
+    assert len(ex) == 52
     assert set(ex) == EXPECTED_KEYS
 
 

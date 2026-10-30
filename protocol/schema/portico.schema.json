@@ -1786,6 +1786,9 @@
         },
         {
           "$ref": "#/$defs/ServicesRestartAll"
+        },
+        {
+          "$ref": "#/$defs/SessionsClear"
         }
       ]
     },
@@ -3460,6 +3463,63 @@
         "next"
       ],
       "title": "SessionRenewed",
+      "type": "object"
+    },
+    "SessionsClear": {
+      "additionalProperties": false,
+      "description": "Forget the ended sessions, keeping the live one (v0.11, single presentation only).\n\nOnly when ``hello.capabilities`` has ``sessions.clear``. Only Portico's\nlist is cleared: the engine's transcripts on disk stay, and the numbers\nare never handed out again. Answered with ``chat.list``; refused with\n``sessions.not_single`` in multiple presentation.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "sessions.clear",
+          "default": "sessions.clear",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "SessionsClear",
       "type": "object"
     },
     "StatusSet": {

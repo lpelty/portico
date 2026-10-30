@@ -202,6 +202,7 @@ from .messages import (
     Service,
     ServiceRestart,
     ServicesRestartAll,
+    SessionsClear,
     ServicesStatus,
     SessionLog,
     SessionLogged,
@@ -283,6 +284,22 @@ def slash_command(text: str) -> str | None:
     if "." in word or os.path.lexists("/" + word):
         return None
     return word
+
+
+def _resolved(folder: Path | str) -> Path:
+    """``folder`` resolved, or as given when it cannot be."""
+    try:
+        return Path(folder).expanduser().resolve()
+    except OSError:
+        return Path(folder)
+
+
+def home_relative(path: Path) -> str:
+    """``path`` with the home folder written ``~`` (v0.11), as a person reads it."""
+    try:
+        return "~/" + str(Path(path).relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 def _now() -> str:
@@ -790,6 +807,7 @@ class GatewayServer:
         self.register("session.log", self.on_session_log)
         self.register("service.restart", self.on_service_restart)
         self.register("services.restart_all", self.on_services_restart_all)
+        self.register("sessions.clear", self.on_sessions_clear)
 
     @property
     def attached(self) -> bool:
@@ -818,6 +836,7 @@ class GatewayServer:
             create_connection=self._make_connection,
         )
         self.port = self._server.sockets[0].getsockname()[1]
+        await self._follow_default_folder()
         await self._preview_next_number()
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
         if self.config_path is not None:
@@ -1235,6 +1254,59 @@ class GatewayServer:
         return await next_session_number(
             self.config.sessions.next_number, self.registry.next_number, self.next_number_timeout
         )
+
+    # --- the live session follows default_folder (v0.11, item 54) ---------------
+
+    async def _follow_default_folder(self) -> None:
+        """At start, single presentation: a changed ``default_folder`` gets a new live session there.
+
+        The live session working anywhere else is ended (no log step: no
+        engine runs yet, and nothing starts one unasked) and the next one
+        starts in the new folder, both saying why in their conversations.
+        The folder is recorded each start, so a folder the person chose for
+        a session is kept while ``default_folder`` stays the same; an index
+        from before v0.11 recorded none, and counts as changed.
+        """
+        if self.config.presentation != "single" or not self.config.default_folder:
+            return
+        try:
+            folder = Path(self.config.default_folder).expanduser().resolve()
+        except OSError:
+            return
+        if not folder.is_dir():
+            return
+        recorded = self.registry.recorded_default_folder
+        changed = recorded is None or Path(recorded) != folder
+        live = max((c for c in self.registry.chats() if c.ended is None), key=lambda c: c.number, default=None)
+        if changed and live is not None and _resolved(live.folder) != folder:
+            following = self.registry.create(folder, parent=live.number, number=await self._new_session_number())
+            live.ended = _now()
+            live.logged = None
+            await self.set_state(live, "stopped")
+            await self.notice(
+                live, f"Session ended · the deployment's folder changed · continues in Session {following.number}"
+            )
+            await self.set_state(following, "idle")
+            await self.notice(
+                following, f"Started a new session in {home_relative(folder)} — the deployment's folder changed"
+            )
+            log.info(
+                "default_folder is now %s: session %d (in %s) ended; session %d follows there",
+                folder, live.number, live.folder, following.number,
+            )
+        self.registry.record_default_folder(str(folder))
+
+    async def on_sessions_clear(self, msg: SessionsClear, conn: ServerConnection) -> None:
+        """Forget every ended session (v0.11, item 54); the live one stays, and the transcripts on disk."""
+        if self.config.presentation != "single":
+            raise ProtocolError("sessions.not_single", "only a deployment with one live session at a time clears earlier ones")
+        for chat in [c for c in self.registry.chats() if c.ended is not None]:
+            await self.cards.cancel_all(chat, "session cleared", self.emit)
+            await self._close_engine(chat)
+            self.registry.remove(chat.number)
+            self._engine_locks.pop(chat.number, None)
+        log.info("earlier sessions cleared from the list")
+        await self.send_chat_list()
 
     async def _preview_next_number(self) -> None:
         """At start, with a ``next_number`` command and no live session in single presentation: ask it once for the welcome."""

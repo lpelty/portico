@@ -19,6 +19,15 @@
   icon whenever the strip left its fullest form (so whenever the viewer
   was open); now the strip's other words shrink first and the notice
   becomes an icon only when even the smallest strip has no room for it.
+- **The live session follows the deployment's folder.** When
+  `default_folder` changes, the next launch ends the session working in
+  the old folder and starts one in the new one, and the conversation says
+  why: "Started a new session in ~/… — the deployment's folder changed".
+  A folder the person chose for a session is kept while `default_folder`
+  stays the same.
+- **Clear earlier sessions…** in Settings → General (single presentation;
+  asks first) empties the list of ended sessions. The live session and
+  every transcript on disk stay.
 - **The welcome names the real next session.** With no sessions yet it
   said "Session 1" whatever the gateway's counter said; it now shows the
   number the session will get.
@@ -43,6 +52,9 @@
 
 ### Gateway
 
+- The index records the `default_folder` the gateway last ran with, so a
+  change is told from a folder the person chose. An index from before
+  v0.11 has none: a live session outside `default_folder` follows it once.
 - **A file the agent writes outside the session opens no more.** A file
   opens on its own only inside the session's folder or the deployment's
   roots, the same rule `show_in_viewer` keeps; one written anywhere else
@@ -51,7 +63,10 @@
 ### Protocol (still version 1; additions only)
 
 - `hello` gains `hide_session_folder` (default `false`); `chat.list`
-  gains `next_chat?`. Schema and examples regenerated.
+  gains `next_chat?`. New app → gateway `sessions.clear` (answered with
+  `chat.list`; `sessions.not_single` in multiple presentation), offered by
+  the `sessions.clear` capability in single presentation. Schema and
+  examples regenerated.
 
 ## v0.10.0 (2026-10-30)
 

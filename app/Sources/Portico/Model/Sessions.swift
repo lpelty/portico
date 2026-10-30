@@ -218,6 +218,22 @@ extension AppModel {
         }
     }
 
+    // MARK: clearing earlier sessions (v0.11, item 54)
+
+    /// Settings → General offers Clear earlier sessions…: single
+    /// presentation, on a gateway that can.
+    var canClearEarlierSessions: Bool {
+        isSinglePresentation && offers(SessionsClear.capability)
+    }
+
+    /// Clear earlier sessions… once confirmed: the gateway forgets the
+    /// ended sessions (the live one stays, and every transcript on disk)
+    /// and answers with `chat.list`.
+    func clearEarlierSessions() {
+        guard canClearEarlierSessions, !earlierSessions.isEmpty else { return }
+        send(.sessionsClear(SessionsClear(id: Self.requestId())))
+    }
+
     /// The nudge's "Log and start new": `session.renew`, with `log` when
     /// the deployment has a log step. One at a time per session.
     func renew(chat: Int) {

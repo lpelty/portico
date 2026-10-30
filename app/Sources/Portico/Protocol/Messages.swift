@@ -424,6 +424,17 @@ struct ServicesRestartAll: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// Forget the ended sessions, keeping the live one (v0.11; single
+/// presentation, when `hello.capabilities` has `sessions.clear`). Only
+/// Portico's list is cleared: the transcripts on disk stay. Answered with
+/// `chat.list`.
+struct SessionsClear: Codable, Equatable, Sendable {
+    static let messageType = "sessions.clear"
+    static let capability = "sessions.clear"
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 /// Change the session's permission mode; answered with `chat.state`
 /// carrying `mode`.
 struct SessionMode: Codable, Equatable, Sendable {
@@ -1134,6 +1145,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case sessionLog(SessionLog)
     case serviceRestart(ServiceRestart)
     case servicesRestartAll(ServicesRestartAll)
+    case sessionsClear(SessionsClear)
 
     var type: String {
         switch self {
@@ -1155,6 +1167,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionLog: SessionLog.messageType
         case .serviceRestart: ServiceRestart.messageType
         case .servicesRestartAll: ServicesRestartAll.messageType
+        case .sessionsClear: SessionsClear.messageType
         }
     }
 
@@ -1179,6 +1192,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SessionLog.messageType: self = .sessionLog(try SessionLog(from: decoder))
         case ServiceRestart.messageType: self = .serviceRestart(try ServiceRestart(from: decoder))
         case ServicesRestartAll.messageType: self = .servicesRestartAll(try ServicesRestartAll(from: decoder))
+        case SessionsClear.messageType: self = .sessionsClear(try SessionsClear(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1205,6 +1219,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .sessionLog(let m): try m.encode(to: encoder)
         case .serviceRestart(let m): try m.encode(to: encoder)
         case .servicesRestartAll(let m): try m.encode(to: encoder)
+        case .sessionsClear(let m): try m.encode(to: encoder)
         }
     }
 }

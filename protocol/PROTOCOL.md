@@ -387,6 +387,16 @@ request's `id` and the reason. Errors before anything runs:
 services), `services.busy` (one is already running). An app that never
 sends it is unaffected.
 
+### `sessions.clear` — `SessionsClear` *(v0.11)*
+`id`. Only when `hello.capabilities` has `sessions.clear` (the reference
+gateway lists it in single presentation). The gateway forgets every ended
+session, keeping the live one, and answers with `chat.list`. Only the
+gateway's list is cleared: the engine's transcripts on disk stay, and the
+numbers are never handed out again (`chat.list.next_chat` does not go
+back). In multiple presentation it is refused with
+`error code=sessions.not_single`. An app that never sends it is
+unaffected.
+
 ### `files.search` — `FilesSearch`
 `root` (named as for `files.list`; `chat` with `chat` set), `query`, `id`.
 Reply: `files.results`, or `error` with the `files.list` root codes or
@@ -429,7 +439,9 @@ v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 `files`, `producer`; v0.8: `services.restart_all` when the deployment can
 restart all its services at once, so the app offers Restart all
 services; v0.10: `agents.v1` when the gateway sends subagent and workflow
-frames to an app that lists the same in its own `hello`). Always followed by `chat.list`, so the app has the
+frames to an app that lists the same in its own `hello`; v0.11:
+`sessions.clear` in single presentation, so the app offers Clear earlier
+sessions…). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:

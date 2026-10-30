@@ -380,6 +380,16 @@ class ChatRegistry:
         return [self._chats[n] for n in sorted(self._chats)]
 
     @property
+    def recorded_default_folder(self) -> str | None:
+        """The deployment's ``default_folder`` the gateway last ran with (v0.11); ``None`` in an older index."""
+        return self._index.default_folder
+
+    def record_default_folder(self, folder: str | None) -> None:
+        """Remember the ``default_folder`` this gateway runs with; saved to the index at once."""
+        self._index.default_folder = folder
+        self.persist()
+
+    @property
     def next_number(self) -> int:
         """The number Portico's own counter gives the next chat."""
         return self._index.next_chat

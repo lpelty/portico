@@ -38,6 +38,10 @@ CAPABILITIES: list[str] = ["cards.form", "files", "producer", "sessions", "files
 # then offers Restart all services and sends ``services.restart_all``.
 RESTART_ALL_CAPABILITY = "services.restart_all"
 
+# v0.11: advertised in single presentation; the app's Settings then offers
+# Clear earlier sessions… and sends ``sessions.clear``.
+CLEAR_SESSIONS_CAPABILITY = "sessions.clear"
+
 
 class ConfigError(ValueError):
     """``config.toml`` cannot be used; the message says which key and why.
@@ -411,12 +415,15 @@ def hello_for(
     session starts in; ``commands`` lists ``log`` when the deployment can log;
     ``hide_session_folder`` (v0.11) is ``[files] hide_session_folder``.
     ``capabilities`` (v0.8) adds ``services.restart_all`` when the
-    deployment can restart all its services.
+    deployment can restart all its services, and (v0.11) ``sessions.clear``
+    in single presentation.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
     if can_restart_all(config, plugins):
         capabilities.append(RESTART_ALL_CAPABILITY)
+    if config.presentation == "single":
+        capabilities.append(CLEAR_SESSIONS_CAPABILITY)
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,

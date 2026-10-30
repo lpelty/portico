@@ -214,6 +214,19 @@ plug-in's `on_renew` replaces it. With neither, renewing just ends the
 session and opens the next. In single mode `chat.new` is refused while a
 session is live; nothing renews on its own, ever.
 
+When the deployment's `default_folder` changes, the live session follows
+it: at its next start the gateway ends the session working elsewhere
+(without a log step) and starts the next one in the new folder, and the
+conversation says why ("Started a new session in ~/… — the deployment's
+folder changed"). The gateway records the `default_folder` it ran with,
+so a session the person started in a folder of their own choosing keeps
+it while `default_folder` stays the same.
+
+Settings → General → **Clear earlier sessions…** (after a confirmation)
+empties the list of ended sessions. Only Portico's list: the live session
+stays, the agent's transcripts stay on disk, and the numbers are not used
+again.
+
 ### Session numbers
 
 Sessions are numbered by Portico's own counter, and a number is never

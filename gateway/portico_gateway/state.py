@@ -98,6 +98,10 @@ class Index(BaseModel):
 
     chats: list[ChatRecord] = []
     next_chat: int = 1
+    # v0.11: the ``default_folder`` (resolved) the gateway last ran with, so
+    # a change can be told from a folder the person chose (``None`` in an
+    # older index).
+    default_folder: str | None = None
 
 
 class StateDir:
