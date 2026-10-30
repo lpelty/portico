@@ -426,3 +426,31 @@ async def test_a_message_held_through_a_renewal_goes_to_the_next_session(
         assert factory.last.calls[-1] == ("send", "carry on")
     finally:
         await conn.close()
+
+
+async def test_a_step_ending_after_stop_does_not_write_into_the_stopping_turn(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    # An interrupted turn may drop a write, losing the message; it goes as the next turn instead.
+    conn = await attach_queueing(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        pause = Pause()
+        engine.script(tool_use("toolu_1", "Read", {"file_path": "/tmp/x"}), pause, tool_result("toolu_1", "ok"), fake_result())
+        await busy_turn(conn, number)
+        await asyncio.wait_for(pause.reached.wait(), 5)
+        await queue(conn, number, "after the stop", "req-2")
+
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        for _ in range(200):  # the stop lands before the step ends
+            if server._runs[number].stop_requested:
+                break
+            await asyncio.sleep(0.01)
+        pause.go.set()
+        frames = await recv_until(conn, UserText)
+        assert not any(call[0] == "inject" for call in engine.calls)
+        assert frames[-1].text == "after the stop"  # type: ignore[union-attr]
+        assert any(isinstance(m, TurnFinished) for m in frames)  # the stopped turn ended first
+    finally:
+        await conn.close()

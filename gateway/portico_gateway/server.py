@@ -1403,17 +1403,22 @@ class GatewayServer:
 
     def _commands_on_connect(self) -> list[ChatCommands]:
         """The kept lists an app hears on connect (v0.11 item 66): the default folder's and each live session's."""
-        folders: list[str] = []
+        # (as the app names the folder, the key the list is kept under)
+        folders: list[tuple[str, str]] = []
         default = hello_for(self.config, self.epoch, self.version, self.plugins).default_folder
         if default:
-            folders.append(default)
+            try:
+                key = str(Path(default).expanduser().resolve())
+            except OSError:
+                key = str(Path(default).expanduser())
+            folders.append((default, key))  # chats keep resolved folders; a symlinked default still finds its list
         for chat in self.registry.chats():
-            if chat.ended is None and str(chat.folder) not in folders:
-                folders.append(str(chat.folder))
+            if chat.ended is None and all(str(chat.folder) != key for _, key in folders):
+                folders.append((str(chat.folder), str(chat.folder)))
         return [
-            ChatCommands(ts=_now(), folder=folder, commands=self.command_lists[folder])
-            for folder in folders
-            if folder in self.command_lists
+            ChatCommands(ts=_now(), folder=folder, commands=self.command_lists[key])
+            for folder, key in folders
+            if key in self.command_lists
         ]
 
     def _sync_session(self, chat: Chat) -> None:
@@ -2395,6 +2400,8 @@ class GatewayServer:
         engine = chat.engine
         if not held or engine is None or self._runs.get(chat.number) is not run:
             return
+        if run.stop_requested:
+            return  # an interrupted turn may drop the write; it goes as the next turn instead
         while held and slash_command(held[0].text) is None:
             item = held[0]
             text = with_attachments(item.text, item.attachments)
@@ -2430,6 +2437,11 @@ class GatewayServer:
         try:
             await self._send_message(chat, send, None)
         except ProtocolError as e:
+            if e.code == "chat.busy":
+                # Another send started the turn first: this one waits for it.
+                self._queues.setdefault(chat.number, []).insert(0, item)
+                await self.broadcast(self._queue_frame(chat))
+                return
             await self.broadcast(self.error(e.code, e.message, chat=chat.number, id=item.id))
         except Exception as e:
             log.exception("chat %d: sending a queued message failed", chat.number)
