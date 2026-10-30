@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.11.0 — unreleased
+
+### Queued messages
+
+- **Type while the agent works (item 74).** The composer stays usable
+  during a turn and during the log step. A message sent then waits above
+  the composer as a card, "Queued — sends at Acme's next step", with Edit
+  (back into the composer) and Cancel; several wait in order. The gateway
+  writes it into the turn when the agent's current step ends (its next
+  tool result, never a subagent's), and it shows in the conversation as
+  your message at that point; one still waiting when the turn ends goes
+  as the next turn. During the log step it goes into the log step itself,
+  so a rating typed while the close runs reaches it. While nothing is
+  typed, the composer offers Stop alone, as before.
+- **Protocol (additive).** Capability `queue.v1` on both sides. A
+  `message.send` during a turn is answered `chat.queued {id}` instead of
+  `chat.busy`; `chat.queue {chat, items}` carries the list after every
+  change and after `chat.live` on `chat.open`; `chat.unqueue {chat, id}`
+  takes one back (`chat.not_queued` once it has gone). An app or gateway
+  without `queue.v1` behaves as in v0.10.
+
 ## v0.10.0 (2026-10-30)
 
 ### What a person gets (app)

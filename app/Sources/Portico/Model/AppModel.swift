@@ -333,6 +333,9 @@ final class AppModel: ObservableObject {
     }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
+    /// Per chat, the messages the gateway holds for the agent's next step
+    /// (v0.11, item 74), oldest first, as its last `chat.queue` listed them.
+    @Published private(set) var queued: [Int: [QueuedMessage]] = [:]
     /// The artifact to put back in a chat's viewer when it is listed: the
     /// one showing when the app last quit (v0.6, `restoreViewerAtLaunch`).
     private var launchViewer: [Int: String] = [:]
@@ -416,6 +419,8 @@ final class AppModel: ObservableObject {
             // A restarted gateway never saw (or will never answer) a send in
             // flight; the replay from the beginning carries any turn that ran.
             pendingSends = [:]
+            // Its queue went with it (v0.11); `chat.open` says what is held.
+            queued = [:]
         }
         // A send still in flight went out before the opens below: their
         // replays may hold it (or the old connection lost it).
@@ -532,6 +537,16 @@ final class AppModel: ObservableObject {
 
         case .chatHistory(let history):
             applyHistory(history)
+
+        case .chatQueued(let accepted):
+            // Held for the agent's next step (v0.11): the send is answered;
+            // the card comes with the `chat.queue` that follows.
+            if let id = accepted.id, pendingSends[accepted.chat]?.id == id {
+                pendingSends[accepted.chat] = nil
+            }
+
+        case .chatQueue(let list):
+            queued[list.chat] = list.items.isEmpty ? nil : list.items
 
         case .chatLive(let liveMarker):
             live.insert(liveMarker.chat)
@@ -975,7 +990,8 @@ final class AppModel: ObservableObject {
             break
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
-            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus:
+            .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
+            .chatQueued, .chatQueue:
             break
         }
     }
@@ -1538,6 +1554,47 @@ final class AppModel: ObservableObject {
         drafts[chat] = text.isEmpty ? nil : text
     }
 
+    // MARK: - queued messages (v0.11, item 74)
+
+    /// Whether a send while the agent works is queued rather than refused:
+    /// the gateway listed `queue.v1` (so it queues for this app, which
+    /// lists it too). An older gateway keeps the composer's Stop-only rule.
+    var queuesWhileWorking: Bool {
+        hello?.capabilities.contains(ChatQueue.capability) == true
+    }
+
+    /// The messages waiting for the agent's next step in `chat`, oldest first.
+    func queuedMessages(chat: Int) -> [QueuedMessage] {
+        queued[chat] ?? []
+    }
+
+    /// The card's line: "Queued — sends at Acme's next step".
+    func queuedLine(chat: Int) -> String {
+        "Queued — sends at \(hello?.brand.agentName ?? brand.name)'s next step"
+    }
+
+    /// Cancel: take the message back before it goes. Off the card at once;
+    /// the gateway's `chat.queue` confirms, or `chat.not_queued` says it
+    /// had already gone (the status line carries that).
+    func cancelQueued(chat: Int, id: String) {
+        let kept = queuedMessages(chat: chat).filter { $0.id != id }
+        queued[chat] = kept.isEmpty ? nil : kept
+        send(.chatUnqueue(ChatUnqueue(chat: chat, id: id)))
+    }
+
+    /// Edit: take the message back and put it in the composer (ahead of
+    /// anything typed since, its files back as chips); sending it again
+    /// queues it anew, at the end.
+    func editQueued(chat: Int, id: String) {
+        guard let item = queuedMessages(chat: chat).first(where: { $0.id == id }) else { return }
+        cancelQueued(chat: chat, id: id)
+        let typedSince = draft(for: chat)
+        drafts[chat] = typedSince.isEmpty ? item.text : item.text + "\n" + typedSince
+        let attachedSince = draftAttachments[chat] ?? []
+        draftAttachments[chat] = nil
+        attach(item.attachments + attachedSince, to: chat)
+    }
+
     /// Interrupt the running turn; the gateway answers with
     /// `turn.finished outcome=stopped` (nothing, when nothing is running).
     func stopTurn(chat: Int) {
@@ -1582,6 +1639,7 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = nil
         drafts[chat] = nil
         pendingSends[chat] = nil
+        queued[chat] = nil
         transcripts[chat] = nil
         openCards[chat] = nil
         artifacts[chat] = nil

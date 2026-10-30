@@ -6,7 +6,11 @@ import UniformTypeIdentifiers
 /// multi-line editor, the deployment's action buttons from
 /// `hello.actions`, then `+` (attach), the permission mode chip, the
 /// Enter hint, and Send — or Stop alone (⌘.) while the chat is `working`
-/// or `waiting on you`. Enter sends, Shift+Enter adds a line. File URLs
+/// or `waiting on you`. Enter sends, Shift+Enter adds a line. v0.11 (item
+/// 74): with a gateway that queues, the composer stays usable while the
+/// agent works: Stop alone while nothing is typed, Stop (quiet) and Send
+/// once something is; a send then waits above the composer
+/// (`QueuedMessages`) for the agent's next step. File URLs
 /// dropped anywhere on the bar become chips; the Files pane adds chips
 /// through `AppModel.attach`.
 struct InputBar: View {
@@ -35,11 +39,21 @@ struct InputBar: View {
     /// A `session.log` is out (v0.4): typing goes on, sending waits.
     private var logging: Bool { model.isLogging(chat: chat) }
     private var canSend: Bool { InputBar.canSend(model, chat: chat, text: draft.wrappedValue) }
+    /// v0.11: a send now would be queued for the agent's next step.
+    private var queues: Bool { model.queuesWhileWorking }
 
+    /// Whether Send may go. A running turn, a log step or a renewal holds
+    /// it back, unless the gateway queues (v0.11): then only a send still
+    /// unanswered does, and the gateway holds the message until it can go.
     static func canSend(_ model: AppModel, chat: Int, text: String) -> Bool {
-        model.connection == .connected && !model.isBusy(chat: chat) && !model.isSending(chat: chat)
-            && !model.isRenewing(chat: chat) && !model.isLogging(chat: chat)
+        let held = model.isBusy(chat: chat) || model.isRenewing(chat: chat) || model.isLogging(chat: chat)
+        return model.connection == .connected && (!held || model.queuesWhileWorking) && !model.isSending(chat: chat)
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Send shows beside Stop while the agent works only with something to queue.
+    static func showsSendWhileBusy(queues: Bool, text: String) -> Bool {
+        queues && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// This composer for Talk (v0.9 decision 1): the words go into the
@@ -105,29 +119,37 @@ struct InputBar: View {
                     .lineLimit(1)
                     .layoutPriority(-1)
                 MicButton(composer: voiceComposer)
-                    .disabled(renewing)
+                    .disabled(renewing && !queues)
                 if busy {
+                    let typing = InputBar.showsSendWhileBusy(queues: queues, text: draft.wrappedValue)
                     Button(action: { model.stopTurn(chat: chat) }) {
                         Text("Stop")
                     }
-                    .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                    .buttonStyle(PillButtonStyle(kind: typing ? .quiet : .primary(model.brand.accent ?? Theme.accent)))
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Stop the running turn (⌘.)")
                     .disabled(!connected)
-                } else {
-                    Button(action: send) {
-                        Text("Send")
+                    if typing {
+                        sendButton
                     }
-                    .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("Send (Enter)")
-                    .disabled(!canSend)
+                } else {
+                    sendButton
                 }
             }
         }
         .padding(EdgeInsets(top: 12, leading: 14, bottom: 10, trailing: 14))
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.border, lineWidth: 1))
+    }
+
+    private var sendButton: some View {
+        Button(action: send) {
+            Text("Send")
+        }
+        .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+        .keyboardShortcut(.return, modifiers: .command)
+        .help(busy ? "Send at \(model.hello?.brand.agentName ?? model.brand.name)'s next step (Enter)" : "Send (Enter)")
+        .disabled(!canSend)
     }
 
     private var editor: some View {
@@ -147,7 +169,7 @@ struct InputBar: View {
                 .frame(minHeight: 20, maxHeight: 160)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
-                .disabled(renewing)
+                .disabled(renewing && !queues)
                 .onKeyPress(.return, phases: .down) { press in
                     InputBar.handleReturn(modifiers: press.modifiers, composing: InputBar.isComposing(), send: send)
                 }
