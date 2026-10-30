@@ -54,10 +54,14 @@ struct ConversationView: View {
                 // What the person sent while the agent works, waiting for its next step (v0.11, AG5).
                 QueuedMessages(chat: chat, sideInset: Self.sideInset)
                 // An ended session is read-only: no composer.
+                // The composer draws above the queued cards and the dock:
+                // its slash list (v0.11 item 66) rises from the box's top
+                // edge and floats over them while it is open.
                 InputBar(chat: chat)
                     .id(chat)
                     .padding(.horizontal, Self.sideInset)
                     .padding(.bottom, 16)
+                    .zIndex(1)
             }
         }
     }
