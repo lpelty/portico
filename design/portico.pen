@@ -104010,103 +104010,6 @@
                   ]
                 }
               ]
-            },
-            {
-              "type": "text",
-              "id": "rOajx",
-              "name": "H",
-              "fill": "$text-2",
-              "content": "Sessions",
-              "fontFamily": "$font",
-              "fontSize": 12,
-              "fontWeight": "600"
-            },
-            {
-              "type": "frame",
-              "id": "P7H9FS",
-              "name": "Sessions",
-              "width": "fill_container",
-              "fill": "$panel",
-              "cornerRadius": 9,
-              "stroke": "$border",
-              "strokeWidth": 1,
-              "layout": "vertical",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "mVRzF",
-                  "name": "12 earlier sessions",
-                  "width": "fill_container",
-                  "gap": 10,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "HoWiD",
-                      "name": "T",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 2,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "KBcde",
-                          "name": "L",
-                          "fill": "$text",
-                          "content": "12 earlier sessions",
-                          "fontFamily": "$font",
-                          "fontSize": 13,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "lHgfR",
-                          "name": "S",
-                          "fill": "$text-3",
-                          "textGrowth": "fixed-width",
-                          "width": "fill_container",
-                          "content": "Only the list is cleared. The live session stays, and every transcript stays on disk.",
-                          "lineHeight": 1.4,
-                          "fontFamily": "$font",
-                          "fontSize": 11.5,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "q8e8E",
-                      "name": "Clear earlier sessions…",
-                      "fill": "$control",
-                      "cornerRadius": 6,
-                      "stroke": "$border",
-                      "strokeWidth": 1,
-                      "gap": 5,
-                      "padding": [
-                        4,
-                        9
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "O5AzqR",
-                          "name": "Label",
-                          "fill": "$text-2",
-                          "content": "Clear earlier sessions…",
-                          "fontFamily": "$font",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
             }
           ]
         }
@@ -105770,7 +105673,7 @@
       "fill": "$text-2",
       "textGrowth": "fixed-width",
       "width": 3040,
-      "content": "AJ · Settings for v0.12. One fixed window, 700 × 800 (today 520 wide and sized to the tab, so General and Gateway scroll), the same size on every tab so it doesn't jump when you switch. General gains the viewer settings: Open files in the viewer automatically (the five kinds as one row of checkboxes instead of five indented switches), Agent can see the viewer, and Agent checks HTML it creates (greyed while the one above is off); and Spaces: Notify when a space is updated. Gateway puts state and controls first, then what quitting does, then the connection overrides people rarely touch. Voice and Appearance are unchanged. Wording is generic (\"the agent\"), as an admin would read it; a deployment can set the defaults in its config.",
+      "content": "AJ · Settings for v0.12. One fixed window, 700 × 800 (today 520 wide and sized to the tab, so General and Gateway scroll), the same size on every tab so it doesn't jump when you switch. General gains the viewer settings: Open files in the viewer automatically (the five kinds as one row of checkboxes instead of five indented switches), Agent can see the viewer, and Agent checks HTML it creates (greyed while the one above is off); and Spaces: Notify when a space is updated. Clear earlier sessions is gone from Settings (Larry: not for users); it stays an admin command on the gateway. Gateway puts state and controls first, then what quitting does, then the connection overrides people rarely touch. Voice and Appearance are unchanged. Wording is generic (\"the agent\"), as an admin would read it; a deployment can set the defaults in its config.",
       "lineHeight": 1.45,
       "fontFamily": "$font",
       "fontSize": 14,
