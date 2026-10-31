@@ -528,3 +528,16 @@ async def test_bash_html_outside_roots_no_context(tmp_path: Path) -> None:
     (other / "a.html").write_text("x")
     hook = build_check_html_hook(bridge, folder, [])
     assert await hook(bash_input(f"echo hi > {other / 'a.html'}", folder), "t", None) == {}
+
+
+async def test_bash_read_of_old_html_no_context(tmp_path: Path) -> None:
+    import os
+
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    (tmp_path / "proto").mkdir()
+    old = tmp_path / "proto" / "old.html"
+    old.write_text("x")
+    stamp = old.stat().st_mtime - 3600
+    os.utime(old, (stamp, stamp))
+    assert await hook(bash_input("cat proto/old.html", tmp_path), "t", None) == {}

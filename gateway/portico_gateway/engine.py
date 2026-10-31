@@ -30,6 +30,7 @@ import dataclasses
 import logging
 import re
 import shlex
+import time
 import warnings
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
@@ -590,6 +591,14 @@ def build_open_hook(callbacks: EngineCallbacks):
     return open_hook
 
 
+def _written_lately(path: Path, seconds: float = 30.0) -> bool:
+    """Whether ``path`` was modified within the last ``seconds``."""
+    try:
+        return time.time() - path.stat().st_mtime <= seconds
+    except OSError:
+        return False
+
+
 def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
     """The ``PostToolUse`` hook on ``Write|Edit|MultiEdit|Bash`` (v0.12): look at the HTML you just made.
 
@@ -614,6 +623,8 @@ def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
             # A shell write: the same detection the artifact list uses, the files the command names that now exist.
             command = tool_input.get("command")
             candidates = paths_in(command, base) if isinstance(command, str) else []
+            # Only files the command just wrote: a read of an old page names it too.
+            candidates = [c for c in candidates if _written_lately(c if c.is_absolute() else base / c)]
         else:
             raw = tool_input.get("file_path")
             candidates = [Path(raw)] if isinstance(raw, str) else []
