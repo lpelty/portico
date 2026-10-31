@@ -197,6 +197,31 @@ final class ViewerAgent: ObservableObject {
 
     private func performWebSteps(_ act: ViewerAct, shown: ArtifactPresentation, load: WebPane.Load) async -> ViewerResult {
         guard let view = await webView(showing: load) else { return fail(act, Message.timedOut) }
+        // The page's `focus()` makes the web view the window's first
+        // responder; what the person was typing in keeps the keyboard.
+        let window = view.window
+        // A text field's shared field editor is torn down when it loses
+        // focus; the field itself takes it back.
+        var before = window?.firstResponder
+        if let editor = before as? NSTextView, editor.isFieldEditor, let owner = editor.delegate as? NSResponder {
+            before = owner
+        }
+        let result = await performWebActs(act, shown: shown, in: view)
+        if let window, let before, !Self.isInside(before, view) {
+            // WebKit asks for first responder a beat after the script runs.
+            for _ in 0..<4 {
+                if Self.isInside(window.firstResponder, view) { window.makeFirstResponder(before) }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        return result
+    }
+
+    private static func isInside(_ responder: NSResponder?, _ view: NSView) -> Bool {
+        (responder as? NSView)?.isDescendant(of: view) ?? false
+    }
+
+    private func performWebActs(_ act: ViewerAct, shown: ArtifactPresentation, in view: WKWebView) async -> ViewerResult {
         await settle(view)
         await ensureScript(in: view)
         let target = act.args["target"]?.stringValue ?? ""

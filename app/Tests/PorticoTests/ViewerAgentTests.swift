@@ -239,6 +239,32 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(area as? String, "Jordan's route")
     }
 
+    /// Found live 10-31: the page's `focus()` made the web view the
+    /// window's first responder, so what the person typed in the composer
+    /// while the agent worked went into the page.
+    func test_type_and_click_leave_the_keyboard_where_the_person_had_it() async throws {
+        let rig = try rig(#"<input aria-label="Name"><button onclick="this.textContent='Done'">Sign up</button>"#)
+        let window = try XCTUnwrap(rig.view.window)
+        let container = NSView(frame: window.contentView?.frame ?? .zero)
+        let composer = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        rig.view.removeFromSuperview()
+        container.addSubview(rig.view)
+        container.addSubview(composer)
+        window.contentView = container
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(window.makeFirstResponder(composer))
+
+        let look = await rig.agent.perform(act(.look))
+        let typed = await rig.agent.perform(act(.type, ["target": .string(ref(for: "Name", in: look.text)), "text": .string("Sam")]))
+        XCTAssertTrue(typed.ok, typed.text)
+        let clicked = await rig.agent.perform(act(.click, ["target": .string("Sign up")]))
+        XCTAssertTrue(clicked.ok, clicked.text)
+        try await Task.sleep(for: .milliseconds(300))
+
+        let editor = try XCTUnwrap(composer.currentEditor(), "the composer lost the keyboard")
+        XCTAssertTrue(window.firstResponder === editor, "first responder is \(String(describing: window.firstResponder))")
+    }
+
     func test_stale_ref_answers_not_found_look_again() async throws {
         let rig = try rig("<button>Save trail</button><button>Delete</button>")
         let look = await rig.agent.perform(act(.look))
