@@ -531,18 +531,8 @@ struct ViewerResult: Codable, Equatable, Sendable {
     var error: String? = nil
     var ts: String = ProtocolClock.now()
 
+    /// The synthesized encoding leaves a nil `image` / `error` out, as the gateway's examples do.
     enum CodingKeys: String, CodingKey { case id, ok, text, image, error, ts }
-
-    /// `image` and `error` are always present on the wire, `null` when absent.
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encode(ok, forKey: .ok)
-        try c.encode(text, forKey: .text)
-        try c.encode(image, forKey: .image)
-        try c.encode(error, forKey: .error)
-        try c.encode(ts, forKey: .ts)
-    }
 }
 
 /// Ask the gateway to run a space's refresh command; answered by a new

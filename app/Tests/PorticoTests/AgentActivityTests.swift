@@ -740,9 +740,7 @@ final class AgentActivityTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("protocol/examples/client.hello.json")
         let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-        // TODO(v0.12 merge): protocol/examples/client.hello.json gains "viewer.v1" with the
-        // gateway side; then compare to HelloClient.appCapabilities whole again.
-        XCTAssertEqual(raw?["capabilities"] as? [String], HelloClient.appCapabilities.filter { $0 != ViewerSettings.capability && $0 != SpacesList.capability })
+        XCTAssertEqual(raw?["capabilities"] as? [String], HelloClient.appCapabilities)
     }
 
     // MARK: - words

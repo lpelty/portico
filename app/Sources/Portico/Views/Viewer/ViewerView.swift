@@ -382,8 +382,11 @@ struct SpaceViewer: View {
             }
             Rectangle().fill(Theme.border).frame(height: 1)
             if let artifact = model.openSpaceArtifact {
+                // Kept for the space (not re-made on each change, which lost
+                // the scroll position); a change re-reads it in place.
                 ArtifactContent(artifact: artifact)
-                    .id(ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
+                    .id(artifact.id)
+                    .environment(\.webPaneRevision, ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
                     .environment(\.viewerAgent, model.viewerAgent)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

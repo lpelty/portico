@@ -230,6 +230,108 @@ final class WebPaneRenderTests: XCTestCase {
         XCTAssertNil(coordinator.failed, "a new load clears the old failure until it fails itself")
     }
 
+    /// D2: Back across an artifact switch finds the earlier page; its
+    /// registration is kept for the coordinator's life, not dropped on the next load.
+    func testBackAcrossAnArtifactSwitchFindsTheEarlierPage() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-back-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let first = dir.appendingPathComponent("first.md")
+        try "# First page\n".write(to: first, atomically: true, encoding: .utf8)
+        let second = dir.appendingPathComponent("second.html")
+        try "<!doctype html><h1>Second page</h1>".write(to: second, atomically: true, encoding: .utf8)
+
+        let coordinator = WebPane.Coordinator()
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.markdown(first), to: view)
+        try await poll("the first page loads") { !view.isLoading && view.url?.scheme == RenderedPageHandler.scheme }
+        let firstURL = try XCTUnwrap(view.url)
+        coordinator.apply(.html(second), to: view)
+        try await poll("the second page loads") { !view.isLoading && view.url?.lastPathComponent == "second.html" }
+
+        view.goBack()
+        try await poll("back at the first page") { !view.isLoading && view.url == firstURL }
+        view.reload()  // asked of the handler again, not the page cache
+        try await poll("reloaded") { !view.isLoading }
+        try await Task.sleep(for: .milliseconds(100))
+        let text = try await view.evaluateJavaScript("document.body.textContent") as? String ?? ""
+        XCTAssertTrue(text.contains("First page"), "Back finds the earlier page, not a 404: \(text)")
+    }
+
+    /// D3: an open space re-read (a new revision for the same file) keeps
+    /// the reader's scroll position.
+    func testRereadKeepsTheScrollPosition() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-reread-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("brief.md")
+        let body = (1...200).map { "Paragraph \($0) of the brief." }.joined(separator: "\n\n")
+        try "# Version one\n\n\(body)\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let coordinator = WebPane.Coordinator()
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.markdown(file), revision: "1", to: view)
+        try await poll("the page loads") { !view.isLoading && view.url?.scheme == RenderedPageHandler.scheme }
+        let scroll = "(document.scrollingElement || document.documentElement)"
+        _ = try await view.evaluateJavaScript("\(scroll).scrollTop = 900; \(scroll).scrollTop")
+        let before = try await view.evaluateJavaScript("\(scroll).scrollTop") as? Double ?? 0
+        XCTAssertGreaterThan(before, 800, "the page scrolled")
+
+        try "# Version two\n\n\(body)\n".write(to: file, atomically: true, encoding: .utf8)
+        coordinator.apply(.markdown(file), revision: "2", to: view)
+        try await poll("the new text is in") {
+            !view.isLoading && view.title != nil
+        }
+        var heading = "", after = 0.0
+        for _ in 0..<150 {
+            heading = try await view.evaluateJavaScript("document.querySelector('h1') ? document.querySelector('h1').textContent : ''") as? String ?? ""
+            after = try await view.evaluateJavaScript("\(scroll).scrollTop") as? Double ?? 0
+            if heading == "Version two" && abs(after - before) < 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(heading, "Version two", "re-read")
+        XCTAssertEqual(after, before, accuracy: 2, "the reader's place is kept")
+
+        // The same revision again is a redraw, not a re-read.
+        let shownURL = view.url
+        coordinator.apply(.markdown(file), revision: "2", to: view)
+        XCTAssertEqual(view.url, shownURL)
+    }
+
+    /// M8 + A3c: an opened HTML file that is itself a symlink is served
+    /// (from the folder it really lives in), and an HTML file with no meta
+    /// charset is read as UTF-8.
+    func testSymlinkedHTMLFileIsServedAsUTF8() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("portico-link-\(UUID().uuidString)")
+        let real = parent.appendingPathComponent("real"), elsewhere = parent.appendingPathComponent("elsewhere")
+        let fm = FileManager.default
+        try fm.createDirectory(at: real, withIntermediateDirectories: true)
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        addTeardownBlock { try? fm.removeItem(at: parent) }
+        let page = real.appendingPathComponent("page.html")
+        try "<!doctype html><html><body><h1>Café ☕</h1></body></html>".write(to: page, atomically: true, encoding: .utf8)
+        let link = elsewhere.appendingPathComponent("link.html")
+        try fm.createSymbolicLink(at: link, withDestinationURL: page)
+
+        let coordinator = WebPane.Coordinator()
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.html(link), to: view)
+        try await poll("the page loads") { !view.isLoading && view.url != nil }
+        let heading = try await view.evaluateJavaScript("document.querySelector('h1') ? document.querySelector('h1').textContent : document.body.textContent") as? String
+        XCTAssertEqual(heading, "Café ☕")
+    }
+
+    func testAFolderAtTheRootStillServesItsFiles() {
+        let render = RenderedPageHandler.Render(page: nil, root: URL(fileURLWithPath: "/"), entry: nil)
+        XCTAssertEqual(RenderedPageHandler.file("/usr/bin", in: render)?.path, "/usr/bin")
+    }
+
     /// A web view that counts the navigations it is asked for.
     final class CountingWebView: WKWebView {
         var loads = 0

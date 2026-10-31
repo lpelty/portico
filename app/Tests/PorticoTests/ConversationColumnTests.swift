@@ -46,7 +46,7 @@ final class ConversationColumnTests: XCTestCase {
 
     // MARK: - body text (73)
 
-    func testRepliesAre16PointRegularWithBoldAVisibleStepUp() throws {
+    func testRepliesAre15PointRegularWithBoldAVisibleStepUp() throws {
         XCTAssertEqual(MarkdownText.bodySize, 15)
         let text = MarkdownAttributed.prose(MarkdownParser.parse("**npx and node** are missing."))
         let bold = try XCTUnwrap(text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)

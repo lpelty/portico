@@ -450,7 +450,7 @@ struct MarkdownText: View {
     /// The message's id: Read aloud knows the reply by it.
     var id: String? = nil
 
-    /// v0.11 (73, AG1): 16-point regular, the desktop app's reading size,
+    /// v0.12 (A7): 15-point regular (v0.11's 16 came down a step; code is 14),
     /// so bold (`MarkdownAttributed.boldWeight`) reads as bold; with the
     /// spacing a line is about 1.5 times the size.
     static let bodySize: CGFloat = 15

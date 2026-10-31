@@ -119,18 +119,18 @@ final class ViewerSpacesPlumbingTests: XCTestCase {
         XCTAssertEqual(act.args["submit"], .bool(true))
     }
 
-    func testViewerResultEncodesImageAndNulls() throws {
+    func testViewerResultEncodesImageAndLeavesOutNils() throws {
         let withImage = ViewerResult(id: "a1", ok: true, text: "A page", image: .init(data: "AAAA"))
         let object = try encodedObject(.viewerResult(withImage))
         XCTAssertEqual(object["type"] as? String, "viewer.result")
         XCTAssertEqual(object["id"] as? String, "a1")
         XCTAssertEqual(object["ok"] as? Bool, true)
         XCTAssertEqual(object["image"] as? [String: String], ["data": "AAAA", "media_type": "image/png"])
-        XCTAssertTrue(object["error"] is NSNull, "error is null on the wire, not absent")
+        XCTAssertNil(object["error"], "a nil error is left out of the wire form, as in the protocol examples")
 
         let failure = ViewerResult(id: "a2", ok: false, text: "", error: "Nothing is open in the viewer.")
         let failed = try encodedObject(.viewerResult(failure))
-        XCTAssertTrue(failed["image"] is NSNull)
+        XCTAssertNil(failed["image"])
         XCTAssertEqual(failed["error"] as? String, "Nothing is open in the viewer.")
         // And it reads back.
         let back = try JSONDecoder().decode(ClientMessage.self, from: JSONEncoder().encode(ClientMessage.viewerResult(failure)))
