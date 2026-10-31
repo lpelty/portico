@@ -266,6 +266,8 @@ from .update import UPDATE_CHECK_SECONDS, check_for_update
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
+# The largest frame the gateway takes from the app (a viewer screenshot is the big one).
+MAX_INBOUND_BYTES = 16 * 2**20
 PROTOCOL_PATH = "/v1"
 READY_PREFIX = "PORTICO_READY"
 
@@ -920,6 +922,9 @@ class GatewayServer:
             port,
             process_request=self._process_request,
             create_connection=self._make_connection,
+            # A ``viewer.result`` carries a base64 screenshot up to 1,600 px
+            # wide, over the 1 MiB default; the app allows 64 MiB inbound.
+            max_size=MAX_INBOUND_BYTES,
         )
         self.port = self._server.sockets[0].getsockname()[1]
         await self._follow_default_folder()
@@ -1944,13 +1949,36 @@ class GatewayServer:
             raise ProtocolError(e.code if e.code != "space.failed" else failed_code, str(e)) from None
         await self._spaces_answer()
 
+    def _spawn_space_action(
+        self, msg: SpaceRefresh | SpaceRemove, conn: ServerConnection,
+        action: Callable[[], Awaitable[None]], failed_code: str,
+    ) -> None:
+        """Run a space command as a task, like ``service.restart``, so other frames keep moving.
+
+        Its refusal or failure is an ``error`` frame carrying the request's ``id``.
+        """
+
+        async def task() -> None:
+            try:
+                await self._space_action(msg.id, action, failed_code)
+            except ProtocolError as e:
+                await self._send(conn, self.error(e.code, e.message, id=msg.id))
+            except Exception as e:
+                log.exception("%s for %s failed", msg.type, msg.id)
+                await self._send(conn, self.error("gateway.error", f"{msg.type} failed: {e}", id=msg.id))
+
+        self._spawn(task(), name=f"portico-{msg.type}-{msg.id}")
+
     async def on_space_refresh(self, msg: SpaceRefresh, conn: ServerConnection) -> None:
         folder = self._space_folder()
         command = self.config.spaces.refresh
         if not command:
             raise ProtocolError("space.no_refresh", "this deployment has no refresh for spaces")
-        spaces_mod.find(folder, msg.id)  # not_found before anything runs
-        await self._space_action(msg.id, lambda: spaces_mod.refresh(msg.id, command), "space.refresh_failed")
+        try:
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id)  # not_found before anything runs
+        except SpaceError as e:
+            raise ProtocolError(e.code, str(e)) from None
+        self._spawn_space_action(msg, conn, lambda: spaces_mod.refresh(msg.id, command), "space.refresh_failed")
 
     async def on_space_rename(self, msg: SpaceRename, conn: ServerConnection) -> None:
         folder = self._space_folder()
@@ -1962,8 +1990,12 @@ class GatewayServer:
 
     async def on_space_remove(self, msg: SpaceRemove, conn: ServerConnection) -> None:
         folder = self._space_folder()
-        await self._space_action(
-            msg.id, lambda: spaces_mod.remove(folder, msg.id, self.config.spaces.remove), "space.remove_failed"
+        try:
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id)  # not_found before anything runs
+        except SpaceError as e:
+            raise ProtocolError(e.code, str(e)) from None
+        self._spawn_space_action(
+            msg, conn, lambda: spaces_mod.remove(folder, msg.id, self.config.spaces.remove), "space.remove_failed"
         )
 
     async def on_viewer_settings(self, msg: ViewerSettings, conn: ServerConnection) -> None:

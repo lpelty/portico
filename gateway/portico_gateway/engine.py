@@ -593,12 +593,14 @@ def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
     After a write to an ``.html``/``.htm`` file inside the chat's folder or a
     root, ``additionalContext`` tells the agent to show it and look at it.
     Both ``bridge.can_see`` and ``bridge.check_html`` are read on every call,
-    so a change in Settings applies within the session.
+    so a change in Settings applies within the session. With no app that can
+    act on it (none declared ``viewer.v1`` and sent ``viewer.settings``) it
+    adds nothing: the agent would be told to look with a viewer it cannot reach.
     """
     allowed = [Path(p).expanduser() for p in (folder, *roots)]
 
     async def check_html_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
-        if not (bridge.can_see and bridge.check_html):
+        if not (bridge.has_target and bridge.can_see and bridge.check_html):
             return {}
         tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
         raw = tool_input.get("file_path") if isinstance(tool_input, Mapping) else None

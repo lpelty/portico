@@ -255,10 +255,12 @@ class ViewerConfig(BaseModel):
                 or not raw
                 or raw.startswith(".")
                 or raw.endswith(".")
+                or "." not in raw
             ):
                 raise ConfigError(
                     f"viewer: act_hosts entry {raw!r} must be a bare host name like \"figma.com\" "
-                    "(no scheme, path, port, wildcard, spaces or leading/trailing dot; it already covers subdomains)"
+                    "(no scheme, path, port, wildcard, spaces or leading/trailing dot, and at least one dot; "
+                    "it already covers subdomains)"
                 )
             out.append(raw.lower())
         return out
@@ -285,7 +287,8 @@ class SpacesConfig(BaseModel):
         path = Path(value.strip()).expanduser()
         if not path.is_dir():
             raise ConfigError(f"spaces: folder {str(path)!r} does not exist; create it or remove the key")
-        return str(path)
+        # Absolute from here on: it goes to the agent's add_dirs and prompt.
+        return str(path.resolve())
 
     @field_validator("refresh", "remove")
     @classmethod
@@ -294,7 +297,11 @@ class SpacesConfig(BaseModel):
 
 
 def host_allowed(host: str, act_hosts: list[str]) -> bool:
-    """Whether the agent may click and type on ``host``: a local host, or an ``act_hosts`` entry or its subdomain."""
+    """Whether the agent may click and type on ``host``: a local host, or an ``act_hosts`` entry or its subdomain.
+
+    Used by the doctor and the tests; the app is what enforces it (the gateway
+    only sends ``act_hosts`` in ``hello``).
+    """
     h = host.lower()
     if h.endswith("."):  # a fully qualified name: "figma.com." is "figma.com"
         h = h[:-1]

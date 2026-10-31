@@ -533,7 +533,7 @@ def test_viewer_defaults_follow_the_config(tmp_path: Path) -> None:
     }
 
 
-@pytest.mark.parametrize("entry", ["https://figma.com", "figma.com/x", "figma.com:443", "*.figma.com", "figma .com", ".figma.com", "figma.com."])
+@pytest.mark.parametrize("entry", ["https://figma.com", "figma.com/x", "figma.com:443", "*.figma.com", "figma .com", ".figma.com", "figma.com.", "com", "localhost"])
 def test_act_hosts_rejects_scheme_path_port_wildcard(tmp_path: Path, entry: str) -> None:
     with pytest.raises(ConfigError) as e:
         _load(tmp_path, f'[viewer]\nact_hosts = ["{entry}"]\n')
@@ -578,7 +578,14 @@ def test_spaces_folder_missing_is_config_error(tmp_path: Path) -> None:
 def test_spaces_folder_expands_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "sp").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert _load(tmp_path, '[spaces]\nfolder = "~/sp"\n').spaces.folder == str(tmp_path / "sp")
+    assert _load(tmp_path, '[spaces]\nfolder = "~/sp"\n').spaces.folder == str((tmp_path / "sp").resolve())
+
+
+def test_spaces_folder_relative_becomes_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "sp").mkdir()
+    monkeypatch.chdir(tmp_path)
+    folder = _load(tmp_path, '[spaces]\nfolder = "sp"\n').spaces.folder
+    assert folder == str((tmp_path / "sp").resolve()) and Path(folder).is_absolute()
 
 
 def test_spaces_capability_only_when_folder_set(tmp_path: Path) -> None:

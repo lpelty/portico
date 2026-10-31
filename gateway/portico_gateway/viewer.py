@@ -73,6 +73,11 @@ class ViewerBridge:
         self.settings: tuple[bool, bool] | None = None
 
     @property
+    def has_target(self) -> bool:
+        """An app that declared ``viewer.v1`` has sent ``viewer.settings``: an act would reach it."""
+        return self._target is not None and self.settings is not None and self._capable(self._target)
+
+    @property
     def can_see(self) -> bool:
         return (self.settings or self._defaults)[0]
 
@@ -179,7 +184,7 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
     )
     async def viewer_type(args: dict[str, Any]) -> dict[str, Any]:
         wire = _args(args, "target", "text")
-        wire["submit"] = bool(args.get("submit", False))
+        wire["submit"] = args.get("submit") is True  # the string "false" must not press Return
         return await bridge.act(chat, "type", wire)
 
     @tool(

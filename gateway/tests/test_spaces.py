@@ -469,3 +469,88 @@ async def test_action_that_changes_the_list_broadcasts_it_once(server: GatewaySe
             await asyncio.wait_for(conn.recv(), 0.4)  # no second copy
     finally:
         await conn.close()
+
+
+# --- final review fixes -----------------------------------------------------------
+
+
+async def test_symlinked_file_is_not_a_space(spaces_dir: Path, tmp_path: Path, fake_home: Path) -> None:
+    outside = tmp_path / "outside.md"
+    original = "---\ntitle: Elsewhere\n---\nbody\n"
+    outside.write_text(original, encoding="utf-8")
+    (spaces_dir / "x.md").symlink_to(outside)
+    put(spaces_dir, "real.md")
+    assert ids(scan(spaces_dir)) == ["real"]
+    with pytest.raises(SpaceError) as e:
+        rename(spaces_dir, "x", "New")
+    assert e.value.code == "space.not_found"
+    with pytest.raises(SpaceError) as e:
+        await remove(spaces_dir, "x", None)
+    assert e.value.code == "space.not_found"
+    assert outside.read_text(encoding="utf-8") == original
+    assert (spaces_dir / "x.md").is_symlink()
+
+
+def test_rename_refuses_double_dash_in_a_comment_block(spaces_dir: Path) -> None:
+    page = put(spaces_dir, "p.html", "<!-- title: Page -->\n<p>hi</p>\n")
+    bare = put(spaces_dir, "q.htm", "<p>hi</p>\n")
+    for id in ("p", "q"):
+        with pytest.raises(SpaceError) as e:
+            rename(spaces_dir, id, "A --> B")
+        assert e.value.code == "space.invalid"
+    assert page.read_text() == "<!-- title: Page -->\n<p>hi</p>\n" and bare.read_text() == "<p>hi</p>\n"
+    put(spaces_dir, "m.md", "body\n")
+    rename(spaces_dir, "m", "A -- B")  # front matter has no comment to end
+    assert "A -- B" in {s.title for s in scan(spaces_dir)}
+
+
+async def test_slow_refresh_does_not_hold_up_other_frames(
+    state_dir: StateDir, factory: EngineFactory, spaces_dir: Path
+) -> None:
+    from portico_gateway.messages import ViewerResult, ViewerSettings
+
+    config = make_config(
+        setting_sources=["project"], spaces=SpacesConfig(folder=str(spaces_dir), refresh="sleep 2"))
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    put(spaces_dir, "brief.md")
+    await srv.spaces_watcher.poll()
+    conn = await hello(srv, ["spaces.v1", "viewer.v1"])
+    try:
+        await frames_until(conn, "spaces.list")
+        await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+        await conn.send(dump(SpaceRefresh(ts=TS, id="brief")))
+        await asyncio.sleep(0.2)  # the refresh command is running
+        task = asyncio.create_task(srv.viewer.act(1, "look", {}))
+        act = await frames_until(conn, "viewer.act")
+        await conn.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="seen")))
+        out = await asyncio.wait_for(task, 1)  # not after the 2 s refresh
+        assert out["content"][0]["text"] == "seen"
+        await asyncio.wait_for(frames_until(conn, "spaces.list"), 4)  # the refresh's answer still comes
+
+        await conn.send(dump(SpaceRefresh(ts=TS, id="nope")))
+        err = await frames_until(conn, "error")
+        assert err.code == "space.not_found" and err.id == "nope"
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_failed_refresh_answers_its_error_with_the_id(
+    state_dir: StateDir, factory: EngineFactory, spaces_dir: Path
+) -> None:
+    config = make_config(setting_sources=["project"], spaces=SpacesConfig(folder=str(spaces_dir), refresh="exit 3"))
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    put(spaces_dir, "brief.md")
+    conn = await hello(srv)
+    try:
+        await frames_until(conn, "spaces.list")
+        await conn.send(dump(SpaceRefresh(ts=TS, id="brief")))
+        err = await asyncio.wait_for(frames_until(conn, "error"), 4)
+        assert err.code == "space.refresh_failed" and err.id == "brief"
+    finally:
+        await conn.close()
+        await srv.shutdown()

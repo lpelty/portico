@@ -302,6 +302,21 @@ async def test_server_round_trip(server: Any) -> None:
     await conn.close()
 
 
+async def test_server_accepts_a_result_over_1_mib(server: Any) -> None:
+    """A full-size screenshot in ``viewer.result`` is bigger than the WebSocket default 1 MiB; the gateway takes it."""
+    conn = await attach_app(server, ["viewer.v1"])
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=False)))
+    await until(lambda: server.viewer.settings is not None)
+    task = asyncio.create_task(server.viewer.act(1, "look", {}))
+    act = await frames_until(conn, "viewer.act")
+    big = "A" * (3 * 2**20)
+    await conn.send(dump(ViewerResult(
+        ts=TS, id=act.id, ok=True, text="big", image=ViewerImage(data=big, media_type="image/png"))))
+    out = await asyncio.wait_for(task, 5)
+    assert out["content"][1]["data"] == big
+    await conn.close()
+
+
 async def test_server_old_app_gets_no_act(server: Any) -> None:
     conn = await attach_app(server, [])
     await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
@@ -339,9 +354,6 @@ async def test_server_second_app_takes_over_pending_stays_with_first(server: Any
     await second.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="back")))
     assert (await asyncio.wait_for(task2, 2))["content"][0]["text"] == "back"
     await second.close()
-
-
-# --- G2 review fixes ------------------------------------------------------------------
 
 
 async def test_stalled_send_is_bounded_by_the_same_timeout() -> None:
@@ -383,8 +395,15 @@ def context_of(out: dict[str, Any]) -> str | None:
     return out.get("hookSpecificOutput", {}).get("additionalContext")
 
 
+def ready_bridge(capable: bool = True):
+    """A bridge with an app attached that declared ``viewer.v1`` (when ``capable``) and sent ``viewer.settings``."""
+    bridge, app = make_bridge(capable=capable)
+    bridge.set_target(object(), True, True)
+    return bridge, app
+
+
 async def test_html_write_in_folder_adds_context(tmp_path: Path) -> None:
-    bridge, _ = make_bridge()
+    bridge, _ = ready_bridge()
     hook = build_check_html_hook(bridge, tmp_path, [])
     page = tmp_path / "index.html"
     for tool in ("Write", "Edit", "MultiEdit"):
@@ -396,7 +415,7 @@ async def test_html_write_in_folder_adds_context(tmp_path: Path) -> None:
 
 
 async def test_html_in_a_root_adds_context(tmp_path: Path) -> None:
-    bridge, _ = make_bridge()
+    bridge, _ = ready_bridge()
     folder, root = tmp_path / "chat", tmp_path / "root"
     folder.mkdir(), root.mkdir()
     hook = build_check_html_hook(bridge, folder, [root])
@@ -404,13 +423,13 @@ async def test_html_in_a_root_adds_context(tmp_path: Path) -> None:
 
 
 async def test_md_write_no_context(tmp_path: Path) -> None:
-    bridge, _ = make_bridge()
+    bridge, _ = ready_bridge()
     hook = build_check_html_hook(bridge, tmp_path, [])
     assert await hook(write_input(tmp_path / "notes.md"), "t", None) == {}
 
 
 async def test_html_outside_roots_no_context(tmp_path: Path) -> None:
-    bridge, _ = make_bridge()
+    bridge, _ = ready_bridge()
     folder, other = tmp_path / "chat", tmp_path / "elsewhere"
     folder.mkdir(), other.mkdir()
     hook = build_check_html_hook(bridge, folder, [])
@@ -419,7 +438,7 @@ async def test_html_outside_roots_no_context(tmp_path: Path) -> None:
 
 
 async def test_setting_read_live(tmp_path: Path) -> None:
-    bridge, _ = make_bridge()
+    bridge, _ = ready_bridge()
     hook = build_check_html_hook(bridge, tmp_path, [])
     page = write_input(tmp_path / "a.html")
     assert context_of(await hook(page, "t", None)) is not None
@@ -430,10 +449,30 @@ async def test_setting_read_live(tmp_path: Path) -> None:
 
 
 async def test_check_off_when_can_see_off(tmp_path: Path) -> None:
-    bridge, _ = make_bridge()
+    bridge, _ = ready_bridge()
     hook = build_check_html_hook(bridge, tmp_path, [])
     bridge.settings = (False, True)
     assert await hook(write_input(tmp_path / "a.html"), "t", None) == {}
+
+
+async def test_no_context_without_a_capable_app(tmp_path: Path) -> None:
+    page = write_input(tmp_path / "a.html")
+    bridge, _ = make_bridge()  # no app has sent viewer.settings
+    assert await build_check_html_hook(bridge, tmp_path, [])(page, "t", None) == {}
+    old, _ = ready_bridge(capable=False)  # an app without viewer.v1
+    assert await build_check_html_hook(old, tmp_path, [])(page, "t", None) == {}
+    bridge.set_target(object(), True, True)
+    assert context_of(await build_check_html_hook(bridge, tmp_path, [])(page, "t", None)) is not None
+
+
+async def test_type_submits_only_on_true() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    viewer_type = by_name(build_viewer_tools(bridge, 1))["viewer_type"]
+    for given, expect in (("false", False), ("true", False), (1, False), (True, True), (None, False)):
+        args = {"target": "e1", "text": "x"} | ({} if given is None else {"submit": given})
+        await viewer_type.handler(args)
+        assert app.acts[-1].args["submit"] is expect, given
 
 
 def test_hook_registered_on_write_edit_multiedit(tmp_path: Path) -> None:

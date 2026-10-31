@@ -220,3 +220,9 @@ def test_v04_messages_parse_and_keep_their_shapes():
     assert isinstance(status, ServicesStatus) and status.services[0].can_restart is False
     with pytest.raises(ProtocolError):
         parse_server('{"type":"services.status","ts":"%s","services":[{"id":"m","name":"M","state":"sleeping"}]}' % TS)
+
+
+def test_hello_example_shows_the_v012_fields():
+    hello = example_messages()["server.hello"]
+    assert hello.viewer_defaults is not None and hello.viewer_defaults.act_hosts == ["figma.com"]
+    assert {"spaces.v1", "spaces.refresh"} <= set(hello.capabilities)

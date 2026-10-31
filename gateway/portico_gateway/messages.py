@@ -1100,7 +1100,9 @@ def example_messages() -> dict[str, BaseModel]:
             actions=[Action(label="Review", text="/review")],
             roots=[Root(name="projects", path="/Users/someone/projects")],
             commands=["log"],
-            capabilities=["cards.form", "files", "producer", "sessions", "files.search", "context"],
+            capabilities=[
+                "cards.form", "files", "producer", "sessions", "files.search", "context", "spaces.v1", "spaces.refresh",
+            ],
             presentation="single",
             can_log=True,
             config_stale=False,
@@ -1108,6 +1110,7 @@ def example_messages() -> dict[str, BaseModel]:
             default_folder="/Users/someone/projects",
             permission_mode="auto",
             hide_session_folder=False,
+            viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
         ),
         ChatList(
             ts=_TS,

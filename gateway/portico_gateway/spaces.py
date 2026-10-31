@@ -165,19 +165,25 @@ def scan(folder: Path) -> list[Space]:
     """The spaces in ``folder`` (not looking inside folders), in the order the switcher shows them.
 
     ``.md``, ``.markdown``, ``.html`` and ``.htm`` files whose names do not
-    start with ``.`` or ``_``. Order by ``order`` (those without one last),
+    start with ``.`` or ``_``; symbolic links are left out. Order by ``order`` (those without one last),
     then title. Two files with one stem: the first by name is the space.
     """
     try:
         names = sorted(p for p in Path(folder).iterdir() if p.suffix.lower() in EXTENSIONS and p.name[0] not in "._")
     except OSError:
         return []
+    try:
+        home = Path(folder).resolve()
+    except (OSError, RuntimeError):
+        return []
     out: dict[str, Space] = {}
     for path in names:
         try:
-            if not path.is_file():
+            # A link is never a space: rename would write, and remove would
+            # trash, the file it points at, which may be anywhere.
+            if path.is_symlink() or not path.is_file() or path.resolve().parent != home:
                 continue
-        except OSError:
+        except (OSError, RuntimeError):
             continue
         space = _space_for(path)
         if space is not None and space.id not in out:
@@ -277,6 +283,11 @@ def rename(folder: Path, id: str, title: str) -> None:
         found = _block(text)
     except ValueError:
         found = None  # a block that never closes is left alone; a new one goes in front
+    in_comment = (found is None and path.suffix.lower() in (".html", ".htm")) or (
+        found is not None and not text.lstrip("\ufeff").startswith("---")
+    )
+    if in_comment and "--" in title:
+        raise SpaceError('this space keeps its title in an HTML comment, which cannot hold "--"', "space.invalid")
     if found is None:
         new = f"<!-- {line} -->\n{text}" if path.suffix.lower() in (".html", ".htm") else f"---\n{line}\n---\n{text}"
     else:
@@ -342,8 +353,8 @@ async def remove(folder: Path, id: str, command: str | None, timeout: float = CO
 
     A failing command is reported (``SpaceError``) after the file has gone.
     """
-    path = find(folder, id)
-    target = _trash(path)
+    path = await asyncio.to_thread(find, folder, id)
+    target = await asyncio.to_thread(_trash, path)
     log.info("spaces: %s moved to %s", id, target)
     if command:
         try:
