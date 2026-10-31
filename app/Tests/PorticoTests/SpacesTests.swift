@@ -48,7 +48,7 @@ final class SpacesTests: XCTestCase {
         XCTAssertFalse(ToolbarLayout.items(showSwitcher: false, showViewerToggle: true).contains(.switcher))
     }
 
-    func test_app_declares_spaces_capability() {
+    func test_app_names_spaces_capability() {
         XCTAssertTrue(HelloClient.appCapabilities.contains("spaces.v1"))
         XCTAssertTrue(HelloClient.appCapabilities.contains("viewer.v1"))
     }
