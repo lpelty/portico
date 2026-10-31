@@ -1395,7 +1395,7 @@ class GatewayServer:
         """Forget every ended session (v0.11, item 54); the live one stays, and the transcripts on disk."""
         if self.config.presentation != "single":
             raise ProtocolError("sessions.not_single", "only a deployment with one live session at a time clears earlier ones")
-        for chat in [c for c in self.registry.chats() if c.ended is not None]:
+        for chat in self.registry.ended_chats():
             await self.cards.cancel_all(chat, "session cleared", self.emit)
             await self._close_engine(chat)
             self.registry.remove(chat.number)
