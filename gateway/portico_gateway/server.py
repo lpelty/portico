@@ -226,6 +226,9 @@ from .messages import (
     ServiceRestart,
     ServicesRestartAll,
     SessionsClear,
+    ViewerAct,
+    ViewerResult,
+    ViewerSettings,
     ServicesStatus,
     SessionLog,
     SessionLogged,
@@ -249,6 +252,7 @@ from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
 from .state import StateDir
+from .viewer import VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
@@ -506,6 +510,15 @@ class ChatCallbacks:
 
     async def on_show(self, paths: list[str]) -> str | None:
         return await self.server.show_files(self.chat, paths)
+
+    @property
+    def viewer_bridge(self) -> ViewerBridge:
+        """v0.12: where the viewer tools send their acts."""
+        return self.server.viewer
+
+    @property
+    def viewer_chat(self) -> int:
+        return self.chat.number
 
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
@@ -823,6 +836,15 @@ class GatewayServer:
             ("POST", "/v1/artifact"): self._producer,
             ("GET", "/v1/status"): self._status,
         }
+        # v0.12: the agent's viewer tools. Until an app sends ``viewer.settings`` the
+        # deployment's defaults apply; acts go only to apps that declared ``viewer.v1``.
+        self.viewer = ViewerBridge(
+            self._send_viewer_act,
+            capable=lambda conn: VIEWER_CAPABILITY in _capabilities(conn),
+            defaults=(config.viewer.agent_can_see, config.viewer.agent_checks_html),
+        )
+        self.register("viewer.settings", self.on_viewer_settings)
+        self.register("viewer.result", self.on_viewer_result)
         self.register("artifact.opened", self.on_artifact_opened)
         self.register("card.answer", self.on_card_answer)
         self.register("chat.new", self.on_chat_new)
@@ -1169,6 +1191,7 @@ class GatewayServer:
             pass
         finally:
             frames.put_nowait(None)
+            self.viewer.drop(conn)  # a pending act answers "not available" now, not after 10 s
             if self._app is conn:
                 self._app = None
                 self.cards.set_attached(False)
@@ -1822,6 +1845,16 @@ class GatewayServer:
         """Back to ``working`` after a card, but only while the same turn is still running."""
         if run is not None and self._runs.get(chat.number) is run and chat.state == "waiting on you":
             await self.set_state(chat, "working")
+
+    async def _send_viewer_act(self, conn: ServerConnection, act: ViewerAct) -> None:
+        await conn.send(dump(act))
+
+    async def on_viewer_settings(self, msg: ViewerSettings, conn: ServerConnection) -> None:
+        """The app's two viewer switches; this app is now the one acts go to."""
+        self.viewer.set_target(conn, msg.can_see, msg.check_html)
+
+    async def on_viewer_result(self, msg: ViewerResult, conn: ServerConnection) -> None:
+        self.viewer.resolve(conn, msg)
 
     async def on_card_answer(self, msg: CardAnswer, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)

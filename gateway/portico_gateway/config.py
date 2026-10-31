@@ -249,10 +249,16 @@ class ViewerConfig(BaseModel):
     def _hosts_are_bare(cls, value: list[str]) -> list[str]:
         out: list[str] = []
         for raw in value:
-            if any(token in raw for token in ("://", "/", ":", "*")) or any(c.isspace() for c in raw) or not raw:
+            if (
+                any(token in raw for token in ("://", "/", ":", "*"))
+                or any(c.isspace() for c in raw)
+                or not raw
+                or raw.startswith(".")
+                or raw.endswith(".")
+            ):
                 raise ConfigError(
                     f"viewer: act_hosts entry {raw!r} must be a bare host name like \"figma.com\" "
-                    "(no scheme, path, port, wildcard or spaces; it already covers subdomains)"
+                    "(no scheme, path, port, wildcard, spaces or leading/trailing dot; it already covers subdomains)"
                 )
             out.append(raw.lower())
         return out
@@ -290,6 +296,8 @@ class SpacesConfig(BaseModel):
 def host_allowed(host: str, act_hosts: list[str]) -> bool:
     """Whether the agent may click and type on ``host``: a local host, or an ``act_hosts`` entry or its subdomain."""
     h = host.lower()
+    if h.endswith("."):  # a fully qualified name: "figma.com." is "figma.com"
+        h = h[:-1]
     if h in LOCAL_HOSTS:
         return True
     return any(h == e.lower() or h.endswith("." + e.lower()) for e in act_hosts)

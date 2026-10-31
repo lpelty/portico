@@ -74,6 +74,9 @@ EXPECTED_KEYS = {
     "server.services.status",
     "client.sessions.clear",
     "server.chat.commands",
+    "server.viewer.act",
+    "client.viewer.settings",
+    "client.viewer.result",
 }
 
 
@@ -87,7 +90,7 @@ def test_every_type_has_schema_def_and_example():
     # v0.8's services.restart_all, v0.10's agent.started, agent.progress, agent.finished,
     # workflow.started, workflow.phase, workflow.finished, v0.11's sessions.clear,
     # chat.unqueue, chat.queued, chat.queue, chat.commands
-    assert len(ex) == 56
+    assert len(ex) == 59
     assert set(ex) == EXPECTED_KEYS
 
 

@@ -59,6 +59,7 @@ from claude_agent_sdk import (
 )
 
 from .agents import AgentTracker
+from .viewer import VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
     AgentFinished,
@@ -115,6 +116,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "Task", "Agent", "TaskOutput", "BashOutput", "Skill", "AskUserQuestion",
         "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool", "ReadMcpResourceTool",
         SHOW_TOOL_NAME,
+        *VIEWER_TOOL_NAMES,
     }
 )
 
@@ -570,8 +572,12 @@ def build_open_hook(callbacks: EngineCallbacks):
 
 # The show tool is allowed outright on purpose (it only shows a file), so the
 # SDK's advisory that ``can_use_tool`` will not see it is expected.
+# The v0.12 viewer tools are allowed outright the same way (the person watches
+# each action and has Stop), so the advisory is expected for them too.
 warnings.filterwarnings(
-    "ignore", message=rf"can_use_tool will not be invoked for: {re.escape(SHOW_TOOL_NAME)}\.", category=CanUseToolShadowedWarning
+    "ignore",
+    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES))})(?:, )?)+\.",
+    category=CanUseToolShadowedWarning,
 )
 
 
@@ -604,9 +610,16 @@ def build_options(
     extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
     if callable(getattr(callbacks, "on_show", None)):
         pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
+        tools = [build_show_tool(callbacks)]
+        allowed = [SHOW_TOOL_NAME]
+        bridge = getattr(callbacks, "viewer_bridge", None)
+        if bridge is not None:
+            # v0.12: the agent sees and uses the viewer; the tools answer "not available" when no app can.
+            tools += build_viewer_tools(bridge, callbacks.viewer_chat)  # type: ignore[attr-defined]
+            allowed += VIEWER_TOOL_NAMES
         extra = {
-            "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=[build_show_tool(callbacks)])},
-            "allowed_tools": [SHOW_TOOL_NAME],
+            "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
+            "allowed_tools": allowed,
             "system_prompt": with_viewer_prompt(system_prompt),
         }
     return ClaudeAgentOptions(

@@ -274,6 +274,30 @@ class TurnStop(Envelope):
     chat: int
 
 
+class ViewerSettings(Envelope):
+    """v0.12: the person's two viewer switches; sent after ``hello`` and when either changes. Not chat-scoped."""
+
+    type: Literal["viewer.settings"] = "viewer.settings"
+    can_see: bool
+    check_html: bool
+
+
+class ViewerImage(Strict):
+    data: str  # base64 PNG
+    media_type: Literal["image/png"]
+
+
+class ViewerResult(Envelope):
+    """v0.12: the app's answer to a ``viewer.act``."""
+
+    type: Literal["viewer.result"] = "viewer.result"
+    id: str
+    ok: bool
+    text: str
+    image: ViewerImage | None = None
+    error: str | None = None
+
+
 class CardAnswer(Envelope):
     type: Literal["card.answer"] = "card.answer"
     chat: int
@@ -802,6 +826,16 @@ HistoryEvent = Annotated[
 ]
 
 
+class ViewerAct(Envelope):
+    """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``."""
+
+    type: Literal["viewer.act"] = "viewer.act"
+    id: str
+    chat: int
+    action: Literal["look", "click", "type", "scroll", "back"]
+    args: dict[str, Any] = {}
+
+
 class ChatHistory(Envelope):
     type: Literal["chat.history"] = "chat.history"
     chat: int
@@ -832,6 +866,8 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ServicesRestartAll,
     SessionsClear,
     ChatUnqueue,
+    ViewerSettings,
+    ViewerResult,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -870,6 +906,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatQueued,
     ChatQueue,
     ChatCommands,
+    ViewerAct,
     Error,
 )
 
@@ -996,6 +1033,14 @@ def example_messages() -> dict[str, BaseModel]:
         ServicesRestartAll(ts=_TS, id="req-8"),
         SessionsClear(ts=_TS, id="req-9"),
         ChatUnqueue(ts=_TS, chat=1, id="req-10"),
+        ViewerSettings(ts=_TS, can_see=True, check_html=True),
+        ViewerResult(
+            ts=_TS,
+            id="act-1",
+            ok=True,
+            text="trail-detail.html. 12 elements.",
+            image=ViewerImage(data="iVBORw0KGgo=", media_type="image/png"),
+        ),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -1178,6 +1223,7 @@ def example_messages() -> dict[str, BaseModel]:
                 AgentCommand(name="acme:review", description="Review a change before it ships", source="acme-tools"),
             ],
         ),
+        ViewerAct(ts=_TS, id="act-1", chat=1, action="click", args={"target": "e12"}),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

@@ -533,7 +533,7 @@ def test_viewer_defaults_follow_the_config(tmp_path: Path) -> None:
     }
 
 
-@pytest.mark.parametrize("entry", ["https://figma.com", "figma.com/x", "figma.com:443", "*.figma.com", "figma .com"])
+@pytest.mark.parametrize("entry", ["https://figma.com", "figma.com/x", "figma.com:443", "*.figma.com", "figma .com", ".figma.com", "figma.com."])
 def test_act_hosts_rejects_scheme_path_port_wildcard(tmp_path: Path, entry: str) -> None:
     with pytest.raises(ConfigError) as e:
         _load(tmp_path, f'[viewer]\nact_hosts = ["{entry}"]\n')
@@ -557,6 +557,16 @@ def test_host_allowed() -> None:
     assert host_allowed("127.0.0.1", [])
     assert host_allowed("::1", [])
     assert not host_allowed("example.com", [])
+
+
+def test_host_allowed_ignores_one_trailing_dot() -> None:
+    from portico_gateway.config import host_allowed
+
+    assert host_allowed("figma.com.", ["figma.com"])
+    assert host_allowed("www.figma.com.", ["figma.com"])
+    assert host_allowed("localhost.", [])
+    assert not host_allowed("figma.com..", ["figma.com"])
+    assert not host_allowed("example.com.", ["figma.com"])
 
 
 def test_spaces_folder_missing_is_config_error(tmp_path: Path) -> None:
