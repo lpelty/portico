@@ -278,15 +278,19 @@ final class ViewerSpacesPlumbingTests: XCTestCase {
 
     func testHasNewAfterUpdateClearedOnOpen() {
         let (model, _) = model()
-        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: "2026-10-31T12:00:00Z")])))
-        XCTAssertTrue(model.hasNew("a"), "never opened")
+        let seen = Date(timeIntervalSince1970: 1_800_000_000)
+        model.now = { seen }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: ISO8601DateFormatter().string(from: seen))])))
+        XCTAssertFalse(model.hasNew("a"), "first sight: no dot")
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: ISO8601DateFormatter().string(from: seen.addingTimeInterval(30)))])))
+        XCTAssertTrue(model.hasNew("a"), "changed after first sight")
 
         model.setOpenSpace("a")
         XCTAssertEqual(model.openSpace, "a")
         XCTAssertFalse(model.hasNew("a"), "opening clears it")
 
         // The file changes after the person opened it.
-        let later = ISO8601DateFormatter().string(from: Date().addingTimeInterval(60))
+        let later = ISO8601DateFormatter().string(from: seen.addingTimeInterval(600))
         model.apply(.spacesList(SpacesList(spaces: [space("a", updated: later)])))
         XCTAssertTrue(model.hasNew("a"))
         model.setOpenSpace("a")
@@ -298,6 +302,7 @@ final class ViewerSpacesPlumbingTests: XCTestCase {
         let (model, _) = model()
         model.settings.spacesNotify = false
         model.apply(.spacesList(SpacesList(spaces: [space("a")])))
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: "2099-01-01T00:00:00Z")])))
         XCTAssertFalse(model.hasNew("a"))
     }
 

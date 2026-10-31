@@ -14,9 +14,27 @@ final class SpacesTests: XCTestCase {
         return Settings(defaults: defaults)
     }
 
-    private func space(_ id: String, title: String? = nil) -> SpaceInfo {
+    private func space(_ id: String, title: String? = nil, updated: String = "2026-10-31T12:00:00Z") -> SpaceInfo {
         SpaceInfo(id: id, title: title ?? id, icon: "doc.text", order: nil, location: "/tmp/\(id).md", media: "markdown",
-                  updated: "2026-10-31T12:00:00Z")
+                  updated: updated)
+    }
+
+    private func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
+
+    private func hello(_ capabilities: [String]) -> HelloServer {
+        HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.12.0", epoch: "e1",
+            brand: Brand(name: "Portico", agentName: "Acme"), actions: [], roots: [], commands: [],
+            capabilities: capabilities)
+    }
+
+    private func fileArtifact(_ id: String, space: String? = nil, open: Bool = true) -> Artifact {
+        Artifact(id: id, kind: .file, location: "/tmp/\(id).md", media: .markdown, title: id, source: .text, open: open, space: space)
+    }
+
+    @MainActor final class FakeNotifier: SpaceNotifying {
+        var posted: [(space: String, title: String, body: String)] = []
+        func post(space: String, title: String, body: String) { posted.append((space, title, body)) }
     }
 
     private func model(spaces: [SpaceInfo] = []) -> (AppModel, AppModelTests.Sent) {
@@ -176,7 +194,11 @@ final class SpacesTests: XCTestCase {
 
     func test_dot_on_the_switcher_when_any_space_has_something_new() {
         let (model, _) = model(spaces: [space("a"), space("b")])
-        XCTAssertTrue(model.hasNew("a"), "never opened: new")
+        XCTAssertFalse(model.hasNew("a"), "first sight: no dot")
+        // Both change after the app first saw them.
+        let later = ISO8601DateFormatter().string(from: Date().addingTimeInterval(60))
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: later), space("b", updated: later)])))
+        XCTAssertTrue(model.spaces.contains { model.hasNew($0.id) })
         model.setOpenSpace("a")
         model.setOpenSpace("b")
         XCTAssertFalse(model.spaces.contains { model.hasNew($0.id) })
@@ -206,5 +228,148 @@ final class SpacesTests: XCTestCase {
     func test_title_is_capped_and_list_scrolls_past_nine_rows() {
         XCTAssertEqual(ToolbarLayout.switcherTitleMaxWidth, 160)
         XCTAssertEqual(SpacesPresentation.listMaxHeight, 450)
+    }
+
+    // MARK: - a space open (A5)
+
+    func test_artifact_space_switches_not_opens_file() {
+        let (model, _) = model(spaces: [space("brief")])
+        model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: fileArtifact("brief.md", space: "brief"))))
+        XCTAssertEqual(model.openSpace, "brief")
+        XCTAssertNil(model.current[1], "not opened as a file")
+        XCTAssertTrue(model.artifacts[1]?.isEmpty ?? true, "not in the chat's history either")
+
+        // Its row not listed yet: the switch waits for the list.
+        let (late, _) = self.model()
+        late.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: fileArtifact("brief.md", space: "brief"))))
+        XCTAssertNil(late.openSpace)
+        late.apply(.spacesList(SpacesList(spaces: [space("brief")])))
+        XCTAssertEqual(late.openSpace, "brief")
+        XCTAssertNil(late.current[1])
+    }
+
+    func test_close_restores_previous_viewer() {
+        let (model, _) = model(spaces: [space("brief")])
+        let before = fileArtifact("notes.md")
+        model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: before)))
+        XCTAssertEqual(model.current[1], before)
+        model.openSpaceAt(1)
+        XCTAssertEqual(model.shownArtifact(for: 1)?.id, "space:brief")
+        XCTAssertEqual(model.shownArtifact(for: 1)?.location, "/tmp/brief.md")
+        XCTAssertEqual(model.current[1], before, "the chat's own viewer is untouched")
+        model.openSpaceAt(0)
+        XCTAssertEqual(model.shownArtifact(for: 1), before)
+
+        // Collapsed before: still collapsed after.
+        model.setViewer(visible: false, for: 1)
+        model.openSpaceAt(1)
+        XCTAssertTrue(model.isViewerShown(for: 1), "a space opens the column")
+        model.setOpenSpace(nil)
+        XCTAssertFalse(model.isViewerShown(for: 1))
+    }
+
+    func test_space_belongs_to_the_window_not_a_chat() {
+        let (model, _) = model(spaces: [space("brief")])
+        model.openSpaceAt(1)
+        model.apply(.chatList(ChatList(chats: [
+            ChatSummary(chat: 1, folder: "/tmp/a", alias: nil, state: .idle, created: "2026-10-28T12:00:00Z"),
+            ChatSummary(chat: 2, folder: "/tmp/b", alias: nil, state: .idle, created: "2026-10-28T12:00:00Z")])))
+        model.selected = 1
+        XCTAssertEqual(model.shownArtifact(for: 1)?.id, "space:brief")
+        model.selected = 2
+        XCTAssertEqual(model.openSpace, "brief")
+        XCTAssertEqual(model.shownArtifact(for: 2)?.id, "space:brief")
+    }
+
+    func test_ordinary_file_while_a_space_is_open_goes_back_to_work() {
+        let (model, _) = model(spaces: [space("brief")])
+        model.openSpaceAt(1)
+        let file = fileArtifact("report.md")
+        model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: file)))
+        XCTAssertNil(model.openSpace)
+        XCTAssertEqual(model.shownArtifact(for: 1), file)
+    }
+
+    func test_refresh_hidden_without_capability() {
+        let (model, _) = model()
+        model.apply(.hello(hello(["spaces.v1"])))
+        XCTAssertFalse(model.spacesCanRefresh)
+        model.apply(.hello(hello(["spaces.v1", "spaces.refresh"])))
+        XCTAssertTrue(model.spacesCanRefresh)
+    }
+
+    func test_stale_list_cleared_by_a_gateway_without_spaces() {
+        let (model, _) = model(spaces: [space("brief")])
+        model.openSpaceAt(1)
+        model.apply(.hello(hello(["spaces.v1"])))
+        XCTAssertEqual(model.spaces.map(\.id), ["brief"], "spaces.v1: the list stands until the next one")
+        model.apply(.hello(hello(["files"])))
+        XCTAssertTrue(model.spaces.isEmpty)
+        XCTAssertNil(model.openSpace)
+    }
+
+    func test_first_sight_stamps_and_later_change_is_new() {
+        let (model, _) = model()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        model.now = { start }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(-3600)))])))
+        XCTAssertEqual(model.settings.spacesFirstSeen["a"], start)
+        XCTAssertFalse(model.hasNew("a"), "older than first sight")
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(60)))])))
+        XCTAssertTrue(model.hasNew("a"))
+        model.now = { start.addingTimeInterval(120) }
+        model.setOpenSpace("a")
+        XCTAssertFalse(model.hasNew("a"))
+        XCTAssertEqual(model.settings.spacesFirstSeen["a"], start, "stamped once")
+    }
+
+    func test_notify_only_when_inactive_and_enabled() {
+        let (model, _) = model()
+        let notifier = FakeNotifier()
+        model.spaceNotifier = notifier
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        model.now = { start.addingTimeInterval(120) }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", title: "Meeting prep", updated: iso(start))])))
+        XCTAssertTrue(notifier.posted.isEmpty, "the first list is not news")
+
+        func change(_ seconds: TimeInterval) {
+            model.apply(.spacesList(SpacesList(spaces: [space("a", title: "Meeting prep", updated: iso(start.addingTimeInterval(seconds)))])))
+        }
+        model.isAppActive = { true }
+        change(10)
+        XCTAssertTrue(notifier.posted.isEmpty, "active: no notification")
+
+        model.isAppActive = { false }
+        model.settings.spacesNotify = false
+        change(20)
+        XCTAssertTrue(notifier.posted.isEmpty, "setting off: none")
+
+        model.settings.spacesNotify = true
+        change(20)
+        XCTAssertTrue(notifier.posted.isEmpty, "not advanced: none")
+        change(30)
+        XCTAssertEqual(notifier.posted.count, 1)
+        XCTAssertEqual(notifier.posted.first?.space, "a")
+        XCTAssertEqual(notifier.posted.first?.title, "Meeting prep")
+        XCTAssertTrue(notifier.posted.first?.body.hasPrefix("Updated — ") == true)
+    }
+
+    func test_notify_off_hides_dot() {
+        let (model, _) = model()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        model.now = { start }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start))])))
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(60)))])))
+        XCTAssertTrue(model.hasNew("a"))
+        model.settings.spacesNotify = false
+        XCTAssertFalse(model.hasNew("a"))
+    }
+
+    func test_space_column_is_700_where_the_window_allows() {
+        XCTAssertEqual(ColumnWidths.viewerDefault(for: .space), 700)
+        let wide = ColumnWidths.fit(sidebar: 260, viewer: 700, window: 1600)
+        XCTAssertEqual(wide.viewer, 700)
+        let narrow = ColumnWidths.fit(sidebar: 260, viewer: 700, window: 1100)
+        XCTAssertEqual(narrow.viewer, 700 - (260 + 700 + ColumnWidths.conversationMinimum - 1100))
     }
 }

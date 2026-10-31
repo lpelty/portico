@@ -24,6 +24,14 @@ struct PorticoApp: App {
         // everything" after the window closed can still reach the gateway.
         model.supervisor = supervisor
         model.appVersion = Self.version
+        // Space-updated notifications need an app bundle; a bare executable
+        // (`swift run`) has no notification centre to ask.
+        if Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" {
+            let notifier = SpaceNotifier()
+            notifier.open = { [weak model] id in model?.setOpenSpace(id) }
+            notifier.install()
+            model.spaceNotifier = notifier
+        }
         _settings = StateObject(wrappedValue: settings)
         _supervisor = StateObject(wrappedValue: supervisor)
         _model = StateObject(wrappedValue: model)

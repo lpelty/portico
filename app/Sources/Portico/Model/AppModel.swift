@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -456,19 +457,78 @@ final class AppModel: ObservableObject {
         send(.viewerSettings(ViewerSettings(canSee: see, checkHTML: see && (checks ?? defaults.agentChecksHTML))))
     }
 
-    /// The space changed after the person last opened it, and they want to know.
+    /// The clock the dot and the "first seen" stamp read (tests set it).
+    var now: () -> Date = Date.init
+    /// Whether Portico is the active app (tests set it).
+    var isAppActive: () -> Bool = { NSApplication.shared.isActive }
+    /// Posts the "space updated" notification; `nil` where there is no
+    /// notification centre (tests, a bare executable).
+    var spaceNotifier: SpaceNotifying?
+    /// The space the agent switched to (`artifact.space`) before its row had
+    /// arrived in `spaces.list`.
+    private var pendingOpenSpace: String?
+    /// Whether the viewer column is showing while a space is open: the
+    /// person can collapse it by hand, and opening a space shows it again.
+    @Published private(set) var spaceViewerShown = true
+
+    /// The space changed after the person last opened it (and after this app
+    /// first saw it), and they want to know.
     func hasNew(_ id: String) -> Bool {
         guard settings.spacesNotify, let space = spaces.first(where: { $0.id == id }) else { return false }
-        guard let opened = settings.spacesLastOpened[id] else { return true }
         guard let updated = space.updatedDate else { return false }
-        return updated > opened
+        let since = max(settings.spacesLastOpened[id] ?? .distantPast, settings.spacesFirstSeen[id] ?? .distantPast)
+        return updated > since
     }
 
     /// Show a space (or none, with `nil`); opening one clears its dot.
+    /// Closing it leaves each chat's viewer as it was.
     func setOpenSpace(_ id: String?) {
         openSpace = id
+        pendingOpenSpace = nil
+        if id != nil { spaceViewerShown = true }
         // The file's own clock can run ahead of this one; opening it must still clear its dot.
-        if let id { settings.spacesLastOpened[id] = max(Date(), spaces.first { $0.id == id }?.updatedDate ?? .distantPast) }
+        if let id { settings.spacesLastOpened[id] = max(now(), spaces.first { $0.id == id }?.updatedDate ?? .distantPast) }
+    }
+
+    /// The open space as a file for the viewer to draw, or `nil` with none open.
+    var openSpaceArtifact: Artifact? {
+        guard let id = openSpace, let space = spaces.first(where: { $0.id == id }) else { return nil }
+        let media = Media(rawValue: space.media) ?? Media.of(path: space.location)
+        return Artifact(
+            id: Self.spaceArtifactPrefix + id, kind: .file, location: space.location, media: media,
+            title: space.title, source: .text, open: true)
+    }
+    static let spaceArtifactPrefix = "space:"
+
+    /// What the viewer draws for `chat`: the open space (it belongs to the
+    /// window, not a chat), else the chat's own current artifact.
+    func shownArtifact(for chat: Int) -> Artifact? { openSpaceArtifact ?? current[chat] }
+
+    /// The Refresh button: only when the gateway has a refresh command.
+    var spacesCanRefresh: Bool { hello?.capabilities.contains(SpacesList.refreshCapability) == true }
+
+    /// Apply a new `spaces.list`: stamp spaces seen for the first time,
+    /// notify for the ones that changed, drop an open space that is gone.
+    private func applySpaces(_ list: [SpaceInfo]) {
+        let before = Dictionary(spaces.map { ($0.id, $0.updatedDate) }, uniquingKeysWith: { first, _ in first })
+        spaces = list
+        for space in list where settings.spacesFirstSeen[space.id] == nil {
+            settings.spacesFirstSeen[space.id] = now()
+        }
+        if let pending = pendingOpenSpace, list.contains(where: { $0.id == pending }) { setOpenSpace(pending) }
+        if let openSpace, !list.contains(where: { $0.id == openSpace }) { self.openSpace = nil }
+        guard settings.spacesNotify, let notifier = spaceNotifier, !isAppActive() else { return }
+        for space in list {
+            guard let known = before[space.id], let was = known, let updated = space.updatedDate, updated > was else { continue }
+            let stamp = SpacesPresentation.updatedText(updated, now: now())
+            let time = stamp.dropFirst("Updated".count).trimmingCharacters(in: .whitespaces)
+            notifier.post(space: space.id, title: space.title, body: "Updated — \(time)")
+        }
+    }
+
+    /// A pick of an ordinary file takes the viewer back to Work.
+    private func leaveSpaceForFile() {
+        if openSpace != nil { setOpenSpace(nil) }
     }
 
     /// ⌘0 is Work; ⌘1–⌘9 the nth space in the switcher's order. A number
@@ -591,6 +651,13 @@ final class AppModel: ObservableObject {
             // that follows says how each session is now.
             logging = [:]
             renewing = [:]
+            // A gateway without spaces has no list to trust: what an earlier
+            // one sent is stale, and so is a space open from it.
+            if !hello.capabilities.contains(SpacesList.capability) {
+                spaces = []
+                openSpace = nil
+                pendingOpenSpace = nil
+            }
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -604,8 +671,7 @@ final class AppModel: ObservableObject {
             if let viewerActHandler { viewerActHandler(act) } else { answerViewerAct(act) }
 
         case .spacesList(let list):
-            spaces = list.spaces
-            if let openSpace, !list.spaces.contains(where: { $0.id == openSpace }) { self.openSpace = nil }
+            applySpaces(list.spaces)
 
         case .chatList(let list):
             chats = list.chats
@@ -1038,6 +1104,13 @@ final class AppModel: ObservableObject {
 
         case .artifactCreated(let created):
             let artifact = created.artifact
+            if let space = artifact.space {
+                // Talking about a space switches to it; it is never opened as a file.
+                if artifact.open {
+                    if spaces.contains(where: { $0.id == space }) { setOpenSpace(space) } else { pendingOpenSpace = space }
+                }
+                break
+            }
             var list = artifacts[chat] ?? []
             if let index = list.firstIndex(where: { $0.id == artifact.id }) {
                 list[index] = artifact
@@ -1294,6 +1367,7 @@ final class AppModel: ObservableObject {
     /// aside are all dropped, so none of them can come back over it.
     func show(_ artifact: Artifact, in chat: Int) {
         if !replayingFromBeginning { supersedeRemembered(in: chat) }
+        leaveSpaceForFile()
         current[chat] = artifact
         viewerVisible[chat] = true
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
@@ -1373,13 +1447,18 @@ final class AppModel: ObservableObject {
     /// artifacts alone (an earlier session's, a replay's, ones that did not
     /// auto-open) leave it closed rather than open on nothing (v0.6).
     func isViewerShown(for chat: Int) -> Bool {
-        viewerVisible[chat] ?? (current[chat] != nil)
+        if openSpace != nil { return spaceViewerShown }
+        return viewerVisible[chat] ?? (current[chat] != nil)
     }
 
     /// Open or collapse the viewer column for `chat` by hand. Collapsing
     /// it ends focus.
     func setViewer(visible: Bool, for chat: Int) {
-        viewerVisible[chat] = visible
+        if openSpace != nil {
+            spaceViewerShown = visible
+        } else {
+            viewerVisible[chat] = visible
+        }
         if !visible, viewerFocus?.chat == chat { endFocus() }
     }
 
@@ -1395,7 +1474,7 @@ final class AppModel: ObservableObject {
         } else {
             viewerFocus = ViewerFocus(chat: chat, sidebarWasVisible: sidebarVisible)
             sidebarVisible = false
-            viewerVisible[chat] = true
+            if openSpace != nil { spaceViewerShown = true } else { viewerVisible[chat] = true }
         }
     }
 
@@ -2043,6 +2122,7 @@ extension AppModel {
         }
         artifacts[chat] = list
         supersedeRemembered(in: chat)
+        leaveSpaceForFile()
         current[chat] = artifact
         viewerVisible[chat] = true
     }

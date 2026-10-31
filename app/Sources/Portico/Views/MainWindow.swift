@@ -83,9 +83,11 @@ struct MainWindow: View {
         return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
     }
 
-    /// The viewer's fit: the current artifact's, reading when nothing is shown.
+    /// The viewer's fit: a space's (700 where the window allows), else the
+    /// current artifact's, reading when nothing is shown.
     private var viewerFit: ColumnWidths.Fit {
-        ColumnWidths.Fit(media: model.shownChat.flatMap { model.current[$0]?.media })
+        if model.openSpace != nil { return .space }
+        return ColumnWidths.Fit(media: model.shownChat.flatMap { model.current[$0]?.media })
     }
 
     /// Focus (V3) is on for the chat shown and its viewer is up.

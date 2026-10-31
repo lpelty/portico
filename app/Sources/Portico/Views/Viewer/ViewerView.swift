@@ -170,7 +170,62 @@ struct ViewerView: View {
 
     private var made: [Artifact] { model.history(for: chat) }
 
+    @ViewBuilder
     private var header: some View {
+        if let space = model.openSpace.flatMap({ id in model.spaces.first { $0.id == id } }) {
+            spaceHeader(space)
+        } else {
+            fileHeader
+        }
+    }
+
+    /// A space open (row AI2): its icon and title, "Updated <time>", then
+    /// Refresh (only when the gateway can), expand, and ×, which goes back
+    /// to Work and the file that was open before.
+    private func spaceHeader(_ space: SpaceInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: space.icon)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text2)
+            Text(space.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(SpacesPresentation.updatedText(space.updatedDate))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+                .lineLimit(1)
+                .layoutPriority(-1)
+            Spacer(minLength: 8)
+            ViewerActingLabel(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) {
+                model.stopTurn(chat: chat)
+            }
+            if model.spacesCanRefresh {
+                headerButton("Refresh", systemImage: "arrow.clockwise", labelled: ViewerHeaderButtons.labelled(width: headerWidth, obsidian: false), help: "Ask the agent to update this now") {
+                    model.refreshSpace(space.id)
+                }
+            }
+            focusButton
+            Button {
+                model.setOpenSpace(nil)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.text2)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.hover)
+            .help("Back to Work (⌘0)")
+            .accessibilityLabel("Close the space")
+        }
+        .padding(.horizontal, 16)
+        .frame(height: Theme.toolbarHeight)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+    }
+
+    private var fileHeader: some View {
         HStack(spacing: 8) {
             titleMenu
             Spacer(minLength: 8)
@@ -312,7 +367,7 @@ struct ViewerView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let current = model.current[chat] {
+        if let current = model.shownArtifact(for: chat) {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
                 .environment(\.viewerAgent, model.viewerAgent)

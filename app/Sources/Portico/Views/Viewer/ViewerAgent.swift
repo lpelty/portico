@@ -141,7 +141,7 @@ final class ViewerAgent: ObservableObject {
             guard model.shownChat == act.chat else { return fail(act, Message.anotherChat) }
             chat = act.chat
         }
-        guard let artifact = model.current[chat] else { return fail(act, Message.nothingOpen) }
+        guard let artifact = model.shownArtifact(for: chat) else { return fail(act, Message.nothingOpen) }
 
         begin(chat)
         defer { end() }
