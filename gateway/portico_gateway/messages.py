@@ -161,6 +161,8 @@ class Artifact(Strict):
     title: str
     source: Literal["tool", "text", "producer"]
     open: bool
+    # v0.12: the id of the space this file is (a file in the spaces folder); the app switches to it.
+    space: str | None = None
 
 
 class Entry(Strict):
@@ -280,6 +282,28 @@ class ViewerSettings(Envelope):
     type: Literal["viewer.settings"] = "viewer.settings"
     can_see: bool
     check_html: bool
+
+
+class SpaceRefresh(Envelope):
+    """v0.12: run the deployment's refresh for a space; ``id`` is the space's id. Answered by ``spaces.list`` or ``error``."""
+
+    type: Literal["space.refresh"] = "space.refresh"
+    id: str
+
+
+class SpaceRename(Envelope):
+    """v0.12: set a space's title (written into its front matter); ``id`` is the space's id."""
+
+    type: Literal["space.rename"] = "space.rename"
+    id: str
+    title: str
+
+
+class SpaceRemove(Envelope):
+    """v0.12: move a space's file to the Trash and run the deployment's remove; ``id`` is the space's id."""
+
+    type: Literal["space.remove"] = "space.remove"
+    id: str
 
 
 class ViewerImage(Strict):
@@ -826,6 +850,25 @@ HistoryEvent = Annotated[
 ]
 
 
+class SpaceInfo(Strict):
+    """One space in ``spaces.list``: ``updated`` is the file's modification time (UTC ISO 8601)."""
+
+    id: str
+    title: str
+    icon: str
+    order: int | None = None
+    location: str
+    media: Media
+    updated: str
+
+
+class SpacesList(Envelope):
+    """v0.12: the spaces as they are, after ``services.status`` on hello and whenever the folder changes."""
+
+    type: Literal["spaces.list"] = "spaces.list"
+    spaces: list[SpaceInfo] = []
+
+
 class ViewerAct(Envelope):
     """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``."""
 
@@ -868,6 +911,9 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ChatUnqueue,
     ViewerSettings,
     ViewerResult,
+    SpaceRefresh,
+    SpaceRename,
+    SpaceRemove,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -907,6 +953,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatQueue,
     ChatCommands,
     ViewerAct,
+    SpacesList,
     Error,
 )
 
@@ -1034,6 +1081,9 @@ def example_messages() -> dict[str, BaseModel]:
         SessionsClear(ts=_TS, id="req-9"),
         ChatUnqueue(ts=_TS, chat=1, id="req-10"),
         ViewerSettings(ts=_TS, can_see=True, check_html=True),
+        SpaceRefresh(ts=_TS, id="meeting-prep"),
+        SpaceRename(ts=_TS, id="meeting-prep", title="Prep for Priya"),
+        SpaceRemove(ts=_TS, id="brief"),
         ViewerResult(
             ts=_TS,
             id="act-1",
@@ -1224,6 +1274,28 @@ def example_messages() -> dict[str, BaseModel]:
             ],
         ),
         ViewerAct(ts=_TS, id="act-1", chat=1, action="click", args={"target": "e12"}),
+        SpacesList(
+            ts=_TS,
+            spaces=[
+                SpaceInfo(
+                    id="meeting-prep",
+                    title="Meeting prep",
+                    icon="calendar-clock",
+                    order=2,
+                    location="/Users/sam/Spaces/meeting-prep.md",
+                    media="markdown",
+                    updated="2026-10-31T14:05:11.250000Z",
+                ),
+                SpaceInfo(
+                    id="brief",
+                    title="brief",
+                    icon="doc.text",
+                    location="/Users/sam/Spaces/brief.html",
+                    media="html",
+                    updated="2026-10-31T07:30:00.000000Z",
+                ),
+            ],
+        ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]
     out: dict[str, BaseModel] = {}

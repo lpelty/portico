@@ -96,6 +96,12 @@ VIEWER_PROMPT = (
     "The person sees files in Portico's viewer beside this conversation. To show a file, "
     "call show_in_viewer with its path; don't open files with the `open` command or a browser."
 )
+# v0.12: appended after the viewer line when the deployment has a spaces folder.
+SPACES_PROMPT = (
+    "The person's spaces are files in {folder}, one Markdown or HTML file each, named by front matter title. "
+    "To show one, call show_in_viewer with its path. To create one, write a new file there with a title in front matter, "
+    "then tell the person; how it is kept up to date is the deployment's."
+)
 # The longest the adapter waits for the engine's context reading.
 CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
@@ -483,26 +489,30 @@ def deployment_system_prompt(kind: str, append: str | None) -> Any:
     return {"type": "preset", "preset": "claude_code", **({"append": text} if text else {})}
 
 
-def with_viewer_prompt(system_prompt: Any) -> Any:
+def with_viewer_prompt(system_prompt: Any, spaces_folder: Path | str | None = None) -> Any:
     """``system_prompt`` (as ``ClaudeAgentOptions`` takes it) with ``VIEWER_PROMPT`` appended.
 
+    With a ``spaces_folder`` (v0.12) the spaces line follows the viewer line.
     ``None`` is the SDK's default, an empty prompt: the line becomes the
     prompt. A preset keeps its ``append`` and gets the line after it; a
     custom prompt gets the line after its text. A prompt file cannot be
     appended to and is left as it is.
     """
+    line = VIEWER_PROMPT
+    if spaces_folder:
+        line = f"{VIEWER_PROMPT} {SPACES_PROMPT.format(folder=spaces_folder)}"
     if system_prompt is None:
-        return VIEWER_PROMPT
+        return line
     if isinstance(system_prompt, str):
-        return f"{system_prompt}\n\n{VIEWER_PROMPT}" if system_prompt else VIEWER_PROMPT
+        return f"{system_prompt}\n\n{line}" if system_prompt else line
     if isinstance(system_prompt, Mapping):
         kind = system_prompt.get("type")
         if kind == "preset":
             before = system_prompt.get("append") or ""
-            return {**system_prompt, "append": f"{before}\n\n{VIEWER_PROMPT}" if before else VIEWER_PROMPT}
+            return {**system_prompt, "append": f"{before}\n\n{line}" if before else line}
         if kind == "custom":
             before = system_prompt.get("prompt") or ""
-            return {**system_prompt, "prompt": f"{before}\n\n{VIEWER_PROMPT}" if before else VIEWER_PROMPT}
+            return {**system_prompt, "prompt": f"{before}\n\n{line}" if before else line}
     return system_prompt
 
 
@@ -657,6 +667,10 @@ def build_options(
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
     post_tool_use: list[Any] = []
     extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
+    # v0.12: the spaces folder is one of the agent's own places (an extra directory), so writing a space
+    # has the permissions of writing in the chat's folder.
+    spaces_folder = getattr(callbacks, "spaces_folder", None)
+    add_dirs: list[str | Path] = [spaces_folder] if spaces_folder else []
     if callable(getattr(callbacks, "on_show", None)):
         pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
         tools = [build_show_tool(callbacks)]
@@ -673,10 +687,11 @@ def build_options(
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
             "allowed_tools": allowed,
-            "system_prompt": with_viewer_prompt(system_prompt),
+            "system_prompt": with_viewer_prompt(system_prompt, spaces_folder),
         }
     return ClaudeAgentOptions(
         cwd=str(folder),
+        add_dirs=add_dirs,
         resume=resume,
         permission_mode=permission_mode,
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
