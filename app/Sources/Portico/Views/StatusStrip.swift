@@ -373,8 +373,8 @@ enum ServiceColors {
 /// The services menu (W3; v0.11, item 60, AG3): one line per service,
 /// its dot carrying the state, and a second line only when it says
 /// something (the gateway's port, a check's detail, an error in red). One
-/// Restart all at the foot. No buttons on the rows: a row's own Restart,
-/// and the gateway's Stop or Start, are on its context menu. Reads the
+/// Restart all at the foot. The Gateway row shows Stop and Restart on hover (v0.12);
+/// a row's own Restart, and the gateway's Stop or Start, are also on its context menu. Reads the
 /// model itself so it stays current while open.
 struct ServicesMenu: View {
     /// Closes the popover, so a confirmation sheet is not hidden behind it.
@@ -412,6 +412,7 @@ struct ServiceRowView: View {
     let row: ServiceRow
     var closeMenu: () -> Void = {}
     @EnvironmentObject private var model: AppModel
+    @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -436,8 +437,18 @@ struct ServiceRowView: View {
             if restarting {
                 ProgressView().controlSize(.small)
                     .help("Restarting \(row.name)…")
+            } else if hovering {
+                // v0.12, item 1: the Gateway row's Stop and Restart, visible on hover.
+                ForEach(ServicesPresentation.hoverControls(row), id: \.title) { control in
+                    Button(control.title) { press(control) }
+                        .buttonStyle(.hover)
+                        .font(.system(size: 12))
+                        .help(Self.help(control))
+                        .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
+                }
             }
         }
+        .onHover { hovering = $0 }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .contentShape(Rectangle())

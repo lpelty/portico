@@ -239,7 +239,7 @@ struct TranscriptItemView: View {
 
 /// What the person sent, right-aligned on a tinted background. The text
 /// is the gateway's `user.text`: what the engine received, attachments
-/// listed under it. v0.11 (58, AG1): the replies' 16-point text, 10 by 16
+/// listed under it. v0.11 (58, AG1): the replies' 15-point text (v0.12), 10 by 16
 /// padding, at most 70% of the reading column; a short message hugs.
 struct UserBubble: View {
     let text: String

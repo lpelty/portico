@@ -41,7 +41,7 @@ enum MarkdownRun: Equatable {
 // MARK: - Attributed text
 
 /// Prose blocks as AppKit attributed text, laid out like the SwiftUI
-/// blocks they replace: body 16 regular with 5 of line spacing, 10 between
+/// blocks they replace: body 15 regular with 5 of line spacing, 10 between
 /// blocks, 6 between list items, heads semibold a little larger (v0.11, 73).
 @MainActor
 enum MarkdownAttributed {
@@ -134,7 +134,7 @@ enum MarkdownAttributed {
         return (traits?[.weight] as? CGFloat).map { NSFont.Weight($0) } ?? .regular
     }
 
-    /// A code block's text: monospaced 14 (v0.11, beside 16 pt prose), 3 of line spacing, as fenced.
+    /// A code block's text: monospaced 14 (v0.11, beside 15 pt prose), 3 of line spacing, as fenced.
     static func code(_ text: String) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 3
