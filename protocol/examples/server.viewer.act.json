@@ -1,0 +1,10 @@
+{
+  "action": "click",
+  "args": {
+    "target": "e12"
+  },
+  "chat": 1,
+  "id": "act-1",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "viewer.act"
+}

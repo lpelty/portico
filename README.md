@@ -141,6 +141,19 @@ status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": 
                                     # when set, its rows replace the [[services]] checks; a row's
                                     # context menu offers Restart when a [[services]] entry with the
                                     # same id gives one
+```
+
+A row's `detail` is shown while the row is up, so a count worth
+spot-checking over time (a memory count, say) goes there. The status
+command prints it in the row, and the app receives it as
+`services.status` row `{"id": "memory", "name": "Memory", "state": "up",
+"detail": "71,946 memories"}`:
+
+```json
+{"services": [{"id": "memory", "name": "Memory", "up": true, "detail": "71,946 memories"}]}
+```
+
+```toml
 
 [[actions]]                         # buttons in the input bar; each sends its text
 label = "Review"
@@ -165,6 +178,16 @@ next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's n
 [files]                             # optional (v0.11): the Files pane
 hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
                                     # (it is still where the agent works, and a file in it still shows)
+
+[viewer]                            # optional (v0.12): the agent's view of the viewer
+agent_can_see = true                # default for Settings > Agent can see the viewer (look, scroll, click, type)
+agent_checks_html = true            # default for Settings > Agent checks HTML it creates
+act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and type on; ships empty (see below)
+
+[spaces]                            # optional (v0.12): files the agent keeps current, in the app's switcher
+folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space
+refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
+remove = "my-tool forget-space"     # optional: runs after the file is moved to the Trash; same environment
 ```
 
 A title call goes through the Agent SDK to the same provider, with the
@@ -378,6 +401,47 @@ folder's agent instructions. A suggested instruction:
 > `[/TTS]`. Write those sentences for the ear: no Markdown, no code, no
 > file paths or links. Short conversational replies need no tags.
 
+## The viewer's vision and spaces
+
+**What the agent can do in the viewer (v0.12).** Beside `show_in_viewer`,
+the agent has `viewer_look`, `viewer_click`, `viewer_type`, `viewer_scroll`
+and `viewer_back`. A look returns a picture of what the viewer shows, an
+outline of the page (a ref such as `e12` on each heading, link, button and
+field) and any page errors since the last look; the other tools act on a
+ref or on a link's or button's visible text. The person sees every action
+as it happens and turns the whole thing off in Settings (**Agent can see
+the viewer**). **Agent checks HTML it creates** (on by default, off with
+the first) has the agent open an HTML page it wrote and look at it before
+it replies; it uses more tokens. `[viewer] agent_can_see` and
+`agent_checks_html` set the defaults.
+
+**Outside sites.** The viewer keeps website sign-ins the way a browser does,
+so a click on an outside site is the person's click. Local pages (`file://`
+and `localhost`, `127.0.0.1`, `::1` on any port) are always usable. On every
+other site the agent can look and scroll, not click or type, unless the
+site is in `act_hosts`. An entry is a bare host name that matches that host
+and its subdomains (`figma.com` covers `www.figma.com`); a scheme, path,
+port, wildcard or leading or trailing dot is a configuration error at
+start. Matching ignores case. The app checks the page's current host at
+every click and type, so a redirect or a link to another site is checked
+again. Only the deployment sets the list: there is no control in the app.
+It ships empty, and `bin/doctor` prints it ("Agent can click and type on:
+figma.com, lovable.dev" or "Outside sites: look only").
+
+**Spaces.** A space is a Markdown or HTML file the agent keeps current, in
+`[spaces] folder`. The app lists them in a toolbar switcher and opens one
+beside the conversation. A space's name, icon and order come from front
+matter (`title`, `icon` as an SF Symbol name, `order`); an HTML file puts
+the same keys in a leading `<!-- ... -->` block. A file with no title is
+listed by its file name, and files starting with `.` or `_` are skipped.
+Portico schedules nothing: the deployment rewrites the files (it can ask
+the agent to). The gateway checks the folder every 5 seconds and tells the
+agent where it is in the system prompt. `refresh` and `remove` run
+commands you provide, so a space can be re-run on demand or its source
+dropped when the person removes it. `examples/spaces/meeting-prep.md` is a
+starting file. Spaces need an app that lists `spaces.v1`, and the
+viewer tools need `viewer.v1`; an older app is sent neither.
+
 ## Command line
 
 `bin/portico-gateway <command>`, each with `--state` (default
@@ -390,6 +454,9 @@ bin/portico-gateway stop               # stop the running gateway (its own stop 
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
+bin/portico-gateway sessions clear     # (v0.12) forget every earlier session; asks first, --yes skips that;
+                                       # refuses while a gateway runs ("Stop the gateway first.") and in
+                                       # multiple presentation; the transcripts on disk stay
 ```
 
 `status --json` is the supported way for other tools to see that the app

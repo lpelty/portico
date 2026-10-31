@@ -325,6 +325,18 @@
           "title": "Source",
           "type": "string"
         },
+        "space": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Space"
+        },
         "title": {
           "title": "Title",
           "type": "string"
@@ -2053,6 +2065,21 @@
         },
         {
           "$ref": "#/$defs/ChatUnqueue"
+        },
+        {
+          "$ref": "#/$defs/ViewerSettings"
+        },
+        {
+          "$ref": "#/$defs/ViewerResult"
+        },
+        {
+          "$ref": "#/$defs/SpaceRefresh"
+        },
+        {
+          "$ref": "#/$defs/SpaceRename"
+        },
+        {
+          "$ref": "#/$defs/SpaceRemove"
         }
       ]
     },
@@ -2908,6 +2935,17 @@
           "default": "hello",
           "title": "Type",
           "type": "string"
+        },
+        "viewer_defaults": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewerDefaults"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -3238,6 +3276,12 @@
         },
         {
           "$ref": "#/$defs/ChatCommands"
+        },
+        {
+          "$ref": "#/$defs/ViewerAct"
+        },
+        {
+          "$ref": "#/$defs/SpacesList"
         },
         {
           "$ref": "#/$defs/Error"
@@ -3821,6 +3865,287 @@
         "ts"
       ],
       "title": "SessionsClear",
+      "type": "object"
+    },
+    "SpaceInfo": {
+      "additionalProperties": false,
+      "description": "One space in ``spaces.list``: ``updated`` is the file's modification time (UTC ISO 8601).",
+      "properties": {
+        "icon": {
+          "title": "Icon",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "location": {
+          "title": "Location",
+          "type": "string"
+        },
+        "media": {
+          "enum": [
+            "markdown",
+            "image",
+            "html",
+            "pdf",
+            "text",
+            "url",
+            "other"
+          ],
+          "title": "Media",
+          "type": "string"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated": {
+          "title": "Updated",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "icon",
+        "location",
+        "media",
+        "updated"
+      ],
+      "title": "SpaceInfo",
+      "type": "object"
+    },
+    "SpaceRefresh": {
+      "additionalProperties": false,
+      "description": "v0.12: run the deployment's refresh for a space; ``id`` is the space's id. Answered by ``spaces.list`` or ``error``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "space.refresh",
+          "default": "space.refresh",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ts"
+      ],
+      "title": "SpaceRefresh",
+      "type": "object"
+    },
+    "SpaceRemove": {
+      "additionalProperties": false,
+      "description": "v0.12: move a space's file to the Trash and run the deployment's remove; ``id`` is the space's id.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "space.remove",
+          "default": "space.remove",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ts"
+      ],
+      "title": "SpaceRemove",
+      "type": "object"
+    },
+    "SpaceRename": {
+      "additionalProperties": false,
+      "description": "v0.12: set a space's title (written into its front matter); ``id`` is the space's id.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "space.rename",
+          "default": "space.rename",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ts",
+        "title"
+      ],
+      "title": "SpaceRename",
+      "type": "object"
+    },
+    "SpacesList": {
+      "additionalProperties": false,
+      "description": "v0.12: the spaces as they are, after ``services.status`` on hello and whenever the folder changes.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "spaces": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SpaceInfo"
+          },
+          "title": "Spaces",
+          "type": "array"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "spaces.list",
+          "default": "spaces.list",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "SpacesList",
       "type": "object"
     },
     "StatusSet": {
@@ -4429,6 +4754,263 @@
         "text"
       ],
       "title": "UserText",
+      "type": "object"
+    },
+    "ViewerAct": {
+      "additionalProperties": false,
+      "description": "v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``.",
+      "properties": {
+        "action": {
+          "enum": [
+            "look",
+            "click",
+            "type",
+            "scroll",
+            "back"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Args",
+          "type": "object"
+        },
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "viewer.act",
+          "default": "viewer.act",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "id",
+        "ts",
+        "action"
+      ],
+      "title": "ViewerAct",
+      "type": "object"
+    },
+    "ViewerDefaults": {
+      "additionalProperties": false,
+      "description": "v0.12: the deployment's viewer settings (config ``[viewer]``), sent in ``hello``.",
+      "properties": {
+        "act_hosts": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Act Hosts",
+          "type": "array"
+        },
+        "agent_can_see": {
+          "default": true,
+          "title": "Agent Can See",
+          "type": "boolean"
+        },
+        "agent_checks_html": {
+          "default": true,
+          "title": "Agent Checks Html",
+          "type": "boolean"
+        }
+      },
+      "title": "ViewerDefaults",
+      "type": "object"
+    },
+    "ViewerImage": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "title": "Data",
+          "type": "string"
+        },
+        "media_type": {
+          "const": "image/png",
+          "title": "Media Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "media_type"
+      ],
+      "title": "ViewerImage",
+      "type": "object"
+    },
+    "ViewerResult": {
+      "additionalProperties": false,
+      "description": "v0.12: the app's answer to a ``viewer.act``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewerImage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "viewer.result",
+          "default": "viewer.result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ts",
+        "ok",
+        "text"
+      ],
+      "title": "ViewerResult",
+      "type": "object"
+    },
+    "ViewerSettings": {
+      "additionalProperties": false,
+      "description": "v0.12: the person's two viewer switches; sent after ``hello`` and when either changes. Not chat-scoped.",
+      "properties": {
+        "can_see": {
+          "title": "Can See",
+          "type": "boolean"
+        },
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "check_html": {
+          "title": "Check Html",
+          "type": "boolean"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "viewer.settings",
+          "default": "viewer.settings",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "can_see",
+        "check_html"
+      ],
+      "title": "ViewerSettings",
       "type": "object"
     },
     "WorkflowFinished": {
