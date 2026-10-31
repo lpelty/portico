@@ -66,6 +66,20 @@ final class ViewerSpacesPlumbingTests: XCTestCase {
         XCTAssertTrue(hello.capabilities.contains(SpacesList.refreshCapability))
     }
 
+    /// A partial `viewer_defaults` (a gateway that sends some fields) still
+    /// decodes, each missing field taking its default, so the hello is not lost.
+    func testPartialViewerDefaultsDecodeWithFallbacks() throws {
+        let json = """
+            {"type":"hello","protocol":\(protocolVersion),"gateway_version":"0.12.0","epoch":"e1",
+             "brand":{"name":"Portico","agent_name":"Acme"},"actions":[],"roots":[],"commands":[],
+             "capabilities":[],"viewer_defaults":{"agent_checks_html":false},"ts":"2026-10-31T12:00:00Z"}
+            """
+        guard case .hello(let hello) = try decodeServer(json) else { return XCTFail("not a hello") }
+        XCTAssertEqual(hello.viewerDefaults, ViewerDefaults(agentCanSee: true, agentChecksHTML: false, actHosts: []))
+        let empty = try JSONDecoder().decode(ViewerDefaults.self, from: Data("{}".utf8))
+        XCTAssertEqual(empty, ViewerDefaults(agentCanSee: true, agentChecksHTML: true, actHosts: []))
+    }
+
     func testHelloWithoutViewerDefaultsStillDecodes() throws {
         let json = """
             {"type":"hello","protocol":\(protocolVersion),"gateway_version":"0.11.0","epoch":"e1",

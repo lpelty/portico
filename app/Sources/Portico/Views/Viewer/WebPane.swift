@@ -147,6 +147,17 @@ struct WebPane: NSViewRepresentable {
         case markdown(URL)
         case html(URL)
         case url(URL)
+
+        /// How the viewer loads `shown`, when it draws as a web page:
+        /// Markdown, HTML and URLs; `nil` for the other kinds.
+        init?(_ shown: ArtifactPresentation) {
+            switch shown.media {
+            case .markdown: guard let file = shown.fileURL else { return nil }; self = .markdown(file)
+            case .html: guard let file = shown.fileURL else { return nil }; self = .html(file)
+            case .url: guard let url = shown.externalURL else { return nil }; self = .url(url)
+            default: return nil
+            }
+        }
     }
 
     let load: Load
@@ -154,6 +165,7 @@ struct WebPane: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
+        context.coordinator.agent = context.environment.viewerAgent
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, to: view)
         return view
@@ -163,7 +175,14 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.apply(load, to: view)
     }
 
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.agent?.detach(view)
+    }
+
     final class Coordinator: NSObject, WKNavigationDelegate {
+        /// The agent that may act in this pane (v0.12): the viewer's panes
+        /// have one, the document view's do not.
+        var agent: ViewerAgent?
         private var loaded: Load?
         /// The load whose navigation failed (or whose file could not be
         /// read), until a retry or another load. It stays `loaded` too:
@@ -186,6 +205,11 @@ struct WebPane: NSViewRepresentable {
             let configuration = WKWebViewConfiguration()
             configuration.defaultWebpagePreferences.allowsContentJavaScript = true
             configuration.setURLSchemeHandler(handler, forURLScheme: RenderedPageHandler.scheme)
+            // The agent's script from document start, so page errors are
+            // captured from load (spec §3.2).
+            if agent != nil, let script = ViewerAgentScript.userScript() {
+                configuration.userContentController.addUserScript(script)
+            }
             return configuration
         }
 
@@ -219,6 +243,7 @@ struct WebPane: NSViewRepresentable {
         private func start(_ load: Load, in view: WKWebView) {
             loaded = load
             failed = nil
+            agent?.attach(view, showing: load)
             if let old = renderedURL {
                 handler.forget(old)
                 renderedURL = nil

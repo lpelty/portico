@@ -423,8 +423,19 @@ final class AppModel: ObservableObject {
     @Published var spaces: [SpaceInfo] = []
     /// The space open in the viewer column, if any.
     @Published var openSpace: String?
-    /// Where a `viewer.act` goes; set by the viewer once it can carry one out.
+    /// Where a `viewer.act` goes instead of `viewerAgent` (tests).
     var viewerActHandler: ((ViewerAct) -> Void)?
+    /// Carries out the agent's `viewer.act` in the viewer on screen.
+    private(set) lazy var viewerAgent = ViewerAgent(model: self)
+
+    /// Act in the viewer and answer the gateway with one `viewer.result`.
+    private func answerViewerAct(_ act: ViewerAct) {
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await self.viewerAgent.perform(act)
+            self.send(.viewerResult(result))
+        }
+    }
 
     /// "Agent can see the viewer" as it stands: the person's choice, else the deployment's default, else on.
     var agentCanSee: Bool { settings.viewerAgentCanSee ?? hello?.viewerDefaults?.agentCanSee ?? true }
@@ -568,7 +579,7 @@ final class AppModel: ObservableObject {
             sendViewerSettings()
 
         case .viewerAct(let act):
-            viewerActHandler?(act)
+            if let viewerActHandler { viewerActHandler(act) } else { answerViewerAct(act) }
 
         case .spacesList(let list):
             spaces = list.spaces

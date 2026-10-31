@@ -174,6 +174,9 @@ struct ViewerView: View {
         HStack(spacing: 8) {
             titleMenu
             Spacer(minLength: 8)
+            ViewerActingLabel(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) {
+                model.stopTurn(chat: chat)
+            }
             // No Open buttons for a file that isn't on disk: nothing to open.
             if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
                 let shown = ArtifactPresentation(artifact: current)
@@ -312,6 +315,7 @@ struct ViewerView: View {
         if let current = model.current[chat] {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
+                .environment(\.viewerAgent, model.viewerAgent)
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",
@@ -412,20 +416,26 @@ struct ArtifactMenu: View {
 /// says so first, whatever its kind.
 struct ArtifactContent: View {
     let artifact: Artifact
+    @Environment(\.viewerAgent) private var agent
 
     private var shown: ArtifactPresentation { ArtifactPresentation(artifact: artifact) }
 
     var body: some View {
+        panes
+            // A native pane's view, for the agent's look (v0.12).
+            .background {
+                if let agent, WebPane.Load(shown) == nil || shown.isMissing { ViewerPaneAnchor(agent: agent) }
+            }
+    }
+
+    @ViewBuilder
+    private var panes: some View {
         if shown.isMissing {
             MissingPane(shown: shown)
         } else {
             switch shown.media {
-            case .markdown:
-                if let file = shown.fileURL { WebPane(load: .markdown(file)) } else { OtherPane(shown: shown) }
-            case .html:
-                if let file = shown.fileURL { WebPane(load: .html(file)) } else { OtherPane(shown: shown) }
-            case .url:
-                if let url = shown.externalURL { WebPane(load: .url(url)) } else { OtherPane(shown: shown) }
+            case .markdown, .html, .url:
+                if let load = WebPane.Load(shown) { WebPane(load: load) } else { OtherPane(shown: shown) }
             case .image:
                 if let file = shown.fileURL { ImagePane(file: file, shown: shown) } else { OtherPane(shown: shown) }
             case .pdf:

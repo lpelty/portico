@@ -635,6 +635,22 @@ struct ViewerDefaults: Codable, Equatable, Sendable {
         case agentChecksHTML = "agent_checks_html"
         case actHosts = "act_hosts"
     }
+
+    init(agentCanSee: Bool = true, agentChecksHTML: Bool = true, actHosts: [String] = []) {
+        self.agentCanSee = agentCanSee
+        self.agentChecksHTML = agentChecksHTML
+        self.actHosts = actHosts
+    }
+
+    /// Each field on its own: a partial object takes the defaults (both
+    /// switches on, no outside hosts) for what it leaves out, rather than
+    /// failing the hello it rides in.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agentCanSee = try c.decodeIfPresent(Bool.self, forKey: .agentCanSee) ?? true
+        agentChecksHTML = try c.decodeIfPresent(Bool.self, forKey: .agentChecksHTML) ?? true
+        actHosts = try c.decodeIfPresent([String].self, forKey: .actHosts) ?? []
+    }
 }
 
 /// The agent asks the app to act in the viewer on screen; answered by one
