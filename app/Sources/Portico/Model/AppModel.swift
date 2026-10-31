@@ -486,9 +486,9 @@ final class AppModel: ObservableObject {
     /// in plain words, and focus. No form (spec 4.4).
     func beginNewSpace() {
         if let chat = shownChat {
-            setDraft(SpacesPresentation.newSpacePrefill, for: chat)
+            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
         } else {
-            startDraft = SpacesPresentation.newSpacePrefill
+            startDraft = SpacesPresentation.newSpaceDraft(existing: startDraft)
         }
         composerFocusRequests += 1
     }

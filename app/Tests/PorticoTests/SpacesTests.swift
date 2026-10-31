@@ -38,6 +38,11 @@ final class SpacesTests: XCTestCase {
             ToolbarLayout.items(showSwitcher: true, showViewerToggle: true),
             [.sidebarToggle, .brand, .switcher, .spacer, .viewerToggle])
         XCTAssertEqual(ToolbarLayout.brandToSwitcherGap, 6)
+        // The real toolbar is drawn from these items and these gaps.
+        XCTAssertEqual(ToolbarLayout.gap(after: .brand, next: .switcher), 6)
+        XCTAssertEqual(ToolbarLayout.gap(after: .sidebarToggle, next: .brand), 12)
+        XCTAssertEqual(ToolbarLayout.gap(after: .brand, next: .spacer), 12)
+        XCTAssertEqual(ToolbarLayout.gap(after: .spacer, next: .viewerToggle), 0)
     }
 
     func test_no_switcher_without_spaces() {
@@ -175,5 +180,31 @@ final class SpacesTests: XCTestCase {
         model.setOpenSpace("a")
         model.setOpenSpace("b")
         XCTAssertFalse(model.spaces.contains { model.hasNew($0.id) })
+    }
+
+    func test_new_space_keeps_an_existing_draft() {
+        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: ""), "New space: ")
+        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: "  \n"), "New space: ")
+        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: "fix the bug"), "New space: fix the bug")
+        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: "New space: a brief"), "New space: a brief")
+        let (model, _) = model(spaces: [space("a")])
+        model.startDraft = "half a thought"
+        model.beginNewSpace()
+        XCTAssertEqual(model.startDraft, "New space: half a thought")
+    }
+
+    func test_escape_clears_the_filter_then_closes() {
+        let spaces = [space("a", title: "Alpha")]
+        var menu = SpaceMenuState()
+        menu.setQuery("alp", spaces: spaces)
+        XCTAssertFalse(menu.escape(spaces: spaces))
+        XCTAssertEqual(menu.query, "")
+        XCTAssertEqual(menu.selection, .space("a"), "the selection survives the clear")
+        XCTAssertTrue(menu.escape(spaces: spaces))
+    }
+
+    func test_title_is_capped_and_list_scrolls_past_nine_rows() {
+        XCTAssertEqual(ToolbarLayout.switcherTitleMaxWidth, 160)
+        XCTAssertEqual(SpacesPresentation.listMaxHeight, 450)
     }
 }

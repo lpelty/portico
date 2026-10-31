@@ -21,6 +21,18 @@ enum ToolbarLayout {
         !spaces.isEmpty || capabilities?.contains(SpacesList.capability) == true
     }
 
+    /// The pill's title stops here (about 220 pt pill) and truncates.
+    static let switcherTitleMaxWidth: CGFloat = 160
+
+    /// Room after `item` before the next one: the brand sits 6 pt from the switcher.
+    static func gap(after item: Item, next: Item?) -> CGFloat {
+        switch (item, next) {
+        case (.brand, .switcher?): return brandToSwitcherGap
+        case (.spacer, _), (_, nil): return 0
+        default: return 12
+        }
+    }
+
     static func items(showSwitcher: Bool, showViewerToggle: Bool) -> [Item] {
         var items: [Item] = [.sidebarToggle, .brand]
         if showSwitcher { items.append(.switcher) }
@@ -35,6 +47,16 @@ enum SpacesPresentation {
     static let shortcutDigits = Array(0...9)
 
     static let newSpacePrefill = "New space: "
+
+    /// "New space: " before whatever is already typed; a blank draft just gets the prefill.
+    static func newSpaceDraft(existing: String) -> String {
+        if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return newSpacePrefill }
+        if existing.hasPrefix(newSpacePrefill) { return existing }
+        return newSpacePrefill + existing
+    }
+
+    /// The menu's list scrolls past this height (about nine rows); Work, New space… and the hint stay put.
+    static let listMaxHeight: CGFloat = 9 * 50
 
     static func removeConfirmation(title: String) -> String {
         "Remove \(title)? The agent stops keeping it up to date. The file moves to the Trash."
@@ -109,6 +131,13 @@ struct SpaceMenuState: Equatable {
         selection = entries.first
     }
 
+    /// Esc clears a typed filter first; with none, it closes. True means close.
+    mutating func escape(spaces: [SpaceInfo]) -> Bool {
+        guard !query.isEmpty else { return true }
+        setQuery("", spaces: spaces)
+        return false
+    }
+
     /// Up and down stop at the ends.
     mutating func move(_ delta: Int, spaces: [SpaceInfo]) {
         let entries = visible(spaces)
@@ -139,6 +168,7 @@ struct SpaceSwitcher: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: ToolbarLayout.switcherTitleMaxWidth, alignment: .leading)
                 if anyNew { Circle().fill(Theme.accent).frame(width: 6, height: 6) }
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
@@ -150,7 +180,6 @@ struct SpaceSwitcher: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .fixedSize()
         .help("Switch between Work and your spaces")
         .accessibilityLabel("Space: \(current?.title ?? "Work")")
         .popover(isPresented: $open, arrowEdge: .bottom) {
@@ -209,8 +238,19 @@ private struct SpaceMenu: View {
                     .tracking(0.5)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
-                ForEach(spaceEntries, id: \.element.id) { index, space in
-                    spaceRow(space, number: index + 1)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(spaceEntries, id: \.element.id) { index, space in
+                                spaceRow(space, number: index + 1).id(space.id)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: SpacesPresentation.listMaxHeight)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onChange(of: state.selection) { _, selection in
+                        if case .space(let id)? = selection { proxy.scrollTo(id) }
+                    }
                 }
             }
             if entries.contains(.newSpace) {
@@ -240,7 +280,9 @@ private struct SpaceMenu: View {
         case .return:
             if let selection = state.selection { pick(selection) }
             return .handled
-        case .escape: dismiss(); return .handled
+        case .escape:
+            if state.escape(spaces: model.spaces) { dismiss() }
+            return .handled
         case .delete:
             if !state.query.isEmpty { state.setQuery(String(state.query.dropLast()), spaces: model.spaces) }
             return .handled
@@ -291,6 +333,7 @@ private struct SpaceMenu: View {
                 TextField("Name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
                     .focused($renameFocused)
+                    .onAppear { renameFocused = true }
                     .onSubmit { commitRename(space) }
                     .onKeyPress(.escape) { cancelRename(); return .handled }
             }
@@ -321,7 +364,6 @@ private struct SpaceMenu: View {
                 Button("Rename…") {
                     renameText = space.title
                     renaming = space.id
-                    renameFocused = true
                 }
                 Button("Remove…") { askToRemove(space) }
             }

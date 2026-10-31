@@ -200,13 +200,38 @@ struct MainColumn: View {
 struct MainToolbar: View {
     @EnvironmentObject private var model: AppModel
 
+    private var items: [ToolbarLayout.Item] {
+        ToolbarLayout.items(
+            showSwitcher: ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities),
+            showViewerToggle: model.shownChat != nil && !model.documentMode)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
+        let items = items
+        HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element) { index, item in
+                view(for: item)
+                    .padding(.trailing, ToolbarLayout.gap(after: item, next: items.indices.contains(index + 1) ? items[index + 1] : nil))
+            }
+        }
+        .padding(.leading, model.sidebarShown ? 16 : Theme.trafficLightsInset)
+        .padding(.trailing, 16)
+        .frame(height: Theme.toolbarHeight)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(WindowDragGesture())
+    }
+
+    @ViewBuilder
+    private func view(for item: ToolbarLayout.Item) -> some View {
+        switch item {
+        case .sidebarToggle:
             PanelToggle(
                 shown: model.sidebarShown, side: .leading,
                 help: model.sidebarVisible ? "Hide the sidebar" : "Show the sidebar"
             ) { model.sidebarVisible.toggle() }
             .disabled(model.awaitingFirstSession)
+        case .brand:
             HStack(spacing: 8) {
                 if let header = model.brand.headerImage {
                     HeaderImage(image: header, label: model.brand.name)
@@ -219,26 +244,19 @@ struct MainToolbar: View {
                         .truncationMode(.tail)
                 }
             }
-            if ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities) {
-                // The brand's name truncates first when the column is narrow.
-                SpaceSwitcher()
-                    .padding(.leading, ToolbarLayout.brandToSwitcherGap - 12)
-                    .layoutPriority(1)
-            }
+        case .switcher:
+            // The brand's name truncates first when the column is narrow.
+            SpaceSwitcher().layoutPriority(1)
+        case .spacer:
             Spacer(minLength: 0)
-            if let chat = model.shownChat, !model.documentMode {
+        case .viewerToggle:
+            if let chat = model.shownChat {
                 let shown = model.isViewerShown(for: chat)
                 PanelToggle(shown: shown, side: .trailing, help: shown ? "Hide the viewer" : "Show the viewer") {
                     model.setViewer(visible: !shown, for: chat)
                 }
             }
         }
-        .padding(.leading, model.sidebarShown ? 16 : Theme.trafficLightsInset)
-        .padding(.trailing, 16)
-        .frame(height: Theme.toolbarHeight)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .gesture(WindowDragGesture())
     }
 }
 
