@@ -193,8 +193,10 @@ struct MainColumn: View {
 }
 
 /// The 52-high bar over the conversation: collapse the sidebar, the brand
-/// (icon and name), a slash, the chat's title, and collapse the viewer.
-/// The whole bar drags the window, since there is no title bar.
+/// (icon and name), the spaces switcher (when there are spaces), and
+/// collapse the viewer. The chat's title is not here: the session card
+/// names the session. The whole bar drags the window, since there is no
+/// title bar.
 struct MainToolbar: View {
     @EnvironmentObject private var model: AppModel
 
@@ -217,19 +219,11 @@ struct MainToolbar: View {
                         .truncationMode(.tail)
                 }
             }
-            // The brand keeps its room; the title truncates first, and
-            // nothing wraps when the main column is narrow (W4).
-            .layoutPriority(1)
-            if let title = chatTitle {
-                Text("/")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text3)
-                    .fixedSize()
-                Text(title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            if ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities) {
+                // The brand's name truncates first when the column is narrow.
+                SpaceSwitcher()
+                    .padding(.leading, ToolbarLayout.brandToSwitcherGap - 12)
+                    .layoutPriority(1)
             }
             Spacer(minLength: 0)
             if let chat = model.shownChat, !model.documentMode {
@@ -245,24 +239,6 @@ struct MainToolbar: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .gesture(WindowDragGesture())
-    }
-
-    /// `Chat #3`, or the alias when the chat has one; `Session 14` in
-    /// single presentation; `Files · Research vault` in the document view.
-    private var chatTitle: String? {
-        if model.documentMode, let chat = model.filesChat {
-            let roots = model.fileRoots(for: chat)
-            let root = roots.first { $0.name != AppModel.chatRoot } ?? roots.first
-            guard let root else { return "Files" }
-            return "Files · " + (root.name == AppModel.chatRoot ? URL(fileURLWithPath: root.path).lastPathComponent : root.name)
-        }
-        guard let id = model.shownChat else { return model.mainScreen == .waiting ? nil : model.startTitle }
-        if model.isSinglePresentation {
-            return "Session \(id)"
-        }
-        let summary = model.chats.first { $0.chat == id }
-        if let alias = summary?.alias, !alias.isEmpty { return alias }
-        return "Chat #\(id)"
     }
 }
 

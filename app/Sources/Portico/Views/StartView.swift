@@ -73,6 +73,7 @@ struct StartView: View {
         .padding(EdgeInsets(top: 32, leading: 48, bottom: 120, trailing: 48))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { focused = true }
+        .onChange(of: model.composerFocusRequests) { focused = true }
     }
 
     // MARK: greeting

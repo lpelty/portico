@@ -112,6 +112,17 @@ struct PorticoApp: App {
                     .keyboardShortcut("f", modifiers: [.command, .shift])
                     .disabled(model.filesChat == nil)
             }
+            CommandGroup(after: .toolbar) {
+                Divider()
+                let spacesShown = ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities)
+                Button("Work") { model.openSpaceAt(0) }
+                    .keyboardShortcut("0", modifiers: .command)
+                    .disabled(!spacesShown)
+                ForEach(Array(model.spaces.prefix(9).enumerated()), id: \.element.id) { index, space in
+                    Button(space.title) { model.openSpaceAt(index + 1) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                }
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About \(model.brand.name)") {
                     model.brand.showAboutPanel(version: Self.version)

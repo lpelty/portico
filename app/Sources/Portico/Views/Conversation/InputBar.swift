@@ -94,6 +94,7 @@ struct InputBar: View {
             return true
         }
         .onAppear { editorFocused = true }
+        .onChange(of: model.composerFocusRequests) { editorFocused = true }
     }
 
     /// The frame's Input: one bordered box in the control colour holding the

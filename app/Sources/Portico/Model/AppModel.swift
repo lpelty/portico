@@ -471,6 +471,28 @@ final class AppModel: ObservableObject {
         if let id { settings.spacesLastOpened[id] = max(Date(), spaces.first { $0.id == id }?.updatedDate ?? .distantPast) }
     }
 
+    /// ⌘0 is Work; ⌘1–⌘9 the nth space in the switcher's order. A number
+    /// with no space behind it does nothing.
+    func openSpaceAt(_ number: Int) {
+        if number == 0 { setOpenSpace(nil); return }
+        guard spaces.indices.contains(number - 1) else { return }
+        setOpenSpace(spaces[number - 1].id)
+    }
+
+    /// Bumped to ask whichever composer is on screen to take focus.
+    @Published private(set) var composerFocusRequests = 0
+
+    /// "New space…": the composer gets "New space: " for the person to finish
+    /// in plain words, and focus. No form (spec 4.4).
+    func beginNewSpace() {
+        if let chat = shownChat {
+            setDraft(SpacesPresentation.newSpacePrefill, for: chat)
+        } else {
+            startDraft = SpacesPresentation.newSpacePrefill
+        }
+        composerFocusRequests += 1
+    }
+
     func refreshSpace(_ id: String) { send(.spaceRefresh(SpaceRefresh(id: id))) }
     func renameSpace(_ id: String, to title: String) { send(.spaceRename(SpaceRename(id: id, title: title))) }
     func removeSpace(_ id: String) { send(.spaceRemove(SpaceRemove(id: id))) }

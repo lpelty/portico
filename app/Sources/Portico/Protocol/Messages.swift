@@ -311,7 +311,7 @@ struct HelloClient: Codable, Equatable, Sendable {
 
     /// Everything this app names in `capabilities` (v0.11: `queue.v1`,
     /// messages typed while the agent works).
-    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability]
+    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability]
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
