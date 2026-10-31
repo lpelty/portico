@@ -477,3 +477,21 @@ def test_doctor_counts_the_deployment_status_as_services(state_dir: StateDir, wi
     got = by_name(doctor(state_dir, state_dir.config_path))
     assert got["services"].ok and "listed by [deployment] status" in got["services"].line
     assert "none configured" not in got["services"].line
+
+
+def test_doctor_viewer_line_lists_act_hosts(state_dir: StateDir, with_credential: None) -> None:
+    state_dir.config_path.write_text('[viewer]\nact_hosts = ["figma.com", "lovable.dev"]\n', encoding="utf-8")
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert got["viewer"].ok
+    assert "Agent can click and type on: figma.com, lovable.dev" in got["viewer"].line
+
+
+def test_doctor_viewer_line_default_is_look_only(state_dir: StateDir, with_credential: None) -> None:
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert "Outside sites: look only" in got["viewer"].line
+
+
+def test_doctor_viewer_line_is_one_line_when_config_is_bad(state_dir: StateDir, with_credential: None) -> None:
+    state_dir.config_path.write_text('[viewer]\nact_hosts = ["https://figma.com"]\n', encoding="utf-8")
+    got = by_name(doctor(state_dir, state_dir.config_path))
+    assert not got["viewer"].ok and "https://figma.com" in got["viewer"].line and "\n" not in got["viewer"].line

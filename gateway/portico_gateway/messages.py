@@ -373,6 +373,14 @@ class GatewayStop(Envelope):
 # --- gateway -> app (server) -------------------------------------------------
 
 
+class ViewerDefaults(Strict):
+    """v0.12: the deployment's viewer settings (config ``[viewer]``), sent in ``hello``."""
+
+    agent_can_see: bool = True
+    agent_checks_html: bool = True
+    act_hosts: list[str] = []
+
+
 class HelloServer(Envelope):
     type: Literal["hello"] = "hello"
     protocol: Literal[1] = PROTOCOL_VERSION
@@ -399,6 +407,9 @@ class HelloServer(Envelope):
     # v0.11: the Files pane leaves out the session's own folder (the
     # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
     hide_session_folder: bool = False
+    # v0.12: the deployment's viewer defaults; the app uses them until the
+    # person changes a switch. Absent from an older gateway.
+    viewer_defaults: ViewerDefaults | None = None
 
 
 class ChatList(Envelope):
