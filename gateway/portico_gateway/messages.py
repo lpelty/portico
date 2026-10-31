@@ -308,7 +308,7 @@ class SpaceRemove(Envelope):
 
 class ViewerImage(Strict):
     data: str  # base64 PNG
-    media_type: Literal["image/png"]
+    media_type: Literal["image/png", "image/jpeg"]
 
 
 class ViewerResult(Envelope):

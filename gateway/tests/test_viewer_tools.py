@@ -482,3 +482,10 @@ def test_hook_registered_on_write_edit_multiedit(tmp_path: Path) -> None:
     assert [m.matcher for m in matchers] == ["Write|Edit|MultiEdit"]
     plain = build_options(tmp_path, None, ["project"], RecordingCallbacks())
     assert "PostToolUse" not in (plain.hooks or {})
+
+
+async def test_a_jpeg_look_becomes_a_jpeg_image_item() -> None:
+    bridge, _app = make_bridge(ok("shot", ViewerImage(data=PNG, media_type="image/jpeg")))
+    bridge.set_target(object(), True, True)
+    out = await by_name(build_viewer_tools(bridge, 3))["viewer_look"].handler({})
+    assert out["content"][1] == {"type": "image", "data": PNG, "mimeType": "image/jpeg"}

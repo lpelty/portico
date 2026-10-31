@@ -316,6 +316,35 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual([smallRep.pixelsWide, smallRep.pixelsHigh], [800, 600])
     }
 
+    func test_look_image_falls_back_to_jpeg_when_the_png_is_large() throws {
+        // Noise does not compress: a 1,600 px square of it is well past 3.5 MB as PNG.
+        let noisy = try XCTUnwrap(Self.noise(width: 1600, height: 1600))
+        let big = try XCTUnwrap(ViewerSnapshot.encode(noisy))
+        XCTAssertEqual(big.mediaType, "image/jpeg")
+        let bytes = try XCTUnwrap(Data(base64Encoded: big.data))
+        XCTAssertLessThan(bytes.count, 3_500_000)
+        XCTAssertNotNil(NSBitmapImageRep(data: bytes))
+        let small = try XCTUnwrap(ViewerSnapshot.encode(try XCTUnwrap(Self.image(width: 800, height: 600))))
+        XCTAssertEqual(small.mediaType, "image/png")
+    }
+
+    private static func noise(width: Int, height: Int) -> CGImage? {
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+        for i in stride(from: 0, to: bytes.count, by: 4) {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            bytes[i] = UInt8(truncatingIfNeeded: seed >> 33)
+            bytes[i + 1] = UInt8(truncatingIfNeeded: seed >> 41)
+            bytes[i + 2] = UInt8(truncatingIfNeeded: seed >> 49)
+            bytes[i + 3] = 255
+        }
+        let context = bytes.withUnsafeMutableBytes {
+            CGContext(data: $0.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        }
+        return context?.makeImage()
+    }
+
     private static func image(width: Int, height: Int) -> CGImage? {
         let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,

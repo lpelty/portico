@@ -4851,7 +4851,10 @@
           "type": "string"
         },
         "media_type": {
-          "const": "image/png",
+          "enum": [
+            "image/png",
+            "image/jpeg"
+          ],
           "title": "Media Type",
           "type": "string"
         }

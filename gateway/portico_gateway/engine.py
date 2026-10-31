@@ -87,6 +87,8 @@ SHOW_TOOL = "show_in_viewer"
 # titles). The SDK marks its engines ``CLAUDE_CODE_ENTRYPOINT=sdk-py``, which a
 # deployment's start-up checks may read as nobody present; this says someone is.
 ATTENDED_ENV = "PORTICO_ATTENDED"
+# The SDK reads the CLI's stdout as JSON lines, 1 MiB at most by default; a look's base64 image is one line.
+CLI_MAX_BUFFER_BYTES = 32 * 2**20
 SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
 # What the agent sees when its ``open <file>`` was shown instead of run.
@@ -699,6 +701,7 @@ def build_options(
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
+        max_buffer_size=CLI_MAX_BUFFER_BYTES,
         env={ATTENDED_ENV: "1"},
         hooks={
             "PreToolUse": pre_tool_use,

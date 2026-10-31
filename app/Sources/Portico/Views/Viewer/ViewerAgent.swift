@@ -244,7 +244,7 @@ final class ViewerAgent: ObservableObject {
         } else {
             text += "\nPage errors since the last look:\n" + errors.map { "- \($0)" }.joined(separator: "\n")
         }
-        let image = await snapshot(of: view).map { ViewerResult.Image(data: $0.base64EncodedString()) }
+        let image = await snapshot(of: view)
         return ViewerResult(id: act.id, ok: true, text: text, image: image)
     }
 
@@ -460,9 +460,9 @@ final class ViewerAgent: ObservableObject {
         }
     }
 
-    private func snapshot(of view: WKWebView) async -> Data? {
+    private func snapshot(of view: WKWebView) async -> ViewerResult.Image? {
         guard let image = try? await view.takeSnapshot(configuration: WKSnapshotConfiguration()) else { return nil }
-        return ViewerSnapshot.png(image)
+        return ViewerSnapshot.encode(image)
     }
 
     // MARK: other panes
@@ -493,7 +493,7 @@ final class ViewerAgent: ObservableObject {
                 text += " \(rep.pixelsWide) × \(rep.pixelsHigh) pixels."
             }
             if let pane, let read = Self.read(pane, whole: true) { text += " " + read }
-            let image = paneSnapshot().map { ViewerResult.Image(data: $0.base64EncodedString()) }
+            let image = paneSnapshot()
             return ViewerResult(id: act.id, ok: true, text: text, image: image)
         case .scroll:
             guard readable else { return fail(act, Message.notUsed(kind: kind)) }
@@ -627,12 +627,12 @@ final class ViewerAgent: ObservableObject {
     }
 
     /// The native pane as drawn, from the window's own rendering.
-    private func paneSnapshot() -> Data? {
+    private func paneSnapshot() -> ViewerResult.Image? {
         guard let pane = paneView, let content = pane.window?.contentView else { return nil }
         let rect = pane.convert(pane.bounds, to: content)
         guard rect.width >= 1, rect.height >= 1, let rep = content.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
         content.cacheDisplay(in: rect, to: rep)
-        return rep.cgImage.flatMap { ViewerSnapshot.png($0) }
+        return rep.cgImage.flatMap { ViewerSnapshot.encode($0) }
     }
 }
 
@@ -674,9 +674,28 @@ enum ViewerAgentScript {
 
 // MARK: - ViewerSnapshot
 
-/// The look's image: PNG, the longer side at most 1,600 px (spec §3.2).
+/// The look's image: PNG, the longer side at most 1,600 px (spec §3.2). A PNG past
+/// `pngLimit` goes out as JPEG instead; the model API refuses images over 5 MB.
 enum ViewerSnapshot {
     static let maxSide = 1600
+    static let pngLimit = 3_500_000
+
+    static func encode(_ image: NSImage) -> ViewerResult.Image? {
+        let cg = (image.representations.first as? NSBitmapImageRep)?.cgImage
+            ?? image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        return cg.flatMap { encode($0) }
+    }
+
+    static func encode(_ image: CGImage, maxSide: Int = maxSide) -> ViewerResult.Image? {
+        guard let png = png(image, maxSide: maxSide) else { return nil }
+        if png.count <= pngLimit {
+            return ViewerResult.Image(data: png.base64EncodedString())
+        }
+        guard let rep = NSBitmapImageRep(data: png),
+              let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+        else { return nil }
+        return ViewerResult.Image(data: jpeg.base64EncodedString(), mediaType: "image/jpeg")
+    }
 
     static func png(_ image: NSImage) -> Data? {
         let cg = (image.representations.first as? NSBitmapImageRep)?.cgImage

@@ -1108,8 +1108,8 @@ app, in its `viewer.result`).
 
 #### `viewer.result` — `ViewerResult` *(app → gateway)*
 `id` (the act's), `ok: bool`, `text`, `image?: {data, media_type}`
-(`data` is base64 PNG, `media_type` is `image/png`; the longer side at
-most 1,600 px), `error?`. A result for an unknown id, or from an app other
+(`data` is base64, `media_type` is `image/png`, or `image/jpeg` when the
+PNG would pass 3.5 MB; the longer side at most 1,600 px), `error?`. A result for an unknown id, or from an app other
 than the one asked, is ignored.
 
 The gateway waits 10 s for the result. It answers the agent in a plain
