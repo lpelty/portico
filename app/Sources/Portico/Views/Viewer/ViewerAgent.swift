@@ -771,7 +771,7 @@ struct ViewerPaneAnchor: NSViewRepresentable {
 
 }
 
-/// While the agent acts, a 2 pt accent line and a soft inner glow around
+/// While the agent acts, a 3 pt accent line and a soft inner glow around
 /// the page (v0.13 decision 2, Pen AL1), in place of v0.12's header label.
 /// It pulses gently, holds steady under Reduce Motion, and goes with the
 /// label's timing: `labelLinger` after the last action, at once on Stop.
@@ -786,18 +786,21 @@ struct ViewerActingGlow: View {
     /// One breath, in and out.
     static let period: Double = 1.6
     static let dimOpacity: Double = 0.55
+    static let lineWidth: CGFloat = 3
 
     var body: some View {
         if agent.actingChat == chat {
             ZStack {
+                // The glow breathes; the line stays at full strength so it
+                // reads on any page (Larry 10-31: "a little brighter").
                 Rectangle()
                     .strokeBorder(accent.opacity(0.45), lineWidth: 10)
                     .blur(radius: 8)
+                    .opacity(reduceMotion ? 1 : (dim ? Self.dimOpacity : 1))
                 Rectangle()
-                    .strokeBorder(accent, lineWidth: 2)
+                    .strokeBorder(accent, lineWidth: Self.lineWidth)
             }
             .clipped()
-            .opacity(reduceMotion ? 1 : (dim ? Self.dimOpacity : 1))
             .allowsHitTesting(false)
             .transition(.opacity)
             .accessibilityElement()
