@@ -9,7 +9,7 @@
   "use strict";
   // `MARKER` tells this script's object from a page's own under the name;
   // keep it equal to `ViewerAgentScript.marker` (ViewerAgent.swift).
-  var MARKER = "viewer-agent-1";
+  var MARKER = "viewer-agent-2";
   var existing = window.__porticoAgent;
   if (existing && existing.__portico === MARKER) return;
 
@@ -234,6 +234,19 @@
 
   var NOT_FOUND = { ok: false, notFound: true };
 
+  /// Where the page is: scheme and host (with port). The app checks a
+  /// page's site before a click or typing and passes this along; if the
+  /// page has gone elsewhere meanwhile (a redirect, a timer), the action
+  /// is refused for the new site rather than done there.
+  agent.place = function () {
+    return location.protocol + "//" + location.host;
+  };
+
+  function moved(place) {
+    if (!place || agent.place() === place) return null;
+    return { ok: false, outside: location.host || location.href };
+  }
+
   agent.outline = function () {
     var items = listed();
     var lines = [];
@@ -277,7 +290,9 @@
     el.dispatchEvent(new Ctor(type, init));
   }
 
-  agent.click = function (target, page) {
+  agent.click = function (target, page, place) {
+    var away = moved(place);
+    if (away) return away;
     var found = resolve(target, page, false);
     if (!found) return NOT_FOUND;
     var el = clickable(found);
@@ -303,7 +318,9 @@
     Object.getOwnPropertyDescriptor(proto, "value").set.call(el, text);
   }
 
-  agent.type = function (target, text, submit, page) {
+  agent.type = function (target, text, submit, page, place) {
+    var away = moved(place);
+    if (away) return away;
     var el = resolve(target, page, true);
     if (!el) {
       // A ref to something that is not a field says so, rather than "not found".

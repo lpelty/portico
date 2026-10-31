@@ -204,11 +204,15 @@ final class ViewerAgent: ObservableObject {
         case .look:
             return await look(act, shown: shown, in: view)
         case .click:
-            if let refusal = outsideRefusal(view) { return fail(act, refusal) }
-            return await click(act, target: target, in: view)
+            switch await usablePlace(view) {
+            case .refused(let text): return fail(act, text)
+            case .place(let place): return await click(act, target: target, place: place, in: view)
+            }
         case .type:
-            if let refusal = outsideRefusal(view) { return fail(act, refusal) }
-            return await type(act, target: target, in: view)
+            switch await usablePlace(view) {
+            case .refused(let text): return fail(act, text)
+            case .place(let place): return await type(act, target: target, place: place, in: view)
+            }
         case .scroll:
             let direction = act.args["direction"]?.stringValue ?? target
             guard !direction.isEmpty else { return fail(act, "Give a direction (up, down, top, bottom) or a target.") }
@@ -244,20 +248,21 @@ final class ViewerAgent: ObservableObject {
         return ViewerResult(id: act.id, ok: true, text: text, image: image)
     }
 
-    private func click(_ act: ViewerAct, target: String, in view: WKWebView) async -> ViewerResult {
+    private func click(_ act: ViewerAct, target: String, place: String, in view: WKWebView) async -> ViewerResult {
         guard !target.isEmpty else { return fail(act, "Say what to click: a ref from the last look, or a button's or link's words.") }
         let page = lookedPage ?? ""
         guard await outline(target, page: page, field: false, in: view) else { return fail(act, Message.notFound) }
         let before = view.url
         let answer = await call(
-            "return window.__porticoAgent.click(target, page)", ["target": target, "page": page], in: view) as? [String: Any]
+            "return window.__porticoAgent.click(target, page, place)", ["target": target, "page": page, "place": place], in: view) as? [String: Any]
+        if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
         if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
         guard answer?["ok"] as? Bool == true else { return answered(act, answer, otherwise: "") }
         let label = (answer?["label"] as? String) ?? target
         return ViewerResult(id: act.id, ok: true, text: "Clicked \(label)." + (await navigated(view, from: before)))
     }
 
-    private func type(_ act: ViewerAct, target: String, in view: WKWebView) async -> ViewerResult {
+    private func type(_ act: ViewerAct, target: String, place: String, in view: WKWebView) async -> ViewerResult {
         guard !target.isEmpty else { return fail(act, "Say where to type: a ref from the last look, or a field's label.") }
         let text = act.args["text"]?.stringValue ?? ""
         let submit = act.args["submit"] == .bool(true)
@@ -265,8 +270,9 @@ final class ViewerAgent: ObservableObject {
         guard await outline(target, page: page, field: true, in: view) else { return fail(act, Message.notFound) }
         let before = view.url
         let answer = await call(
-            "return window.__porticoAgent.type(target, text, submit, page)",
-            ["target": target, "text": text, "submit": submit, "page": page], in: view) as? [String: Any]
+            "return window.__porticoAgent.type(target, text, submit, page, place)",
+            ["target": target, "text": text, "submit": submit, "page": page, "place": place], in: view) as? [String: Any]
+        if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
         if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
         guard answer?["ok"] as? Bool == true else { return answered(act, answer, otherwise: "") }
         let label = (answer?["label"] as? String) ?? target
@@ -325,8 +331,11 @@ final class ViewerAgent: ObservableObject {
         let place: String
         if let url = view.url, url.isFileURL {
             place = url.path
-        } else if view.url?.scheme == RenderedPageHandler.scheme, let file = shown?.fileURL {
-            place = file.path
+        } else if let url = view.url, url.scheme == RenderedPageHandler.scheme, let file = shown?.fileURL {
+            // An HTML file is served at `/<name>`; a link to another file
+            // beside it is that file. A markdown page is at `/`.
+            let path = url.path
+            place = path.isEmpty || path == "/" ? file.path : file.deletingLastPathComponent().appendingPathComponent(String(path.dropFirst())).path
         } else {
             place = view.url?.absoluteString ?? shown?.artifact.location ?? ""
         }
@@ -351,13 +360,27 @@ final class ViewerAgent: ObservableObject {
         }
     }
 
-    /// The refusal for clicking or typing on what `view` shows now, or
-    /// `nil` when the agent may. The view's current URL, so a redirect or
-    /// a link to another site is checked again.
-    private func outsideRefusal(_ view: WKWebView) -> String? {
-        guard let url = view.url else { return nil }
-        guard !Self.canAct(url: url, actHosts: model?.hello?.viewerDefaults?.actHosts ?? []) else { return nil }
-        return Message.outsideSite(url.host(percentEncoded: false) ?? url.absoluteString)
+    private enum Place {
+        case place(String)
+        case refused(String)
+    }
+
+    /// Whether the agent may click or type on what `view` shows now: the
+    /// page's own `location` (so a redirect or a link to another site is
+    /// checked again), and the place the script checks once more at the
+    /// moment of acting. No page at all fails closed. Only the top-level
+    /// page is checked: the agent's script runs in the main frame only, so
+    /// it never reaches into an iframe from another site.
+    private func usablePlace(_ view: WKWebView) async -> Place {
+        guard view.url != nil,
+            let here = await call("return {href: location.href, place: window.__porticoAgent.place()}", in: view) as? [String: Any],
+            let href = (here["href"] as? String).flatMap(URL.init(string:)),
+            let place = here["place"] as? String
+        else { return .refused(Message.nothingOpen) }
+        guard Self.canAct(url: href, actHosts: model?.hello?.viewerDefaults?.actHosts ?? []) else {
+            return .refused(Message.outsideSite(href.host(percentEncoded: false) ?? href.absoluteString))
+        }
+        return .place(place)
     }
 
     // MARK: web helpers
@@ -393,9 +416,11 @@ final class ViewerAgent: ObservableObject {
             return
         }
         guard let source = ViewerAgentScript.source else { return }
-        _ = await call("delete window.__porticoAgent; return true", in: view)
         // Evaluated by the app, not by the page's `eval`, which a page's
-        // Content-Security-Policy without 'unsafe-eval' would block.
+        // Content-Security-Policy without 'unsafe-eval' would block. The
+        // script puts itself in place over a page's object of the same
+        // name; nothing is removed first, so a reinstall that runs out of
+        // time leaves the page as it was rather than without one.
         _ = await race(in: view) { try? await view.evaluateJavaScript(source, in: nil, contentWorld: .page) }
     }
 
@@ -634,7 +659,7 @@ private final class JavaScriptRace {
 enum ViewerAgentScript {
     /// `window.__porticoAgent.__portico`: what tells the app's script from
     /// a page's own object under that name.
-    static let marker = "viewer-agent-1"
+    static let marker = "viewer-agent-2"
 
     /// `Resources/viewer-agent.js`, read once.
     static let source: String? = AppResources.url(forResource: "viewer-agent", withExtension: "js")

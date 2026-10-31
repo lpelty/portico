@@ -132,6 +132,63 @@ final class WebPaneRenderTests: XCTestCase {
         XCTAssertGreaterThan(openHeight, foldedHeight + 40)
     }
 
+    /// v0.12: an HTML file is served under the viewer's own scheme from
+    /// its folder (so its scripts' errors keep their message): CSS, a
+    /// script and an image beside it load; a symlink out of the folder, a
+    /// dot-file and anything in a dot-folder are refused.
+    func testHTMLFileServedFromItsFolderWithoutSymlinksOrDotFiles() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("portico-html-\(UUID().uuidString)")
+        let dir = parent.appendingPathComponent("site")
+        let fm = FileManager.default
+        try fm.createDirectory(at: dir.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.appendingPathComponent("img"), withIntermediateDirectories: true)
+        addTeardownBlock { try? fm.removeItem(at: parent) }
+        try "SECRET-OUTSIDE".write(to: parent.appendingPathComponent("secret.txt"), atomically: true, encoding: .utf8)
+        try fm.createSymbolicLink(at: dir.appendingPathComponent("link.txt"), withDestinationURL: parent.appendingPathComponent("secret.txt"))
+        try "TOKEN=1".write(to: dir.appendingPathComponent(".env"), atomically: true, encoding: .utf8)
+        try "[core]".write(to: dir.appendingPathComponent(".git/config"), atomically: true, encoding: .utf8)
+        try "INSIDE-OK".write(to: dir.appendingPathComponent("data.txt"), atomically: true, encoding: .utf8)
+        try "h1 { color: rgb(1, 2, 3) }".write(to: dir.appendingPathComponent("style.css"), atomically: true, encoding: .utf8)
+        try "window.sideScript = 'ran';".write(to: dir.appendingPathComponent("side.js"), atomically: true, encoding: .utf8)
+        try Self.tinyPNG(width: 7, height: 5).write(to: dir.appendingPathComponent("img/chart.png"))
+        let page = dir.appendingPathComponent("index.html")
+        try """
+            <!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href="style.css">
+            <script src="side.js"></script></head><body><h1>Trail</h1><img src="img/chart.png"></body></html>
+            """.write(to: page, atomically: true, encoding: .utf8)
+
+        let coordinator = WebPane.Coordinator()
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.html(page), to: view)
+        try await poll("the page loads") { !view.isLoading && view.url != nil }
+        XCTAssertEqual(view.url?.scheme, RenderedPageHandler.scheme, "served by the viewer's scheme, not file://")
+        XCTAssertEqual(view.url?.lastPathComponent, "index.html")
+        try await Task.sleep(for: .milliseconds(200))
+        let read = try await view.callAsyncJavaScript(
+            """
+            async function get(u) { try { const r = await fetch(u); return r.ok ? await r.text() : 'refused ' + r.status } catch (e) { return 'refused' } }
+            return {
+              colour: getComputedStyle(document.querySelector('h1')).color,
+              script: window.sideScript || '',
+              image: document.querySelector('img').naturalWidth,
+              data: await get('data.txt'),
+              link: await get('link.txt'),
+              env: await get('.env'),
+              git: await get('.git/config'),
+              up: await get('../secret.txt'),
+            }
+            """, arguments: [:], in: nil, contentWorld: .page) as? [String: Any] ?? [:]
+        XCTAssertEqual(read["colour"] as? String, "rgb(1, 2, 3)", "\(read)")
+        XCTAssertEqual(read["script"] as? String, "ran", "\(read)")
+        XCTAssertEqual(read["image"] as? Int, 7, "\(read)")
+        XCTAssertEqual(read["data"] as? String, "INSIDE-OK", "\(read)")
+        for key in ["link", "env", "git", "up"] {
+            XCTAssertTrue((read[key] as? String ?? "").hasPrefix("refused"), "\(key) must be refused: \(read)")
+        }
+    }
+
     func testFailedNavigationIsAskedForAgainOnlyThroughTheRetryLink() async throws {
         // A URL nobody serves (the dev server went away). The pane shows
         // why once; SwiftUI's redraws, which call apply with the same load

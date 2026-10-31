@@ -481,6 +481,9 @@ final class ViewerAgentTests: XCTestCase {
             ("https://example.com/", hosts, false),
             ("https://example.com/", [], false),
             ("about:blank", hosts, false),
+            ("https://figma.com@evil.com/", hosts, false),
+            ("blob:https://figma.com/x", hosts, false),
+            ("data:text/html,x", hosts, false),
         ]
         for (string, list, expected) in table {
             let url = try XCTUnwrap(URL(string: string))
@@ -537,6 +540,39 @@ final class ViewerAgentTests: XCTestCase {
         local.view.loadHTMLString(Self.page("<button>Go</button>"), baseURL: URL(string: "https://lovable.dev/p")!)
         let away = await local.agent.perform(act(.click, ["target": .string("Go")]))
         XCTAssertEqual(away.text, Self.outsideText("lovable.dev"))
+    }
+
+    /// The page goes to another site while the target is outlined: the
+    /// click is checked again at the moment of acting, on the new host.
+    func test_navigation_during_highlight_refused_at_act_time() async throws {
+        let rig = try urlRig(
+            "<button>Save trail</button>", at: URL(string: "https://www.figma.com/file/x")!, actHosts: ["figma.com"])
+        rig.agent.highlightDuration = .milliseconds(600)
+        _ = await rig.agent.perform(act(.look))
+        let view = rig.view
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            view.loadHTMLString(Self.page("<script>window.clicks = []</script><button onclick=\"clicks.push(1)\">Save trail</button>"),
+                                baseURL: URL(string: "https://example.com/elsewhere")!)
+        }
+        let click = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertFalse(click.ok, click.text)
+        XCTAssertEqual(click.text, Self.outsideText("example.com"))
+        let clicks = try await evaluate("(window.clicks || []).length", in: view)
+        XCTAssertEqual(clicks as? Int, 0, "nothing on the new site was clicked")
+    }
+
+    /// A page whose Content-Security-Policy forbids eval still gets the
+    /// script back after replacing it.
+    func test_reinstall_works_under_a_csp_without_unsafe_eval() async throws {
+        let rig = try rig("""
+            <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'">
+            <button>Save trail</button>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        _ = try await evaluate("window.__porticoAgent = {outline: () => 'fake'}; true", in: rig.view)
+        let look = await rig.agent.perform(act(.look))
+        XCTAssertTrue(look.text.contains("button: Save trail"), look.text)
     }
 
     /// The person's input wins: they scroll mid-turn, and the next look
@@ -691,6 +727,35 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertTrue(look.text.contains("This is a text file."), look.text)
     }
 
+    /// The same PDF view shown another file (no new view): the agent
+    /// reads the new one.
+    func test_pdf_view_reused_for_another_file_is_read_afresh() async throws {
+        let one = try pdf(words: 30)
+        let three = try tempDir().appendingPathComponent("three.pdf")
+        let doc = try XCTUnwrap(PDFDocument(url: one))
+        for index in 1...2 { doc.insert(try XCTUnwrap(doc.page(at: 0)?.copy() as? PDFPage), at: index) }
+        XCTAssertTrue(doc.write(to: three))
+        let (model, _) = model()
+        let first = Artifact(id: "p-3", kind: .file, location: one.path, media: .pdf, title: "route.pdf", source: .tool, open: true)
+        model.show(first, in: 1)
+        let agent = ViewerAgent(model: model)
+        agent.nativeWait = .milliseconds(500)
+        let holder = PDFHolder(file: one)
+        let host = NSHostingView(rootView: PDFHolderView(holder: holder).environment(\.viewerAgent, agent))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        host.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
+        window.contentView = host
+        keepAlive = [host, agent, model, window]
+        let before = await agent.perform(act(.look))
+        XCTAssertTrue(before.text.contains("1 page;"), before.text)
+
+        model.show(Artifact(id: "p-4", kind: .file, location: three.path, media: .pdf, title: "three.pdf", source: .tool, open: true), in: 1)
+        holder.file = three
+        let after = await agent.perform(act(.look))
+        XCTAssertTrue(after.text.contains("3 pages;"), after.text)
+    }
+
     func test_image_click_not_used() async throws {
         let file = try tempDir().appendingPathComponent("ridge.png")
         let png = try XCTUnwrap(ViewerSnapshot.png(try XCTUnwrap(Self.image(width: 40, height: 30))))
@@ -722,4 +787,16 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(answer?.ok, false)
         XCTAssertEqual(answer?.text, "Nothing is open in the viewer.")
     }
+}
+
+/// Drives one `PDFPane` through two files without a new view.
+@MainActor
+final class PDFHolder: ObservableObject {
+    @Published var file: URL
+    init(file: URL) { self.file = file }
+}
+
+struct PDFHolderView: View {
+    @ObservedObject var holder: PDFHolder
+    var body: some View { PDFPane(file: holder.file) }
 }

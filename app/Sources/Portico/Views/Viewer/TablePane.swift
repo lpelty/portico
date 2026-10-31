@@ -146,7 +146,26 @@ struct TableContentAnchor: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: NSView, context: Context) {}
+    /// The same view drawn for another file or table (SwiftUI keeps a
+    /// view when only its inputs change): the agent reads the new one.
+    func updateNSView(_ view: NSView, context: Context) {
+        guard context.coordinator.file != file || context.coordinator.table != table else { return }
+        context.coordinator.file = file
+        context.coordinator.table = table
+        agent.attachNative(view, file: file, table: table, rows: seen)
+    }
+
+    func makeCoordinator() -> Shown { Shown(file: file, table: table) }
+
+    /// What the view was last given to the agent as.
+    final class Shown {
+        var file: URL
+        var table: DelimitedTable
+        init(file: URL, table: DelimitedTable) {
+            self.file = file
+            self.table = table
+        }
+    }
 }
 
 /// The table rows on screen, as the rows report it (a lazy stack's height

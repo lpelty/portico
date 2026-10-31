@@ -496,6 +496,8 @@ struct PDFPane: NSViewRepresentable {
     func updateNSView(_ view: PDFView, context: Context) {
         if view.document?.documentURL != file {
             view.document = PDFDocument(url: file)
+            // The same view, another file: the agent reads the new one.
+            context.environment.viewerAgent?.attachNative(view, file: file)
         }
     }
 }
@@ -552,6 +554,8 @@ struct TextBody: View {
                 ScrollView([.horizontal, .vertical]) {
                     if let attributed {
                         SelectableText(text: attributed, wraps: false, onMake: onMake)
+                            // Another file is another text view, so the agent is given it.
+                            .id(file)
                             .padding(.vertical, 12)
                             .padding(.horizontal, 14)
                             .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
