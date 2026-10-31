@@ -98445,7 +98445,7 @@
                           "content": "Synthesize the six usability sessions in round-2/. Group the findings by severity and pull one quote for each.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -98674,7 +98674,7 @@
                   "content": "Six sessions, four findings that came up in at least half of them. Two are high severity: both stop someone from starting a hike, not just slow them down. The three that matter most:",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
-                  "fontSize": 16,
+                  "fontSize": 15,
                   "fontWeight": "normal"
                 },
                 {
@@ -98706,7 +98706,7 @@
                           "content": "•",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         },
                         {
@@ -98719,7 +98719,7 @@
                           "content": "Elevation is hard to read: five of six misjudged the climb from the profile alone.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -98739,7 +98739,7 @@
                           "content": "•",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         },
                         {
@@ -98752,7 +98752,7 @@
                           "content": "Saved trails are hard to find again after the first visit.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -98772,7 +98772,7 @@
                           "content": "•",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         },
                         {
@@ -98785,7 +98785,7 @@
                           "content": "Distance units weren't noticed as a setting.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -98802,7 +98802,7 @@
                   "content": "The tagged quotes are in findings.csv if you want to trace any of them back to a transcript.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
-                  "fontSize": 16,
+                  "fontSize": 15,
                   "fontWeight": "normal"
                 },
                 {
@@ -98834,7 +98834,7 @@
                           "content": "Add a recommendation for each high-severity finding, and keep it to a page.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -98925,7 +98925,7 @@
                   "content": "Added Recommendations at the end and trimmed the method section to two lines. It still fits on one page.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
-                  "fontSize": 16,
+                  "fontSize": 15,
                   "fontWeight": "normal"
                 }
               ]
@@ -102005,7 +102005,7 @@
                           "content": "What should I bring up with Priya today?",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -102169,7 +102169,7 @@
                   "content": "Two things. The activation dip since her step shipped Tuesday — she'll have seen it. And the elevation-chart references you said you'd send her on the 23rd; that's still open, so send them before 2 or say when.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
-                  "fontSize": 16,
+                  "fontSize": 15,
                   "fontWeight": "normal"
                 },
                 {
@@ -102201,7 +102201,7 @@
                           "content": "Add: ask how the move is going.",
                           "lineHeight": 1.5,
                           "fontFamily": "$font",
-                          "fontSize": 16,
+                          "fontSize": 15,
                           "fontWeight": "normal"
                         }
                       ]
@@ -102292,7 +102292,7 @@
                   "content": "Added as number 3 under Worth raising.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
-                  "fontSize": 16,
+                  "fontSize": 15,
                   "fontWeight": "normal"
                 }
               ]
