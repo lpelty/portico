@@ -22,6 +22,7 @@ from portico_gateway.config import Config, SpacesConfig
 from portico_gateway.engine import SPACES_PROMPT, build_options
 from portico_gateway.messages import (
     ArtifactCreated,
+    ChatNew,
     Error,
     HelloClient,
     HelloServer,
@@ -302,23 +303,22 @@ async def server(
 
 
 async def test_show_space_file_sets_artifact_space(server: GatewayServer, spaces_dir: Path, tmp_path: Path) -> None:
-    from tests.test_server import attach
-
     folder = tmp_path / "work"
     folder.mkdir()
-    conn = await attach(server)
-    assert isinstance(parse_server(await conn.recv()), SpacesList)
+    conn = await hello(server)
+    await frames_until(conn, "spaces.list")
     try:
-        number = await new_chat(conn, folder)
+        await conn.send(dump(ChatNew(ts=TS, id="req-new", folder=str(folder))))
+        number = (await frames_until(conn, "chat.state")).chat
         chat = server.registry.get(number)
         page = put(spaces_dir, "meeting-prep.md", "---\ntitle: Meeting prep\n---\n")
         plain = put(folder, "notes.md")
         assert await server.show_files(chat, [str(page)]) is None
-        event = await recv(conn)
+        event = await frames_until(conn, "artifact.created")
         assert isinstance(event, ArtifactCreated) and event.artifact.space == "meeting-prep"
         assert event.artifact.open is True and event.artifact.location == str(page.resolve())
         assert await server.show_files(chat, [str(plain)]) is None
-        event = await recv(conn)
+        event = await frames_until(conn, "artifact.created")
         assert isinstance(event, ArtifactCreated) and event.artifact.space is None
         assert '"space"' not in dump(event)  # None is left out of the wire form
     finally:
@@ -352,7 +352,8 @@ def test_prompt_line_only_when_configured(tmp_path: Path, spaces_dir: Path) -> N
 
 async def hello(server: GatewayServer, capabilities: list[str] | None = None):
     conn = await connect(ws_url(server, server.token))
-    await conn.send(dump(HelloClient(ts=TS, app_version="0.12.0", capabilities=capabilities or [])))
+    caps = ["spaces.v1"] if capabilities is None else capabilities
+    await conn.send(dump(HelloClient(ts=TS, app_version="0.12.0", capabilities=caps)))
     return conn
 
 
@@ -420,5 +421,51 @@ async def test_change_is_broadcast_and_actions_answer(server: GatewayServer, spa
         await conn.send(dump(SpaceRemove(ts=TS, id="brief")))
         got = await frames_until(conn, "spaces.list")
         assert got.spaces == [] and (fake_home / ".Trash" / "brief.md").exists()
+    finally:
+        await conn.close()
+
+
+async def test_app_without_spaces_v1_gets_no_spaces_list(server: GatewayServer, spaces_dir: Path) -> None:
+    old = await hello(server, [])
+    try:
+        types: list[str] = []
+        with pytest.raises(TimeoutError):
+            while True:
+                types.append(parse_server(await asyncio.wait_for(old.recv(), 0.4)).type)
+        assert "services.status" in types and "spaces.list" not in types
+        put(spaces_dir, "x.md")
+        await server.spaces_watcher.poll()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(old.recv(), 0.4)
+    finally:
+        await old.close()
+
+
+def test_rename_quotes_titles_yaml_would_not_read_as_text(spaces_dir: Path) -> None:
+    for i, title in enumerate(["true", "No", "null", "~", "123", "1.5", "0x1F", "Fine title"]):
+        path = put(spaces_dir, f"s{i}.md", "body\n")
+        rename(spaces_dir, f"s{i}", title)
+        expect = title if title == "Fine title" else f'"{title}"'
+        assert path.read_text().splitlines()[1] == f"title: {expect}", title
+        assert scan(spaces_dir)  # still reads back
+    assert {s.title for s in scan(spaces_dir)} >= {"true", "123", "Fine title"}
+
+
+async def test_failed_remove_command_says_the_file_is_in_the_trash(spaces_dir: Path, fake_home: Path) -> None:
+    put(spaces_dir, "b.md")
+    with pytest.raises(SpaceError) as e:
+        await remove(spaces_dir, "b", "exit 3")
+    assert str(e.value).endswith("(the file is already in the Trash)")
+
+
+async def test_action_that_changes_the_list_broadcasts_it_once(server: GatewayServer, spaces_dir: Path) -> None:
+    conn = await hello(server)
+    try:
+        await frames_until(conn, "spaces.list")
+        put(spaces_dir, "a.md", "---\ntitle: A\n---\n")
+        await conn.send(dump(SpaceRename(ts=TS, id="a", title="B")))
+        await frames_until(conn, "spaces.list")
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(conn.recv(), 0.4)  # no second copy
     finally:
         await conn.close()

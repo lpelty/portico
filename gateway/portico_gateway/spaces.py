@@ -253,7 +253,11 @@ def _key_of(line: str, comment: bool) -> str | None:
 
 
 def _quote_if_needed(title: str) -> str:
-    if re.search(r"""[:#"'\[\]{}&*!|>%@`]|^\s|\s$|^[-?]""", title) or not title:
+    if (
+        re.search(r"""[:#"'\[\]{}&*!|>%@`]|^\s|\s$|^[-?]""", title)
+        or title.lower() in ("true", "false", "yes", "no", "on", "off", "y", "n", "null", "~")
+        or re.fullmatch(r"[-+]?(\d[\d_]*\.?\d*([eE][-+]?\d+)?|\.\d+|0x[0-9a-fA-F]+|0o[0-7]+|\.inf|\.nan)", title, re.I)
+    ):
         return '"' + title.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return title
 
@@ -342,7 +346,10 @@ async def remove(folder: Path, id: str, command: str | None, timeout: float = CO
     target = _trash(path)
     log.info("spaces: %s moved to %s", id, target)
     if command:
-        await _command(command, id, timeout, "remove")
+        try:
+            await _command(command, id, timeout, "remove")
+        except SpaceError as e:
+            raise SpaceError(f"{e} (the file is already in the Trash)", e.code) from None
 
 
 async def refresh(id: str, command: str, timeout: float = COMMAND_SECONDS) -> None:

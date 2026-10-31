@@ -166,7 +166,7 @@ from .agents import AgentTracker
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import Config, hello_for
+from .config import SPACES_CAPABILITY, Config, hello_for
 from .engine import (
     READ_ONLY_TOOLS,
     Engine,
@@ -460,6 +460,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     gaps are harmless, the app only skips what it has already seen.
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     """
+    if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
+        return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
     if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
         return None  # v0.11: an app that cannot show a queue never had one
     if AGENTS_CAPABILITY in capabilities:
@@ -1928,9 +1930,11 @@ class GatewayServer:
     async def _spaces_answer(self) -> None:
         """The fresh list an action answers with (and the watcher's next look has nothing to add)."""
         assert self.spaces_watcher is not None
+        before = self.spaces_watcher.spaces
         await self.spaces_watcher.poll()
-        # Sent even when nothing differs (an action that changed nothing still gets its answer).
-        await self.broadcast(self._spaces_frame(self.spaces_watcher.spaces))
+        if self.spaces_watcher.spaces == before:
+            # The poll said nothing; an action that changed nothing still gets its answer.
+            await self.broadcast(self._spaces_frame(self.spaces_watcher.spaces))
 
     async def _space_action(self, id: str, action: Callable[[], Awaitable[None]], failed_code: str) -> None:
         try:
