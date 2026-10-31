@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The settings window (spec §5.6): General (folder, auto-open),
+/// The settings window (spec §5.6, v0.12 §6): General (Folder, Viewer, Spaces),
 /// Appearance, Gateway (address and token overrides, Start / Stop, Doctor,
 /// and what quitting does, v0.9 decision 7).
 /// Brand, actions and roots are the gateway's, not here.
@@ -25,9 +25,6 @@ enum GeneralSettingsPresentation {
 
     /// "Agent checks HTML it creates" is disabled while the agent cannot see.
     static func checksHTMLEnabled(canSee: Bool) -> Bool { canSee }
-
-    /// The switch reads off while the agent cannot see, whatever was chosen.
-    static func checksHTMLShownOn(canSee: Bool, _ chosen: Bool) -> Bool { canSee && chosen }
 }
 
 enum GatewayConnectionPresentation {
@@ -46,8 +43,8 @@ struct SettingsView: View {
             AppearanceSettingsTab()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
-        .frame(width: SettingsWindow.width, height: SettingsWindow.height)
         .padding(20)
+        .frame(width: SettingsWindow.width, height: SettingsWindow.height)
     }
 }
 

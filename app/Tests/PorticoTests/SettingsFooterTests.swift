@@ -69,6 +69,16 @@ final class SettingsFooterTests: XCTestCase {
         XCTAssertFalse(titles.contains("Sessions"))
         XCTAssertEqual(titles, ["Folder", "Viewer", "Spaces"])
         XCTAssertFalse(GeneralSettingsPresentation.sectionTitles(capabilities: ["sessions.clear"]).contains("Sessions"))
+        // And no path in the model sends the message, whatever the gateway offers.
+        let sent = AppModelTests.Sent()
+        model.outbound = { sent.frames.append($0) }
+        model.apply(.chatList(ChatList(chats: [
+            ChatSummary(chat: 1, folder: "/tmp", alias: nil, state: .stopped, created: "2026-10-27T11:00:00Z", title: nil, ended: "2026-10-27T11:30:00Z", logged: nil, parent: nil, compactions: nil, contextPercent: nil),
+            ChatSummary(chat: 2, folder: "/tmp", alias: nil, state: .idle, created: "2026-10-27T11:40:00Z", title: nil, ended: nil, logged: nil, parent: 1, compactions: nil, contextPercent: nil)])))
+        model.settings.viewerAgentCanSee = false
+        model.settings.spacesNotify = false
+        model.sendViewerSettings()
+        XCTAssertFalse(sent.types().contains("sessions.clear"))
     }
 
     @MainActor
@@ -77,7 +87,8 @@ final class SettingsFooterTests: XCTestCase {
         XCTAssertTrue(GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
         model.settings.viewerAgentCanSee = false
         XCTAssertFalse(GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
-        XCTAssertFalse(GeneralSettingsPresentation.checksHTMLShownOn(canSee: model.agentCanSee, model.settings.viewerAgentChecksHTML ?? true))
+        model.settings.viewerAgentChecksHTML = true
+        XCTAssertFalse(model.agentChecksHTML, "reads off while the agent cannot see")
         model.settings.viewerAgentCanSee = true
         XCTAssertTrue(GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
     }
