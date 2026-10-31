@@ -204,6 +204,16 @@ struct WebPane: NSViewRepresentable {
         func configuration() -> WKWebViewConfiguration {
             let configuration = WKWebViewConfiguration()
             configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+            // An HTML file's own scripts count as same-origin with it, so an
+            // uncaught error keeps its message and line for the agent (spec
+            // §3.2) instead of WebKit's "Script error." for an opaque file
+            // origin; and the page can read files beside it. Reads stay
+            // inside the folder `loadFileURL` grants (checked: a file in a
+            // sibling folder or the home folder reads empty). WebKit's own
+            // preference, not public API: set only where it exists.
+            if WKPreferences.instancesRespond(to: NSSelectorFromString("_setAllowFileAccessFromFileURLs:")) {
+                configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+            }
             configuration.setURLSchemeHandler(handler, forURLScheme: RenderedPageHandler.scheme)
             // The agent's script from document start, so page errors are
             // captured from load (spec §3.2).

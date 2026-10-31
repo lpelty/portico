@@ -53,7 +53,8 @@
   // element, which does not bubble, so only script errors reach here.
   if (!listening) {
     window.addEventListener("error", function (event) {
-      note(event.message || describe(event.error));
+      var line = event.lineno ? " (line " + event.lineno + ")" : "";
+      note((event.message || describe(event.error)) + line);
     });
     window.addEventListener("unhandledrejection", function (event) {
       note("Unhandled rejection: " + describe(event.reason));

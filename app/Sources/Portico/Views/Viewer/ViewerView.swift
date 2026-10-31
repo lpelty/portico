@@ -488,6 +488,8 @@ struct PDFPane: NSViewRepresentable {
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.document = PDFDocument(url: file)
+        // The agent reads and scrolls the viewer's PDF (v0.12).
+        context.environment.viewerAgent?.attachNative(view, file: file)
         return view
     }
 
@@ -517,7 +519,7 @@ struct TextPane: View {
         Group {
             switch phase {
             case .loading: LoadingPane()
-            case .text(let read): TextBody(read: read)
+            case .text(let read): TextBody(read: read, file: file)
             case .unreadable: OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
             }
         }
@@ -535,6 +537,9 @@ struct TextPane: View {
 /// broken for display (`TextFileRead.hardBreak`).
 struct TextBody: View {
     let read: TextFileRead
+    /// The file shown, for the agent (v0.12); `nil` draws the text alone.
+    var file: URL? = nil
+    @Environment(\.viewerAgent) private var agent
     @State private var attributed: NSAttributedString?
     @State private var broke = false
 
@@ -546,12 +551,16 @@ struct TextBody: View {
             GeometryReader { geo in
                 ScrollView([.horizontal, .vertical]) {
                     if let attributed {
-                        SelectableText(text: attributed, wraps: false)
+                        SelectableText(text: attributed, wraps: false, onMake: onMake)
                             .padding(.vertical, 12)
                             .padding(.horizontal, 14)
                             .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
                     }
                 }
+                // At the top when the text arrives, not where the empty
+                // pane's middle was (a scroll view both ways keeps the
+                // centre as its content grows).
+                .defaultScrollAnchor(.topLeading)
             }
             if let note = Self.note(read: read, broke: broke) {
                 ViewerFootnote(text: note)
@@ -566,6 +575,12 @@ struct TextBody: View {
             broke = shown.broke
             attributed = MarkdownAttributed.code(shown.text)
         }
+    }
+
+    /// Gives the text view to the agent, in the viewer's panes only.
+    private var onMake: ((NSTextView) -> Void)? {
+        guard let agent, let file else { return nil }
+        return { agent.attachNative($0, file: file) }
     }
 
     /// The line under the text, or `nil` when it is all there as written.

@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import WebKit
 
@@ -26,6 +27,11 @@ final class ViewerAgent: ObservableObject {
             "This is \(article(kind)) \(kind); it can be looked at, not used."
         }
 
+        /// An outside site off the deployment's allow list (spec §3.6).
+        static func outsideSite(_ host: String) -> String {
+            "This page (\(host)) can be looked at and scrolled, not used. The deployment's allow list sets which sites the agent can click and type on."
+        }
+
         static func article(_ kind: String) -> String {
             kind.first.map { "aeiou".contains($0) } == true ? "an" : "a"
         }
@@ -51,8 +57,18 @@ final class ViewerAgent: ObservableObject {
         let load: WebPane.Load
     }
 
+    /// A native pane the agent reads and scrolls (spec §3.2): a PDF's
+    /// view, a text file's text view, or the content of a table.
+    private struct NativeRef {
+        weak var view: NSView?
+        let file: URL
+        let table: DelimitedTable?
+        let rows: TableRowsSeen?
+    }
+
     private var web: WebPaneRef?
     private weak var paneView: NSView?
+    private var native: NativeRef?
     /// Per chat, the page token (`__porticoAgent.page`) of the last look:
     /// refs are only followed on the page that numbered them.
     private(set) var lookedPages: [Int: String] = [:]
@@ -92,6 +108,12 @@ final class ViewerAgent: ObservableObject {
 
     func detachPane(_ view: NSView) {
         if paneView === view { paneView = nil }
+    }
+
+    /// A PDF's view, a text file's text view, or (with `table`) a view
+    /// the size of a table's content, showing `file`.
+    func attachNative(_ view: NSView, file: URL, table: DelimitedTable? = nil, rows: TableRowsSeen? = nil) {
+        native = NativeRef(view: view, file: file.standardizedFileURL, table: table, rows: rows)
     }
 
     // MARK: perform
@@ -182,8 +204,10 @@ final class ViewerAgent: ObservableObject {
         case .look:
             return await look(act, shown: shown, in: view)
         case .click:
+            if let refusal = outsideRefusal(view) { return fail(act, refusal) }
             return await click(act, target: target, in: view)
         case .type:
+            if let refusal = outsideRefusal(view) { return fail(act, refusal) }
             return await type(act, target: target, in: view)
         case .scroll:
             let direction = act.args["direction"]?.stringValue ?? target
@@ -309,6 +333,33 @@ final class ViewerAgent: ObservableObject {
         return title.isEmpty ? place : "\(title) — \(place)"
     }
 
+    /// Whether the agent may click and type on the page at `url` (spec
+    /// §3.6): the agent's own pages (`file:` and the viewer's rendered
+    /// pages), local servers, and the deployment's `act_hosts` with their
+    /// subdomains. Everything else is look and scroll only.
+    static func canAct(url: URL, actHosts: [String]) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        if scheme == "file" || scheme == RenderedPageHandler.scheme { return true }
+        guard scheme == "http" || scheme == "https",
+            var host = url.host(percentEncoded: false)?.lowercased(), !host.isEmpty
+        else { return false }
+        if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        if ["localhost", "127.0.0.1", "::1"].contains(host) { return true }
+        return actHosts.contains { entry in
+            let entry = entry.lowercased()
+            return !entry.isEmpty && (host == entry || host.hasSuffix("." + entry))
+        }
+    }
+
+    /// The refusal for clicking or typing on what `view` shows now, or
+    /// `nil` when the agent may. The view's current URL, so a redirect or
+    /// a link to another site is checked again.
+    private func outsideRefusal(_ view: WKWebView) -> String? {
+        guard let url = view.url else { return nil }
+        guard !Self.canAct(url: url, actHosts: model?.hello?.viewerDefaults?.actHosts ?? []) else { return nil }
+        return Message.outsideSite(url.host(percentEncoded: false) ?? url.absoluteString)
+    }
+
     // MARK: web helpers
 
     private func webView(showing load: WebPane.Load) async -> WKWebView? {
@@ -342,7 +393,10 @@ final class ViewerAgent: ObservableObject {
             return
         }
         guard let source = ViewerAgentScript.source else { return }
-        _ = await call("delete window.__porticoAgent; (0, eval)(source); return true", ["source": source], in: view)
+        _ = await call("delete window.__porticoAgent; return true", in: view)
+        // Evaluated by the app, not by the page's `eval`, which a page's
+        // Content-Security-Policy without 'unsafe-eval' would block.
+        _ = await race(in: view) { try? await view.evaluateJavaScript(source, in: nil, contentWorld: .page) }
     }
 
     /// Run `body` in the page, or `nil` when it fails or the act's
@@ -351,6 +405,11 @@ final class ViewerAgent: ObservableObject {
     /// must see the page's own `console.error` and the elements its
     /// scripts listen on, as the page sees them.
     private func call(_ body: String, _ arguments: [String: Any] = [:], in view: WKWebView) async -> Any? {
+        await race(in: view) { try? await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page) }
+    }
+
+    /// `work`'s answer, or `nil` when the act's deadline comes first.
+    private func race(in view: WKWebView, _ work: @escaping @MainActor () async -> Any?) async -> Any? {
         guard ContinuousClock.now < deadline else {
             expired = true
             return nil
@@ -360,7 +419,7 @@ final class ViewerAgent: ObservableObject {
         let answer = await withCheckedContinuation { (continuation: CheckedContinuation<JavaScriptRace.Answer, Never>) in
             race.continuation = continuation
             Task { @MainActor in
-                let value = try? await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page)
+                let value = await work()
                 race.finish(.value(JavaScriptRace.Box(value: value)))
             }
             Task { @MainActor in
@@ -397,21 +456,149 @@ final class ViewerAgent: ObservableObject {
 
     private func performNative(_ act: ViewerAct, shown: ArtifactPresentation) async -> ViewerResult {
         let kind = Self.kindWord(shown)
+        let readable = !shown.isMissing && (shown.media == .pdf || shown.media == .text)
         switch act.action {
         case .look:
+            // Let a pane that just slid open (or a file still loading) draw
+            // before it is read and captured.
+            let pane = readable ? await nativePane(for: shown) : nil
+            try? await Task.sleep(for: .milliseconds(100))
             var text = "Open: \(shown.title) — \(shown.fileURL?.path ?? shown.artifact.location)\nThis is \(Message.article(kind)) \(kind)."
             if shown.media == .image, let file = shown.fileURL, let rep = NSImageRep(contentsOf: file) {
                 text += " \(rep.pixelsWide) × \(rep.pixelsHigh) pixels."
             }
-            // Let a pane that just slid open draw before it is captured.
-            try? await Task.sleep(for: .milliseconds(100))
+            if let pane, let read = Self.read(pane, whole: true) { text += " " + read }
             let image = paneSnapshot().map { ViewerResult.Image(data: $0.base64EncodedString()) }
             return ViewerResult(id: act.id, ok: true, text: text, image: image)
-        case .click, .type, .scroll:
+        case .scroll:
+            guard readable else { return fail(act, Message.notUsed(kind: kind)) }
+            let direction = (act.args["direction"]?.stringValue ?? act.args["target"]?.stringValue ?? "").lowercased()
+            guard ["up", "down", "top", "bottom"].contains(direction) else {
+                return fail(act, "In \(Message.article(kind)) \(kind), scroll up, down, top or bottom.")
+            }
+            guard let pane = await nativePane(for: shown), let scroller = Self.scroller(of: pane) else {
+                return fail(act, ContinuousClock.now >= deadline ? Message.timedOut : "The \(kind) can't be scrolled.")
+            }
+            Self.scroll(scroller, direction)
+            try? await Task.sleep(for: .milliseconds(50))
+            let now = Self.read(pane, whole: false).map { " Now showing \($0)" } ?? ""
+            return ViewerResult(id: act.id, ok: true, text: "Scrolled \(direction == "top" || direction == "bottom" ? "to the \(direction)" : direction).\(now)")
+        case .click, .type:
             return fail(act, Message.notUsed(kind: kind))
         case .back:
             return fail(act, "There's nothing to go back to in the viewer.")
         }
+    }
+
+    /// How long a look or scroll waits for a PDF, text or table pane to
+    /// draw. A file that can't be read shows a message pane that never
+    /// comes, and the look still answers with the snapshot.
+    var nativeWait: Duration = .seconds(3)
+
+    /// The native pane showing `shown`'s file once it has drawn, or `nil`
+    /// after `nativeWait` (or at the act's deadline).
+    private func nativePane(for shown: ArtifactPresentation) async -> NativeRef? {
+        let file = shown.fileURL?.standardizedFileURL
+        let due = min(deadline, ContinuousClock.now + nativeWait)
+        while true {
+            if let native, native.file == file, let view = native.view, view.window != nil { return native }
+            if ContinuousClock.now >= due { return nil }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    /// The most text a look carries from a PDF, text file or table.
+    static let nativeTextLimit = 4000
+
+    /// What the pane shows now. `whole`: the look's account with the
+    /// visible text; otherwise the scroll's short "page 3 of 12." / "lines
+    /// 41–80 of 300."
+    private static func read(_ pane: NativeRef, whole: Bool) -> String? {
+        guard let view = pane.view else { return nil }
+        view.window?.contentView?.layoutSubtreeIfNeeded()
+        if let pdf = view as? PDFView, let document = pdf.document {
+            let count = document.pageCount
+            // From the pages' places on screen: `visiblePages` lags a scroll.
+            let pages = (0..<count).compactMap(document.page(at:)).filter { page in
+                let rect = pdf.convert(page.bounds(for: pdf.displayBox), from: page)
+                return rect.intersection(pdf.bounds).height >= 1
+            }
+            let numbers = pages.map { document.index(for: $0) + 1 }
+            guard let first = numbers.first, let last = numbers.last else { return "\(count) page\(count == 1 ? "" : "s")." }
+            let span = first == last ? "page \(first)" : "pages \(first)–\(last)"
+            guard whole else { return "\(span) of \(count)." }
+            let text = pages.compactMap(\.string).joined(separator: "\n\n")
+            return "\(count) page\(count == 1 ? "" : "s"); showing \(span).\n\nText on the visible pages:\n" + capped(text)
+        }
+        if let textView = view as? NSTextView {
+            guard let layout = textView.layoutManager, let container = textView.textContainer else { return nil }
+            let string = textView.string as NSString
+            let glyphs = layout.glyphRange(forBoundingRect: textView.visibleRect, in: container)
+            let characters = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+            let lines = string.lineRange(for: characters)
+            let first = lineNumber(at: lines.location, in: string)
+            let shown = string.substring(with: lines).trimmingCharacters(in: .newlines)
+            let last = first + max(0, shown.components(separatedBy: "\n").count - 1)
+            let total = lineNumber(at: string.length, in: string)
+            let span = "lines \(first)–\(last) of \(total)"
+            return whole ? "\(span.prefix(1).uppercased() + span.dropFirst()) are visible:\n" + capped(shown) : "\(span)."
+        }
+        if let table = pane.table {
+            let seen = pane.rows?.visible.filter { $0 < table.rows.count } ?? []
+            guard let first = seen.min(), let last = seen.max() else { return whole ? "No rows are visible." : "no rows." }
+            let span = "rows \(first + 1)–\(last + 1) of \(table.rows.count)"
+            guard whole else { return "\(span)." }
+            let lines = [table.header] + table.rows[first...last]
+            return "\(span.prefix(1).uppercased() + span.dropFirst()) are visible:\n"
+                + capped(lines.map { $0.joined(separator: "\t") }.joined(separator: "\n"))
+        }
+        return nil
+    }
+
+    /// `text` cut to `nativeTextLimit`, saying so when it was.
+    private static func capped(_ text: String) -> String {
+        guard text.count > nativeTextLimit else { return text }
+        return String(text.prefix(nativeTextLimit)) + "\n… cut at 4,000 characters"
+    }
+
+    /// The 1-based line `location` falls on.
+    private static func lineNumber(at location: Int, in string: NSString) -> Int {
+        var count = 1
+        var index = 0
+        while index < location {
+            let found = string.range(of: "\n", range: NSRange(location: index, length: location - index))
+            guard found.location != NSNotFound else { break }
+            count += 1
+            index = found.location + 1
+        }
+        return count
+    }
+
+    /// The scroll view that scrolls the pane.
+    private static func scroller(of pane: NativeRef) -> NSScrollView? {
+        guard let view = pane.view else { return nil }
+        if let pdf = view as? PDFView { return pdf.documentView?.enclosingScrollView }
+        return view.enclosingScrollView
+    }
+
+    /// Up or down by most of a screen, or to the top or bottom.
+    private static func scroll(_ scroller: NSScrollView, _ direction: String) {
+        guard let document = scroller.documentView else { return }
+        let clip = scroller.contentView
+        let flipped = document.isFlipped
+        let low = document.frame.minY
+        let high = max(low, document.frame.maxY - clip.bounds.height)
+        let page = clip.bounds.height * 0.9
+        var origin = clip.bounds.origin
+        switch direction {
+        case "up": origin.y += flipped ? -page : page
+        case "down": origin.y += flipped ? page : -page
+        case "top": origin.y = flipped ? low : high
+        default: origin.y = flipped ? high : low
+        }
+        origin.y = min(max(origin.y, low), high)
+        clip.scroll(to: origin)
+        scroller.reflectScrolledClipView(clip)
     }
 
     /// The native pane as drawn, from the window's own rendering.

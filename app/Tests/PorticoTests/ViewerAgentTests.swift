@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import PDFKit
+import SwiftUI
 import WebKit
 import XCTest
 
@@ -21,11 +23,11 @@ final class ViewerAgentTests: XCTestCase {
 
     // MARK: - fixtures
 
-    private func isolatedSettings() -> Settings {
+    private func isolatedSettings() -> Portico.Settings {
         let name = "portico.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         addTeardownBlock { defaults.removePersistentDomain(forName: name) }
-        return Settings(defaults: defaults)
+        return Portico.Settings(defaults: defaults)
     }
 
     /// A model showing chat 1 (multiple presentation: no hello), with what
@@ -250,10 +252,10 @@ final class ViewerAgentTests: XCTestCase {
         let lines = errors.split(separator: "\n").filter { $0.hasPrefix("- ") }
         XCTAssertEqual(lines.count, 20, "the last 20: \(errors)")
         XCTAssertTrue(lines.allSatisfy { $0.count <= 202 }, "each cut to 200 characters")
-        // An uncaught error on a file:// page: WebKit hides its details
-        // ("Script error.") because a file URL's origin is opaque; it is
-        // still reported, so the agent knows something threw.
-        XCTAssertTrue(errors.contains("Script error."), errors)
+        // An uncaught error on the agent's own page keeps its message
+        // (WebKit says only "Script error." for an opaque file:// origin).
+        XCTAssertNotNil(errors.firstMatch(of: /Error: late failure \(line \d+\)/), errors)
+        XCTAssertFalse(errors.contains("Script error."), errors)
         XCTAssertTrue(errors.contains("nope"), errors)
         XCTAssertFalse(errors.contains("boom"), "older than the last 20")
 
@@ -418,6 +420,291 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertNil(rig.agent.lookedPages[2])
         let page = try await evaluate("window.__porticoAgent.page", in: rig.view) as? String
         XCTAssertEqual(rig.agent.lookedPages[1], page)
+    }
+
+    // MARK: - outside sites (spec §3.6)
+
+    /// The deployment's `act_hosts`, as the gateway's hello carries them.
+    private func allow(_ hosts: [String], on model: AppModel) {
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.12.0", epoch: "e",
+            brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [],
+            commands: [], capabilities: ["viewer.v1"], presentation: "multiple",
+            viewerDefaults: ViewerDefaults(actHosts: hosts))))
+        model.selected = 1
+    }
+
+    /// A URL artifact in chat 1's viewer, its page `body` loaded offline
+    /// as if from `url` (no network in tests).
+    private func urlRig(_ body: String, at url: URL, actHosts: [String]) throws -> Rig {
+        let (model, _) = model()
+        allow(actHosts, on: model)
+        model.show(Artifact(id: "u-1", kind: .url, location: url.absoluteString, media: .url, title: url.host ?? "", source: .tool, open: true), in: 1)
+        let agent = ViewerAgent(model: model)
+        agent.highlightDuration = .milliseconds(20)
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView = view
+        keepAlive = [view, coordinator, agent, model, window]
+        agent.attach(view, showing: .url(url))
+        view.loadHTMLString(Self.page(body), baseURL: url)
+        return Rig(model: model, agent: agent, view: view, file: URL(fileURLWithPath: "/"))
+    }
+
+    private static func page(_ body: String) -> String {
+        "<!doctype html><html><head><meta charset=utf-8><title>Outside</title></head><body>\(body)</body></html>"
+    }
+
+    private static let outsideText = { (host: String) in
+        "This page (\(host)) can be looked at and scrolled, not used. The deployment's allow list sets which sites the agent can click and type on."
+    }
+
+    func test_can_act_rules() throws {
+        let hosts = ["figma.com", "lovable.dev"]
+        let table: [(String, [String], Bool)] = [
+            ("file:///tmp/trail-detail.html", [], true),
+            ("portico-view://abc/trail-detail.html", [], true),
+            ("http://localhost:3000/", [], true),
+            ("http://127.0.0.1:8080/app", [], true),
+            ("http://[::1]:5173/", [], true),
+            ("https://www.figma.com/file/x", hosts, true),
+            ("https://figma.com/", hosts, true),
+            ("https://FIGMA.COM/", hosts, true),
+            ("https://www.figma.com/", ["FIGMA.com"], true),
+            ("https://notfigma.com/", hosts, false),
+            ("https://figma.com.example.com/", hosts, false),
+            ("https://lovable.dev/projects", hosts, true),
+            ("https://example.com/", hosts, false),
+            ("https://example.com/", [], false),
+            ("about:blank", hosts, false),
+        ]
+        for (string, list, expected) in table {
+            let url = try XCTUnwrap(URL(string: string))
+            XCTAssertEqual(ViewerAgent.canAct(url: url, actHosts: list), expected, "\(string) with \(list)")
+        }
+    }
+
+    func test_outside_host_click_refused_with_spec_text() async throws {
+        let rig = try urlRig(
+            "<script>window.clicks = []</script><button onclick=\"clicks.push('save')\">Save trail</button><input aria-label=\"Search\">",
+            at: URL(string: "https://example.com/trails")!, actHosts: ["figma.com"])
+        let look = await rig.agent.perform(act(.look))
+        XCTAssertTrue(look.ok, "an outside page can be looked at: \(look.text)")
+        XCTAssertTrue(look.text.contains("button: Save trail"), look.text)
+        let scroll = await rig.agent.perform(act(.scroll, ["direction": .string("down")]))
+        XCTAssertTrue(scroll.ok, "and scrolled: \(scroll.text)")
+
+        let click = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, Self.outsideText("example.com"))
+        let typed = await rig.agent.perform(act(.type, ["target": .string("Search"), "text": .string("Priya")]))
+        XCTAssertFalse(typed.ok)
+        XCTAssertEqual(typed.text, Self.outsideText("example.com"))
+        let clicks = try await evaluate("clicks.length", in: rig.view)
+        XCTAssertEqual(clicks as? Int, 0, "nothing was clicked")
+
+        // A host on the list (or under it) is usable.
+        let allowed = try urlRig(
+            "<script>window.clicks = []</script><button onclick=\"clicks.push('save')\">Save trail</button>",
+            at: URL(string: "https://www.figma.com/file/x")!, actHosts: ["figma.com"])
+        let ok = await allowed.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(ok.ok, ok.text)
+    }
+
+    /// Checked on the page's current host at every click: a redirect or a
+    /// link away from an allowed page is refused for the new host.
+    func test_redirect_to_other_host_rechecked() async throws {
+        let outside = try urlRig(
+            "<button>Save trail</button>", at: URL(string: "https://www.figma.com/file/x")!, actHosts: ["figma.com"])
+        let first = await outside.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(first.ok, first.text)
+
+        // The page went elsewhere (same artifact; the view's URL moved).
+        outside.view.loadHTMLString(Self.page("<button>Save trail</button>"), baseURL: URL(string: "https://example.com/landing")!)
+        let moved = await outside.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertFalse(moved.ok)
+        XCTAssertEqual(moved.text, Self.outsideText("example.com"))
+
+        // The agent's own page that links out: refused there too.
+        let local = try rig("<button>Go</button>")
+        allow([], on: local.model)
+        let here = await local.agent.perform(act(.click, ["target": .string("Go")]))
+        XCTAssertTrue(here.ok, "the agent's own page is usable: \(here.text)")
+        local.view.loadHTMLString(Self.page("<button>Go</button>"), baseURL: URL(string: "https://lovable.dev/p")!)
+        let away = await local.agent.perform(act(.click, ["target": .string("Go")]))
+        XCTAssertEqual(away.text, Self.outsideText("lovable.dev"))
+    }
+
+    /// The person's input wins: they scroll mid-turn, and the next look
+    /// shows the page where they left it.
+    func test_person_scroll_then_look_sees_new_position() async throws {
+        let rig = try rig("""
+            <style>body{margin:0} div{height:1500px}</style>
+            <div style="background:#ff0000"></div><div style="background:#0000ff"></div>
+            """)
+        let top = await rig.agent.perform(act(.look))
+        XCTAssertEqual(try Self.middleColour(top), "red")
+        _ = try await evaluate("window.scrollTo(0, document.body.scrollHeight); true", in: rig.view)
+        try await Task.sleep(for: .milliseconds(100))
+        let after = await rig.agent.perform(act(.look))
+        XCTAssertEqual(try Self.middleColour(after), "blue", "the look sees where the person scrolled")
+    }
+
+    private static func middleColour(_ result: ViewerResult) throws -> String {
+        let data = try XCTUnwrap(result.image.flatMap { Data(base64Encoded: $0.data) }, result.text)
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: data))
+        let colour = try XCTUnwrap(rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+        if colour.redComponent > 0.8, colour.blueComponent < 0.3 { return "red" }
+        if colour.blueComponent > 0.8, colour.redComponent < 0.3 { return "blue" }
+        return "\(colour)"
+    }
+
+    // MARK: - native panes (spec §3.2)
+
+    /// `artifact` drawn by the viewer's own panes in a window, the agent
+    /// in their environment as `ViewerView` sets it.
+    private func nativeRig(_ artifact: Artifact, size: NSSize = NSSize(width: 700, height: 500)) -> (AppModel, ViewerAgent) {
+        let (model, _) = model()
+        model.show(artifact, in: 1)
+        let agent = ViewerAgent(model: model)
+        let host = NSHostingView(rootView: ArtifactContent(artifact: artifact).environment(\.viewerAgent, agent))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        host.frame = NSRect(origin: .zero, size: size)
+        window.contentView = host
+        keepAlive = [host, agent, model, window]
+        return (model, agent)
+    }
+
+    /// A one-page PDF whose text is `w00001 w00002 …` up to `words`.
+    private func pdf(words: Int) throws -> URL {
+        let file = try tempDir().appendingPathComponent("route.pdf")
+        let text = (1...words).map { String(format: "w%05d", $0) }.joined(separator: " ")
+        let data = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let consumer = try XCTUnwrap(CGDataConsumer(data: data))
+        let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &box, nil))
+        context.beginPDFPage(nil)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 5)])
+            .draw(in: box.insetBy(dx: 20, dy: 20))
+        NSGraphicsContext.restoreGraphicsState()
+        context.endPDFPage()
+        context.closePDF()
+        try (data as Data).write(to: file)
+        return file
+    }
+
+    func test_pdf_look_text_capped_4000() async throws {
+        let file = try pdf(words: 1200)
+        XCTAssertGreaterThan(PDFDocument(url: file)?.page(at: 0)?.string?.count ?? 0, 6000, "fixture holds more than the cap")
+        let (_, agent) = nativeRig(Artifact(id: "p-1", kind: .file, location: file.path, media: .pdf, title: "route.pdf", source: .tool, open: true))
+        let look = await agent.perform(act(.look))
+        XCTAssertTrue(look.ok, look.text)
+        XCTAssertTrue(look.text.contains("1 page"), look.text)
+        let visible = try XCTUnwrap(look.text.components(separatedBy: "Text on the visible pages:\n").last)
+        let body = visible.components(separatedBy: "\n… cut at 4,000 characters").first ?? visible
+        XCTAssertLessThanOrEqual(body.count, 4000)
+        XCTAssertGreaterThan(body.count, 3900, "as much as the cap allows")
+        XCTAssertTrue(body.hasPrefix("w00001 w00002"), String(body.prefix(40)))
+        XCTAssertFalse(look.text.contains("w01200"), "past the cap is not sent")
+        XCTAssertTrue(look.text.contains("… cut at 4,000 characters"), "says it was cut")
+        XCTAssertNotNil(look.image, "a look carries the snapshot")
+
+        let click = await agent.perform(act(.click, ["target": .string("w00001")]))
+        XCTAssertEqual(click.text, "This is a PDF; it can be looked at, not used.")
+    }
+
+    func test_pdf_scrolls() async throws {
+        let first = try pdf(words: 50)
+        // Three pages: page 1 stays, two more copies after it.
+        let doc = try XCTUnwrap(PDFDocument(url: first))
+        for index in 1...2 { doc.insert(try XCTUnwrap(doc.page(at: 0)?.copy() as? PDFPage), at: index) }
+        XCTAssertTrue(doc.write(to: first))
+        let (_, agent) = nativeRig(Artifact(id: "p-2", kind: .file, location: first.path, media: .pdf, title: "route.pdf", source: .tool, open: true))
+        let look = await agent.perform(act(.look))
+        XCTAssertTrue(look.text.contains("3 pages"), look.text)
+        XCTAssertTrue(look.text.contains("showing page 1"), look.text)
+        let bottom = await agent.perform(act(.scroll, ["direction": .string("bottom")]))
+        XCTAssertTrue(bottom.ok, bottom.text)
+        XCTAssertTrue(bottom.text.contains("page 3 of 3"), bottom.text)
+        let top = await agent.perform(act(.scroll, ["direction": .string("top")]))
+        XCTAssertTrue(top.text.contains("page 1 of 3"), top.text)
+    }
+
+    func test_text_look_lists_visible_lines_and_scrolls() async throws {
+        let file = try tempDir().appendingPathComponent("notes.txt")
+        try (1...400).map { "line \($0)" }.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let (_, agent) = nativeRig(Artifact(id: "t-1", kind: .file, location: file.path, media: .text, title: "notes.txt", source: .tool, open: true))
+        let look = await agent.perform(act(.look))
+        XCTAssertTrue(look.ok, look.text)
+        XCTAssertTrue(look.text.contains("This is a text file."), look.text)
+        XCTAssertTrue(look.text.contains("\nline 1\n"), look.text)
+        XCTAssertFalse(look.text.contains("line 300"), "only the visible lines: \(look.text)")
+        XCTAssertTrue(look.text.contains("of 400"), look.text)
+
+        let down = await agent.perform(act(.scroll, ["direction": .string("down")]))
+        XCTAssertTrue(down.ok, down.text)
+        let next = await agent.perform(act(.look))
+        XCTAssertFalse(next.text.contains("\nline 1\n"), "scrolled past the first lines: \(next.text)")
+        let bottom = await agent.perform(act(.scroll, ["direction": .string("bottom")]))
+        XCTAssertTrue(bottom.ok, bottom.text)
+        let end = await agent.perform(act(.look))
+        XCTAssertTrue(end.text.contains("line 400"), end.text)
+        let typed = await agent.perform(act(.type, ["target": .string("line 1"), "text": .string("x")]))
+        XCTAssertEqual(typed.text, "This is a text file; it can be looked at, not used.")
+    }
+
+    func test_table_look_lists_visible_rows() async throws {
+        let file = try tempDir().appendingPathComponent("miles.csv")
+        try (["day,miles"] + (1...300).map { "\($0),\($0 * 2)" }).joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let (_, agent) = nativeRig(Artifact(id: "c-1", kind: .file, location: file.path, media: .text, title: "miles.csv", source: .tool, open: true))
+        let look = await agent.perform(act(.look))
+        XCTAssertTrue(look.ok, look.text)
+        XCTAssertTrue(look.text.contains("This is a table."), look.text)
+        XCTAssertTrue(look.text.contains("day\tmiles"), look.text)
+        XCTAssertTrue(look.text.contains("\n1\t2\n"), look.text)
+        XCTAssertFalse(look.text.contains("\n250\t500"), look.text)
+        XCTAssertTrue(look.text.contains("of 300"), look.text)
+        let bottom = await agent.perform(act(.scroll, ["direction": .string("bottom")]))
+        XCTAssertTrue(bottom.ok, bottom.text)
+        let end = await agent.perform(act(.look))
+        XCTAssertTrue(end.text.contains("300\t600"), end.text)
+    }
+
+    /// A text file that can't be read draws a message, never a text view:
+    /// the look answers soon, not at the act's deadline.
+    func test_unreadable_text_look_answers_soon() async throws {
+        let file = try tempDir().appendingPathComponent("blob.txt")
+        try Data([0xFF, 0xFE, 0x00, 0xC3, 0x28, 0x00, 0xFF]).write(to: file)
+        let (_, agent) = nativeRig(Artifact(id: "t-2", kind: .file, location: file.path, media: .text, title: "blob.txt", source: .tool, open: true))
+        agent.nativeWait = .milliseconds(300)
+        let start = ContinuousClock.now
+        let look = await agent.perform(act(.look))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+        XCTAssertTrue(look.ok, look.text)
+        XCTAssertTrue(look.text.contains("This is a text file."), look.text)
+    }
+
+    func test_image_click_not_used() async throws {
+        let file = try tempDir().appendingPathComponent("ridge.png")
+        let png = try XCTUnwrap(ViewerSnapshot.png(try XCTUnwrap(Self.image(width: 40, height: 30))))
+        try png.write(to: file)
+        let (_, agent) = nativeRig(Artifact(id: "i-1", kind: .file, location: file.path, media: .image, title: "ridge.png", source: .tool, open: true))
+        let look = await agent.perform(act(.look))
+        XCTAssertTrue(look.ok, look.text)
+        XCTAssertTrue(look.text.contains("40 × 30 pixels"), look.text)
+        XCTAssertNotNil(look.image)
+        let click = await agent.perform(act(.click, ["target": .string("e1")]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, "This is an image; it can be looked at, not used.")
+        let typed = await agent.perform(act(.type, ["target": .string("e1"), "text": .string("x")]))
+        XCTAssertEqual(typed.text, "This is an image; it can be looked at, not used.")
     }
 
     // MARK: - wiring

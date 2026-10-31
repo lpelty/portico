@@ -171,6 +171,9 @@ struct SelectableText: NSViewRepresentable {
     /// False for code: lines keep their length and the view is as wide as
     /// the longest (its scroll view scrolls sideways).
     var wraps = true
+    /// Called with the text view once it is made (the viewer's text pane
+    /// gives it to the agent, v0.12).
+    var onMake: ((NSTextView) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSTextView {
         let view = SelectableTextView(usingTextLayoutManager: false)
@@ -187,6 +190,7 @@ struct SelectableText: NSViewRepresentable {
         view.linkTextAttributes = [.foregroundColor: NSColor(Theme.accent), .cursor: NSCursor.pointingHand]
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.textStorage?.setAttributedString(text)
+        onMake?(view)
         return view
     }
 
