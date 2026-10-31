@@ -108,6 +108,10 @@ final class Settings: ObservableObject {
         static let readAloudAvailable = "voice.readAloudAvailable"
         static let voiceIdentifier = "voice.identifier"
         static let speechRate = "voice.speechRate"
+        static let viewerAgentCanSee = "viewer.agentCanSee"
+        static let viewerAgentChecksHTML = "viewer.agentChecksHTML"
+        static let spacesNotify = "spaces.notify"
+        static let spacesLastOpened = "spaces.lastOpened"
     }
 
     private let defaults: UserDefaults
@@ -195,6 +199,29 @@ final class Settings: ObservableObject {
         didSet { defaults.set(speechRate.rawValue, forKey: Key.speechRate) }
     }
 
+    // MARK: viewer vision and spaces (v0.12)
+
+    /// The person's choice for "Agent can see the viewer"; `nil` until they
+    /// choose, which means the deployment's default (`hello.viewer_defaults`).
+    @Published var viewerAgentCanSee: Bool? {
+        didSet { Self.store(viewerAgentCanSee, forKey: Key.viewerAgentCanSee, in: defaults) }
+    }
+    /// The person's choice for "Agent checks HTML it creates"; `nil` as above.
+    @Published var viewerAgentChecksHTML: Bool? {
+        didSet { Self.store(viewerAgentChecksHTML, forKey: Key.viewerAgentChecksHTML, in: defaults) }
+    }
+    /// "Notify when a space is updated": the dot and the notification.
+    @Published var spacesNotify: Bool {
+        didSet { defaults.set(spacesNotify, forKey: Key.spacesNotify) }
+    }
+    /// When each space (by id) was last opened here; a space changed after
+    /// that has something new.
+    @Published var spacesLastOpened: [String: Date] {
+        didSet {
+            defaults.set(spacesLastOpened.mapValues { $0.timeIntervalSince1970 }, forKey: Key.spacesLastOpened)
+        }
+    }
+
     /// The artifact the viewer showed when the app last quit, and in which
     /// session (v0.6); `nil` when it was closed or empty. Read at launch to
     /// decide whether the viewer comes back.
@@ -247,6 +274,11 @@ final class Settings: ObservableObject {
         readAloudAvailable = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
+        viewerAgentCanSee = defaults.object(forKey: Key.viewerAgentCanSee) as? Bool
+        viewerAgentChecksHTML = defaults.object(forKey: Key.viewerAgentChecksHTML) as? Bool
+        spacesNotify = defaults.object(forKey: Key.spacesNotify) as? Bool ?? true
+        let opened = defaults.dictionary(forKey: Key.spacesLastOpened) as? [String: Double] ?? [:]
+        spacesLastOpened = opened.mapValues { Date(timeIntervalSince1970: $0) }
     }
 
     /// Whether an artifact of `media` should open on its own.
@@ -262,6 +294,10 @@ final class Settings: ObservableObject {
     private static func read(_ key: String, in defaults: UserDefaults) -> String? {
         let value = defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
+    }
+
+    private static func store(_ value: Bool?, forKey key: String, in defaults: UserDefaults) {
+        if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
     }
 
     private static func store(_ value: String?, forKey key: String, in defaults: UserDefaults) {

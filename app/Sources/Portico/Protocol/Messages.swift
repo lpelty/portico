@@ -279,6 +279,8 @@ struct Artifact: Codable, Equatable, Sendable {
     var title: String
     var source: ArtifactSource
     var open: Bool
+    /// The space this artifact is the file of (v0.12, `spaces.v1`); absent otherwise.
+    var space: String? = nil
 }
 
 struct Entry: Codable, Equatable, Sendable {
@@ -309,7 +311,7 @@ struct HelloClient: Codable, Equatable, Sendable {
 
     /// Everything this app names in `capabilities` (v0.11: `queue.v1`,
     /// messages typed while the agent works).
-    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability]
+    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability]
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
@@ -487,6 +489,83 @@ struct GatewayStop: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+// MARK: - Viewer vision and spaces (v0.12)
+
+/// What the person's switches say about the agent and the viewer, sent
+/// after `hello` and whenever either changes (not chat-scoped). The
+/// gateway sends `viewer.act` only to the app that sent this last.
+struct ViewerSettings: Codable, Equatable, Sendable {
+    static let messageType = "viewer.settings"
+    /// Named in the app's `hello.capabilities`.
+    static let capability = "viewer.v1"
+    var canSee: Bool
+    var checkHTML: Bool
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case canSee = "can_see"
+        case checkHTML = "check_html"
+        case ts
+    }
+}
+
+/// The app's answer to a `viewer.act`: text, and for a look an image.
+struct ViewerResult: Codable, Equatable, Sendable {
+    static let messageType = "viewer.result"
+
+    struct Image: Codable, Equatable, Sendable {
+        /// Base64 PNG.
+        var data: String
+        var mediaType: String = "image/png"
+
+        enum CodingKeys: String, CodingKey {
+            case data
+            case mediaType = "media_type"
+        }
+    }
+
+    var id: String
+    var ok: Bool
+    var text: String
+    var image: Image? = nil
+    var error: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey { case id, ok, text, image, error, ts }
+
+    /// `image` and `error` are always present on the wire, `null` when absent.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(ok, forKey: .ok)
+        try c.encode(text, forKey: .text)
+        try c.encode(image, forKey: .image)
+        try c.encode(error, forKey: .error)
+        try c.encode(ts, forKey: .ts)
+    }
+}
+
+/// Ask the gateway to run a space's refresh command; answered by a new
+/// `spaces.list` or an `error`.
+struct SpaceRefresh: Codable, Equatable, Sendable {
+    static let messageType = "space.refresh"
+    var id: String
+    var ts: String = ProtocolClock.now()
+}
+
+struct SpaceRename: Codable, Equatable, Sendable {
+    static let messageType = "space.rename"
+    var id: String
+    var title: String
+    var ts: String = ProtocolClock.now()
+}
+
+struct SpaceRemove: Codable, Equatable, Sendable {
+    static let messageType = "space.remove"
+    var id: String
+    var ts: String = ProtocolClock.now()
+}
+
 // MARK: - Gateway -> app payloads
 
 struct HelloServer: Codable, Equatable, Sendable {
@@ -516,6 +595,9 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The Files pane leaves out the session's own folder (v0.11, config
     /// `[files] hide_session_folder`); it still resolves.
     var hideSessionFolder: Bool? = nil
+    /// The deployment's defaults for the viewer switches (v0.12, config
+    /// `[viewer]`); absent from an older gateway.
+    var viewerDefaults: ViewerDefaults? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -523,6 +605,7 @@ struct HelloServer: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts
+        case viewerDefaults = "viewer_defaults"
         case gatewayVersion = "gateway_version"
         case canLog = "can_log"
         case configStale = "config_stale"
@@ -536,6 +619,100 @@ struct HelloServer: Codable, Equatable, Sendable {
 
     /// One live session at a time (S1), rather than the chat list.
     var isSingle: Bool { presentation == "single" }
+}
+
+// MARK: - Viewer vision and spaces, gateway -> app (v0.12)
+
+/// `hello.viewer_defaults`: what the switches start as until the person
+/// changes them, and the hosts the agent may act on beyond local pages.
+struct ViewerDefaults: Codable, Equatable, Sendable {
+    var agentCanSee: Bool
+    var agentChecksHTML: Bool
+    var actHosts: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case agentCanSee = "agent_can_see"
+        case agentChecksHTML = "agent_checks_html"
+        case actHosts = "act_hosts"
+    }
+}
+
+/// The agent asks the app to act in the viewer on screen; answered by one
+/// `viewer.result` with the same `id`.
+struct ViewerAct: Codable, Equatable, Sendable {
+    static let messageType = "viewer.act"
+
+    enum Action: String, Codable, Sendable {
+        case look, click, type, scroll, back
+    }
+
+    var id: String
+    var chat: Int
+    var action: Action
+    /// look `{}`, click `{target}`, type `{target, text, submit}`,
+    /// scroll `{direction}` or `{target}`, back `{}`.
+    var args: [String: JSONValue] = [:]
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+
+    init(id: String, chat: Int, action: Action, args: [String: JSONValue] = [:], seq: Int? = nil, ts: String = ProtocolClock.now()) {
+        self.id = id
+        self.chat = chat
+        self.action = action
+        self.args = args
+        self.seq = seq
+        self.ts = ts
+    }
+
+    enum CodingKeys: String, CodingKey { case id, chat, action, args, seq, ts }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        chat = try c.decode(Int.self, forKey: .chat)
+        action = try c.decode(Action.self, forKey: .action)
+        args = try c.decodeIfPresent([String: JSONValue].self, forKey: .args) ?? [:]
+        seq = try c.decodeIfPresent(Int.self, forKey: .seq)
+        ts = try c.decodeIfPresent(String.self, forKey: .ts) ?? ProtocolClock.now()
+    }
+}
+
+/// One space: a file the agent keeps current, listed in the switcher.
+struct SpaceInfo: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var title: String
+    var icon: String
+    /// The person's order in the folder's front matter; `nil` sorts after.
+    var order: Int?
+    var location: String
+    var media: String
+    /// The file's modification time, UTC ISO 8601.
+    var updated: String
+
+    /// `updated` as a date; `nil` if the gateway sent something else.
+    var updatedDate: Date? {
+        if let date = try? Date(updated, strategy: .iso8601) { return date }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: updated)
+    }
+}
+
+/// The whole list of spaces, after `hello` and on every change.
+struct SpacesList: Codable, Equatable, Sendable {
+    static let messageType = "spaces.list"
+    /// Named in the gateway's `hello.capabilities` when a folder is configured.
+    static let capability = "spaces.v1"
+    /// Named when the gateway has a refresh command.
+    static let refreshCapability = "spaces.refresh"
+    var spaces: [SpaceInfo]
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: seq) }
 }
 
 struct ChatList: Codable, Equatable, Sendable {
@@ -1233,6 +1410,11 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case servicesRestartAll(ServicesRestartAll)
     case sessionsClear(SessionsClear)
     case chatUnqueue(ChatUnqueue)
+    case viewerSettings(ViewerSettings)
+    case viewerResult(ViewerResult)
+    case spaceRefresh(SpaceRefresh)
+    case spaceRename(SpaceRename)
+    case spaceRemove(SpaceRemove)
 
     var type: String {
         switch self {
@@ -1256,6 +1438,11 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .servicesRestartAll: ServicesRestartAll.messageType
         case .sessionsClear: SessionsClear.messageType
         case .chatUnqueue: ChatUnqueue.messageType
+        case .viewerSettings: ViewerSettings.messageType
+        case .viewerResult: ViewerResult.messageType
+        case .spaceRefresh: SpaceRefresh.messageType
+        case .spaceRename: SpaceRename.messageType
+        case .spaceRemove: SpaceRemove.messageType
         }
     }
 
@@ -1282,6 +1469,11 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case ServicesRestartAll.messageType: self = .servicesRestartAll(try ServicesRestartAll(from: decoder))
         case SessionsClear.messageType: self = .sessionsClear(try SessionsClear(from: decoder))
         case ChatUnqueue.messageType: self = .chatUnqueue(try ChatUnqueue(from: decoder))
+        case ViewerSettings.messageType: self = .viewerSettings(try ViewerSettings(from: decoder))
+        case ViewerResult.messageType: self = .viewerResult(try ViewerResult(from: decoder))
+        case SpaceRefresh.messageType: self = .spaceRefresh(try SpaceRefresh(from: decoder))
+        case SpaceRename.messageType: self = .spaceRename(try SpaceRename(from: decoder))
+        case SpaceRemove.messageType: self = .spaceRemove(try SpaceRemove(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1310,6 +1502,11 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .servicesRestartAll(let m): try m.encode(to: encoder)
         case .sessionsClear(let m): try m.encode(to: encoder)
         case .chatUnqueue(let m): try m.encode(to: encoder)
+        case .viewerSettings(let m): try m.encode(to: encoder)
+        case .viewerResult(let m): try m.encode(to: encoder)
+        case .spaceRefresh(let m): try m.encode(to: encoder)
+        case .spaceRename(let m): try m.encode(to: encoder)
+        case .spaceRemove(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1353,6 +1550,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case chatQueued(ChatQueued)
     case chatQueue(ChatQueue)
     case chatCommands(ChatCommands)
+    case viewerAct(ViewerAct)
+    case spacesList(SpacesList)
 
     var type: String {
         switch self {
@@ -1392,6 +1591,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatQueued: ChatQueued.messageType
         case .chatQueue: ChatQueue.messageType
         case .chatCommands: ChatCommands.messageType
+        case .viewerAct: ViewerAct.messageType
+        case .spacesList: SpacesList.messageType
         }
     }
 
@@ -1433,6 +1634,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatQueued(let m): m.envelope
         case .chatQueue(let m): m.envelope
         case .chatCommands(let m): m.envelope
+        case .viewerAct(let m): m.envelope
+        case .spacesList(let m): m.envelope
         }
     }
 
@@ -1475,6 +1678,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ChatQueued.messageType: self = .chatQueued(try ChatQueued(from: decoder))
         case ChatQueue.messageType: self = .chatQueue(try ChatQueue(from: decoder))
         case ChatCommands.messageType: self = .chatCommands(try ChatCommands(from: decoder))
+        case ViewerAct.messageType: self = .viewerAct(try ViewerAct(from: decoder))
+        case SpacesList.messageType: self = .spacesList(try SpacesList(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1519,6 +1724,8 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatQueued(let m): try m.encode(to: encoder)
         case .chatQueue(let m): try m.encode(to: encoder)
         case .chatCommands(let m): try m.encode(to: encoder)
+        case .viewerAct(let m): try m.encode(to: encoder)
+        case .spacesList(let m): try m.encode(to: encoder)
         }
     }
 }

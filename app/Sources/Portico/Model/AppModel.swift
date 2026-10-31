@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 // MARK: - Transcript items
@@ -404,7 +405,64 @@ final class AppModel: ObservableObject {
 
     init(settings: Settings = Settings()) {
         self.settings = settings
+        // A change to either viewer switch tells the gateway at once. The
+        // publishers fire before the value lands, so send what they carry.
+        viewerSwitchObserver = settings.$viewerAgentCanSee
+            .combineLatest(settings.$viewerAgentChecksHTML)
+            .dropFirst()
+            .sink { [weak self] canSee, checks in
+                MainActor.assumeIsolated { self?.sendViewerSettings(canSee: canSee, checks: checks) }
+            }
     }
+
+    // MARK: - viewer vision and spaces (v0.12)
+
+    private var viewerSwitchObserver: AnyCancellable?
+
+    /// The spaces from the latest `spaces.list`, in the gateway's order.
+    @Published var spaces: [SpaceInfo] = []
+    /// The space open in the viewer column, if any.
+    @Published var openSpace: String?
+    /// Where a `viewer.act` goes; set by the viewer once it can carry one out.
+    var viewerActHandler: ((ViewerAct) -> Void)?
+
+    /// "Agent can see the viewer" as it stands: the person's choice, else the deployment's default, else on.
+    var agentCanSee: Bool { settings.viewerAgentCanSee ?? hello?.viewerDefaults?.agentCanSee ?? true }
+
+    /// "Agent checks HTML it creates": as above, and always off while the agent cannot see.
+    var agentChecksHTML: Bool { agentCanSee && (settings.viewerAgentChecksHTML ?? hello?.viewerDefaults?.agentChecksHTML ?? true) }
+
+    /// Tell the gateway how the two switches stand. Only to a gateway that
+    /// sent `viewer_defaults` (v0.12 on): an older one has no such message.
+    func sendViewerSettings() {
+        guard hello?.viewerDefaults != nil else { return }
+        send(.viewerSettings(ViewerSettings(canSee: agentCanSee, checkHTML: agentChecksHTML)))
+    }
+
+    private func sendViewerSettings(canSee: Bool?, checks: Bool?) {
+        guard let defaults = hello?.viewerDefaults else { return }
+        let see = canSee ?? defaults.agentCanSee
+        send(.viewerSettings(ViewerSettings(canSee: see, checkHTML: see && (checks ?? defaults.agentChecksHTML))))
+    }
+
+    /// The space changed after the person last opened it, and they want to know.
+    func hasNew(_ id: String) -> Bool {
+        guard settings.spacesNotify, let space = spaces.first(where: { $0.id == id }) else { return false }
+        guard let opened = settings.spacesLastOpened[id] else { return true }
+        guard let updated = space.updatedDate else { return false }
+        return updated > opened
+    }
+
+    /// Show a space (or none, with `nil`); opening one clears its dot.
+    func setOpenSpace(_ id: String?) {
+        openSpace = id
+        // The file's own clock can run ahead of this one; opening it must still clear its dot.
+        if let id { settings.spacesLastOpened[id] = max(Date(), spaces.first { $0.id == id }?.updatedDate ?? .distantPast) }
+    }
+
+    func refreshSpace(_ id: String) { send(.spaceRefresh(SpaceRefresh(id: id))) }
+    func renameSpace(_ id: String, to title: String) { send(.spaceRename(SpaceRename(id: id, title: title))) }
+    func removeSpace(_ id: String) { send(.spaceRemove(SpaceRemove(id: id))) }
 
     // MARK: - hello and reattach
 
@@ -507,6 +565,14 @@ final class AppModel: ObservableObject {
                 }
                 send(frame)
             }
+            sendViewerSettings()
+
+        case .viewerAct(let act):
+            viewerActHandler?(act)
+
+        case .spacesList(let list):
+            spaces = list.spaces
+            if let openSpace, !list.spaces.contains(where: { $0.id == openSpace }) { self.openSpace = nil }
 
         case .chatList(let list):
             chats = list.chats
@@ -1010,7 +1076,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList:
             break
         }
     }
