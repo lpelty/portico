@@ -520,6 +520,11 @@ class ChatCallbacks:
     def viewer_chat(self) -> int:
         return self.chat.number
 
+    @property
+    def viewer_roots(self) -> list[Path]:
+        """The deployment's roots, where a file may be shown from beside the chat's folder."""
+        return [Path(root.path) for root in self.server.config.roots]
+
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
 

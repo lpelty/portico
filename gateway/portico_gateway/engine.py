@@ -110,15 +110,22 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 # Tools that only read (or keep the engine's own notes): auto mode never has
 # anything to decide for them, so their rows carry no permission outcome.
-READ_ONLY_TOOLS: frozenset[str] = frozenset(
+_READ_ONLY_ENGINE_TOOLS: frozenset[str] = frozenset(
     {
         "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "TodoRead", "ToolSearch",
         "Task", "Agent", "TaskOutput", "BashOutput", "Skill", "AskUserQuestion",
         "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool", "ReadMcpResourceTool",
-        SHOW_TOOL_NAME,
-        *VIEWER_TOOL_NAMES,
     }
 )
+
+# Portico's own tools, allowed outright with no permission card in any mode:
+# ``show_in_viewer`` only shows a file; the viewer tools include ones that act
+# (click, type) but the person watches each action and has Stop. Not read-only,
+# yet auto mode has nothing to decide for them either.
+ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset({SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES})
+
+# What the permission row treats as "nothing to decide" (see server.py).
+READ_ONLY_TOOLS: frozenset[str] = _READ_ONLY_ENGINE_TOOLS | ALLOWED_OUTRIGHT_TOOLS
 
 # What the engine's tool result says when auto mode's classifier refused a
 # step ("Permission for this action was denied by the Claude Code auto mode
@@ -570,6 +577,47 @@ def build_open_hook(callbacks: EngineCallbacks):
     return open_hook
 
 
+def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
+    """The ``PostToolUse`` hook on ``Write|Edit|MultiEdit`` (v0.12): look at the HTML you just made.
+
+    After a write to an ``.html``/``.htm`` file inside the chat's folder or a
+    root, ``additionalContext`` tells the agent to show it and look at it.
+    Both ``bridge.can_see`` and ``bridge.check_html`` are read on every call,
+    so a change in Settings applies within the session.
+    """
+    allowed = [Path(p).expanduser() for p in (folder, *roots)]
+
+    async def check_html_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        if not (bridge.can_see and bridge.check_html):
+            return {}
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        raw = tool_input.get("file_path") if isinstance(tool_input, Mapping) else None
+        if not isinstance(raw, str) or Path(raw).suffix.lower() not in (".html", ".htm"):
+            return {}
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            cwd = input.get("cwd") if isinstance(input, Mapping) else None
+            path = (Path(cwd) if isinstance(cwd, str) and cwd else folder) / path
+        try:
+            path = path.resolve()
+            inside = any(path.is_relative_to(a.resolve()) for a in allowed)
+        except (OSError, RuntimeError):
+            return {}
+        if not inside:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": (
+                    f"Before you reply, show {path} in the viewer and look at it with viewer_look; "
+                    "tell the person what you saw and fix what's broken."
+                ),
+            }
+        }
+
+    return check_html_hook
+
+
 # The show tool is allowed outright on purpose (it only shows a file), so the
 # SDK's advisory that ``can_use_tool`` will not see it is expected.
 # The v0.12 viewer tools are allowed outright the same way (the person watches
@@ -607,6 +655,7 @@ def build_options(
     drives this chat (v0.11).
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
+    post_tool_use: list[Any] = []
     extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
     if callable(getattr(callbacks, "on_show", None)):
         pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
@@ -617,6 +666,10 @@ def build_options(
             # v0.12: the agent sees and uses the viewer; the tools answer "not available" when no app can.
             tools += build_viewer_tools(bridge, callbacks.viewer_chat)  # type: ignore[attr-defined]
             allowed += VIEWER_TOOL_NAMES
+            roots = list(getattr(callbacks, "viewer_roots", []))
+            post_tool_use.append(
+                HookMatcher(matcher="Write|Edit|MultiEdit", hooks=[build_check_html_hook(bridge, folder, roots)])
+            )
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
             "allowed_tools": allowed,
@@ -633,6 +686,7 @@ def build_options(
         hooks={
             "PreToolUse": pre_tool_use,
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
+            **({"PostToolUse": post_tool_use} if post_tool_use else {}),
         },
         **extra,
     )

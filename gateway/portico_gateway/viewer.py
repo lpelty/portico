@@ -11,6 +11,7 @@ answer, the app leaving) the agent gets a plain sentence, never a hang.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from typing import Any
 from claude_agent_sdk import SdkMcpTool, tool
 
 from .messages import ViewerAct, ViewerResult
+
+log = logging.getLogger(__name__)
 
 VIEWER_CAPABILITY = "viewer.v1"
 ACT_TIMEOUT = 10.0
@@ -108,13 +111,19 @@ class ViewerBridge:
         act_id = uuid.uuid4().hex
         future: asyncio.Future[ViewerResult | None] = asyncio.get_running_loop().create_future()
         self._pending[act_id] = _Pending(conn, future)
+        async def round_trip() -> ViewerResult | None:
+            try:
+                await self._send(conn, ViewerAct(ts=_now(), id=act_id, chat=chat, action=action, args=args))  # type: ignore[arg-type]
+            except Exception:
+                log.warning("sending viewer.act (%s) failed", action, exc_info=True)
+                return None
+            return await future
+
         try:
-            await self._send(conn, ViewerAct(ts=_now(), id=act_id, chat=chat, action=action, args=args))  # type: ignore[arg-type]
-            result = await asyncio.wait_for(future, timeout)
+            # One budget for the send and the wait together: a stalled send still answers in time.
+            result = await asyncio.wait_for(round_trip(), timeout)
         except asyncio.TimeoutError:
             return _error(NO_ANSWER)
-        except Exception:
-            return _error(NOT_AVAILABLE)
         finally:
             self._pending.pop(act_id, None)
         if result is None:

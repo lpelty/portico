@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from portico_gateway.engine import SHOW_SERVER, SHOW_TOOL_NAME, build_options
+from portico_gateway.engine import SHOW_SERVER, SHOW_TOOL_NAME, build_check_html_hook, build_options
 from portico_gateway.messages import (
     HelloClient,
     HelloServer,
@@ -339,3 +339,107 @@ async def test_server_second_app_takes_over_pending_stays_with_first(server: Any
     await second.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="back")))
     assert (await asyncio.wait_for(task2, 2))["content"][0]["text"] == "back"
     await second.close()
+
+
+# --- G2 review fixes ------------------------------------------------------------------
+
+
+async def test_stalled_send_is_bounded_by_the_same_timeout() -> None:
+    async def send(conn: Any, act: ViewerAct) -> None:
+        await asyncio.sleep(30)  # the socket write never completes
+
+    bridge = ViewerBridge(send)
+    bridge.set_target(object(), True, True)
+    out = await asyncio.wait_for(bridge.act(1, "look", {}, timeout=0.05), 2)
+    assert out == {"content": [{"type": "text", "text": NO_ANSWER}], "is_error": True}
+    assert bridge._pending == {}
+
+
+async def test_failed_send_is_logged_then_not_available(caplog: pytest.LogCaptureFixture) -> None:
+    async def send(conn: Any, act: ViewerAct) -> None:
+        raise ConnectionError("closed")
+
+    bridge = ViewerBridge(send)
+    bridge.set_target(object(), True, True)
+    with caplog.at_level("WARNING"):
+        out = await bridge.act(1, "look", {})
+    assert out["is_error"] is True and out["content"][0]["text"] == NOT_AVAILABLE
+    assert any(r.levelname == "WARNING" and "viewer.act" in r.getMessage() for r in caplog.records)
+
+
+# --- the check-HTML hook (v0.12 section 3.3) -------------------------------------------
+
+CHECK_SENTENCE = (
+    "Before you reply, show {file} in the viewer and look at it with viewer_look; "
+    "tell the person what you saw and fix what's broken."
+)
+
+
+def write_input(path: Path, tool: str = "Write") -> dict[str, Any]:
+    return {"hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": {"file_path": str(path)}, "cwd": str(path.parent)}
+
+
+def context_of(out: dict[str, Any]) -> str | None:
+    return out.get("hookSpecificOutput", {}).get("additionalContext")
+
+
+async def test_html_write_in_folder_adds_context(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    page = tmp_path / "index.html"
+    for tool in ("Write", "Edit", "MultiEdit"):
+        out = await hook(write_input(page, tool), "t1", None)
+        assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert context_of(out) == CHECK_SENTENCE.format(file=page.resolve())
+    htm = await hook(write_input(tmp_path / "old.HTM"), "t2", None)
+    assert context_of(htm) is not None
+
+
+async def test_html_in_a_root_adds_context(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    folder, root = tmp_path / "chat", tmp_path / "root"
+    folder.mkdir(), root.mkdir()
+    hook = build_check_html_hook(bridge, folder, [root])
+    assert context_of(await hook(write_input(root / "a.html"), "t", None)) is not None
+
+
+async def test_md_write_no_context(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    assert await hook(write_input(tmp_path / "notes.md"), "t", None) == {}
+
+
+async def test_html_outside_roots_no_context(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    folder, other = tmp_path / "chat", tmp_path / "elsewhere"
+    folder.mkdir(), other.mkdir()
+    hook = build_check_html_hook(bridge, folder, [])
+    assert await hook(write_input(other / "a.html"), "t", None) == {}
+    assert await hook({"tool_name": "Write", "tool_input": {}}, "t", None) == {}
+
+
+async def test_setting_read_live(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    page = write_input(tmp_path / "a.html")
+    assert context_of(await hook(page, "t", None)) is not None
+    bridge.settings = (True, False)
+    assert await hook(page, "t", None) == {}
+    bridge.settings = (True, True)
+    assert context_of(await hook(page, "t", None)) is not None
+
+
+async def test_check_off_when_can_see_off(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    bridge.settings = (False, True)
+    assert await hook(write_input(tmp_path / "a.html"), "t", None) == {}
+
+
+def test_hook_registered_on_write_edit_multiedit(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    options = build_options(tmp_path, None, ["project"], WithBridge(bridge))
+    matchers = (options.hooks or {})["PostToolUse"]
+    assert [m.matcher for m in matchers] == ["Write|Edit|MultiEdit"]
+    plain = build_options(tmp_path, None, ["project"], RecordingCallbacks())
+    assert "PostToolUse" not in (plain.hooks or {})
