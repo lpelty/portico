@@ -48,6 +48,20 @@ enum SpacesPresentation {
 
     static let newSpacePrefill = "New space: "
 
+    /// A space's own front-matter keys, kept out of the Properties block.
+    static let hiddenFrontMatterKeys: Set<String> = ["title", "icon", "order"]
+
+    /// The notification's body: "Updated — 7:02 AM".
+    static func notificationBody(_ date: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let f = DateFormatter()
+        f.locale = locale
+        f.calendar = calendar
+        f.timeZone = calendar.timeZone
+        f.dateStyle = .none
+        f.timeStyle = .short
+        return "Updated — " + f.string(from: date)
+    }
+
     /// "New space: " before whatever is already typed; a blank draft just gets the prefill.
     static func newSpaceDraft(existing: String) -> String {
         if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return newSpacePrefill }

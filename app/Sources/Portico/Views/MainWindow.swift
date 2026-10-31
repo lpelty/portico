@@ -34,7 +34,7 @@ struct MainWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // The shown chat's viewer: the conversation's, or (Y1) the
                 // live session's beside the welcome that continues it.
-                if let chat = model.shownChat, let viewer = widths.viewer {
+                if let viewer = widths.viewer {
                     ColumnDivider(
                         onDrag: { dx in
                             // In focus the split is fixed; the widths to come back to stay as they were.
@@ -50,7 +50,7 @@ struct MainWindow: View {
                             guard !focused else { return }
                             settings.setViewerWidth(ColumnWidths.viewerDefault(for: viewerFit), for: viewerFit)
                         })
-                    ViewerView(chat: chat)
+                    ViewerColumn(chat: model.shownChat)
                         .frame(width: viewer)
                         // v0.11 (67): the panel eases in, fading as it slides,
                         // rather than appearing all at once.
@@ -79,8 +79,7 @@ struct MainWindow: View {
     }
 
     private var viewerShown: Bool {
-        guard !model.documentMode else { return false }
-        return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
+        model.viewerColumnShown
     }
 
     /// The viewer's fit: a space's (700 where the window allows), else the

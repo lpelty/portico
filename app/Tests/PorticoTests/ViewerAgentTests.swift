@@ -100,6 +100,38 @@ final class ViewerAgentTests: XCTestCase {
         try await view.evaluateJavaScript(script)
     }
 
+    // MARK: - a space open
+
+    func test_look_with_a_space_open_sees_the_space() async throws {
+        let dir = try tempDir()
+        let file = dir.appendingPathComponent("brief.md")
+        try "# Morning brief\n\nThree things today.".write(to: file, atomically: true, encoding: .utf8)
+        let (model, _) = model()
+        // The chat has its own file open; the space is the window's.
+        model.show(Artifact(id: "a-1", kind: .file, location: "/tmp/other.md", media: .markdown, title: "other.md", source: .tool, open: true), in: 1)
+        model.apply(.spacesList(SpacesList(spaces: [
+            SpaceInfo(id: "brief", title: "Brief", icon: "doc", order: nil, location: file.path, media: "markdown", updated: "2026-10-31T12:00:00Z")])))
+        model.openSpaceAt(1)
+        let agent = ViewerAgent(model: model)
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let size = NSSize(width: 800, height: 600)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(origin: .zero, size: size)
+        window.contentView = view
+        keepAlive = [view, coordinator, agent, model, window]
+        // The pane loads what the viewer would draw for the open space.
+        let load = try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact))))
+        coordinator.apply(load, to: view)
+        let result = await agent.perform(act(.look))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertTrue(result.text.contains("Morning brief"), result.text)
+        XCTAssertTrue(result.text.contains(file.path), "names the space's file, not the chat's: \(result.text)")
+        XCTAssertFalse(result.text.contains("/tmp/other.md"))
+    }
+
     // MARK: - outline
 
     func test_outline_lists_headings_links_buttons_fields_with_refs() async throws {

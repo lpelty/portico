@@ -372,4 +372,105 @@ final class SpacesTests: XCTestCase {
         let narrow = ColumnWidths.fit(sidebar: 260, viewer: 700, window: 1100)
         XCTAssertEqual(narrow.viewer, 700 - (260 + 700 + ColumnWidths.conversationMinimum - 1100))
     }
+
+    // MARK: - fix round 1
+
+    private func history(_ events: [ServerMessage], chat: Int = 1) -> ServerMessage {
+        .chatHistory(ChatHistory(chat: chat, events: events, truncated: false))
+    }
+
+    func test_replay_never_opens_a_space() {
+        let (model, _) = model(spaces: [space("brief")])
+        model.apply(history([.artifactCreated(ArtifactCreated(chat: 1, artifact: fileArtifact("brief.md", space: "brief"), seq: 1))]))
+        XCTAssertNil(model.openSpace, "history replay does not drive the window's space")
+        XCTAssertNil(model.current[1])
+    }
+
+    func test_replayed_auto_open_keeps_the_open_space() {
+        let (model, _) = model(spaces: [space("brief")])
+        model.openSpaceAt(1)
+        model.apply(history([.artifactCreated(ArtifactCreated(chat: 1, artifact: fileArtifact("old.md"), seq: 1))]))
+        XCTAssertEqual(model.openSpace, "brief", "a replayed auto-open does not close the person's space")
+    }
+
+    func test_space_shows_with_no_chat_shown() {
+        let (model, _) = model(spaces: [space("brief")])
+        XCTAssertNil(model.shownChat)
+        XCTAssertFalse(model.viewerColumnShown)
+        model.openSpaceAt(1)
+        XCTAssertTrue(model.viewerColumnShown, "the column is drawn for a space on the welcome screen")
+        model.setViewer(visible: false, for: 1)
+        XCTAssertFalse(model.viewerColumnShown, "collapsible by hand")
+        model.openSpaceAt(0)
+        XCTAssertFalse(model.viewerColumnShown)
+    }
+
+    func test_markdown_properties_hide_the_space_keys_only() throws {
+        let source = "---\ntitle: Brief\nicon: doc.text\norder: 2\nstatus: draft\n---\n# Brief\n"
+        let hidden = try MarkdownPage.html(source: source, title: "brief.md", hiding: SpacesPresentation.hiddenFrontMatterKeys)
+        XCTAssertFalse(hidden.contains("<span class=\"fm-key\">title</span>"))
+        XCTAssertFalse(hidden.contains("<span class=\"fm-key\">icon</span>"))
+        XCTAssertFalse(hidden.contains("<span class=\"fm-key\">order</span>"))
+        XCTAssertTrue(hidden.contains("<span class=\"fm-key\">status</span>"), "other keys still show")
+
+        let onlyOwn = try MarkdownPage.html(source: "---\ntitle: Brief\nicon: doc.text\n---\n# Brief\n", title: "b.md", hiding: SpacesPresentation.hiddenFrontMatterKeys)
+        XCTAssertFalse(onlyOwn.contains("<details class=\"fm\""), "nothing left: no block at all")
+
+        let plain = try MarkdownPage.html(source: source, title: "brief.md")
+        XCTAssertTrue(plain.contains("<span class=\"fm-key\">title</span>"), "an ordinary note keeps its title")
+
+        // The open space's artifact loads with the hidden keys; a file does not.
+        let spaceFile = ArtifactPresentation(artifact: Artifact(id: "space:brief", kind: .file, location: "/tmp/brief.md", media: .markdown, title: "Brief", source: .text, open: true))
+        XCTAssertEqual(WebPane.Load(spaceFile), .markdown(URL(fileURLWithPath: "/tmp/brief.md"), hiding: SpacesPresentation.hiddenFrontMatterKeys))
+        let ordinary = ArtifactPresentation(artifact: fileArtifact("notes"))
+        XCTAssertEqual(WebPane.Load(ordinary), .markdown(URL(fileURLWithPath: "/tmp/notes.md"), hiding: []))
+    }
+
+    func test_notification_time_is_time_only() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let date = try! Date("2026-10-31T07:02:00Z", strategy: .iso8601)
+        XCTAssertEqual(SpacesPresentation.notificationBody(date, calendar: calendar, locale: Locale(identifier: "en_US")), "Updated — 7:02\u{202F}AM")
+    }
+
+    func test_update_to_the_open_space_while_active_leaves_no_dot() {
+        let (model, _) = model()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        model.now = { start }
+        model.isAppActive = { true }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start))])))
+        model.setOpenSpace("a")
+        model.now = { start.addingTimeInterval(100) }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(90)))])))
+        XCTAssertFalse(model.hasNew("a"), "being looked at")
+        // Another space, or the app in the background, still shows it.
+        model.now = { start.addingTimeInterval(80) }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(90))), space("b", updated: iso(start))])))
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(90))), space("b", updated: iso(start.addingTimeInterval(95)))])))
+        XCTAssertTrue(model.hasNew("b"))
+        model.isAppActive = { false }
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: iso(start.addingTimeInterval(99))), space("b", updated: iso(start.addingTimeInterval(95)))])))
+        XCTAssertTrue(model.hasNew("a"), "inactive: not being looked at")
+    }
+
+    func test_pending_switch_clears_on_a_list_without_it() {
+        let (model, _) = model()
+        model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: fileArtifact("brief.md", space: "brief"))))
+        model.apply(.spacesList(SpacesList(spaces: [space("other")])))
+        XCTAssertNil(model.openSpace)
+        model.apply(.spacesList(SpacesList(spaces: [space("other"), space("brief")])))
+        XCTAssertNil(model.openSpace, "the stale pending switch is gone")
+    }
+
+    func test_file_re_reads_when_updated_advances() {
+        let (model, _) = model(spaces: [space("a", updated: "2026-10-31T12:00:00Z")])
+        model.openSpaceAt(1)
+        let before = model.openSpaceContentKey
+        XCTAssertNotNil(before)
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: "2026-10-31T12:05:00Z")])))
+        XCTAssertNotEqual(model.openSpaceContentKey, before, "a new `updated` reloads the pane")
+        let same = model.openSpaceContentKey
+        model.apply(.spacesList(SpacesList(spaces: [space("a", updated: "2026-10-31T12:05:00Z")])))
+        XCTAssertEqual(model.openSpaceContentKey, same, "an unchanged list does not")
+    }
 }

@@ -254,6 +254,12 @@ struct FrontMatter: Equatable, Sendable {
         return key
     }
 
+    /// Without the properties named in `keys` (case-insensitive).
+    func hiding(_ keys: Set<String>) -> FrontMatter {
+        guard !keys.isEmpty else { return self }
+        return FrontMatter(properties: properties.filter { !keys.contains($0.key.lowercased()) })
+    }
+
     // MARK: the block's HTML
 
     /// The Properties block for the viewer page: a `<details>`, open, whose

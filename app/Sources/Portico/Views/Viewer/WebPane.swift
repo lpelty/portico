@@ -23,14 +23,15 @@ enum MarkdownPage {
     /// The page for `source`, titled `title`. Front matter at the top is
     /// taken out and drawn as the Properties block (v0.11, item 68); only
     /// the body reaches the renderer.
-    static func html(source: String, title: String) throws -> String {
+    static func html(source: String, title: String, hiding: Set<String> = []) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
         let split = FrontMatter.split(source)
         // The block goes in first, its braces as entities, so a value that
         // reads `{{SOURCE}}` is not taken for the next placeholder.
-        let properties = (split.frontMatter?.html() ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        let shownProperties = split.frontMatter?.hiding(hiding)
+        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html() : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
@@ -176,7 +177,7 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
 /// same handler) and a URL (a local dev server, usually).
 struct WebPane: NSViewRepresentable {
     enum Load: Equatable {
-        case markdown(URL)
+        case markdown(URL, hiding: Set<String> = [])
         case html(URL)
         case url(URL)
 
@@ -184,7 +185,7 @@ struct WebPane: NSViewRepresentable {
         /// Markdown, HTML and URLs; `nil` for the other kinds.
         init?(_ shown: ArtifactPresentation) {
             switch shown.media {
-            case .markdown: guard let file = shown.fileURL else { return nil }; self = .markdown(file)
+            case .markdown: guard let file = shown.fileURL else { return nil }; self = .markdown(file, hiding: shown.hiddenFrontMatterKeys)
             case .html: guard let file = shown.fileURL else { return nil }; self = .html(file)
             case .url: guard let url = shown.externalURL else { return nil }; self = .url(url)
             default: return nil
@@ -281,10 +282,10 @@ struct WebPane: NSViewRepresentable {
                 renderedURL = nil
             }
             switch load {
-            case .markdown(let file):
+            case .markdown(let file, let hiding):
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent)
+                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
                     let url = handler.register(page: page, root: file.deletingLastPathComponent())
                     renderedURL = url
                     view.load(URLRequest(url: url))

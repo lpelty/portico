@@ -362,6 +362,9 @@ final class AppModel: ObservableObject {
     /// A replay from the beginning is being applied: an artifact it shows
     /// again is not newer than what was remembered (`show`).
     private var replayingFromBeginning = false
+    /// A `chat.history` is being applied (from the beginning or a catch-up):
+    /// what it replays never moves the window's open space.
+    private var replayingHistory = false
     /// The `files.list` requests in flight, by request id: the directory
     /// each asked for, so an expand asks once and the reply (or the error)
     /// lands on the directory as requested, whatever path the gateway
@@ -498,13 +501,28 @@ final class AppModel: ObservableObject {
             id: Self.spaceArtifactPrefix + id, kind: .file, location: space.location, media: media,
             title: space.title, source: .text, open: true)
     }
-    static let spaceArtifactPrefix = "space:"
+    nonisolated static let spaceArtifactPrefix = "space:"
 
     /// What the viewer draws for `chat`: the open space (it belongs to the
     /// window, not a chat), else the chat's own current artifact.
     func shownArtifact(for chat: Int) -> Artifact? { openSpaceArtifact ?? current[chat] }
 
     /// The Refresh button: only when the gateway has a refresh command.
+    /// Whether the viewer column is drawn: the shown chat's viewer, or an
+    /// open space (it belongs to the window, so it shows with no chat too).
+    var viewerColumnShown: Bool {
+        guard !documentMode else { return false }
+        if openSpace != nil { return spaceViewerShown }
+        return shownChat.map { isViewerShown(for: $0) } ?? false
+    }
+
+    /// What reloads the open space's pane: the space and the `updated` the
+    /// gateway last reported for it.
+    var openSpaceContentKey: String? {
+        guard let id = openSpace, let space = spaces.first(where: { $0.id == id }) else { return nil }
+        return "\(id)|\(space.updated)"
+    }
+
     var spacesCanRefresh: Bool { hello?.capabilities.contains(SpacesList.refreshCapability) == true }
 
     /// Apply a new `spaces.list`: stamp spaces seen for the first time,
@@ -515,20 +533,25 @@ final class AppModel: ObservableObject {
         for space in list where settings.spacesFirstSeen[space.id] == nil {
             settings.spacesFirstSeen[space.id] = now()
         }
-        if let pending = pendingOpenSpace, list.contains(where: { $0.id == pending }) { setOpenSpace(pending) }
+        if let pending = pendingOpenSpace {
+            // The switch waits for its row once; a list without it drops it.
+            if list.contains(where: { $0.id == pending }) { setOpenSpace(pending) } else { pendingOpenSpace = nil }
+        }
         if let openSpace, !list.contains(where: { $0.id == openSpace }) { self.openSpace = nil }
+        // The person is looking at it: what changed is not new to them.
+        if let openSpace, isAppActive(), let updated = list.first(where: { $0.id == openSpace })?.updatedDate {
+            settings.spacesLastOpened[openSpace] = max(now(), updated)
+        }
         guard settings.spacesNotify, let notifier = spaceNotifier, !isAppActive() else { return }
         for space in list {
             guard let known = before[space.id], let was = known, let updated = space.updatedDate, updated > was else { continue }
-            let stamp = SpacesPresentation.updatedText(updated, now: now())
-            let time = stamp.dropFirst("Updated".count).trimmingCharacters(in: .whitespaces)
-            notifier.post(space: space.id, title: space.title, body: "Updated — \(time)")
+            notifier.post(space: space.id, title: space.title, body: SpacesPresentation.notificationBody(updated))
         }
     }
 
     /// A pick of an ordinary file takes the viewer back to Work.
     private func leaveSpaceForFile() {
-        if openSpace != nil { setOpenSpace(nil) }
+        if openSpace != nil, !replayingHistory { setOpenSpace(nil) }
     }
 
     /// ⌘0 is Work; ⌘1–⌘9 the nth space in the switcher's order. A number
@@ -951,7 +974,11 @@ final class AppModel: ObservableObject {
             pendingSends[chat] = nil
         }
         replayingFromBeginning = fromBeginning
-        defer { replayingFromBeginning = false }
+        replayingHistory = true
+        defer {
+            replayingFromBeginning = false
+            replayingHistory = false
+        }
         for event in history.events {
             if let seq = event.envelope.seq, let seen = lastSeq[chat], seq <= seen { continue }
             applyEvent(event, to: chat)
@@ -1105,8 +1132,9 @@ final class AppModel: ObservableObject {
         case .artifactCreated(let created):
             let artifact = created.artifact
             if let space = artifact.space {
-                // Talking about a space switches to it; it is never opened as a file.
-                if artifact.open {
+                // Talking about a space switches to it; it is never opened as a
+                // file. A replay of the chat's past does not.
+                if artifact.open, !replayingHistory {
                     if spaces.contains(where: { $0.id == space }) { setOpenSpace(space) } else { pendingOpenSpace = space }
                 }
                 break
