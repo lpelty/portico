@@ -5,6 +5,35 @@ import SwiftUI
 /// Appearance, Gateway (address and token overrides, Start / Stop, Doctor,
 /// and what quitting does, v0.9 decision 7).
 /// Brand, actions and roots are the gateway's, not here.
+/// One fixed window, the same on every tab (v0.12 spec section 6).
+enum SettingsWindow {
+    static let width: CGFloat = 700
+    static let height: CGFloat = 800
+}
+
+/// What Settings → General shows and says (v0.12 spec sections 3.5, 4.5, 6).
+enum GeneralSettingsPresentation {
+    static let canSeeNote = "The agent can look at, scroll and click what's open in the viewer, when asked or when it helps. You see every action as it happens."
+    static let checksHTMLNote = "After creating or changing an HTML page, the agent opens it in the viewer and looks before replying. Uses more tokens."
+    static let spacesNote = "A dot on the switcher, and a macOS notification while Portico is in the background."
+
+    /// Spaces appears only on a gateway with `spaces.v1`. There is no
+    /// Sessions section: Clear earlier sessions is an admin command.
+    static func sectionTitles(capabilities: [String]) -> [String] {
+        ["Folder", "Viewer"] + (capabilities.contains("spaces.v1") ? ["Spaces"] : [])
+    }
+
+    /// "Agent checks HTML it creates" is disabled while the agent cannot see.
+    static func checksHTMLEnabled(canSee: Bool) -> Bool { canSee }
+
+    /// The switch reads off while the agent cannot see, whatever was chosen.
+    static func checksHTMLShownOn(canSee: Bool, _ chosen: Bool) -> Bool { canSee && chosen }
+}
+
+enum GatewayConnectionPresentation {
+    static let caption = "Leave these empty: the app finds the gateway and reads its token itself. A change is used the next time it connects."
+}
+
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -17,7 +46,7 @@ struct SettingsView: View {
             AppearanceSettingsTab()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
-        .frame(width: 520)
+        .frame(width: SettingsWindow.width, height: SettingsWindow.height)
         .padding(20)
     }
 }
@@ -33,7 +62,7 @@ struct AutoOpenKindPresentation: Equatable, Sendable, Identifiable {
         .init(kind: "markdown", label: "Markdown"),
         .init(kind: "image", label: "Images"),
         .init(kind: "html", label: "HTML pages"),
-        .init(kind: "pdf", label: "PDF documents"),
+        .init(kind: "pdf", label: "PDFs"),
         .init(kind: "url", label: "Web addresses"),
     ]
 }
@@ -41,10 +70,8 @@ struct AutoOpenKindPresentation: Equatable, Sendable, Identifiable {
 struct GeneralSettingsTab: View {
     @EnvironmentObject private var settings: Settings
     @EnvironmentObject private var model: AppModel
-    /// Clear earlier sessions… asks first (v0.11, item 54).
-    @State private var confirmingClear = false
-
     var body: some View {
+        let titles = GeneralSettingsPresentation.sectionTitles(capabilities: model.hello?.capabilities ?? [])
         Form {
             Section("Folder") {
                 LabeledContent("Works in") {
@@ -58,36 +85,48 @@ struct GeneralSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Artifacts") {
-                Toggle("Open artifacts automatically", isOn: $settings.autoOpen)
-                ForEach(AutoOpenKindPresentation.all) { kind in
-                    Toggle(kind.label, isOn: binding(for: kind.kind))
-                        .disabled(!settings.autoOpen)
-                        .padding(.leading, 20)
+            Section("Viewer") {
+                Toggle("Open files in the viewer automatically", isOn: $settings.autoOpen)
+                Text("When the agent creates or changes a file of these kinds. Anything else is listed in the chat and opens only when clicked.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 16) {
+                    ForEach(AutoOpenKindPresentation.all) { kind in
+                        Toggle(kind.label, isOn: binding(for: kind.kind))
+                            .toggleStyle(.checkbox)
+                    }
                 }
-                Text("Anything else is listed in the chat's history and never opens on its own.")
+                .disabled(!settings.autoOpen)
+                Toggle("Agent can see the viewer", isOn: canSeeBinding)
+                Text(GeneralSettingsPresentation.canSeeNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Agent checks HTML it creates", isOn: checksHTMLBinding)
+                    .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
+                Text(GeneralSettingsPresentation.checksHTMLNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if model.canClearEarlierSessions {
-                Section("Sessions") {
-                    LabeledContent(ClearEarlierSessions.label(count: model.earlierSessions.count)) {
-                        Button("Clear earlier sessions…") { confirmingClear = true }
-                            .disabled(model.earlierSessions.isEmpty)
-                    }
-                    Text(ClearEarlierSessions.note)
+            if titles.contains("Spaces") {
+                Section("Spaces") {
+                    Toggle("Notify when a space is updated", isOn: $settings.spacesNotify)
+                    Text(GeneralSettingsPresentation.spacesNote)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog(ClearEarlierSessions.question, isPresented: $confirmingClear) {
-            Button("Clear", role: .destructive) { model.clearEarlierSessions() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(ClearEarlierSessions.note)
-        }
+    }
+
+    private var canSeeBinding: Binding<Bool> {
+        Binding(get: { model.agentCanSee }, set: { settings.viewerAgentCanSee = $0 })
+    }
+
+    private var checksHTMLBinding: Binding<Bool> {
+        Binding(
+            get: { model.agentChecksHTML },
+            set: { settings.viewerAgentChecksHTML = $0 })
     }
 
     private func chooseFolder() {
@@ -109,21 +148,6 @@ struct GeneralSettingsTab: View {
             set: { on in
                 if on { settings.autoOpenKinds.insert(kind) } else { settings.autoOpenKinds.remove(kind) }
             })
-    }
-}
-
-/// The words of Settings → General's Clear earlier sessions… (v0.11, item 54).
-enum ClearEarlierSessions {
-    static let question = "Clear earlier sessions?"
-    static let note = "Only the list of earlier sessions is cleared. The live session stays, and every session's transcript stays on disk."
-
-    /// `No earlier sessions`, `1 earlier session`, `12 earlier sessions`.
-    static func label(count: Int) -> String {
-        switch count {
-        case 0: "No earlier sessions"
-        case 1: "1 earlier session"
-        default: "\(count) earlier sessions"
-        }
     }
 }
 
@@ -152,15 +176,6 @@ struct GatewaySettingsTab: View {
 
     var body: some View {
         Form {
-            Section("Connection") {
-                TextField("Address", text: optional($settings.gatewayURL), prompt: Text("discovered from the ledger"))
-                    .textFieldStyle(.roundedBorder)
-                TextField("Token file", text: optional($settings.tokenFile), prompt: Text(supervisor.stateDir.appendingPathComponent("token").path))
-                    .textFieldStyle(.roundedBorder)
-                Text("Defaults that never need touching: the app finds the gateway through \(supervisor.ledgerURL.path) and reads its token on every attach. A change is used on the next attach.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             Section("Gateway") {
                 LabeledContent("State", value: model.statusStrip(gateway: supervisor.status).gatewayText)
                 if model.configStale {
@@ -194,19 +209,6 @@ struct GatewaySettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            // Moved here from General with clearer wording (v0.9 decision 7, AE2).
-            Section("When Portico quits") {
-                Picker("When Portico quits", selection: $settings.quitBehaviour) {
-                    ForEach(Settings.QuitBehaviour.allCases, id: \.self) { behaviour in
-                        Text(behaviour.label).tag(behaviour)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                Text(Settings.QuitBehaviour.caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             if !doctorLines.isEmpty {
                 Section("Doctor") {
                     ScrollView {
@@ -221,6 +223,28 @@ struct GatewaySettingsTab: View {
                     }
                     .frame(minHeight: 80, maxHeight: 220)
                 }
+            }
+            // Moved here from General with clearer wording (v0.9 decision 7, AE2).
+            Section("When Portico quits") {
+                Picker("When Portico quits", selection: $settings.quitBehaviour) {
+                    ForEach(Settings.QuitBehaviour.allCases, id: \.self) { behaviour in
+                        Text(behaviour.label).tag(behaviour)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                Text(Settings.QuitBehaviour.caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Connection") {
+                TextField("Address", text: optional($settings.gatewayURL), prompt: Text("discovered from the ledger"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Token file", text: optional($settings.tokenFile), prompt: Text(supervisor.stateDir.appendingPathComponent("token").path))
+                    .textFieldStyle(.roundedBorder)
+                Text(GatewayConnectionPresentation.caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

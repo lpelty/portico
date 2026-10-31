@@ -40,4 +40,59 @@ final class SettingsFooterTests: XCTestCase {
         XCTAssertEqual(Settings.QuitBehaviour.stopEverything.rawValue, "stopEverything")
         XCTAssertEqual(Settings.QuitBehaviour.allCases, [.keepRunning, .stopEverything])
     }
+
+    // MARK: - v0.12 settings window (spec section 6)
+
+    func testWindowIs700By800() {
+        XCTAssertEqual(SettingsWindow.width, 700)
+        XCTAssertEqual(SettingsWindow.height, 800)
+    }
+
+    @MainActor
+    private func model(capabilities: [String]) -> AppModel {
+        let name = "portico.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        let model = AppModel(settings: Settings(defaults: defaults))
+        model.outbound = { _ in }
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.12.0", epoch: "e1",
+            brand: Brand(name: "Portico", agentName: "Acme"), actions: [], roots: [], commands: [],
+            capabilities: capabilities)))
+        return model
+    }
+
+    @MainActor
+    func test_no_clear_sessions_control() {
+        let model = model(capabilities: ["sessions", "sessions.clear", "spaces.v1"])
+        let titles = GeneralSettingsPresentation.sectionTitles(capabilities: model.hello?.capabilities ?? [])
+        XCTAssertFalse(titles.contains("Sessions"))
+        XCTAssertEqual(titles, ["Folder", "Viewer", "Spaces"])
+        XCTAssertFalse(GeneralSettingsPresentation.sectionTitles(capabilities: ["sessions.clear"]).contains("Sessions"))
+    }
+
+    @MainActor
+    func test_check_html_disabled_when_can_see_off() {
+        let model = model(capabilities: [])
+        XCTAssertTrue(GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
+        model.settings.viewerAgentCanSee = false
+        XCTAssertFalse(GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
+        XCTAssertFalse(GeneralSettingsPresentation.checksHTMLShownOn(canSee: model.agentCanSee, model.settings.viewerAgentChecksHTML ?? true))
+        model.settings.viewerAgentCanSee = true
+        XCTAssertTrue(GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
+    }
+
+    func test_spaces_group_only_with_capability() {
+        XCTAssertEqual(GeneralSettingsPresentation.sectionTitles(capabilities: []), ["Folder", "Viewer"])
+        XCTAssertEqual(GeneralSettingsPresentation.sectionTitles(capabilities: ["spaces.v1"]), ["Folder", "Viewer", "Spaces"])
+    }
+
+    func testViewerCopyIsGenericAndExact() {
+        XCTAssertEqual(GeneralSettingsPresentation.canSeeNote,
+            "The agent can look at, scroll and click what's open in the viewer, when asked or when it helps. You see every action as it happens.")
+        XCTAssertEqual(GeneralSettingsPresentation.checksHTMLNote,
+            "After creating or changing an HTML page, the agent opens it in the viewer and looks before replying. Uses more tokens.")
+        XCTAssertEqual(GatewayConnectionPresentation.caption,
+            "Leave these empty: the app finds the gateway and reads its token itself. A change is used the next time it connects.")
+    }
 }
