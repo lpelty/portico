@@ -350,6 +350,76 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertNil(rig.agent.actingChat, "clears after the last action")
     }
 
+    // MARK: - fix round 1
+
+    /// The document view has the window: the act leaves it, the viewer
+    /// slides open, and the look succeeds (spec §3.1).
+    func test_act_in_document_mode_leaves_the_document_view_and_looks() async throws {
+        let rig = try rig("<h1>Shown</h1>")
+        rig.model.openDocumentView()
+        XCTAssertTrue(rig.model.documentMode)
+        let result = await rig.agent.perform(act(.look))
+        XCTAssertFalse(rig.model.documentMode, "the person sees the viewer the agent uses")
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertTrue(rig.model.isViewerShown(for: 1))
+    }
+
+    /// A page whose script never answers can't hang the act or leave the
+    /// label up: one deadline for the whole act.
+    func test_a_stuck_page_answers_within_the_deadline_and_the_label_clears() async throws {
+        let rig = try rig("<button>Go</button>")
+        rig.agent.actWait = .milliseconds(1500)
+        rig.agent.labelLinger = .milliseconds(50)
+        _ = await rig.agent.perform(act(.look))
+        // A page busy in a loop for 4 s (longer than the act's 1.5 s).
+        _ = try await evaluate(
+            "window.__porticoAgent.click = () => { const end = Date.now() + 4000; while (Date.now() < end) {} return {ok: true, label: 'x'} }; true",
+            in: rig.view)
+        let start = ContinuousClock.now
+        let stuck = await rig.agent.perform(act(.click, ["target": .string("Go")]))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(3), "answered at the deadline, not hung")
+        XCTAssertFalse(stuck.ok)
+        XCTAssertEqual(stuck.text, "The viewer didn't answer in 10 s.")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(rig.agent.actingChat)
+    }
+
+    func test_a_pane_that_never_appears_answers_within_the_deadline() async throws {
+        let (model, _) = model()
+        let dir = try tempDir()
+        let file = dir.appendingPathComponent("never.html")
+        try "<h1>x</h1>".write(to: file, atomically: true, encoding: .utf8)
+        model.show(Artifact(id: "a-3", kind: .file, location: file.path, media: .html, title: "never.html", source: .tool, open: true), in: 1)
+        let agent = ViewerAgent(model: model)
+        agent.actWait = .milliseconds(300)
+        let start = ContinuousClock.now
+        let result = await agent.perform(act(.look))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+        XCTAssertEqual(result.text, "The viewer didn't answer in 10 s.")
+    }
+
+    /// A page that replaces `window.__porticoAgent` gets the script back.
+    func test_a_page_that_overwrites_the_agent_object_gets_the_script_again() async throws {
+        let rig = try rig("<button>Save trail</button>")
+        _ = await rig.agent.perform(act(.look))
+        _ = try await evaluate("window.__porticoAgent = {outline: () => 'fake'}; true", in: rig.view)
+        let look = await rig.agent.perform(act(.look))
+        XCTAssertTrue(look.text.contains("button: Save trail"), look.text)
+        let clicked = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(clicked.ok, clicked.text)
+    }
+
+    /// The looked-page token is the chat's: a look in one chat never
+    /// vouches for refs in another.
+    func test_looked_page_is_kept_per_chat() async throws {
+        let rig = try rig("<button>Save trail</button>")
+        _ = await rig.agent.perform(act(.look))
+        XCTAssertNotNil(rig.agent.lookedPages[1])
+        XCTAssertNil(rig.agent.lookedPages[2])
+        let page = try await evaluate("window.__porticoAgent.page", in: rig.view) as? String
+        XCTAssertEqual(rig.agent.lookedPages[1], page)
+    }
+
     // MARK: - wiring
 
     func test_viewer_act_from_the_gateway_is_answered_with_viewer_result() async throws {

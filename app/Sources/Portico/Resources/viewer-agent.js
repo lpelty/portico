@@ -7,7 +7,11 @@
 // numbered it (`page`), so one from another page is never followed.
 (function () {
   "use strict";
-  if (window.__porticoAgent) return;
+  // `MARKER` tells this script's object from a page's own under the name;
+  // keep it equal to `ViewerAgentScript.marker` (ViewerAgent.swift).
+  var MARKER = "viewer-agent-1";
+  var existing = window.__porticoAgent;
+  if (existing && existing.__portico === MARKER) return;
 
   var MAX_ERRORS = 20;
   var ERROR_CHARS = 200;
@@ -17,13 +21,21 @@
 
   // MARK: page errors
 
-  var errors = [];
+  // Kept apart from `window.__porticoAgent`, so the script installed again
+  // (a page replaced that object) keeps what was caught and listens once.
+  var STORE = typeof Symbol === "function" ? Symbol.for("portico.viewer-agent.errors") : "__porticoErrors";
+  var store = window[STORE];
+  var listening = !!store;
+  if (!store) {
+    store = { errors: [] };
+    Object.defineProperty(window, STORE, { value: store });
+  }
 
   function note(text) {
     text = String(text);
     if (text.length > ERROR_CHARS) text = text.slice(0, ERROR_CHARS);
-    errors.push(text);
-    if (errors.length > MAX_ERRORS) errors.shift();
+    store.errors.push(text);
+    if (store.errors.length > MAX_ERRORS) store.errors.shift();
   }
 
   function describe(value) {
@@ -39,17 +51,19 @@
 
   // Bubble phase only: a resource that fails to load fires `error` on its
   // element, which does not bubble, so only script errors reach here.
-  window.addEventListener("error", function (event) {
-    note(event.message || describe(event.error));
-  });
-  window.addEventListener("unhandledrejection", function (event) {
-    note("Unhandled rejection: " + describe(event.reason));
-  });
-  var consoleError = console.error;
-  console.error = function () {
-    note(Array.prototype.map.call(arguments, describe).join(" "));
-    return consoleError.apply(console, arguments);
-  };
+  if (!listening) {
+    window.addEventListener("error", function (event) {
+      note(event.message || describe(event.error));
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      note("Unhandled rejection: " + describe(event.reason));
+    });
+    var consoleError = console.error;
+    console.error = function () {
+      note(Array.prototype.map.call(arguments, describe).join(" "));
+      return consoleError.apply(console, arguments);
+    };
+  }
 
   // MARK: reading the page
 
@@ -186,7 +200,13 @@
 
   // MARK: refs
 
-  var agent = { page: Math.random().toString(36).slice(2), next: 0 };
+  var agent = { __portico: MARKER, page: Math.random().toString(36).slice(2), next: 0 };
+  // Installed again on the same page: carry on numbering from the refs
+  // already written, so a new ref never repeats an old one.
+  Array.prototype.forEach.call(document.querySelectorAll("[data-portico-ref]"), function (el) {
+    var n = parseInt(String(el.getAttribute("data-portico-ref")).slice(1), 10);
+    if (n > agent.next) agent.next = n;
+  });
 
   /// The element a ref names on its page, or the element whose name the
   /// text is (exactly, then partly), or null.
@@ -231,8 +251,8 @@
   };
 
   agent.errors = function () {
-    var out = errors;
-    errors = [];
+    var out = store.errors;
+    store.errors = [];
     return out;
   };
 

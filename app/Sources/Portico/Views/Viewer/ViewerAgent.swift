@@ -41,9 +41,10 @@ final class ViewerAgent: ObservableObject {
     var highlightDuration: Duration = .milliseconds(600)
     /// How long the acting label stays after the last action.
     var labelLinger: Duration = .milliseconds(1500)
-    /// How long to wait for the pane to be there and its page loaded:
-    /// under the gateway's 10 s, so the agent hears why.
-    var paneWait: Duration = .seconds(9)
+    /// The whole act's time, from its arrival: pane, load, script calls,
+    /// highlight and any navigation. Under the gateway's 10 s, so the agent
+    /// hears why rather than the gateway giving up first.
+    var actWait: Duration = .seconds(9)
 
     private struct WebPaneRef {
         weak var view: WKWebView?
@@ -52,10 +53,22 @@ final class ViewerAgent: ObservableObject {
 
     private var web: WebPaneRef?
     private weak var paneView: NSView?
-    /// The page token (`__porticoAgent.page`) of the last look: refs are
-    /// only followed on the page that numbered them.
-    private var lookedPage: String?
+    /// Per chat, the page token (`__porticoAgent.page`) of the last look:
+    /// refs are only followed on the page that numbered them.
+    private(set) var lookedPages: [Int: String] = [:]
     private var actions = 0
+    /// Acts run one at a time; this is the last one queued.
+    private var queue: Task<Void, Never>?
+    /// The act being carried out: its chat and deadline, and whether a
+    /// step ran out of time. Safe as state because acts run one at a time.
+    private var runChat = 0
+    private var deadline = ContinuousClock.now
+    private var expired = false
+
+    private var lookedPage: String? {
+        get { lookedPages[runChat] }
+        set { lookedPages[runChat] = newValue }
+    }
 
     init(model: AppModel?) {
         self.model = model
@@ -83,7 +96,20 @@ final class ViewerAgent: ObservableObject {
 
     // MARK: perform
 
+    /// Carry out `act`, after any act before it, within `actWait` of now.
     func perform(_ act: ViewerAct) async -> ViewerResult {
+        let due = ContinuousClock.now + actWait
+        let previous = queue
+        let task = Task { @MainActor [weak self] () -> ViewerResult in
+            _ = await previous?.value
+            guard let self else { return ViewerResult(id: act.id, ok: false, text: Message.nothingOpen) }
+            return await self.performNow(act, due: due)
+        }
+        queue = Task { _ = await task.value }
+        return await task.value
+    }
+
+    private func performNow(_ act: ViewerAct, due: ContinuousClock.Instant) async -> ViewerResult {
         guard let model else { return fail(act, Message.nothingOpen) }
         guard model.agentCanSee else { return fail(act, Message.settingOff) }
         let chat: Int
@@ -97,7 +123,12 @@ final class ViewerAgent: ObservableObject {
 
         begin(chat)
         defer { end() }
-        // The agent never drives a viewer the person can't see.
+        runChat = chat
+        deadline = due
+        expired = false
+        // The agent never drives a viewer the person can't see: the
+        // document view gives the window back, and a hidden viewer opens.
+        model.closeDocumentView()
         if !model.isViewerShown(for: chat) { model.setViewer(visible: true, for: chat) }
 
         let shown = ArtifactPresentation(artifact: artifact)
@@ -137,9 +168,14 @@ final class ViewerAgent: ObservableObject {
     // MARK: web pages
 
     private func performWeb(_ act: ViewerAct, shown: ArtifactPresentation, load: WebPane.Load) async -> ViewerResult {
-        let deadline = ContinuousClock.now + paneWait
-        guard let view = await webView(showing: load, until: deadline) else { return fail(act, Message.timedOut) }
-        await settle(view, until: deadline)
+        let result = await performWebSteps(act, shown: shown, load: load)
+        // A step that ran out of time makes any answer it led to unreliable.
+        return expired || ContinuousClock.now >= deadline ? fail(act, Message.timedOut) : result
+    }
+
+    private func performWebSteps(_ act: ViewerAct, shown: ArtifactPresentation, load: WebPane.Load) async -> ViewerResult {
+        guard let view = await webView(showing: load) else { return fail(act, Message.timedOut) }
+        await settle(view)
         await ensureScript(in: view)
         let target = act.args["target"]?.stringValue ?? ""
         switch act.action {
@@ -160,7 +196,7 @@ final class ViewerAgent: ObservableObject {
             guard view.canGoBack else { return fail(act, "There's nothing to go back to in the viewer.") }
             view.goBack()
             try? await Task.sleep(for: .milliseconds(100))
-            await settle(view, until: ContinuousClock.now + paneWait)
+            await settle(view)
             return ViewerResult(id: act.id, ok: true, text: "Went back. Now showing \(await location(of: view, shown: shown)).")
         }
     }
@@ -246,7 +282,7 @@ final class ViewerAgent: ObservableObject {
         ring.layer?.borderWidth = 2
         ring.layer?.cornerRadius = 4
         view.addSubview(ring)
-        try? await Task.sleep(for: highlightDuration)
+        try? await Task.sleep(until: min(ContinuousClock.now + highlightDuration, deadline))
         ring.removeFromSuperview()
         return true
     }
@@ -254,7 +290,7 @@ final class ViewerAgent: ObservableObject {
     /// " Now showing <title> — <location>." when the action navigated.
     private func navigated(_ view: WKWebView, from before: URL?) async -> String {
         try? await Task.sleep(for: .milliseconds(150))
-        await settle(view, until: ContinuousClock.now + .seconds(5))
+        await settle(view)
         guard view.url != before else { return "" }
         return " Now showing \(await location(of: view, shown: nil))."
     }
@@ -275,7 +311,7 @@ final class ViewerAgent: ObservableObject {
 
     // MARK: web helpers
 
-    private func webView(showing load: WebPane.Load, until deadline: ContinuousClock.Instant) async -> WKWebView? {
+    private func webView(showing load: WebPane.Load) async -> WKWebView? {
         while true {
             if let web, web.load == load, let view = web.view { return view }
             if ContinuousClock.now >= deadline { return nil }
@@ -284,7 +320,7 @@ final class ViewerAgent: ObservableObject {
     }
 
     /// Wait until the page has loaded (or the deadline).
-    private func settle(_ view: WKWebView, until deadline: ContinuousClock.Instant) async {
+    private func settle(_ view: WKWebView) async {
         while ContinuousClock.now < deadline {
             if !view.isLoading,
                 await call("return document.readyState", in: view) as? String == "complete"
@@ -296,17 +332,46 @@ final class ViewerAgent: ObservableObject {
     }
 
     /// The script is installed at document start; a page loaded before
-    /// that (or by a view made without it) gets it now.
+    /// that, made by a view without it, or that replaced
+    /// `window.__porticoAgent` with its own (no marker) gets it now.
     private func ensureScript(in view: WKWebView) async {
-        if await call("return typeof window.__porticoAgent === 'object'", in: view) as? Bool == true { return }
+        let marker = ViewerAgentScript.marker
+        if await call("var a = window.__porticoAgent; return !!a && a.__portico === marker", ["marker": marker], in: view)
+            as? Bool == true
+        {
+            return
+        }
         guard let source = ViewerAgentScript.source else { return }
-        _ = try? await view.evaluateJavaScript(source + "\n;true")
+        _ = await call("delete window.__porticoAgent; (0, eval)(source); return true", ["source": source], in: view)
     }
 
+    /// Run `body` in the page, or `nil` when it fails or the act's
+    /// deadline comes first (a page stuck in a loop or a promise that
+    /// never settles). The page world, not an isolated one: the script
+    /// must see the page's own `console.error` and the elements its
+    /// scripts listen on, as the page sees them.
     private func call(_ body: String, _ arguments: [String: Any] = [:], in view: WKWebView) async -> Any? {
-        do {
-            return try await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page)
-        } catch {
+        guard ContinuousClock.now < deadline else {
+            expired = true
+            return nil
+        }
+        let race = JavaScriptRace()
+        let due = deadline
+        let answer = await withCheckedContinuation { (continuation: CheckedContinuation<JavaScriptRace.Answer, Never>) in
+            race.continuation = continuation
+            Task { @MainActor in
+                let value = try? await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page)
+                race.finish(.value(JavaScriptRace.Box(value: value)))
+            }
+            Task { @MainActor in
+                try? await Task.sleep(until: due)
+                race.finish(.timedOut)
+            }
+        }
+        switch answer {
+        case .value(let box): return box.value
+        case .timedOut:
+            expired = true
             return nil
         }
     }
@@ -359,9 +424,31 @@ final class ViewerAgent: ObservableObject {
     }
 }
 
+/// The first of a script's answer and the act's deadline.
+@MainActor
+private final class JavaScriptRace {
+    /// What the page answered (a plist-like value, used on the main actor only).
+    struct Box: @unchecked Sendable { let value: Any? }
+    enum Answer: Sendable {
+        case value(Box)
+        case timedOut
+    }
+
+    var continuation: CheckedContinuation<Answer, Never>?
+
+    func finish(_ answer: Answer) {
+        continuation?.resume(returning: answer)
+        continuation = nil
+    }
+}
+
 // MARK: - The script
 
 enum ViewerAgentScript {
+    /// `window.__porticoAgent.__portico`: what tells the app's script from
+    /// a page's own object under that name.
+    static let marker = "viewer-agent-1"
+
     /// `Resources/viewer-agent.js`, read once.
     static let source: String? = AppResources.url(forResource: "viewer-agent", withExtension: "js")
         .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
