@@ -55,9 +55,9 @@ final class SpacesTests: XCTestCase {
         XCTAssertEqual(
             ToolbarLayout.items(showSwitcher: true, showViewerToggle: true),
             [.sidebarToggle, .brand, .switcher, .spacer, .viewerToggle])
-        XCTAssertEqual(ToolbarLayout.brandToSwitcherGap, 6)
+        XCTAssertEqual(ToolbarLayout.brandToSwitcherGap, 26)
         // The real toolbar is drawn from these items and these gaps.
-        XCTAssertEqual(ToolbarLayout.gap(after: .brand, next: .switcher), 6)
+        XCTAssertEqual(ToolbarLayout.gap(after: .brand, next: .switcher), 26)
         XCTAssertEqual(ToolbarLayout.gap(after: .sidebarToggle, next: .brand), 12)
         XCTAssertEqual(ToolbarLayout.gap(after: .brand, next: .spacer), 12)
         XCTAssertEqual(ToolbarLayout.gap(after: .spacer, next: .viewerToggle), 0)

@@ -1858,6 +1858,9 @@ final class AppModel: ObservableObject {
     /// Interrupt the running turn; the gateway answers with
     /// `turn.finished outcome=stopped` (nothing, when nothing is running).
     func stopTurn(chat: Int) {
+        // The page's glow goes at once (v0.13 decision 2): Stop is the
+        // composer's now, not the viewer header's.
+        if viewerAgent.actingChat == chat { viewerAgent.stopActing() }
         send(.turnStop(TurnStop(chat: chat, id: Self.requestId())))
     }
 

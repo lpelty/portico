@@ -434,9 +434,23 @@ final class ViewerAgentTests: XCTestCase {
         let rig = try rig("<button>Go</button>")
         rig.agent.labelLinger = .milliseconds(150)
         _ = await rig.agent.perform(act(.look))
-        XCTAssertEqual(rig.agent.actingChat, 1, "the header says the agent is using the viewer")
+        XCTAssertEqual(rig.agent.actingChat, 1, "the page glows while the agent acts")
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertNil(rig.agent.actingChat, "clears after the last action")
+    }
+
+    /// v0.13 decision 2: the composer's Stop (or Esc) takes the glow away at
+    /// once, not after the linger.
+    func test_stop_clears_the_glow_at_once() async throws {
+        let rig = try rig("<button>Go</button>")
+        let agent = rig.model.viewerAgent
+        agent.labelLinger = .seconds(30)
+        let running = Task { await agent.perform(act(.look)) }
+        for _ in 0..<100 where agent.actingChat == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(agent.actingChat, 1, "the page glows while the agent acts")
+        rig.model.stopTurn(chat: 1)
+        XCTAssertNil(agent.actingChat, "Stop takes the glow away at once")
+        running.cancel()
     }
 
     // MARK: - fix round 1
@@ -677,12 +691,25 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(try Self.middleColour(after), "blue", "the look sees where the person scrolled")
     }
 
+    /// v0.13 decision 4: a page that sets no background is white, as in a
+    /// browser; one that sets its own keeps it.
+    func test_a_page_with_no_background_shows_white() async throws {
+        let plain = try rig("<p>Join the beta</p>")
+        let plainLook = await plain.agent.perform(act(.look))
+        XCTAssertEqual(try Self.middleColour(plainLook), "white")
+        let dark = try rig("<style>html,body{background:#111;margin:0;height:100%}</style><p>Join the beta</p>")
+        let darkLook = await dark.agent.perform(act(.look))
+        XCTAssertEqual(try Self.middleColour(darkLook), "dark")
+    }
+
     private static func middleColour(_ result: ViewerResult) throws -> String {
         let data = try XCTUnwrap(result.image.flatMap { Data(base64Encoded: $0.data) }, result.text)
         let rep = try XCTUnwrap(NSBitmapImageRep(data: data))
         let colour = try XCTUnwrap(rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.usingColorSpace(.sRGB))
         if colour.redComponent > 0.8, colour.blueComponent < 0.3 { return "red" }
         if colour.blueComponent > 0.8, colour.redComponent < 0.3 { return "blue" }
+        if colour.redComponent > 0.95, colour.greenComponent > 0.95, colour.blueComponent > 0.95 { return "white" }
+        if colour.redComponent < 0.2, colour.greenComponent < 0.2, colour.blueComponent < 0.2 { return "dark" }
         return "\(colour)"
     }
 

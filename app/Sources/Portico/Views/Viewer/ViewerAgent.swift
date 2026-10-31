@@ -39,7 +39,7 @@ final class ViewerAgent: ObservableObject {
 
     weak var model: AppModel?
 
-    /// The chat whose viewer header says "Agent is using the viewer";
+    /// The chat whose page glows while the agent acts (v0.13);
     /// `nil` once `labelLinger` has passed since the last action.
     @Published private(set) var actingChat: Int?
 
@@ -771,42 +771,42 @@ struct ViewerPaneAnchor: NSViewRepresentable {
 
 }
 
-/// "Agent is using the viewer" and Stop, in the viewer header while the
-/// agent acts (spec §3.1). Stop interrupts the turn, as the composer's does.
-struct ViewerActingLabel: View {
+/// While the agent acts, a 2 pt accent line and a soft inner glow around
+/// the page (v0.13 decision 2, Pen AL1), in place of v0.12's header label.
+/// It pulses gently, holds steady under Reduce Motion, and goes with the
+/// label's timing: `labelLinger` after the last action, at once on Stop.
+struct ViewerActingGlow: View {
     @ObservedObject var agent: ViewerAgent
     let chat: Int
     let accent: Color
-    let onStop: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dim = false
+
+    static let label = "Agent is using the viewer"
+    /// One breath, in and out.
+    static let period: Double = 1.6
+    static let dimOpacity: Double = 0.55
 
     var body: some View {
         if agent.actingChat == chat {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(accent)
-                    .frame(width: 6, height: 6)
-                Text("Agent is using the viewer")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                Button {
-                    agent.stopActing()
-                    onStop()
-                } label: {
-                    Text("Stop")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                        .padding(.vertical, 3)
-                        .padding(.horizontal, 9)
-                        .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.hover)
-                .help("Stop the agent")
+            ZStack {
+                Rectangle()
+                    .strokeBorder(accent.opacity(0.45), lineWidth: 10)
+                    .blur(radius: 8)
+                Rectangle()
+                    .strokeBorder(accent, lineWidth: 2)
             }
-            .fixedSize()
+            .clipped()
+            .opacity(reduceMotion ? 1 : (dim ? Self.dimOpacity : 1))
+            .allowsHitTesting(false)
             .transition(.opacity)
+            .accessibilityElement()
+            .accessibilityLabel(Self.label)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: Self.period / 2).repeatForever(autoreverses: true)) { dim = true }
+            }
+            .onDisappear { dim = false }
         }
     }
 }

@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.13.0 (2026-10-31)
+
+### What a person gets (app)
+
+- **A quieter sign that the agent is using the viewer.** While it looks,
+  clicks or types, a thin accent line and a soft glow sit around the page
+  and pulse gently (steady with Reduce Motion). The header no longer says
+  "Agent is using the viewer" or carries its own Stop; the message box's
+  Stop stops the agent, as before, and the glow goes at once.
+- **Tool rows close up.** Steps that follow each other sit together as one
+  block; the space around the block is unchanged.
+- **The agent's viewer steps fold into one row.** Two or more looks,
+  clicks, typing, scrolls or backs in a row read "Used the viewer · 12
+  steps" with the latest step, the count rising while it works. Open it to
+  see each step. A refused or failed step marks the row red.
+- **A resumed session opens at its newest message,** not near the top.
+- **A page with no background shows white**, as in a browser. Pages that
+  set their own colours look as they did.
+- **An outside site's address in the viewer header.** When a link leaves
+  the file, the header shows the site (for example `example.com/docs`) and
+  whether the agent may only look and scroll there. Open externally opens
+  the site.
+- **More room before the space switcher** in the toolbar.
+- **Settings is 20% shorter:** 700 × 640. A tab taller than that scrolls.
+- **Typing while the agent works stays in the message box.** (Also in
+  v0.12.0's tag.)
+
+### Protocol and gateway
+
+- No changes. Gateway version 0.13.0 to match the app.
+
 ## v0.12.0 (2026-10-31)
 
 ### What a person gets (app)
