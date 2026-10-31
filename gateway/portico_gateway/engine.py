@@ -58,6 +58,7 @@ from claude_agent_sdk import (
     tool,
 )
 
+from .artifacts import paths_in
 from .agents import AgentTracker
 from .viewer import VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
@@ -590,7 +591,7 @@ def build_open_hook(callbacks: EngineCallbacks):
 
 
 def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
-    """The ``PostToolUse`` hook on ``Write|Edit|MultiEdit`` (v0.12): look at the HTML you just made.
+    """The ``PostToolUse`` hook on ``Write|Edit|MultiEdit|Bash`` (v0.12): look at the HTML you just made.
 
     After a write to an ``.html``/``.htm`` file inside the chat's folder or a
     root, ``additionalContext`` tells the agent to show it and look at it.
@@ -605,25 +606,39 @@ def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
         if not (bridge.has_target and bridge.can_see and bridge.check_html):
             return {}
         tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
-        raw = tool_input.get("file_path") if isinstance(tool_input, Mapping) else None
-        if not isinstance(raw, str) or Path(raw).suffix.lower() not in (".html", ".htm"):
+        if not isinstance(tool_input, Mapping):
             return {}
-        path = Path(raw).expanduser()
-        if not path.is_absolute():
-            cwd = input.get("cwd") if isinstance(input, Mapping) else None
-            path = (Path(cwd) if isinstance(cwd, str) and cwd else folder) / path
-        try:
-            path = path.resolve()
-            inside = any(path.is_relative_to(a.resolve()) for a in allowed)
-        except (OSError, RuntimeError):
+        cwd = input.get("cwd") if isinstance(input, Mapping) else None
+        base = Path(cwd) if isinstance(cwd, str) and cwd else folder
+        if input.get("tool_name") == "Bash":
+            # A shell write: the same detection the artifact list uses, the files the command names that now exist.
+            command = tool_input.get("command")
+            candidates = paths_in(command, base) if isinstance(command, str) else []
+        else:
+            raw = tool_input.get("file_path")
+            candidates = [Path(raw)] if isinstance(raw, str) else []
+        found: list[Path] = []
+        for candidate in candidates:
+            if candidate.suffix.lower() not in (".html", ".htm"):
+                continue
+            path = candidate.expanduser()
+            if not path.is_absolute():
+                path = base / path
+            try:
+                path = path.resolve()
+                inside = any(path.is_relative_to(a.resolve()) for a in allowed)
+            except (OSError, RuntimeError):
+                continue
+            if inside and path not in found:
+                found.append(path)
+        if not found:
             return {}
-        if not inside:
-            return {}
+        names = found[0] if len(found) == 1 else ", ".join(map(str, found[:-1])) + f" and {found[-1]}"
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
                 "additionalContext": (
-                    f"Before you reply, show {path} in the viewer and look at it with viewer_look; "
+                    f"Before you reply, show {names} in the viewer and look at it with viewer_look; "
                     "tell the person what you saw and fix what's broken."
                 ),
             }
@@ -686,7 +701,7 @@ def build_options(
             allowed += VIEWER_TOOL_NAMES
             roots = list(getattr(callbacks, "viewer_roots", []))
             post_tool_use.append(
-                HookMatcher(matcher="Write|Edit|MultiEdit", hooks=[build_check_html_hook(bridge, folder, roots)])
+                HookMatcher(matcher="Write|Edit|MultiEdit|Bash", hooks=[build_check_html_hook(bridge, folder, roots)])
             )
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},

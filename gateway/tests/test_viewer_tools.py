@@ -479,7 +479,7 @@ def test_hook_registered_on_write_edit_multiedit(tmp_path: Path) -> None:
     bridge, _ = make_bridge()
     options = build_options(tmp_path, None, ["project"], WithBridge(bridge))
     matchers = (options.hooks or {})["PostToolUse"]
-    assert [m.matcher for m in matchers] == ["Write|Edit|MultiEdit"]
+    assert [m.matcher for m in matchers] == ["Write|Edit|MultiEdit|Bash"]
     plain = build_options(tmp_path, None, ["project"], RecordingCallbacks())
     assert "PostToolUse" not in (plain.hooks or {})
 
@@ -489,3 +489,42 @@ async def test_a_jpeg_look_becomes_a_jpeg_image_item() -> None:
     bridge.set_target(object(), True, True)
     out = await by_name(build_viewer_tools(bridge, 3))["viewer_look"].handler({})
     assert out["content"][1] == {"type": "image", "data": PNG, "mimeType": "image/jpeg"}
+
+
+def bash_input(command: str, cwd: Path) -> dict[str, Any]:
+    return {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
+
+
+async def test_bash_heredoc_html_write_adds_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    (tmp_path / "proto").mkdir()
+    page = tmp_path / "proto" / "hello.html"
+    page.write_text("<p>hi</p>")
+    command = "cat > proto/hello.html <<'EOF'\n<p>hi</p>\nEOF"
+    assert context_of(await hook(bash_input(command, tmp_path), "t", None)) == CHECK_SENTENCE.format(file=page.resolve())
+
+
+async def test_bash_several_html_names_each(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    for name in ("a.html", "b.html"):
+        (tmp_path / name).write_text("x")
+    text = context_of(await hook(bash_input("cp tpl.html a.html && cp tpl.html b.html", tmp_path), "t", None))
+    assert text is not None and str((tmp_path / "a.html").resolve()) in text and str((tmp_path / "b.html").resolve()) in text
+
+
+async def test_bash_md_write_no_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    (tmp_path / "notes.md").write_text("x")
+    assert await hook(bash_input("echo hi > notes.md", tmp_path), "t", None) == {}
+
+
+async def test_bash_html_outside_roots_no_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    folder, other = tmp_path / "chat", tmp_path / "elsewhere"
+    folder.mkdir(), other.mkdir()
+    (other / "a.html").write_text("x")
+    hook = build_check_html_hook(bridge, folder, [])
+    assert await hook(bash_input(f"echo hi > {other / 'a.html'}", folder), "t", None) == {}
