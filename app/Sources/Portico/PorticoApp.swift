@@ -24,6 +24,14 @@ struct PorticoApp: App {
         // everything" after the window closed can still reach the gateway.
         model.supervisor = supervisor
         model.appVersion = Self.version
+        // Space-updated notifications need an app bundle; a bare executable
+        // (`swift run`) has no notification centre to ask.
+        if Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" {
+            let notifier = SpaceNotifier()
+            notifier.open = { [weak model] id in model?.setOpenSpace(id) }
+            notifier.install()
+            model.spaceNotifier = notifier
+        }
         _settings = StateObject(wrappedValue: settings)
         _supervisor = StateObject(wrappedValue: supervisor)
         _model = StateObject(wrappedValue: model)
@@ -111,6 +119,17 @@ struct PorticoApp: App {
                 Button(model.documentMode ? "Back to Conversation" : "Document View") { model.toggleDocumentView() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
                     .disabled(model.filesChat == nil)
+            }
+            CommandGroup(after: .toolbar) {
+                Divider()
+                let spacesShown = ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities)
+                Button("Work") { model.openSpaceAt(0) }
+                    .keyboardShortcut("0", modifiers: .command)
+                    .disabled(!spacesShown)
+                ForEach(Array(model.spaces.prefix(9).enumerated()), id: \.element.id) { index, space in
+                    Button(space.title) { model.openSpaceAt(index + 1) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                }
             }
             CommandGroup(replacing: .appInfo) {
                 Button("About \(model.brand.name)") {

@@ -23,14 +23,15 @@ enum MarkdownPage {
     /// The page for `source`, titled `title`. Front matter at the top is
     /// taken out and drawn as the Properties block (v0.11, item 68); only
     /// the body reaches the renderer.
-    static func html(source: String, title: String) throws -> String {
+    static func html(source: String, title: String, hiding: Set<String> = []) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
         let split = FrontMatter.split(source)
         // The block goes in first, its braces as entities, so a value that
         // reads `{{SOURCE}}` is not taken for the next placeholder.
-        let properties = (split.frontMatter?.html() ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        let shownProperties = split.frontMatter?.hiding(hiding)
+        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html() : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
@@ -73,20 +74,30 @@ enum MarkdownPage {
 
 // MARK: - RenderedPageHandler
 
-/// Serves a rendered markdown page to the web view under a private URL
-/// scheme, `portico-view://<render>/`, and the files next to the markdown
-/// (its relative images) under the same host. The page is not on disk, so
-/// `loadFileURL` cannot show it, and WebKit's read grant for a file base
-/// URL on `loadHTMLString` proved inconsistent (it loaded a sibling image
-/// from a folder under the home directory and not from `/var/folders`, on
-/// this machine). A scheme handler reads exactly what the viewer means to
-/// show and nothing else.
+/// Serves the viewer's pages to the web view under a private URL scheme,
+/// `portico-view://<render>/`: a rendered markdown page (at `/`), or an
+/// HTML file (at `/<its name>`), and the files under its folder (relative
+/// images, CSS, scripts). A markdown page is not on disk, so `loadFileURL`
+/// cannot show it, and WebKit's read grant for a file base URL on
+/// `loadHTMLString` proved inconsistent. An HTML file comes through here
+/// too (v0.12): under a file URL WebKit hides a script's uncaught error
+/// as "Script error." (an opaque origin); here the page has an origin of
+/// its own and the agent hears the real message.
+///
+/// A served page can read, by `fetch`, any file under its own folder; no
+/// further. Symlinks are resolved before that check (a link inside the
+/// folder to a file outside is refused), and dot-files and anything in a
+/// dot-folder (`.git`, `.env`) are never served.
 final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "portico-view"
 
     struct Render {
-        let page: Data
+        /// The rendered page served at `/`; `nil` for an HTML file, which
+        /// is served from the folder like everything else.
+        let page: Data?
         let root: URL
+        /// The HTML file's own name, served even when it starts with a dot.
+        let entry: String?
     }
 
     private var renders: [String: Render] = [:]
@@ -95,12 +106,39 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
     /// (a directory). Returns the URL to load.
     func register(page: String, root: URL) -> URL {
         let id = UUID().uuidString.lowercased()
-        renders[id] = Render(page: Data(page.utf8), root: root.standardizedFileURL)
+        renders[id] = Render(page: Data(page.utf8), root: Self.resolved(root), entry: nil)
         return URL(string: "\(Self.scheme)://\(id)/")!
+    }
+
+    /// Register an HTML file, served from its folder. Returns the URL to load.
+    func register(file: URL) -> URL {
+        let id = UUID().uuidString.lowercased()
+        let name = file.lastPathComponent
+        renders[id] = Render(page: nil, root: Self.resolved(file.deletingLastPathComponent()), entry: name)
+        return URL(string: "\(Self.scheme)://\(id)/")!.appendingPathComponent(name)
     }
 
     func forget(_ url: URL) {
         if let host = url.host { renders[host] = nil }
+    }
+
+    private static func resolved(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    /// The file `path` names under `render`'s root, or `nil` when it is
+    /// outside it (after symlinks) or is or lies in a dot-file or dot-folder.
+    static func file(_ path: String, in render: Render) -> URL? {
+        let relative = String(path.drop { $0 == "/" })
+        let parts = relative.split(separator: "/").map(String.init)
+        guard !parts.isEmpty else { return nil }
+        if parts.contains(where: { $0.hasPrefix(".") }), relative != render.entry { return nil }
+        let file = resolved(render.root.appendingPathComponent(relative))
+        guard file.path.hasPrefix(render.root.path + "/") else { return nil }
+        // The resolved path must not land in a dot-folder either (a link to `.git/config`).
+        let inside = file.path.dropFirst(render.root.path.count + 1).split(separator: "/")
+        if inside.contains(where: { $0.hasPrefix(".") }), String(inside.joined(separator: "/")) != render.entry { return nil }
+        return file
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
@@ -109,15 +147,10 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
             return respond(task, url: url, status: 404, type: "text/plain", body: Data("no such page".utf8))
         }
         let path = url.path
-        if path.isEmpty || path == "/" || path == "/index.html" {
-            return respond(task, url: url, status: 200, type: "text/html", body: render.page)
+        if let page = render.page, path.isEmpty || path == "/" || path == "/index.html" {
+            return respond(task, url: url, status: 200, type: "text/html", body: page)
         }
-        let relative = String(path.dropFirst())
-        let file = render.root.appendingPathComponent(relative).standardizedFileURL
-        // Stay under the root: `..` in a reference does not climb out of the markdown's folder.
-        guard file.path.hasPrefix(render.root.path + "/") || file.path == render.root.path,
-            let body = try? Data(contentsOf: file)
-        else {
+        guard let file = Self.file(path, in: render), let body = try? Data(contentsOf: file) else {
             return respond(task, url: url, status: 404, type: "text/plain", body: Data("not found".utf8))
         }
         let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
@@ -140,13 +173,24 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
 
 /// A `WKWebView` for the three web-rendered kinds: a markdown file (the
 /// rendered page, with the file's directory as the root its relative
-/// images resolve under), an HTML file (loaded as a file with read access
-/// to its directory) and a URL (a local dev server, usually).
+/// images resolve under), an HTML file (served from its directory by the
+/// same handler) and a URL (a local dev server, usually).
 struct WebPane: NSViewRepresentable {
     enum Load: Equatable {
-        case markdown(URL)
+        case markdown(URL, hiding: Set<String> = [])
         case html(URL)
         case url(URL)
+
+        /// How the viewer loads `shown`, when it draws as a web page:
+        /// Markdown, HTML and URLs; `nil` for the other kinds.
+        init?(_ shown: ArtifactPresentation) {
+            switch shown.media {
+            case .markdown: guard let file = shown.fileURL else { return nil }; self = .markdown(file, hiding: shown.hiddenFrontMatterKeys)
+            case .html: guard let file = shown.fileURL else { return nil }; self = .html(file)
+            case .url: guard let url = shown.externalURL else { return nil }; self = .url(url)
+            default: return nil
+            }
+        }
     }
 
     let load: Load
@@ -154,6 +198,7 @@ struct WebPane: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
+        context.coordinator.agent = context.environment.viewerAgent
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, to: view)
         return view
@@ -163,7 +208,14 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.apply(load, to: view)
     }
 
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.agent?.detach(view)
+    }
+
     final class Coordinator: NSObject, WKNavigationDelegate {
+        /// The agent that may act in this pane (v0.12): the viewer's panes
+        /// have one, the document view's do not.
+        var agent: ViewerAgent?
         private var loaded: Load?
         /// The load whose navigation failed (or whose file could not be
         /// read), until a retry or another load. It stays `loaded` too:
@@ -186,6 +238,11 @@ struct WebPane: NSViewRepresentable {
             let configuration = WKWebViewConfiguration()
             configuration.defaultWebpagePreferences.allowsContentJavaScript = true
             configuration.setURLSchemeHandler(handler, forURLScheme: RenderedPageHandler.scheme)
+            // The agent's script from document start, so page errors are
+            // captured from load (spec §3.2).
+            if agent != nil, let script = ViewerAgentScript.userScript() {
+                configuration.userContentController.addUserScript(script)
+            }
             return configuration
         }
 
@@ -219,15 +276,16 @@ struct WebPane: NSViewRepresentable {
         private func start(_ load: Load, in view: WKWebView) {
             loaded = load
             failed = nil
+            agent?.attach(view, showing: load)
             if let old = renderedURL {
                 handler.forget(old)
                 renderedURL = nil
             }
             switch load {
-            case .markdown(let file):
+            case .markdown(let file, let hiding):
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent)
+                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
                     let url = handler.register(page: page, root: file.deletingLastPathComponent())
                     renderedURL = url
                     view.load(URLRequest(url: url))
@@ -235,7 +293,14 @@ struct WebPane: NSViewRepresentable {
                     showFailure("Cannot read \(file.path): \(error)", in: view)
                 }
             case .html(let file):
-                view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
+                // Served by the scheme handler from its folder, so its
+                // scripts' errors keep their message (v0.12).
+                guard FileManager.default.isReadableFile(atPath: file.path) else {
+                    return showFailure("Cannot read \(file.path)", in: view)
+                }
+                let url = handler.register(file: file)
+                renderedURL = url
+                view.load(URLRequest(url: url))
             case .url(let url):
                 view.load(URLRequest(url: url))
             }

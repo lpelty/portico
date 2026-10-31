@@ -34,7 +34,7 @@ struct MainWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // The shown chat's viewer: the conversation's, or (Y1) the
                 // live session's beside the welcome that continues it.
-                if let chat = model.shownChat, let viewer = widths.viewer {
+                if let viewer = widths.viewer {
                     ColumnDivider(
                         onDrag: { dx in
                             // In focus the split is fixed; the widths to come back to stay as they were.
@@ -50,7 +50,7 @@ struct MainWindow: View {
                             guard !focused else { return }
                             settings.setViewerWidth(ColumnWidths.viewerDefault(for: viewerFit), for: viewerFit)
                         })
-                    ViewerView(chat: chat)
+                    ViewerColumn(chat: model.shownChat)
                         .frame(width: viewer)
                         // v0.11 (67): the panel eases in, fading as it slides,
                         // rather than appearing all at once.
@@ -79,13 +79,14 @@ struct MainWindow: View {
     }
 
     private var viewerShown: Bool {
-        guard !model.documentMode else { return false }
-        return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
+        model.viewerColumnShown
     }
 
-    /// The viewer's fit: the current artifact's, reading when nothing is shown.
+    /// The viewer's fit: a space's (700 where the window allows), else the
+    /// current artifact's, reading when nothing is shown.
     private var viewerFit: ColumnWidths.Fit {
-        ColumnWidths.Fit(media: model.shownChat.flatMap { model.current[$0]?.media })
+        if model.openSpace != nil { return .space }
+        return ColumnWidths.Fit(media: model.shownChat.flatMap { model.current[$0]?.media })
     }
 
     /// Focus (V3) is on for the chat shown and its viewer is up.
@@ -193,18 +194,45 @@ struct MainColumn: View {
 }
 
 /// The 52-high bar over the conversation: collapse the sidebar, the brand
-/// (icon and name), a slash, the chat's title, and collapse the viewer.
-/// The whole bar drags the window, since there is no title bar.
+/// (icon and name), the spaces switcher (when there are spaces), and
+/// collapse the viewer. The chat's title is not here: the session card
+/// names the session. The whole bar drags the window, since there is no
+/// title bar.
 struct MainToolbar: View {
     @EnvironmentObject private var model: AppModel
 
+    private var items: [ToolbarLayout.Item] {
+        ToolbarLayout.items(
+            showSwitcher: ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities),
+            showViewerToggle: model.shownChat != nil && !model.documentMode)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
+        let items = items
+        HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element) { index, item in
+                view(for: item)
+                    .padding(.trailing, ToolbarLayout.gap(after: item, next: items.indices.contains(index + 1) ? items[index + 1] : nil))
+            }
+        }
+        .padding(.leading, model.sidebarShown ? 16 : Theme.trafficLightsInset)
+        .padding(.trailing, 16)
+        .frame(height: Theme.toolbarHeight)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(WindowDragGesture())
+    }
+
+    @ViewBuilder
+    private func view(for item: ToolbarLayout.Item) -> some View {
+        switch item {
+        case .sidebarToggle:
             PanelToggle(
                 shown: model.sidebarShown, side: .leading,
                 help: model.sidebarVisible ? "Hide the sidebar" : "Show the sidebar"
             ) { model.sidebarVisible.toggle() }
             .disabled(model.awaitingFirstSession)
+        case .brand:
             HStack(spacing: 8) {
                 if let header = model.brand.headerImage {
                     HeaderImage(image: header, label: model.brand.name)
@@ -217,52 +245,19 @@ struct MainToolbar: View {
                         .truncationMode(.tail)
                 }
             }
-            // The brand keeps its room; the title truncates first, and
-            // nothing wraps when the main column is narrow (W4).
-            .layoutPriority(1)
-            if let title = chatTitle {
-                Text("/")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text3)
-                    .fixedSize()
-                Text(title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
+        case .switcher:
+            // The brand's name truncates first when the column is narrow.
+            SpaceSwitcher().layoutPriority(1)
+        case .spacer:
             Spacer(minLength: 0)
-            if let chat = model.shownChat, !model.documentMode {
+        case .viewerToggle:
+            if let chat = model.shownChat {
                 let shown = model.isViewerShown(for: chat)
                 PanelToggle(shown: shown, side: .trailing, help: shown ? "Hide the viewer" : "Show the viewer") {
                     model.setViewer(visible: !shown, for: chat)
                 }
             }
         }
-        .padding(.leading, model.sidebarShown ? 16 : Theme.trafficLightsInset)
-        .padding(.trailing, 16)
-        .frame(height: Theme.toolbarHeight)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .gesture(WindowDragGesture())
-    }
-
-    /// `Chat #3`, or the alias when the chat has one; `Session 14` in
-    /// single presentation; `Files · Research vault` in the document view.
-    private var chatTitle: String? {
-        if model.documentMode, let chat = model.filesChat {
-            let roots = model.fileRoots(for: chat)
-            let root = roots.first { $0.name != AppModel.chatRoot } ?? roots.first
-            guard let root else { return "Files" }
-            return "Files · " + (root.name == AppModel.chatRoot ? URL(fileURLWithPath: root.path).lastPathComponent : root.name)
-        }
-        guard let id = model.shownChat else { return model.mainScreen == .waiting ? nil : model.startTitle }
-        if model.isSinglePresentation {
-            return "Session \(id)"
-        }
-        let summary = model.chats.first { $0.chat == id }
-        if let alias = summary?.alias, !alias.isEmpty { return alias }
-        return "Chat #\(id)"
     }
 }
 

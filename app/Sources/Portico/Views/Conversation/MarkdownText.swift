@@ -453,7 +453,7 @@ struct MarkdownText: View {
     /// v0.11 (73, AG1): 16-point regular, the desktop app's reading size,
     /// so bold (`MarkdownAttributed.boldWeight`) reads as bold; with the
     /// spacing a line is about 1.5 times the size.
-    static let bodySize: CGFloat = 16
+    static let bodySize: CGFloat = 15
     static let lineSpacing: CGFloat = 5
 
     @State private var hovering = false

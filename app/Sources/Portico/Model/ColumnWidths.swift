@@ -12,6 +12,8 @@ enum ColumnWidths {
         case reading
         /// Web pages and prototypes: as wide as the person made it.
         case canvas
+        /// A space: a little wider than a document (700 where the window allows).
+        case space
 
         init(media: Media?) {
             switch media {
@@ -25,6 +27,7 @@ enum ColumnWidths {
     static let sidebarRange: ClosedRange<CGFloat> = 200...480
     static let viewerDefault: CGFloat = 440
     static let canvasDefault: CGFloat = 640
+    static let spaceDefault: CGFloat = 700
     static let viewerMinimum: CGFloat = 320
     /// The conversation never gets narrower than this while a side column
     /// can still give way.
@@ -60,7 +63,11 @@ enum ColumnWidths {
     }
 
     static func viewerDefault(for fit: Fit) -> CGFloat {
-        fit == .canvas ? canvasDefault : viewerDefault
+        switch fit {
+        case .canvas: canvasDefault
+        case .space: spaceDefault
+        case .reading: viewerDefault
+        }
     }
 
     /// The widths to draw in a window `window` wide: the remembered widths,
