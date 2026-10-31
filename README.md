@@ -421,8 +421,8 @@ and `localhost`, `127.0.0.1`, `::1` on any port) are always usable. On every
 other site the agent can look and scroll, not click or type, unless the
 site is in `act_hosts`. An entry is a bare host name that matches that host
 and its subdomains (`figma.com` covers `www.figma.com`); a scheme, path,
-port, wildcard or leading or trailing dot is a configuration error at
-start. Matching ignores case. The app checks the page's current host at
+port, wildcard, leading or trailing dot, or a name with no dot at all
+(`com`) is a configuration error at start. Matching ignores case. The app checks the page's current host at
 every click and type, so a redirect or a link to another site is checked
 again. Only the deployment sets the list: there is no control in the app.
 It ships empty, and `bin/doctor` prints it ("Agent can click and type on:

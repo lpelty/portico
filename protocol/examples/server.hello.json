@@ -18,7 +18,9 @@
     "producer",
     "sessions",
     "files.search",
-    "context"
+    "context",
+    "spaces.v1",
+    "spaces.refresh"
   ],
   "commands": [
     "log"
@@ -38,5 +40,12 @@
     }
   ],
   "ts": "2026-10-27T12:00:00Z",
-  "type": "hello"
+  "type": "hello",
+  "viewer_defaults": {
+    "act_hosts": [
+      "figma.com"
+    ],
+    "agent_can_see": true,
+    "agent_checks_html": true
+  }
 }

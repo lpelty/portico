@@ -1103,7 +1103,8 @@ submit}` for `type`; `{direction}` or `{target}` for `scroll`). Sent
 only to an app that declared `viewer.v1`, and only when the person has not
 turned the agent's view off. The app shows the viewer for `chat` if it is
 not open. In multiple presentation an act for a chat that is not on
-screen is answered "The person is looking at another chat.".
+screen is answered "The person is looking at another chat." (by the
+app, in its `viewer.result`).
 
 #### `viewer.result` — `ViewerResult` *(app → gateway)*
 `id` (the act's), `ok: bool`, `text`, `image?: {data, media_type}`
@@ -1163,15 +1164,19 @@ and whenever a file is added, changed or removed.
 `space.refresh {id}`, `space.rename {id, title}`, `space.remove {id}`. On
 these three, `id` is **the space's id**, not a request id, and it is the
 `id` an `error` echoes. Each is answered by a new `spaces.list` (sent to
-every connected app) or by an `error`. Refresh runs `[spaces] refresh`,
-rename writes the title into the file's front matter, and remove moves the
-file to the Trash and then runs `[spaces] remove`. The commands run with
-`/bin/sh -c`, a 30 s timeout, and `$PORTICO_SPACE` set to the id; a
-failure answers `error` and is logged.
+the attached app, if it declared `spaces.v1`) or by an `error`. Refresh
+runs `[spaces] refresh`, rename writes the title into the file's front
+matter, and remove moves the file to the Trash and then runs `[spaces]
+remove`. The commands run with `/bin/sh -c`, a 30 s timeout, and
+`$PORTICO_SPACE` set to the id; a failure answers `error` and is logged.
+Refresh and remove run beside the app's other frames, not ahead of them.
+Symbolic links in the folder are not spaces. A title that would go into
+an HTML comment block cannot contain `--` (`space.invalid`).
 
 Error codes: `space.not_configured` (no spaces folder), `space.not_found`,
-`space.invalid` (rename with an empty title), `space.no_refresh` (no
-refresh command), `space.refresh_failed`, `space.rename_failed`,
+`space.invalid` (rename with an empty title, or with `--` in a title kept
+in a comment block), `space.no_refresh` (no refresh command),
+`space.refresh_failed`, `space.rename_failed`,
 `space.remove_failed` (its message says when the file is already in the
 Trash).
 
