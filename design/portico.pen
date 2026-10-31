@@ -98237,32 +98237,11 @@
                   "fontWeight": "600"
                 },
                 {
-                  "type": "text",
-                  "id": "tsNf8",
-                  "name": "Sep",
-                  "fill": "$text-3",
-                  "content": "/",
-                  "fontFamily": "$font",
-                  "fontSize": 14,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "BtmLR",
-                  "name": "Title",
-                  "fill": "$text-2",
-                  "content": "Session 12",
-                  "fontFamily": "$font",
-                  "fontSize": 14,
-                  "fontWeight": "normal"
-                },
-                {
                   "type": "frame",
-                  "id": "YVoVM",
-                  "name": "Divider",
-                  "width": 1,
-                  "height": 18,
-                  "fill": "$border"
+                  "id": "FXu90",
+                  "name": "Gap",
+                  "width": 6,
+                  "height": 1
                 },
                 {
                   "type": "frame",
@@ -98316,6 +98295,23 @@
                       "fill": "$text-3"
                     }
                   ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Tx4f8",
+                  "name": "Spacer",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "icon",
+                  "id": "M0tTdP",
+                  "name": "Viewer toggle",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "panel-right",
+                  "library": "lucide",
+                  "fill": "$text-2"
                 }
               ]
             },
@@ -100093,7 +100089,7 @@
           "type": "frame",
           "id": "X1eBOf",
           "layoutPosition": "absolute",
-          "x": 501,
+          "x": 409,
           "y": 43.5,
           "name": "Space switcher menu",
           "width": 380,
@@ -100588,7 +100584,7 @@
       "fill": "$text-2",
       "textGrowth": "fixed-width",
       "width": 1440,
-      "content": "AI1 · The switcher, open. It sits in the toolbar after Portico / Session 12 and always names where you are: Work, or the space you're in. Work is the first row (today's window: chat, files, viewer); then each space with its last update and ⌘1–9; New space… at the bottom. A dot on the switcher and on the row means a space has something new (here Meeting prep is ready before the 2:00 meeting) — no notice in the status strip, so it never competes with Update available.",
+      "content": "AI1 · The switcher, open. It sits in the toolbar after the sidebar toggle and the brand (the session title no longer shows there; the sidebar card names the session), with the viewer toggle at the far right as in the app, and always names where you are: Work, or the space you're in. Work is the first row (today's window: chat, files, viewer); then each space with its last update and ⌘1–9; New space… at the bottom. A dot on the switcher and on the row means a space has something new (here Meeting prep is ready before the 2:00 meeting) — no notice in the status strip, so it never competes with Update available.",
       "lineHeight": 1.45,
       "fontFamily": "$font",
       "fontSize": 14,
@@ -101809,32 +101805,11 @@
                   "fontWeight": "600"
                 },
                 {
-                  "type": "text",
-                  "id": "dTBKQ",
-                  "name": "Sep",
-                  "fill": "$text-3",
-                  "content": "/",
-                  "fontFamily": "$font",
-                  "fontSize": 14,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "wTy2D",
-                  "name": "Title",
-                  "fill": "$text-2",
-                  "content": "Session 12",
-                  "fontFamily": "$font",
-                  "fontSize": 14,
-                  "fontWeight": "normal"
-                },
-                {
                   "type": "frame",
-                  "id": "GYN3G",
-                  "name": "Divider",
-                  "width": 1,
-                  "height": 18,
-                  "fill": "$border"
+                  "id": "QYqYf",
+                  "name": "Gap",
+                  "width": 6,
+                  "height": 1
                 },
                 {
                   "type": "frame",
@@ -101880,6 +101855,23 @@
                       "fill": "$text-3"
                     }
                   ]
+                },
+                {
+                  "type": "frame",
+                  "id": "MfcrG",
+                  "name": "Spacer",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "icon",
+                  "id": "c9p1Qz",
+                  "name": "Viewer toggle",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "panel-right",
+                  "library": "lucide",
+                  "fill": "$text-2"
                 }
               ]
             },
