@@ -508,3 +508,90 @@ def test_an_unknown_files_key_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as e:
         load_config(path)
     assert "files" in e.value.keys
+
+
+# --- v0.12: [viewer] and [spaces] ------------------------------------------------
+
+
+def _load(tmp_path: Path, text: str) -> Config:
+    p = tmp_path / "config.toml"
+    p.write_text(text, encoding="utf-8")
+    return load_config(p)
+
+
+def test_viewer_defaults_in_hello() -> None:
+    hello = hello_for(Config(), "e1", "0.12.0")
+    assert hello.viewer_defaults is not None
+    assert hello.viewer_defaults.model_dump() == {"agent_can_see": True, "agent_checks_html": True, "act_hosts": []}
+
+
+def test_viewer_defaults_follow_the_config(tmp_path: Path) -> None:
+    cfg = _load(tmp_path, '[viewer]\nagent_can_see = false\nagent_checks_html = false\nact_hosts = ["figma.com"]\n')
+    hello = hello_for(cfg, "e1", "0.12.0")
+    assert hello.viewer_defaults.model_dump() == {
+        "agent_can_see": False, "agent_checks_html": False, "act_hosts": ["figma.com"],
+    }
+
+
+@pytest.mark.parametrize("entry", ["https://figma.com", "figma.com/x", "figma.com:443", "*.figma.com", "figma .com", ".figma.com", "figma.com."])
+def test_act_hosts_rejects_scheme_path_port_wildcard(tmp_path: Path, entry: str) -> None:
+    with pytest.raises(ConfigError) as e:
+        _load(tmp_path, f'[viewer]\nact_hosts = ["{entry}"]\n')
+    assert entry in str(e.value)
+
+
+def test_act_hosts_lowercased(tmp_path: Path) -> None:
+    assert _load(tmp_path, '[viewer]\nact_hosts = ["FIGMA.com", "Lovable.dev"]\n').viewer.act_hosts == [
+        "figma.com", "lovable.dev",
+    ]
+
+
+def test_host_allowed() -> None:
+    from portico_gateway.config import host_allowed
+
+    assert host_allowed("www.figma.com", ["figma.com"])
+    assert host_allowed("figma.com", ["figma.com"])
+    assert not host_allowed("notfigma.com", ["figma.com"])
+    assert host_allowed("FIGMA.COM", ["figma.com"])
+    assert host_allowed("localhost", [])
+    assert host_allowed("127.0.0.1", [])
+    assert host_allowed("::1", [])
+    assert not host_allowed("example.com", [])
+
+
+def test_host_allowed_ignores_one_trailing_dot() -> None:
+    from portico_gateway.config import host_allowed
+
+    assert host_allowed("figma.com.", ["figma.com"])
+    assert host_allowed("www.figma.com.", ["figma.com"])
+    assert host_allowed("localhost.", [])
+    assert not host_allowed("figma.com..", ["figma.com"])
+    assert not host_allowed("example.com.", ["figma.com"])
+
+
+def test_spaces_folder_missing_is_config_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as e:
+        _load(tmp_path, f'[spaces]\nfolder = "{tmp_path / "nope"}"\n')
+    assert "spaces" in str(e.value) and "nope" in str(e.value)
+
+
+def test_spaces_folder_expands_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "sp").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert _load(tmp_path, '[spaces]\nfolder = "~/sp"\n').spaces.folder == str(tmp_path / "sp")
+
+
+def test_spaces_capability_only_when_folder_set(tmp_path: Path) -> None:
+    assert "spaces.v1" not in hello_for(Config(), "e", "0.12.0").capabilities
+    (tmp_path / "sp").mkdir()
+    cfg = _load(tmp_path, f'[spaces]\nfolder = "{tmp_path / "sp"}"\n')
+    caps = hello_for(cfg, "e", "0.12.0").capabilities
+    assert "spaces.v1" in caps and "spaces.refresh" not in caps
+
+
+def test_spaces_refresh_capability_only_with_command(tmp_path: Path) -> None:
+    (tmp_path / "sp").mkdir()
+    cfg = _load(tmp_path, f'[spaces]\nfolder = "{tmp_path / "sp"}"\nrefresh = "true"\n')
+    assert "spaces.refresh" in hello_for(cfg, "e", "0.12.0").capabilities
+    # A refresh command without a folder advertises nothing.
+    assert "spaces.refresh" not in hello_for(Config(spaces={"refresh": "true"}), "e", "0.12.0").capabilities

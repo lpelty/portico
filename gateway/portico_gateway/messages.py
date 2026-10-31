@@ -161,6 +161,8 @@ class Artifact(Strict):
     title: str
     source: Literal["tool", "text", "producer"]
     open: bool
+    # v0.12: the id of the space this file is (a file in the spaces folder); the app switches to it.
+    space: str | None = None
 
 
 class Entry(Strict):
@@ -274,6 +276,52 @@ class TurnStop(Envelope):
     chat: int
 
 
+class ViewerSettings(Envelope):
+    """v0.12: the person's two viewer switches; sent after ``hello`` and when either changes. Not chat-scoped."""
+
+    type: Literal["viewer.settings"] = "viewer.settings"
+    can_see: bool
+    check_html: bool
+
+
+class SpaceRefresh(Envelope):
+    """v0.12: run the deployment's refresh for a space; ``id`` is the space's id. Answered by ``spaces.list`` or ``error``."""
+
+    type: Literal["space.refresh"] = "space.refresh"
+    id: str
+
+
+class SpaceRename(Envelope):
+    """v0.12: set a space's title (written into its front matter); ``id`` is the space's id."""
+
+    type: Literal["space.rename"] = "space.rename"
+    id: str
+    title: str
+
+
+class SpaceRemove(Envelope):
+    """v0.12: move a space's file to the Trash and run the deployment's remove; ``id`` is the space's id."""
+
+    type: Literal["space.remove"] = "space.remove"
+    id: str
+
+
+class ViewerImage(Strict):
+    data: str  # base64 PNG
+    media_type: Literal["image/png"]
+
+
+class ViewerResult(Envelope):
+    """v0.12: the app's answer to a ``viewer.act``."""
+
+    type: Literal["viewer.result"] = "viewer.result"
+    id: str
+    ok: bool
+    text: str
+    image: ViewerImage | None = None
+    error: str | None = None
+
+
 class CardAnswer(Envelope):
     type: Literal["card.answer"] = "card.answer"
     chat: int
@@ -373,6 +421,14 @@ class GatewayStop(Envelope):
 # --- gateway -> app (server) -------------------------------------------------
 
 
+class ViewerDefaults(Strict):
+    """v0.12: the deployment's viewer settings (config ``[viewer]``), sent in ``hello``."""
+
+    agent_can_see: bool = True
+    agent_checks_html: bool = True
+    act_hosts: list[str] = []
+
+
 class HelloServer(Envelope):
     type: Literal["hello"] = "hello"
     protocol: Literal[1] = PROTOCOL_VERSION
@@ -399,6 +455,9 @@ class HelloServer(Envelope):
     # v0.11: the Files pane leaves out the session's own folder (the
     # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
     hide_session_folder: bool = False
+    # v0.12: the deployment's viewer defaults; the app uses them until the
+    # person changes a switch. Absent from an older gateway.
+    viewer_defaults: ViewerDefaults | None = None
 
 
 class ChatList(Envelope):
@@ -791,6 +850,35 @@ HistoryEvent = Annotated[
 ]
 
 
+class SpaceInfo(Strict):
+    """One space in ``spaces.list``: ``updated`` is the file's modification time (UTC ISO 8601)."""
+
+    id: str
+    title: str
+    icon: str
+    order: int | None = None
+    location: str
+    media: Media
+    updated: str
+
+
+class SpacesList(Envelope):
+    """v0.12: the spaces as they are, after ``services.status`` on hello and whenever the folder changes."""
+
+    type: Literal["spaces.list"] = "spaces.list"
+    spaces: list[SpaceInfo] = []
+
+
+class ViewerAct(Envelope):
+    """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``."""
+
+    type: Literal["viewer.act"] = "viewer.act"
+    id: str
+    chat: int
+    action: Literal["look", "click", "type", "scroll", "back"]
+    args: dict[str, Any] = {}
+
+
 class ChatHistory(Envelope):
     type: Literal["chat.history"] = "chat.history"
     chat: int
@@ -821,6 +909,11 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ServicesRestartAll,
     SessionsClear,
     ChatUnqueue,
+    ViewerSettings,
+    ViewerResult,
+    SpaceRefresh,
+    SpaceRename,
+    SpaceRemove,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -859,6 +952,8 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatQueued,
     ChatQueue,
     ChatCommands,
+    ViewerAct,
+    SpacesList,
     Error,
 )
 
@@ -952,7 +1047,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.11.0", capabilities=["agents.v1", "queue.v1"]),
+        HelloClient(ts=_TS, app_version="0.12.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1"]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -985,6 +1080,17 @@ def example_messages() -> dict[str, BaseModel]:
         ServicesRestartAll(ts=_TS, id="req-8"),
         SessionsClear(ts=_TS, id="req-9"),
         ChatUnqueue(ts=_TS, chat=1, id="req-10"),
+        ViewerSettings(ts=_TS, can_see=True, check_html=True),
+        SpaceRefresh(ts=_TS, id="meeting-prep"),
+        SpaceRename(ts=_TS, id="meeting-prep", title="Prep for Priya"),
+        SpaceRemove(ts=_TS, id="brief"),
+        ViewerResult(
+            ts=_TS,
+            id="act-1",
+            ok=True,
+            text="trail-detail.html. 12 elements.",
+            image=ViewerImage(data="iVBORw0KGgo=", media_type="image/png"),
+        ),
         # gateway -> app
         HelloServer(
             ts=_TS,
@@ -1165,6 +1271,29 @@ def example_messages() -> dict[str, BaseModel]:
             commands=[
                 AgentCommand(name="standup", description="Draft a standup from today's log.", source="user"),
                 AgentCommand(name="acme:review", description="Review a change before it ships", source="acme-tools"),
+            ],
+        ),
+        ViewerAct(ts=_TS, id="act-1", chat=1, action="click", args={"target": "e12"}),
+        SpacesList(
+            ts=_TS,
+            spaces=[
+                SpaceInfo(
+                    id="meeting-prep",
+                    title="Meeting prep",
+                    icon="calendar-clock",
+                    order=2,
+                    location="/Users/sam/Spaces/meeting-prep.md",
+                    media="markdown",
+                    updated="2026-10-31T14:05:11.250000Z",
+                ),
+                SpaceInfo(
+                    id="brief",
+                    title="brief",
+                    icon="doc.text",
+                    location="/Users/sam/Spaces/brief.html",
+                    media="html",
+                    updated="2026-10-31T07:30:00.000000Z",
+                ),
             ],
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),

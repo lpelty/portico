@@ -1,0 +1,471 @@
+"""v0.12: spaces, files the agent keeps current in the deployment's spaces folder.
+
+The scan, the watcher, rename / remove / refresh, and the pieces of the server
+and engine that know about the folder. Model-free; every folder is under
+``tmp_path`` and ``HOME`` is faked, so the real Trash is never touched.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from portico_gateway import __version__
+from portico_gateway.artifacts import TurnCollector
+from portico_gateway.chats import ChatRegistry
+from portico_gateway.config import Config, SpacesConfig
+from portico_gateway.engine import SPACES_PROMPT, build_options
+from portico_gateway.messages import (
+    ArtifactCreated,
+    ChatNew,
+    Error,
+    HelloClient,
+    HelloServer,
+    SpaceRefresh,
+    SpaceRemove,
+    SpaceRename,
+    SpacesList,
+    dump,
+    parse_server,
+)
+from portico_gateway.server import GatewayServer
+from portico_gateway.spaces import (
+    DEFAULT_ICON,
+    Space,
+    SpaceError,
+    SpacesWatcher,
+    refresh,
+    remove,
+    rename,
+    scan,
+)
+from portico_gateway.state import StateDir
+from tests.conftest import RecordingCallbacks, make_config
+from tests.test_artifacts import make_chat
+from tests.test_server import TS, connect, ws_url
+from tests.test_turns import EngineFactory, new_chat, recv
+
+# --- helpers --------------------------------------------------------------------
+
+
+def put(folder: Path, name: str, text: str = "body\n") -> Path:
+    path = folder / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def ids(spaces: list[Space]) -> list[str]:
+    return [s.id for s in spaces]
+
+
+@pytest.fixture
+def spaces_dir(tmp_path: Path) -> Path:
+    path = tmp_path / "spaces"
+    path.mkdir()
+    return path
+
+
+@pytest.fixture
+def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+# --- scan -----------------------------------------------------------------------
+
+
+def test_scan_front_matter_md(spaces_dir: Path) -> None:
+    put(
+        spaces_dir,
+        "meeting-prep.md",
+        "---\ntitle: Meeting prep\nicon: calendar-clock     # an SF Symbol\norder: 2\n---\n\n# Today\n",
+    )
+    [space] = scan(spaces_dir)
+    assert space.id == "meeting-prep" and space.title == "Meeting prep"
+    assert space.icon == "calendar-clock" and space.order == 2
+    assert space.location == str((spaces_dir / "meeting-prep.md").resolve())
+    assert space.media == "markdown"
+    assert space.updated.endswith("Z") and space.updated.startswith("20")
+
+
+def test_scan_defaults_icon_and_title(spaces_dir: Path) -> None:
+    put(spaces_dir, "brief.markdown", "No front matter.\n")
+    [space] = scan(spaces_dir)
+    assert (space.id, space.title, space.icon, space.order) == ("brief", "brief", DEFAULT_ICON, None)
+    assert DEFAULT_ICON == "doc.text"
+
+
+def test_scan_html_comment_block(spaces_dir: Path) -> None:
+    put(spaces_dir, "board.html", "<!-- title: Acme board\nicon: chart.bar\norder: 1 -->\n<html><body>hi</body></html>\n")
+    [space] = scan(spaces_dir)
+    assert (space.title, space.icon, space.order, space.media) == ("Acme board", "chart.bar", 1, "html")
+
+
+def test_scan_ignores_dot_underscore(spaces_dir: Path) -> None:
+    put(spaces_dir, ".hidden.md")
+    put(spaces_dir, "_draft.md")
+    put(spaces_dir, "notes.txt")
+    (spaces_dir / "sub.md").mkdir()
+    put(spaces_dir, "real.htm", "<p>x</p>")
+    assert ids(scan(spaces_dir)) == ["real"]
+
+
+def test_scan_bad_front_matter_listed_by_stem(spaces_dir: Path) -> None:
+    put(spaces_dir, "oops.md", "---\ntitle Missing colon\nicon: x\n---\ntext\n")
+    put(spaces_dir, "open.md", "---\ntitle: Never closed\n\ntext\n")
+    put(spaces_dir, "badorder.md", "---\ntitle: Fine\norder: soon\n---\n")
+    got = {s.id: s for s in scan(spaces_dir)}
+    assert set(got) == {"oops", "open", "badorder"}
+    for stem, space in got.items():
+        assert (space.title, space.icon, space.order) == (stem, DEFAULT_ICON, None)
+
+
+def test_scan_non_utf8_listed_by_stem(spaces_dir: Path) -> None:
+    (spaces_dir / "latin.md").write_bytes(b"---\ntitle: Caf\xe9\n---\n")
+    [space] = scan(spaces_dir)
+    assert (space.id, space.title) == ("latin", "latin")
+
+
+def test_scan_survives_a_file_deleted_mid_scan(spaces_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    put(spaces_dir, "gone.md")
+    put(spaces_dir, "kept.md")
+    real_stat = Path.stat
+
+    def flaky(self: Path, *a: Any, **kw: Any):
+        if self.name == "gone.md":
+            raise FileNotFoundError(self)
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", flaky)
+    assert ids(scan(spaces_dir)) == ["kept"]
+
+
+def test_scan_missing_folder_is_empty(tmp_path: Path) -> None:
+    assert scan(tmp_path / "nowhere") == []
+
+
+def test_sort_order_then_title(spaces_dir: Path) -> None:
+    put(spaces_dir, "z.md", "---\ntitle: Zed\norder: 1\n---\n")
+    put(spaces_dir, "a.md", "---\ntitle: Alpha\n---\n")
+    put(spaces_dir, "b.md", "---\ntitle: beta\n---\n")
+    put(spaces_dir, "m.md", "---\ntitle: Mid\norder: 1\n---\n")
+    put(spaces_dir, "f.md", "---\ntitle: First\norder: 0\n---\n")
+    assert ids(scan(spaces_dir)) == ["f", "m", "z", "a", "b"]
+
+
+# --- watcher --------------------------------------------------------------------
+
+
+async def test_watcher_fires_on_add_change_remove(spaces_dir: Path) -> None:
+    seen: list[list[Space]] = []
+
+    async def on_change(spaces: list[Space]) -> None:
+        seen.append(spaces)
+
+    watcher = SpacesWatcher(spaces_dir, on_change)
+    await watcher.poll()
+    assert seen == []  # nothing changed since the baseline
+    path = put(spaces_dir, "brief.md", "---\ntitle: Brief\n---\n")
+    await watcher.poll()
+    assert [ids(s) for s in seen] == [["brief"]]
+    await watcher.poll()
+    assert len(seen) == 1  # no difference, no call
+    os.utime(path, (1_900_000_000, 1_900_000_000))
+    await watcher.poll()
+    assert len(seen) == 2 and seen[-1][0].updated.startswith("2030")
+    path.unlink()
+    await watcher.poll()
+    assert seen[-1] == [] and len(seen) == 3
+
+
+# --- rename ---------------------------------------------------------------------
+
+
+def test_rename_preserves_other_keys(spaces_dir: Path) -> None:
+    path = put(spaces_dir, "p.md", "---\ntitle: Old\nicon: calendar  # keep\norder: 3\n---\n\nBody: here\n")
+    rename(spaces_dir, "p", "New: title")
+    assert path.read_text(encoding="utf-8") == '---\ntitle: "New: title"\nicon: calendar  # keep\norder: 3\n---\n\nBody: here\n'
+    [space] = scan(spaces_dir)
+    assert (space.title, space.icon, space.order) == ("New: title", "calendar", 3)
+
+
+def test_rename_adds_the_key_or_the_block(spaces_dir: Path) -> None:
+    a = put(spaces_dir, "a.md", "---\nicon: x\n---\ntext\n")
+    b = put(spaces_dir, "b.md", "just text\n")
+    c = put(spaces_dir, "c.html", "<html></html>\n")
+    d = put(spaces_dir, "d.html", "<!-- icon: y -->\n<p>x</p>\n")
+    for sid in "abcd":
+        rename(spaces_dir, sid, "Fresh")
+    assert a.read_text() == "---\nicon: x\ntitle: Fresh\n---\ntext\n"
+    assert b.read_text() == "---\ntitle: Fresh\n---\njust text\n"
+    assert c.read_text() == "<!-- title: Fresh -->\n<html></html>\n"
+    assert d.read_text() == "<!-- icon: y\ntitle: Fresh -->\n<p>x</p>\n"
+    assert {s.id: s.title for s in scan(spaces_dir)} == {x: "Fresh" for x in "abcd"}
+
+
+def test_rename_refuses_unknown_or_empty(spaces_dir: Path) -> None:
+    put(spaces_dir, "a.md")
+    with pytest.raises(SpaceError):
+        rename(spaces_dir, "nope", "X")
+    with pytest.raises(SpaceError):
+        rename(spaces_dir, "a", "   ")
+    with pytest.raises(SpaceError):
+        rename(spaces_dir, "../a", "X")
+
+
+# --- remove / refresh -----------------------------------------------------------
+
+
+async def test_remove_trashes_and_runs_command_with_env(spaces_dir: Path, fake_home: Path, tmp_path: Path) -> None:
+    put(spaces_dir, "brief.md", "one")
+    trash = fake_home / ".Trash"
+    trash.mkdir()
+    (trash / "brief.md").write_text("an older one")
+    out = tmp_path / "seen.txt"
+    await remove(spaces_dir, "brief", f'printf %s "$PORTICO_SPACE" > {out}')
+    assert not (spaces_dir / "brief.md").exists()
+    assert (trash / "brief.md").read_text() == "an older one"  # not overwritten
+    assert sorted(p.name for p in trash.iterdir()) == ["brief 2.md", "brief.md"]
+    assert (trash / "brief 2.md").read_text() == "one"
+    assert out.read_text() == "brief"
+
+
+async def test_remove_without_command_and_failing_command(spaces_dir: Path, fake_home: Path) -> None:
+    put(spaces_dir, "a.md")
+    await remove(spaces_dir, "a", None)
+    assert (fake_home / ".Trash" / "a.md").exists()
+    put(spaces_dir, "b.md")
+    with pytest.raises(SpaceError) as e:
+        await remove(spaces_dir, "b", "exit 3")
+    assert "exited 3" in str(e.value)
+    assert (fake_home / ".Trash" / "b.md").exists()  # the file was trashed first
+
+
+async def test_refresh_command_timeout_answers_error(tmp_path: Path) -> None:
+    with pytest.raises(SpaceError) as e:
+        await refresh("brief", "sleep 5", timeout=0.2)
+    assert "did not finish in 0.2 s" in str(e.value)
+
+
+async def test_refresh_runs_with_env(tmp_path: Path) -> None:
+    out = tmp_path / "seen.txt"
+    await refresh("brief", f'printf %s "$PORTICO_SPACE" > {out}')
+    assert out.read_text() == "brief"
+    with pytest.raises(SpaceError) as e:
+        await refresh("brief", "echo bad >&2; exit 2")
+    assert "exited 2" in str(e.value)
+
+
+# --- show / auto-open -----------------------------------------------------------
+
+
+def test_turn_write_in_spaces_folder_not_auto_opened(tmp_path: Path, spaces_dir: Path) -> None:
+    chat_folder = tmp_path / "work"
+    chat_folder.mkdir()
+    written = put(spaces_dir, "brief.md")
+    other = put(chat_folder, "notes.md")
+    for order in ([written], [other, written], [written, other]):
+        collector = TurnCollector(make_chat(chat_folder))
+        for p in order:
+            collector.note_tool("Write", {"file_path": str(p)})
+        found = collector.finish(
+            chat_folder, open_within=[chat_folder.resolve(), spaces_dir.resolve()], never_open=[spaces_dir.resolve()]
+        )
+        opened = [Path(a.location).name for a in found if a.open]
+        assert opened == ([] if order == [written] else ["notes.md"])
+        assert "brief.md" in [Path(a.location).name for a in found]
+
+
+@pytest.fixture
+def factory() -> EngineFactory:
+    return EngineFactory()
+
+
+@pytest.fixture
+async def server(
+    state_dir: StateDir, factory: EngineFactory, spaces_dir: Path
+) -> AsyncIterator[GatewayServer]:
+    config: Config = make_config(setting_sources=["project"], spaces=SpacesConfig(folder=str(spaces_dir)))
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    try:
+        yield srv
+    finally:
+        await srv.shutdown()
+
+
+async def test_show_space_file_sets_artifact_space(server: GatewayServer, spaces_dir: Path, tmp_path: Path) -> None:
+    folder = tmp_path / "work"
+    folder.mkdir()
+    conn = await hello(server)
+    await frames_until(conn, "spaces.list")
+    try:
+        await conn.send(dump(ChatNew(ts=TS, id="req-new", folder=str(folder))))
+        number = (await frames_until(conn, "chat.state")).chat
+        chat = server.registry.get(number)
+        page = put(spaces_dir, "meeting-prep.md", "---\ntitle: Meeting prep\n---\n")
+        plain = put(folder, "notes.md")
+        assert await server.show_files(chat, [str(page)]) is None
+        event = await frames_until(conn, "artifact.created")
+        assert isinstance(event, ArtifactCreated) and event.artifact.space == "meeting-prep"
+        assert event.artifact.open is True and event.artifact.location == str(page.resolve())
+        assert await server.show_files(chat, [str(plain)]) is None
+        event = await frames_until(conn, "artifact.created")
+        assert isinstance(event, ArtifactCreated) and event.artifact.space is None
+        assert '"space"' not in dump(event)  # None is left out of the wire form
+    finally:
+        await conn.close()
+
+
+def test_spaces_folder_in_add_dirs(tmp_path: Path, spaces_dir: Path) -> None:
+    cb = RecordingCallbacks()
+    cb.spaces_folder = spaces_dir  # type: ignore[attr-defined]
+    cb.viewer_roots = [spaces_dir]  # type: ignore[attr-defined]
+    options = build_options(tmp_path, None, ["project"], cb)
+    assert options.add_dirs == [spaces_dir]
+    assert build_options(tmp_path, None, ["project"], RecordingCallbacks()).add_dirs == []
+
+
+def test_prompt_line_only_when_configured(tmp_path: Path, spaces_dir: Path) -> None:
+    plain = build_options(tmp_path, None, ["project"], RecordingCallbacks())
+    assert "spaces" not in str(plain.system_prompt)
+    cb = RecordingCallbacks()
+    cb.spaces_folder = spaces_dir  # type: ignore[attr-defined]
+    options = build_options(tmp_path, None, ["project"], cb, system_prompt={"type": "preset", "preset": "claude_code"})
+    line = SPACES_PROMPT.format(folder=spaces_dir)
+    assert line.startswith("The person's spaces are files in ")
+    assert line.endswith("how it is kept up to date is the deployment's.")
+    assert options.system_prompt["append"].endswith(line)  # type: ignore[index]
+    assert options.system_prompt["append"].index("show_in_viewer") < options.system_prompt["append"].index("spaces")  # type: ignore[index]
+
+
+# --- through the server ---------------------------------------------------------
+
+
+async def hello(server: GatewayServer, capabilities: list[str] | None = None):
+    conn = await connect(ws_url(server, server.token))
+    caps = ["spaces.v1"] if capabilities is None else capabilities
+    await conn.send(dump(HelloClient(ts=TS, app_version="0.12.0", capabilities=caps)))
+    return conn
+
+
+async def frames_until(conn: Any, type_name: str) -> Any:
+    while True:
+        msg = parse_server(await asyncio.wait_for(conn.recv(), 2))
+        if msg.type == type_name:
+            return msg
+
+
+async def test_hello_sends_spaces_list_after_services_status(server: GatewayServer, spaces_dir: Path) -> None:
+    put(spaces_dir, "brief.md", "---\ntitle: Brief\nicon: sun.max\n---\n")
+    conn = await hello(server)
+    try:
+        types = []
+        while "spaces.list" not in types:
+            types.append(parse_server(await asyncio.wait_for(conn.recv(), 2)).type)
+        assert types.index("services.status") < types.index("spaces.list")
+        assert types[0] == "hello"
+    finally:
+        await conn.close()
+
+
+async def test_no_spaces_no_list(state_dir: StateDir, tmp_path: Path) -> None:
+    from tests.test_server import make_server
+
+    srv = make_server(state_dir, make_config())
+    await srv.serve(0)
+    conn = await hello(srv)
+    try:
+        types = []
+        while "chat.list" not in types or "services.status" not in types:
+            types.append(parse_server(await asyncio.wait_for(conn.recv(), 2)).type)
+        with pytest.raises(TimeoutError):
+            while True:
+                types.append(parse_server(await asyncio.wait_for(conn.recv(), 0.3)).type)
+        assert "spaces.list" not in types
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_change_is_broadcast_and_actions_answer(server: GatewayServer, spaces_dir: Path, fake_home: Path) -> None:
+    conn = await hello(server)
+    try:
+        first = await frames_until(conn, "spaces.list")
+        assert isinstance(first, SpacesList) and first.spaces == []
+        put(spaces_dir, "brief.md", "---\ntitle: Brief\n---\n")
+        await server.spaces_watcher.poll()  # what the 5 s loop does
+        got = await frames_until(conn, "spaces.list")
+        assert [s.id for s in got.spaces] == ["brief"]
+
+        await conn.send(dump(SpaceRename(ts=TS, id="brief", title="Morning brief")))
+        got = await frames_until(conn, "spaces.list")
+        assert got.spaces[0].title == "Morning brief"
+
+        await conn.send(dump(SpaceRefresh(ts=TS, id="brief")))  # no refresh command configured
+        err = await frames_until(conn, "error")
+        assert isinstance(err, Error) and err.code == "space.no_refresh" and err.id == "brief"
+
+        await conn.send(dump(SpaceRename(ts=TS, id="nope", title="X")))
+        err = await frames_until(conn, "error")
+        assert err.code == "space.not_found"
+
+        await conn.send(dump(SpaceRemove(ts=TS, id="brief")))
+        got = await frames_until(conn, "spaces.list")
+        assert got.spaces == [] and (fake_home / ".Trash" / "brief.md").exists()
+    finally:
+        await conn.close()
+
+
+async def test_app_without_spaces_v1_gets_no_spaces_list(server: GatewayServer, spaces_dir: Path) -> None:
+    old = await hello(server, [])
+    try:
+        types: list[str] = []
+        with pytest.raises(TimeoutError):
+            while True:
+                types.append(parse_server(await asyncio.wait_for(old.recv(), 0.4)).type)
+        assert "services.status" in types and "spaces.list" not in types
+        put(spaces_dir, "x.md")
+        await server.spaces_watcher.poll()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(old.recv(), 0.4)
+    finally:
+        await old.close()
+
+
+def test_rename_quotes_titles_yaml_would_not_read_as_text(spaces_dir: Path) -> None:
+    for i, title in enumerate(["true", "No", "null", "~", "123", "1.5", "0x1F", "Fine title"]):
+        path = put(spaces_dir, f"s{i}.md", "body\n")
+        rename(spaces_dir, f"s{i}", title)
+        expect = title if title == "Fine title" else f'"{title}"'
+        assert path.read_text().splitlines()[1] == f"title: {expect}", title
+        assert scan(spaces_dir)  # still reads back
+    assert {s.title for s in scan(spaces_dir)} >= {"true", "123", "Fine title"}
+
+
+async def test_failed_remove_command_says_the_file_is_in_the_trash(spaces_dir: Path, fake_home: Path) -> None:
+    put(spaces_dir, "b.md")
+    with pytest.raises(SpaceError) as e:
+        await remove(spaces_dir, "b", "exit 3")
+    assert str(e.value).endswith("(the file is already in the Trash)")
+
+
+async def test_action_that_changes_the_list_broadcasts_it_once(server: GatewayServer, spaces_dir: Path) -> None:
+    conn = await hello(server)
+    try:
+        await frames_until(conn, "spaces.list")
+        put(spaces_dir, "a.md", "---\ntitle: A\n---\n")
+        await conn.send(dump(SpaceRename(ts=TS, id="a", title="B")))
+        await frames_until(conn, "spaces.list")
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(conn.recv(), 0.4)  # no second copy
+    finally:
+        await conn.close()

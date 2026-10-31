@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``sessions clear``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -208,6 +208,39 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if status["running"] else EXIT_NONE_RUNNING
 
 
+def cmd_sessions_clear(args: argparse.Namespace) -> int:
+    """Forget every ended session on a stopped gateway's state directory; the live one and the transcripts stay."""
+    from portico_gateway.chats import ChatRegistry
+    from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.status import running_pid
+
+    state, config_path = _state_and_config_path(args)
+    if running_pid(state) is not None:
+        print("portico-gateway: Stop the gateway first.", file=sys.stderr)
+        return 1
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    if config.presentation != "single":
+        print("portico-gateway: only a deployment with one live session at a time clears earlier ones", file=sys.stderr)
+        return 1
+    if not args.yes:
+        try:
+            answer = input("Clear earlier sessions? The transcripts on disk stay. [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            return 0
+    registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=config.history_buffer)
+    ended = registry.ended_chats()
+    for chat in ended:
+        registry.remove(chat.number)
+    print(f"cleared {len(ended)} earlier session{'s' if len(ended) != 1 else ''}")
+    return 0
+
+
 # Exit code of the ``update`` commands when the deployment configured no update command.
 EXIT_NOT_CONFIGURED = 2
 # ``update --check``: the check command failed (another exit, a timeout, could not start).
@@ -308,6 +341,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
     p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("sessions", help="admin commands on the session list")
+    sessions_sub = p.add_subparsers(dest="sessions_command", required=True)
+    c = sessions_sub.add_parser("clear", help="forget every earlier session (the gateway must be stopped; transcripts stay)")
+    c.add_argument("--yes", action="store_true", help="do not ask first")
+    c.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    c.add_argument("--config", help="config file (default: <state>/config.toml)")
+    c.set_defaults(func=cmd_sessions_clear)
 
     p = sub.add_parser("update", help="run the deployment's update (stops the gateway first); --check only asks")
     p.add_argument("--check", action="store_true", help="exit 0 and print the version when an update is available, 1 when none, 2 when not configured, 4 when the check failed")

@@ -59,6 +59,7 @@ from claude_agent_sdk import (
 )
 
 from .agents import AgentTracker
+from .viewer import VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
     AgentFinished,
@@ -95,6 +96,12 @@ VIEWER_PROMPT = (
     "The person sees files in Portico's viewer beside this conversation. To show a file, "
     "call show_in_viewer with its path; don't open files with the `open` command or a browser."
 )
+# v0.12: appended after the viewer line when the deployment has a spaces folder.
+SPACES_PROMPT = (
+    "The person's spaces are files in {folder}, one Markdown or HTML file each, named by front matter title. "
+    "To show one, call show_in_viewer with its path. To create one, write a new file there with a title in front matter, "
+    "then tell the person; how it is kept up to date is the deployment's."
+)
 # The longest the adapter waits for the engine's context reading.
 CONTEXT_USAGE_TIMEOUT = 10.0
 DEFAULT_DENY_MESSAGE = "denied by the user"
@@ -109,14 +116,22 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 # Tools that only read (or keep the engine's own notes): auto mode never has
 # anything to decide for them, so their rows carry no permission outcome.
-READ_ONLY_TOOLS: frozenset[str] = frozenset(
+_READ_ONLY_ENGINE_TOOLS: frozenset[str] = frozenset(
     {
         "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "TodoRead", "ToolSearch",
         "Task", "Agent", "TaskOutput", "BashOutput", "Skill", "AskUserQuestion",
         "ExitPlanMode", "EnterPlanMode", "ListMcpResourcesTool", "ReadMcpResourceTool",
-        SHOW_TOOL_NAME,
     }
 )
+
+# Portico's own tools, allowed outright with no permission card in any mode:
+# ``show_in_viewer`` only shows a file; the viewer tools include ones that act
+# (click, type) but the person watches each action and has Stop. Not read-only,
+# yet auto mode has nothing to decide for them either.
+ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset({SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES})
+
+# What the permission row treats as "nothing to decide" (see server.py).
+READ_ONLY_TOOLS: frozenset[str] = _READ_ONLY_ENGINE_TOOLS | ALLOWED_OUTRIGHT_TOOLS
 
 # What the engine's tool result says when auto mode's classifier refused a
 # step ("Permission for this action was denied by the Claude Code auto mode
@@ -474,26 +489,30 @@ def deployment_system_prompt(kind: str, append: str | None) -> Any:
     return {"type": "preset", "preset": "claude_code", **({"append": text} if text else {})}
 
 
-def with_viewer_prompt(system_prompt: Any) -> Any:
+def with_viewer_prompt(system_prompt: Any, spaces_folder: Path | str | None = None) -> Any:
     """``system_prompt`` (as ``ClaudeAgentOptions`` takes it) with ``VIEWER_PROMPT`` appended.
 
+    With a ``spaces_folder`` (v0.12) the spaces line follows the viewer line.
     ``None`` is the SDK's default, an empty prompt: the line becomes the
     prompt. A preset keeps its ``append`` and gets the line after it; a
     custom prompt gets the line after its text. A prompt file cannot be
     appended to and is left as it is.
     """
+    line = VIEWER_PROMPT
+    if spaces_folder:
+        line = f"{VIEWER_PROMPT} {SPACES_PROMPT.format(folder=spaces_folder)}"
     if system_prompt is None:
-        return VIEWER_PROMPT
+        return line
     if isinstance(system_prompt, str):
-        return f"{system_prompt}\n\n{VIEWER_PROMPT}" if system_prompt else VIEWER_PROMPT
+        return f"{system_prompt}\n\n{line}" if system_prompt else line
     if isinstance(system_prompt, Mapping):
         kind = system_prompt.get("type")
         if kind == "preset":
             before = system_prompt.get("append") or ""
-            return {**system_prompt, "append": f"{before}\n\n{VIEWER_PROMPT}" if before else VIEWER_PROMPT}
+            return {**system_prompt, "append": f"{before}\n\n{line}" if before else line}
         if kind == "custom":
             before = system_prompt.get("prompt") or ""
-            return {**system_prompt, "prompt": f"{before}\n\n{VIEWER_PROMPT}" if before else VIEWER_PROMPT}
+            return {**system_prompt, "prompt": f"{before}\n\n{line}" if before else line}
     return system_prompt
 
 
@@ -568,10 +587,55 @@ def build_open_hook(callbacks: EngineCallbacks):
     return open_hook
 
 
+def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
+    """The ``PostToolUse`` hook on ``Write|Edit|MultiEdit`` (v0.12): look at the HTML you just made.
+
+    After a write to an ``.html``/``.htm`` file inside the chat's folder or a
+    root, ``additionalContext`` tells the agent to show it and look at it.
+    Both ``bridge.can_see`` and ``bridge.check_html`` are read on every call,
+    so a change in Settings applies within the session.
+    """
+    allowed = [Path(p).expanduser() for p in (folder, *roots)]
+
+    async def check_html_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        if not (bridge.can_see and bridge.check_html):
+            return {}
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        raw = tool_input.get("file_path") if isinstance(tool_input, Mapping) else None
+        if not isinstance(raw, str) or Path(raw).suffix.lower() not in (".html", ".htm"):
+            return {}
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            cwd = input.get("cwd") if isinstance(input, Mapping) else None
+            path = (Path(cwd) if isinstance(cwd, str) and cwd else folder) / path
+        try:
+            path = path.resolve()
+            inside = any(path.is_relative_to(a.resolve()) for a in allowed)
+        except (OSError, RuntimeError):
+            return {}
+        if not inside:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": (
+                    f"Before you reply, show {path} in the viewer and look at it with viewer_look; "
+                    "tell the person what you saw and fix what's broken."
+                ),
+            }
+        }
+
+    return check_html_hook
+
+
 # The show tool is allowed outright on purpose (it only shows a file), so the
 # SDK's advisory that ``can_use_tool`` will not see it is expected.
+# The v0.12 viewer tools are allowed outright the same way (the person watches
+# each action and has Stop), so the advisory is expected for them too.
 warnings.filterwarnings(
-    "ignore", message=rf"can_use_tool will not be invoked for: {re.escape(SHOW_TOOL_NAME)}\.", category=CanUseToolShadowedWarning
+    "ignore",
+    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES))})(?:, )?)+\.",
+    category=CanUseToolShadowedWarning,
 )
 
 
@@ -601,16 +665,33 @@ def build_options(
     drives this chat (v0.11).
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
+    post_tool_use: list[Any] = []
     extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
+    # v0.12: the spaces folder is one of the agent's own places (an extra directory), so writing a space
+    # has the permissions of writing in the chat's folder.
+    spaces_folder = getattr(callbacks, "spaces_folder", None)
+    add_dirs: list[str | Path] = [spaces_folder] if spaces_folder else []
     if callable(getattr(callbacks, "on_show", None)):
         pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
+        tools = [build_show_tool(callbacks)]
+        allowed = [SHOW_TOOL_NAME]
+        bridge = getattr(callbacks, "viewer_bridge", None)
+        if bridge is not None:
+            # v0.12: the agent sees and uses the viewer; the tools answer "not available" when no app can.
+            tools += build_viewer_tools(bridge, callbacks.viewer_chat)  # type: ignore[attr-defined]
+            allowed += VIEWER_TOOL_NAMES
+            roots = list(getattr(callbacks, "viewer_roots", []))
+            post_tool_use.append(
+                HookMatcher(matcher="Write|Edit|MultiEdit", hooks=[build_check_html_hook(bridge, folder, roots)])
+            )
         extra = {
-            "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=[build_show_tool(callbacks)])},
-            "allowed_tools": [SHOW_TOOL_NAME],
-            "system_prompt": with_viewer_prompt(system_prompt),
+            "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
+            "allowed_tools": allowed,
+            "system_prompt": with_viewer_prompt(system_prompt, spaces_folder),
         }
     return ClaudeAgentOptions(
         cwd=str(folder),
+        add_dirs=add_dirs,
         resume=resume,
         permission_mode=permission_mode,
         setting_sources=list(setting_sources),  # type: ignore[arg-type]
@@ -620,6 +701,7 @@ def build_options(
         hooks={
             "PreToolUse": pre_tool_use,
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
+            **({"PostToolUse": post_tool_use} if post_tool_use else {}),
         },
         **extra,
     )

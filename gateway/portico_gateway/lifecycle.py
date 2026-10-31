@@ -23,7 +23,7 @@ import logging
 import os
 import signal
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from .state import StateDir
@@ -105,7 +105,13 @@ def _kill_group(pid: int) -> None:
         os.killpg(pid, signal.SIGKILL)
 
 
-async def run_command(command: str, on_line: OnLine, timeout: float, on_stderr: OnLine | None = None) -> int:
+async def run_command(
+    command: str,
+    on_line: OnLine,
+    timeout: float,
+    on_stderr: OnLine | None = None,
+    env: Mapping[str, str] | None = None,
+) -> int:
     """Run ``command`` through the shell; ``await on_line(line)`` for each output line; return its exit code.
 
     stdout and stderr are merged, in order, unless ``on_stderr`` is given:
@@ -113,7 +119,8 @@ async def run_command(command: str, on_line: OnLine, timeout: float, on_stderr: 
     (v0.8: a command whose stdout is data, such as ``[deployment]
     status``). Blank lines are skipped. On ``timeout`` seconds the whole
     process group is killed and ``TimeoutError`` is raised; the lines
-    already seen were delivered.
+    already seen were delivered. ``env`` (v0.12) is added to the gateway's own
+    environment for this command.
     """
     loop = asyncio.get_running_loop()
     transport: asyncio.SubprocessTransport
@@ -126,6 +133,7 @@ async def run_command(command: str, on_line: OnLine, timeout: float, on_stderr: 
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE if split else asyncio.subprocess.STDOUT,
         start_new_session=True,
+        env={**os.environ, **env} if env else None,
     )
     pid = transport.get_pid()
 
