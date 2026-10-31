@@ -664,3 +664,10 @@ async def test_pump_ending_ends_the_open_background_work_before_the_turn(tmp_pat
     assert [f.outcome for f in _finished(cb)] == ["done"], "the turn had ended: nothing more for it"
     await eng.close()
     assert [e for e in cb.events if isinstance(e, (WorkflowFinished, AgentFinished))] == ended, "closing adds nothing"
+
+
+def test_build_options_lifts_the_cli_buffer_for_image_results(tmp_path: Path) -> None:
+    cb = RecordingCallbacks()
+    options = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=cb)
+    assert options.max_buffer_size is not None
+    assert options.max_buffer_size >= 32 * 2**20

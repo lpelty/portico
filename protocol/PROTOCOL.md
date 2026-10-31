@@ -87,7 +87,9 @@ First frame on every connection. `protocol: 1`, `app_version: string`;
 v0.10: `capabilities?: [string]`, what the app can show beyond the
 messages every app reads: `agents.v1` (see Subagents and
 workflows): without it the gateway sends none of those frames; v0.11:
-`queue.v1` (see Messages while the agent works). Absent
+`queue.v1` (see Messages while the agent works); v0.12: `viewer.v1`
+(the app can carry out `viewer.act`; see The viewer and spaces) and
+`spaces.v1` (it shows `spaces.list`). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -394,6 +396,9 @@ services), `services.busy` (one is already running). An app that never
 sends it is unaffected.
 
 ### `sessions.clear` — `SessionsClear` *(v0.11)*
+Since 0.12 the reference app no longer sends it (the admin command
+`portico-gateway sessions clear` does the same on a stopped gateway; see
+Command line), and the message stays for compatibility.
 `id`. Only when `hello.capabilities` has `sessions.clear` (the reference
 gateway lists it in single presentation). The gateway forgets every ended
 session, keeping the live one, and answers with `chat.list`. Only the
@@ -448,7 +453,9 @@ services; v0.10: `agents.v1` when the gateway sends subagent and workflow
 frames to an app that lists the same in its own `hello`; v0.11:
 `sessions.clear` in single presentation, so the app offers Clear earlier
 sessions…; v0.11: `queue.v1` when it queues a send made during a turn for
-an app that lists the same). Always followed by `chat.list`, so the app has the
+an app that lists the same; v0.12: `spaces.v1` when `[spaces] folder` is
+set, and `spaces.refresh` as well when `[spaces] refresh` is, so the app
+offers Refresh on a space). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`
 and (v0.11) any kept `chat.commands`.
 
@@ -462,6 +469,16 @@ folder; after the folder the person last used, before the first root);
 `permission_mode?` (config `permission_mode`: the mode a new session
 starts in — the start screen shows it, and a new session the person did
 not pick a mode for runs in it).
+
+v0.12: `viewer_defaults?: {agent_can_see: bool, agent_checks_html: bool,
+act_hosts: [string]}` (config `[viewer]`): the deployment's defaults for
+the app's two viewer switches, used until the person changes one, and the
+outside sites the agent may click and type on (host names; each matches
+that host and its subdomains; empty by default, so every outside site is
+look and scroll only). `act_hosts` is the deployment's alone: no
+`viewer.settings` field changes it. Local pages (`file://`, `localhost`,
+`127.0.0.1`, `::1`) are always usable. Absent from an older gateway: the
+app then uses `true` for both switches and an empty list.
 
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
@@ -688,7 +705,7 @@ gateway stop (`gateway stopping`), and a timed-out hold (`nobody was there
 to answer`). A `card.answer` that arrives afterwards is `card.stale`.
 
 ### `artifact.created` — `ArtifactCreated`
-`chat`, `seq`, `artifact {id, kind: file | url, location, media, title, source, open}`.
+`chat`, `seq`, `artifact {id, kind: file | url, location, media, title, source, open, space?}`.
 `media` is one of `markdown`, `image`, `html`, `pdf`, `text`, `url`, `other`
 (by file extension: `.md .markdown`, `.png .jpg .jpeg .gif .webp .svg`,
 `.html .htm`, `.pdf`; a URL is `url`; anything else `other`).
@@ -741,6 +758,10 @@ wrote or named takes `open: true` only when it is inside the chat's folder
 or a configured root, the rule `show_in_viewer` keeps. A file outside them
 is listed with `open: false`, and the newest viewable file inside them
 opens instead. URLs and producer artifacts are unchanged.
+
+Since 0.12: `artifact.space?` (a string) is the id of the space the file
+is, when it is a file in the spaces folder (see The viewer and spaces);
+the app switches to that space. Absent otherwise.
 
 ### `files.list` — `FilesList`
 `root`, `path` (normalised relative path, `""` for the root itself),
@@ -884,6 +905,9 @@ all services runs),
 is live; renew it instead),
 `lifecycle.before_first_chat_failed` (the deployment's preflight failed or timed out; the message
 carries its last line and no chat was created),
+`space.not_configured`, `space.not_found`, `space.invalid`,
+`space.no_refresh`, `space.refresh_failed`, `space.rename_failed`,
+`space.remove_failed` (v0.12: see The viewer and spaces),
 `gateway.error` (a handler failed; the message says which).
 
 An `error` that answers a request carries the request's `id` and `chat`
@@ -1047,6 +1071,119 @@ that is not a task's). A subagent's own subagent (`spawn_depth` above 1)
 is not reported as an agent: its start is the parent's `Agent` step, and
 its own calls are left out. Shell and monitor tasks are not shown.
 
+## The viewer and spaces *(v0.12)*
+
+Both halves are additive. An older app is sent none of it; an older
+gateway never sends it.
+
+### The agent's view of the viewer
+
+The reference gateway gives the agent five tools beside `show_in_viewer`
+(in-process, allowed outright, no permission card in any mode):
+`viewer_look` (a PNG of the viewer as shown, what is open, an outline of
+the page with a ref such as `e12` on each line, and the page errors since
+the last look), `viewer_click(target)`, `viewer_type(target, text,
+submit?)`, `viewer_scroll(direction | target)` and `viewer_back()`. A
+`target` is a ref from the last look, or the visible text of a button or
+link. Each carries out its action in the app over the connection and
+returns what happened. The tool texts are the reference gateway's and the
+app's; the protocol carries only the frames below.
+
+#### `viewer.settings` — `ViewerSettings` *(app → gateway)*
+`can_see: bool`, `check_html: bool`. The person's two switches (Agent can
+see the viewer; Agent checks HTML it creates). Sent after `hello` and
+whenever either changes; not chat-scoped. The app that most recently sent
+it is the one `viewer.act` goes to. Until one does, the gateway uses
+`hello.viewer_defaults`.
+
+#### `viewer.act` — `ViewerAct` *(gateway → app)*
+`id`, `chat`, `action: look | click | type | scroll | back`, `args`
+(`{}` for `look` and `back`; `{target}` for `click`; `{target, text,
+submit}` for `type`; `{direction}` or `{target}` for `scroll`). Sent
+only to an app that declared `viewer.v1`, and only when the person has not
+turned the agent's view off. The app shows the viewer for `chat` if it is
+not open. In multiple presentation an act for a chat that is not on
+screen is answered "The person is looking at another chat." (by the
+app, in its `viewer.result`).
+
+#### `viewer.result` — `ViewerResult` *(app → gateway)*
+`id` (the act's), `ok: bool`, `text`, `image?: {data, media_type}`
+(`data` is base64, `media_type` is `image/png`, or `image/jpeg` when the
+PNG would pass 3.5 MB; the longer side at most 1,600 px), `error?`. A result for an unknown id, or from an app other
+than the one asked, is ignored.
+
+The gateway waits 10 s for the result. It answers the agent in a plain
+sentence, never a hang, when:
+
+- no app is connected, or the app lacks `viewer.v1`: "The viewer isn't
+  available right now (Portico isn't open).";
+- the person turned the view off: "The person has turned off the agent's
+  view of the viewer in Settings.";
+- the app does not answer in time: "The viewer didn't answer in 10 s.";
+- the app disconnects while an act is pending: the same sentence as no app.
+
+What the app puts in `text` and `ok: false` for a page it cannot act on
+(nothing open, a stale ref "Not found — look again", an image or PDF
+pane "can be looked at, not used", a page whose host is not allowed) is
+the app's. For outside sites the app checks the page's *current* host at
+every click and type against `viewer_defaults.act_hosts` (a redirect or a
+link to another site is checked again), and always allows `file://`,
+`localhost`, `127.0.0.1` and `::1`. Look and scroll work on any page.
+
+When Agent checks HTML it creates is on (and the view is not off), a
+`PostToolUse` hook on `Write`, `Edit` and `MultiEdit` tells the agent,
+after it writes an `.html` or `.htm` file inside the chat's folder or a
+root, to show the file in the viewer and look at it before replying. The
+hook reads the setting each time. This is gateway behaviour; no frame.
+
+### Spaces
+
+A space is one Markdown or HTML file the agent keeps current, in the
+folder configured as `[spaces] folder`. Its id is the file name without
+the extension. Its title, icon and order come from front matter (`---`
+lines at the top) or, for any file, a leading `<!-- key: value -->`
+block: `title`, `icon` (an SF Symbol name; default `doc.text`), `order`
+(an integer, optional). A file with broken or missing front matter, or
+that is not UTF-8, is listed by its file name with the defaults. Files
+whose names start with `.` or `_` are not spaces. Portico schedules
+nothing: the deployment (or the agent) rewrites the files.
+
+The gateway looks at the folder every 5 s (modification times) and also
+after any of the actions below. It sends `spaces.list` only to an app that
+declared `spaces.v1`. The agent is told in its system prompt where the
+folder is and passed it as an extra directory, so it can write there.
+
+#### `spaces.list` — `SpacesList` *(gateway → app)*
+`spaces: [{id, title, icon, order?, location, media, updated}]`.
+`location` is the absolute path, `media` as for `artifact.created`
+(`markdown` or `html`), `updated` the file's modification time (UTC, ISO
+8601). The whole list every time. Sent after `services.status` on `hello`
+and whenever a file is added, changed or removed.
+
+#### `space.refresh`, `space.rename`, `space.remove` *(app → gateway)*
+`space.refresh {id}`, `space.rename {id, title}`, `space.remove {id}`. On
+these three, `id` is **the space's id**, not a request id, and it is the
+`id` an `error` echoes. Each is answered by a new `spaces.list` (sent to
+the attached app, if it declared `spaces.v1`) or by an `error`. Refresh
+runs `[spaces] refresh`, rename writes the title into the file's front
+matter, and remove moves the file to the Trash and then runs `[spaces]
+remove`. The commands run with `/bin/sh -c`, a 30 s timeout, and
+`$PORTICO_SPACE` set to the id; a failure answers `error` and is logged.
+Refresh and remove run beside the app's other frames, not ahead of them.
+Symbolic links in the folder are not spaces. A title that would go into
+an HTML comment block cannot contain `--` (`space.invalid`).
+
+Error codes: `space.not_configured` (no spaces folder), `space.not_found`,
+`space.invalid` (rename with an empty title, or with `--` in a title kept
+in a comment block), `space.no_refresh` (no refresh command),
+`space.refresh_failed`, `space.rename_failed`,
+`space.remove_failed` (its message says when the file is already in the
+Trash).
+
+#### The space's file as an artifact
+`artifact.created.artifact.space?` carries the space's id when the file is
+one, so the app opens it as that space.
+
 ## Services *(v0.4)*
 
 Configuration notes for the reference gateway (not protocol messages).
@@ -1137,6 +1274,13 @@ for the reference gateway, not protocol messages.
   `brand.app_icon`, `update.run`...) or nothing when it is unset or not a
   key; exit 0. A config file that does not load: its reason on stderr,
   exit 1. Lists and tables print as JSON.
+
+- `sessions clear [--yes]` *(v0.12)* — forgets every ended session on a
+  stopped gateway's state directory, keeping the live one; the engine's
+  transcripts on disk stay and the numbers are never handed out again.
+  Asks first unless `--yes`. Refuses with "Stop the gateway first." (exit
+  1) while a gateway runs on the state directory, and in multiple
+  presentation. It does what the `sessions.clear` message does.
 
 The running gateway also checks for updates itself: `update.check` at
 start and every 6 hours, in the background; a version found goes to the

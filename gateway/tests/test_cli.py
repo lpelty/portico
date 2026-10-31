@@ -223,3 +223,60 @@ async def test_update_stops_the_gateway_then_streams_the_run_and_exits_with_its_
     write_config(home, '[update]\nrun = "echo done"\n')
     assert await asyncio.to_thread(main, ["update", "--state", str(home)]) == 0
     assert "done" in capfd.readouterr().out
+
+
+# --- sessions clear -----------------------------------------------------------------
+
+
+def _state_with_sessions(home: Path) -> None:
+    """Two ended sessions and one live one, written to the index the way a gateway would."""
+    from portico_gateway.chats import ChatRegistry
+    from portico_gateway.state import StateDir
+
+    state = StateDir(home)
+    registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=3)
+    for n in (1, 2, 3):
+        registry.create(home)
+    registry.get(1).ended = "2026-10-01T00:00:00Z"
+    registry.get(2).ended = "2026-10-02T00:00:00Z"
+    registry.persist()
+
+
+def _chat_numbers(home: Path) -> list[int]:
+    from portico_gateway.state import StateDir
+
+    return [c.chat for c in StateDir(home).load_index().chats]
+
+
+def test_sessions_clear_yes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "home"
+    _state_with_sessions(home)
+    assert main(["sessions", "clear", "--yes", "--state", str(home)]) == 0
+    assert _chat_numbers(home) == [3]  # the live session stays
+    assert "2" in capsys.readouterr().out
+
+
+def test_sessions_clear_refuses_while_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    _state_with_sessions(home)
+    monkeypatch.setattr("portico_gateway.status.running_pid", lambda state: 4242)
+    assert main(["sessions", "clear", "--yes", "--state", str(home)]) == 1
+    assert "Stop the gateway first." in capsys.readouterr().err
+    assert _chat_numbers(home) == [1, 2, 3]
+
+
+def test_sessions_clear_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    home = tmp_path / "home"
+    _state_with_sessions(home)
+    prompts: list[str] = []
+
+    def fake_input(prompt: str = "") -> str:
+        prompts.append(prompt)
+        return "n"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    assert main(["sessions", "clear", "--state", str(home)]) == 0
+    assert prompts == ["Clear earlier sessions? The transcripts on disk stay. [y/N] "]
+    assert _chat_numbers(home) == [1, 2, 3]

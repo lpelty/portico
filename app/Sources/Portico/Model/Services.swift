@@ -252,6 +252,12 @@ extension ServicesPresentation {
         [gateway.state == .up ? .stop : .start, .restart]
     }
 
+    /// The buttons a row shows on hover (v0.12, item 1): the Gateway row's
+    /// Stop or Start and Restart; other rows keep their context-menu Restart.
+    static func hoverControls(_ row: ServiceRow) -> [GatewayControl] {
+        row.isGateway ? gatewayControls(row) : []
+    }
+
     /// Whether a Gateway row button can be pressed now: none during a
     /// restart; Start and Restart not while the gateway is starting (as in
     /// Settings).

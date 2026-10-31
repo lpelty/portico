@@ -166,7 +166,7 @@ from .agents import AgentTracker
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import Config, hello_for
+from .config import SPACES_CAPABILITY, Config, hello_for
 from .engine import (
     READ_ONLY_TOOLS,
     Engine,
@@ -226,7 +226,15 @@ from .messages import (
     ServiceRestart,
     ServicesRestartAll,
     SessionsClear,
+    ViewerAct,
+    ViewerResult,
+    ViewerSettings,
     ServicesStatus,
+    SpaceInfo,
+    SpaceRefresh,
+    SpaceRemove,
+    SpaceRename,
+    SpacesList,
     SessionLog,
     SessionLogged,
     SessionMode,
@@ -249,12 +257,17 @@ from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
 from .state import StateDir
+from . import spaces as spaces_mod
+from .spaces import Space, SpaceError, SpacesWatcher
+from .viewer import VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
+# The largest frame the gateway takes from the app (a viewer screenshot is the big one).
+MAX_INBOUND_BYTES = 16 * 2**20
 PROTOCOL_PATH = "/v1"
 READY_PREFIX = "PORTICO_READY"
 
@@ -449,6 +462,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     gaps are harmless, the app only skips what it has already seen.
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     """
+    if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
+        return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
     if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
         return None  # v0.11: an app that cannot show a queue never had one
     if AGENTS_CAPABILITY in capabilities:
@@ -506,6 +521,29 @@ class ChatCallbacks:
 
     async def on_show(self, paths: list[str]) -> str | None:
         return await self.server.show_files(self.chat, paths)
+
+    @property
+    def viewer_bridge(self) -> ViewerBridge:
+        """v0.12: where the viewer tools send their acts."""
+        return self.server.viewer
+
+    @property
+    def viewer_chat(self) -> int:
+        return self.chat.number
+
+    @property
+    def viewer_roots(self) -> list[Path]:
+        """The deployment's roots (and the spaces folder), where a file may be shown from beside the chat's folder."""
+        roots = [Path(root.path) for root in self.server.config.roots]
+        if self.spaces_folder is not None:
+            roots.append(self.spaces_folder)
+        return roots
+
+    @property
+    def spaces_folder(self) -> Path | None:
+        """v0.12: the spaces folder, one of the agent's own places (an extra directory for the engine)."""
+        folder = self.server.config.spaces.folder
+        return Path(folder) if folder else None
 
 
 # --- plain HTTP on the WebSocket port ----------------------------------------
@@ -823,6 +861,22 @@ class GatewayServer:
             ("POST", "/v1/artifact"): self._producer,
             ("GET", "/v1/status"): self._status,
         }
+        # v0.12: the agent's viewer tools. Until an app sends ``viewer.settings`` the
+        # deployment's defaults apply; acts go only to apps that declared ``viewer.v1``.
+        self.viewer = ViewerBridge(
+            self._send_viewer_act,
+            capable=lambda conn: VIEWER_CAPABILITY in _capabilities(conn),
+            defaults=(config.viewer.agent_can_see, config.viewer.agent_checks_html),
+        )
+        # v0.12: spaces. The watcher tells every attached app when the folder's list changes.
+        self.spaces_watcher: SpacesWatcher | None = (
+            SpacesWatcher(Path(config.spaces.folder), self._spaces_changed) if config.spaces.folder else None
+        )
+        self.register("space.refresh", self.on_space_refresh)
+        self.register("space.rename", self.on_space_rename)
+        self.register("space.remove", self.on_space_remove)
+        self.register("viewer.settings", self.on_viewer_settings)
+        self.register("viewer.result", self.on_viewer_result)
         self.register("artifact.opened", self.on_artifact_opened)
         self.register("card.answer", self.on_card_answer)
         self.register("chat.new", self.on_chat_new)
@@ -868,6 +922,9 @@ class GatewayServer:
             port,
             process_request=self._process_request,
             create_connection=self._make_connection,
+            # A ``viewer.result`` carries a base64 screenshot up to 1,600 px
+            # wide, over the 1 MiB default; the app allows 64 MiB inbound.
+            max_size=MAX_INBOUND_BYTES,
         )
         self.port = self._server.sockets[0].getsockname()[1]
         await self._follow_default_folder()
@@ -879,6 +936,9 @@ class GatewayServer:
             self._spawn(self._watch_updates(), name="portico-update-check")
         if self.services.active:
             self._spawn(self.services.run(), name="portico-services")
+        if self.spaces_watcher is not None:
+            self.spaces_watcher.spaces = await asyncio.to_thread(spaces_mod.scan, self.spaces_watcher.folder)
+            self._spawn(self.spaces_watcher.run(), name="portico-spaces")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -1148,6 +1208,8 @@ class GatewayServer:
         # v0.4: every connection hears the services as they stand (an empty
         # list when the deployment lists none: the app has its own Gateway row).
         await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
+        if self.spaces_watcher is not None:
+            await self._send(conn, self._spaces_frame(self.spaces_watcher.spaces))
         if self.update_version is not None:
             # Found before this app attached: it hears it now.
             await self._send(conn, UpdateAvailable(ts=_now(), version=self.update_version))
@@ -1169,6 +1231,7 @@ class GatewayServer:
             pass
         finally:
             frames.put_nowait(None)
+            self.viewer.drop(conn)  # a pending act answers "not available" now, not after 10 s
             if self._app is conn:
                 self._app = None
                 self.cards.set_attached(False)
@@ -1337,7 +1400,7 @@ class GatewayServer:
         """Forget every ended session (v0.11, item 54); the live one stays, and the transcripts on disk."""
         if self.config.presentation != "single":
             raise ProtocolError("sessions.not_single", "only a deployment with one live session at a time clears earlier ones")
-        for chat in [c for c in self.registry.chats() if c.ended is not None]:
+        for chat in self.registry.ended_chats():
             await self.cards.cancel_all(chat, "session cleared", self.emit)
             await self._close_engine(chat)
             self.registry.remove(chat.number)
@@ -1686,17 +1749,37 @@ class GatewayServer:
 
     async def _report_collected(self, chat: Chat, collector: TurnCollector) -> None:
         # v0.11 (67): a written file opens only where ``show_in_viewer`` may show one.
-        artifacts = collector.finish(chat.folder, open_within=self._shown_folders(chat))
+        # v0.12: a space's file is shown (and counted a root) but never opened by a turn's write.
+        never = self._spaces_folders()
+        artifacts = collector.finish(chat.folder, open_within=self._shown_folders(chat, spaces=False), never_open=never)
         if not artifacts:
             return
         for artifact in artifacts:
+            artifact.space = self._space_of(artifact)
             chat.artifacts.append(artifact)
             await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
         self.registry.persist()
 
-    def _shown_folders(self, chat: Chat) -> list[Path]:
-        """Where a file may be shown from: the chat's folder and the deployment's roots."""
+    def _spaces_folders(self) -> list[Path]:
+        """The spaces folder (resolved) as a list: empty when none is configured."""
+        if not self.config.spaces.folder:
+            return []
+        try:
+            return [Path(self.config.spaces.folder).resolve()]
+        except OSError:
+            return []
+
+    def _space_of(self, artifact: Artifact) -> str | None:
+        """The id of the space an artifact's file is, else ``None``."""
+        if artifact.kind != "file" or not self.config.spaces.folder:
+            return None
+        return spaces_mod.space_id_for(Path(self.config.spaces.folder), artifact.location)
+
+    def _shown_folders(self, chat: Chat, spaces: bool = True) -> list[Path]:
+        """Where a file may be shown from: the chat's folder, the deployment's roots, and the spaces folder."""
         folders = [chat.folder, *(Path(root.path) for root in self.config.roots)]
+        if spaces and self.config.spaces.folder:
+            folders.append(Path(self.config.spaces.folder))
         out: list[Path] = []
         for folder in folders:
             try:
@@ -1742,6 +1825,7 @@ class GatewayServer:
         run = self._runs.get(chat.number)
         for path in shown:
             artifact = artifact_for_location(str(path), source="tool", open=True)
+            artifact.space = self._space_of(artifact)
             chat.artifacts.append(artifact)
             await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
             if run is not None:
@@ -1822,6 +1906,104 @@ class GatewayServer:
         """Back to ``working`` after a card, but only while the same turn is still running."""
         if run is not None and self._runs.get(chat.number) is run and chat.state == "waiting on you":
             await self.set_state(chat, "working")
+
+    async def _send_viewer_act(self, conn: ServerConnection, act: ViewerAct) -> None:
+        await conn.send(dump(act))
+
+    # --- spaces (v0.12) ---------------------------------------------------------
+
+    @staticmethod
+    def _space_info(space: Space) -> SpaceInfo:
+        return SpaceInfo(
+            id=space.id, title=space.title, icon=space.icon, order=space.order,
+            location=space.location, media=space.media,  # type: ignore[arg-type]
+            updated=space.updated,
+        )
+
+    def _spaces_frame(self, spaces: list[Space]) -> SpacesList:
+        return SpacesList(ts=_now(), spaces=[self._space_info(s) for s in spaces])
+
+    async def _spaces_changed(self, spaces: list[Space]) -> None:
+        await self.broadcast(self._spaces_frame(spaces))
+
+    def _space_folder(self) -> Path:
+        folder = self.config.spaces.folder
+        if not folder:
+            raise ProtocolError("space.not_configured", "this deployment has no spaces folder")
+        return Path(folder)
+
+    async def _spaces_answer(self) -> None:
+        """The fresh list an action answers with (and the watcher's next look has nothing to add)."""
+        assert self.spaces_watcher is not None
+        before = self.spaces_watcher.spaces
+        await self.spaces_watcher.poll()
+        if self.spaces_watcher.spaces == before:
+            # The poll said nothing; an action that changed nothing still gets its answer.
+            await self.broadcast(self._spaces_frame(self.spaces_watcher.spaces))
+
+    async def _space_action(self, id: str, action: Callable[[], Awaitable[None]], failed_code: str) -> None:
+        try:
+            await action()
+        except SpaceError as e:
+            await self._spaces_answer()
+            raise ProtocolError(e.code if e.code != "space.failed" else failed_code, str(e)) from None
+        await self._spaces_answer()
+
+    def _spawn_space_action(
+        self, msg: SpaceRefresh | SpaceRemove, conn: ServerConnection,
+        action: Callable[[], Awaitable[None]], failed_code: str,
+    ) -> None:
+        """Run a space command as a task, like ``service.restart``, so other frames keep moving.
+
+        Its refusal or failure is an ``error`` frame carrying the request's ``id``.
+        """
+
+        async def task() -> None:
+            try:
+                await self._space_action(msg.id, action, failed_code)
+            except ProtocolError as e:
+                await self._send(conn, self.error(e.code, e.message, id=msg.id))
+            except Exception as e:
+                log.exception("%s for %s failed", msg.type, msg.id)
+                await self._send(conn, self.error("gateway.error", f"{msg.type} failed: {e}", id=msg.id))
+
+        self._spawn(task(), name=f"portico-{msg.type}-{msg.id}")
+
+    async def on_space_refresh(self, msg: SpaceRefresh, conn: ServerConnection) -> None:
+        folder = self._space_folder()
+        command = self.config.spaces.refresh
+        if not command:
+            raise ProtocolError("space.no_refresh", "this deployment has no refresh for spaces")
+        try:
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id)  # not_found before anything runs
+        except SpaceError as e:
+            raise ProtocolError(e.code, str(e)) from None
+        self._spawn_space_action(msg, conn, lambda: spaces_mod.refresh(msg.id, command), "space.refresh_failed")
+
+    async def on_space_rename(self, msg: SpaceRename, conn: ServerConnection) -> None:
+        folder = self._space_folder()
+
+        async def do() -> None:
+            await asyncio.to_thread(spaces_mod.rename, folder, msg.id, msg.title)
+
+        await self._space_action(msg.id, do, "space.rename_failed")
+
+    async def on_space_remove(self, msg: SpaceRemove, conn: ServerConnection) -> None:
+        folder = self._space_folder()
+        try:
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id)  # not_found before anything runs
+        except SpaceError as e:
+            raise ProtocolError(e.code, str(e)) from None
+        self._spawn_space_action(
+            msg, conn, lambda: spaces_mod.remove(folder, msg.id, self.config.spaces.remove), "space.remove_failed"
+        )
+
+    async def on_viewer_settings(self, msg: ViewerSettings, conn: ServerConnection) -> None:
+        """The app's two viewer switches; this app is now the one acts go to."""
+        self.viewer.set_target(conn, msg.can_see, msg.check_html)
+
+    async def on_viewer_result(self, msg: ViewerResult, conn: ServerConnection) -> None:
+        self.viewer.resolve(conn, msg)
 
     async def on_card_answer(self, msg: CardAnswer, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)

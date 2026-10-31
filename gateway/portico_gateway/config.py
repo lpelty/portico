@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import Action, Brand, HelloServer, PermissionMode, Presentation, Root
+from .messages import Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -45,6 +45,14 @@ RESTART_ALL_CAPABILITY = "services.restart_all"
 # v0.11: advertised in single presentation; the app's Settings then offers
 # Clear earlier sessions… and sends ``sessions.clear``.
 CLEAR_SESSIONS_CAPABILITY = "sessions.clear"
+
+# v0.12: advertised when ``[spaces] folder`` is set; ``spaces.refresh`` also
+# when ``[spaces] refresh`` is (the app then offers Refresh).
+SPACES_CAPABILITY = "spaces.v1"
+SPACES_REFRESH_CAPABILITY = "spaces.refresh"
+
+# Always usable by the agent in the viewer, whatever ``act_hosts`` says.
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 class ConfigError(ValueError):
@@ -221,6 +229,87 @@ class SessionsConfig(BaseModel):
         return value if value is not None and value.strip() else None
 
 
+class ViewerConfig(BaseModel):
+    """``[viewer]`` (v0.12): what the agent may do in the app's viewer.
+
+    ``agent_can_see`` and ``agent_checks_html`` are the defaults for the two
+    Settings switches. ``act_hosts`` are the outside sites the agent may click
+    and type on (it can only look at and scroll the rest); an entry is a bare
+    host name matching that host and its subdomains. Set by the deployment only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_can_see: bool = True
+    agent_checks_html: bool = True
+    act_hosts: list[str] = []
+
+    @field_validator("act_hosts")
+    @classmethod
+    def _hosts_are_bare(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in value:
+            if (
+                any(token in raw for token in ("://", "/", ":", "*"))
+                or any(c.isspace() for c in raw)
+                or not raw
+                or raw.startswith(".")
+                or raw.endswith(".")
+                or "." not in raw
+            ):
+                raise ConfigError(
+                    f"viewer: act_hosts entry {raw!r} must be a bare host name like \"figma.com\" "
+                    "(no scheme, path, port, wildcard, spaces or leading/trailing dot, and at least one dot; "
+                    "it already covers subdomains)"
+                )
+            out.append(raw.lower())
+        return out
+
+
+class SpacesConfig(BaseModel):
+    """``[spaces]`` (v0.12): a folder of files the agent keeps current, shown in the app's switcher.
+
+    ``refresh`` and ``remove`` are commands (``/bin/sh -c``, 30 s, with
+    ``$PORTICO_SPACE`` set to the space's id).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    folder: str | None = None
+    refresh: str | None = None
+    remove: str | None = None
+
+    @field_validator("folder")
+    @classmethod
+    def _folder_exists(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        path = Path(value.strip()).expanduser()
+        if not path.is_dir():
+            raise ConfigError(f"spaces: folder {str(path)!r} does not exist; create it or remove the key")
+        # Absolute from here on: it goes to the agent's add_dirs and prompt.
+        return str(path.resolve())
+
+    @field_validator("refresh", "remove")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
+def host_allowed(host: str, act_hosts: list[str]) -> bool:
+    """Whether the agent may click and type on ``host``: a local host, or an ``act_hosts`` entry or its subdomain.
+
+    Used by the doctor and the tests; the app is what enforces it (the gateway
+    only sends ``act_hosts`` in ``hello``).
+    """
+    h = host.lower()
+    if h.endswith("."):  # a fully qualified name: "figma.com." is "figma.com"
+        h = h[:-1]
+    if h in LOCAL_HOSTS:
+        return True
+    return any(h == e.lower() or h.endswith("." + e.lower()) for e in act_hosts)
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -282,6 +371,9 @@ class Config(BaseModel):
     files: FilesConfig = FilesConfig()
     # v0.11: the deployment's own session numbers (``[sessions] next_number``).
     sessions: SessionsConfig = SessionsConfig()
+    # v0.12: the viewer (``[viewer]``) and spaces (``[spaces]``).
+    viewer: ViewerConfig = ViewerConfig()
+    spaces: SpacesConfig = SpacesConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -428,6 +520,10 @@ def hello_for(
         capabilities.append(RESTART_ALL_CAPABILITY)
     if config.presentation == "single":
         capabilities.append(CLEAR_SESSIONS_CAPABILITY)
+    if config.spaces.folder:
+        capabilities.append(SPACES_CAPABILITY)
+        if config.spaces.refresh:
+            capabilities.append(SPACES_REFRESH_CAPABILITY)
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,
@@ -446,6 +542,7 @@ def hello_for(
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
         permission_mode=config.permission_mode,
         hide_session_folder=config.files.hide_session_folder,
+        viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

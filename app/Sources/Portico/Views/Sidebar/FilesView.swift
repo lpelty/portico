@@ -143,12 +143,25 @@ struct FilesView: View {
     }
 
     private var matches: some View {
-        List(matchingNodes) { node in
-            FileRow(node: node, subtitle: "\(node.root)/\(node.path)")
+        let changed = ChangedFiles.matching(model.changedThisSession(chat: chat), filter: filter)
+        let nodes = matchingNodes
+        return List {
+            if !changed.isEmpty {
+                Section {
+                    ForEach(changed, id: \.path) { file in
+                        ChangedFileRow(chat: chat, path: file.path, at: file.at)
+                    }
+                } header: {
+                    Text("Changed this session")
+                }
+            }
+            ForEach(nodes) { node in
+                FileRow(node: node, subtitle: "\(node.root)/\(node.path)")
+            }
         }
         .listStyle(.sidebar)
         .overlay {
-            if matchingNodes.isEmpty {
+            if nodes.isEmpty && changed.isEmpty {
                 ContentUnavailableView.search(text: filter)
             }
         }
@@ -467,6 +480,14 @@ enum ChangedFiles {
     static func shown(count: Int, expanded: Bool) -> Int {
         expanded ? count : min(count, collapsedCount)
     }
+
+    /// The changed files whose name contains the filter (case-insensitive);
+    /// all of them when the filter is empty (v0.12, item 3).
+    static func matching(_ changed: [ChangedFile], filter: String) -> [ChangedFile] {
+        let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        if needle.isEmpty { return changed }
+        return changed.filter { $0.name.lowercased().contains(needle) }
+    }
 }
 
 /// A file in CHANGED THIS SESSION, drawn as the tree's file rows are
@@ -582,7 +603,9 @@ struct BookmarksView: View {
                         .padding(.top, 18)
                         .padding(.bottom, 6)
                     ForEach(changed, id: \.path) { file in
-                        BookmarkRow(chat: chat, path: file.path, at: file.at)
+                        // v0.12, item 2: the folder list's row style.
+                        ChangedFileRow(chat: chat, path: file.path, at: file.at)
+                            .padding(.horizontal, 8)
                     }
                 }
             }

@@ -563,6 +563,22 @@ def check_services(config_path: Path) -> Check:
     )
 
 
+VIEWER_KEYS = frozenset({"viewer"})
+
+
+def check_viewer(config_path: Path) -> Check:
+    """Which outside sites the agent may click and type on (v0.12); the rest it can only look at."""
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        if e.keys & VIEWER_KEYS:
+            return Check("viewer", False, _one_line(str(e)))
+        return Check("viewer", True, "not checked: the config does not load (see the config check)")
+    if config.viewer.act_hosts:
+        return Check("viewer", True, "Agent can click and type on: " + ", ".join(config.viewer.act_hosts))
+    return Check("viewer", True, "Outside sites: look only")
+
+
 PATH_TOOLS = ("node", "npx", "uvx")
 
 
@@ -638,6 +654,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[C
         check_setting_sources(config_path),
         *check_plugins(config_path),
         check_services(config_path),
+        check_viewer(config_path),
         check_path(config_path),
         check_token(state),
         check_env_file(state),

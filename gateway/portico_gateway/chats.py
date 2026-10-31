@@ -422,6 +422,10 @@ class ChatRegistry:
     def summaries(self) -> list[ChatSummary]:
         return [chat.summary() for chat in self.chats()]
 
+    def ended_chats(self) -> list[Chat]:
+        """Every chat a renewal has closed (``sessions.clear`` and ``sessions clear`` forget exactly these)."""
+        return [c for c in self.chats() if c.ended is not None]
+
     def remove(self, number: int) -> Chat:
         """Forget a chat. Its number is never handed out again. The caller closes its engine."""
         chat = self.get(number)

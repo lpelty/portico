@@ -22,6 +22,11 @@ struct ArtifactPresentation: Equatable {
         return URL(fileURLWithPath: artifact.location).lastPathComponent
     }
 
+    /// A space's own front-matter keys are not shown as Properties (spec 4.3).
+    var hiddenFrontMatterKeys: Set<String> {
+        artifact.id.hasPrefix(AppModel.spaceArtifactPrefix) ? SpacesPresentation.hiddenFrontMatterKeys : []
+    }
+
     /// The media kind, in the protocol's word.
     var kindLabel: String { artifact.media.rawValue }
 
@@ -170,10 +175,15 @@ struct ViewerView: View {
 
     private var made: [Artifact] { model.history(for: chat) }
 
-    private var header: some View {
+    private var header: some View { fileHeader }
+
+    private var fileHeader: some View {
         HStack(spacing: 8) {
             titleMenu
             Spacer(minLength: 8)
+            ViewerActingLabel(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) {
+                model.stopTurn(chat: chat)
+            }
             // No Open buttons for a file that isn't on disk: nothing to open.
             if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
                 let shown = ArtifactPresentation(artifact: current)
@@ -213,53 +223,13 @@ struct ViewerView: View {
         }
     }
 
-    /// One of the header's open buttons (AG2/AG2b): icon and words on a
-    /// control fill while the viewer is wide; the icon alone, its words in
-    /// the tooltip, when it is narrow.
     private func headerButton(
         _ title: String, systemImage: String, labelled: Bool, help: String, action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 10, weight: .semibold))
-                if labelled {
-                    Text(title)
-                        .font(.system(size: 12))
-                }
-            }
-            .foregroundStyle(Theme.text2)
-            .padding(.vertical, labelled ? 4 : 6)
-            .padding(.horizontal, labelled ? 9 : 6)
-            .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
-            .fixedSize()
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.hover)
-        .help(help)
-        .accessibilityLabel(title)
+        ViewerHeaderButton(title: title, systemImage: systemImage, labelled: labelled, help: help, action: action)
     }
 
-    private var focusButton: some View {
-        let on = model.isFocused(chat: chat)
-        let accent = model.brand.accent ?? Theme.accent
-        return Button {
-            model.toggleFocus(chat: chat)
-        } label: {
-            Image(systemName: on ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(on ? accent : Theme.text2)
-                .frame(width: 24, height: 24)
-                .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.hover)
-        .keyboardShortcut(.return, modifiers: [.command, .shift])
-        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Focus on this: hide the sidebar and widen the viewer (⌘⇧↩)")
-        .accessibilityLabel(on ? "Leave focus" : "Focus")
-    }
+    private var focusButton: some View { ViewerFocusButton(chat: chat) }
 
     /// The title, with the count of things made here and a chevron; a
     /// click lists them, the one shown checked.
@@ -312,12 +282,165 @@ struct ViewerView: View {
         if let current = model.current[chat] {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
+                .environment(\.viewerAgent, model.viewerAgent)
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",
                 description: Text(made.isEmpty ? "What the agent makes opens here." : "Pick something from the menu above."))
         }
     }
+}
+
+/// One of the header's open buttons (AG2/AG2b): icon and words on a
+/// control fill while the viewer is wide; the icon alone, its words in
+/// the tooltip, when it is narrow.
+struct ViewerHeaderButton: View {
+    let title: String
+    let systemImage: String
+    let labelled: Bool
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                if labelled {
+                    Text(title)
+                        .font(.system(size: 12))
+                }
+            }
+            .foregroundStyle(Theme.text2)
+            .padding(.vertical, labelled ? 4 : 6)
+            .padding(.horizontal, labelled ? 9 : 6)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+            .fixedSize()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .help(help)
+        .accessibilityLabel(title)
+    }
+}
+
+/// The Focus button (⌘⇧↩).
+struct ViewerFocusButton: View {
+    let chat: Int
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let on = model.isFocused(chat: chat)
+        let accent = model.brand.accent ?? Theme.accent
+        Button {
+            model.toggleFocus(chat: chat)
+        } label: {
+            Image(systemName: on ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(on ? accent : Theme.text2)
+                .frame(width: 24, height: 24)
+                .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .keyboardShortcut(.return, modifiers: [.command, .shift])
+        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Focus on this: hide the sidebar and widen the viewer (⌘⇧↩)")
+        .accessibilityLabel(on ? "Leave focus" : "Focus")
+    }
+}
+
+/// The viewer column: an open space (it belongs to the window, so it shows
+/// with no chat too), else the shown chat's viewer.
+struct ViewerColumn: View {
+    let chat: Int?
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if model.openSpace != nil {
+            SpaceViewer(chat: chat)
+        } else if let chat {
+            ViewerView(chat: chat)
+        }
+    }
+}
+
+/// A space open (row AI2): its icon and title, "Updated <time>", then
+/// Refresh (only when the gateway can), expand, and ×, which goes back to
+/// Work and the file that was open before. Re-read when the gateway says
+/// the file changed (`updated` advances).
+struct SpaceViewer: View {
+    let chat: Int?
+    @EnvironmentObject private var model: AppModel
+    @State private var headerWidth: CGFloat?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let space = model.openSpace.flatMap({ id in model.spaces.first { $0.id == id } }) {
+                header(space)
+            }
+            Rectangle().fill(Theme.border).frame(height: 1)
+            if let artifact = model.openSpaceArtifact {
+                // Kept for the space (not re-made on each change, which lost
+                // the scroll position); a change re-reads it in place.
+                ArtifactContent(artifact: artifact)
+                    .id(artifact.id)
+                    .environment(\.webPaneRevision, ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
+                    .environment(\.viewerAgent, model.viewerAgent)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Theme.panel)
+    }
+
+    private func header(_ space: SpaceInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: space.icon)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text2)
+            Text(space.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(SpacesPresentation.updatedText(space.updatedDate))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+                .lineLimit(1)
+                .layoutPriority(-1)
+            Spacer(minLength: 8)
+            if let chat {
+                ViewerActingLabel(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) {
+                    model.stopTurn(chat: chat)
+                }
+            }
+            if model.spacesCanRefresh {
+                ViewerHeaderButton(title: "Refresh", systemImage: "arrow.clockwise", labelled: ViewerHeaderButtons.labelled(width: headerWidth, obsidian: false), help: "Ask the agent to update this now") {
+                    model.refreshSpace(space.id)
+                }
+            }
+            if let chat { ViewerFocusButton(chat: chat) }
+            Button {
+                model.setOpenSpace(nil)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.text2)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.hover)
+            .help("Back to Work (⌘0)")
+            .accessibilityLabel("Close the space")
+        }
+        .padding(.horizontal, 16)
+        .frame(height: Theme.toolbarHeight)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+    }
+
 }
 
 /// Whether the viewer header's open buttons keep their words (v0.11,
@@ -412,20 +535,26 @@ struct ArtifactMenu: View {
 /// says so first, whatever its kind.
 struct ArtifactContent: View {
     let artifact: Artifact
+    @Environment(\.viewerAgent) private var agent
 
     private var shown: ArtifactPresentation { ArtifactPresentation(artifact: artifact) }
 
     var body: some View {
+        panes
+            // A native pane's view, for the agent's look (v0.12).
+            .background {
+                if let agent, WebPane.Load(shown) == nil || shown.isMissing { ViewerPaneAnchor(agent: agent) }
+            }
+    }
+
+    @ViewBuilder
+    private var panes: some View {
         if shown.isMissing {
             MissingPane(shown: shown)
         } else {
             switch shown.media {
-            case .markdown:
-                if let file = shown.fileURL { WebPane(load: .markdown(file)) } else { OtherPane(shown: shown) }
-            case .html:
-                if let file = shown.fileURL { WebPane(load: .html(file)) } else { OtherPane(shown: shown) }
-            case .url:
-                if let url = shown.externalURL { WebPane(load: .url(url)) } else { OtherPane(shown: shown) }
+            case .markdown, .html, .url:
+                if let load = WebPane.Load(shown) { WebPane(load: load) } else { OtherPane(shown: shown) }
             case .image:
                 if let file = shown.fileURL { ImagePane(file: file, shown: shown) } else { OtherPane(shown: shown) }
             case .pdf:
@@ -478,12 +607,16 @@ struct PDFPane: NSViewRepresentable {
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.document = PDFDocument(url: file)
+        // The agent reads and scrolls the viewer's PDF (v0.12).
+        context.environment.viewerAgent?.attachNative(view, file: file)
         return view
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
         if view.document?.documentURL != file {
             view.document = PDFDocument(url: file)
+            // The same view, another file: the agent reads the new one.
+            context.environment.viewerAgent?.attachNative(view, file: file)
         }
     }
 }
@@ -507,7 +640,7 @@ struct TextPane: View {
         Group {
             switch phase {
             case .loading: LoadingPane()
-            case .text(let read): TextBody(read: read)
+            case .text(let read): TextBody(read: read, file: file)
             case .unreadable: OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
             }
         }
@@ -525,6 +658,9 @@ struct TextPane: View {
 /// broken for display (`TextFileRead.hardBreak`).
 struct TextBody: View {
     let read: TextFileRead
+    /// The file shown, for the agent (v0.12); `nil` draws the text alone.
+    var file: URL? = nil
+    @Environment(\.viewerAgent) private var agent
     @State private var attributed: NSAttributedString?
     @State private var broke = false
 
@@ -536,12 +672,18 @@ struct TextBody: View {
             GeometryReader { geo in
                 ScrollView([.horizontal, .vertical]) {
                     if let attributed {
-                        SelectableText(text: attributed, wraps: false)
+                        SelectableText(text: attributed, wraps: false, onMake: onMake)
+                            // Another file is another text view, so the agent is given it.
+                            .id(file)
                             .padding(.vertical, 12)
                             .padding(.horizontal, 14)
                             .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
                     }
                 }
+                // At the top when the text arrives, not where the empty
+                // pane's middle was (a scroll view both ways keeps the
+                // centre as its content grows).
+                .defaultScrollAnchor(.topLeading)
             }
             if let note = Self.note(read: read, broke: broke) {
                 ViewerFootnote(text: note)
@@ -556,6 +698,12 @@ struct TextBody: View {
             broke = shown.broke
             attributed = MarkdownAttributed.code(shown.text)
         }
+    }
+
+    /// Gives the text view to the agent, in the viewer's panes only.
+    private var onMake: ((NSTextView) -> Void)? {
+        guard let agent, let file else { return nil }
+        return { agent.attachNative($0, file: file) }
     }
 
     /// The line under the text, or `nil` when it is all there as written.

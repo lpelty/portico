@@ -99,6 +99,7 @@ final class Settings: ObservableObject {
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
+        static let spaceWidth = "viewerWidth.space"
         static let earlierHeight = "earlierHeight"
         static let viewerAtQuit = "viewerAtQuit"
         static let voiceInputEnabled = "voice.inputEnabled"
@@ -108,6 +109,11 @@ final class Settings: ObservableObject {
         static let readAloudAvailable = "voice.readAloudAvailable"
         static let voiceIdentifier = "voice.identifier"
         static let speechRate = "voice.speechRate"
+        static let viewerAgentCanSee = "viewer.agentCanSee"
+        static let viewerAgentChecksHTML = "viewer.agentChecksHTML"
+        static let spacesNotify = "spaces.notify"
+        static let spacesLastOpened = "spaces.lastOpened"
+        static let spacesFirstSeen = "spaces.firstSeen"
     }
 
     private let defaults: UserDefaults
@@ -149,6 +155,9 @@ final class Settings: ObservableObject {
     /// The viewer's width as last dragged, one per fit (documents, web).
     @Published var readingWidth: CGFloat {
         didSet { defaults.set(Double(readingWidth), forKey: Key.readingWidth) }
+    }
+    @Published var spaceWidth: CGFloat {
+        didSet { defaults.set(Double(spaceWidth), forKey: Key.spaceWidth) }
     }
     @Published var canvasWidth: CGFloat {
         didSet { defaults.set(Double(canvasWidth), forKey: Key.canvasWidth) }
@@ -195,6 +204,38 @@ final class Settings: ObservableObject {
         didSet { defaults.set(speechRate.rawValue, forKey: Key.speechRate) }
     }
 
+    // MARK: viewer vision and spaces (v0.12)
+
+    /// The person's choice for "Agent can see the viewer"; `nil` until they
+    /// choose, which means the deployment's default (`hello.viewer_defaults`).
+    @Published var viewerAgentCanSee: Bool? {
+        didSet { Self.store(viewerAgentCanSee, forKey: Key.viewerAgentCanSee, in: defaults) }
+    }
+    /// The person's choice for "Agent checks HTML it creates"; `nil` as above.
+    @Published var viewerAgentChecksHTML: Bool? {
+        didSet { Self.store(viewerAgentChecksHTML, forKey: Key.viewerAgentChecksHTML, in: defaults) }
+    }
+    /// "Notify when a space is updated": the dot and the notification.
+    @Published var spacesNotify: Bool {
+        didSet { defaults.set(spacesNotify, forKey: Key.spacesNotify) }
+    }
+    /// When each space (by id) was last opened here; a space changed after
+    /// that has something new.
+    @Published var spacesLastOpened: [String: Date] {
+        didSet {
+            defaults.set(spacesLastOpened.mapValues { $0.timeIntervalSince1970 }, forKey: Key.spacesLastOpened)
+        }
+    }
+
+    /// When this app first saw each space (by id). A space is new only if it
+    /// changed after both this and the last time it was opened, so a first
+    /// launch shows no dots.
+    @Published var spacesFirstSeen: [String: Date] {
+        didSet {
+            defaults.set(spacesFirstSeen.mapValues { $0.timeIntervalSince1970 }, forKey: Key.spacesFirstSeen)
+        }
+    }
+
     /// The artifact the viewer showed when the app last quit, and in which
     /// session (v0.6); `nil` when it was closed or empty. Read at launch to
     /// decide whether the viewer comes back.
@@ -215,11 +256,19 @@ final class Settings: ObservableObject {
     }
 
     func viewerWidth(for fit: ColumnWidths.Fit) -> CGFloat {
-        fit == .canvas ? canvasWidth : readingWidth
+        switch fit {
+        case .canvas: canvasWidth
+        case .space: spaceWidth
+        case .reading: readingWidth
+        }
     }
 
     func setViewerWidth(_ width: CGFloat, for fit: ColumnWidths.Fit) {
-        if fit == .canvas { canvasWidth = width } else { readingWidth = width }
+        switch fit {
+        case .canvas: canvasWidth = width
+        case .space: spaceWidth = width
+        case .reading: readingWidth = width
+        }
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -239,6 +288,7 @@ final class Settings: ObservableObject {
         sidebarWidth = Self.width(Key.sidebarWidth, in: defaults) ?? ColumnWidths.sidebarDefault
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
+        spaceWidth = Self.width(Key.spaceWidth, in: defaults) ?? ColumnWidths.spaceDefault
         earlierHeight = Self.width(Key.earlierHeight, in: defaults)
         voiceInputEnabled = defaults.object(forKey: Key.voiceInputEnabled) as? Bool ?? true
         sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
@@ -247,6 +297,13 @@ final class Settings: ObservableObject {
         readAloudAvailable = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
+        viewerAgentCanSee = defaults.object(forKey: Key.viewerAgentCanSee) as? Bool
+        viewerAgentChecksHTML = defaults.object(forKey: Key.viewerAgentChecksHTML) as? Bool
+        spacesNotify = defaults.object(forKey: Key.spacesNotify) as? Bool ?? true
+        let opened = defaults.dictionary(forKey: Key.spacesLastOpened) as? [String: Double] ?? [:]
+        spacesLastOpened = opened.mapValues { Date(timeIntervalSince1970: $0) }
+        let seen = defaults.dictionary(forKey: Key.spacesFirstSeen) as? [String: Double] ?? [:]
+        spacesFirstSeen = seen.mapValues { Date(timeIntervalSince1970: $0) }
     }
 
     /// Whether an artifact of `media` should open on its own.
@@ -262,6 +319,10 @@ final class Settings: ObservableObject {
     private static func read(_ key: String, in defaults: UserDefaults) -> String? {
         let value = defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
+    }
+
+    private static func store(_ value: Bool?, forKey key: String, in defaults: UserDefaults) {
+        if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
     }
 
     private static func store(_ value: String?, forKey key: String, in defaults: UserDefaults) {

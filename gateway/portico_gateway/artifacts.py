@@ -328,11 +328,16 @@ class TurnCollector:
         if text:
             self._signals.append(("text", text))
 
-    def finish(self, folder: Path, open_within: list[Path] | None = None) -> list[Artifact]:
+    def finish(
+        self, folder: Path, open_within: list[Path] | None = None, never_open: list[Path] | None = None
+    ) -> list[Artifact]:
         """The turn's artifacts, one per location, ``open`` on the newest viewable one only.
 
         ``open_within`` (v0.11, resolved folders): a file outside every one of
-        them never opens; ``None`` lets any file open.
+        them never opens; ``None`` lets any file open. ``never_open`` (v0.12,
+        resolved folders): a file under one of them is listed but never opens
+        (the spaces folder: a heartbeat's rewrite must not pull the person out
+        of Work).
         """
         folder = Path(folder)
         # location -> (source, last position); insertion order is the first mention.
@@ -382,6 +387,8 @@ class TurnCollector:
             if artifact.source == "text" and artifact.kind == "file" and not _changed_since(Path(artifact.location), self.started):
                 continue
             if artifact.kind == "file" and open_within is not None and not _inside(artifact.location, open_within):
+                continue
+            if artifact.kind == "file" and never_open and _inside(artifact.location, never_open):
                 continue
             artifact.open = True
             break

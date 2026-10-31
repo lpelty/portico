@@ -41,7 +41,7 @@ enum MarkdownRun: Equatable {
 // MARK: - Attributed text
 
 /// Prose blocks as AppKit attributed text, laid out like the SwiftUI
-/// blocks they replace: body 16 regular with 5 of line spacing, 10 between
+/// blocks they replace: body 15 regular with 5 of line spacing, 10 between
 /// blocks, 6 between list items, heads semibold a little larger (v0.11, 73).
 @MainActor
 enum MarkdownAttributed {
@@ -134,7 +134,7 @@ enum MarkdownAttributed {
         return (traits?[.weight] as? CGFloat).map { NSFont.Weight($0) } ?? .regular
     }
 
-    /// A code block's text: monospaced 14 (v0.11, beside 16 pt prose), 3 of line spacing, as fenced.
+    /// A code block's text: monospaced 14 (v0.11, beside 15 pt prose), 3 of line spacing, as fenced.
     static func code(_ text: String) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 3
@@ -171,6 +171,9 @@ struct SelectableText: NSViewRepresentable {
     /// False for code: lines keep their length and the view is as wide as
     /// the longest (its scroll view scrolls sideways).
     var wraps = true
+    /// Called with the text view once it is made (the viewer's text pane
+    /// gives it to the agent, v0.12).
+    var onMake: ((NSTextView) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSTextView {
         let view = SelectableTextView(usingTextLayoutManager: false)
@@ -187,6 +190,7 @@ struct SelectableText: NSViewRepresentable {
         view.linkTextAttributes = [.foregroundColor: NSColor(Theme.accent), .cursor: NSCursor.pointingHand]
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.textStorage?.setAttributedString(text)
+        onMake?(view)
         return view
     }
 

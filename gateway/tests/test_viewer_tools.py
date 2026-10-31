@@ -1,0 +1,543 @@
+"""v0.12: the viewer tools and the ``viewer.act`` / ``viewer.result`` round trip.
+
+The bridge is driven with a fake app connection; the server tests use a real
+WebSocket client. No model: tool handlers are called directly.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from portico_gateway.engine import SHOW_SERVER, SHOW_TOOL_NAME, build_check_html_hook, build_options
+from portico_gateway.messages import (
+    HelloClient,
+    HelloServer,
+    ViewerAct,
+    ViewerImage,
+    ViewerResult,
+    ViewerSettings,
+    dump,
+    parse_server,
+)
+from portico_gateway.viewer import (
+    NO_ANSWER,
+    NOT_AVAILABLE,
+    SETTING_OFF,
+    VIEWER_TOOL_NAMES,
+    ViewerBridge,
+    build_viewer_tools,
+)
+from tests.conftest import RecordingCallbacks
+from tests.test_server import TS, connect, make_server, ws_url
+
+PNG = "iVBORw0KGgo="
+
+
+class FakeApp:
+    """A fake app connection: records the acts it is sent; answers them when ``reply`` is set."""
+
+    def __init__(self, bridge: ViewerBridge, reply: ViewerResult | None = None) -> None:
+        self.bridge = bridge
+        self.acts: list[ViewerAct] = []
+        self.reply = reply
+
+    async def send(self, conn: Any, act: ViewerAct) -> None:
+        self.acts.append(act)
+        if self.reply is not None:
+            self.bridge.resolve(conn, self.reply.model_copy(update={"id": act.id}))
+
+
+def make_bridge(reply: ViewerResult | None = None, capable: bool = True, defaults: tuple[bool, bool] = (True, True)):
+    holder: dict[str, FakeApp] = {}
+
+    async def send(conn: Any, act: ViewerAct) -> None:
+        await holder["app"].send(conn, act)
+
+    bridge = ViewerBridge(send, capable=lambda conn: capable, defaults=defaults)
+    holder["app"] = FakeApp(bridge, reply)
+    return bridge, holder["app"]
+
+
+def ok(text: str = "Done.", image: ViewerImage | None = None) -> ViewerResult:
+    return ViewerResult(ts=TS, id="x", ok=True, text=text, image=image)
+
+
+def by_name(tools: list[Any]) -> dict[str, Any]:
+    return {t.name: t for t in tools}
+
+
+# --- the round trip ---------------------------------------------------------------
+
+
+async def test_look_returns_text_and_image_content() -> None:
+    bridge, app = make_bridge(ok("trail-detail.html\ne1 heading Trails", ViewerImage(data=PNG, media_type="image/png")))
+    conn = object()
+    bridge.set_target(conn, True, True)
+    tools = by_name(build_viewer_tools(bridge, 3))
+    out = await tools["viewer_look"].handler({})
+    assert out == {
+        "content": [
+            {"type": "text", "text": "trail-detail.html\ne1 heading Trails"},
+            {"type": "image", "data": PNG, "mimeType": "image/png"},
+        ]
+    }
+    assert [(a.chat, a.action, a.args) for a in app.acts] == [(3, "look", {})]
+
+
+async def test_wire_args_per_action() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    tools = by_name(build_viewer_tools(bridge, 1))
+    await tools["viewer_click"].handler({"target": "e12"})
+    await tools["viewer_type"].handler({"target": "e3", "text": "hi"})
+    await tools["viewer_type"].handler({"target": "e3", "text": "hi", "submit": True})
+    await tools["viewer_scroll"].handler({"direction": "down"})
+    await tools["viewer_scroll"].handler({"target": "Pricing"})
+    await tools["viewer_back"].handler({})
+    assert [(a.action, a.args) for a in app.acts] == [
+        ("click", {"target": "e12"}),
+        ("type", {"target": "e3", "text": "hi", "submit": False}),
+        ("type", {"target": "e3", "text": "hi", "submit": True}),
+        ("scroll", {"direction": "down"}),
+        ("scroll", {"target": "Pricing"}),
+        ("back", {}),
+    ]
+
+
+async def test_not_ok_result_is_an_error_with_its_words() -> None:
+    bridge, _ = make_bridge(ViewerResult(ts=TS, id="x", ok=False, text="", error="Not found — look again"))
+    bridge.set_target(object(), True, True)
+    out = await by_name(build_viewer_tools(bridge, 1))["viewer_click"].handler({"target": "e99"})
+    assert out == {"content": [{"type": "text", "text": "Not found — look again"}], "is_error": True}
+
+
+async def test_no_app_answers_not_available() -> None:
+    bridge, app = make_bridge(ok())
+    out = await by_name(build_viewer_tools(bridge, 1))["viewer_look"].handler({})
+    assert out == {"content": [{"type": "text", "text": NOT_AVAILABLE}], "is_error": True}
+    assert NOT_AVAILABLE == "The viewer isn't available right now (Portico isn't open)."
+    assert app.acts == []
+
+
+async def test_old_app_without_capability_answers_not_available() -> None:
+    bridge, app = make_bridge(ok(), capable=False)
+    bridge.set_target(object(), True, True)
+    out = await by_name(build_viewer_tools(bridge, 1))["viewer_look"].handler({})
+    assert out["content"][0]["text"] == NOT_AVAILABLE and out["is_error"] is True
+    assert app.acts == []
+
+
+async def test_setting_off_refuses_every_tool_but_show() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), False, True)
+    tools = by_name(build_viewer_tools(bridge, 1))
+    assert set(tools) == {"viewer_look", "viewer_click", "viewer_type", "viewer_scroll", "viewer_back"}
+    for name, args in [
+        ("viewer_look", {}),
+        ("viewer_click", {"target": "e1"}),
+        ("viewer_type", {"target": "e1", "text": "x"}),
+        ("viewer_scroll", {"direction": "up"}),
+        ("viewer_back", {}),
+    ]:
+        out = await tools[name].handler(args)
+        assert out == {"content": [{"type": "text", "text": SETTING_OFF}], "is_error": True}, name
+    assert SETTING_OFF == "The person has turned off the agent's view of the viewer in Settings."
+    assert app.acts == []
+
+
+async def test_config_defaults_apply_until_the_app_sends_settings() -> None:
+    bridge, _ = make_bridge(ok(), defaults=(False, False))
+    conn = object()
+    bridge._target = conn  # an app is there but has sent no settings (older than this rule: tests the default only)
+    assert bridge.settings is None and bridge.can_see is False and bridge.check_html is False
+    out = await by_name(build_viewer_tools(bridge, 1))["viewer_look"].handler({})
+    assert out["content"][0]["text"] == SETTING_OFF
+    bridge.set_target(conn, True, True)  # the person's choice wins
+    assert bridge.can_see is True and bridge.check_html is True
+
+
+async def test_timeout_answers_after_10s() -> None:
+    bridge, app = make_bridge(None)  # the app never answers
+    bridge.set_target(object(), True, True)
+    out = await bridge.act(1, "look", {}, timeout=0.05)
+    assert out == {"content": [{"type": "text", "text": NO_ANSWER}], "is_error": True}
+    assert NO_ANSWER == "The viewer didn't answer in 10 s."
+    assert len(app.acts) == 1 and bridge._pending == {}
+
+
+async def test_disconnect_fails_pending_act() -> None:
+    bridge, app = make_bridge(None)
+    conn = object()
+    bridge.set_target(conn, True, True)
+    task = asyncio.create_task(bridge.act(1, "look", {}, timeout=5))
+    await asyncio.sleep(0.01)
+    assert len(app.acts) == 1
+    bridge.drop(conn)
+    out = await asyncio.wait_for(task, 1)
+    assert out == {"content": [{"type": "text", "text": NOT_AVAILABLE}], "is_error": True}
+    # and nothing is targeted any more
+    assert (await bridge.act(1, "look", {}))["content"][0]["text"] == NOT_AVAILABLE
+
+
+async def test_acts_go_to_latest_settings_sender() -> None:
+    sent: list[tuple[Any, ViewerAct]] = []
+    bridge: ViewerBridge
+
+    async def send(conn: Any, act: ViewerAct) -> None:
+        sent.append((conn, act))
+        bridge.resolve(conn, ViewerResult(ts=TS, id=act.id, ok=True, text="ok"))
+
+    bridge = ViewerBridge(send)
+    first, second = object(), object()
+    bridge.set_target(first, True, True)
+    bridge.set_target(second, True, False)
+    await bridge.act(1, "back", {})
+    assert [c for c, _ in sent] == [second]
+    assert bridge.settings == (True, False)
+    # the first leaving changes nothing for the second
+    bridge.drop(first)
+    await bridge.act(1, "back", {})
+    assert [c for c, _ in sent] == [second, second]
+
+
+async def test_a_result_from_another_app_is_ignored() -> None:
+    bridge, _ = make_bridge(None)
+    conn, other = object(), object()
+    bridge.set_target(conn, True, True)
+    task = asyncio.create_task(bridge.act(1, "look", {}, timeout=0.1))
+    await asyncio.sleep(0.01)
+    (act_id,) = bridge._pending
+    bridge.resolve(other, ViewerResult(ts=TS, id=act_id, ok=True, text="spoofed"))
+    bridge.resolve(conn, ViewerResult(ts=TS, id="unknown", ok=True, text="stray"))
+    out = await task
+    assert out["content"][0]["text"] == NO_ANSWER
+
+
+# --- registered beside show_in_viewer -------------------------------------------------
+
+
+class WithBridge(RecordingCallbacks):
+    def __init__(self, bridge: ViewerBridge, chat: int = 4) -> None:
+        super().__init__()
+        self.viewer_bridge = bridge
+        self.viewer_chat = chat
+
+
+def test_tools_registered_with_show_in_viewer(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    options = build_options(tmp_path, None, ["project"], WithBridge(bridge))
+    server = (options.mcp_servers or {})[SHOW_SERVER]  # type: ignore[index]
+    assert server["type"] == "sdk" and server["name"] == SHOW_SERVER
+    assert options.allowed_tools == [SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES]
+    assert VIEWER_TOOL_NAMES[0] == "mcp__portico__viewer_look"
+
+
+def test_no_bridge_leaves_the_show_tool_alone(tmp_path: Path) -> None:
+    options = build_options(tmp_path, None, ["project"], RecordingCallbacks())
+    assert options.allowed_tools == [SHOW_TOOL_NAME]
+
+
+def test_tool_names_and_schemas() -> None:
+    bridge, _ = make_bridge()
+    tools = by_name(build_viewer_tools(bridge, 1))
+    assert [f"mcp__portico__{n}" for n in tools] == list(VIEWER_TOOL_NAMES)
+    assert tools["viewer_scroll"].input_schema["required"] == []
+    assert tools["viewer_type"].input_schema["required"] == ["target", "text"]
+    assert tools["viewer_click"].input_schema["required"] == ["target"]
+
+
+# --- through the server -------------------------------------------------------------------
+
+
+@pytest.fixture
+async def server(state_dir, config) -> AsyncIterator[Any]:
+    srv = make_server(state_dir, config)
+    await srv.serve(0)
+    try:
+        yield srv
+    finally:
+        await srv.shutdown()
+
+
+async def attach_app(server: Any, capabilities: list[str]):
+    conn = await connect(ws_url(server, server.token))
+    await conn.send(dump(HelloClient(ts=TS, app_version="0.12.0", capabilities=capabilities)))
+    assert isinstance(parse_server(await conn.recv()), HelloServer)
+    return conn
+
+
+async def until(predicate, seconds: float = 2.0) -> None:
+    async def poll() -> None:
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), seconds)
+
+
+async def frames_until(conn, type_name: str) -> Any:
+    while True:
+        msg = parse_server(await asyncio.wait_for(conn.recv(), 2))
+        if msg.type == type_name:
+            return msg
+
+
+async def test_server_round_trip(server: Any) -> None:
+    conn = await attach_app(server, ["viewer.v1"])
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=False)))
+    await until(lambda: server.viewer.settings is not None)
+    assert server.viewer.settings == (True, False)
+    task = asyncio.create_task(server.viewer.act(7, "look", {}))
+    act = await frames_until(conn, "viewer.act")
+    assert (act.chat, act.action, act.args) == (7, "look", {})
+    await conn.send(dump(ViewerResult(
+        ts=TS, id=act.id, ok=True, text="hello", image=ViewerImage(data=PNG, media_type="image/png"))))
+    out = await asyncio.wait_for(task, 2)
+    assert out["content"][0] == {"type": "text", "text": "hello"}
+    assert out["content"][1]["mimeType"] == "image/png"
+    await conn.close()
+
+
+async def test_server_accepts_a_result_over_1_mib(server: Any) -> None:
+    """A full-size screenshot in ``viewer.result`` is bigger than the WebSocket default 1 MiB; the gateway takes it."""
+    conn = await attach_app(server, ["viewer.v1"])
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=False)))
+    await until(lambda: server.viewer.settings is not None)
+    task = asyncio.create_task(server.viewer.act(1, "look", {}))
+    act = await frames_until(conn, "viewer.act")
+    big = "A" * (3 * 2**20)
+    await conn.send(dump(ViewerResult(
+        ts=TS, id=act.id, ok=True, text="big", image=ViewerImage(data=big, media_type="image/png"))))
+    out = await asyncio.wait_for(task, 5)
+    assert out["content"][1]["data"] == big
+    await conn.close()
+
+
+async def test_server_old_app_gets_no_act(server: Any) -> None:
+    conn = await attach_app(server, [])
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+    await until(lambda: server.viewer.settings is not None)
+    out = await server.viewer.act(1, "look", {})
+    assert out["content"][0]["text"] == NOT_AVAILABLE
+    await conn.close()
+
+
+async def test_server_app_disconnect_fails_pending_act(server: Any) -> None:
+    conn = await attach_app(server, ["viewer.v1"])
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+    await until(lambda: server.viewer.settings is not None)
+    task = asyncio.create_task(server.viewer.act(1, "look", {}, timeout=5))
+    await frames_until(conn, "viewer.act")
+    await conn.close()
+    out = await asyncio.wait_for(task, 2)
+    assert out["content"][0]["text"] == NOT_AVAILABLE
+    assert server.viewer.settings is None
+
+
+async def test_server_second_app_takes_over_pending_stays_with_first(server: Any) -> None:
+    first = await attach_app(server, ["viewer.v1"])
+    await first.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+    await until(lambda: server.viewer.settings is not None)
+    task = asyncio.create_task(server.viewer.act(1, "look", {}, timeout=0.5))
+    await frames_until(first, "viewer.act")
+    second = await attach_app(server, ["viewer.v1"])  # the first is replaced and closed
+    await asyncio.wait_for(task, 3)  # answers within the timeout, never hangs
+    await second.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+    await until(lambda: server.viewer._target is not None)
+    task2 = asyncio.create_task(server.viewer.act(1, "back", {}))
+    act = await frames_until(second, "viewer.act")
+    assert act.action == "back"
+    await second.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="back")))
+    assert (await asyncio.wait_for(task2, 2))["content"][0]["text"] == "back"
+    await second.close()
+
+
+async def test_stalled_send_is_bounded_by_the_same_timeout() -> None:
+    async def send(conn: Any, act: ViewerAct) -> None:
+        await asyncio.sleep(30)  # the socket write never completes
+
+    bridge = ViewerBridge(send)
+    bridge.set_target(object(), True, True)
+    out = await asyncio.wait_for(bridge.act(1, "look", {}, timeout=0.05), 2)
+    assert out == {"content": [{"type": "text", "text": NO_ANSWER}], "is_error": True}
+    assert bridge._pending == {}
+
+
+async def test_failed_send_is_logged_then_not_available(caplog: pytest.LogCaptureFixture) -> None:
+    async def send(conn: Any, act: ViewerAct) -> None:
+        raise ConnectionError("closed")
+
+    bridge = ViewerBridge(send)
+    bridge.set_target(object(), True, True)
+    with caplog.at_level("WARNING"):
+        out = await bridge.act(1, "look", {})
+    assert out["is_error"] is True and out["content"][0]["text"] == NOT_AVAILABLE
+    assert any(r.levelname == "WARNING" and "viewer.act" in r.getMessage() for r in caplog.records)
+
+
+# --- the check-HTML hook (v0.12 section 3.3) -------------------------------------------
+
+CHECK_SENTENCE = (
+    "Before you reply, show {file} in the viewer and look at it with viewer_look; "
+    "tell the person what you saw and fix what's broken."
+)
+
+
+def write_input(path: Path, tool: str = "Write") -> dict[str, Any]:
+    return {"hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": {"file_path": str(path)}, "cwd": str(path.parent)}
+
+
+def context_of(out: dict[str, Any]) -> str | None:
+    return out.get("hookSpecificOutput", {}).get("additionalContext")
+
+
+def ready_bridge(capable: bool = True):
+    """A bridge with an app attached that declared ``viewer.v1`` (when ``capable``) and sent ``viewer.settings``."""
+    bridge, app = make_bridge(capable=capable)
+    bridge.set_target(object(), True, True)
+    return bridge, app
+
+
+async def test_html_write_in_folder_adds_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    page = tmp_path / "index.html"
+    for tool in ("Write", "Edit", "MultiEdit"):
+        out = await hook(write_input(page, tool), "t1", None)
+        assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert context_of(out) == CHECK_SENTENCE.format(file=page.resolve())
+    htm = await hook(write_input(tmp_path / "old.HTM"), "t2", None)
+    assert context_of(htm) is not None
+
+
+async def test_html_in_a_root_adds_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    folder, root = tmp_path / "chat", tmp_path / "root"
+    folder.mkdir(), root.mkdir()
+    hook = build_check_html_hook(bridge, folder, [root])
+    assert context_of(await hook(write_input(root / "a.html"), "t", None)) is not None
+
+
+async def test_md_write_no_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    assert await hook(write_input(tmp_path / "notes.md"), "t", None) == {}
+
+
+async def test_html_outside_roots_no_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    folder, other = tmp_path / "chat", tmp_path / "elsewhere"
+    folder.mkdir(), other.mkdir()
+    hook = build_check_html_hook(bridge, folder, [])
+    assert await hook(write_input(other / "a.html"), "t", None) == {}
+    assert await hook({"tool_name": "Write", "tool_input": {}}, "t", None) == {}
+
+
+async def test_setting_read_live(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    page = write_input(tmp_path / "a.html")
+    assert context_of(await hook(page, "t", None)) is not None
+    bridge.settings = (True, False)
+    assert await hook(page, "t", None) == {}
+    bridge.settings = (True, True)
+    assert context_of(await hook(page, "t", None)) is not None
+
+
+async def test_check_off_when_can_see_off(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    bridge.settings = (False, True)
+    assert await hook(write_input(tmp_path / "a.html"), "t", None) == {}
+
+
+async def test_no_context_without_a_capable_app(tmp_path: Path) -> None:
+    page = write_input(tmp_path / "a.html")
+    bridge, _ = make_bridge()  # no app has sent viewer.settings
+    assert await build_check_html_hook(bridge, tmp_path, [])(page, "t", None) == {}
+    old, _ = ready_bridge(capable=False)  # an app without viewer.v1
+    assert await build_check_html_hook(old, tmp_path, [])(page, "t", None) == {}
+    bridge.set_target(object(), True, True)
+    assert context_of(await build_check_html_hook(bridge, tmp_path, [])(page, "t", None)) is not None
+
+
+async def test_type_submits_only_on_true() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    viewer_type = by_name(build_viewer_tools(bridge, 1))["viewer_type"]
+    for given, expect in (("false", False), ("true", False), (1, False), (True, True), (None, False)):
+        args = {"target": "e1", "text": "x"} | ({} if given is None else {"submit": given})
+        await viewer_type.handler(args)
+        assert app.acts[-1].args["submit"] is expect, given
+
+
+def test_hook_registered_on_write_edit_multiedit(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    options = build_options(tmp_path, None, ["project"], WithBridge(bridge))
+    matchers = (options.hooks or {})["PostToolUse"]
+    assert [m.matcher for m in matchers] == ["Write|Edit|MultiEdit|Bash"]
+    plain = build_options(tmp_path, None, ["project"], RecordingCallbacks())
+    assert "PostToolUse" not in (plain.hooks or {})
+
+
+async def test_a_jpeg_look_becomes_a_jpeg_image_item() -> None:
+    bridge, _app = make_bridge(ok("shot", ViewerImage(data=PNG, media_type="image/jpeg")))
+    bridge.set_target(object(), True, True)
+    out = await by_name(build_viewer_tools(bridge, 3))["viewer_look"].handler({})
+    assert out["content"][1] == {"type": "image", "data": PNG, "mimeType": "image/jpeg"}
+
+
+def bash_input(command: str, cwd: Path) -> dict[str, Any]:
+    return {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
+
+
+async def test_bash_heredoc_html_write_adds_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    (tmp_path / "proto").mkdir()
+    page = tmp_path / "proto" / "hello.html"
+    page.write_text("<p>hi</p>")
+    command = "cat > proto/hello.html <<'EOF'\n<p>hi</p>\nEOF"
+    assert context_of(await hook(bash_input(command, tmp_path), "t", None)) == CHECK_SENTENCE.format(file=page.resolve())
+
+
+async def test_bash_several_html_names_each(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    for name in ("a.html", "b.html"):
+        (tmp_path / name).write_text("x")
+    text = context_of(await hook(bash_input("cp tpl.html a.html && cp tpl.html b.html", tmp_path), "t", None))
+    assert text is not None and str((tmp_path / "a.html").resolve()) in text and str((tmp_path / "b.html").resolve()) in text
+
+
+async def test_bash_md_write_no_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    (tmp_path / "notes.md").write_text("x")
+    assert await hook(bash_input("echo hi > notes.md", tmp_path), "t", None) == {}
+
+
+async def test_bash_html_outside_roots_no_context(tmp_path: Path) -> None:
+    bridge, _ = ready_bridge()
+    folder, other = tmp_path / "chat", tmp_path / "elsewhere"
+    folder.mkdir(), other.mkdir()
+    (other / "a.html").write_text("x")
+    hook = build_check_html_hook(bridge, folder, [])
+    assert await hook(bash_input(f"echo hi > {other / 'a.html'}", folder), "t", None) == {}
+
+
+async def test_bash_read_of_old_html_no_context(tmp_path: Path) -> None:
+    import os
+
+    bridge, _ = ready_bridge()
+    hook = build_check_html_hook(bridge, tmp_path, [])
+    (tmp_path / "proto").mkdir()
+    old = tmp_path / "proto" / "old.html"
+    old.write_text("x")
+    stamp = old.stat().st_mtime - 3600
+    os.utime(old, (stamp, stamp))
+    assert await hook(bash_input("cat proto/old.html", tmp_path), "t", None) == {}

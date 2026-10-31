@@ -15,9 +15,9 @@ struct TablePane: View {
             case nil:
                 LoadingPane()
             case .table(let table, let widths, let note)?:
-                TableBody(table: table, widths: widths, note: note)
+                TableBody(table: table, widths: widths, note: note, file: file)
             case .text(let read)?:
-                TextBody(read: read)
+                TextBody(read: read, file: file)
             case .unreadable?:
                 OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
             }
@@ -60,6 +60,10 @@ struct TableBody: View {
     let table: DelimitedTable
     let widths: [CGFloat]
     let note: String?
+    /// The file shown, for the agent (v0.12); `nil` draws the table alone.
+    var file: URL? = nil
+    @Environment(\.viewerAgent) private var agent
+    @State private var seen = TableRowsSeen()
 
     static let rowHeight: CGFloat = 30
 
@@ -73,6 +77,8 @@ struct TableBody: View {
                         Section {
                             ForEach(0..<table.rows.count, id: \.self) { index in
                                 row(table.rows[index], header: false)
+                                    // Which rows are on screen, for the agent (v0.12).
+                                    .onScrollVisibilityChange(threshold: 0.5) { seen.set(index, visible: $0) }
                                 hairline
                             }
                         } header: {
@@ -83,6 +89,10 @@ struct TableBody: View {
                         }
                     }
                     .textSelection(.enabled)
+                    // The content's own size, so the agent reads which rows are visible.
+                    .background {
+                        if let agent, let file { TableContentAnchor(agent: agent, file: file, table: table, seen: seen) }
+                    }
                     // As wide as the table, or the viewer when that is wider;
                     // at least as tall as the viewer so a short table sits at the top.
                     .frame(width: max(tableWidth, geo.size.width), alignment: .topLeading)
@@ -115,5 +125,57 @@ struct TableBody: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // The pinned header is opaque so rows scrolling under it don't show.
         .background(header ? Theme.surface : .clear)
+    }
+}
+
+/// A view as big as a table's content, given to the agent: its visible
+/// rect says which rows are on screen, and its scroll view scrolls them.
+struct TableContentAnchor: NSViewRepresentable {
+    let agent: ViewerAgent
+    let file: URL
+    let table: DelimitedTable
+    let seen: TableRowsSeen
+
+    final class Content: NSView {
+        override var isFlipped: Bool { true }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = Content()
+        agent.attachNative(view, file: file, table: table, rows: seen)
+        return view
+    }
+
+    /// The same view drawn for another file or table (SwiftUI keeps a
+    /// view when only its inputs change): the agent reads the new one.
+    func updateNSView(_ view: NSView, context: Context) {
+        guard context.coordinator.file != file || context.coordinator.table != table else { return }
+        context.coordinator.file = file
+        context.coordinator.table = table
+        agent.attachNative(view, file: file, table: table, rows: seen)
+    }
+
+    func makeCoordinator() -> Shown { Shown(file: file, table: table) }
+
+    /// What the view was last given to the agent as.
+    final class Shown {
+        var file: URL
+        var table: DelimitedTable
+        init(file: URL, table: DelimitedTable) {
+            self.file = file
+            self.table = table
+        }
+    }
+}
+
+/// The table rows on screen, as the rows report it (a lazy stack's height
+/// is an estimate until rows draw, so a position can't say which rows).
+/// Read by the agent; not drawn, so not published.
+@MainActor
+final class TableRowsSeen {
+    private(set) var visible: Set<Int> = []
+
+    func set(_ row: Int, visible shown: Bool) {
+        if shown { visible.insert(row) } else { visible.remove(row) }
     }
 }
