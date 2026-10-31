@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.12.0 (2026-10-31)
+
+### What a person gets (app)
+
+- **The agent sees the viewer you're looking at.** It can look at whatever
+  is open (a web page, a Markdown file and its front matter, a table, a
+  PDF, an image, a space) and, on web pages, click, type, scroll and go
+  back. You watch it happen: the target is outlined for a moment first,
+  the viewer header says "Agent is using the viewer" with a Stop button,
+  and each action is a row in the conversation. Your own clicks and
+  scrolling always win.
+- **Outside websites are look-only** unless the deployment lists the site
+  (see `[viewer] act_hosts`). Your own files and local test servers can
+  always be used. The site is checked again at the moment of every click.
+- **The agent checks HTML it creates.** After writing or changing an HTML
+  page (with its Write/Edit tools or a shell command) it opens the page
+  and looks before replying.
+- **Spaces.** Pages the agent keeps up to date (a Brief, Meeting prep, or
+  anything you ask for) are listed in a switcher in the toolbar: Work
+  (⌘0), then each space (⌘1–⌘9), then New space…. A space opens beside the
+  chat; × or ⌘0 goes back. A dot marks a space that changed since you
+  last looked; with Portico in the background you get a notification.
+  Right-click a space to rename or remove it (removing asks first and
+  moves the file to the Trash). "Show me my brief" in the chat switches
+  to it.
+- **Settings is one 700 × 800 window** on every tab. General gains Viewer
+  (open files automatically, with the five kinds in one row; Agent can
+  see the viewer; Agent checks HTML it creates) and Spaces (Notify when a
+  space is updated). Gateway puts its state and controls first.
+- **Clear earlier sessions… left Settings.** It is now an admin command
+  (`portico-gateway sessions clear`).
+- **Conversation text is 15 pt** (code stays 14). The toolbar drops the
+  chat title: sidebar toggle, brand, the space switcher, viewer toggle.
+- **Small fixes.** The services menu's Gateway row shows Stop and Restart
+  on hover. Changed-this-session rows in Bookmarks match the folder list,
+  and stay visible while you filter.
+
+### For deployments
+
+- `[viewer] agent_can_see`, `agent_checks_html` (both default on; the
+  person can change them in Settings) and `act_hosts` (host names the
+  agent may click and type on, subdomains included; empty by default; not
+  settable in the app). Example: `act_hosts = ["figma.com", "lovable.dev"]`.
+- `[spaces] folder` (one Markdown or HTML file per space, named by front
+  matter `title`, optional `icon` and `order`), `refresh` and `remove`
+  commands (`$PORTICO_SPACE` = the space id). Portico schedules nothing;
+  your heartbeat rewrites the files. An example space is in
+  `examples/spaces/`. The spaces folder is one of the agent's own places.
+- `portico-gateway sessions clear [--yes]` (refuses while a gateway runs).
+- A memory count belongs in your `[deployment] status` row's `detail`
+  (README has the example).
+- Doctor prints which outside sites the agent can use.
+
+### Gateway
+
+- Five viewer tools beside `show_in_viewer`: `viewer_look` (image plus an
+  outline of refs, page errors), `viewer_click`, `viewer_type`,
+  `viewer_scroll`, `viewer_back`; 10 s per action.
+- Inbound frames up to 16 MiB and an engine buffer of 32 MiB, so a
+  full-size look image fits.
+- Spaces folder scanned every 5 s; symlinked files are ignored; refresh
+  and remove run off the connection's frame loop.
+
+### Protocol (still version 1; additions only)
+
+- App capability `viewer.v1`; `viewer.settings`, `viewer.act`,
+  `viewer.result` (image `image/png` or `image/jpeg`).
+- `hello.viewer_defaults`; gateway capabilities `spaces.v1`,
+  `spaces.refresh`; app capability `spaces.v1`; `spaces.list`,
+  `space.refresh`, `space.rename`, `space.remove`; `artifact.space`.
+- `sessions.clear` is kept but the app no longer sends it.
+
 ## v0.11.0 (2026-10-30)
 
 ### What a person gets (app)
