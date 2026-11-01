@@ -134445,9 +134445,9 @@
               "gap": 14,
               "padding": [
                 22,
-                28,
+                206,
                 12,
-                28
+                206
               ],
               "children": [
                 {
@@ -134490,7 +134490,7 @@
                   "type": "frame",
                   "id": "RZf3A",
                   "name": "Update Meeting prep",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "#00000000",
                   "cornerRadius": 8,
                   "stroke": "$border",
@@ -134565,7 +134565,7 @@
                   "name": "P",
                   "fill": "$text",
                   "textGrowth": "fixed-width",
-                  "width": "fill_container",
+                  "width": 707,
                   "content": "Three that carry the findings best:\n1. \"I didn't know if it was climbing or going down.\" (Priya, P4)\n2. \"I scrolled right past Start.\" (Jordan, P2)\n3. \"Moderate in yellow meant nothing to me.\" (Sam, P6)",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
@@ -134576,7 +134576,7 @@
                   "type": "frame",
                   "id": "c05Iik",
                   "name": "Thread 2 is waiting (display only)",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "$control",
                   "cornerRadius": 12,
                   "stroke": "#E0A43A",
@@ -134763,7 +134763,7 @@
                   "type": "frame",
                   "id": "A0tGJb",
                   "name": "Update Meeting prep",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "#00000000",
                   "cornerRadius": 8,
                   "stroke": "$border",
@@ -134839,7 +134839,7 @@
                   "name": "P",
                   "fill": "$text",
                   "textGrowth": "fixed-width",
-                  "width": "fill_container",
+                  "width": 707,
                   "content": "Added both under Findings, each with its participant.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
@@ -134855,9 +134855,9 @@
               "width": "fill_container",
               "padding": [
                 0,
-                28,
+                206,
                 18,
-                28
+                206
               ],
               "children": [
                 {
@@ -136173,9 +136173,9 @@
               "gap": 14,
               "padding": [
                 22,
-                28,
+                206,
                 12,
-                28
+                206
               ],
               "children": [
                 {
@@ -136220,7 +136220,7 @@
                   "name": "P",
                   "fill": "$text",
                   "textGrowth": "fixed-width",
-                  "width": "fill_container",
+                  "width": 707,
                   "content": "I'll do that in a thread, so it doesn't crowd this conversation.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
@@ -136231,7 +136231,7 @@
                   "type": "frame",
                   "id": "ifzFX",
                   "name": "Thread proposal",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "$control",
                   "cornerRadius": 12,
                   "stroke": "$border",
@@ -136357,9 +136357,9 @@
               "width": "fill_container",
               "padding": [
                 0,
-                28,
+                206,
                 18,
-                28
+                206
               ],
               "children": [
                 {
@@ -137859,16 +137859,16 @@
               "gap": 14,
               "padding": [
                 22,
-                28,
+                206,
                 12,
-                28
+                206
               ],
               "children": [
                 {
                   "type": "frame",
                   "id": "e2ZDAQ",
                   "name": "Brief from Main",
-                  "width": "fill_container",
+                  "width": 707,
                   "cornerRadius": 10,
                   "stroke": "$border",
                   "strokeWidth": 1,
@@ -137909,7 +137909,7 @@
                   "type": "frame",
                   "id": "YKdWx",
                   "name": "Update Meeting prep",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "#00000000",
                   "cornerRadius": 8,
                   "stroke": "$border",
@@ -137982,7 +137982,7 @@
                   "type": "frame",
                   "id": "L8TLN",
                   "name": "Update Meeting prep",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "#00000000",
                   "cornerRadius": 8,
                   "stroke": "$border",
@@ -138058,7 +138058,7 @@
                   "name": "P",
                   "fill": "$text",
                   "textGrowth": "fixed-width",
-                  "width": "fill_container",
+                  "width": 707,
                   "content": "Two drafts are ready. One is plain and short; one explains the reason. Before I pick:",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
@@ -138069,7 +138069,7 @@
                   "type": "frame",
                   "id": "l05Yrw",
                   "name": "Question card",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "$control",
                   "cornerRadius": 12,
                   "stroke": "#E0A43A",
@@ -138274,9 +138274,9 @@
               "width": "fill_container",
               "padding": [
                 0,
-                28,
+                206,
                 18,
-                28
+                206
               ],
               "children": [
                 {
@@ -139702,9 +139702,9 @@
               "gap": 14,
               "padding": [
                 22,
-                28,
+                206,
                 12,
-                28
+                206
               ],
               "children": [
                 {
@@ -139749,7 +139749,7 @@
                   "name": "P",
                   "fill": "$text",
                   "textGrowth": "fixed-width",
-                  "width": "fill_container",
+                  "width": 707,
                   "content": "Two threads are open, which is the most. Close one and I'll start this as a new thread.",
                   "lineHeight": 1.5,
                   "fontFamily": "$font",
@@ -139760,7 +139760,7 @@
                   "type": "frame",
                   "id": "xAD61",
                   "name": "Limit card",
-                  "width": "fill_container",
+                  "width": 707,
                   "fill": "$control",
                   "cornerRadius": 12,
                   "stroke": "$border",
@@ -139967,9 +139967,9 @@
               "width": "fill_container",
               "padding": [
                 0,
-                28,
+                206,
                 18,
-                28
+                206
               ],
               "children": [
                 {
