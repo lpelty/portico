@@ -1148,6 +1148,23 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertTrue(rig.view.canGoBack, "Back returns to B")
     }
 
+    /// The header's list heads the page the viewer shows "THIS PAGE": the
+    /// agent publishes that page as each load is drawn.
+    func testCurrentPageFollowsTheLoadedPage() async throws {
+        let rig = try rig(Self.trailPage)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        let onA = await waitFor { rig.agent.currentPage?.name == "trail-detail.html" }
+        XCTAssertTrue(onA, "A once loaded")
+        XCTAssertEqual(rig.agent.currentPage?.key, rig.file.standardizedFileURL.resolvingSymlinksInPath().path)
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.agent.currentPage?.name == "b.html" }
+        XCTAssertTrue(onB, "B after the link")
+        rig.agent.detach(rig.view)
+        let gone = await waitFor { rig.agent.currentPage == nil }
+        XCTAssertTrue(gone, "no page once the pane goes")
+    }
+
     /// Review Focus 2 for a rendered Markdown page: a re-render (a new
     /// rendered URL) keeps the page's key and draws the mark again.
     func testRenderedMarkdownKeepsItsKeyAcrossReload() async throws {

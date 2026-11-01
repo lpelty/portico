@@ -156,10 +156,13 @@ struct ArtifactPresentation: Equatable {
 /// externally, Focus (⌘⇧↩) and collapse.
 struct ViewerView: View {
     let chat: Int
+    /// The marks store, observed so the chip comes and goes (v0.14).
+    @ObservedObject var marks: MarkStore
     @EnvironmentObject private var model: AppModel
     @State private var menuOpen = false
-    /// The header's width, for whether its buttons keep their words.
+    /// The header's width and its parts' ideal widths, for `HeaderFit`.
     @State private var headerWidth: CGFloat?
+    @State private var measured = HeaderFit.Widths.zero
     /// The vault the shown file is in, looked up once per file.
     @State private var vault: String?
     /// Where the page has gone when a link left the file (v0.13, AL4).
@@ -182,33 +185,36 @@ struct ViewerView: View {
 
     private var header: some View { fileHeader }
 
+    private var chipShown: Bool { !(marks.marks[chat] ?? []).isEmpty }
+
+    /// The measured parts as `HeaderFit` counts them, with the header's
+    /// spacing: padding 16 + 16, 8 either side of the Spacer and its 8,
+    /// Focus 24 and collapse 20 each after 8; the chip and the buttons
+    /// each after 8 when they are there; the note after the title's 7.
+    private var fitWidths: HeaderFit.Widths {
+        let chip = chipShown
+        let spaced = { (width: CGFloat) in width > 0 ? width + 8 : 0 }
+        return HeaderFit.Widths(
+            title: measured.title,
+            note: page.outside != nil ? measured.note + 7 : 0,
+            chipFull: chip ? spaced(measured.chipFull) : 0,
+            chipShort: chip ? spaced(measured.chipShort) : 0,
+            chipCount: chip ? spaced(measured.chipCount) : 0,
+            buttonsLabelled: spaced(measured.buttonsLabelled),
+            buttonsIcons: spaced(measured.buttonsIcons),
+            fixed: 32 + 8 + 8 + (8 + 24) + (8 + 20))
+    }
+
     private var fileHeader: some View {
-        HStack(spacing: 8) {
-            titleMenu
+        let fit = HeaderFit.step(available: headerWidth, fitWidths)
+        return HStack(spacing: 8) {
+            titleMenu(fit)
             Spacer(minLength: 8)
-            if let outside = page.outside {
-                headerButton("Open externally", systemImage: "arrow.up.right",
-                             labelled: ViewerHeaderButtons.labelled(width: headerWidth, obsidian: false),
-                             help: "Open \(ViewerPageAddress.display(outside)) in your browser") {
-                    NSWorkspace.shared.open(outside)
-                }
-            // No Open buttons for a file that isn't on disk: nothing to open.
-            } else if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
-                let shown = ArtifactPresentation(artifact: current)
-                let labelled = ViewerHeaderButtons.labelled(width: headerWidth, obsidian: vault != nil)
-                if vault != nil, let path = shown.fileURL?.path {
-                    let installed = Obsidian.isInstalled
-                    headerButton("Open in Obsidian", systemImage: "diamond", labelled: labelled,
-                                 help: installed ? "Open this note in Obsidian" : Obsidian.notInstalledHelp) {
-                        Obsidian.open(path: path)
-                    }
-                    .disabled(!installed)
-                }
-                headerButton("Open externally", systemImage: "arrow.up.right", labelled: labelled,
-                             help: shown.openLabel) {
-                    shown.openExternally()
-                }
+            if chipShown {
+                MarksChip(chat: chat, store: marks, agent: model.viewerAgent, form: fit.chipForm,
+                          accent: model.brand.accent ?? Theme.accent)
             }
+            openButtons(labelled: fit.labelled)
             focusButton
             Button {
                 model.setViewer(visible: false, for: chat)
@@ -224,10 +230,60 @@ struct ViewerView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.toolbarHeight)
+        .background { fileHeaderMeasures }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
         .task(id: model.current[chat]?.location) {
             vault = model.current[chat].flatMap { ArtifactPresentation(artifact: $0).fileURL }
                 .flatMap { Obsidian.vault(containing: $0.path) }
+        }
+    }
+
+    /// Hidden copies of the header's parts at their ideal widths.
+    private var fileHeaderMeasures: some View {
+        ZStack {
+            titleLabel(note: false).headerMeasure { measured.title = $0 }
+            if let outside = page.outside {
+                noteText(outside).headerMeasure { measured.note = $0 }
+            }
+            if chipShown {
+                let accent = model.brand.accent ?? Theme.accent
+                MarksChipLabel(text: marks.chipText(chat: chat, form: .full), accent: accent)
+                    .headerMeasure { measured.chipFull = $0 }
+                MarksChipLabel(text: marks.chipText(chat: chat, form: .short), accent: accent)
+                    .headerMeasure { measured.chipShort = $0 }
+                MarksChipLabel(text: marks.chipText(chat: chat, form: .count), accent: accent)
+                    .headerMeasure { measured.chipCount = $0 }
+            }
+            HStack(spacing: 8) { openButtons(labelled: true) }
+                .headerMeasure { measured.buttonsLabelled = $0 }
+            HStack(spacing: 8) { openButtons(labelled: false) }
+                .headerMeasure { measured.buttonsIcons = $0 }
+        }
+    }
+
+    /// Open externally, and Open in Obsidian before it for a file in a
+    /// vault; none for a file that isn't on disk (nothing to open).
+    @ViewBuilder
+    private func openButtons(labelled: Bool) -> some View {
+        if let outside = page.outside {
+            headerButton("Open externally", systemImage: "arrow.up.right", labelled: labelled,
+                         help: "Open \(ViewerPageAddress.display(outside)) in your browser") {
+                NSWorkspace.shared.open(outside)
+            }
+        } else if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
+            let shown = ArtifactPresentation(artifact: current)
+            if vault != nil, let path = shown.fileURL?.path {
+                let installed = Obsidian.isInstalled
+                headerButton("Open in Obsidian", systemImage: "diamond", labelled: labelled,
+                             help: installed ? "Open this note in Obsidian" : Obsidian.notInstalledHelp) {
+                    Obsidian.open(path: path)
+                }
+                .disabled(!installed)
+            }
+            headerButton("Open externally", systemImage: "arrow.up.right", labelled: labelled,
+                         help: shown.openLabel) {
+                shown.openExternally()
+            }
         }
     }
 
@@ -245,64 +301,76 @@ struct ViewerView: View {
             ? "outside site" : "outside site · look and scroll only"
     }
 
+    private func noteText(_ outside: URL) -> some View {
+        Text(outsideNote(outside))
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.text3)
+            .lineLimit(1)
+    }
+
     /// The title, with the count of things made here and a chevron; a
-    /// click lists them, the one shown checked.
-    private var titleMenu: some View {
+    /// click lists them, the one shown checked. The outside note gives way
+    /// first; the title keeps its room until the header's last step (AK5).
+    private func titleMenu(_ fit: HeaderFit.Step) -> some View {
         Button {
             menuOpen.toggle()
         } label: {
-            HStack(spacing: 7) {
-                if let outside = page.outside {
-                    Image(systemName: "globe")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.text2)
-                    Text(ViewerPageAddress.display(outside))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(outsideNote(outside))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.text3)
-                        .lineLimit(1)
-                        .layoutPriority(-1)
-                } else if let current = model.current[chat] {
-                    let shown = ArtifactPresentation(artifact: current)
-                    Image(systemName: shown.systemImage)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.text2)
-                    Text(shown.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text(made.isEmpty ? "Viewer" : model.madeHereLabel)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.text2)
-                }
-                if !made.isEmpty {
-                    Text("\(made.count)")
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(Theme.text2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Theme.surface, in: Capsule())
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Theme.text3)
-                }
-            }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
+            titleLabel(note: true)
         }
         .buttonStyle(.hover)
+        .layoutPriority(fit < .titleShrinks ? 1 : 0)
         .disabled(made.isEmpty)
         .help(model.current[chat].map { "\(ArtifactPresentation(artifact: $0).kindLabel) · \($0.location)" } ?? model.madeHereLabel)
         .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
             ArtifactMenu(chat: chat, artifacts: made, onPick: { menuOpen = false })
         }
+    }
+
+    private func titleLabel(note: Bool) -> some View {
+        HStack(spacing: 7) {
+            if let outside = page.outside {
+                Image(systemName: "globe")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text2)
+                Text(ViewerPageAddress.display(outside))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if note {
+                    noteText(outside)
+                        .layoutPriority(-1)
+                }
+            } else if let current = model.current[chat] {
+                let shown = ArtifactPresentation(artifact: current)
+                Image(systemName: shown.systemImage)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text2)
+                Text(shown.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                Text(made.isEmpty ? "Viewer" : model.madeHereLabel)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text2)
+            }
+            if !made.isEmpty {
+                Text("\(made.count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.text2)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Theme.surface, in: Capsule())
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.text3)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -387,9 +455,9 @@ struct ViewerColumn: View {
 
     var body: some View {
         if model.openSpace != nil {
-            SpaceViewer(chat: chat)
+            SpaceViewer(chat: chat, marks: model.markStore)
         } else if let chat {
-            ViewerView(chat: chat)
+            ViewerView(chat: chat, marks: model.markStore)
         }
     }
 }
@@ -400,8 +468,11 @@ struct ViewerColumn: View {
 /// the file changed (`updated` advances).
 struct SpaceViewer: View {
     let chat: Int?
+    /// The marks store, observed so the chip comes and goes (v0.14).
+    @ObservedObject var marks: MarkStore
     @EnvironmentObject private var model: AppModel
     @State private var headerWidth: CGFloat?
+    @State private var measured = HeaderFit.Widths.zero
 
     var body: some View {
         VStack(spacing: 0) {
@@ -429,7 +500,30 @@ struct SpaceViewer: View {
         .background(Theme.panel)
     }
 
-    private func header(_ space: SpaceInfo) -> some View {
+    /// The chat whose marks the chip counts; none without a chat.
+    private var chipChat: Int? {
+        guard let chat, !(marks.marks[chat] ?? []).isEmpty else { return nil }
+        return chat
+    }
+
+    /// As `ViewerView.fitWidths`: the icon and title, "Updated" after 8,
+    /// padding 16 + 16, 8 either side of the Spacer and its 8, × 20 after
+    /// 8, Focus 24 after 8 with a chat, the chip and Refresh after 8 each.
+    private var fitWidths: HeaderFit.Widths {
+        let chip = chipChat != nil
+        let spaced = { (width: CGFloat) in width > 0 ? width + 8 : 0 }
+        return HeaderFit.Widths(
+            title: measured.title,
+            note: spaced(measured.note),
+            chipFull: chip ? spaced(measured.chipFull) : 0,
+            chipShort: chip ? spaced(measured.chipShort) : 0,
+            chipCount: chip ? spaced(measured.chipCount) : 0,
+            buttonsLabelled: model.spacesCanRefresh ? spaced(measured.buttonsLabelled) : 0,
+            buttonsIcons: model.spacesCanRefresh ? spaced(measured.buttonsIcons) : 0,
+            fixed: 32 + 8 + 8 + (8 + 20) + (chat != nil ? 8 + 24 : 0))
+    }
+
+    private func spaceTitle(_ space: SpaceInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: space.icon)
                 .font(.system(size: 13))
@@ -439,16 +533,36 @@ struct SpaceViewer: View {
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Text(SpacesPresentation.updatedText(space.updatedDate))
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.text3)
-                .lineLimit(1)
+        }
+    }
+
+    private func updatedText(_ space: SpaceInfo) -> some View {
+        Text(SpacesPresentation.updatedText(space.updatedDate))
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.text3)
+            .lineLimit(1)
+    }
+
+    private func refreshButton(_ space: SpaceInfo, labelled: Bool) -> some View {
+        ViewerHeaderButton(title: "Refresh", systemImage: "arrow.clockwise", labelled: labelled, help: "Ask the agent to update this now") {
+            model.refreshSpace(space.id)
+        }
+    }
+
+    private func header(_ space: SpaceInfo) -> some View {
+        let fit = HeaderFit.step(available: headerWidth, fitWidths)
+        let accent = model.brand.accent ?? Theme.accent
+        return HStack(spacing: 8) {
+            spaceTitle(space)
+                .layoutPriority(fit < .titleShrinks ? 1 : 0)
+            updatedText(space)
                 .layoutPriority(-1)
             Spacer(minLength: 8)
+            if let chipChat {
+                MarksChip(chat: chipChat, store: marks, agent: model.viewerAgent, form: fit.chipForm, accent: accent)
+            }
             if model.spacesCanRefresh {
-                ViewerHeaderButton(title: "Refresh", systemImage: "arrow.clockwise", labelled: ViewerHeaderButtons.labelled(width: headerWidth, obsidian: false), help: "Ask the agent to update this now") {
-                    model.refreshSpace(space.id)
-                }
+                refreshButton(space, labelled: fit.labelled)
             }
             if let chat { ViewerFocusButton(chat: chat) }
             Button {
@@ -466,24 +580,88 @@ struct SpaceViewer: View {
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.toolbarHeight)
+        .background {
+            ZStack {
+                spaceTitle(space).headerMeasure { measured.title = $0 }
+                updatedText(space).headerMeasure { measured.note = $0 }
+                if let chipChat {
+                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .full), accent: accent)
+                        .headerMeasure { measured.chipFull = $0 }
+                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .short), accent: accent)
+                        .headerMeasure { measured.chipShort = $0 }
+                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .count), accent: accent)
+                        .headerMeasure { measured.chipCount = $0 }
+                }
+                refreshButton(space, labelled: true).headerMeasure { measured.buttonsLabelled = $0 }
+                refreshButton(space, labelled: false).headerMeasure { measured.buttonsIcons = $0 }
+            }
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
     }
 
 }
 
-/// Whether the viewer header's open buttons keep their words (v0.11,
-/// item 69): while the viewer is at least `labelledWidth` wide (less when
-/// Open in Obsidian is not there); narrower, they are icons with tooltips.
-/// A width not measured yet keeps the words.
-enum ViewerHeaderButtons {
-    /// Room for the title and both labelled buttons, as AG2 draws them at 620.
-    static let labelledWidth: CGFloat = 560
-    /// Room for the title and Open externally alone.
-    static let labelledWidthAlone: CGFloat = 420
+/// How the viewer header gives way as it narrows (v0.14 §3.4, AK5). Each
+/// part's ideal width is measured; the first step whose need fits is the
+/// one drawn. The need is title + note + chip + buttons + fixed, where the
+/// buttons go to icons first, then the note gives up its room, then the
+/// chip goes to "N marks" and to "N", and only then does the title shrink.
+/// With no chip, the chip widths are 0.
+enum HeaderFit {
+    struct Widths: Equatable {
+        var title, note, chipFull, chipShort, chipCount, buttonsLabelled, buttonsIcons, fixed: CGFloat
 
-    static func labelled(width: CGFloat?, obsidian: Bool) -> Bool {
-        guard let width else { return true }
-        return width >= (obsidian ? labelledWidth : labelledWidthAlone)
+        static let zero = Widths(title: 0, note: 0, chipFull: 0, chipShort: 0, chipCount: 0,
+                                 buttonsLabelled: 0, buttonsIcons: 0, fixed: 0)
+    }
+
+    enum Step: Int, Comparable {
+        case full, buttonIcons, noteShrinks, chipShort, chipCount, titleShrinks
+
+        static func < (lhs: Step, rhs: Step) -> Bool { lhs.rawValue < rhs.rawValue }
+
+        /// Whether the open buttons keep their words.
+        var labelled: Bool { self == .full }
+
+        /// The chip's text at this step.
+        var chipForm: MarkStore.ChipForm {
+            switch self {
+            case .full, .buttonIcons, .noteShrinks: return .full
+            case .chipShort: return .short
+            case .chipCount, .titleShrinks: return .count
+            }
+        }
+    }
+
+    static func step(available: CGFloat, _ w: Widths) -> Step {
+        let tries: [(Step, CGFloat, CGFloat, CGFloat)] = [
+            (.full, w.note, w.chipFull, w.buttonsLabelled),
+            (.buttonIcons, w.note, w.chipFull, w.buttonsIcons),
+            (.noteShrinks, 0, w.chipFull, w.buttonsIcons),
+            (.chipShort, 0, w.chipShort, w.buttonsIcons),
+            (.chipCount, 0, w.chipCount, w.buttonsIcons),
+        ]
+        for (step, note, chip, buttons) in tries where w.title + note + chip + buttons + w.fixed <= available {
+            return step
+        }
+        return .titleShrinks
+    }
+
+    /// A header not measured yet keeps its words.
+    static func step(available: CGFloat?, _ w: Widths) -> Step {
+        available.map { step(available: $0, w) } ?? .full
+    }
+}
+
+extension View {
+    /// A hidden copy of a header part at its ideal width, reporting that
+    /// width (HeaderFit's measuring; placed in a `.background`).
+    func headerMeasure(_ report: @escaping (CGFloat) -> Void) -> some View {
+        fixedSize()
+            .hidden()
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { report($0) }
     }
 }
 

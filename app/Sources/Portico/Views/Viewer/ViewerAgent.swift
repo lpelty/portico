@@ -55,6 +55,11 @@ final class ViewerAgent: ObservableObject {
     /// `nil` once `labelLinger` has passed since the last action.
     @Published private(set) var actingChat: Int?
 
+    /// The page the attached web pane shows, as marks know it, updated as
+    /// each load is drawn (the marks list's "THIS PAGE"); `nil` with no
+    /// web pane or a page with no address.
+    @Published private(set) var currentPage: MarkPage?
+
     /// How long the target is outlined before a click or typing.
     var highlightDuration: Duration = .milliseconds(600)
     /// How long the acting label stays after the last action.
@@ -126,7 +131,18 @@ final class ViewerAgent: ObservableObject {
     }
 
     func detach(_ view: WKWebView) {
-        if web?.view === view { web = nil }
+        guard web?.view === view else { return }
+        web = nil
+        // Called while SwiftUI takes the pane down: publish after.
+        Task { [weak self] in
+            guard let self, self.web == nil else { return }
+            self.setCurrentPage(nil)
+        }
+    }
+
+    private func setCurrentPage(_ page: MarkPage?) {
+        // A page's name can differ by how it was reached; both count here.
+        if currentPage?.key != page?.key || currentPage?.name != page?.name { currentPage = page }
     }
 
     /// The view that holds a native pane (image, PDF, text, table), for its snapshot.
@@ -656,6 +672,7 @@ final class ViewerAgent: ObservableObject {
         guard let model else { return }
         await ensureScript(in: view, quiet: true)
         let page = await page(of: view)
+        if web?.view === view { setCurrentPage(page) }
         let chat = drawChat
         let list = page.flatMap { page in chat.map { model.markStore.marks(chat: $0, on: page) } } ?? []
         await draw(list, chat: chat ?? 0, page: page, in: view, quiet: true)
