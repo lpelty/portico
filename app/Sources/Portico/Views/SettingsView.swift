@@ -5,10 +5,10 @@ import SwiftUI
 /// Appearance, Gateway (address and token overrides, Start / Stop, Doctor,
 /// and what quitting does, v0.9 decision 7).
 /// Brand, actions and roots are the gateway's, not here.
-/// One fixed window, the same on every tab (v0.12 spec section 6).
+/// One fixed window, the same on every tab (v0.12 spec section 6; v0.13 decision 7: 20% shorter, a taller tab scrolls).
 enum SettingsWindow {
     static let width: CGFloat = 700
-    static let height: CGFloat = 800
+    static let height: CGFloat = 640
 }
 
 /// What Settings → General shows and says (v0.12 spec sections 3.5, 4.5, 6).

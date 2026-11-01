@@ -88,22 +88,35 @@ struct ConversationView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
+                // Each element brings its own gap above it (v0.13 decision 1):
+                // tool rows that follow each other close up into one block.
+                let drawn = TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
+                let working = model.showsWorkingLine(chat: chat)
+                let headed = sessionDivider != nil || items.isEmpty
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if let divider = sessionDivider {
                         divider
                     }
                     if items.isEmpty {
                         emptyState
+                            .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
                     }
-                    ForEach(items.filter { model.isDrawn($0, in: chat) }) { item in
-                        TranscriptItemView(item: item, folder: folder, chat: chat)
-                            .id(item.id)
+                    ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
+                        let gap: CGFloat = index == 0
+                            ? (headed ? TranscriptSpacing.itemGap : 0)
+                            : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
+                        TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                            .padding(.top, gap)
+                            .id(entry.id)
                     }
-                    if model.showsWorkingLine(chat: chat) {
+                    if working {
                         WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
+                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
                             .id("working")
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    Color.clear.frame(height: 1)
+                        .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
+                        .id("bottom")
                 }
                 .scrollTargetLayout()
                 // v0.11 (58): the reading column, centred; its items size
@@ -135,10 +148,24 @@ struct ConversationView: View {
                 case nil: scrollMemory.seen(atBottom: now.atBottom, topItem: topItem, width: now.width)
                 }
             }
+            // A conversation opens at its newest message (v0.13, found live
+            // 10-31: a resumed session's transcript arrives in one batch and
+            // the scroll ran before the lazy stack had laid it out, leaving
+            // the view near the top). Anchor at the bottom, and scroll again
+            // once the new rows are laid out.
+            .defaultScrollAnchor(.bottom)
             .onChange(of: scrollKey) { _, _ in
-                proxy.scrollTo("bottom", anchor: .bottom)
+                scrollToBottom(proxy)
             }
-            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onAppear { scrollToBottom(proxy) }
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo("bottom", anchor: .bottom)
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
 
@@ -234,6 +261,23 @@ struct TranscriptItemView: View {
                 AgentGroupView(group: group, chat: chat, folder: folder)
             }
         }
+    }
+}
+
+/// The space above a transcript item (v0.13 decision 1): tool rows that
+/// follow each other sit `toolRowGap` apart, as one block; everything else
+/// keeps the conversation's `itemGap`.
+enum TranscriptSpacing {
+    static let itemGap: CGFloat = 20
+    static let toolRowGap: CGFloat = 2
+
+    static func gap(before item: TranscriptItem, after previous: TranscriptItem) -> CGFloat {
+        gap(before: .item(item), after: .item(previous))
+    }
+
+    /// A folded run of viewer steps closes up like the tool rows it holds.
+    static func gap(before entry: TranscriptEntry, after previous: TranscriptEntry) -> CGFloat {
+        entry.isToolRow && previous.isToolRow ? toolRowGap : itemGap
     }
 }
 

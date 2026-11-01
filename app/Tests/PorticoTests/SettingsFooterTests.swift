@@ -41,11 +41,11 @@ final class SettingsFooterTests: XCTestCase {
         XCTAssertEqual(Settings.QuitBehaviour.allCases, [.keepRunning, .stopEverything])
     }
 
-    // MARK: - v0.12 settings window (spec section 6)
+    // MARK: - settings window (v0.12 spec section 6, v0.13 decision 7)
 
-    func testWindowIs700By800() {
+    func testWindowIs700By640() {
         XCTAssertEqual(SettingsWindow.width, 700)
-        XCTAssertEqual(SettingsWindow.height, 800)
+        XCTAssertEqual(SettingsWindow.height, 640)
     }
 
     @MainActor

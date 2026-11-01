@@ -1089,6 +1089,12 @@ link. Each carries out its action in the app over the connection and
 returns what happened. The tool texts are the reference gateway's and the
 app's; the protocol carries only the frames below.
 
+The engine names them `mcp__portico__viewer_look` and so on (the reference
+gateway's server is `portico`). Since v0.13 the app folds two or more of
+these steps in a row into one conversation row ("Used the viewer · N
+steps"). It is the one place the app reads a tool's name, and only
+Portico's own: a gateway that names the server differently gets plain rows.
+
 #### `viewer.settings` — `ViewerSettings` *(app → gateway)*
 `can_see: bool`, `check_html: bool`. The person's two switches (Agent can
 see the viewer; Agent checks HTML it creates). Sent after `hello` and

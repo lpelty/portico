@@ -12,8 +12,8 @@ enum ToolbarLayout {
         case sidebarToggle, brand, switcher, spacer, viewerToggle
     }
 
-    /// The gap between the brand and the switcher.
-    static let brandToSwitcherGap: CGFloat = 6
+    /// The gap between the brand and the switcher: 26 pt, as drawn in Pen (v0.13 decision 6; was 6).
+    static let brandToSwitcherGap: CGFloat = 26
 
     /// With spaces, or with a gateway that keeps a folder (so "New space…"
     /// has somewhere to go); never for a gateway that has no spaces.
@@ -24,7 +24,7 @@ enum ToolbarLayout {
     /// The pill's title stops here (about 220 pt pill) and truncates.
     static let switcherTitleMaxWidth: CGFloat = 160
 
-    /// Room after `item` before the next one: the brand sits 6 pt from the switcher.
+    /// Room after `item` before the next one: the brand sits 26 pt from the switcher.
     static func gap(after item: Item, next: Item?) -> CGFloat {
         switch (item, next) {
         case (.brand, .switcher?): return brandToSwitcherGap

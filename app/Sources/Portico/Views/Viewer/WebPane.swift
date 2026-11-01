@@ -188,12 +188,46 @@ extension EnvironmentValues {
     /// Set by the open space's viewer: a new value re-reads the same file
     /// in place, keeping the scroll position (the file changed on disk).
     @Entry var webPaneRevision: String? = nil
+    /// Where the file viewer's page has gone, for its header (v0.13).
+    @Entry var viewerPageAddress: ViewerPageAddress? = nil
 }
 
 /// A `WKWebView` for the three web-rendered kinds: a markdown file (the
 /// rendered page, with the file's directory as the root its relative
 /// images resolve under), an HTML file (served from its directory by the
 /// same handler) and a URL (a local dev server, usually).
+/// The outside site the viewer's page has gone to, when a link left the
+/// file it opened (v0.13 decision 5, Pen AL4); `nil` while it shows what
+/// it opened.
+@MainActor
+final class ViewerPageAddress: ObservableObject {
+    @Published var outside: URL?
+
+    /// `current` when it is a web page that is not what the viewer opened.
+    static func outside(current: URL?, loaded: WebPane.Load?) -> URL? {
+        guard let current, let scheme = current.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        // An address the viewer opened stays itself across its own pages and
+        // redirects (figma.com to www.figma.com/login, a local dev server's
+        // pages): outside means another site.
+        if case .url(let opened) = loaded, site(opened) == site(current) { return nil }
+        return current
+    }
+
+    private static func site(_ url: URL) -> String {
+        var host = url.host(percentEncoded: false)?.lowercased() ?? ""
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        return host + (url.port.map { ":\($0)" } ?? "")
+    }
+
+    /// The address as the header shows it: host and path, no scheme or "www.".
+    static func display(_ url: URL) -> String {
+        var host = url.host(percentEncoded: false) ?? url.absoluteString
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        let path = url.path(percentEncoded: false)
+        return path.isEmpty || path == "/" ? host : host + path
+    }
+}
+
 struct WebPane: NSViewRepresentable {
     enum Load: Equatable {
         case markdown(URL, hiding: Set<String> = [])
@@ -218,6 +252,7 @@ struct WebPane: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         context.coordinator.agent = context.environment.viewerAgent
+        context.coordinator.address = context.environment.viewerPageAddress
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         return view
@@ -235,6 +270,8 @@ struct WebPane: NSViewRepresentable {
         /// The agent that may act in this pane (v0.12): the viewer's panes
         /// have one, the document view's do not.
         var agent: ViewerAgent?
+        /// The file viewer's header address (v0.13); `nil` elsewhere.
+        weak var address: ViewerPageAddress?
         private var loaded: Load?
         /// The load whose navigation failed (or whose file could not be
         /// read), until a retry or another load. It stays `loaded` too:
@@ -270,6 +307,14 @@ struct WebPane: NSViewRepresentable {
         /// reported into the pane, the retry link honoured.
         func makeWebView() -> WKWebView {
             attach(WKWebView(frame: .zero, configuration: configuration()))
+        }
+
+        /// A page or site that sets no background shows on white, as a
+        /// browser shows it (v0.13 decision 4); rendered markdown is styled
+        /// by the app and lets the pane show through.
+        static func drawsBackground(for load: Load) -> Bool {
+            if case .markdown = load { return false }
+            return true
         }
 
         /// Wire a view made from `configuration()` to this coordinator.
@@ -323,7 +368,17 @@ struct WebPane: NSViewRepresentable {
             """
         }
 
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            noteAddress(of: webView)
+        }
+
+        private func noteAddress(of webView: WKWebView) {
+            let outside = ViewerPageAddress.outside(current: webView.url, loaded: loaded)
+            if address?.outside != outside { address?.outside = outside }
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            noteAddress(of: webView)
             guard let y = pendingScroll else { return }
             pendingScroll = nil
             webView.evaluateJavaScript(Self.restoreScroll(y))
@@ -339,6 +394,7 @@ struct WebPane: NSViewRepresentable {
             loaded = load
             failed = nil
             pendingScroll = scroll
+            view.setValue(Self.drawsBackground(for: load), forKey: "drawsBackground")
             agent?.attach(view, showing: load)
             // Earlier pages stay registered for the coordinator's life: the
             // web view's Back (and the agent's viewer_back) can return to

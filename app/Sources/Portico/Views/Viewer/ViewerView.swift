@@ -162,6 +162,8 @@ struct ViewerView: View {
     @State private var headerWidth: CGFloat?
     /// The vault the shown file is in, looked up once per file.
     @State private var vault: String?
+    /// Where the page has gone when a link left the file (v0.13, AL4).
+    @StateObject private var page = ViewerPageAddress()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -169,6 +171,9 @@ struct ViewerView: View {
             Rectangle().fill(Theme.border).frame(height: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay { ViewerActingGlow(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) }
+                .environment(\.viewerPageAddress, page)
+                .onChange(of: model.current[chat]?.location) { page.outside = nil }
         }
         .background(Theme.panel)
     }
@@ -181,11 +186,14 @@ struct ViewerView: View {
         HStack(spacing: 8) {
             titleMenu
             Spacer(minLength: 8)
-            ViewerActingLabel(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) {
-                model.stopTurn(chat: chat)
-            }
+            if let outside = page.outside {
+                headerButton("Open externally", systemImage: "arrow.up.right",
+                             labelled: ViewerHeaderButtons.labelled(width: headerWidth, obsidian: false),
+                             help: "Open \(ViewerPageAddress.display(outside)) in your browser") {
+                    NSWorkspace.shared.open(outside)
+                }
             // No Open buttons for a file that isn't on disk: nothing to open.
-            if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
+            } else if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
                 let shown = ArtifactPresentation(artifact: current)
                 let labelled = ViewerHeaderButtons.labelled(width: headerWidth, obsidian: vault != nil)
                 if vault != nil, let path = shown.fileURL?.path {
@@ -231,6 +239,12 @@ struct ViewerView: View {
 
     private var focusButton: some View { ViewerFocusButton(chat: chat) }
 
+    /// AL4: whether the agent may use the outside site, as the act rule has it.
+    private func outsideNote(_ url: URL) -> String {
+        ViewerAgent.canAct(url: url, actHosts: model.hello?.viewerDefaults?.actHosts ?? [])
+            ? "outside site" : "outside site · look and scroll only"
+    }
+
     /// The title, with the count of things made here and a chevron; a
     /// click lists them, the one shown checked.
     private var titleMenu: some View {
@@ -238,7 +252,21 @@ struct ViewerView: View {
             menuOpen.toggle()
         } label: {
             HStack(spacing: 7) {
-                if let current = model.current[chat] {
+                if let outside = page.outside {
+                    Image(systemName: "globe")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text2)
+                    Text(ViewerPageAddress.display(outside))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(outsideNote(outside))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text3)
+                        .lineLimit(1)
+                        .layoutPriority(-1)
+                } else if let current = model.current[chat] {
                     let shown = ArtifactPresentation(artifact: current)
                     Image(systemName: shown.systemImage)
                         .font(.system(size: 13))
@@ -389,6 +417,11 @@ struct SpaceViewer: View {
                     .environment(\.webPaneRevision, ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
                     .environment(\.viewerAgent, model.viewerAgent)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if let chat {
+                            ViewerActingGlow(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent)
+                        }
+                    }
             } else {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -412,11 +445,6 @@ struct SpaceViewer: View {
                 .lineLimit(1)
                 .layoutPriority(-1)
             Spacer(minLength: 8)
-            if let chat {
-                ViewerActingLabel(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) {
-                    model.stopTurn(chat: chat)
-                }
-            }
             if model.spacesCanRefresh {
                 ViewerHeaderButton(title: "Refresh", systemImage: "arrow.clockwise", labelled: ViewerHeaderButtons.labelled(width: headerWidth, obsidian: false), help: "Ask the agent to update this now") {
                     model.refreshSpace(space.id)
