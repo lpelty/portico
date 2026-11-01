@@ -9,7 +9,7 @@
   "use strict";
   // `MARKER` tells this script's object from a page's own under the name;
   // keep it equal to `ViewerAgentScript.marker` (ViewerAgent.swift).
-  var MARKER = "viewer-agent-2";
+  var MARKER = "viewer-agent-3";
   var existing = window.__porticoAgent;
   if (existing && existing.__portico === MARKER) return;
 
@@ -389,6 +389,197 @@
       return { ok: true, text: "Already at the " + (direction === "down" ? "bottom" : "top") + ". " + where() };
     }
     return { ok: true, text: "Scrolled " + direction + ". " + where() };
+  };
+
+  // MARK: marks (v0.14, spec §3.1, §6)
+
+  // Numbered accent boxes with a short note, drawn over page elements in
+  // one `<portico-marks>` host with its own shadow root, so the page's
+  // styles do not reach in and clicks pass through to the page.
+  var MARKS_HOST = "portico-marks";
+  var MARK_FALLBACK_ACCENT = "#0a84ff";
+  var MARKS_STYLE =
+    ".box{position:absolute;box-sizing:border-box;border:2px solid var(--accent);border-radius:6px;" +
+    "margin:0;padding:0;background:none;pointer-events:none}" +
+    ".badge{position:absolute;left:-11px;top:-11px;width:18px;height:18px;border-radius:50%;" +
+    "background:var(--accent);color:#fff;font:bold 11px/18px -apple-system,system-ui,sans-serif;" +
+    "text-align:center;letter-spacing:normal;text-transform:none}" +
+    ".note{position:absolute;top:-2px;left:calc(100% + 6px);max-width:none;white-space:nowrap;" +
+    "background:var(--accent);color:#fff;font:12px/16px -apple-system,system-ui,sans-serif;" +
+    "border-radius:5px;padding:2px 7px;letter-spacing:normal;text-transform:none}" +
+    ".note.before{left:auto;right:calc(100% + 6px)}";
+
+  var marks = { host: null, items: [], observer: null };
+
+  /// `body > tag:nth-of-type(n) > …`: where the element sits under `body`,
+  /// or "" when it is not under `body`.
+  function pathOf(el) {
+    var parts = [];
+    while (el && el !== document.body) {
+      var parent = el.parentElement;
+      if (!parent) return "";
+      var n = 1;
+      for (var s = el.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === el.tagName) n += 1;
+      parts.unshift(el.tagName.toLowerCase() + ":nth-of-type(" + n + ")");
+      el = parent;
+    }
+    if (!el) return "";
+    parts.unshift("body");
+    return parts.join(" > ");
+  }
+
+  /// Any listed element may be marked: by ref on its page, or by name
+  /// (exactly, then partly) — no field/non-field filter as for clicks.
+  function markTarget(target, page) {
+    target = squash(target);
+    if (!target) return null;
+    if (/^e\d+$/.test(target)) return resolve(target, page, false);
+    var want = target.toLowerCase();
+    var named = listed().map(function (item) { return { el: item.el, name: name(item.el).toLowerCase() }; });
+    for (var i = 0; i < named.length; i++) if (named[i].name === want) return named[i].el;
+    for (var j = 0; j < named.length; j++) if (named[j].name && named[j].name.indexOf(want) >= 0) return named[j].el;
+    return null;
+  }
+
+  /// The element a saved locator names on this page, or null: its path if
+  /// the tag (and text, when there is one) still match, else the first
+  /// element of that tag whose text is the same.
+  function findAgain(locator) {
+    if (!locator || !locator.tag) return null;
+    var tag = String(locator.tag).toLowerCase();
+    var text = locator.text == null ? "" : String(locator.text);
+    var el = null;
+    if (locator.path) {
+      try { el = document.querySelector(String(locator.path)); } catch (e) { el = null; }
+    }
+    if (el && el.tagName.toLowerCase() === tag && (!text || cut(name(el)) === text)) return el;
+    // With no text there is nothing to tell one element of the tag from another.
+    if (!text) return null;
+    var all = document.getElementsByTagName(tag);
+    for (var i = 0; i < all.length; i++) if (cut(name(all[i])) === text) return all[i];
+    return null;
+  }
+
+  function placeMarks() {
+    if (!marks.host) return;
+    var origin = marks.host.getBoundingClientRect();
+    var width = document.documentElement.clientWidth;
+    for (var i = 0; i < marks.items.length; i++) {
+      var item = marks.items[i];
+      var r = item.el.getBoundingClientRect();
+      if (!item.el.isConnected || (!r.width && !r.height)) {
+        item.box.style.display = "none";
+        continue;
+      }
+      item.box.style.display = "";
+      item.box.style.left = (r.left - origin.left) + "px";
+      item.box.style.top = (r.top - origin.top) + "px";
+      item.box.style.width = r.width + "px";
+      item.box.style.height = r.height + "px";
+      if (item.note) {
+        // To the right of the box, or to its left when there is no room.
+        var room = item.note.offsetWidth + 6;
+        var before = r.right + room > width && r.left - room >= 0;
+        item.note.className = before ? "note before" : "note";
+      }
+    }
+  }
+
+  function stopMarks() {
+    if (marks.observer) marks.observer.disconnect();
+    window.removeEventListener("scroll", placeMarks, true);
+    window.removeEventListener("resize", placeMarks);
+    marks.host = null;
+    marks.items = [];
+    marks.observer = null;
+  }
+
+  agent.markLocate = function (target, page) {
+    var el = markTarget(target, page);
+    if (!el) return NOT_FOUND;
+    return {
+      ok: true,
+      label: describeElement(el) || cut(name(el)),
+      locator: { path: pathOf(el), tag: el.tagName.toLowerCase(), text: cut(name(el)) }
+    };
+  };
+
+  agent.hideMarks = function () {
+    stopMarks();
+    // Every host, including one an earlier copy of this script drew.
+    Array.prototype.forEach.call(document.querySelectorAll(MARKS_HOST), function (host) {
+      if (host.parentNode) host.parentNode.removeChild(host);
+    });
+  };
+
+  /// Draw `list` ([{n, note, locator}]) in `accent`, replacing any earlier
+  /// marks; an empty list only clears. Answers [{n, found}] in list order.
+  agent.showMarks = function (list, accent) {
+    agent.hideMarks();
+    list = list || [];
+    var results = [];
+    var found = [];
+    for (var i = 0; i < list.length; i++) {
+      var el = findAgain(list[i] && list[i].locator);
+      results.push({ n: list[i] ? list[i].n : null, found: !!el });
+      if (el) found.push({ n: list[i].n, text: list[i].note, el: el });
+    }
+    if (!found.length) return results;
+
+    var host = document.createElement(MARKS_HOST);
+    host.setAttribute("aria-hidden", "true");
+    host.style.cssText = "position:absolute!important;top:0!important;left:0!important;width:0!important;" +
+      "height:0!important;margin:0!important;padding:0!important;border:0!important;display:block!important;" +
+      "pointer-events:none!important;z-index:2147483647!important;transform:none!important";
+    host.style.setProperty("--accent", MARK_FALLBACK_ACCENT);
+    if (typeof accent === "string" && accent) host.style.setProperty("--accent", accent);
+    var root = host.attachShadow({ mode: "open" });
+    var style = document.createElement("style");
+    style.textContent = MARKS_STYLE;
+    root.appendChild(style);
+
+    var items = found.map(function (mark) {
+      var box = document.createElement("div");
+      box.className = "box";
+      var badge = document.createElement("div");
+      badge.className = "badge";
+      badge.textContent = String(mark.n);
+      box.appendChild(badge);
+      var note = null;
+      if (mark.text) {
+        note = document.createElement("div");
+        note.className = "note";
+        note.textContent = String(mark.text);
+        box.appendChild(note);
+      }
+      root.appendChild(box);
+      return { n: mark.n, el: mark.el, box: box, note: note };
+    });
+    document.documentElement.appendChild(host);
+    marks.host = host;
+    marks.items = items;
+
+    // Capture phase, so an inner scroller's scroll (which does not bubble) counts.
+    window.addEventListener("scroll", placeMarks, true);
+    window.addEventListener("resize", placeMarks);
+    if (window.ResizeObserver) {
+      marks.observer = new ResizeObserver(placeMarks);
+      items.forEach(function (item) { marks.observer.observe(item.el); });
+    }
+    placeMarks();
+    return results;
+  };
+
+  agent.scrollToMark = function (n) {
+    for (var i = 0; i < marks.items.length; i++) {
+      var item = marks.items[i];
+      if (String(item.n) !== String(n)) continue;
+      if (!item.el.isConnected) return false;
+      item.el.scrollIntoView({ block: "center", inline: "nearest" });
+      placeMarks();
+      return true;
+    }
+    return false;
   };
 
   window.__porticoAgent = agent;

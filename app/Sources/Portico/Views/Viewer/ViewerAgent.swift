@@ -688,7 +688,7 @@ private final class JavaScriptRace {
 enum ViewerAgentScript {
     /// `window.__porticoAgent.__portico`: what tells the app's script from
     /// a page's own object under that name.
-    static let marker = "viewer-agent-2"
+    static let marker = "viewer-agent-3"
 
     /// `Resources/viewer-agent.js`, read once.
     static let source: String? = AppResources.url(forResource: "viewer-agent", withExtension: "js")
