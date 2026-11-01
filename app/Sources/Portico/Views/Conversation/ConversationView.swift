@@ -243,9 +243,15 @@ struct TranscriptItemView: View {
                 .frame(maxWidth: replyWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
-            ToolRowView(
-                row: row, folder: folder,
-                waiting: chat.map { model.permissionCard(chat: $0, toolUseId: row.toolUseId) != nil } ?? false)
+            Group {
+                if row.tool == ViewerSteps.markTool {
+                    MarkRowView(row: row, chat: chat)
+                } else {
+                    ToolRowView(
+                        row: row, folder: folder,
+                        waiting: chat.map { model.permissionCard(chat: $0, toolUseId: row.toolUseId) != nil } ?? false)
+                }
+            }
                 .frame(maxWidth: replyWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .card(let card):

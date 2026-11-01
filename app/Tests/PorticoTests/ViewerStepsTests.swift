@@ -53,4 +53,52 @@ final class ViewerStepsTests: XCTestCase {
         XCTAssertEqual(TranscriptSpacing.gap(before: run, after: .item(tool("x", "Bash"))), 2)
         XCTAssertEqual(TranscriptSpacing.gap(before: .item(reply), after: run), 20)
     }
+
+    // MARK: v0.14 - the Mark row
+
+    func test_the_mark_row_is_not_folded() {
+        let three = TranscriptEntry.entries([step("a", "look"), step("m", "mark"), step("c", "look")])
+        XCTAssertEqual(three.map(\.id), ["tool:a", "tool:m", "tool:c"])
+        let run = TranscriptEntry.entries([step("a", "look"), step("b", "look"), step("m", "mark"), step("c", "click")])
+        XCTAssertEqual(run.count, 3)
+        guard case .viewerSteps(let rows) = run[0] else { return XCTFail("\(run)") }
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(run[1].id, "tool:m")
+        XCTAssertEqual(run[2].id, "tool:c")
+    }
+
+    func test_clear_marks_folds_and_reads() {
+        let entries = TranscriptEntry.entries([step("a", "look"), step("b", "clear_marks")])
+        guard case .viewerSteps(let rows) = entries.first else { return XCTFail("\(entries)") }
+        XCTAssertEqual(ViewerSteps.verb(rows[1]), "Clear marks")
+        XCTAssertEqual(ViewerSteps.markTool, "mcp__portico__viewer_mark")
+    }
+
+    private func markRow(count: Int?) -> ToolRow {
+        var input: [String: JSONValue] = [:]
+        if let count { input["marks"] = .array((0..<count).map { _ in .object(["target": .string("Start")]) }) }
+        return ToolRow(toolUseId: "tu1", turn: 1, tool: ViewerSteps.markTool, summary: "", input: input)
+    }
+
+    private func call(_ n: Int, pages: [String] = ["trail-detail.html"]) -> MarkCall {
+        let marks = (0..<n).map { i in
+            let name = pages[min(i, pages.count - 1)]
+            return Mark(number: i + 1, page: MarkPage(key: "/tmp/\(name)", name: name), note: "", label: "x",
+                        locator: MarkLocator(path: "", tag: "a", text: "x"), found: true, call: "c1")
+        }
+        return MarkCall(id: "c1", toolUseId: "tu1", marks: marks)
+    }
+
+    func test_mark_row_text() {
+        let three = MarkRowPresentation(row: markRow(count: 3), call: call(3))
+        XCTAssertEqual(three.text, "Mark \u{B7} trail-detail.html \u{B7} 3 areas")
+        XCTAssertTrue(three.showsShowAgain)
+        XCTAssertEqual(MarkRowPresentation(row: markRow(count: 1), call: call(1)).text, "Mark \u{B7} trail-detail.html \u{B7} 1 area")
+        let spanning = MarkRowPresentation(row: markRow(count: 2), call: call(2, pages: ["a.html", "b.html"]))
+        XCTAssertEqual(spanning.text, "Mark \u{B7} a.html \u{B7} 2 areas")
+        let resumed = MarkRowPresentation(row: markRow(count: 3), call: nil)
+        XCTAssertEqual(resumed.text, "Mark \u{B7} 3 areas")
+        XCTAssertFalse(resumed.showsShowAgain)
+        XCTAssertEqual(MarkRowPresentation(row: markRow(count: nil), call: nil).text, "Mark")
+    }
 }
