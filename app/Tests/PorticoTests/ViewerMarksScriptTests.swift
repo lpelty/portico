@@ -265,6 +265,37 @@ final class ViewerMarksScriptTests: XCTestCase {
         XCTAssertEqual(tops[0], tops[1], accuracy: 1)
     }
 
+    func testNoteNeverAddsHorizontalScroll() async throws {
+        let view = try webView(size: NSSize(width: 400, height: 300))
+        try await load("""
+            <style>body{margin:0}</style>
+            <h2>Elevation</h2>
+            <button style="position:absolute;right:0;top:80px;width:360px">Start trail</button>
+            """, in: view)
+        let located = try await locateTrail(in: view)
+        let marks: [[String: Any]] = [
+            ["n": 1, "note": "Gains 420 m over the first two miles of the ridge", "locator": located[1]["locator"] ?? [:]],
+            ["n": 2, "note": String(repeating: "Steep switchbacks ", count: 6), "locator": located[0]["locator"] ?? [:]],
+        ]
+        let shown = try await show(marks, in: view)
+        XCTAssertEqual(shown.map { $0["found"] as? Bool }, [true, true])
+        let answer = try await js("""
+            var s = document.scrollingElement;
+            var notes = document.querySelector('portico-marks').shadowRoot.querySelectorAll('.note');
+            var width = document.documentElement.clientWidth;
+            var inside = Array.prototype.every.call(notes, function (n) {
+              var r = n.getBoundingClientRect();
+              return r.left >= -0.5 && r.right <= width + 0.5;
+            });
+            return { scrollWidth: s.scrollWidth, clientWidth: s.clientWidth, inside: inside, count: notes.length };
+            """, in: view, as: [String: Any].self)
+        XCTAssertEqual(answer["count"] as? Int, 2)
+        XCTAssertEqual(answer["inside"] as? Bool, true, "\(answer)")
+        let scrollWidth = try XCTUnwrap(answer["scrollWidth"] as? Int)
+        let clientWidth = try XCTUnwrap(answer["clientWidth"] as? Int)
+        XCTAssertLessThanOrEqual(scrollWidth, clientWidth, "\(answer)")
+    }
+
     func testScrollToMark() async throws {
         let view = try webView()
         try await load("""

@@ -404,10 +404,10 @@
     ".badge{position:absolute;left:-11px;top:-11px;width:18px;height:18px;border-radius:50%;" +
     "background:var(--accent);color:#fff;font:bold 11px/18px -apple-system,system-ui,sans-serif;" +
     "text-align:center;letter-spacing:normal;text-transform:none}" +
-    ".note{position:absolute;top:-2px;left:calc(100% + 6px);max-width:none;white-space:nowrap;" +
+    ".note{position:absolute;top:-2px;left:0;box-sizing:border-box;max-width:none;white-space:nowrap;" +
+    "overflow:hidden;text-overflow:ellipsis;" +
     "background:var(--accent);color:#fff;font:12px/16px -apple-system,system-ui,sans-serif;" +
-    "border-radius:5px;padding:2px 7px;letter-spacing:normal;text-transform:none}" +
-    ".note.before{left:auto;right:calc(100% + 6px)}";
+    "border-radius:5px;padding:2px 7px;letter-spacing:normal;text-transform:none}";
 
   var marks = { host: null, items: [], observer: null };
 
@@ -460,6 +460,28 @@
     return null;
   }
 
+  /// The note to the right of the box, or to its left when there is no
+  /// room; failing both, kept inside the page's width (cut with "…" when
+  /// wider than it), so a mark never adds a horizontal scrollbar.
+  function placeNote(note, r, width) {
+    var GAP = 6;
+    note.style.maxWidth = "none";
+    var w = note.offsetWidth;
+    var x;
+    if (r.right + GAP + w <= width) {
+      x = r.right + GAP;
+    } else if (r.left - GAP - w >= 0) {
+      x = r.left - GAP - w;
+    } else if (w > width) {
+      note.style.maxWidth = Math.max(0, width) + "px";
+      x = 0;
+    } else {
+      x = Math.max(0, Math.min(r.right + GAP, width - w));
+    }
+    // Relative to the box's padding edge, inside its 2 px border.
+    note.style.left = (x - r.left - 2) + "px";
+  }
+
   function placeMarks() {
     if (!marks.host) return;
     var origin = marks.host.getBoundingClientRect();
@@ -476,12 +498,7 @@
       item.box.style.top = (r.top - origin.top) + "px";
       item.box.style.width = r.width + "px";
       item.box.style.height = r.height + "px";
-      if (item.note) {
-        // To the right of the box, or to its left when there is no room.
-        var room = item.note.offsetWidth + 6;
-        var before = r.right + room > width && r.left - room >= 0;
-        item.note.className = before ? "note before" : "note";
-      }
+      if (item.note) placeNote(item.note, r, width);
     }
   }
 
