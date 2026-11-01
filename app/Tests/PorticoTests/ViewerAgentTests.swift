@@ -1148,6 +1148,79 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertTrue(rig.view.canGoBack, "Back returns to B")
     }
 
+    /// Review Focus 2 for a rendered Markdown page: a re-render (a new
+    /// rendered URL) keeps the page's key and draws the mark again.
+    func testRenderedMarkdownKeepsItsKeyAcrossReload() async throws {
+        let rig = try rig("# Trail notes\n\n## Water\n\nTwo springs.\n", name: "notes.md", media: .markdown)
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Water", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        let first = await rig.agent.page(of: rig.view)
+        XCTAssertEqual(first?.name, "notes.md")
+        let before = rig.view.url
+        try XCTUnwrap(rig.coordinator).apply(.markdown(rig.file), revision: "edited", to: rig.view)
+        let reloaded = await waitFor { rig.view.url != before && !rig.view.isLoading }
+        XCTAssertTrue(reloaded, "a new rendered URL")
+        XCTAssertNotEqual(rig.view.url?.host, before?.host)
+        let redrawn = try await waitFor { try await self.boxCount(in: rig.view) == 1 }
+        XCTAssertTrue(redrawn, "the mark is drawn again")
+        let second = await rig.agent.page(of: rig.view)
+        XCTAssertEqual(second?.key, first?.key)
+    }
+
+    /// A mark made on a space's page (named for the space) is the same
+    /// page once the space is closed and the file is reached again: its
+    /// box is drawn, the viewer scrolls to it, the look calls it "this
+    /// page", and the re-rendered page hides the space's front matter.
+    func testSpaceMarkFoundAfterTheSpaceCloses() async throws {
+        let dir = try tempDir()
+        let file = dir.appendingPathComponent("brief.md")
+        let spacer = String(repeating: "Filler line.\n\n", count: 120)
+        try "---\ntitle: Brief\nicon: compass\nowner: Sam\n---\n# Morning brief\n\n[Plan](plan.md)\n\n\(spacer)## Route notes\n\nEnd.\n"
+            .write(to: file, atomically: true, encoding: .utf8)
+        try "<!doctype html><title>Plan</title><p>Plan</p>".write(
+            to: dir.appendingPathComponent("plan.html"), atomically: true, encoding: .utf8)
+        let (model, _) = model()
+        model.apply(.spacesList(SpacesList(spaces: [
+            SpaceInfo(id: "brief", title: "Brief", icon: "doc", order: nil, location: file.path, media: "markdown", updated: "2026-10-31T12:00:00Z")])))
+        model.openSpaceAt(1)
+        let agent = ViewerAgent(model: model)
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView = view
+        keepAlive = [view, coordinator, agent, model, window]
+        coordinator.apply(try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact)))), to: view)
+        let marked = await agent.perform(act(.mark, markArgs([("Route notes", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        let mark = try XCTUnwrap(model.markStore.marks[1]?.first)
+        XCTAssertEqual(mark.page.name, "Brief")
+
+        // Leave the page, close the space, and go back to the mark.
+        view.loadHTMLString(Self.page("<p>Elsewhere</p>"), baseURL: URL(string: "https://example.com/elsewhere")!)
+        _ = await waitFor { view.url?.host == "example.com" && !view.isLoading }
+        model.setOpenSpace(nil)
+        agent.goToMark(mark, chat: 1)
+        let drawn = try await waitFor {
+            guard view.url?.scheme == RenderedPageHandler.scheme else { return false }
+            return try await self.boxCount(in: view) == 1
+        }
+        XCTAssertTrue(drawn, "the box is drawn on the file reached again")
+        let page = await agent.page(of: view)
+        XCTAssertEqual(page?.name, "brief.md", "no space is open now")
+        XCTAssertEqual(page?.key, mark.page.key)
+        let scrolled = try await waitFor { (try await self.evaluate("window.scrollY", in: view) as? Double ?? 0) > 100 }
+        XCTAssertTrue(scrolled, "it scrolled to the mark")
+        let look = model.markStore.lookText(chat: 1, current: page)
+        XCTAssertTrue(look?.contains("(this page)") == true, look ?? "")
+        XCTAssertEqual(model.markStore.marks[1]?.first?.found, true)
+        let text = try await evaluate("document.body.innerText", in: view) as? String ?? ""
+        XCTAssertTrue(text.contains("Sam"), text)
+        XCTAssertFalse(text.contains("compass"), "the space's front matter stays hidden")
+    }
+
     func testSpacePageIsNamedForTheSpace() async throws {
         let dir = try tempDir()
         let file = dir.appendingPathComponent("brief.md")

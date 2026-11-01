@@ -9,10 +9,16 @@ struct MarkLocator: Codable, Equatable, Sendable {
 }
 
 /// A page marks belong to. The key is a file path or a URL without its
-/// fragment; the name is what the list shows.
+/// fragment; the name is what the list shows. A page is its key alone:
+/// the name can differ by how the page was reached (a space's title while
+/// the space is open, the file's name otherwise), so it takes no part in
+/// equality, and the store keeps the name it first saw for a key.
 struct MarkPage: Equatable, Hashable, Sendable {
     var key: String
     var name: String
+
+    static func == (lhs: MarkPage, rhs: MarkPage) -> Bool { lhs.key == rhs.key }
+    func hash(into hasher: inout Hasher) { hasher.combine(key) }
 }
 
 struct Mark: Equatable, Identifiable, Sendable {
@@ -61,6 +67,8 @@ final class MarkStore: ObservableObject {
     func add(chat: Int, page: MarkPage, items: [(label: String, note: String, locator: MarkLocator)],
              call: String, toolUseId: String?, replace: Bool) -> [Mark] {
         if replace { marks[chat] = nil }
+        // A known page keeps the name it was first listed under.
+        let page = (marks[chat] ?? []).first { $0.page == page }?.page ?? page
         var next = highest(chat)
         var added: [Mark] = []
         for item in items.prefix(Self.perCall) {

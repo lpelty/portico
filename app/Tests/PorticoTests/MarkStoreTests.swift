@@ -125,6 +125,25 @@ final class MarkStoreTests: XCTestCase {
         XCTAssertEqual(store.marks[1]?.count, 4)
     }
 
+    /// A page is its key: the same file reached under another name (a
+    /// space's title, then the file's name) is the same page, and the
+    /// store keeps the name it first saw.
+    func testPageIdentityIsTheKeyAlone() {
+        let space = MarkPage(key: "/x/brief.md", name: "Brief")
+        let file = MarkPage(key: "/x/brief.md", name: "brief.md")
+        XCTAssertEqual(space, file)
+        XCTAssertEqual(Set([space, file]).count, 1)
+        let store = MarkStore()
+        store.add(chat: 1, page: space, items: items([("a", "")]), call: "c1", toolUseId: nil, replace: false)
+        let more = store.add(chat: 1, page: file, items: items([("b", "")]), call: "c2", toolUseId: nil, replace: false)
+        XCTAssertEqual(more.first?.page.name, "Brief", "a known key keeps its stored name")
+        XCTAssertEqual(store.marks(chat: 1, on: file).count, 2)
+        XCTAssertEqual(store.groups(chat: 1, current: file).count, 1)
+        XCTAssertTrue(store.lookText(chat: 1, current: file)?.contains("(this page)") == true)
+        store.setFound(chat: 1, page: file, found: [1: false])
+        XCTAssertEqual(store.marks[1]?.first?.found, false)
+    }
+
     func testEndSessionClears() {
         let store = seeded()
         store.endSession(chat: 1)

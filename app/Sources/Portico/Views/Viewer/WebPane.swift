@@ -451,14 +451,15 @@ struct WebPane: NSViewRepresentable {
         /// A URL for `file` served by this pane, to load in place so Back
         /// returns (v0.14, going to a mark on another page): an HTML file
         /// from its folder, a Markdown file rendered; `nil` otherwise.
-        func renderedURL(for file: URL) -> URL? {
+        /// `hiding`: the front-matter keys the page hid when first shown.
+        func renderedURL(for file: URL, hiding: Set<String> = []) -> URL? {
             switch file.pathExtension.lowercased() {
             case "html", "htm":
                 guard FileManager.default.isReadableFile(atPath: file.path) else { return nil }
                 return handler.register(file: file)
             case "md", "markdown":
                 guard let source = try? String(contentsOf: file, encoding: .utf8),
-                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent)
+                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
                 else { return nil }
                 return handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
             default:

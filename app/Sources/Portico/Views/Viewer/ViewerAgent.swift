@@ -717,7 +717,7 @@ final class ViewerAgent: ObservableObject {
 
     private func go(to mark: Mark, chat: Int) async {
         guard let model else { return }
-        if let view = web?.view, await page(of: view) == mark.page {
+        if let view = web?.view, await page(of: view)?.key == mark.page.key {
             await redraw(view)
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": mark.number], in: view, quiet: true)
             return
@@ -737,7 +737,7 @@ final class ViewerAgent: ObservableObject {
         let due = ContinuousClock.now + markPageWait
         while ContinuousClock.now < due {
             try? await Task.sleep(for: .milliseconds(50))
-            guard let view = web?.view, !view.isLoading, await page(of: view) == mark.page else { continue }
+            guard let view = web?.view, !view.isLoading, await page(of: view)?.key == mark.page.key else { continue }
             await redraw(view)
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": mark.number], in: view, quiet: true)
             return
@@ -747,7 +747,14 @@ final class ViewerAgent: ObservableObject {
     /// What to load for a page key: a file path served by the pane, or the
     /// page's own address.
     private func markURL(_ key: String) -> URL? {
-        if key.hasPrefix("/") { return web?.coordinator?.renderedURL(for: URL(fileURLWithPath: key)) }
+        if key.hasPrefix("/") {
+            // A space's file hides the same front matter it hides as a space.
+            let isSpace = model?.spaces.contains { space in
+                URL(fileURLWithPath: space.location).standardizedFileURL.resolvingSymlinksInPath().path == key
+            } ?? false
+            return web?.coordinator?.renderedURL(
+                for: URL(fileURLWithPath: key), hiding: isSpace ? SpacesPresentation.hiddenFrontMatterKeys : [])
+        }
         guard let url = URL(string: key), let scheme = url.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) else { return nil }
         return url
     }
