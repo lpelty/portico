@@ -63,12 +63,27 @@ final class SpacesTests: XCTestCase {
         XCTAssertEqual(ToolbarLayout.gap(after: .spacer, next: .viewerToggle), 0)
     }
 
-    func test_no_switcher_without_spaces() {
-        XCTAssertFalse(ToolbarLayout.showsSwitcher(spaces: [], capabilities: ["files"]))
-        XCTAssertFalse(ToolbarLayout.showsSwitcher(spaces: [], capabilities: nil))
-        XCTAssertTrue(ToolbarLayout.showsSwitcher(spaces: [space("brief")], capabilities: []))
-        XCTAssertTrue(ToolbarLayout.showsSwitcher(spaces: [], capabilities: ["spaces.v1"]), "a folder with no files yet still offers New space")
+    func test_switcher_always_shows() {
+        XCTAssertTrue(ToolbarLayout.showsSwitcher)
+        XCTAssertTrue(ToolbarLayout.items(showSwitcher: ToolbarLayout.showsSwitcher, showViewerToggle: false).contains(.switcher))
         XCTAssertFalse(ToolbarLayout.items(showSwitcher: false, showViewerToggle: true).contains(.switcher))
+    }
+
+    func test_new_space_needs_spaces_v1() {
+        XCTAssertTrue(SpacesPresentation.canCreateSpace(capabilities: ["spaces.v1"]))
+        XCTAssertTrue(SpacesPresentation.canCreateSpace(capabilities: ["files", "spaces.v1", "spaces.refresh"]))
+        XCTAssertFalse(SpacesPresentation.canCreateSpace(capabilities: ["files"]), "an older gateway: New space… is dimmed")
+        XCTAssertFalse(SpacesPresentation.canCreateSpace(capabilities: nil))
+    }
+
+    func test_empty_menu_and_too_old_copy() {
+        XCTAssertEqual(SpacesPresentation.noSpacesText, "No spaces yet")
+        XCTAssertEqual(SpacesPresentation.tooOldHelp, "This Portico gateway is too old for spaces.")
+        XCTAssertTrue(SpacesPresentation.showsEmptyNote(spaces: [], query: ""))
+        XCTAssertFalse(SpacesPresentation.showsEmptyNote(spaces: [], query: "x"), "a typed filter shows No match, not the empty note")
+        XCTAssertFalse(SpacesPresentation.showsEmptyNote(spaces: [space("brief")], query: ""))
+        // With no spaces the menu still offers Work and New space….
+        XCTAssertEqual(SpaceMenuState().visible([]), [.work, .newSpace])
     }
 
     func test_app_names_spaces_capability() {

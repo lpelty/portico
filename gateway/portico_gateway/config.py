@@ -46,7 +46,7 @@ RESTART_ALL_CAPABILITY = "services.restart_all"
 # Clear earlier sessions… and sends ``sessions.clear``.
 CLEAR_SESSIONS_CAPABILITY = "sessions.clear"
 
-# v0.12: advertised when ``[spaces] folder`` is set; ``spaces.refresh`` also
+# v0.12: advertised with a spaces folder (v0.14: always, the folder defaults to ``<state dir>/spaces``); ``spaces.refresh`` also
 # when ``[spaces] refresh`` is (the app then offers Refresh).
 SPACES_CAPABILITY = "spaces.v1"
 SPACES_REFRESH_CAPABILITY = "spaces.refresh"
@@ -294,6 +294,19 @@ class SpacesConfig(BaseModel):
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value if value is not None and value.strip() else None
+
+
+def with_default_spaces(config: Config, state_path: Path) -> Config:
+    """v0.14: with no ``[spaces] folder``, the spaces folder is ``<state dir>/spaces``, created if missing.
+
+    A configured folder is returned untouched (``SpacesConfig`` already checked that it exists).
+    """
+    if config.spaces.folder:
+        return config
+    folder = Path(state_path) / "spaces"
+    folder.mkdir(parents=True, exist_ok=True)
+    spaces = config.spaces.model_copy(update={"folder": str(folder.resolve())})
+    return config.model_copy(update={"spaces": spaces})
 
 
 def host_allowed(host: str, act_hosts: list[str]) -> bool:

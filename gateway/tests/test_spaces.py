@@ -377,20 +377,16 @@ async def test_hello_sends_spaces_list_after_services_status(server: GatewayServ
         await conn.close()
 
 
-async def test_no_spaces_no_list(state_dir: StateDir, tmp_path: Path) -> None:
+async def test_no_folder_set_still_sends_an_empty_spaces_list(state_dir: StateDir, tmp_path: Path) -> None:
+    """v0.14: no ``[spaces] folder`` means the default folder, so an app with spaces.v1 gets a (empty) list."""
     from tests.test_server import make_server
 
     srv = make_server(state_dir, make_config())
     await srv.serve(0)
     conn = await hello(srv)
     try:
-        types = []
-        while "chat.list" not in types or "services.status" not in types:
-            types.append(parse_server(await asyncio.wait_for(conn.recv(), 2)).type)
-        with pytest.raises(TimeoutError):
-            while True:
-                types.append(parse_server(await asyncio.wait_for(conn.recv(), 0.3)).type)
-        assert "spaces.list" not in types
+        listing = await frames_until(conn, "spaces.list")
+        assert listing.spaces == []
     finally:
         await conn.close()
         await srv.shutdown()
@@ -554,3 +550,50 @@ async def test_failed_refresh_answers_its_error_with_the_id(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.14: no [spaces] folder means <state dir>/spaces ---------------------------
+
+
+@pytest.fixture
+async def default_server(state_dir: StateDir, factory: EngineFactory) -> AsyncIterator[GatewayServer]:
+    config: Config = make_config(setting_sources=["project"])
+    assert config.spaces.folder is None
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    put(state_dir.path / "spaces", "brief.md", "---\ntitle: Brief\n---\n")  # created at construction; scanned at serve
+    await srv.serve(0)
+    try:
+        yield srv
+    finally:
+        await srv.shutdown()
+
+
+async def test_unset_folder_uses_state_dir_spaces(default_server: GatewayServer, state_dir: StateDir) -> None:
+    folder = state_dir.path / "spaces"
+    assert folder.is_dir()
+    assert default_server.spaces_watcher is not None and default_server.spaces_watcher.folder == folder.resolve()
+    conn = await hello(default_server)
+    try:
+        hello_frame = await frames_until(conn, "hello")
+        assert "spaces.v1" in hello_frame.capabilities
+        listing = await frames_until(conn, "spaces.list")
+        assert [s.id for s in listing.spaces] == ["brief"]
+    finally:
+        await conn.close()
+
+
+async def test_default_folder_works_across_restarts(state_dir: StateDir, factory: EngineFactory) -> None:
+    folder = state_dir.path / "spaces"
+    for run in range(2):
+        config: Config = make_config(setting_sources=["project"])
+        registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+        srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+        if run == 0:
+            put(folder, "kept.md", "---\ntitle: Kept\n---\n")
+        await srv.serve(0)
+        try:
+            assert srv.config.spaces.folder == str(folder.resolve())
+            assert [s.id for s in srv.spaces_watcher.spaces] == ["kept"]  # type: ignore[union-attr]
+        finally:
+            await srv.shutdown()

@@ -203,7 +203,7 @@ struct MainToolbar: View {
 
     private var items: [ToolbarLayout.Item] {
         ToolbarLayout.items(
-            showSwitcher: ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities),
+            showSwitcher: ToolbarLayout.showsSwitcher,
             showViewerToggle: model.shownChat != nil && !model.documentMode)
     }
 

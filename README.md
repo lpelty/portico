@@ -185,7 +185,7 @@ agent_checks_html = true            # default for Settings > Agent checks HTML i
 act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and type on; ships empty (see below)
 
 [spaces]                            # optional (v0.12): files the agent keeps current, in the app's switcher
-folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space
+folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
 refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
 remove = "my-tool forget-space"     # optional: runs after the file is moved to the Trash; same environment
 ```
@@ -431,8 +431,11 @@ It ships empty, and `bin/doctor` prints it ("Agent can click and type on:
 figma.com, lovable.dev" or "Outside sites: look only").
 
 **Spaces.** A space is a Markdown or HTML file the agent keeps current, in
-`[spaces] folder`. The app lists them in a toolbar switcher and opens one
-beside the conversation. A space's name, icon and order come from front
+`[spaces] folder`, or, when that is not set, `spaces` in the state
+directory (`~/.portico/spaces`, created at start). The app always shows
+the toolbar switcher, with "No spaces yet" until there is one, and opens
+a space beside the conversation. On a gateway too old for spaces, New
+space… is dimmed. A space's name, icon and order come from front
 matter (`title`, `icon` as an SF Symbol name, `order`); an HTML file puts
 the same keys in a leading `<!-- ... -->` block. A file with no title is
 listed by its file name, and files starting with `.` or `_` are skipped.

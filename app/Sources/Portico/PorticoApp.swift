@@ -122,7 +122,7 @@ struct PorticoApp: App {
             }
             CommandGroup(after: .toolbar) {
                 Divider()
-                let spacesShown = ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities)
+                let spacesShown = ToolbarLayout.showsSwitcher
                 Button("Work") { model.openSpaceAt(0) }
                     .keyboardShortcut("0", modifiers: .command)
                     .disabled(!spacesShown)

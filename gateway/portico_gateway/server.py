@@ -166,7 +166,7 @@ from .agents import AgentTracker
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import SPACES_CAPABILITY, Config, hello_for
+from .config import SPACES_CAPABILITY, Config, hello_for, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
     Engine,
@@ -767,6 +767,8 @@ class GatewayServer:
         config_path: Path | None = None,
         titler: Titler | None = None,
     ) -> None:
+        # v0.14: no [spaces] folder means <state dir>/spaces (created here), treated like a configured one.
+        config = with_default_spaces(config, state.path)
         self.config = config
         # The file the config came from and its modification time at start:
         # a newer file means the running gateway is not using it (v0.3).

@@ -4,6 +4,13 @@
 
 ### What a person gets (app)
 
+- **The space switcher always shows.** With no spaces its menu lists Work,
+  "No spaces yet" and New space…. Against a gateway too old for spaces,
+  New space… is dimmed ("This Portico gateway is too old for spaces.").
+  The gateway uses `<state dir>/spaces` when `[spaces] folder` is not
+  set, creating it at start and advertising `spaces.v1` as for a
+  configured folder.
+
 - **The agent can point at things on a page.** After a critique, "show me
   all three" draws a numbered accent box with a short note on each part of
   the page, and scrolls to the first. Marks work on HTML files, Markdown,

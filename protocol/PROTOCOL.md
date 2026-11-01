@@ -454,8 +454,8 @@ services; v0.10: `agents.v1` when the gateway sends subagent and workflow
 frames to an app that lists the same in its own `hello`; v0.11:
 `sessions.clear` in single presentation, so the app offers Clear earlier
 sessions…; v0.11: `queue.v1` when it queues a send made during a turn for
-an app that lists the same; v0.12: `spaces.v1` when `[spaces] folder` is
-set, and `spaces.refresh` as well when `[spaces] refresh` is, so the app
+an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
+`[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`
 and (v0.11) any kept `chat.commands`.
@@ -1157,7 +1157,8 @@ hook reads the setting each time. This is gateway behaviour; no frame.
 ### Spaces
 
 A space is one Markdown or HTML file the agent keeps current, in the
-folder configured as `[spaces] folder`. Its id is the file name without
+folder configured as `[spaces] folder`, or, when that is not set (v0.14),
+`spaces` in the state directory (created at start if missing). Its id is the file name without
 the extension. Its title, icon and order come from front matter (`---`
 lines at the top) or, for any file, a leading `<!-- key: value -->`
 block: `title`, `icon` (an SF Symbol name; default `doc.text`), `order`
@@ -1191,7 +1192,7 @@ Refresh and remove run beside the app's other frames, not ahead of them.
 Symbolic links in the folder are not spaces. A title that would go into
 an HTML comment block cannot contain `--` (`space.invalid`).
 
-Error codes: `space.not_configured` (no spaces folder), `space.not_found`,
+Error codes: `space.not_configured` (no spaces folder; since v0.14 a gateway always has one), `space.not_found`,
 `space.invalid` (rename with an empty title, or with `--` in a title kept
 in a comment block), `space.no_refresh` (no refresh command),
 `space.refresh_failed`, `space.rename_failed`,
