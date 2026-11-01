@@ -1167,8 +1167,9 @@ lines at the top) or, for any file, a leading `<!-- key: value -->`
 block: `title`, `icon` (an SF Symbol name; default `doc.text`), `order`
 (an integer, optional). A file with broken or missing front matter, or
 that is not UTF-8, is listed by its file name with the defaults. Files
-whose names start with `.` or `_` are not spaces. Portico schedules
-nothing: the deployment (or the agent) rewrites the files.
+whose names start with `.` or `_` are not spaces. Subfolders of the spaces folder are ignored: nothing inside them is listed or watched. (v0.14: a
+deployment can keep a space's scripts in a same-named subfolder.) Portico
+schedules nothing: the deployment (or the agent) rewrites the files.
 
 The gateway looks at the folder every 5 s (modification times) and also
 after any of the actions below. It sends `spaces.list` only to an app that

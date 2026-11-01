@@ -439,6 +439,7 @@ space… is dimmed. A space's name, icon and order come from front
 matter (`title`, `icon` as an SF Symbol name, `order`); an HTML file puts
 the same keys in a leading `<!-- ... -->` block. A file with no title is
 listed by its file name, and files starting with `.` or `_` are skipped.
+Subfolders of the spaces folder are ignored: nothing inside them is listed or watched.
 Portico schedules nothing: the deployment rewrites the files (it can ask
 the agent to). The gateway checks the folder every 5 seconds and tells the
 agent where it is in the system prompt. `refresh` and `remove` run

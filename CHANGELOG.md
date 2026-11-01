@@ -72,6 +72,11 @@
   its nearest clickable ancestor (a link, a button, `[role=button]`, an
   element with a click handler or `cursor: pointer`). A heading with none
   answers "That's a heading, not something to click; use its ref."
+- **Subfolders of the spaces folder are ignored**, now a documented
+  guarantee: only top-level `.md`, `.markdown`, `.html` and `.htm` files
+  are spaces, and nothing inside a subfolder is listed or watched, so a
+  deployment can keep a space's scripts in a same-named subfolder. Stated
+  in PROTOCOL.md and pinned by tests.
 
 ## v0.13.0 (2026-10-31)
 

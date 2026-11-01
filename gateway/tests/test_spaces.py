@@ -117,6 +117,17 @@ def test_scan_ignores_dot_underscore(spaces_dir: Path) -> None:
     assert ids(scan(spaces_dir)) == ["real"]
 
 
+def test_scan_ignores_a_same_named_subfolder(spaces_dir: Path) -> None:
+    """v0.14 §6b.6: subfolders of the spaces folder are ignored; nothing inside them is listed."""
+    put(spaces_dir, "brief.html", "<!-- title: Brief -->\n<p>Acme</p>\n")
+    (spaces_dir / "brief").mkdir()
+    put(spaces_dir / "brief", "x.html", "<p>script output</p>")
+    put(spaces_dir / "brief", "y.md", "---\ntitle: Y\n---\n")
+    [space] = scan(spaces_dir)
+    assert (space.id, space.title) == ("brief", "Brief")
+    assert space.location == str((spaces_dir / "brief.html").resolve())
+
+
 def test_scan_bad_front_matter_listed_by_stem(spaces_dir: Path) -> None:
     put(spaces_dir, "oops.md", "---\ntitle Missing colon\nicon: x\n---\ntext\n")
     put(spaces_dir, "open.md", "---\ntitle: Never closed\n\ntext\n")
@@ -183,6 +194,33 @@ async def test_watcher_fires_on_add_change_remove(spaces_dir: Path) -> None:
     path.unlink()
     await watcher.poll()
     assert seen[-1] == [] and len(seen) == 3
+
+
+async def test_watcher_ignores_changes_inside_a_subfolder(spaces_dir: Path) -> None:
+    """v0.14 §6b.6: nothing inside a subfolder is watched: adding, changing or removing there sends no list."""
+    seen: list[list[Space]] = []
+
+    async def on_change(spaces: list[Space]) -> None:
+        seen.append(spaces)
+
+    put(spaces_dir, "brief.html", "<p>Acme</p>")
+    sub = spaces_dir / "brief"
+    sub.mkdir()
+    x = put(sub, "x.html", "<p>one</p>")
+    watcher = SpacesWatcher(spaces_dir, on_change)
+    assert ids(watcher.spaces) == ["brief"]
+    put(sub, "y.md", "---\ntitle: Y\n---\n")
+    await watcher.poll()
+    x.write_text("<p>two</p>")
+    os.utime(x, (1_900_000_000, 1_900_000_000))
+    os.utime(sub, (1_900_000_000, 1_900_000_000))
+    await watcher.poll()
+    (sub / "deeper").mkdir()
+    put(sub / "deeper", "z.htm", "<p>z</p>")
+    await watcher.poll()
+    x.unlink()
+    await watcher.poll()
+    assert seen == [], "no spaces.list for a change inside brief/"
 
 
 # --- rename ---------------------------------------------------------------------
