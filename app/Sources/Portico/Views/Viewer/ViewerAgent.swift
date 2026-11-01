@@ -382,8 +382,12 @@ final class ViewerAgent: ObservableObject {
     /// scrolled on the page since the agent's last look, that they did
     /// (v0.14 §6b.4): the page may have changed under the agent.
     private func notFound(_ act: ViewerAct, in view: WKWebView) async -> ViewerResult {
-        let used = await call("var a = window.__porticoAgent; return !!(a && a.personUsed && a.personUsed())", in: view) as? Bool
-        return fail(act, used == true ? Message.personUsed : Message.notFound)
+        fail(act, await personUsed(in: view) ? Message.personUsed : Message.notFound)
+    }
+
+    /// Whether the person clicked, pressed a key or scrolled on the page since the agent's last look.
+    private func personUsed(in view: WKWebView) async -> Bool {
+        await call("var a = window.__porticoAgent; return !!(a && a.personUsed && a.personUsed())", in: view) as? Bool == true
     }
 
     /// The script's own answer `{ok, text}`, or a not-found.
@@ -624,7 +628,8 @@ final class ViewerAgent: ObservableObject {
         }
         var text = "Marked " + added.map { "\($0.number) · \($0.label)" }.joined(separator: ", ") + "."
         if !missing.isEmpty {
-            text += " Not found: " + missing.map { "\"\($0)\"" }.joined(separator: ", ") + " — look again."
+            let why = await personUsed(in: view) ? " — the person used the page since your last look; look again." : " — look again."
+            text += " Not found: " + missing.map { "\"\($0)\"" }.joined(separator: ", ") + why
         }
         return ViewerResult(id: act.id, ok: true, text: text)
     }

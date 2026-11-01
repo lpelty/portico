@@ -1553,6 +1553,18 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(click.text, Self.personUsed)
     }
 
+    func test_a_partly_found_mark_after_person_input_says_so_for_the_missing() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.click, on: rig)
+        let result = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Nowhere", nil)])))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertTrue(result.text.hasPrefix("Marked 1 · "), result.text)
+        XCTAssertTrue(
+            result.text.hasSuffix(" Not found: \"Nowhere\" — the person used the page since your last look; look again."),
+            result.text)
+    }
+
     func test_input_before_the_look_and_script_events_dont_count() async throws {
         let rig = try rig(Self.inputPage)
         _ = await rig.agent.perform(act(.look))

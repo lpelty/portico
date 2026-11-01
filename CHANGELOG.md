@@ -54,10 +54,13 @@
 - **`bin/update` stops the running gateway.** After moving to the new tag
   (or pulling main) it stops a gateway still running the old version and
   says "Stopped the running gateway (it was the old version); Portico
-  starts the new one." With no gateway running it says nothing.
+  starts the new one." With no gateway running it says nothing. If the
+  install then fails, it says "update: install failed; the gateway was
+  stopped. Fix the error above, then run bin/install."
 - **The viewer divider is as easy to grab as the sidebar's.** Its 14 pt
   grip now sits wholly on the conversation side; the web page beside it
-  had taken the half over it.
+  had taken the half over it. The conversation's scrollers move in by as
+  much while the viewer is open, so they stay draggable.
 - **A brighter acting glow.** The line stays 3 pt at full accent; the glow
   is wider, stronger and more blurred, and its pulse runs 75-100% (was
   55-100%). Still steady with Reduce Motion.
@@ -65,8 +68,9 @@
   typing, scroll-to or mark target isn't found and the person has clicked,
   pressed a key or scrolled on the page since the agent's last look, the
   agent hears "The person used the page since your last look; look
-  again." instead of "Not found — look again". The viewer is not locked;
-  the person's input still wins.
+  again." instead of "Not found — look again" (a mark call that finds
+  only some targets says it for the rest). The viewer is not locked; the
+  person's input still wins.
 - **A heading inside a clickable card clicks the card.** Click by text
   also matches headings, after buttons and links. When the heading sits in
   a clickable card (a link, a button, `[role=button]`, an element with a
