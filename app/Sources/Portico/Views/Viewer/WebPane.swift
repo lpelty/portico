@@ -99,15 +99,18 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         let root: URL
         /// The HTML file's own name, served even when it starts with a dot.
         let entry: String?
+        /// The Markdown file a rendered page was made from (v0.14), so a
+        /// mark on it keeps its file across re-renders and Back.
+        var source: URL? = nil
     }
 
     private var renders: [String: Render] = [:]
 
     /// Register a page whose relative references resolve under `root`
     /// (a directory). Returns the URL to load.
-    func register(page: String, root: URL) -> URL {
+    func register(page: String, root: URL, source: URL? = nil) -> URL {
         let id = UUID().uuidString.lowercased()
-        renders[id] = Render(page: Data(page.utf8), root: Self.resolved(root), entry: nil)
+        renders[id] = Render(page: Data(page.utf8), root: Self.resolved(root), entry: nil, source: source.map(Self.resolved))
         return URL(string: "\(Self.scheme)://\(id)/")!
     }
 
@@ -119,6 +122,26 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         let name = file.lastPathComponent
         renders[id] = Render(page: nil, root: file.deletingLastPathComponent(), entry: name)
         return URL(string: "\(Self.scheme)://\(id)/")!.appendingPathComponent(name)
+    }
+
+    /// The file a rendered URL stands for (v0.14): for an HTML file (or a
+    /// file beside it) the root plus the path; `nil` for a rendered
+    /// Markdown page (see `source(for:)`) and for anything not served here.
+    func file(for url: URL) -> URL? {
+        guard url.scheme == Self.scheme, let host = url.host, let render = renders[host] else { return nil }
+        if render.page != nil, Self.isRenderedPage(url.path) { return nil }
+        return Self.file(url.path, in: render)
+    }
+
+    /// The Markdown file a rendered page's URL was made from, if any.
+    func source(for url: URL) -> URL? {
+        guard url.scheme == Self.scheme, let host = url.host, let render = renders[host],
+              render.page != nil, Self.isRenderedPage(url.path) else { return nil }
+        return render.source
+    }
+
+    private static func isRenderedPage(_ path: String) -> Bool {
+        path.isEmpty || path == "/" || path == "/index.html"
     }
 
     func forget(_ url: URL) {
@@ -152,7 +175,7 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
             return respond(task, url: url, status: 404, type: "text/plain", body: Data("no such page".utf8))
         }
         let path = url.path
-        if let page = render.page, path.isEmpty || path == "/" || path == "/index.html" {
+        if let page = render.page, Self.isRenderedPage(path) {
             return respond(task, url: url, status: 200, type: "text/html; charset=utf-8", body: page)
         }
         guard let file = Self.file(path, in: render), let body = try? Data(contentsOf: file) else {
@@ -379,6 +402,9 @@ struct WebPane: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             noteAddress(of: webView)
+            // Marks are drawn again on every load. WebKit calls this on
+            // Back too, from its back-forward cache or not (v0.14).
+            agent?.pageLoaded(webView)
             guard let y = pendingScroll else { return }
             pendingScroll = nil
             webView.evaluateJavaScript(Self.restoreScroll(y))
@@ -395,7 +421,7 @@ struct WebPane: NSViewRepresentable {
             failed = nil
             pendingScroll = scroll
             view.setValue(Self.drawsBackground(for: load), forKey: "drawsBackground")
-            agent?.attach(view, showing: load)
+            agent?.attach(view, showing: load, coordinator: self)
             // Earlier pages stay registered for the coordinator's life: the
             // web view's Back (and the agent's viewer_back) can return to
             // them across an artifact switch.
@@ -404,7 +430,7 @@ struct WebPane: NSViewRepresentable {
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
                     let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
-                    let url = handler.register(page: page, root: file.deletingLastPathComponent())
+                    let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
                     view.load(URLRequest(url: url))
                 } catch {
                     showFailure("Cannot read \(file.path): \(error)", in: view)
@@ -419,6 +445,24 @@ struct WebPane: NSViewRepresentable {
                 view.load(URLRequest(url: url))
             case .url(let url):
                 view.load(URLRequest(url: url))
+            }
+        }
+
+        /// A URL for `file` served by this pane, to load in place so Back
+        /// returns (v0.14, going to a mark on another page): an HTML file
+        /// from its folder, a Markdown file rendered; `nil` otherwise.
+        func renderedURL(for file: URL) -> URL? {
+            switch file.pathExtension.lowercased() {
+            case "html", "htm":
+                guard FileManager.default.isReadableFile(atPath: file.path) else { return nil }
+                return handler.register(file: file)
+            case "md", "markdown":
+                guard let source = try? String(contentsOf: file, encoding: .utf8),
+                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent)
+                else { return nil }
+                return handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
+            default:
+                return nil
             }
         }
 
