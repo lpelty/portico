@@ -189,7 +189,12 @@ final class ViewerAgent: ObservableObject {
             guard model.shownChat == act.chat else { return fail(act, Message.anotherChat) }
             chat = act.chat
         }
-        guard let artifact = model.shownArtifact(for: chat) else { return fail(act, Message.nothingOpen) }
+        guard let artifact = model.shownArtifact(for: chat) else {
+            // Clearing is the store's alone: it needs no page open.
+            guard act.action == .clearMarks else { return fail(act, Message.nothingOpen) }
+            lastChat = chat
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(model.markStore.clear(chat: chat)))
+        }
 
         begin(chat)
         defer { end() }
@@ -689,12 +694,43 @@ final class ViewerAgent: ObservableObject {
         let answer = await call(
             "return window.__porticoAgent.showMarks(list, accent)",
             ["list": payload, "accent": accentCSS(for: view)], in: view, quiet: quiet) as? [Any]
+        recheck?.cancel()
+        recheck = nil
         guard let answer, let page, view.url == url else { return }
+        let found = Self.foundFlags(answer)
+        model?.markStore.setFound(chat: chat, page: page, found: found)
+        guard found.values.contains(false) else { return }
+        // The page script watches a short while for what it didn't find (a
+        // page that builds its content with script); read back what it drew.
+        // A flag that changes publishes, and the redraw that follows starts
+        // this again only while something is still missing.
+        recheck = Task { [weak self, weak view] in
+            var waited: Duration = .zero
+            for at in Self.markRecheck {
+                try? await Task.sleep(for: at - waited)
+                waited = at
+                guard !Task.isCancelled, let self, let view, view.url == url else { return }
+                guard let status = await self.call("return window.__porticoAgent.markStatus()", in: view, quiet: true) as? [Any],
+                      !Task.isCancelled, view.url == url
+                else { return }
+                let now = Self.foundFlags(status)
+                self.model?.markStore.setFound(chat: chat, page: page, found: now)
+                if !now.values.contains(false) { return }
+            }
+        }
+    }
+
+    /// When a draw that missed a mark reads back what the page's watch
+    /// (about 2 s) found since.
+    static let markRecheck: [Duration] = [.milliseconds(300), .milliseconds(1500), .milliseconds(2200)]
+    private var recheck: Task<Void, Never>?
+
+    private static func foundFlags(_ answer: [Any]) -> [Int: Bool] {
         var found: [Int: Bool] = [:]
         for case let item as [String: Any] in answer {
             if let number = (item["n"] as? NSNumber)?.intValue, let flag = item["found"] as? Bool { found[number] = flag }
         }
-        model?.markStore.setFound(chat: chat, page: page, found: found)
+        return found
     }
 
     /// The brand accent as CSS, in the pane's appearance.
@@ -734,24 +770,40 @@ final class ViewerAgent: ObservableObject {
 
     private func go(to mark: Mark, chat: Int) async {
         guard let model else { return }
-        if let view = web?.view, await page(of: view)?.key == mark.page.key {
+        // As for an act: the person sees the viewer it goes to. The
+        // document view gives the window back and a collapsed viewer opens
+        // (its web pane comes back with it).
+        model.closeDocumentView()
+        if !model.isViewerShown(for: chat) { model.setViewer(visible: true, for: chat) }
+        let due = ContinuousClock.now + markPageWait
+        let shown = model.shownArtifact(for: chat)
+        let shownLoad = shown.flatMap { WebPane.Load(ArtifactPresentation(artifact: $0)) }
+        // A web pane for the shown artifact that is on its way back.
+        if shownLoad != nil {
+            while web?.view == nil, ContinuousClock.now < due { try? await Task.sleep(for: .milliseconds(25)) }
+        }
+        if let view = web?.view, !view.isLoading, await page(of: view)?.key == mark.page.key {
             await redraw(view)
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": mark.number], in: view, quiet: true)
             return
         }
-        // Another of the chat's artifacts is shown in its place. The one
-        // already shown (the person followed a link away from it) is loaded
-        // again in the view: showing it again would change nothing.
-        let shown = model.shownArtifact(for: chat)
         let listed = (model.artifacts[chat] ?? []).filter { $0.id != shown?.id }
-        if let artifact = listed.first(where: { Self.pageKey(of: $0) == mark.page.key }) {
+        if let shown, Self.pageKey(of: shown) == mark.page.key,
+           let shownLoad, web?.load == shownLoad, web?.view?.isLoading ?? true {
+            // The shown artifact is the mark's page and its pane is loading
+            // it (it just came back): wait for it below.
+        } else if let artifact = listed.first(where: { Self.pageKey(of: $0) == mark.page.key }) {
+            // Another of the chat's artifacts (the pane may be another
+            // kind, an image or a PDF): show it in its place.
             model.show(artifact, in: chat)
         } else if let view = web?.view, let url = markURL(mark.page.key) {
+            // The shown artifact's page the person followed a link away
+            // from, or a page reached from it: loaded in the view, so Back
+            // returns.
             view.load(URLRequest(url: url))
         } else {
             return
         }
-        let due = ContinuousClock.now + markPageWait
         while ContinuousClock.now < due {
             try? await Task.sleep(for: .milliseconds(50))
             guard let view = web?.view, !view.isLoading, await page(of: view)?.key == mark.page.key else { continue }

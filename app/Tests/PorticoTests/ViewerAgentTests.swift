@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import PDFKit
 import SwiftUI
@@ -1259,6 +1260,197 @@ final class ViewerAgentTests: XCTestCase {
         let result = await agent.perform(act(.mark, markArgs([("Morning brief", nil)])))
         XCTAssertTrue(result.ok, result.text)
         XCTAssertEqual(model.markStore.marks[1]?.first?.page, MarkPage(key: file.standardizedFileURL.resolvingSymlinksInPath().path, name: "Brief"))
+    }
+
+    // MARK: - final fix wave (v0.14)
+
+    /// A new pane for `load`, as SwiftUI makes one when the viewer comes
+    /// back: its own coordinator and view, wired to `agent`.
+    private func pane(for load: WebPane.Load, agent: ViewerAgent, size: NSSize = NSSize(width: 800, height: 600)) -> WKWebView {
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(origin: .zero, size: size)
+        window.contentView = view
+        keepAlive.append(contentsOf: [view, coordinator, window])
+        coordinator.apply(load, to: view)
+        return view
+    }
+
+    private static let tallPage = """
+        <h1>Trail detail</h1>
+        <div style="height: 2400px">Long description</div>
+        <button>Save trail</button>
+        <button>Share trail</button>
+        """
+
+    /// Fix 1: the viewer collapsed (its web pane taken down) and the mark
+    /// on the chat's shown artifact. Show again opens the viewer, and once
+    /// the pane is back the marks are drawn and the first is scrolled to.
+    func testShowAgainWithTheViewerCollapsedOpensItAndDraws() async throws {
+        let rig = try rig(Self.tallPage)
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Share trail", nil)], toolUseId: "tu-c")))
+        XCTAssertTrue(marked.ok, marked.text)
+        rig.agent.clearMarks(chat: 1)
+        // Collapse: SwiftUI takes the pane down.
+        rig.model.setViewer(visible: false, for: 1)
+        rig.agent.detach(rig.view)
+        rig.model.openDocumentView()
+
+        rig.agent.showAgain(toolUseId: "tu-c", chat: 1)
+        let opened = await waitFor { rig.model.isViewerShown(for: 1) && !rig.model.documentMode }
+        XCTAssertTrue(opened, "Show again opens the viewer and leaves the document view")
+        guard opened else { return }
+        // The viewer is back: SwiftUI makes a new pane on the shown artifact.
+        let load = try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(rig.model.shownArtifact(for: 1)))))
+        let view = pane(for: load, agent: rig.agent)
+        let drawn = try await waitFor { try await self.boxCount(in: view) == 2 }
+        XCTAssertTrue(drawn, "the marks are drawn on the pane that came back")
+        let scrolled = try await waitFor { (try await self.evaluate("window.scrollY", in: view) as? Double ?? 0) > 1000 }
+        XCTAssertTrue(scrolled, "the viewer scrolled to the first mark")
+    }
+
+    /// Follows the model's shown artifact for chat 1 into `view`, as the
+    /// viewer does: a web artifact loads in the pane, anything else takes
+    /// the pane down (and a web artifact after that makes a new one).
+    private final class Follower {
+        var view: WKWebView?
+        var watch: AnyCancellable?
+    }
+
+    private func follow(_ model: AppModel, agent: ViewerAgent, from view: WKWebView, coordinator: WebPane.Coordinator) -> Follower {
+        let follower = Follower()
+        follower.view = view
+        var coordinator: WebPane.Coordinator? = coordinator
+        follower.watch = model.$current.dropFirst().sink { [weak self] current in
+            MainActor.assumeIsolated {
+                guard let self, let artifact = current[1] else { return }
+                if let load = WebPane.Load(ArtifactPresentation(artifact: artifact)) {
+                    if let view = follower.view, let coordinator {
+                        coordinator.apply(load, to: view)
+                    } else {
+                        follower.view = self.pane(for: load, agent: agent)
+                    }
+                } else if let view = follower.view {
+                    agent.detach(view)
+                    follower.view = nil
+                    coordinator = nil
+                }
+            }
+        }
+        keepAlive.append(follower)
+        return follower
+    }
+
+    /// Fix 1 (coverage): a mark on another listed artifact is reached
+    /// through `model.show`, from a web page and from an image pane.
+    func testGoToMarkShowsAnotherListedArtifact() async throws {
+        let rig = try rig(Self.trailPage)
+        let dir = rig.file.deletingLastPathComponent()
+        let other = dir.appendingPathComponent("route.html")
+        try Self.page("<h1>Route</h1><button>Download route</button>").write(to: other, atomically: true, encoding: .utf8)
+        let image = dir.appendingPathComponent("map.png")
+        try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")!
+            .write(to: image)
+        let first = Artifact(id: "a-1", kind: .file, location: rig.file.path, media: .html, title: "trail-detail.html", source: .tool, open: false)
+        let route = Artifact(id: "a-2", kind: .file, location: other.path, media: .html, title: "route.html", source: .tool, open: false)
+        let map = Artifact(id: "a-3", kind: .file, location: image.path, media: .image, title: "map.png", source: .tool, open: false)
+        for artifact in [first, route, map] { rig.model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: artifact))) }
+        let follower = follow(rig.model, agent: rig.agent, from: rig.view, coordinator: try XCTUnwrap(rig.coordinator))
+
+        rig.model.show(route, in: 1)
+        let onRoute = await waitFor { rig.view.url != nil && !rig.view.isLoading && rig.agent.currentPage?.name == "route.html" }
+        XCTAssertTrue(onRoute)
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Download route", "Here")])))
+        XCTAssertTrue(marked.ok, marked.text)
+        let mark = try XCTUnwrap(rig.model.markStore.marks[1]?.first)
+
+        // From another web page.
+        rig.model.show(first, in: 1)
+        _ = await waitFor { rig.agent.currentPage?.name == "trail-detail.html" }
+        rig.agent.goToMark(mark, chat: 1)
+        let back = try await waitFor {
+            guard rig.model.shownArtifact(for: 1)?.id == "a-2", let view = follower.view else { return false }
+            return try await self.boxCount(in: view) == 1
+        }
+        XCTAssertTrue(back, "route.html is shown again with its box")
+
+        // From an image pane: no web pane at all until route.html is shown.
+        rig.model.show(map, in: 1)
+        XCTAssertNil(follower.view)
+        rig.agent.goToMark(mark, chat: 1)
+        let fromImage = try await waitFor {
+            guard rig.model.shownArtifact(for: 1)?.id == "a-2", let view = follower.view else { return false }
+            return try await self.boxCount(in: view) == 1
+        }
+        XCTAssertTrue(fromImage, "from the image, route.html is shown with its box")
+    }
+
+    /// Fix 3: a page that builds the marked element 500 ms after it loads.
+    /// After leaving and coming back (no page cache, so it is built again)
+    /// the mark is found and drawn, and the store says so.
+    func testMarkOnAScriptBuiltPageIsFoundAfterReturn() async throws {
+        let late = """
+            <h1>Trail detail</h1>
+            <a href="b.html">Next page</a>
+            <script>setTimeout(function () {
+              var b = document.createElement('button'); b.textContent = 'Late button'; document.body.appendChild(b);
+            }, 500)</script>
+            """
+        let rig = try rig(late)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        rig.view.configuration.preferences.setValue(false, forKey: "usesPageCache")
+        let built = try await waitFor {
+            (try await self.evaluate("!!document.querySelector('button')", in: rig.view) as? Bool) == true
+        }
+        XCTAssertTrue(built)
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Late button", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
+        XCTAssertTrue(onB)
+        rig.view.goBack()
+        let back = await waitFor { rig.view.url?.lastPathComponent == "trail-detail.html" && !rig.view.isLoading }
+        XCTAssertTrue(back)
+        let drawn = try await waitFor(.seconds(5)) { try await self.boxCount(in: rig.view) == 1 }
+        XCTAssertTrue(drawn, "the late element gets its box")
+        let found = await waitFor(.seconds(5)) { rig.model.markStore.marks[1]?.first?.found == true }
+        XCTAssertTrue(found, "the store hears it was found")
+        // Settled: no redraw loop keeps the store publishing.
+        var publishes = 0
+        let watch = rig.model.markStore.$marks.dropFirst().sink { _ in publishes += 1 }
+        try await Task.sleep(for: .seconds(2.5))
+        watch.cancel()
+        XCTAssertEqual(publishes, 0, "the store stops changing once the mark is found")
+        let still = try await boxCount(in: rig.view)
+        XCTAssertEqual(still, 1)
+    }
+
+    /// Fix 5: clearing is store-only, so it works with nothing open.
+    func testClearMarksWithNothingOpen() async throws {
+        let (model, _) = model()
+        let agent = ViewerAgent(model: model)
+        model.markStore.add(
+            chat: 1, page: MarkPage(key: "/tmp/a.html", name: "a.html"),
+            items: [(label: "Save", note: "", locator: MarkLocator(path: "", tag: "button", text: "Save"))],
+            call: "c1", toolUseId: nil, replace: false)
+        XCTAssertNil(model.shownArtifact(for: 1))
+        let cleared = await agent.perform(act(.clearMarks))
+        XCTAssertTrue(cleared.ok, cleared.text)
+        XCTAssertEqual(cleared.text, "Cleared 1 mark.")
+        XCTAssertNil(model.markStore.marks[1])
+        // The setting and the other-chat checks still come first.
+        let other = await agent.perform(act(.clearMarks, chat: 2))
+        XCTAssertEqual(other.text, "The person is looking at another chat.")
+        model.settings.viewerAgentCanSee = false
+        let off = await agent.perform(act(.clearMarks))
+        XCTAssertEqual(off.text, "The person has turned off the agent's view of the viewer in Settings.")
     }
 
     // MARK: - wiring
