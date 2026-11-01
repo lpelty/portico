@@ -25,15 +25,18 @@ from .messages import ViewerAct, ViewerResult
 log = logging.getLogger(__name__)
 
 VIEWER_CAPABILITY = "viewer.v1"
+MARKS_CAPABILITY = "viewer.marks.v1"
 ACT_TIMEOUT = 10.0
 
 NOT_AVAILABLE = "The viewer isn't available right now (Portico isn't open)."
 SETTING_OFF = "The person has turned off the agent's view of the viewer in Settings."
+NEEDS_UPDATE = "This Portico can't show marks yet; it needs updating."
+MARK_COUNT = "Mark 1 to 9 things at a time."
 NO_ANSWER = "The viewer didn't answer in 10 s."
 
 # Tool names as the agent sees them (the tool server is ``portico``, beside ``show_in_viewer``).
 VIEWER_SERVER = "portico"
-VIEWER_TOOLS = ("viewer_look", "viewer_click", "viewer_type", "viewer_scroll", "viewer_back")
+VIEWER_TOOLS = ("viewer_look", "viewer_click", "viewer_type", "viewer_scroll", "viewer_back", "viewer_mark", "viewer_clear_marks")
 VIEWER_TOOL_NAMES = tuple(f"mcp__{VIEWER_SERVER}__{name}" for name in VIEWER_TOOLS)
 
 Send = Callable[[Any, ViewerAct], Awaitable[None]]
@@ -63,10 +66,14 @@ class ViewerBridge:
         send: Send,
         capable: Callable[[Any], bool] = lambda conn: True,
         defaults: tuple[bool, bool] = (True, True),
+        marks_capable: Callable[[Any], bool] = lambda conn: True,
     ) -> None:
         self._send = send
         self._capable = capable
         self._defaults = defaults
+        self._marks_capable = marks_capable
+        # (chat, tool_use_id, tool_input) of viewer_mark calls the PreToolUse hook has seen, not yet taken.
+        self._mark_uses: list[tuple[int, str, dict[str, Any]]] = []
         self._target: Any = None
         self._pending: dict[str, _Pending] = {}
         # (can_see, check_html) as the target app last sent them; ``None`` until one does.
@@ -106,13 +113,35 @@ class ViewerBridge:
             return
         pending.future.set_result(result)
 
-    async def act(self, chat: int, action: str, args: dict[str, Any], timeout: float = ACT_TIMEOUT) -> dict[str, Any]:
+    def note_mark_use(self, chat: int, tool_use_id: str, tool_input: dict[str, Any]) -> None:
+        """The hook saw a ``viewer_mark`` call: remember its id so the handler can pass it to the app."""
+        self._mark_uses.append((chat, tool_use_id, tool_input))
+        del self._mark_uses[:-50]  # a call whose handler never ran must not pile up
+
+    def take_mark_use(self, chat: int, args: dict[str, Any]) -> str | None:
+        """The first noted id for ``chat`` whose input equals ``args``; it is removed."""
+        for i, (c, tool_use_id, tool_input) in enumerate(self._mark_uses):
+            if c == chat and tool_input == args:
+                del self._mark_uses[i]
+                return tool_use_id
+        return None
+
+    async def act(
+        self,
+        chat: int,
+        action: str,
+        args: dict[str, Any],
+        timeout: float = ACT_TIMEOUT,
+        needs_marks: bool = False,
+    ) -> dict[str, Any]:
         """One act as MCP tool content: ``{"content": [text, image?], "is_error"?: True}``."""
         conn = self._target
         if conn is None or not self._capable(conn):
             return _error(NOT_AVAILABLE)
         if not self.can_see:
             return _error(SETTING_OFF)
+        if needs_marks and not self._marks_capable(conn):
+            return _error(NEEDS_UPDATE)
         act_id = uuid.uuid4().hex
         future: asyncio.Future[ViewerResult | None] = asyncio.get_running_loop().create_future()
         self._pending[act_id] = _Pending(conn, future)
@@ -150,7 +179,7 @@ def _args(args: dict[str, Any], *keys: str) -> dict[str, Any]:
 
 
 def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]:
-    """The five viewer tools for ``chat``: look, click, type, scroll, back."""
+    """The seven viewer tools for ``chat``: look, click, type, scroll, back, mark, clear_marks."""
 
     def schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
         return {"type": "object", "properties": properties, "required": required}
@@ -203,4 +232,42 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
     async def viewer_back(args: dict[str, Any]) -> dict[str, Any]:
         return await bridge.act(chat, "back", {})
 
-    return [viewer_look, viewer_click, viewer_type, viewer_scroll, viewer_back]
+    @tool(
+        "viewer_mark",
+        "Mark parts of the page in the viewer so the person can see what you mean: each mark is a numbered "
+        "accent box with a short note (at most 60 characters). target is a ref from your last viewer_look "
+        "(e12), or visible text. Tie each finding to a ref when you look, and mark by that ref, not by "
+        "guessing from the screenshot. Marks stay until cleared; numbers carry on across pages; viewer_look "
+        "lists the marks in use. replace clears all marks first.",
+        schema(
+            {
+                "marks": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "items": {
+                        "type": "object",
+                        "properties": {"target": {"type": "string"}, "note": {"type": "string"}},
+                        "required": ["target"],
+                    },
+                },
+                "replace": {"type": "boolean"},
+            },
+            ["marks"],
+        ),
+    )
+    async def viewer_mark(args: dict[str, Any]) -> dict[str, Any]:
+        marks = args.get("marks")
+        if not isinstance(marks, list) or not 1 <= len(marks) <= 9:
+            return _error(MARK_COUNT)  # the schema is advisory
+        wire: dict[str, Any] = {"marks": marks, "replace": args.get("replace") is True}
+        tool_use_id = bridge.take_mark_use(chat, args)
+        if tool_use_id is not None:
+            wire["tool_use_id"] = tool_use_id
+        return await bridge.act(chat, "mark", wire, needs_marks=True)
+
+    @tool("viewer_clear_marks", "Clear every mark in the viewer.", schema({}, []))
+    async def viewer_clear_marks(args: dict[str, Any]) -> dict[str, Any]:
+        return await bridge.act(chat, "clear_marks", {}, needs_marks=True)
+
+    return [viewer_look, viewer_click, viewer_type, viewer_scroll, viewer_back, viewer_mark, viewer_clear_marks]

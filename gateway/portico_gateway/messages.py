@@ -875,7 +875,7 @@ class ViewerAct(Envelope):
     type: Literal["viewer.act"] = "viewer.act"
     id: str
     chat: int
-    action: Literal["look", "click", "type", "scroll", "back"]
+    action: Literal["look", "click", "type", "scroll", "back", "mark", "clear_marks"]
     args: dict[str, Any] = {}
 
 

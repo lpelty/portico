@@ -658,6 +658,19 @@ def build_check_html_hook(bridge: Any, folder: Path, roots: list[Path]):
     return check_html_hook
 
 
+def build_mark_hook(bridge: Any, chat: int):
+    """The ``PreToolUse`` hook on ``viewer_mark``: note the call's id so the app can tie its marks to the tool row."""
+
+    async def mark_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        use_id = input.get("tool_use_id") if isinstance(input, Mapping) else None
+        if isinstance(tool_input, Mapping) and isinstance(use_id or tool_use_id, str):
+            bridge.note_mark_use(chat, use_id or tool_use_id, dict(tool_input))
+        return {}
+
+    return mark_hook
+
+
 # The show tool is allowed outright on purpose (it only shows a file), so the
 # SDK's advisory that ``can_use_tool`` will not see it is expected.
 # The v0.12 viewer tools are allowed outright the same way (the person watches
@@ -710,6 +723,9 @@ def build_options(
             # v0.12: the agent sees and uses the viewer; the tools answer "not available" when no app can.
             tools += build_viewer_tools(bridge, callbacks.viewer_chat)  # type: ignore[attr-defined]
             allowed += VIEWER_TOOL_NAMES
+            pre_tool_use.append(
+                HookMatcher(matcher="mcp__portico__viewer_mark", hooks=[build_mark_hook(bridge, callbacks.viewer_chat)])  # type: ignore[attr-defined]
+            )
             roots = list(getattr(callbacks, "viewer_roots", []))
             post_tool_use.append(
                 HookMatcher(matcher="Write|Edit|MultiEdit|Bash", hooks=[build_check_html_hook(bridge, folder, roots)])

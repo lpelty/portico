@@ -259,7 +259,7 @@ from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
 from .state import StateDir
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
-from .viewer import VIEWER_CAPABILITY, ViewerBridge
+from .viewer import MARKS_CAPABILITY, VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
@@ -867,6 +867,7 @@ class GatewayServer:
             self._send_viewer_act,
             capable=lambda conn: VIEWER_CAPABILITY in _capabilities(conn),
             defaults=(config.viewer.agent_can_see, config.viewer.agent_checks_html),
+            marks_capable=lambda conn: MARKS_CAPABILITY in _capabilities(conn),
         )
         # v0.12: spaces. The watcher tells every attached app when the folder's list changes.
         self.spaces_watcher: SpacesWatcher | None = (

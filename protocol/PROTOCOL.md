@@ -89,7 +89,8 @@ messages every app reads: `agents.v1` (see Subagents and
 workflows): without it the gateway sends none of those frames; v0.11:
 `queue.v1` (see Messages while the agent works); v0.12: `viewer.v1`
 (the app can carry out `viewer.act`; see The viewer and spaces) and
-`spaces.v1` (it shows `spaces.list`). Absent
+`spaces.v1` (it shows `spaces.list`); v0.14: `viewer.marks.v1` (it
+can draw the agent's marks; see The viewer and spaces). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -1078,12 +1079,13 @@ gateway never sends it.
 
 ### The agent's view of the viewer
 
-The reference gateway gives the agent five tools beside `show_in_viewer`
+The reference gateway gives the agent seven tools beside `show_in_viewer`
 (in-process, allowed outright, no permission card in any mode):
 `viewer_look` (a PNG of the viewer as shown, what is open, an outline of
 the page with a ref such as `e12` on each line, and the page errors since
 the last look), `viewer_click(target)`, `viewer_type(target, text,
-submit?)`, `viewer_scroll(direction | target)` and `viewer_back()`. A
+submit?)`, `viewer_scroll(direction | target)`, `viewer_back()`, and (v0.14)
+`viewer_mark(marks, replace?)` and `viewer_clear_marks()`. A
 `target` is a ref from the last look, or the visible text of a button or
 link. Each carries out its action in the app over the connection and
 returns what happened. The tool texts are the reference gateway's and the
@@ -1103,9 +1105,15 @@ it is the one `viewer.act` goes to. Until one does, the gateway uses
 `hello.viewer_defaults`.
 
 #### `viewer.act` — `ViewerAct` *(gateway → app)*
-`id`, `chat`, `action: look | click | type | scroll | back`, `args`
-(`{}` for `look` and `back`; `{target}` for `click`; `{target, text,
-submit}` for `type`; `{direction}` or `{target}` for `scroll`). Sent
+`id`, `chat`, `action: look | click | type | scroll | back | mark |
+clear_marks`, `args` (`{}` for `look`, `back` and `clear_marks`;
+`{target}` for `click`; `{target, text, submit}` for `type`;
+`{direction}` or `{target}` for `scroll`; v0.14: `{marks: [{target,
+note?}], replace: bool, tool_use_id?}` for `mark`, 1 to 9 marks, `note`
+at most 60 characters, `tool_use_id` the agent's tool call that made
+them). `mark` and `clear_marks` go only to an app that declared
+`viewer.marks.v1`; the app answers both with the ordinary
+`viewer.result`. Sent
 only to an app that declared `viewer.v1`, and only when the person has not
 turned the agent's view off. The app shows the viewer for `chat` if it is
 not open. In multiple presentation an act for a chat that is not on
@@ -1125,6 +1133,10 @@ sentence, never a hang, when:
   available right now (Portico isn't open).";
 - the person turned the view off: "The person has turned off the agent's
   view of the viewer in Settings.";
+- the app lacks `viewer.marks.v1` and the act is `mark` or
+  `clear_marks`: "This Portico can't show marks yet; it needs updating.";
+- `viewer_mark` is given no marks or more than nine: "Mark 1 to 9 things
+  at a time." (the gateway answers; nothing is sent);
 - the app does not answer in time: "The viewer didn't answer in 10 s.";
 - the app disconnects while an act is pending: the same sentence as no app.
 
