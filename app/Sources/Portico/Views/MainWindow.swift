@@ -16,6 +16,12 @@ struct MainWindow: View {
     /// side; the web view would take the half over it.
     static let viewerDividerGripSide: ColumnDivider.GripSide = .leading
 
+    /// How far the conversation's scrollers keep from its right edge: the
+    /// viewer grip's reach while the viewer is shown, else nothing (fix I-1).
+    static func scrollerClearance(viewerShown: Bool) -> CGFloat {
+        viewerShown ? ColumnDivider.overhang(viewerDividerGripSide) : 0
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let widths = columnWidths(window: geometry.size.width)
@@ -35,6 +41,7 @@ struct MainWindow: View {
                 }
                 MainColumn()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .environment(\.viewerGripClearance, Self.scrollerClearance(viewerShown: widths.viewer != nil))
                 // The shown chat's viewer: the conversation's, or (Y1) the
                 // live session's beside the welcome that continues it.
                 if let viewer = widths.viewer {

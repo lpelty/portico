@@ -31,6 +31,11 @@ struct ColumnDivider: View {
         return start...(start + grip)
     }
 
+    /// How far the grip reaches past the line's leading (left or top) edge.
+    static func overhang(_ side: GripSide) -> CGFloat {
+        -gripSpan(side).lowerBound
+    }
+
     /// How far the grip moves from centred on the line: negative is left (or up).
     static func offset(_ side: GripSide) -> CGFloat {
         switch side {
@@ -62,5 +67,28 @@ struct ColumnDivider: View {
             // it covers half the grip.
             .zIndex(1)
             .accessibilityHidden(true)
+    }
+}
+
+extension EnvironmentValues {
+    /// How far the viewer divider's grip reaches over the conversation
+    /// (fix I-1): its scrollers keep this far from the column's right edge.
+    @Entry var viewerGripClearance: CGFloat = 0
+}
+
+extension View {
+    /// Moves this scroll view's scrollers in by `viewerGripClearance`, so
+    /// the viewer divider's grip never sits over them (a drag on the
+    /// scroller scrolls, rather than resizing the viewer).
+    func clearOfViewerGrip() -> some View {
+        modifier(ClearOfViewerGrip())
+    }
+}
+
+private struct ClearOfViewerGrip: ViewModifier {
+    @Environment(\.viewerGripClearance) private var clearance
+
+    func body(content: Content) -> some View {
+        content.contentMargins(.trailing, clearance, for: .scrollIndicators)
     }
 }

@@ -127,6 +127,8 @@ struct ConversationView: View {
                 .padding(.bottom, 16)
                 .frame(maxWidth: .infinity)
             }
+            // Fix I-1: the scroller keeps clear of the viewer divider's grip.
+            .clearOfViewerGrip()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
             .environment(
                 \.conversationColumn,
@@ -184,6 +186,7 @@ struct ConversationView: View {
             .padding(.bottom, 12)
             .inConversationColumn()
         }
+        .clearOfViewerGrip()
         .frame(maxHeight: 320)
     }
 
