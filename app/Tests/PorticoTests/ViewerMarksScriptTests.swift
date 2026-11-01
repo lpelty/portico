@@ -250,8 +250,9 @@ final class ViewerMarksScriptTests: XCTestCase {
             </div>
             """, in: view)
         _ = try await show(list(try await locateTrail(in: view)), in: view)
-        _ = try await js("document.getElementById('scroller').scrollTop = 100; return 0;", in: view)
-        // The scroll event is dispatched on the next rendering update.
+        _ = try await js("document.getElementById('scroller').scrollTop = 150; return 0;", in: view)
+        // The scroll event is dispatched on the next rendering update. Until
+        // then the button is below the scroller's bottom and its box hidden.
         let deadline = ContinuousClock.now + .seconds(5)
         var tops: [Double] = []
         repeat {
@@ -259,7 +260,8 @@ final class ViewerMarksScriptTests: XCTestCase {
             tops = try await js("""
                 var box = document.querySelector('portico-marks').shadowRoot.querySelectorAll('.box')[1];
                 var el = document.querySelector('button');
-                return [parseFloat(box.style.top), el.getBoundingClientRect().top + scrollY];
+                var top = box.style.display === 'none' ? -1e6 : parseFloat(box.style.top);
+                return [top, el.getBoundingClientRect().top + scrollY];
                 """, in: view, as: [Double].self)
         } while abs(tops[0] - tops[1]) > 1 && ContinuousClock.now < deadline
         XCTAssertEqual(tops[0], tops[1], accuracy: 1)
@@ -318,5 +320,122 @@ final class ViewerMarksScriptTests: XCTestCase {
         XCTAssertEqual(answer["ok"] as? Bool, true)
         XCTAssertEqual(answer["inView"] as? Bool, true)
         XCTAssertEqual(answer["missing"] as? Bool, false)
+    }
+
+    // MARK: - final fix wave (v0.14)
+
+    /// Polls `body` (a JS function body answering a Bool) until true or `timeout`.
+    private func until(_ body: String, timeout: Duration = .seconds(4), in view: WKWebView) async throws -> Bool {
+        let due = ContinuousClock.now + timeout
+        while ContinuousClock.now < due {
+            if try await js(body, in: view) as? Bool == true { return true }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        return try await js(body, in: view) as? Bool == true
+    }
+
+    private static let secondBoxShown = """
+        var host = document.querySelector('portico-marks');
+        var box = host && host.shadowRoot.querySelectorAll('.box')[1];
+        return !!box && box.style.display !== 'none';
+        """
+
+    private static let secondBoxHidden = """
+        var host = document.querySelector('portico-marks');
+        var box = host && host.shadowRoot.querySelectorAll('.box')[1];
+        return !!box && box.style.display === 'none';
+        """
+
+    /// Fix 4: a phone-frame prototype: the button scrolls out of an inner
+    /// overflow:auto screen and its box (badge and note with it) is hidden;
+    /// scrolled back, it shows again.
+    func testBoxHiddenWhenScrolledOutOfInnerScroller() async throws {
+        let view = try webView()
+        try await load("""
+            <h2>Elevation</h2>
+            <div id="screen" style="width:300px;height:200px;overflow:auto;border:1px solid #ccc">
+              <div style="height:600px">Notes</div>
+              <button>Start trail</button>
+              <div style="height:400px"></div>
+            </div>
+            """, in: view)
+        _ = try await show(list(try await locateTrail(in: view)), in: view)
+        let hidden = try await until(Self.secondBoxHidden, in: view)
+        XCTAssertTrue(hidden, "the button is below the screen's bottom: no box floats outside it")
+        let first = try await js("""
+            return document.querySelector('portico-marks').shadowRoot.querySelectorAll('.box')[0].style.display !== 'none';
+            """, in: view, as: Bool.self)
+        XCTAssertTrue(first, "the heading, outside any scroller, keeps its box")
+        _ = try await js("document.getElementById('screen').scrollTop = 520; return 0;", in: view)
+        let shown = try await until(Self.secondBoxShown, in: view)
+        XCTAssertTrue(shown, "scrolled into the screen, the box shows")
+        _ = try await js("document.getElementById('screen').scrollTop = 0; return 0;", in: view)
+        let again = try await until(Self.secondBoxHidden, in: view)
+        XCTAssertTrue(again, "scrolled out again, hidden again")
+    }
+
+    /// Fix 3: a mark whose element the page builds later is drawn once it
+    /// appears, and `markStatus` reports it found.
+    func testLateElementIsDrawnWhenItAppears() async throws {
+        let view = try webView()
+        try await load(Self.trail, in: view)
+        let marks = list(try await locateTrail(in: view))
+        try await load("<h2>Elevation</h2>", in: view)
+        let shown = try await show(marks, in: view)
+        XCTAssertEqual(shown.map { $0["found"] as? Bool }, [true, false])
+        _ = try await js("""
+            setTimeout(function () {
+              var b = document.createElement('button'); b.textContent = 'Start trail'; document.body.appendChild(b);
+            }, 300);
+            return 0;
+            """, in: view)
+        let drawn = try await until("""
+            var host = document.querySelector('portico-marks');
+            return !!host && host.shadowRoot.querySelectorAll('.box').length === 2;
+            """, in: view)
+        XCTAssertTrue(drawn, "the late button gets its box")
+        let status = try await js("return window.__porticoAgent.markStatus();", in: view, as: [[String: Any]].self)
+        XCTAssertEqual(status.map { $0["n"] as? Int }, [1, 2])
+        XCTAssertEqual(status.map { $0["found"] as? Bool }, [true, true])
+    }
+
+    /// Fix 3, bounded: the watch ends about 2 s after the marks are shown;
+    /// an element that turns up later is not drawn (a redraw finds it).
+    func testLateWatchEnds() async throws {
+        let view = try webView()
+        try await load(Self.trail, in: view)
+        let marks = list(try await locateTrail(in: view))
+        try await load("<h2>Elevation</h2>", in: view)
+        _ = try await show(marks, in: view)
+        try await Task.sleep(for: .milliseconds(2600))
+        _ = try await js("""
+            var b = document.createElement('button'); b.textContent = 'Start trail'; document.body.appendChild(b); return 0;
+            """, in: view)
+        try await Task.sleep(for: .milliseconds(400))
+        let boxes = try await boxCount(in: view)
+        XCTAssertEqual(boxes, 1, "the watch has ended")
+        let status = try await js("return window.__porticoAgent.markStatus();", in: view, as: [[String: Any]].self)
+        XCTAssertEqual(status.map { $0["found"] as? Bool }, [true, false])
+    }
+
+    /// Fix 3: content inserted above a marked element moves it; its box
+    /// follows within the watch (the element's size did not change, so
+    /// the resize observer alone never fired).
+    func testBoxFollowsContentInsertedAbove() async throws {
+        let view = try webView()
+        try await load(Self.trail, in: view)
+        _ = try await show(list(try await locateTrail(in: view)), in: view)
+        // Past the resize observer's first callback, which would place it anyway.
+        try await Task.sleep(for: .milliseconds(300))
+        _ = try await js("""
+            var p = document.createElement('div'); p.style.height = '150px'; p.textContent = 'Banner';
+            document.body.insertBefore(p, document.body.firstChild); return 0;
+            """, in: view)
+        let follows = try await until("""
+            var box = document.querySelector('portico-marks').shadowRoot.querySelectorAll('.box')[1];
+            var el = document.querySelector('button');
+            return Math.abs(parseFloat(box.style.top) - (el.getBoundingClientRect().top + scrollY)) <= 1;
+            """, in: view)
+        XCTAssertTrue(follows, "the box moved with its button")
     }
 }

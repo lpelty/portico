@@ -409,7 +409,17 @@
     "background:var(--accent);color:#fff;font:12px/16px -apple-system,system-ui,sans-serif;" +
     "border-radius:5px;padding:2px 7px;letter-spacing:normal;text-transform:none}";
 
-  var marks = { host: null, items: [], observer: null };
+  // After the marks are drawn, the page is watched for a short while: a
+  // page that builds its content with script (a single-page app) adds a
+  // marked element after the load, and content added above a mark moves
+  // it. Changes are gathered and handled at most every WATCH_GAP ms, and
+  // the watch ends WATCH_MS after the marks were shown.
+  var WATCH_MS = 2000;
+  var WATCH_GAP = 60;
+  var CLIPS = /^(hidden|auto|scroll|clip|overlay)$/;
+
+  var marks = { host: null, root: null, items: [], observer: null, wanted: [],
+    watch: null, watchEnd: 0, watchTimer: null, pending: null };
 
   /// `body > tag:nth-of-type(n) > …`: where the element sits under `body`,
   /// or "" when it is not under `body`.
@@ -482,6 +492,31 @@
     note.style.left = (x - r.left - 2) + "px";
   }
 
+  /// Whether `r` (the element's rect) lies wholly outside an ancestor that
+  /// clips its overflow (a phone frame's scrolling screen): its mark would
+  /// float outside that frame. The document itself is not such an
+  /// ancestor, nor `body` when its overflow is the viewport's.
+  function clippedAway(el, r) {
+    var html = document.documentElement;
+    var hs = getComputedStyle(html);
+    var bodyIsViewport = hs.overflowX === "visible" && hs.overflowY === "visible";
+    for (var a = el.parentElement; a && a !== html; a = a.parentElement) {
+      if (a === document.body && bodyIsViewport) continue;
+      var s = getComputedStyle(a);
+      var clipX = CLIPS.test(s.overflowX);
+      var clipY = CLIPS.test(s.overflowY);
+      if (!clipX && !clipY) continue;
+      // The padding box: what the ancestor clips to, inside its border.
+      var b = a.getBoundingClientRect();
+      var top = b.top + a.clientTop;
+      var left = b.left + a.clientLeft;
+      var c = { top: top, left: left, bottom: top + a.clientHeight, right: left + a.clientWidth };
+      if (clipY && (r.bottom <= c.top || r.top >= c.bottom)) return true;
+      if (clipX && (r.right <= c.left || r.left >= c.right)) return true;
+    }
+    return false;
+  }
+
   function placeMarks() {
     if (!marks.host) return;
     var origin = marks.host.getBoundingClientRect();
@@ -489,7 +524,8 @@
     for (var i = 0; i < marks.items.length; i++) {
       var item = marks.items[i];
       var r = item.el.getBoundingClientRect();
-      if (!item.el.isConnected || (!r.width && !r.height)) {
+      // The badge and note are inside the box and go with it.
+      if (!item.el.isConnected || (!r.width && !r.height) || clippedAway(item.el, r)) {
         item.box.style.display = "none";
         continue;
       }
@@ -502,13 +538,25 @@
     }
   }
 
+  function endWatch() {
+    if (marks.watch) marks.watch.disconnect();
+    if (marks.watchTimer) clearTimeout(marks.watchTimer);
+    if (marks.pending) clearTimeout(marks.pending);
+    marks.watch = null;
+    marks.watchTimer = null;
+    marks.pending = null;
+  }
+
   function stopMarks() {
+    endWatch();
     if (marks.observer) marks.observer.disconnect();
     window.removeEventListener("scroll", placeMarks, true);
     window.removeEventListener("resize", placeMarks);
     marks.host = null;
+    marks.root = null;
     marks.items = [];
     marks.observer = null;
+    marks.wanted = [];
   }
 
   agent.markLocate = function (target, page) {
@@ -529,20 +577,9 @@
     });
   };
 
-  /// Draw `list` ([{n, note, locator}]) in `accent`, replacing any earlier
-  /// marks; an empty list only clears. Answers [{n, found}] in list order.
-  agent.showMarks = function (list, accent) {
-    agent.hideMarks();
-    list = list || [];
-    var results = [];
-    var found = [];
-    for (var i = 0; i < list.length; i++) {
-      var el = findAgain(list[i] && list[i].locator);
-      results.push({ n: list[i] ? list[i].n : null, found: !!el });
-      if (el) found.push({ n: list[i].n, text: list[i].note, el: el });
-    }
-    if (!found.length) return results;
-
+  /// The overlay's host, made on first need.
+  function ensureHost(accent) {
+    if (marks.host) return;
     var host = document.createElement(MARKS_HOST);
     host.setAttribute("aria-hidden", "true");
     host.style.cssText = "position:absolute!important;top:0!important;left:0!important;width:0!important;" +
@@ -554,37 +591,115 @@
     var style = document.createElement("style");
     style.textContent = MARKS_STYLE;
     root.appendChild(style);
-
-    var items = found.map(function (mark) {
-      var box = document.createElement("div");
-      box.className = "box";
-      var badge = document.createElement("div");
-      badge.className = "badge";
-      badge.textContent = String(mark.n);
-      box.appendChild(badge);
-      var note = null;
-      if (mark.text) {
-        note = document.createElement("div");
-        note.className = "note";
-        note.textContent = String(mark.text);
-        box.appendChild(note);
-      }
-      root.appendChild(box);
-      return { n: mark.n, el: mark.el, box: box, note: note };
-    });
     document.documentElement.appendChild(host);
     marks.host = host;
-    marks.items = items;
+    marks.root = root;
+    if (window.ResizeObserver) marks.observer = new ResizeObserver(placeMarks);
+  }
 
+  /// A box (badge, note) for `mark` ({n, note}) over `el`.
+  function addItem(mark, el, accent) {
+    ensureHost(accent);
+    var box = document.createElement("div");
+    box.className = "box";
+    var badge = document.createElement("div");
+    badge.className = "badge";
+    badge.textContent = String(mark.n);
+    box.appendChild(badge);
+    var note = null;
+    if (mark.note) {
+      note = document.createElement("div");
+      note.className = "note";
+      note.textContent = String(mark.note);
+      box.appendChild(note);
+    }
+    marks.root.appendChild(box);
+    var item = { n: mark.n, el: el, box: box, note: note };
+    marks.items.push(item);
+    if (marks.observer) marks.observer.observe(el);
+    return item;
+  }
+
+  function itemFor(n) {
+    for (var i = 0; i < marks.items.length; i++) if (String(marks.items[i].n) === String(n)) return marks.items[i];
+    return null;
+  }
+
+  /// Find again what is missing (never found, or taken out of the page
+  /// and built again), then place every box.
+  function refreshMarks() {
+    for (var i = 0; i < marks.wanted.length; i++) {
+      var want = marks.wanted[i];
+      var item = itemFor(want.n);
+      if (item && item.el.isConnected) continue;
+      var el = findAgain(want.locator);
+      if (!el) continue;
+      if (item) {
+        if (marks.observer) { marks.observer.unobserve(item.el); marks.observer.observe(el); }
+        item.el = el;
+      } else {
+        addItem(want, el, want.accent);
+      }
+    }
+    placeMarks();
+  }
+
+  /// A change the overlay made itself (its host going in or out).
+  function ours(record) {
+    if (marks.host && (record.target === marks.host || marks.host.contains(record.target))) return true;
+    if (record.type !== "childList") return false;
+    var nodes = Array.prototype.slice.call(record.addedNodes).concat(Array.prototype.slice.call(record.removedNodes));
+    return nodes.length > 0 && nodes.every(function (node) {
+      return node.nodeName && node.nodeName.toLowerCase() === MARKS_HOST;
+    });
+  }
+
+  function startWatch() {
+    endWatch();
+    if (!window.MutationObserver || !marks.wanted.length) return;
+    marks.watchEnd = Date.now() + WATCH_MS;
+    marks.watch = new MutationObserver(function (records) {
+      if (records.every(ours) || marks.pending) return;
+      marks.pending = setTimeout(function () {
+        marks.pending = null;
+        if (Date.now() <= marks.watchEnd) refreshMarks();
+      }, WATCH_GAP);
+    });
+    marks.watch.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+    marks.watchTimer = setTimeout(endWatch, WATCH_MS);
+  }
+
+  /// Draw `list` ([{n, note, locator}]) in `accent`, replacing any earlier
+  /// marks; an empty list only clears. Answers [{n, found}] in list order.
+  /// A mark not found now may still be drawn during the watch; `markStatus`
+  /// says which are on the page then.
+  agent.showMarks = function (list, accent) {
+    agent.hideMarks();
+    list = list || [];
+    var results = [];
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i]) continue;
+      var want = { n: list[i].n, note: list[i].note, locator: list[i].locator, accent: accent };
+      marks.wanted.push(want);
+      var el = findAgain(want.locator);
+      results.push({ n: want.n, found: !!el });
+      if (el) addItem(want, el, accent);
+    }
+    if (!marks.wanted.length) return results;
     // Capture phase, so an inner scroller's scroll (which does not bubble) counts.
     window.addEventListener("scroll", placeMarks, true);
     window.addEventListener("resize", placeMarks);
-    if (window.ResizeObserver) {
-      marks.observer = new ResizeObserver(placeMarks);
-      items.forEach(function (item) { marks.observer.observe(item.el); });
-    }
+    startWatch();
     placeMarks();
     return results;
+  };
+
+  /// [{n, found}] for the marks shown, as they stand on the page now.
+  agent.markStatus = function () {
+    return marks.wanted.map(function (want) {
+      var item = itemFor(want.n);
+      return { n: want.n, found: !!item && item.el.isConnected };
+    });
   };
 
   agent.scrollToMark = function (n) {
