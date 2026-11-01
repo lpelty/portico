@@ -13,12 +13,15 @@ usage() {
 }
 
 # Stops a gateway running on this machine's state directory, if one runs; says so only then.
-# `portico-gateway stop` exits 0 when it stopped one, 3 when none ran, anything else on trouble.
+# `portico-gateway stop` exits 0 when it stopped one, 3 when none ran, anything else on trouble
+# (its own reason, such as a timeout, goes to stderr). Sets `stopped` to 1 when it stopped one.
+stopped=0
 stop_running_gateway() {
   local here="$1" rc=0
-  "$here/portico-gateway" stop >/dev/null 2>&1 || rc=$?
+  "$here/portico-gateway" stop >/dev/null || rc=$?
   case "$rc" in
-    0) echo "Stopped the running gateway (it was the old version); Portico starts the new one." ;;
+    0) stopped=1
+       echo "Stopped the running gateway (it was the old version); Portico starts the new one." ;;
     3) ;;
     *) echo "update: could not stop the running gateway (portico-gateway stop exited $rc); quit Portico before using it" >&2 ;;
   esac
@@ -76,7 +79,13 @@ main() {
   fi
 
   stop_running_gateway "$here"
-  "$here/install"
+  if ! "$here/install"; then
+    if [ "$stopped" = 1 ]; then
+      # A second bin/update would say "already on <tag>" and not install: say what to run.
+      echo "update: install failed; the gateway was stopped. Fix the error above, then run bin/install." >&2
+    fi
+    exit 1
+  fi
   echo
   echo "== update: doctor"
   exec "$here/doctor"

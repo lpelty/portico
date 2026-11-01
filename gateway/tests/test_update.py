@@ -51,6 +51,10 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "portico-gateway $* at $(cat "$here/../RELEASE")" >> "$here/../../portico-gateway.log"
 if [ "${1:-}" = "stop" ]; then
+  if [ -e "$here/../../gateway.stuck" ]; then
+    echo "portico-gateway: the gateway (pid 4242) is still running after 150 seconds" >&2
+    exit 1
+  fi
   if [ -e "$here/../../gateway.running" ]; then
     rm "$here/../../gateway.running"
     echo "stopped the gateway (pid 4242)"
@@ -224,3 +228,44 @@ def test_already_on_the_newest_tag_leaves_the_gateway_running(clone: Path) -> No
     assert result.returncode == 0, result.stderr
     assert (clone.parent / "gateway.running").exists()
     assert STOPPED_LINE not in result.stdout
+
+
+INSTALL_FAILED = "update: install failed; the gateway was stopped. Fix the error above, then run bin/install."
+
+
+def failing_install(upstream: Path) -> None:
+    install = upstream / "bin" / "install"
+    install.write_text("#!/usr/bin/env bash\necho 'install: a prerequisite is missing' >&2\nexit 1\n")
+    install.chmod(0o755)
+
+
+def test_a_failed_install_after_a_stop_says_how_to_recover(upstream: Path, clone: Path) -> None:
+    failing_install(upstream)
+    commit_release(upstream, "v0.2.0")
+    (clone.parent / "gateway.running").touch()
+    result = update(clone)
+    assert result.returncode == 1
+    assert STOPPED_LINE in result.stdout.splitlines()
+    assert "install: a prerequisite is missing" in result.stderr
+    assert INSTALL_FAILED in result.stderr.splitlines()
+    assert ran(clone, "doctor") == []
+
+
+def test_a_failed_install_with_no_gateway_stopped_is_install_s_error_only(upstream: Path, clone: Path) -> None:
+    failing_install(upstream)
+    commit_release(upstream, "v0.2.0")
+    result = update(clone)
+    assert result.returncode == 1
+    assert "install: a prerequisite is missing" in result.stderr
+    assert INSTALL_FAILED not in result.stderr
+
+
+def test_a_stop_that_fails_warns_and_still_installs(upstream: Path, clone: Path) -> None:
+    commit_release(upstream, "v0.2.0")
+    (clone.parent / "gateway.stuck").touch()
+    result = update(clone)
+    assert result.returncode == 0, result.stderr
+    assert "still running after 150 seconds" in result.stderr, "stop's own reason shows"
+    assert "could not stop the running gateway" in result.stderr
+    assert STOPPED_LINE not in result.stdout
+    assert ran(clone, "install") == ["install ran at v0.2.0"]
