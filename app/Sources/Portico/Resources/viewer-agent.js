@@ -248,6 +248,46 @@
     return el.tagName === "DETAILS" ? el.querySelector("summary") || el : el;
   }
 
+  // MARK: a heading inside a clickable card (v0.14 §6b.5)
+
+  var CLICKABLE = "a[href],button,[role=button],[onclick]";
+
+  /// The heading whose text the target is (exactly, then partly), or null.
+  function headingNamed(target) {
+    var want = squash(target).toLowerCase();
+    if (!want || /^e\d+$/.test(want)) return null;
+    var headings = listed().map(function (item) { return item.el; }).filter(function (el) {
+      return /^H[1-6]$/.test(el.tagName);
+    }).map(function (el) { return { el: el, name: name(el).toLowerCase() }; });
+    for (var i = 0; i < headings.length; i++) if (headings[i].name === want) return headings[i].el;
+    for (var j = 0; j < headings.length; j++) if (headings[j].name && headings[j].name.indexOf(want) >= 0) return headings[j].el;
+    return null;
+  }
+
+  /// The nearest element around `el` (itself first) that takes a click: a
+  /// link, a button, `[role=button]`, an `onclick` attribute or property,
+  /// or (around it) `cursor: pointer`; null when there is none.
+  function clickableAround(el) {
+    for (var at = el; at && at !== document.body && at !== document.documentElement; at = at.parentElement) {
+      if (at.matches(CLICKABLE) || typeof at.onclick === "function") return at;
+      if (at !== el && getComputedStyle(at).cursor === "pointer") return at;
+    }
+    return null;
+  }
+
+  /// What a click target names: `{el}` to click (and `heading`, the heading
+  /// it was found by), `{heading: true}` for a heading with nothing
+  /// clickable around it, or null. Anything the outline can click by its
+  /// words is found first, as before; only then a heading.
+  function clickTarget(target, page) {
+    var el = resolve(target, page, false);
+    if (el) return { el: clickable(el), found: el };
+    var heading = headingNamed(target);
+    if (!heading) return null;
+    var around = clickableAround(heading);
+    return around ? { el: around, found: heading } : { heading: true };
+  }
+
   var NOT_FOUND = { ok: false, notFound: true };
 
   /// Where the page is: scheme and host (with port). The app checks a
@@ -292,9 +332,17 @@
   };
 
   agent.rect = function (target, page, wantField) {
-    var el = resolve(target, page, wantField);
-    if (!el) return null;
-    el = clickable(el);
+    var el;
+    if (wantField) {
+      el = resolve(target, page, true);
+      if (!el) return null;
+      el = clickable(el);
+    } else {
+      var picked = clickTarget(target, page);
+      if (!picked) return null;
+      if (picked.heading) return { heading: true };
+      el = picked.el;
+    }
     var box = el.getBoundingClientRect();
     if (box.bottom < 0 || box.top > innerHeight || box.right < 0 || box.left > innerWidth) {
       el.scrollIntoView({ block: "center", inline: "nearest" });
@@ -314,9 +362,11 @@
   agent.click = function (target, page, place) {
     var away = moved(place);
     if (away) return away;
-    var found = resolve(target, page, false);
-    if (!found) return NOT_FOUND;
-    var el = clickable(found);
+    var picked = clickTarget(target, page);
+    if (!picked) return NOT_FOUND;
+    if (picked.heading) return { ok: false, heading: true };
+    var found = picked.found;
+    var el = picked.el;
     var label = describeElement(found) || cut(name(el));
     mouse(el, "pointerdown");
     mouse(el, "mousedown");

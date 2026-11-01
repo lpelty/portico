@@ -67,6 +67,11 @@
   agent hears "The person used the page since your last look; look
   again." instead of "Not found — look again". The viewer is not locked;
   the person's input still wins.
+- **A heading inside a clickable card clicks the card.** Click by text
+  also matches headings, after buttons and links; a heading resolves to
+  its nearest clickable ancestor (a link, a button, `[role=button]`, an
+  element with a click handler or `cursor: pointer`). A heading with none
+  answers "That's a heading, not something to click; use its ref."
 
 ## v0.13.0 (2026-10-31)
 

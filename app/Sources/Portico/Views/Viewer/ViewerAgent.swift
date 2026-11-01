@@ -23,6 +23,8 @@ final class ViewerAgent: ObservableObject {
         static let notFound = "Not found — look again"
         /// A target not found after the person used the page (v0.14 §6b.4).
         static let personUsed = "The person used the page since your last look; look again."
+        /// A click by a heading's words with nothing clickable around it (v0.14 §6b.5).
+        static let heading = "That's a heading, not something to click; use its ref."
         static let timedOut = "The viewer didn't answer in 10 s."
 
         /// "This is a PDF; it can be looked at, not used."
@@ -341,12 +343,17 @@ final class ViewerAgent: ObservableObject {
     private func click(_ act: ViewerAct, target: String, place: String, in view: WKWebView) async -> ViewerResult {
         guard !target.isEmpty else { return fail(act, "Say what to click: a ref from the last look, or a button's or link's words.") }
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: false, in: view) else { return await notFound(act, in: view) }
+        switch await outline(target, page: page, field: false, in: view) {
+        case .shown: break
+        case .missing: return await notFound(act, in: view)
+        case .heading: return fail(act, Message.heading)
+        }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.click(target, page, place)", ["target": target, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
         if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
+        if answer?["heading"] as? Bool == true { return fail(act, Message.heading) }
         guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", in: view) }
         let label = (answer?["label"] as? String) ?? target
         return ViewerResult(id: act.id, ok: true, text: "Clicked \(label)." + (await navigated(view, from: before)))
@@ -357,7 +364,7 @@ final class ViewerAgent: ObservableObject {
         let text = act.args["text"]?.stringValue ?? ""
         let submit = act.args["submit"] == .bool(true)
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: true, in: view) else { return await notFound(act, in: view) }
+        guard await outline(target, page: page, field: true, in: view) == .shown else { return await notFound(act, in: view) }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.type(target, text, submit, page, place)",
@@ -387,14 +394,19 @@ final class ViewerAgent: ObservableObject {
         return ViewerResult(id: act.id, ok: ok, text: text)
     }
 
+    /// What `outline` did: drew the ring (or would have), found nothing,
+    /// or found a heading with nothing clickable around it.
+    private enum Outlined { case shown, missing, heading }
+
     /// Outline the target in the accent colour for `highlightDuration`
-    /// (scrolling it into view first). False when there is no such target.
-    private func outline(_ target: String, page: String, field: Bool, in view: WKWebView) async -> Bool {
+    /// (scrolling it into view first).
+    private func outline(_ target: String, page: String, field: Bool, in view: WKWebView) async -> Outlined {
         guard let box = await call(
             "return window.__porticoAgent.rect(target, page, field)",
             ["target": target, "page": page, "field": field], in: view) as? [String: Any]
-        else { return false }
-        guard highlightDuration > .zero else { return true }
+        else { return .missing }
+        if box["heading"] as? Bool == true { return .heading }
+        guard highlightDuration > .zero else { return .shown }
         let number = { (key: String) in CGFloat((box[key] as? NSNumber)?.doubleValue ?? 0) }
         let zoom = view.pageZoom * view.magnification
         let size = CGSize(width: number("w") * zoom, height: number("h") * zoom)
@@ -412,7 +424,7 @@ final class ViewerAgent: ObservableObject {
         view.addSubview(ring)
         try? await Task.sleep(until: min(ContinuousClock.now + highlightDuration, deadline))
         ring.removeFromSuperview()
-        return true
+        return .shown
     }
 
     /// " Now showing <title> — <location>." when the action navigated.

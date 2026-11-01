@@ -1578,6 +1578,57 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertNotEqual(ViewerAgentScript.marker, "viewer-agent-3", "v0.14 changed what the script records")
     }
 
+    // MARK: - a heading in a clickable card (v0.14 §6b.5)
+
+    private static let headingSentence = "That's a heading, not something to click; use its ref."
+
+    func test_clicking_a_cards_heading_clicks_the_card() async throws {
+        let rig = try rig("""
+            <script>window.clicks = []</script>
+            <div class="card" onclick="clicks.push('grocery')"><h3>Grocery run</h3><p>Tuesday, Sam</p></div>
+            <div class="card" id="laundry" style="cursor:pointer"><h3>Laundry</h3></div>
+            <script>document.getElementById('laundry').addEventListener('click', function () { clicks.push('laundry') })</script>
+            <div id="deep"><section><h4>Deep heading</h4></section></div>
+            <script>document.getElementById('deep').onclick = function () { clicks.push('deep') }</script>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let grocery = await rig.agent.perform(act(.click, ["target": .string("Grocery run")]))
+        XCTAssertTrue(grocery.ok, grocery.text)
+        XCTAssertTrue(grocery.text.contains("Grocery run"), grocery.text)
+        let laundry = await rig.agent.perform(act(.click, ["target": .string("laundry")]))
+        XCTAssertTrue(laundry.ok, "an addEventListener card found by cursor: pointer: \(laundry.text)")
+        let deep = await rig.agent.perform(act(.click, ["target": .string("Deep heading")]))
+        XCTAssertTrue(deep.ok, "an onclick property two levels up: \(deep.text)")
+        let clicks = try await evaluate("clicks.join(',')", in: rig.view)
+        XCTAssertEqual(clicks as? String, "grocery,laundry,deep", "each card's handler, once")
+    }
+
+    func test_a_bare_heading_is_not_something_to_click() async throws {
+        let rig = try rig("<h2>Trail notes</h2><p>Plain text.</p><button>Save trail</button>")
+        _ = await rig.agent.perform(act(.look))
+        let heading = await rig.agent.perform(act(.click, ["target": .string("Trail notes")]))
+        XCTAssertFalse(heading.ok)
+        XCTAssertEqual(heading.text, Self.headingSentence)
+        // Everything else as before: a button by its words, nothing found by other words.
+        let save = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(save.ok, save.text)
+        let none = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(none.text, "Not found — look again")
+    }
+
+    func test_a_button_with_the_same_words_beats_the_heading() async throws {
+        let rig = try rig("""
+            <script>window.clicks = []</script>
+            <div onclick="clicks.push('card')"><h3>Grocery run</h3></div>
+            <button onclick="clicks.push('button')">Grocery run</button>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Grocery run")]))
+        XCTAssertTrue(result.ok, result.text)
+        let clicks = try await evaluate("clicks.join(',')", in: rig.view)
+        XCTAssertEqual(clicks as? String, "button")
+    }
+
     // MARK: - wiring
 
     func test_viewer_act_from_the_gateway_is_answered_with_viewer_result() async throws {
