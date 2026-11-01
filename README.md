@@ -405,7 +405,9 @@ folder's agent instructions. A suggested instruction:
 
 **What the agent can do in the viewer (v0.12).** Beside `show_in_viewer`,
 the agent has `viewer_look`, `viewer_click`, `viewer_type`, `viewer_scroll`
-and `viewer_back`. A look returns a picture of what the viewer shows, an
+and `viewer_back`. Since v0.14 it also has `viewer_mark` (draw numbered,
+noted boxes around parts of a web page; needs `viewer.marks.v1`) and
+`viewer_clear_marks` (remove them all). A look returns a picture of what the viewer shows, an
 outline of the page (a ref such as `e12` on each heading, link, button and
 field) and any page errors since the last look; the other tools act on a
 ref or on a link's or button's visible text. The person sees every action

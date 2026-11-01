@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.14.0 (unreleased)
+
+### What a person gets (app)
+
+- **The agent can point at things on a page.** After a critique, "show me
+  all three" draws a numbered accent box with a short note on each part of
+  the page, and scrolls to the first. Marks work on HTML files, Markdown,
+  spaces and outside sites (including ones the agent may only look at). On
+  an image, PDF, text file or table the agent says marks are for web
+  pages. Marks sit on top of the page, change nothing in it and don't
+  block clicks or scrolling.
+- **Marks belong to their page.** Leaving a page hides its marks and
+  coming back shows them. A new page's marks carry on the numbering (1-3
+  here, then 4 on the next screen). A jump to a `#` heading hides nothing.
+- **Kept until cleared or the session ends.** A click or Esc doesn't clear
+  them. A new or resumed session starts with none.
+- **A marks chip in the viewer header** ("4 marks · 2 pages"). It shows
+  only while there are marks and opens a list grouped by page. Choose a
+  mark to scroll to it, going to its page first if needed. Clear all marks
+  is at the bottom; numbering then starts again at 1.
+- **When the agent changes a marked page,** each mark is found again. One
+  whose element is gone is listed dimmed as "not on the page now".
+- **Show again on the conversation's Mark row** brings that call's marks
+  back, going to their page first. Rows from a resumed session don't have
+  it.
+- **The viewer header gives way by measured fit,** not fixed widths. When
+  it runs short: the Open buttons lose their words, the outside-site note
+  shortens, the chip shortens ("4 marks", then "4"), then the title
+  shortens in the middle. Focus and Collapse always stay.
+
+### Protocol and gateway
+
+- Two agent tools, `viewer_mark` (1-9 targets with optional notes of up to
+  60 characters, `replace` to start over) and `viewer_clear_marks`, over
+  `viewer.act` with the actions `mark` and `clear_marks`. They follow the
+  other viewer tools: off with **Agent can see the viewer**, same timeout.
+- The app announces `viewer.marks.v1`. With an older app both tools answer
+  "This Portico can't show marks yet; it needs updating."
+- `viewer_look` lists the marks in use, so the agent knows the numbers.
+- Marks live in the app, per chat; the gateway keeps nothing. Gateway
+  version 0.14.0 to match the app.
+
 ## v0.13.0 (2026-10-31)
 
 ### What a person gets (app)
