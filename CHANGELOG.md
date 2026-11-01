@@ -58,6 +58,9 @@
 - **The viewer divider is as easy to grab as the sidebar's.** Its 14 pt
   grip now sits wholly on the conversation side; the web page beside it
   had taken the half over it.
+- **A brighter acting glow.** The line stays 3 pt at full accent; the glow
+  is wider, stronger and more blurred, and its pulse runs 75-100% (was
+  55-100%). Still steady with Reduce Motion.
 
 ## v0.13.0 (2026-10-31)
 

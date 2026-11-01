@@ -1116,7 +1116,8 @@ struct ViewerPaneAnchor: NSViewRepresentable {
 
 /// While the agent acts, a 3 pt accent line and a soft inner glow around
 /// the page (v0.13 decision 2, Pen AL1), in place of v0.12's header label.
-/// It pulses gently, holds steady under Reduce Motion, and goes with the
+/// It pulses gently (75-100% since v0.14, §6b.3; the glow stronger too),
+/// holds steady under Reduce Motion, and goes with the
 /// label's timing: `labelLinger` after the last action, at once on Stop.
 struct ViewerActingGlow: View {
     @ObservedObject var agent: ViewerAgent
@@ -1128,17 +1129,23 @@ struct ViewerActingGlow: View {
     static let label = "Agent is using the viewer"
     /// One breath, in and out.
     static let period: Double = 1.6
-    static let dimOpacity: Double = 0.55
+    /// The pulse's floor: 75-100% (v0.13 was 55-100%).
+    static let dimOpacity: Double = 0.75
     static let lineWidth: CGFloat = 3
+    /// The glow: a band of accent inside the edge, blurred (v0.13: 10 pt at 45%, blur 8).
+    static let glowWidth: CGFloat = 14
+    static let glowOpacity: Double = 0.7
+    static let glowBlur: CGFloat = 10
 
     var body: some View {
         if agent.actingChat == chat {
             ZStack {
                 // The glow breathes; the line stays at full strength so it
-                // reads on any page (Larry 10-31: "a little brighter").
+                // reads on any page (Larry 10-31: "a little brighter";
+                // 11-01: still hard to see, so v0.14 strengthens the glow).
                 Rectangle()
-                    .strokeBorder(accent.opacity(0.45), lineWidth: 10)
-                    .blur(radius: 8)
+                    .strokeBorder(accent.opacity(Self.glowOpacity), lineWidth: Self.glowWidth)
+                    .blur(radius: Self.glowBlur)
                     .opacity(reduceMotion ? 1 : (dim ? Self.dimOpacity : 1))
                 Rectangle()
                     .strokeBorder(accent, lineWidth: Self.lineWidth)
