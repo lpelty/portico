@@ -3,11 +3,25 @@
 # rebuilt with a working macOS SDK and reinstalled as <brand.name>.app), then the doctor.
 #   bin/update                  newest release tag (the default)
 #   bin/update --channel main   follow main instead: fast-forward pull
+# A gateway still running the old version is stopped once the checkout has moved (before the install);
+# the app starts the new one.
 # Refuses to update over local changes: deployment code belongs in a plug-in, outside the checkout.
 set -euo pipefail
 
 usage() {
   echo "usage: bin/update [--channel tags|main]" >&2
+}
+
+# Stops a gateway running on this machine's state directory, if one runs; says so only then.
+# `portico-gateway stop` exits 0 when it stopped one, 3 when none ran, anything else on trouble.
+stop_running_gateway() {
+  local here="$1" rc=0
+  "$here/portico-gateway" stop >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) echo "Stopped the running gateway (it was the old version); Portico starts the new one." ;;
+    3) ;;
+    *) echo "update: could not stop the running gateway (portico-gateway stop exited $rc); quit Portico before using it" >&2 ;;
+  esac
 }
 
 main() {
@@ -61,6 +75,7 @@ main() {
     git -c advice.detachedHead=false checkout --quiet "$newest"
   fi
 
+  stop_running_gateway "$here"
   "$here/install"
   echo
   echo "== update: doctor"

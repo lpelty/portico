@@ -479,7 +479,9 @@ bin/update --channel main   # follow main instead (fast-forward pull), then the 
 ```
 
 `bin/update` refuses to run over local changes in the checkout and says
-so; move the change into a plug-in, or ask upstream for it. `bin/doctor`
+so; move the change into a plug-in, or ask upstream for it. Once the
+checkout has moved it stops a gateway still running the old version
+(`portico-gateway stop`) and says so; Portico starts the new one. `bin/doctor`
 prints the tag or commit the checkout is on.
 
 ## The agent's system prompt

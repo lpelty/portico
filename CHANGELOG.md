@@ -49,6 +49,13 @@
 - Marks live in the app, per chat; the gateway keeps nothing. Gateway
   version 0.14.0 to match the app.
 
+### From the v0.13 field report
+
+- **`bin/update` stops the running gateway.** After moving to the new tag
+  (or pulling main) it stops a gateway still running the old version and
+  says "Stopped the running gateway (it was the old version); Portico
+  starts the new one." With no gateway running it says nothing.
+
 ## v0.13.0 (2026-10-31)
 
 ### What a person gets (app)

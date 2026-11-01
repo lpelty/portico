@@ -44,6 +44,26 @@ echo "{name} ran at $(cat "$here/../RELEASE")" >> "$here/../../{name}.log"
 """
 
 
+# The CLI stub: ``stop`` exits 0 ("stopped") when ../../gateway.running exists next to the clone,
+# 3 ("none running") otherwise, the way ``portico-gateway stop`` does; every call is logged.
+GATEWAY_STUB = """#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "portico-gateway $* at $(cat "$here/../RELEASE")" >> "$here/../../portico-gateway.log"
+if [ "${1:-}" = "stop" ]; then
+  if [ -e "$here/../../gateway.running" ]; then
+    rm "$here/../../gateway.running"
+    echo "stopped the gateway (pid 4242)"
+    exit 0
+  fi
+  echo "no gateway running on /somewhere"
+  exit 3
+fi
+"""
+
+STOPPED_LINE = "Stopped the running gateway (it was the old version); Portico starts the new one."
+
+
 def commit_release(repo: Path, version: str) -> None:
     (repo / "RELEASE").write_text(version + "\n")
     git(repo, "add", "-A")
@@ -60,6 +80,9 @@ def upstream(tmp_path: Path) -> Path:
         stub = repo / "bin" / name
         stub.write_text(STUB.replace("{name}", name))
         stub.chmod(0o755)
+    gateway = repo / "bin" / "portico-gateway"
+    gateway.write_text(GATEWAY_STUB)
+    gateway.chmod(0o755)
     git(repo, "init", "-q", "-b", "main")
     commit_release(repo, "v0.1.0")
     return repo
@@ -163,3 +186,41 @@ def test_an_unknown_channel_is_refused(clone: Path) -> None:
     result = update(clone, "--channel", "nightly")
     assert result.returncode == 2
     assert "nightly" in result.stderr
+
+
+def test_stops_a_running_gateway_after_moving_and_says_so(upstream: Path, clone: Path) -> None:
+    commit_release(upstream, "v0.2.0")
+    (clone.parent / "gateway.running").touch()
+    result = update(clone)
+    assert result.returncode == 0, result.stderr
+    assert STOPPED_LINE in result.stdout.splitlines()
+    assert "stop" in " ".join(ran(clone, "portico-gateway"))
+    assert not (clone.parent / "gateway.running").exists(), "the gateway was stopped"
+    assert ran(clone, "install") == ["install ran at v0.2.0"]
+
+
+def test_no_gateway_running_says_nothing_about_one(upstream: Path, clone: Path) -> None:
+    commit_release(upstream, "v0.2.0")
+    result = update(clone)
+    assert result.returncode == 0, result.stderr
+    assert "Stopped" not in result.stdout and "gateway" not in result.stdout
+    assert "gateway" not in result.stderr
+    assert ran(clone, "install") == ["install ran at v0.2.0"]
+
+
+def test_channel_main_also_stops_a_running_gateway(upstream: Path, clone: Path) -> None:
+    (upstream / "NEWS").write_text("unreleased\n")
+    git(upstream, "add", "NEWS")
+    git(upstream, "commit", "-q", "-m", "work on main")
+    (clone.parent / "gateway.running").touch()
+    result = update(clone, "--channel", "main")
+    assert result.returncode == 0, result.stderr
+    assert STOPPED_LINE in result.stdout.splitlines()
+
+
+def test_already_on_the_newest_tag_leaves_the_gateway_running(clone: Path) -> None:
+    (clone.parent / "gateway.running").touch()
+    result = update(clone)
+    assert result.returncode == 0, result.stderr
+    assert (clone.parent / "gateway.running").exists()
+    assert STOPPED_LINE not in result.stdout
