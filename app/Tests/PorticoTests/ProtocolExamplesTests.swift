@@ -66,7 +66,8 @@ final class ProtocolExamplesTests: XCTestCase {
                 XCTAssertEqual(message.envelope.chat, raw["chat"] as? Int, file.lastPathComponent)
                 XCTAssertEqual(message.envelope.id, raw["id"] as? String, file.lastPathComponent)
                 XCTAssertEqual(message.envelope.seq, raw["seq"] as? Int, file.lastPathComponent)
-                seen.append(message.type)
+                // `server.<type>.<variant>.json` files show another shape of one type.
+                if file.lastPathComponent == "server.\(message.type).json" { seen.append(message.type) }
             } catch {
                 XCTFail("\(file.lastPathComponent) failed to decode: \(error)")
             }

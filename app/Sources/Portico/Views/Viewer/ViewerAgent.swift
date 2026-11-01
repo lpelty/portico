@@ -245,6 +245,8 @@ final class ViewerAgent: ObservableObject {
                 "return window.__porticoAgent.scroll(target, page)",
                 ["target": direction, "page": lookedPage ?? ""], in: view) as? [String: Any]
             return answered(act, answer, otherwise: "Scrolled.")
+        case .mark, .clearMarks:
+            return fail(act, "Marks aren't ready yet.")
         case .back:
             guard view.canGoBack else { return fail(act, "There's nothing to go back to in the viewer.") }
             view.goBack()
@@ -537,6 +539,8 @@ final class ViewerAgent: ObservableObject {
             return fail(act, Message.notUsed(kind: kind))
         case .back:
             return fail(act, "There's nothing to go back to in the viewer.")
+        case .mark, .clearMarks:
+            return fail(act, "Marks aren't ready yet.")
         }
     }
 

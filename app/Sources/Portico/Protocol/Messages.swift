@@ -311,7 +311,7 @@ struct HelloClient: Codable, Equatable, Sendable {
 
     /// Everything this app names in `capabilities` (v0.11: `queue.v1`,
     /// messages typed while the agent works).
-    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability]
+    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability, MarkStore.capability]
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
@@ -649,7 +649,8 @@ struct ViewerAct: Codable, Equatable, Sendable {
     static let messageType = "viewer.act"
 
     enum Action: String, Codable, Sendable {
-        case look, click, type, scroll, back
+        case look, click, type, scroll, back, mark
+        case clearMarks = "clear_marks"
     }
 
     var id: String

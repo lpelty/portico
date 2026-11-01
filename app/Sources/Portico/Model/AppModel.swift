@@ -403,6 +403,9 @@ final class AppModel: ObservableObject {
     /// gateway address override a stop without a socket looks at.
     let settings: Settings
 
+    /// The marks the agent has drawn in the viewer, per chat.
+    let markStore = MarkStore()
+
     /// What the app says it is in `hello`; the app sets it at launch, and
     /// `run` again, so a stop without the loop's socket can attach too.
     var appVersion: String = "0.0.0-dev"
