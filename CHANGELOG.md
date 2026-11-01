@@ -55,6 +55,9 @@
   (or pulling main) it stops a gateway still running the old version and
   says "Stopped the running gateway (it was the old version); Portico
   starts the new one." With no gateway running it says nothing.
+- **The viewer divider is as easy to grab as the sidebar's.** Its 14 pt
+  grip now sits wholly on the conversation side; the web page beside it
+  had taken the half over it.
 
 ## v0.13.0 (2026-10-31)
 

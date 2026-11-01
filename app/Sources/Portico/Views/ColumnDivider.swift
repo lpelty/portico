@@ -6,24 +6,50 @@ import SwiftUI
 /// back to its default size. The pointer shows the resize cursor over the
 /// grip. `.vertical` is a line between columns (dragged sideways),
 /// `.horizontal` one between stacked panes (dragged up and down).
+///
+/// `gripSide` (v0.14, §6b.2) moves the grip off-centre: `.leading` puts
+/// all of it on the line's left (or upper) side. The viewer divider uses
+/// it, because the web view beside it is an AppKit view that takes the
+/// mouse over whatever part of the grip overlaps it.
 struct ColumnDivider: View {
+    enum GripSide { case centred, leading, trailing }
+
     var axis: Axis = .vertical
+    var gripSide: GripSide = .centred
     /// The drag so far, in points: positive to the right, or down.
     let onDrag: (CGFloat) -> Void
     let onEnd: () -> Void
     let onReset: () -> Void
 
-    private static let grip: CGFloat = 14
+    static let grip: CGFloat = 14
+    private static let line: CGFloat = 1
+
+    /// Where the grip runs across the line, in the line's coordinates (the
+    /// line itself is `0...1`).
+    static func gripSpan(_ side: GripSide) -> ClosedRange<CGFloat> {
+        let start = (line - grip) / 2 + offset(side)
+        return start...(start + grip)
+    }
+
+    /// How far the grip moves from centred on the line: negative is left (or up).
+    static func offset(_ side: GripSide) -> CGFloat {
+        switch side {
+        case .centred: 0
+        case .leading: -(grip - line) / 2
+        case .trailing: (grip + line) / 2 - line
+        }
+    }
 
     var body: some View {
         let sideways = axis == .vertical
         Rectangle()
             .fill(Theme.border)
-            .frame(width: sideways ? 1 : nil, height: sideways ? nil : 1)
+            .frame(width: sideways ? Self.line : nil, height: sideways ? nil : Self.line)
             .overlay {
                 Color.clear
                     .frame(width: sideways ? Self.grip : nil, height: sideways ? nil : Self.grip)
                     .contentShape(Rectangle())
+                    .offset(x: sideways ? Self.offset(gripSide) : 0, y: sideways ? 0 : Self.offset(gripSide))
                     .pointerStyle(sideways ? .columnResize : .rowResize)
                     .onTapGesture(count: 2, perform: onReset)
                     .gesture(
