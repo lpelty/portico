@@ -71,6 +71,14 @@ struct MarksList: View {
     let accent: Color
     let onDone: () -> Void
 
+    /// A row for VoiceOver (spec §6): "Mark 2, Start here, trail.html",
+    /// the label when there is no note, and "not on the page now" when lost.
+    static func spokenLabel(for mark: Mark) -> String {
+        var parts = ["Mark \(mark.number)", mark.note.isEmpty ? mark.label : mark.note, mark.page.name]
+        if !mark.found { parts.append("not on the page now") }
+        return parts.joined(separator: ", ")
+    }
+
     var body: some View {
         let current = agent.currentPage
         VStack(alignment: .leading, spacing: 2) {
@@ -169,5 +177,6 @@ struct MarksList: View {
         }
         .buttonStyle(.hover)
         .help(mark.label)
+        .accessibilityLabel(Self.spokenLabel(for: mark))
     }
 }

@@ -101,4 +101,53 @@ final class ViewerStepsTests: XCTestCase {
         XCTAssertFalse(resumed.showsShowAgain)
         XCTAssertEqual(MarkRowPresentation(row: markRow(count: nil), call: nil).text, "Mark")
     }
+
+    /// Fix 2: the Mark row says it is running, and a failed mark says why
+    /// (in the failure colour) instead of reading as if it worked.
+    func test_mark_row_running_and_failed() {
+        var running = markRow(count: 3)
+        let busy = MarkRowPresentation(row: running, call: nil)
+        XCTAssertTrue(busy.isRunning)
+        XCTAssertEqual(busy.stateText, "running")
+        XCTAssertNil(busy.failureDetail)
+
+        running.finished = true
+        running.ok = false
+        running.result = "Marks work on web pages; this is an image."
+        let failed = MarkRowPresentation(row: running, call: nil)
+        XCTAssertFalse(failed.isRunning)
+        XCTAssertTrue(failed.isFailed)
+        XCTAssertEqual(failed.failureDetail, "Marks work on web pages; this is an image.")
+        XCTAssertEqual(failed.stateText, "failed: Marks work on web pages; this is an image.")
+        XCTAssertEqual(failed.text, "Mark", "no area count for marks that were not drawn")
+        XCTAssertFalse(failed.showsShowAgain)
+
+        var bare = markRow(count: 1)
+        bare.finished = true
+        bare.ok = false
+        XCTAssertEqual(MarkRowPresentation(row: bare, call: nil).stateText, "failed")
+        XCTAssertNil(MarkRowPresentation(row: bare, call: nil).failureDetail)
+
+        var done = markRow(count: 3)
+        done.finished = true
+        done.ok = true
+        done.result = "Marked 1 · a, 2 · b, 3 · c."
+        let worked = MarkRowPresentation(row: done, call: call(3))
+        XCTAssertFalse(worked.isRunning)
+        XCTAssertFalse(worked.isFailed)
+        XCTAssertNil(worked.failureDetail)
+        XCTAssertEqual(worked.text, "Mark \u{B7} trail-detail.html \u{B7} 3 areas")
+    }
+
+    /// Fix 6: each list row reads its number, note (or label) and page,
+    /// and says when the mark is not on the page now.
+    func test_marks_list_row_spoken_label() {
+        let page = MarkPage(key: "/tmp/trail-detail.html", name: "trail-detail.html")
+        var mark = Mark(number: 2, page: page, note: "Start here", label: "button: Start trail",
+                        locator: MarkLocator(path: "", tag: "button", text: "Start trail"), found: true, call: "c1")
+        XCTAssertEqual(MarksList.spokenLabel(for: mark), "Mark 2, Start here, trail-detail.html")
+        mark.note = ""
+        mark.found = false
+        XCTAssertEqual(MarksList.spokenLabel(for: mark), "Mark 2, button: Start trail, trail-detail.html, not on the page now")
+    }
 }
