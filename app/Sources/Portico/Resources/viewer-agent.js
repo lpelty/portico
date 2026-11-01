@@ -9,7 +9,7 @@
   "use strict";
   // `MARKER` tells this script's object from a page's own under the name;
   // keep it equal to `ViewerAgentScript.marker` (ViewerAgent.swift).
-  var MARKER = "viewer-agent-3";
+  var MARKER = "viewer-agent-4";
   var existing = window.__porticoAgent;
   if (existing && existing.__portico === MARKER) return;
 
@@ -199,6 +199,22 @@
     return out;
   }
 
+  // MARK: the person's input (v0.14 §6b.4)
+
+  // Whether the person clicked, pressed a key or scrolled with the wheel
+  // (`isTrusted`: the browser's own events, never a script's) since the
+  // agent's last look. Kept with the errors, so a reinstalled script keeps
+  // it and listens once; `outline()` (a look) clears it. Scroll events are
+  // not used: the browser marks those trusted even when a script scrolled.
+  if (!store.person) {
+    store.person = { used: false };
+    ["click", "keydown", "wheel"].forEach(function (type) {
+      window.addEventListener(type, function (event) {
+        if (event.isTrusted) store.person.used = true;
+      }, true);
+    });
+  }
+
   // MARK: refs
 
   var agent = { __portico: MARKER, page: Math.random().toString(36).slice(2), next: 0 };
@@ -248,6 +264,7 @@
   }
 
   agent.outline = function () {
+    store.person.used = false;
     var items = listed();
     var lines = [];
     for (var i = 0; i < items.length && i < MAX_LINES; i++) {
@@ -262,6 +279,10 @@
     }
     if (items.length > MAX_LINES) lines.push("… " + (items.length - MAX_LINES) + " more");
     return lines.join("\n");
+  };
+
+  agent.personUsed = function () {
+    return store.person.used;
   };
 
   agent.errors = function () {

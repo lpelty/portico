@@ -21,6 +21,8 @@ final class ViewerAgent: ObservableObject {
         static let anotherChat = "The person is looking at another chat."
         static let nothingOpen = "Nothing is open in the viewer."
         static let notFound = "Not found — look again"
+        /// A target not found after the person used the page (v0.14 §6b.4).
+        static let personUsed = "The person used the page since your last look; look again."
         static let timedOut = "The viewer didn't answer in 10 s."
 
         /// "This is a PDF; it can be looked at, not used."
@@ -298,7 +300,7 @@ final class ViewerAgent: ObservableObject {
             let answer = await call(
                 "return window.__porticoAgent.scroll(target, page)",
                 ["target": direction, "page": lookedPage ?? ""], in: view) as? [String: Any]
-            return answered(act, answer, otherwise: "Scrolled.")
+            return await answered(act, answer, otherwise: "Scrolled.", in: view)
         case .mark:
             return await mark(act, in: view)
         case .clearMarks:
@@ -339,13 +341,13 @@ final class ViewerAgent: ObservableObject {
     private func click(_ act: ViewerAct, target: String, place: String, in view: WKWebView) async -> ViewerResult {
         guard !target.isEmpty else { return fail(act, "Say what to click: a ref from the last look, or a button's or link's words.") }
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: false, in: view) else { return fail(act, Message.notFound) }
+        guard await outline(target, page: page, field: false, in: view) else { return await notFound(act, in: view) }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.click(target, page, place)", ["target": target, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
-        if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
-        guard answer?["ok"] as? Bool == true else { return answered(act, answer, otherwise: "") }
+        if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
+        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", in: view) }
         let label = (answer?["label"] as? String) ?? target
         return ViewerResult(id: act.id, ok: true, text: "Clicked \(label)." + (await navigated(view, from: before)))
     }
@@ -355,23 +357,31 @@ final class ViewerAgent: ObservableObject {
         let text = act.args["text"]?.stringValue ?? ""
         let submit = act.args["submit"] == .bool(true)
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: true, in: view) else { return fail(act, Message.notFound) }
+        guard await outline(target, page: page, field: true, in: view) else { return await notFound(act, in: view) }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.type(target, text, submit, page, place)",
             ["target": target, "text": text, "submit": submit, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
-        if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
-        guard answer?["ok"] as? Bool == true else { return answered(act, answer, otherwise: "") }
+        if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
+        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", in: view) }
         let label = (answer?["label"] as? String) ?? target
         var said = "Typed into \(label)."
         if submit { said += " Pressed Return." }
         return ViewerResult(id: act.id, ok: true, text: said + (await navigated(view, from: before)))
     }
 
+    /// "Not found — look again", or, when the person clicked, typed or
+    /// scrolled on the page since the agent's last look, that they did
+    /// (v0.14 §6b.4): the page may have changed under the agent.
+    private func notFound(_ act: ViewerAct, in view: WKWebView) async -> ViewerResult {
+        let used = await call("var a = window.__porticoAgent; return !!(a && a.personUsed && a.personUsed())", in: view) as? Bool
+        return fail(act, used == true ? Message.personUsed : Message.notFound)
+    }
+
     /// The script's own answer `{ok, text}`, or a not-found.
-    private func answered(_ act: ViewerAct, _ answer: [String: Any]?, otherwise: String) -> ViewerResult {
-        if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
+    private func answered(_ act: ViewerAct, _ answer: [String: Any]?, otherwise: String, in view: WKWebView) async -> ViewerResult {
+        if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
         let ok = answer?["ok"] as? Bool ?? false
         let text = (answer?["text"] as? String) ?? (ok ? otherwise : "The page didn't answer.")
         return ViewerResult(id: act.id, ok: ok, text: text)
@@ -591,7 +601,7 @@ final class ViewerAgent: ObservableObject {
                 missing.append(item.target)
             }
         }
-        guard !located.isEmpty else { return fail(act, Message.notFound) }
+        guard !located.isEmpty else { return await notFound(act, in: view) }
         let store = model.markStore
         let added = store.add(
             chat: runChat, page: page, items: located, call: act.id,
@@ -1027,7 +1037,7 @@ private final class JavaScriptRace {
 enum ViewerAgentScript {
     /// `window.__porticoAgent.__portico`: what tells the app's script from
     /// a page's own object under that name.
-    static let marker = "viewer-agent-3"
+    static let marker = "viewer-agent-4"
 
     /// `Resources/viewer-agent.js`, read once.
     static let source: String? = AppResources.url(forResource: "viewer-agent", withExtension: "js")

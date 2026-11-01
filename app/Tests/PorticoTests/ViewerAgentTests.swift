@@ -1453,6 +1453,131 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(off.text, "The person has turned off the agent's view of the viewer in Settings.")
     }
 
+    // MARK: - the person used the page (v0.14 §6b.4)
+
+    private static let personUsed = "The person used the page since your last look; look again."
+
+    /// A page that records what reached it and whether the browser called it trusted.
+    private static let inputPage = """
+        <script>
+        window.seen = [];
+        ['click', 'keydown', 'wheel'].forEach(function (t) {
+          window.addEventListener(t, function (e) { seen.push(t + ':' + e.isTrusted) }, true);
+        });
+        </script>
+        <style>body{margin:0} .tall{height:3000px}</style>
+        <h1>Trail detail</h1>
+        <button>Save trail</button>
+        <div class="tall"></div>
+        """
+
+    /// Real AppKit events through the window, as the person's mouse,
+    /// keyboard and trackpad send them: WebKit marks these `isTrusted`,
+    /// which `dispatchEvent` from a script never is. The window is shown
+    /// for the test (borderless, briefly) so it can be key.
+    private enum PersonInput { case click, key, wheel }
+
+    private func person(_ input: PersonInput, on rig: Rig) async throws {
+        let window = try XCTUnwrap(rig.view.window)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(rig.view)
+        // A point on the empty part of the page, in window coordinates.
+        let point = rig.view.convert(NSPoint(x: 400, y: rig.view.bounds.height - 300), to: nil)
+        let now = ProcessInfo.processInfo.systemUptime
+        switch input {
+        case .click:
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: now, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                window.sendEvent(event)
+            }
+        case .key:
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                let event = try XCTUnwrap(NSEvent.keyEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: now, windowNumber: window.windowNumber,
+                    context: nil, characters: "j", charactersIgnoringModifiers: "j", isARepeat: false, keyCode: 38))
+                window.sendEvent(event)
+            }
+        case .wheel:
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -40, wheel2: 0, wheel3: 0))
+            let screen = window.convertPoint(toScreen: point)
+            let height = NSScreen.screens.first?.frame.height ?? 0
+            cg.location = CGPoint(x: screen.x, y: height - screen.y)
+            let event = try XCTUnwrap(NSEvent(cgEvent: cg))
+            rig.view.scrollWheel(with: event)
+        }
+        let name = switch input { case .click: "click"; case .key: "keydown"; case .wheel: "wheel" }
+        let arrived = try await waitFor {
+            ((try await self.evaluate("seen.join(',')", in: rig.view) as? String) ?? "").contains("\(name):true")
+        }
+        XCTAssertTrue(arrived, "the page saw a trusted \(name)")
+    }
+
+    func test_a_person_click_since_the_look_is_named_on_not_found() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.click, on: rig)
+
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, Self.personUsed)
+        let type = await rig.agent.perform(act(.type, ["target": .string("Nowhere"), "text": .string("Sam")]))
+        XCTAssertEqual(type.text, Self.personUsed)
+        let scroll = await rig.agent.perform(act(.scroll, ["target": .string("Nowhere")]))
+        XCTAssertEqual(scroll.text, Self.personUsed)
+        let mark = await rig.agent.perform(act(.mark, markArgs([("Nowhere", nil)])))
+        XCTAssertEqual(mark.text, Self.personUsed)
+        let stale = await rig.agent.perform(act(.click, ["target": .string("e999")]))
+        XCTAssertEqual(stale.text, Self.personUsed, "a ref that isn't there either")
+
+        // A look clears it.
+        _ = await rig.agent.perform(act(.look))
+        let after = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(after.text, "Not found — look again")
+    }
+
+    func test_a_person_key_since_the_look_is_named_on_not_found() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.key, on: rig)
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(click.text, Self.personUsed)
+    }
+
+    func test_a_person_scroll_since_the_look_is_named_on_not_found() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.wheel, on: rig)
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(click.text, Self.personUsed)
+    }
+
+    func test_input_before_the_look_and_script_events_dont_count() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.click, on: rig)
+        _ = await rig.agent.perform(act(.look))
+        // The page's own (or the agent's) synthetic events are untrusted.
+        _ = try await evaluate("""
+            document.body.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+            document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'j', bubbles: true}));
+            document.body.dispatchEvent(new WheelEvent('wheel', {deltaY: 40, bubbles: true}));
+            window.scrollTo(0, 500); true
+            """, in: rig.view)
+        let clicked = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(clicked.ok, "the agent's own click is not the person's")
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(click.text, "Not found — look again")
+    }
+
+    func test_the_script_marker_matches_the_app() throws {
+        let source = try XCTUnwrap(ViewerAgentScript.source)
+        let match = try XCTUnwrap(source.firstMatch(of: /var MARKER = "([^"]+)";/))
+        XCTAssertEqual(String(match.1), ViewerAgentScript.marker)
+        XCTAssertNotEqual(ViewerAgentScript.marker, "viewer-agent-3", "v0.14 changed what the script records")
+    }
+
     // MARK: - wiring
 
     func test_viewer_act_from_the_gateway_is_answered_with_viewer_result() async throws {

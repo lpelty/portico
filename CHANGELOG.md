@@ -61,6 +61,12 @@
 - **A brighter acting glow.** The line stays 3 pt at full accent; the glow
   is wider, stronger and more blurred, and its pulse runs 75-100% (was
   55-100%). Still steady with Reduce Motion.
+- **"The person used the page since your last look."** When a click,
+  typing, scroll-to or mark target isn't found and the person has clicked,
+  pressed a key or scrolled on the page since the agent's last look, the
+  agent hears "The person used the page since your last look; look
+  again." instead of "Not found — look again". The viewer is not locked;
+  the person's input still wins.
 
 ## v0.13.0 (2026-10-31)
 
