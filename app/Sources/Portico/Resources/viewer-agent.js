@@ -264,28 +264,50 @@
     return null;
   }
 
-  /// The nearest element around `el` (itself first) that takes a click: a
-  /// link, a button, `[role=button]`, an `onclick` attribute or property,
-  /// or (around it) `cursor: pointer`; null when there is none.
-  function clickableAround(el) {
-    for (var at = el; at && at !== document.body && at !== document.documentElement; at = at.parentElement) {
-      if (at.matches(CLICKABLE) || typeof at.onclick === "function") return at;
-      if (at !== el && getComputedStyle(at).cursor === "pointer") return at;
-    }
-    return null;
+  // An ancestor whose box covers more than this share of the viewport is
+  // a page wrapper or a modal backdrop, not the heading's card.
+  var MAX_CARD_SHARE = 0.6;
+
+  function coversViewport(el) {
+    var box = el.getBoundingClientRect();
+    var area = Math.min(box.width, innerWidth) * Math.min(box.height, innerHeight);
+    return area > MAX_CARD_SHARE * innerWidth * innerHeight;
   }
 
-  /// What a click target names: `{el}` to click (and `heading`, the heading
-  /// it was found by), `{heading: true}` for a heading with nothing
-  /// clickable around it, or null. Anything the outline can click by its
-  /// words is found first, as before; only then a heading.
+  /// Whether something clickable holds `heading` as its card: the heading
+  /// itself, or the nearest ancestor that is a link, a button,
+  /// `[role=button]`, has an `onclick` attribute or property, or shows
+  /// `cursor: pointer`. The search stops (false) at an ancestor holding
+  /// another listed heading or covering most of the viewport: a list, a
+  /// page wrapper or a backdrop is not one card.
+  function inClickableCard(heading) {
+    var headings = listed().map(function (item) { return item.el; }).filter(function (el) {
+      return /^H[1-6]$/.test(el.tagName);
+    });
+    for (var at = heading; at && at !== document.body && at !== document.documentElement; at = at.parentElement) {
+      if (at !== heading) {
+        var held = 0;
+        for (var i = 0; i < headings.length; i++) if (at.contains(headings[i])) held += 1;
+        if (held > 1 || coversViewport(at)) return false;
+      }
+      if (at.matches(CLICKABLE) || typeof at.onclick === "function") return true;
+      if (at !== heading && getComputedStyle(at).cursor === "pointer") return true;
+    }
+    return false;
+  }
+
+  /// What a click target names: `{el}` to click (`found`, what it was found
+  /// as), `{heading: true}` for a heading not in a clickable card, or null.
+  /// Anything the outline can click by its words is found first, as
+  /// before; only then a heading, which is clicked itself so the click
+  /// bubbles to its card as a person's would (delegated handlers see the
+  /// heading as the target; a link around it still follows).
   function clickTarget(target, page) {
     var el = resolve(target, page, false);
     if (el) return { el: clickable(el), found: el };
     var heading = headingNamed(target);
     if (!heading) return null;
-    var around = clickableAround(heading);
-    return around ? { el: around, found: heading } : { heading: true };
+    return inClickableCard(heading) ? { el: heading, found: heading } : { heading: true };
   }
 
   var NOT_FOUND = { ok: false, notFound: true };

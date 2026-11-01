@@ -1603,6 +1603,64 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(clicks as? String, "grocery,laundry,deep", "each card's handler, once")
     }
 
+    /// Fix I-3: the click lands on the heading itself and bubbles, so a
+    /// list that handles clicks for its cards (`closest('.card')`) opens
+    /// the right one.
+    func test_a_delegated_card_list_opens_the_cards_heading() async throws {
+        let rig = try rig("""
+            <style>.card{cursor:pointer;padding:8px}</style>
+            <script>window.opened = []</script>
+            <div id="list">
+              <div class="card" data-id="grocery"><h3>Grocery run</h3><p>Tuesday, Sam</p></div>
+              <div class="card" data-id="laundry"><h3>Laundry</h3><p>Friday, Priya</p></div>
+            </div>
+            <script>
+            // Delegated, from where the click landed: a card's title opens
+            // it; elsewhere on the card does nothing here.
+            document.getElementById('list').onclick = function (e) {
+              var title = e.target.closest('h3');
+              var card = e.target.closest('.card');
+              opened.push(title && card ? card.getAttribute('data-id') : 'none');
+            };
+            </script>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Grocery run")]))
+        XCTAssertTrue(result.ok, result.text)
+        let opened = try await evaluate("opened.join(',')", in: rig.view)
+        XCTAssertEqual(opened as? String, "grocery")
+    }
+
+    /// Fix I-3: a backdrop that closes the dialog on click is not the
+    /// heading's card: it covers the viewport.
+    func test_a_dialog_heading_on_a_click_to_close_backdrop_is_not_clicked() async throws {
+        let rig = try rig("""
+            <script>window.closed = 0</script>
+            <div id="backdrop" onclick="closed += 1" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">
+              <div style="margin:100px auto;width:300px;background:#fff"><h2>Delete Acme board?</h2><p>This can't be undone.</p></div>
+            </div>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Delete Acme board?")]))
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(result.text, Self.headingSentence)
+        let closed = try await evaluate("closed", in: rig.view)
+        XCTAssertEqual(closed as? Int, 0, "the backdrop's handler did not fire")
+    }
+
+    /// Fix I-3: a wrapper holding several headings is not one heading's card.
+    func test_a_clickable_wrapper_around_several_headings_is_not_clicked() async throws {
+        let rig = try rig("""
+            <script>window.hits = 0</script>
+            <div onclick="hits += 1" style="width:300px"><h3>Jordan</h3><h3>Priya</h3></div>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Jordan")]))
+        XCTAssertEqual(result.text, Self.headingSentence)
+        let hits = try await evaluate("hits", in: rig.view)
+        XCTAssertEqual(hits as? Int, 0)
+    }
+
     func test_a_bare_heading_is_not_something_to_click() async throws {
         let rig = try rig("<h2>Trail notes</h2><p>Plain text.</p><button>Save trail</button>")
         _ = await rig.agent.perform(act(.look))

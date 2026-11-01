@@ -68,10 +68,13 @@
   again." instead of "Not found — look again". The viewer is not locked;
   the person's input still wins.
 - **A heading inside a clickable card clicks the card.** Click by text
-  also matches headings, after buttons and links; a heading resolves to
-  its nearest clickable ancestor (a link, a button, `[role=button]`, an
-  element with a click handler or `cursor: pointer`). A heading with none
-  answers "That's a heading, not something to click; use its ref."
+  also matches headings, after buttons and links. When the heading sits in
+  a clickable card (a link, a button, `[role=button]`, an element with a
+  click handler or `cursor: pointer`), the heading is clicked and the
+  click reaches the card as a person's would. Something holding other
+  headings or covering most of the viewport (a list, a page, a dialog's
+  backdrop) is not a card. Otherwise the answer is "That's a heading, not
+  something to click; use its ref."
 - **Subfolders of the spaces folder are ignored**, now a documented
   guarantee: only top-level `.md`, `.markdown`, `.html` and `.htm` files
   are spaces, and nothing inside a subfolder is listed or watched, so a
