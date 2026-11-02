@@ -5,15 +5,24 @@
 ### What a person gets (app)
 
 - **The model in the status strip is a menu.** Choose from the same list
-  `/model` shows in a terminal; the strip names your choice at once
-  ("Default (recommended)" shows as "Default"). Each chat's menu shows the
-  model that chat runs on, and your choice carries to new sessions. The
-  menu is dimmed while a reply runs ("Change the model after this reply")
-  and while disconnected ("Not connected").
+  `/model` shows in a terminal; the strip names your choice at once. Each
+  chat's menu shows the model that chat runs on, and your choice carries to
+  new sessions. The menu is dimmed while a reply runs ("Change the model
+  after this reply") and while disconnected ("Not connected").
+- **The list is there before the first message,** and Default names the
+  model it runs ("Fable 5.1", not "Default"), in the strip and in its menu
+  row. Until a list has ever arrived, the strip shows the name without a
+  menu.
 - **Text size.** Settings → Appearance has a Text size setting, under
   Appearance, which is now a pop-up. It scales the conversation, the
-  sidebar, the menus and the viewer's Markdown together. ⌘+ and ⌘= make
-  text bigger, ⌘- smaller; Actual Size has no shortcut (⌘0 stays Work).
+  sidebar (the Files tree's names and headers too), the menus and the
+  viewer's Markdown together. ⌘+ and ⌘= make text bigger, ⌘- smaller;
+  Actual Size has no shortcut (⌘0 stays Work).
+- **Popovers read more clearly.** The glass stays, with a tint of the
+  window behind the text, and their secondary text is a step darker (in
+  light mode; lighter in dark). This covers the model menu, services,
+  History, the space switcher, marks, the viewer menu, the mode chip and
+  agent steps.
 - **Earlier is now History,** a popover with one title filter. The sidebar
   starts under the traffic lights, in a band 36 pt tall.
 - **The conversation stays at the newest message.** At the bottom, it stays
@@ -35,6 +44,11 @@
 - `model.set` during a reply is refused with `chat.busy`, and a model not
   in the list with `model.unknown`. A choice the deployment stops offering
   is dropped at the next engine start, with a notice.
+- The gateway reads the model list once when it starts (it connects to the
+  CLI, reads its server info and disconnects, sending no message). If that
+  fails or takes over 30 s it logs a warning and keeps the last list.
+- Each `models` choice can carry `resolved_model`, the model id it runs.
+  The field is optional, and an older app ignores it.
 - Gateway version 0.15.0 to match the app.
 
 ### Small items
