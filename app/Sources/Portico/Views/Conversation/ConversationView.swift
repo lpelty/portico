@@ -12,6 +12,9 @@ struct ConversationView: View {
     @State private var topItem: String?
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
+    /// Whether the person is scrolling the transcript (v0.15 task 2b fix
+    /// round 1): only its readings move the scroll memory.
+    @State private var personScrolling = false
     /// The transcript's width, for the reading column's (v0.11, item 58).
     @State private var transcriptWidth: CGFloat?
 
@@ -142,11 +145,12 @@ struct ConversationView: View {
                 TranscriptGeometry(
                     width: geometry.containerSize.width,
                     content: geometry.contentSize.height,
+                    offset: geometry.contentOffset.y,
                     atBottom: ConversationScrollMemory.isAtBottom(
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                if scrollMemory.observe(width: now.width, atBottom: now.atBottom, content: now.content) == .bottom {
+                if scrollMemory.observe(width: now.width, atBottom: now.atBottom, byPerson: personScrolling) == .bottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -156,14 +160,30 @@ struct ConversationView: View {
             // the view near the top). Anchor at the bottom, and scroll again
             // once the new rows are laid out.
             .defaultScrollAnchor(.bottom)
-            .onChange(of: scrollKey) { _, _ in
-                scrollToBottom(proxy)
+            .onScrollPhaseChange { _, phase in
+                personScrolling = phase == .interacting || phase == .tracking || phase == .decelerating
+            }
+            // v0.15 task 2b fix round 1: the newest message is followed only
+            // at the bottom (scrolled up, a streaming reply no longer pulls
+            // the person back down), and once per change: the geometry
+            // reading above catches the rows laid out after it. The person's
+            // own message always goes to the bottom.
+            .onChange(of: followKey) { old, new in
+                if new.sent != old.sent {
+                    scrollToBottom(proxy)
+                } else if scrollMemory.atBottom && !personScrolling {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
             }
             .onAppear { scrollToBottom(proxy) }
         }
     }
 
+    /// To the bottom, and twice: once now, once after the rows are laid out.
+    /// Recorded as at the bottom (v0.15 fix round 1): the jump's own
+    /// reading is the layout's, so the memory would not see it.
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        scrollMemory.followed()
         proxy.scrollTo("bottom", anchor: .bottom)
         Task { @MainActor in
             await Task.yield()
@@ -188,6 +208,18 @@ struct ConversationView: View {
         }
         .clearOfViewerGrip()
         .frame(maxHeight: 320)
+    }
+
+    /// What the transcript follows (v0.15 fix round 1): any change, and
+    /// apart from it the person's newest message (the gateway's echo of a send).
+    private var followKey: FollowKey {
+        let sent = items.last { if case .userText = $0 { true } else { false } }?.id
+        return FollowKey(scroll: scrollKey, sent: sent)
+    }
+
+    private struct FollowKey: Equatable {
+        var scroll: String
+        var sent: String?
     }
 
     /// Changes whenever an item is added or the streaming tail grows.
@@ -215,12 +247,14 @@ struct ConversationView: View {
 }
 
 /// The transcript's width and whether it is at its end, as its scroll
-/// geometry changes (v0.11, item 67). v0.15 fix: and the content's height,
-/// so the rows resolving at a new width is a reading of its own (the end
-/// moved while `atBottom` read false throughout, and nothing followed it).
+/// geometry changes (v0.11, item 67). v0.15 fix: and the content's height
+/// and offset, so the layout moving the end (the rows resolving at a new
+/// width, a streamed line) is a reading of its own: the end moved while
+/// `atBottom` read false throughout, and nothing followed it.
 private struct TranscriptGeometry: Equatable {
     var width: CGFloat
     var content: CGFloat
+    var offset: CGFloat
     var atBottom: Bool
 }
 

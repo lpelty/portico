@@ -27,9 +27,6 @@ struct ConversationScrollMemory: Equatable, Sendable {
     private(set) var atBottom = true
     /// The column's width the place was last seen at.
     private(set) var width: CGFloat?
-    /// The content's height at the last reading (v0.15 fix).
-    private(set) var content: CGFloat?
-
     /// Whether an offset is at the end of the content (or the content fits).
     static func isAtBottom(offset: CGFloat, visible: CGFloat, content: CGFloat) -> Bool {
         content <= visible || offset + visible >= content - bottomSlack
@@ -41,33 +38,45 @@ struct ConversationScrollMemory: Equatable, Sendable {
         self.width = width
     }
 
-    /// One scroll-geometry reading, as the view gets it (its width, whether
-    /// it is at the end, and the content's height). Returns where to scroll,
-    /// if anywhere.
+    /// The app scrolled to the end itself (the person's send, or following
+    /// the newest message): the conversation is at its bottom (v0.15 task 2b
+    /// fix round 1; the jump's own readings are not the person's).
+    mutating func followed() {
+        atBottom = true
+    }
+
+    /// One scroll-geometry reading, as the view gets it: its width, whether
+    /// it is at the end, and whether the person is scrolling (the scroll
+    /// view's phase). Returns where to scroll, if anywhere.
     ///
     /// A reading taken on a frame whose width changed is the reflow's, not
     /// the person's (fix round 1): scrolled up near the end, a step of the
     /// column's animation can read as the bottom, and recording it would
-    /// snap the conversation to its end at the next change. Only readings
-    /// at an unchanged width say where the person is.
+    /// snap the conversation to its end at the next change.
     ///
-    /// v0.15 fix: nor does a reading whose content height changed. The
-    /// width step scrolled to the end of the lazy stack's estimate; the
-    /// stack then resolved its rows at the new width and the end moved
-    /// (189 pt, found hosted), at the same width. That reading is the
-    /// layout's: at the bottom it goes back to the bottom; scrolled up it
-    /// is left alone and not recorded. A person's own scroll changes the
-    /// offset, not the content, and is recorded as before.
-    mutating func observe(width: CGFloat, atBottom: Bool, content: CGFloat? = nil) -> Target? {
-        defer { if let content { self.content = content } }
+    /// v0.15 fix (task 2b): nor is any reading taken while the person is
+    /// not scrolling. Found hosted: the width step scrolled to the end of
+    /// the lazy stack's estimate, the rows then resolved at the new width
+    /// and the end moved (189 pt), and at an unchanged width the layout
+    /// moved the offset by itself (134 pt, content unchanged) and the
+    /// app's own scroll landed short; each was taken for the person leaving
+    /// the bottom, or never seen again. Only the person's scroll (and the
+    /// app's `followed()`) moves the memory now. Any other reading off the
+    /// end, while the memory says at the bottom, goes back to the bottom;
+    /// scrolled up, it is left alone.
+    mutating func observe(width: CGFloat, atBottom: Bool, byPerson: Bool) -> Target? {
         if let known = self.width, abs(known - width) >= 1 {
             return widthChanged(to: width)
         }
-        if let content, let known = self.content, abs(known - content) >= 1 {
-            return self.atBottom && !atBottom ? .bottom : nil
+        if byPerson {
+            seen(atBottom: atBottom, width: width)
+            return nil
         }
-        seen(atBottom: atBottom, width: width)
-        return nil
+        guard self.width != nil else {
+            self.width = width  // the first look: a conversation opens at its bottom
+            return nil
+        }
+        return self.atBottom && !atBottom ? .bottom : nil
     }
 
     /// The column became `newWidth` wide: `.bottom` when it was at the

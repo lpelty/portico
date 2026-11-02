@@ -197,4 +197,56 @@ final class ConversationRoundTripTests: XCTestCase {
         resize(hosted, from: 640, to: 900)
         XCTAssertTrue(atBottom(), "still at the newest message back in Work")
     }
+
+    /// v0.15 task 2b fix round 1 (Important 1): scrolled up, the person
+    /// sends; the app follows to the newest message, and a space opening
+    /// next keeps it there.
+    func testScrolledUpThenSendingThenASpaceLeavesItAtItsBottom() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        let height = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        for _ in 0..<60 where clip.bounds.origin.y > height / 3 {
+            Self.wheel(hosted.scroll, pixels: 300)
+            spin(0.05)
+        }
+        spin(0.3)
+        XCTAssertFalse(atBottom(), "scrolled up")
+        model.apply(.userText(UserText(chat: 3, turn: 41, text: "Question 41 from Jordan", seq: 81)))
+        spin()
+        XCTAssertTrue(atBottom(), "the person's message goes to the bottom")
+        resize(hosted, from: 900, to: 640)
+        XCTAssertTrue(atBottom(), "still at the newest message beside the space")
+        resize(hosted, from: 640, to: 900)
+        XCTAssertTrue(atBottom(), "still at the newest message back in Work")
+    }
+
+    /// v0.15 task 2b fix round 1 (Important 2): scrolled up while a reply
+    /// streams in, the conversation stays where the person is.
+    func testScrolledUpWhileAReplyStreamsStaysPut() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        let height = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        for _ in 0..<60 where clip.bounds.origin.y > height / 3 {
+            Self.wheel(hosted.scroll, pixels: 300)
+            spin(0.05)
+        }
+        spin(0.3)
+        let before = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+        for step in 1...8 {
+            model.apply(.textDelta(TextDelta(chat: 3, turn: 40, text: " More of the reply, part \(step).", seq: 80 + step)))
+            spin(0.05)
+        }
+        spin()
+        let after = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+        XCTAssertEqual(after.text, before.text, "the same reply at the top")
+        XCTAssertEqual(after.dy, before.dy, accuracy: 4, "at the same point in it")
+    }
 }
