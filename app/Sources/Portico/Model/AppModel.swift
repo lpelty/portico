@@ -27,6 +27,9 @@ struct ToolRow: Equatable, Sendable, Identifiable {
     /// When the use last moved: its start's `ts`, then its finish's (v0.4:
     /// "Changed this session" shows when a file last changed).
     var at: String? = nil
+    /// An answered question's choices by question text (v0.16,
+    /// `tool.finished`'s `answers`, live and replayed).
+    var answers: [String: QuestionAnswer]? = nil
 
     var id: String { toolUseId }
 }
@@ -209,6 +212,25 @@ final class AppModel: ObservableObject {
     @Published var logging: [Int: String] = [:]
     /// The session whose New is asking "Log Session N first?" (W2).
     @Published var askingToLog: Int?
+
+    // Threads (v0.16; read and acted on in Threads.swift).
+
+    /// Main's thread proposals by id, as the gateway last said (`thread.proposal`).
+    @Published private(set) var proposals: [String: ThreadProposal] = [:]
+    /// The proposal whose `thread.start` is out: its card is dimmed until
+    /// the gateway answers (the `started` proposal) or refuses (an `error`).
+    @Published private(set) var startingProposal: String?
+    /// That `thread.start`'s request id.
+    private(set) var startingRequest: String?
+    /// The working thread whose close is asking "Close it anyway?".
+    @Published var closingThread: Int?
+    /// Per thread, the id of a `thread.close` the gateway has not answered.
+    @Published private(set) var closingThreads: [Int: String] = [:]
+    /// Per thread, why its last close was refused (its log step could not
+    /// start): the thread stays open and "Close without logging" is offered.
+    @Published private(set) var closeFailures: [Int: String] = [:]
+    /// Per thread, the calling cards put off with Later (card ids).
+    @Published private(set) var dismissedCalls: [Int: Set<String>] = [:]
     /// The deployment's services from the latest `services.status`; `nil`
     /// until the first one on this connection ("Checking…").
     @Published var services: [Service]?
@@ -698,6 +720,11 @@ final class AppModel: ObservableObject {
             // that follows says how each session is now.
             logging = [:]
             renewing = [:]
+            // Likewise a thread start or close in flight (v0.16): the
+            // proposals and `chat.list` that follow say how each stands.
+            startingProposal = nil
+            startingRequest = nil
+            closingThreads = [:]
             // A gateway without spaces has no list to trust: what an earlier
             // one sent is stale, and so is a space open from it.
             if !hello.capabilities.contains(SpacesList.capability) {
@@ -732,6 +759,8 @@ final class AppModel: ObservableObject {
                 forget(chat: chat)
             }
             openLiveSessionIfNeeded()
+            proposals = proposals.filter { proposal in list.chats.contains { $0.chat == proposal.value.chat } }
+            loadLiveThreads()
             awaitServicesStatus()
 
         case .chatState(let state):
@@ -755,7 +784,15 @@ final class AppModel: ObservableObject {
                     dispatch(chat: state.chat, text: start.text, attachments: start.attachments, fromComposer: true)
                 }
             }
+            if let id = state.id { noteThreadAnswer(id: id, chat: state.chat) }
             noteSeq(of: message)
+
+        case .threadProposal(let proposal):
+            proposals[proposal.proposal] = proposal
+            if proposal.proposal == startingProposal, proposal.state != .pending {
+                startingProposal = nil
+                startingRequest = nil
+            }
 
         case .chatHistory(let history):
             applyHistory(history)
@@ -874,6 +911,7 @@ final class AppModel: ObservableObject {
                 lastRestartAllId = nil
                 restartAllError = error.message
             }
+            if let id = error.id { noteThreadRefusal(id: id, message: error.message) }
             if let id = error.id, fileSearch?.pending[id] != nil {
                 fileSearch?.pending[id] = nil
             }
@@ -1103,13 +1141,14 @@ final class AppModel: ObservableObject {
                     row.permission = permission
                     row.note = finished.note ?? row.note
                 }
+                row.answers = finished.answers ?? row.answers
                 items[index] = .tool(row)
             } else {
                 // The start fell off the ring; show the finish rather than lose it.
                 items.append(.tool(ToolRow(
                     toolUseId: finished.toolUseId, turn: finished.turn, tool: "tool", summary: finished.summary,
                     input: [:], finished: true, ok: finished.ok, result: finished.summary,
-                    permission: finished.permission, note: finished.note, at: finished.ts)))
+                    permission: finished.permission, note: finished.note, at: finished.ts, answers: finished.answers)))
             }
 
         case .turnFinished(let finished):
@@ -1243,7 +1282,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal:
             break
         }
     }
@@ -1987,6 +2026,11 @@ final class AppModel: ObservableObject {
         renewing[chat] = nil
         logging[chat] = nil
         if askingToLog == chat { askingToLog = nil }
+        proposals = proposals.filter { $0.value.chat != chat }
+        if closingThread == chat { closingThread = nil }
+        closingThreads[chat] = nil
+        closeFailures[chat] = nil
+        dismissedCalls[chat] = nil
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
     }
@@ -2033,6 +2077,65 @@ final class AppModel: ObservableObject {
     private static func itemId(_ counter: inout Int) -> String {
         counter += 1
         return String(counter)
+    }
+}
+
+// MARK: - Threads: what writes the thread state (v0.16)
+
+/// The thread actions and reducer steps that write `AppModel`'s
+/// `private(set)` thread state; the rest of threads is in Threads.swift.
+extension AppModel {
+    /// Start Thread N (or, with `closing`, Close and start at the limit).
+    /// One start at a time, and only for a proposal still pending: a second
+    /// click sends nothing (Review Focus 1). The window stays where it is:
+    /// the thread works on its brief while the person carries on here.
+    func startThread(_ proposal: ThreadProposal, closing: Int?) {
+        guard threadsOn, startingProposal == nil, (proposals[proposal.proposal] ?? proposal).state == .pending else { return }
+        let id = Self.requestId()
+        startingProposal = proposal.proposal
+        startingRequest = id
+        send(.threadStart(ThreadStart(chat: proposal.chat, proposal: proposal.proposal, close: closing, id: id)))
+    }
+
+    /// `thread.close` for an open thread, with or without its log step;
+    /// one close at a time per thread.
+    func closeThread(chat: Int, log: Bool) {
+        guard thread(of: chat) != nil, !isEnded(chat: chat), closingThreads[chat] == nil else { return }
+        let id = Self.requestId()
+        closingThreads[chat] = id
+        closeFailures[chat] = nil
+        send(.threadClose(ThreadClose(chat: chat, log: log, id: id)))
+    }
+
+    /// Later on a calling card: hidden from Main; the thread's row still says Needs you.
+    func dismissCalling(_ card: CallingCard) {
+        dismissedCalls[card.thread, default: []].insert(card.cardId)
+    }
+
+    /// A `chat.state` answering a request: a thread start's answer names
+    /// the new thread, which is loaded (not shown: Ruling 6 as overridden,
+    /// the selection stays); a close's answer ends its wait.
+    func noteThreadAnswer(id: String, chat: Int) {
+        if id == startingRequest {
+            startingRequest = nil
+            if !openedChats.contains(chat) && !isLoading(chat: chat) { load(chat: chat) }
+        }
+        if let closing = closingThreads.first(where: { $0.value == id })?.key {
+            closingThreads[closing] = nil
+        }
+    }
+
+    /// An `error` answering a request: a refused start un-dims its card
+    /// (Review Focus 2); a refused close keeps the thread open and says why.
+    func noteThreadRefusal(id: String, message: String) {
+        if id == startingRequest {
+            startingProposal = nil
+            startingRequest = nil
+        }
+        if let closing = closingThreads.first(where: { $0.value == id })?.key {
+            closingThreads[closing] = nil
+            closeFailures[closing] = message
+        }
     }
 }
 

@@ -55,9 +55,10 @@ extension AppModel {
         return "Working in \(folder.lastPathComponent) · chosen at setup, change it in Settings"
     }
 
-    /// The live session: the newest chat that has not ended.
+    /// The live session (Main): the newest chat that has not ended and is
+    /// not a thread (v0.16, Ruling 11: whatever the capability says).
     var liveSession: ChatSummary? {
-        chats.filter { $0.ended == nil }.max { $0.chat < $1.chat }
+        chats.filter { $0.ended == nil && $0.thread == nil }.max { $0.chat < $1.chat }
     }
 
     /// Ended sessions, newest first.
@@ -158,8 +159,15 @@ extension AppModel {
     // MARK: renewing
 
     /// Renewing is offered in single presentation, by a gateway that
-    /// speaks sessions, for a session that has not ended.
+    /// speaks sessions, for a session that has not ended and is not a
+    /// thread: a thread closes, it never renews (v0.16, Ruling 10).
     func canRenew(chat: Int) -> Bool {
+        speaksSessions(chat: chat) && summary(of: chat)?.thread == nil
+    }
+
+    /// Single presentation, a gateway that speaks sessions, a session that
+    /// has not ended: Main or a thread.
+    private func speaksSessions(chat: Int) -> Bool {
         isSinglePresentation && offers("sessions") && !isEnded(chat: chat)
     }
 
@@ -184,7 +192,7 @@ extension AppModel {
 
     /// The card's Log session and `/log` are offered for this session.
     func canLogSession(chat: Int) -> Bool {
-        canRenew(chat: chat) && canLogWithoutEnding
+        speaksSessions(chat: chat) && canLogWithoutEnding
     }
 
     /// Why Log session and `/log` are off for this live session, in the
@@ -193,7 +201,7 @@ extension AppModel {
     /// A deployment without a log step says so; a v0.3 gateway that has
     /// one but logs only on renewal says that instead.
     func logSessionOffReason(chat: Int) -> String? {
-        guard canRenew(chat: chat), !canLogWithoutEnding else { return nil }
+        guard speaksSessions(chat: chat), !canLogWithoutEnding else { return nil }
         return canLog ? Self.logsOnlyOnRenewal : Self.noLogStep
     }
 
