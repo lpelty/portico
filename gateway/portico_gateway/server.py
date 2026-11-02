@@ -166,7 +166,7 @@ from .agents import AgentTracker
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import SPACES_CAPABILITY, Config, hello_for
+from .config import SPACES_CAPABILITY, Config, hello_for, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
     Engine,
@@ -259,7 +259,7 @@ from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
 from .state import StateDir
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
-from .viewer import VIEWER_CAPABILITY, ViewerBridge
+from .viewer import MARKS_CAPABILITY, VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
@@ -767,6 +767,8 @@ class GatewayServer:
         config_path: Path | None = None,
         titler: Titler | None = None,
     ) -> None:
+        # v0.14: no [spaces] folder means <state dir>/spaces (created here), treated like a configured one.
+        config = with_default_spaces(config, state.path)
         self.config = config
         # The file the config came from and its modification time at start:
         # a newer file means the running gateway is not using it (v0.3).
@@ -867,6 +869,7 @@ class GatewayServer:
             self._send_viewer_act,
             capable=lambda conn: VIEWER_CAPABILITY in _capabilities(conn),
             defaults=(config.viewer.agent_can_see, config.viewer.agent_checks_html),
+            marks_capable=lambda conn: MARKS_CAPABILITY in _capabilities(conn),
         )
         # v0.12: spaces. The watcher tells every attached app when the folder's list changes.
         self.spaces_watcher: SpacesWatcher | None = (

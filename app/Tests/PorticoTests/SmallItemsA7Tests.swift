@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -33,5 +34,14 @@ final class SmallItemsA7Tests: XCTestCase {
         XCTAssertEqual(ServicesPresentation.hoverControls(up), [.stop, .restart])
         let other = ServiceRow(id: "memory", name: "Memory", state: .up, detail: "up")
         XCTAssertTrue(ServicesPresentation.hoverControls(other).isEmpty)
+    }
+
+    /// v0.14 test fix (issue 3): the row actions are drawn as the app's
+    /// other small row actions, an icon and a word; each icon exists.
+    func test_gateway_row_actions_have_icons() {
+        for control in [GatewayControl.start, .stop, .restart] {
+            XCTAssertNotNil(NSImage(systemSymbolName: control.systemImage, accessibilityDescription: nil), control.title)
+        }
+        XCTAssertEqual(GatewayControl.restart.systemImage, StatusStripPresentation.Measure.restartIcon.name, "the strip's own restart arrow")
     }
 }

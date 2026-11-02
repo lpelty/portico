@@ -12,6 +12,15 @@ struct MainWindow: View {
     @EnvironmentObject private var settings: Settings
     /// The width a column had when its divider drag began.
     @State private var dragStart: CGFloat?
+    /// v0.14 (§6b.2): the viewer divider's grip sits on the conversation
+    /// side; the web view would take the half over it.
+    static let viewerDividerGripSide: ColumnDivider.GripSide = .leading
+
+    /// How far the conversation's scrollers keep from its right edge: the
+    /// viewer grip's reach while the viewer is shown, else nothing (fix I-1).
+    static func scrollerClearance(viewerShown: Bool) -> CGFloat {
+        viewerShown ? ColumnDivider.overhang(viewerDividerGripSide) : 0
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -32,10 +41,12 @@ struct MainWindow: View {
                 }
                 MainColumn()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .environment(\.viewerGripClearance, Self.scrollerClearance(viewerShown: widths.viewer != nil))
                 // The shown chat's viewer: the conversation's, or (Y1) the
                 // live session's beside the welcome that continues it.
                 if let viewer = widths.viewer {
                     ColumnDivider(
+                        gripSide: Self.viewerDividerGripSide,
                         onDrag: { dx in
                             // In focus the split is fixed; the widths to come back to stay as they were.
                             guard !focused else { return }
@@ -203,7 +214,7 @@ struct MainToolbar: View {
 
     private var items: [ToolbarLayout.Item] {
         ToolbarLayout.items(
-            showSwitcher: ToolbarLayout.showsSwitcher(spaces: model.spaces, capabilities: model.hello?.capabilities),
+            showSwitcher: ToolbarLayout.showsSwitcher,
             showViewerToggle: model.shownChat != nil && !model.documentMode)
     }
 

@@ -15,11 +15,9 @@ enum ToolbarLayout {
     /// The gap between the brand and the switcher: 26 pt, as drawn in Pen (v0.13 decision 6; was 6).
     static let brandToSwitcherGap: CGFloat = 26
 
-    /// With spaces, or with a gateway that keeps a folder (so "New space…"
-    /// has somewhere to go); never for a gateway that has no spaces.
-    static func showsSwitcher(spaces: [SpaceInfo], capabilities: [String]?) -> Bool {
-        !spaces.isEmpty || capabilities?.contains(SpacesList.capability) == true
-    }
+    /// v0.14: the switcher is never hidden. With no spaces its menu still offers Work and New space…
+    /// (dimmed on a gateway without `spaces.v1`).
+    static let showsSwitcher = true
 
     /// The pill's title stops here (about 220 pt pill) and truncates.
     static let switcherTitleMaxWidth: CGFloat = 160
@@ -47,6 +45,22 @@ enum SpacesPresentation {
     static let shortcutDigits = Array(0...9)
 
     static let newSpacePrefill = "New space: "
+
+    /// The SPACES section's note when there are none yet.
+    static let noSpacesText = "No spaces yet"
+
+    /// New space…'s tooltip when the gateway predates spaces.
+    static let tooOldHelp = "This Portico gateway is too old for spaces."
+
+    /// New space… works only against a gateway that advertises `spaces.v1`.
+    static func canCreateSpace(capabilities: [String]?) -> Bool {
+        capabilities?.contains(SpacesList.capability) == true
+    }
+
+    /// The "No spaces yet" note shows under SPACES when there are no spaces and no filter is typed.
+    static func showsEmptyNote(spaces: [SpaceInfo], query: String) -> Bool {
+        spaces.isEmpty && query.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     /// A space's own front-matter keys, kept out of the Properties block.
     static let hiddenFrontMatterKeys: Set<String> = ["title", "icon", "order"]
@@ -230,6 +244,7 @@ private struct SpaceMenu: View {
     @FocusState private var renameFocused: Bool
 
     private var entries: [SpaceMenuState.Entry] { state.visible(model.spaces) }
+    private var canCreate: Bool { SpacesPresentation.canCreateSpace(capabilities: model.hello?.capabilities) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -246,12 +261,19 @@ private struct SpaceMenu: View {
                 row(.work, icon: "briefcase", title: "Work", detail: "Chat, files and the viewer", shortcut: "⌘0", current: model.openSpace == nil)
             }
             let spaceEntries = model.spaces.enumerated().filter { entries.contains(.space($0.element.id)) }
-            if !spaceEntries.isEmpty {
+            let emptyNote = SpacesPresentation.showsEmptyNote(spaces: model.spaces, query: state.query)
+            if !spaceEntries.isEmpty || emptyNote {
                 Text("SPACES")
                     .font(.system(size: 10.5, weight: .medium))
                     .tracking(0.5)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
+                if emptyNote {
+                    Text(SpacesPresentation.noSpacesText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text3)
+                        .padding(.horizontal, 10).padding(.bottom, 6)
+                }
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
@@ -269,7 +291,7 @@ private struct SpaceMenu: View {
             }
             if entries.contains(.newSpace) {
                 Rectangle().fill(Theme.border).frame(height: 1).padding(.vertical, 4)
-                row(.newSpace, icon: "plus", title: "New space…", detail: "Say what you want kept up to date; \(model.hello?.brand.agentName ?? "the agent") sets it up", shortcut: nil, current: false)
+                row(.newSpace, icon: "plus", title: "New space…", detail: "Say what you want kept up to date; \(model.hello?.brand.agentName ?? "the agent") sets it up", shortcut: nil, current: false, enabled: canCreate)
             }
             Text("↑↓ move · Return opens · ⌘0–9 from anywhere")
                 .font(.system(size: 10.5))
@@ -311,12 +333,13 @@ private struct SpaceMenu: View {
     }
 
     private func pick(_ entry: SpaceMenuState.Entry) {
+        if entry == .newSpace, !canCreate { return }
         entry.choose(on: model)
         dismiss()
     }
 
     @ViewBuilder
-    private func row(_ entry: SpaceMenuState.Entry, icon: String, title: String, detail: String, shortcut: String?, current: Bool) -> some View {
+    private func row(_ entry: SpaceMenuState.Entry, icon: String, title: String, detail: String, shortcut: String?, current: Bool, enabled: Bool = true) -> some View {
         Button { pick(entry) } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon).font(.system(size: 13)).foregroundStyle(Theme.text2).frame(width: 18)
@@ -334,6 +357,9 @@ private struct SpaceMenu: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+        .help(enabled ? "" : SpacesPresentation.tooOldHelp)
         .onHover { if $0 { state.selection = entry } }
     }
 

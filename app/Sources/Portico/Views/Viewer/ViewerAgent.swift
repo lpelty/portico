@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import PDFKit
 import SwiftUI
 import WebKit
@@ -20,6 +21,13 @@ final class ViewerAgent: ObservableObject {
         static let anotherChat = "The person is looking at another chat."
         static let nothingOpen = "Nothing is open in the viewer."
         static let notFound = "Not found — look again"
+        /// A target not found after the person used the page (v0.14 §6b.4).
+        static let personUsed = "The person used the page since your last look; look again."
+        /// A ref not followed because the page was loaded again (or another
+        /// page put in its place) since the agent's look (v0.14 §6b.4).
+        static let pageReloaded = "The page reloaded since your last look; look again."
+        /// A click by a heading's words with nothing clickable around it (v0.14 §6b.5).
+        static let heading = "That's a heading, not something to click; use its ref."
         static let timedOut = "The viewer didn't answer in 10 s."
 
         /// "This is a PDF; it can be looked at, not used."
@@ -30,6 +38,17 @@ final class ViewerAgent: ObservableObject {
         /// An outside site off the deployment's allow list (spec §3.6).
         static func outsideSite(_ host: String) -> String {
             "This page (\(host)) can be looked at and scrolled, not used. The deployment's allow list sets which sites the agent can click and type on."
+        }
+
+        /// A mark asked for on a pane that isn't a web page (v0.14).
+        static func marksOnWebPages(kind: String) -> String {
+            "Marks work on web pages; this is \(article(kind)) \(kind)."
+        }
+
+        static let markCount = "Mark 1 to 9 things at a time."
+
+        static func cleared(_ count: Int) -> String {
+            "Cleared \(count) mark\(count == 1 ? "" : "s")."
         }
 
         static func article(_ kind: String) -> String {
@@ -43,6 +62,11 @@ final class ViewerAgent: ObservableObject {
     /// `nil` once `labelLinger` has passed since the last action.
     @Published private(set) var actingChat: Int?
 
+    /// The page the attached web pane shows, as marks know it, updated as
+    /// each load is drawn (the marks list's "THIS PAGE"); `nil` with no
+    /// web pane or a page with no address.
+    @Published private(set) var currentPage: MarkPage?
+
     /// How long the target is outlined before a click or typing.
     var highlightDuration: Duration = .milliseconds(600)
     /// How long the acting label stays after the last action.
@@ -55,6 +79,9 @@ final class ViewerAgent: ObservableObject {
     private struct WebPaneRef {
         weak var view: WKWebView?
         let load: WebPane.Load
+        /// The pane's coordinator, whose handler knows what its rendered
+        /// URLs stand for; `nil` for a view attached without one (tests).
+        weak var coordinator: WebPane.Coordinator?
     }
 
     /// A native pane the agent reads and scrolls (spec §3.2): a PDF's
@@ -66,9 +93,28 @@ final class ViewerAgent: ObservableObject {
         let rows: TableRowsSeen?
     }
 
-    private var web: WebPaneRef?
-    private weak var paneView: NSView?
-    private var native: NativeRef?
+    /// The viewer column holds the Work viewer and, while one is open, a
+    /// space over it. The Work viewer stays alive under the space (its page
+    /// is the person's and is not loaded again on the way back), so each
+    /// pane registers in its own slot and the agent acts in the one shown.
+    enum Slot: Hashable, Sendable {
+        case work, space
+    }
+
+    private struct WeakView {
+        weak var view: NSView?
+    }
+
+    private var webs: [Slot: WebPaneRef] = [:]
+    private var paneViews: [Slot: WeakView] = [:]
+    private var natives: [Slot: NativeRef] = [:]
+
+    /// The slot on screen: the space's while one is open, else Work's.
+    var activeSlot: Slot { model?.openSpace != nil ? .space : .work }
+
+    private var web: WebPaneRef? { webs[activeSlot] }
+    private var paneView: NSView? { paneViews[activeSlot]?.view }
+    private var native: NativeRef? { natives[activeSlot] }
     /// Per chat, the page token (`__porticoAgent.page`) of the last look:
     /// refs are only followed on the page that numbered them.
     private(set) var lookedPages: [Int: String] = [:]
@@ -86,34 +132,85 @@ final class ViewerAgent: ObservableObject {
         set { lookedPages[runChat] = newValue }
     }
 
+    /// The chat of the last act, for drawing marks when no chat is shown
+    /// (single presentation before a chat is picked).
+    private var lastChat: Int?
+    private var marksWatch: AnyCancellable?
+    private var slotWatch: AnyCancellable?
+    private var redrawQueued = false
+
     init(model: AppModel?) {
         self.model = model
+        // Clear all or Show again from the list redraws the page. The
+        // publisher fires before the value lands, so the redraw is queued.
+        // A redraw writes found flags back, which publish only on a change,
+        // so a redraw leads to at most one more and then stops.
+        marksWatch = model?.markStore.$marks.dropFirst().sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.queueRedraw() }
+        }
+        // A space opened or Work again: the page on screen changed, so
+        // "THIS PAGE" and the drawn marks follow it.
+        slotWatch = model?.$openSpace.map { $0 != nil }.removeDuplicates().dropFirst().sink { [weak self] spaceOpen in
+            MainActor.assumeIsolated {
+                self?.workPane(hidden: spaceOpen)
+                self?.queueRedraw()
+            }
+        }
     }
 
     // MARK: panes
 
-    /// A web pane now shows `load` in `view`.
-    func attach(_ view: WKWebView, showing load: WebPane.Load) {
-        web = WebPaneRef(view: view, load: load)
+    /// A web pane now shows `load` in `view`, in `slot` (by default the
+    /// slot on screen).
+    func attach(_ view: WKWebView, showing load: WebPane.Load, coordinator: WebPane.Coordinator? = nil, slot: Slot? = nil) {
+        webs[slot ?? activeSlot] = WebPaneRef(view: view, load: load, coordinator: coordinator)
     }
 
     func detach(_ view: WKWebView) {
-        if web?.view === view { web = nil }
+        guard let slot = webs.first(where: { $0.value.view === view })?.key else { return }
+        webs[slot] = nil
+        guard slot == activeSlot else { return }
+        // Called while SwiftUI takes the pane down: publish after.
+        Task { [weak self] in
+            guard let self, self.web == nil else { return }
+            self.setCurrentPage(nil)
+        }
+    }
+
+    /// The Work viewer's web page goes under an open space, or comes back
+    /// (fix round 1). Hidden, it gives up the keyboard (typing would go
+    /// into a page the person cannot see, and count as their use of it)
+    /// and its media is suspended; back, its media may play again.
+    private func workPane(hidden: Bool) {
+        guard let view = webs[.work]?.view else { return }
+        view.setAllMediaPlaybackSuspended(hidden, completionHandler: nil)
+        guard hidden, let window = view.window, Self.isInside(window.firstResponder, view) else { return }
+        // The space's page when it is already there, else nothing in particular.
+        if let space = webs[.space]?.view, space.window === window {
+            window.makeFirstResponder(space)
+        } else {
+            window.makeFirstResponder(nil)
+        }
+    }
+
+    private func setCurrentPage(_ page: MarkPage?) {
+        // A page's name can differ by how it was reached; both count here.
+        if currentPage?.key != page?.key || currentPage?.name != page?.name { currentPage = page }
     }
 
     /// The view that holds a native pane (image, PDF, text, table), for its snapshot.
-    func attachPane(_ view: NSView) {
-        paneView = view
+    func attachPane(_ view: NSView, slot: Slot? = nil) {
+        paneViews[slot ?? activeSlot] = WeakView(view: view)
     }
 
     func detachPane(_ view: NSView) {
-        if paneView === view { paneView = nil }
+        for (slot, held) in paneViews where held.view === view { paneViews[slot] = nil }
     }
 
     /// A PDF's view, a text file's text view, or (with `table`) a view
     /// the size of a table's content, showing `file`.
-    func attachNative(_ view: NSView, file: URL, table: DelimitedTable? = nil, rows: TableRowsSeen? = nil) {
-        native = NativeRef(view: view, file: file.standardizedFileURL, table: table, rows: rows)
+    func attachNative(_ view: NSView, file: URL, table: DelimitedTable? = nil, rows: TableRowsSeen? = nil, slot: Slot? = nil) {
+        natives[slot ?? activeSlot] = NativeRef(view: view, file: file.standardizedFileURL, table: table, rows: rows)
     }
 
     // MARK: perform
@@ -132,6 +229,10 @@ final class ViewerAgent: ObservableObject {
     }
 
     private func performNow(_ act: ViewerAct, due: ContinuousClock.Instant) async -> ViewerResult {
+        // The store keeps at most nine a call; more is refused, not cut.
+        if act.action == .mark, !(1...MarkStore.perCall).contains(Self.markItems(act).count) {
+            return fail(act, Message.markCount)
+        }
         guard let model else { return fail(act, Message.nothingOpen) }
         guard model.agentCanSee else { return fail(act, Message.settingOff) }
         let chat: Int
@@ -141,11 +242,17 @@ final class ViewerAgent: ObservableObject {
             guard model.shownChat == act.chat else { return fail(act, Message.anotherChat) }
             chat = act.chat
         }
-        guard let artifact = model.shownArtifact(for: chat) else { return fail(act, Message.nothingOpen) }
+        guard let artifact = model.shownArtifact(for: chat) else {
+            // Clearing is the store's alone: it needs no page open.
+            guard act.action == .clearMarks else { return fail(act, Message.nothingOpen) }
+            lastChat = chat
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(model.markStore.clear(chat: chat)))
+        }
 
         begin(chat)
         defer { end() }
         runChat = chat
+        lastChat = chat
         deadline = due
         expired = false
         // The agent never drives a viewer the person can't see: the
@@ -244,7 +351,13 @@ final class ViewerAgent: ObservableObject {
             let answer = await call(
                 "return window.__porticoAgent.scroll(target, page)",
                 ["target": direction, "page": lookedPage ?? ""], in: view) as? [String: Any]
-            return answered(act, answer, otherwise: "Scrolled.")
+            return await answered(act, answer, otherwise: "Scrolled.", targets: [direction], in: view)
+        case .mark:
+            return await mark(act, in: view)
+        case .clearMarks:
+            let count = model?.markStore.clear(chat: runChat) ?? 0
+            await draw([], chat: runChat, page: nil, in: view, quiet: false)
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
         case .back:
             guard view.canGoBack else { return fail(act, "There's nothing to go back to in the viewer.") }
             view.goBack()
@@ -269,6 +382,9 @@ final class ViewerAgent: ObservableObject {
         } else {
             text += "\nPage errors since the last look:\n" + errors.map { "- \($0)" }.joined(separator: "\n")
         }
+        if let marks = model?.markStore.lookText(chat: runChat, current: await page(of: view)) {
+            text += "\n\n" + marks
+        }
         let image = await snapshot(of: view)
         return ViewerResult(id: act.id, ok: true, text: text, image: image)
     }
@@ -276,13 +392,18 @@ final class ViewerAgent: ObservableObject {
     private func click(_ act: ViewerAct, target: String, place: String, in view: WKWebView) async -> ViewerResult {
         guard !target.isEmpty else { return fail(act, "Say what to click: a ref from the last look, or a button's or link's words.") }
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: false, in: view) else { return fail(act, Message.notFound) }
+        switch await outline(target, page: page, field: false, in: view) {
+        case .shown: break
+        case .missing: return await notFound(act, [target], in: view)
+        case .heading: return fail(act, Message.heading)
+        }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.click(target, page, place)", ["target": target, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
-        if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
-        guard answer?["ok"] as? Bool == true else { return answered(act, answer, otherwise: "") }
+        if answer?["notFound"] as? Bool == true { return await notFound(act, [target], in: view) }
+        if answer?["heading"] as? Bool == true { return fail(act, Message.heading) }
+        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", targets: [target], in: view) }
         let label = (answer?["label"] as? String) ?? target
         return ViewerResult(id: act.id, ok: true, text: "Clicked \(label)." + (await navigated(view, from: before)))
     }
@@ -292,36 +413,74 @@ final class ViewerAgent: ObservableObject {
         let text = act.args["text"]?.stringValue ?? ""
         let submit = act.args["submit"] == .bool(true)
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: true, in: view) else { return fail(act, Message.notFound) }
+        guard await outline(target, page: page, field: true, in: view) == .shown else { return await notFound(act, [target], in: view) }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.type(target, text, submit, page, place)",
             ["target": target, "text": text, "submit": submit, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
-        if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
-        guard answer?["ok"] as? Bool == true else { return answered(act, answer, otherwise: "") }
+        if answer?["notFound"] as? Bool == true { return await notFound(act, [target], in: view) }
+        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", targets: [target], in: view) }
         let label = (answer?["label"] as? String) ?? target
         var said = "Typed into \(label)."
         if submit { said += " Pressed Return." }
         return ViewerResult(id: act.id, ok: true, text: said + (await navigated(view, from: before)))
     }
 
+    /// "Not found — look again", or why it may not be (v0.14 §6b.4): a ref
+    /// among `targets` from a page that has since reloaded (or been
+    /// replaced), or the person clicked, typed or scrolled on the page since
+    /// the agent's last look.
+    private func notFound(_ act: ViewerAct, _ targets: [String], in view: WKWebView) async -> ViewerResult {
+        fail(act, await notFoundText(targets, in: view))
+    }
+
+    private func notFoundText(_ targets: [String], in view: WKWebView) async -> String {
+        if await reloaded(targets, in: view) { return Message.pageReloaded }
+        return await personUsed(in: view) ? Message.personUsed : Message.notFound
+    }
+
+    /// A ref is one of the page's `eN` numbers, as the script reads it.
+    static func isRef(_ target: String) -> Bool {
+        target.trimmingCharacters(in: .whitespacesAndNewlines).wholeMatch(of: /e\d+/) != nil
+    }
+
+    /// Whether a ref among `targets` was numbered on a page that is no
+    /// longer the one shown: its token differs from the last look's.
+    private func reloaded(_ targets: [String], in view: WKWebView) async -> Bool {
+        guard let looked = lookedPage, !looked.isEmpty, targets.contains(where: Self.isRef) else { return false }
+        let now = await call("var a = window.__porticoAgent; return a ? a.page : null", in: view) as? String
+        return now != nil && now != looked
+    }
+
+    /// Whether the person clicked, pressed a key or scrolled on the page since the agent's last look.
+    private func personUsed(in view: WKWebView) async -> Bool {
+        await call("var a = window.__porticoAgent; return !!(a && a.personUsed && a.personUsed())", in: view) as? Bool == true
+    }
+
     /// The script's own answer `{ok, text}`, or a not-found.
-    private func answered(_ act: ViewerAct, _ answer: [String: Any]?, otherwise: String) -> ViewerResult {
-        if answer?["notFound"] as? Bool == true { return fail(act, Message.notFound) }
+    private func answered(
+        _ act: ViewerAct, _ answer: [String: Any]?, otherwise: String, targets: [String] = [], in view: WKWebView
+    ) async -> ViewerResult {
+        if answer?["notFound"] as? Bool == true { return await notFound(act, targets, in: view) }
         let ok = answer?["ok"] as? Bool ?? false
         let text = (answer?["text"] as? String) ?? (ok ? otherwise : "The page didn't answer.")
         return ViewerResult(id: act.id, ok: ok, text: text)
     }
 
+    /// What `outline` did: drew the ring (or would have), found nothing,
+    /// or found a heading with nothing clickable around it.
+    private enum Outlined { case shown, missing, heading }
+
     /// Outline the target in the accent colour for `highlightDuration`
-    /// (scrolling it into view first). False when there is no such target.
-    private func outline(_ target: String, page: String, field: Bool, in view: WKWebView) async -> Bool {
+    /// (scrolling it into view first).
+    private func outline(_ target: String, page: String, field: Bool, in view: WKWebView) async -> Outlined {
         guard let box = await call(
             "return window.__porticoAgent.rect(target, page, field)",
             ["target": target, "page": page, "field": field], in: view) as? [String: Any]
-        else { return false }
-        guard highlightDuration > .zero else { return true }
+        else { return .missing }
+        if box["heading"] as? Bool == true { return .heading }
+        guard highlightDuration > .zero else { return .shown }
         let number = { (key: String) in CGFloat((box[key] as? NSNumber)?.doubleValue ?? 0) }
         let zoom = view.pageZoom * view.magnification
         let size = CGSize(width: number("w") * zoom, height: number("h") * zoom)
@@ -339,7 +498,7 @@ final class ViewerAgent: ObservableObject {
         view.addSubview(ring)
         try? await Task.sleep(until: min(ContinuousClock.now + highlightDuration, deadline))
         ring.removeFromSuperview()
-        return true
+        return .shown
     }
 
     /// " Now showing <title> — <location>." when the action navigated.
@@ -433,9 +592,9 @@ final class ViewerAgent: ObservableObject {
     /// The script is installed at document start; a page loaded before
     /// that, made by a view without it, or that replaced
     /// `window.__porticoAgent` with its own (no marker) gets it now.
-    private func ensureScript(in view: WKWebView) async {
+    private func ensureScript(in view: WKWebView, quiet: Bool = false) async {
         let marker = ViewerAgentScript.marker
-        if await call("var a = window.__porticoAgent; return !!a && a.__portico === marker", ["marker": marker], in: view)
+        if await call("var a = window.__porticoAgent; return !!a && a.__portico === marker", ["marker": marker], in: view, quiet: quiet)
             as? Bool == true
         {
             return
@@ -446,7 +605,7 @@ final class ViewerAgent: ObservableObject {
         // script puts itself in place over a page's object of the same
         // name; nothing is removed first, so a reinstall that runs out of
         // time leaves the page as it was rather than without one.
-        _ = await race(in: view) { try? await view.evaluateJavaScript(source, in: nil, contentWorld: .page) }
+        _ = await race(in: view, quiet: quiet) { try? await view.evaluateJavaScript(source, in: nil, contentWorld: .page) }
     }
 
     /// Run `body` in the page, or `nil` when it fails or the act's
@@ -454,18 +613,25 @@ final class ViewerAgent: ObservableObject {
     /// never settles). The page world, not an isolated one: the script
     /// must see the page's own `console.error` and the elements its
     /// scripts listen on, as the page sees them.
-    private func call(_ body: String, _ arguments: [String: Any] = [:], in view: WKWebView) async -> Any? {
-        await race(in: view) { try? await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page) }
+    ///
+    /// `quiet`: outside an act (a redraw after a load or a store change),
+    /// with its own short wait, never marking the act in progress expired.
+    private func call(_ body: String, _ arguments: [String: Any] = [:], in view: WKWebView, quiet: Bool = false) async -> Any? {
+        await race(in: view, quiet: quiet) { try? await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .page) }
     }
 
-    /// `work`'s answer, or `nil` when the act's deadline comes first.
-    private func race(in view: WKWebView, _ work: @escaping @MainActor () async -> Any?) async -> Any? {
-        guard ContinuousClock.now < deadline else {
-            expired = true
+    /// How long a quiet call waits for the page.
+    static let quietWait: Duration = .seconds(3)
+
+    /// `work`'s answer, or `nil` when the act's deadline (or a quiet
+    /// call's own wait) comes first.
+    private func race(in view: WKWebView, quiet: Bool = false, _ work: @escaping @MainActor () async -> Any?) async -> Any? {
+        let due = quiet ? ContinuousClock.now + Self.quietWait : deadline
+        guard ContinuousClock.now < due else {
+            if !quiet { expired = true }
             return nil
         }
         let race = JavaScriptRace()
-        let due = deadline
         let answer = await withCheckedContinuation { (continuation: CheckedContinuation<JavaScriptRace.Answer, Never>) in
             race.continuation = continuation
             Task { @MainActor in
@@ -480,7 +646,7 @@ final class ViewerAgent: ObservableObject {
         switch answer {
         case .value(let box): return box.value
         case .timedOut:
-            expired = true
+            if !quiet { expired = true }
             return nil
         }
     }
@@ -488,6 +654,285 @@ final class ViewerAgent: ObservableObject {
     private func snapshot(of view: WKWebView) async -> ViewerResult.Image? {
         guard let image = try? await view.takeSnapshot(configuration: WKSnapshotConfiguration()) else { return nil }
         return ViewerSnapshot.encode(image)
+    }
+
+    // MARK: marks (v0.14 §3.2–3.3, §4)
+
+    /// The `mark` act's items, `{target, note?}` each, in order.
+    static func markItems(_ act: ViewerAct) -> [(target: String, note: String)] {
+        guard case .array(let list)? = act.args["marks"] else { return [] }
+        return list.map { item in
+            guard case .object(let fields) = item else { return (target: "", note: "") }
+            return (target: fields["target"]?.stringValue ?? "", note: fields["note"]?.stringValue ?? "")
+        }
+    }
+
+    /// Locate each target, keep what was found, draw the page's marks and
+    /// scroll to the first new one. Marks change nothing on the page, so
+    /// they are allowed on any site (no `usablePlace`).
+    private func mark(_ act: ViewerAct, in view: WKWebView) async -> ViewerResult {
+        guard let model else { return fail(act, Message.nothingOpen) }
+        guard let page = await page(of: view) else { return fail(act, Message.nothingOpen) }
+        var located: [(label: String, note: String, locator: MarkLocator)] = []
+        var missing: [String] = []
+        for item in Self.markItems(act) {
+            let answer = await call(
+                "return window.__porticoAgent.markLocate(target, page)",
+                ["target": item.target, "page": lookedPage ?? ""], in: view) as? [String: Any]
+            if answer?["ok"] as? Bool == true, let found = answer?["locator"] as? [String: Any] {
+                let locator = MarkLocator(
+                    path: found["path"] as? String ?? "", tag: found["tag"] as? String ?? "", text: found["text"] as? String ?? "")
+                located.append((label: answer?["label"] as? String ?? item.target, note: item.note, locator: locator))
+            } else {
+                missing.append(item.target)
+            }
+        }
+        guard !located.isEmpty else { return await notFound(act, missing, in: view) }
+        let store = model.markStore
+        let added = store.add(
+            chat: runChat, page: page, items: located, call: act.id,
+            toolUseId: act.args["tool_use_id"]?.stringValue, replace: act.args["replace"] == .bool(true))
+        await draw(store.marks(chat: runChat, on: page), chat: runChat, page: page, in: view, quiet: false)
+        if let first = added.first {
+            _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": first.number], in: view)
+        }
+        var text = "Marked " + added.map { "\($0.number) · \($0.label)" }.joined(separator: ", ") + "."
+        if !missing.isEmpty {
+            let why: String
+            switch await notFoundText(missing, in: view) {
+            case Message.pageReloaded: why = " — the page reloaded since your last look; look again."
+            case Message.personUsed: why = " — the person used the page since your last look; look again."
+            default: why = " — look again."
+            }
+            text += " Not found: " + missing.map { "\"\($0)\"" }.joined(separator: ", ") + why
+        }
+        return ViewerResult(id: act.id, ok: true, text: text)
+    }
+
+    /// The page `view` shows, as marks know it: a file path for the app's
+    /// rendered pages (an HTML file, or the Markdown file a page was made
+    /// from), else the URL without its fragment. The open space's page is
+    /// named for the space. `nil` for a page with no address of its own
+    /// (`about:blank`, the failure page).
+    func page(of view: WKWebView) async -> MarkPage? {
+        guard let url = view.url, let scheme = url.scheme?.lowercased() else { return nil }
+        let page: MarkPage
+        if scheme == RenderedPageHandler.scheme {
+            let handler = web?.view === view ? web?.coordinator?.handler : nil
+            guard let file = handler?.file(for: url) ?? handler?.source(for: url) else { return nil }
+            page = MarkPage(key: file.path, name: file.lastPathComponent)
+        } else if ["http", "https", "file"].contains(scheme) {
+            let key = Self.withoutFragment(url)
+            let path = url.path(percentEncoded: false)
+            let name = path.isEmpty || path == "/" ? (url.host(percentEncoded: false) ?? key) : url.lastPathComponent
+            page = MarkPage(key: key, name: name)
+        } else {
+            return nil
+        }
+        if let space = model?.openSpaceArtifact, Self.pageKey(of: space) == page.key {
+            return MarkPage(key: page.key, name: space.title)
+        }
+        return page
+    }
+
+    /// The key a page shown from `artifact` has: its resolved file path
+    /// for a file drawn as a web page, its address for a URL.
+    private static func pageKey(of artifact: Artifact) -> String? {
+        switch artifact.media {
+        case .url: return URL(string: artifact.location).map(withoutFragment)
+        case .html, .markdown:
+            return URL(fileURLWithPath: artifact.location).standardizedFileURL.resolvingSymlinksInPath().path
+        default: return nil
+        }
+    }
+
+    private static func withoutFragment(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
+        parts.fragment = nil
+        return parts.string ?? url.absoluteString
+    }
+
+    /// The chat whose marks the viewer draws: the shown chat, else the
+    /// last act's.
+    private var drawChat: Int? { model?.shownChat ?? lastChat }
+
+    /// A page finished loading in a web pane (WebKit calls `didFinish` on
+    /// Back as well, from its cache or not): draw that page's marks.
+    func pageLoaded(_ view: WKWebView) {
+        guard web?.view === view else { return }
+        Task { [weak self] in await self?.redraw(view) }
+    }
+
+    private func queueRedraw() {
+        guard !redrawQueued else { return }
+        redrawQueued = true
+        Task { [weak self] in
+            guard let self else { return }
+            self.redrawQueued = false
+            if let view = self.web?.view {
+                if view.url != nil { await self.redraw(view) }
+            } else {
+                // No web page on screen (a space closed onto a native pane).
+                self.setCurrentPage(nil)
+            }
+        }
+    }
+
+    /// Draw the store's marks for the page `view` shows (none hides the
+    /// overlay), and write back which were found.
+    private func redraw(_ view: WKWebView) async {
+        guard let model else { return }
+        await ensureScript(in: view, quiet: true)
+        let page = await page(of: view)
+        if web?.view === view { setCurrentPage(page) }
+        let chat = drawChat
+        let list = page.flatMap { page in chat.map { model.markStore.marks(chat: $0, on: page) } } ?? []
+        await draw(list, chat: chat ?? 0, page: page, in: view, quiet: true)
+    }
+
+    /// Show `list` on the page and record the found flags for `page`,
+    /// unless the page moved on meanwhile.
+    private func draw(_ list: [Mark], chat: Int, page: MarkPage?, in view: WKWebView, quiet: Bool) async {
+        let url = view.url
+        let payload: [[String: Any]] = list.map { mark in
+            ["n": mark.number, "note": mark.note,
+             "locator": ["path": mark.locator.path, "tag": mark.locator.tag, "text": mark.locator.text]]
+        }
+        let answer = await call(
+            "return window.__porticoAgent.showMarks(list, accent)",
+            ["list": payload, "accent": accentCSS(for: view)], in: view, quiet: quiet) as? [Any]
+        recheck?.cancel()
+        recheck = nil
+        guard let answer, let page, view.url == url else { return }
+        let found = Self.foundFlags(answer)
+        model?.markStore.setFound(chat: chat, page: page, found: found)
+        guard found.values.contains(false) else { return }
+        // The page script watches a short while for what it didn't find (a
+        // page that builds its content with script); read back what it drew.
+        // A flag that changes publishes, and the redraw that follows starts
+        // this again only while something is still missing.
+        recheck = Task { [weak self, weak view] in
+            var waited: Duration = .zero
+            for at in Self.markRecheck {
+                try? await Task.sleep(for: at - waited)
+                waited = at
+                guard !Task.isCancelled, let self, let view, view.url == url else { return }
+                guard let status = await self.call("return window.__porticoAgent.markStatus()", in: view, quiet: true) as? [Any],
+                      !Task.isCancelled, view.url == url
+                else { return }
+                let now = Self.foundFlags(status)
+                self.model?.markStore.setFound(chat: chat, page: page, found: now)
+                if !now.values.contains(false) { return }
+            }
+        }
+    }
+
+    /// When a draw that missed a mark reads back what the page's watch
+    /// (about 2 s) found since.
+    static let markRecheck: [Duration] = [.milliseconds(300), .milliseconds(1500), .milliseconds(2200)]
+    private var recheck: Task<Void, Never>?
+
+    private static func foundFlags(_ answer: [Any]) -> [Int: Bool] {
+        var found: [Int: Bool] = [:]
+        for case let item as [String: Any] in answer {
+            if let number = (item["n"] as? NSNumber)?.intValue, let flag = item["found"] as? Bool { found[number] = flag }
+        }
+        return found
+    }
+
+    /// The brand accent as CSS, in the pane's appearance.
+    private func accentCSS(for view: WKWebView) -> String {
+        let colour = NSColor(model?.brand.accent ?? Theme.accent)
+        var css = ""
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            guard let rgb = colour.usingColorSpace(.sRGB) else { return }
+            let byte = { (value: CGFloat) in Int((min(max(value, 0), 1) * 255).rounded()) }
+            css = String(format: "#%02X%02X%02X", byte(rgb.redComponent), byte(rgb.greenComponent), byte(rgb.blueComponent))
+        }
+        return css
+    }
+
+    /// Clear all (the list): every mark in the chat goes, and the page
+    /// redraws through the store.
+    func clearMarks(chat: Int) {
+        model?.markStore.clear(chat: chat)
+    }
+
+    /// Show again (a tool call's chip): the call's marks come back and the
+    /// viewer goes to the first.
+    func showAgain(toolUseId: String, chat: Int) {
+        guard let first = model?.markStore.showAgain(chat: chat, toolUseId: toolUseId).first else { return }
+        goToMark(first, chat: chat)
+    }
+
+    /// Scroll to `mark`, going to its page first when the viewer is on
+    /// another: the chat's artifact for that page if there is one, else
+    /// the page loaded in the attached view (so Back returns).
+    func goToMark(_ mark: Mark, chat: Int) {
+        Task { [weak self] in await self?.go(to: mark, chat: chat) }
+    }
+
+    /// How long going to a mark on another page waits for it to load.
+    var markPageWait: Duration = .seconds(5)
+
+    private func go(to mark: Mark, chat: Int) async {
+        guard let model else { return }
+        // As for an act: the person sees the viewer it goes to. The
+        // document view gives the window back and a collapsed viewer opens
+        // (its web pane comes back with it).
+        model.closeDocumentView()
+        if !model.isViewerShown(for: chat) { model.setViewer(visible: true, for: chat) }
+        let due = ContinuousClock.now + markPageWait
+        let shown = model.shownArtifact(for: chat)
+        let shownLoad = shown.flatMap { WebPane.Load(ArtifactPresentation(artifact: $0)) }
+        // A web pane for the shown artifact that is on its way back.
+        if shownLoad != nil {
+            while web?.view == nil, ContinuousClock.now < due { try? await Task.sleep(for: .milliseconds(25)) }
+        }
+        if let view = web?.view, !view.isLoading, await page(of: view)?.key == mark.page.key {
+            await redraw(view)
+            _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": mark.number], in: view, quiet: true)
+            return
+        }
+        let listed = (model.artifacts[chat] ?? []).filter { $0.id != shown?.id }
+        if let shown, Self.pageKey(of: shown) == mark.page.key,
+           let shownLoad, web?.load == shownLoad, web?.view?.isLoading ?? true {
+            // The shown artifact is the mark's page and its pane is loading
+            // it (it just came back): wait for it below.
+        } else if let artifact = listed.first(where: { Self.pageKey(of: $0) == mark.page.key }) {
+            // Another of the chat's artifacts (the pane may be another
+            // kind, an image or a PDF): show it in its place.
+            model.show(artifact, in: chat)
+        } else if let view = web?.view, let url = markURL(mark.page.key) {
+            // The shown artifact's page the person followed a link away
+            // from, or a page reached from it: loaded in the view, so Back
+            // returns.
+            view.load(URLRequest(url: url))
+        } else {
+            return
+        }
+        while ContinuousClock.now < due {
+            try? await Task.sleep(for: .milliseconds(50))
+            guard let view = web?.view, !view.isLoading, await page(of: view)?.key == mark.page.key else { continue }
+            await redraw(view)
+            _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": mark.number], in: view, quiet: true)
+            return
+        }
+    }
+
+    /// What to load for a page key: a file path served by the pane, or the
+    /// page's own address.
+    private func markURL(_ key: String) -> URL? {
+        if key.hasPrefix("/") {
+            // A space's file hides the same front matter it hides as a space.
+            let isSpace = model?.spaces.contains { space in
+                URL(fileURLWithPath: space.location).standardizedFileURL.resolvingSymlinksInPath().path == key
+            } ?? false
+            return web?.coordinator?.renderedURL(
+                for: URL(fileURLWithPath: key), hiding: isSpace ? SpacesPresentation.hiddenFrontMatterKeys : [])
+        }
+        guard let url = URL(string: key), let scheme = url.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) else { return nil }
+        return url
     }
 
     // MARK: other panes
@@ -537,6 +982,11 @@ final class ViewerAgent: ObservableObject {
             return fail(act, Message.notUsed(kind: kind))
         case .back:
             return fail(act, "There's nothing to go back to in the viewer.")
+        case .mark:
+            return fail(act, Message.marksOnWebPages(kind: kind))
+        case .clearMarks:
+            let count = model?.markStore.clear(chat: runChat) ?? 0
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
         }
     }
 
@@ -684,7 +1134,7 @@ private final class JavaScriptRace {
 enum ViewerAgentScript {
     /// `window.__porticoAgent.__portico`: what tells the app's script from
     /// a page's own object under that name.
-    static let marker = "viewer-agent-2"
+    static let marker = "viewer-agent-4"
 
     /// `Resources/viewer-agent.js`, read once.
     static let source: String? = AppResources.url(forResource: "viewer-agent", withExtension: "js")
@@ -755,6 +1205,9 @@ extension EnvironmentValues {
     /// The agent that acts in the viewer; set by `ViewerView` for its
     /// panes only (the document view's panes are not the agent's).
     @Entry var viewerAgent: ViewerAgent? = nil
+    /// Which of the viewer column's two viewers a pane is in (Work's, or
+    /// the open space's over it); `nil` outside the viewer column.
+    @Entry var viewerSlot: ViewerAgent.Slot? = nil
 }
 
 /// Registers the view behind a native pane with the agent, for its snapshot.
@@ -763,7 +1216,7 @@ struct ViewerPaneAnchor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        agent.attachPane(view)
+        agent.attachPane(view, slot: context.environment.viewerSlot)
         return view
     }
 
@@ -773,7 +1226,8 @@ struct ViewerPaneAnchor: NSViewRepresentable {
 
 /// While the agent acts, a 3 pt accent line and a soft inner glow around
 /// the page (v0.13 decision 2, Pen AL1), in place of v0.12's header label.
-/// It pulses gently, holds steady under Reduce Motion, and goes with the
+/// It pulses gently (75-100% since v0.14, §6b.3; the glow stronger too),
+/// holds steady under Reduce Motion, and goes with the
 /// label's timing: `labelLinger` after the last action, at once on Stop.
 struct ViewerActingGlow: View {
     @ObservedObject var agent: ViewerAgent
@@ -785,17 +1239,23 @@ struct ViewerActingGlow: View {
     static let label = "Agent is using the viewer"
     /// One breath, in and out.
     static let period: Double = 1.6
-    static let dimOpacity: Double = 0.55
+    /// The pulse's floor: 75-100% (v0.13 was 55-100%).
+    static let dimOpacity: Double = 0.75
     static let lineWidth: CGFloat = 3
+    /// The glow: a band of accent inside the edge, blurred (v0.13: 10 pt at 45%, blur 8).
+    static let glowWidth: CGFloat = 14
+    static let glowOpacity: Double = 0.7
+    static let glowBlur: CGFloat = 10
 
     var body: some View {
         if agent.actingChat == chat {
             ZStack {
                 // The glow breathes; the line stays at full strength so it
-                // reads on any page (Larry 10-31: "a little brighter").
+                // reads on any page (Larry 10-31: "a little brighter";
+                // 11-01: still hard to see, so v0.14 strengthens the glow).
                 Rectangle()
-                    .strokeBorder(accent.opacity(0.45), lineWidth: 10)
-                    .blur(radius: 8)
+                    .strokeBorder(accent.opacity(Self.glowOpacity), lineWidth: Self.glowWidth)
+                    .blur(radius: Self.glowBlur)
                     .opacity(reduceMotion ? 1 : (dim ? Self.dimOpacity : 1))
                 Rectangle()
                     .strokeBorder(accent, lineWidth: Self.lineWidth)

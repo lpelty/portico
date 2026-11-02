@@ -25,6 +25,7 @@ from portico_gateway.messages import (
     parse_server,
 )
 from portico_gateway.viewer import (
+    NEEDS_UPDATE,
     NO_ANSWER,
     NOT_AVAILABLE,
     SETTING_OFF,
@@ -52,13 +53,20 @@ class FakeApp:
             self.bridge.resolve(conn, self.reply.model_copy(update={"id": act.id}))
 
 
-def make_bridge(reply: ViewerResult | None = None, capable: bool = True, defaults: tuple[bool, bool] = (True, True)):
+def make_bridge(
+    reply: ViewerResult | None = None,
+    capable: bool = True,
+    defaults: tuple[bool, bool] = (True, True),
+    marks_capable: bool = True,
+):
     holder: dict[str, FakeApp] = {}
 
     async def send(conn: Any, act: ViewerAct) -> None:
         await holder["app"].send(conn, act)
 
-    bridge = ViewerBridge(send, capable=lambda conn: capable, defaults=defaults)
+    bridge = ViewerBridge(
+        send, capable=lambda conn: capable, defaults=defaults, marks_capable=lambda conn: marks_capable
+    )
     holder["app"] = FakeApp(bridge, reply)
     return bridge, holder["app"]
 
@@ -136,13 +144,23 @@ async def test_setting_off_refuses_every_tool_but_show() -> None:
     bridge, app = make_bridge(ok())
     bridge.set_target(object(), False, True)
     tools = by_name(build_viewer_tools(bridge, 1))
-    assert set(tools) == {"viewer_look", "viewer_click", "viewer_type", "viewer_scroll", "viewer_back"}
+    assert set(tools) == {
+        "viewer_look",
+        "viewer_click",
+        "viewer_type",
+        "viewer_scroll",
+        "viewer_back",
+        "viewer_mark",
+        "viewer_clear_marks",
+    }
     for name, args in [
         ("viewer_look", {}),
         ("viewer_click", {"target": "e1"}),
         ("viewer_type", {"target": "e1", "text": "x"}),
         ("viewer_scroll", {"direction": "up"}),
         ("viewer_back", {}),
+        ("viewer_mark", {"marks": [{"target": "e1"}]}),
+        ("viewer_clear_marks", {}),
     ]:
         out = await tools[name].handler(args)
         assert out == {"content": [{"type": "text", "text": SETTING_OFF}], "is_error": True}, name
@@ -541,3 +559,113 @@ async def test_bash_read_of_old_html_no_context(tmp_path: Path) -> None:
     stamp = old.stat().st_mtime - 3600
     os.utime(old, (stamp, stamp))
     assert await hook(bash_input("cat proto/old.html", tmp_path), "t", None) == {}
+
+
+# --- v0.14: marks ------------------------------------------------------------------
+
+MARKS = [{"target": "e3", "note": "No axis labels"}]
+
+
+def marks_tools(bridge: ViewerBridge) -> dict[str, Any]:
+    return by_name(build_viewer_tools(bridge, 1))
+
+
+async def test_mark_sends_act_with_marks_and_replace() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    await marks_tools(bridge)["viewer_mark"].handler({"marks": MARKS})
+    assert [(a.action, a.args) for a in app.acts] == [("mark", {"marks": MARKS, "replace": False})]
+
+
+async def test_mark_replace_string_false_is_false() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    tool = marks_tools(bridge)["viewer_mark"]
+    for given, expect in (("false", False), ("true", False), (True, True), (False, False)):
+        await tool.handler({"marks": MARKS, "replace": given})
+        assert app.acts[-1].args["replace"] is expect, given
+
+
+@pytest.mark.parametrize("marks", [[], [{"target": f"e{i}"} for i in range(10)]])
+async def test_mark_rejects_zero_and_ten(marks: list[dict[str, str]]) -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    out = await marks_tools(bridge)["viewer_mark"].handler({"marks": marks})
+    assert out == {"content": [{"type": "text", "text": "Mark 1 to 9 things at a time."}], "is_error": True}
+    assert app.acts == []
+
+
+async def test_mark_without_marks_capability_says_update() -> None:
+    bridge, app = make_bridge(ok(), marks_capable=False)
+    bridge.set_target(object(), True, True)
+    tools = marks_tools(bridge)
+    for name, args in (("viewer_mark", {"marks": MARKS}), ("viewer_clear_marks", {})):
+        out = await tools[name].handler(args)
+        assert out == {"content": [{"type": "text", "text": NEEDS_UPDATE}], "is_error": True}, name
+    assert NEEDS_UPDATE == "This Portico can't show marks yet; it needs updating."
+    assert app.acts == []
+    # the other viewer tools still work on such an app
+    await tools["viewer_look"].handler({})
+    assert [a.action for a in app.acts] == ["look"]
+
+
+async def test_marks_order_of_refusals() -> None:
+    bridge, _ = make_bridge(ok(), marks_capable=False)
+    tool = marks_tools(bridge)["viewer_mark"]
+    out = await tool.handler({"marks": MARKS})
+    assert out["content"][0]["text"] == NOT_AVAILABLE  # no app
+    bridge.set_target(object(), False, True)
+    out = await tool.handler({"marks": MARKS})
+    assert out["content"][0]["text"] == SETTING_OFF  # setting off
+    bridge.set_target(object(), True, True)
+    out = await tool.handler({"marks": MARKS})
+    assert out["content"][0]["text"] == NEEDS_UPDATE
+
+
+async def test_clear_marks_sends_clear_marks() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    await marks_tools(bridge)["viewer_clear_marks"].handler({})
+    assert [(a.action, a.args) for a in app.acts] == [("clear_marks", {})]
+
+
+async def test_mark_carries_noted_tool_use_id() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    tool = marks_tools(bridge)["viewer_mark"]
+    bridge.note_mark_use(1, "toolu_1", {"marks": MARKS})
+    await tool.handler({"marks": MARKS})
+    await tool.handler({"marks": MARKS})
+    assert app.acts[0].args["tool_use_id"] == "toolu_1"
+    assert "tool_use_id" not in app.acts[1].args
+
+
+def test_take_mark_use_matches_chat_and_input_once() -> None:
+    bridge, _ = make_bridge()
+    bridge.note_mark_use(1, "a", {"marks": MARKS})
+    assert bridge.take_mark_use(2, {"marks": MARKS}) is None
+    assert bridge.take_mark_use(1, {"marks": [{"target": "e9"}]}) is None
+    assert bridge.take_mark_use(1, {"marks": MARKS}) == "a"
+    assert bridge.take_mark_use(1, {"marks": MARKS}) is None
+
+
+def test_viewer_tool_names_include_marks() -> None:
+    assert "mcp__portico__viewer_mark" in VIEWER_TOOL_NAMES
+    assert "mcp__portico__viewer_clear_marks" in VIEWER_TOOL_NAMES
+
+
+async def test_mark_hook_notes_the_tool_use_id() -> None:
+    from portico_gateway.engine import build_mark_hook
+
+    bridge, _ = make_bridge()
+    hook = build_mark_hook(bridge, 4)
+    out = await hook({"tool_name": "mcp__portico__viewer_mark", "tool_input": {"marks": MARKS}, "tool_use_id": "toolu_9"}, "toolu_9", None)
+    assert out == {}
+    assert bridge.take_mark_use(4, {"marks": MARKS}) == "toolu_9"
+
+
+def test_build_options_hooks_viewer_mark(tmp_path: Path) -> None:
+    bridge, _ = make_bridge()
+    options = build_options(tmp_path, None, ["project"], WithBridge(bridge))
+    matchers = [m.matcher for m in options.hooks["PreToolUse"]]
+    assert "mcp__portico__viewer_mark" in matchers

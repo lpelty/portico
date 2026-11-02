@@ -89,7 +89,8 @@ messages every app reads: `agents.v1` (see Subagents and
 workflows): without it the gateway sends none of those frames; v0.11:
 `queue.v1` (see Messages while the agent works); v0.12: `viewer.v1`
 (the app can carry out `viewer.act`; see The viewer and spaces) and
-`spaces.v1` (it shows `spaces.list`). Absent
+`spaces.v1` (it shows `spaces.list`); v0.14: `viewer.marks.v1` (it
+can draw the agent's marks; see The viewer and spaces). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -453,8 +454,8 @@ services; v0.10: `agents.v1` when the gateway sends subagent and workflow
 frames to an app that lists the same in its own `hello`; v0.11:
 `sessions.clear` in single presentation, so the app offers Clear earlier
 sessions…; v0.11: `queue.v1` when it queues a send made during a turn for
-an app that lists the same; v0.12: `spaces.v1` when `[spaces] folder` is
-set, and `spaces.refresh` as well when `[spaces] refresh` is, so the app
+an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
+`[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`
 and (v0.11) any kept `chat.commands`.
@@ -1078,12 +1079,13 @@ gateway never sends it.
 
 ### The agent's view of the viewer
 
-The reference gateway gives the agent five tools beside `show_in_viewer`
+The reference gateway gives the agent seven tools beside `show_in_viewer`
 (in-process, allowed outright, no permission card in any mode):
 `viewer_look` (a PNG of the viewer as shown, what is open, an outline of
 the page with a ref such as `e12` on each line, and the page errors since
 the last look), `viewer_click(target)`, `viewer_type(target, text,
-submit?)`, `viewer_scroll(direction | target)` and `viewer_back()`. A
+submit?)`, `viewer_scroll(direction | target)`, `viewer_back()`, and (v0.14)
+`viewer_mark(marks, replace?)` and `viewer_clear_marks()`. A
 `target` is a ref from the last look, or the visible text of a button or
 link. Each carries out its action in the app over the connection and
 returns what happened. The tool texts are the reference gateway's and the
@@ -1103,9 +1105,15 @@ it is the one `viewer.act` goes to. Until one does, the gateway uses
 `hello.viewer_defaults`.
 
 #### `viewer.act` — `ViewerAct` *(gateway → app)*
-`id`, `chat`, `action: look | click | type | scroll | back`, `args`
-(`{}` for `look` and `back`; `{target}` for `click`; `{target, text,
-submit}` for `type`; `{direction}` or `{target}` for `scroll`). Sent
+`id`, `chat`, `action: look | click | type | scroll | back | mark |
+clear_marks`, `args` (`{}` for `look`, `back` and `clear_marks`;
+`{target}` for `click`; `{target, text, submit}` for `type`;
+`{direction}` or `{target}` for `scroll`; v0.14: `{marks: [{target,
+note?}], replace: bool, tool_use_id?}` for `mark`, 1 to 9 marks, `note`
+at most 60 characters, `tool_use_id` the agent's tool call that made
+them). `mark` and `clear_marks` go only to an app that declared
+`viewer.marks.v1`; the app answers both with the ordinary
+`viewer.result`. Sent
 only to an app that declared `viewer.v1`, and only when the person has not
 turned the agent's view off. The app shows the viewer for `chat` if it is
 not open. In multiple presentation an act for a chat that is not on
@@ -1125,11 +1133,19 @@ sentence, never a hang, when:
   available right now (Portico isn't open).";
 - the person turned the view off: "The person has turned off the agent's
   view of the viewer in Settings.";
+- the app lacks `viewer.marks.v1` and the act is `mark` or
+  `clear_marks`: "This Portico can't show marks yet; it needs updating.";
+- `viewer_mark` is given no marks or more than nine: "Mark 1 to 9 things
+  at a time." (the gateway answers; nothing is sent);
 - the app does not answer in time: "The viewer didn't answer in 10 s.";
 - the app disconnects while an act is pending: the same sentence as no app.
 
 What the app puts in `text` and `ok: false` for a page it cannot act on
-(nothing open, a stale ref "Not found — look again", an image or PDF
+(nothing open, a stale ref "Not found — look again" — or, when the
+person clicked, pressed a key or scrolled on the page since the agent's
+last look, "The person used the page since your last look; look again.",
+or, for a ref from a page that has reloaded or been replaced since that
+look, "The page reloaded since your last look; look again." — an image or PDF
 pane "can be looked at, not used", a page whose host is not allowed) is
 the app's. For outside sites the app checks the page's *current* host at
 every click and type against `viewer_defaults.act_hosts` (a redirect or a
@@ -1145,14 +1161,18 @@ hook reads the setting each time. This is gateway behaviour; no frame.
 ### Spaces
 
 A space is one Markdown or HTML file the agent keeps current, in the
-folder configured as `[spaces] folder`. Its id is the file name without
+folder configured as `[spaces] folder`, or, when that is not set (v0.14),
+`spaces` in the state directory (created at start if missing). Its id is the file name without
 the extension. Its title, icon and order come from front matter (`---`
 lines at the top) or, for any file, a leading `<!-- key: value -->`
 block: `title`, `icon` (an SF Symbol name; default `doc.text`), `order`
 (an integer, optional). A file with broken or missing front matter, or
 that is not UTF-8, is listed by its file name with the defaults. Files
-whose names start with `.` or `_` are not spaces. Portico schedules
-nothing: the deployment (or the agent) rewrites the files.
+whose names start with `.` or `_` are not spaces. Subfolders of the
+spaces folder are ignored: nothing inside them is listed or watched.
+(v0.14: a deployment can keep a space's scripts in a same-named
+subfolder.) Portico schedules nothing: the deployment (or the agent)
+rewrites the files.
 
 The gateway looks at the folder every 5 s (modification times) and also
 after any of the actions below. It sends `spaces.list` only to an app that
@@ -1179,7 +1199,7 @@ Refresh and remove run beside the app's other frames, not ahead of them.
 Symbolic links in the folder are not spaces. A title that would go into
 an HTML comment block cannot contain `--` (`space.invalid`).
 
-Error codes: `space.not_configured` (no spaces folder), `space.not_found`,
+Error codes: `space.not_configured` (no spaces folder; since v0.14 a gateway always has one), `space.not_found`,
 `space.invalid` (rename with an empty title, or with `--` in a title kept
 in a comment block), `space.no_refresh` (no refresh command),
 `space.refresh_failed`, `space.rename_failed`,

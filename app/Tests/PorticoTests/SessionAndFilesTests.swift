@@ -464,14 +464,15 @@ final class SessionAndFilesTests: XCTestCase {
         XCTAssertNil(Obsidian.vault(containing: base.appendingPathComponent("loose.md").path))
     }
 
-    /// v0.11 (69): the viewer's buttons keep their words while it is wide
-    /// and turn to icons with tooltips when it is narrow.
+    /// v0.11 (69), measured since v0.14: the open buttons keep their
+    /// words while the header has room, icons with tooltips when it has not
+    /// (the thresholds themselves are `HeaderFitTests`).
     func testViewerHeaderLabelsOnlyWhenWide() {
-        XCTAssertTrue(ViewerHeaderButtons.labelled(width: 620, obsidian: true))
-        XCTAssertFalse(ViewerHeaderButtons.labelled(width: 500, obsidian: true))
-        XCTAssertTrue(ViewerHeaderButtons.labelled(width: 500, obsidian: false), "one button needs less room")
-        XCTAssertFalse(ViewerHeaderButtons.labelled(width: 380, obsidian: false))
-        XCTAssertTrue(ViewerHeaderButtons.labelled(width: nil, obsidian: true), "not measured yet: words")
+        let alone = HeaderFit.Widths(title: 180, note: 0, chipFull: 0, chipShort: 0, chipCount: 0,
+                                     buttonsLabelled: 125, buttonsIcons: 30, fixed: 108)
+        XCTAssertTrue(HeaderFit.step(available: 420, alone).labelled)
+        XCTAssertFalse(HeaderFit.step(available: 380, alone).labelled)
+        XCTAssertTrue(HeaderFit.step(available: nil, alone).labelled, "not measured yet: words")
     }
 
     /// v0.11 (70): CHANGED THIS SESSION shows five rows in the folder

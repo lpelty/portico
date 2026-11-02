@@ -602,3 +602,40 @@ def test_spaces_refresh_capability_only_with_command(tmp_path: Path) -> None:
     assert "spaces.refresh" in hello_for(cfg, "e", "0.12.0").capabilities
     # A refresh command without a folder advertises nothing.
     assert "spaces.refresh" not in hello_for(Config(spaces={"refresh": "true"}), "e", "0.12.0").capabilities
+
+
+# --- v0.14: the default spaces folder ---------------------------------------------
+
+
+def test_default_spaces_folder_is_created_in_the_state_dir(tmp_path: Path) -> None:
+    from portico_gateway.config import with_default_spaces
+
+    cfg = with_default_spaces(Config(), tmp_path / "home")
+    folder = tmp_path / "home" / "spaces"
+    assert folder.is_dir()
+    assert cfg.spaces.folder == str(folder.resolve())
+    assert "spaces.v1" in hello_for(cfg, "e", "0.14.0").capabilities
+
+
+def test_configured_spaces_folder_wins_and_nothing_is_created(tmp_path: Path) -> None:
+    from portico_gateway.config import with_default_spaces
+
+    (tmp_path / "sp").mkdir()
+    cfg = _load(tmp_path, f'[spaces]\nfolder = "{tmp_path / "sp"}"\n')
+    out = with_default_spaces(cfg, tmp_path / "home")
+    assert out.spaces.folder == cfg.spaces.folder
+    assert not (tmp_path / "home" / "spaces").exists()
+
+
+def test_configured_spaces_folder_must_still_exist(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError):
+        _load(tmp_path, f'[spaces]\nfolder = "{tmp_path / "nope"}"\n')
+
+
+def test_default_spaces_folder_keeps_refresh_and_remove(tmp_path: Path) -> None:
+    from portico_gateway.config import with_default_spaces
+
+    cfg = _load(tmp_path, '[spaces]\nrefresh = "true"\nremove = "true"\n')
+    out = with_default_spaces(cfg, tmp_path / "home")
+    assert (out.spaces.refresh, out.spaces.remove) == ("true", "true")
+    assert out.spaces.folder is not None

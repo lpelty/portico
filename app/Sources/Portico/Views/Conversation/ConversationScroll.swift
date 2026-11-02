@@ -1,15 +1,19 @@
 import CoreGraphics
 
-/// Where the conversation was last seen, so a
-/// change of the column's width (the viewer opening or closing, the
-/// sidebar folding) puts it back there (v0.11 decision 6, item 67).
+/// Whether the conversation was last seen at its bottom, so a change of
+/// the column's width (the viewer opening or closing, a space opening or
+/// going back to Work, the sidebar folding) keeps it there (v0.11
+/// decision 6, item 67).
 ///
-/// A narrower column wraps every line again and the transcript grows; the
-/// scroll view keeps its offset from the top, so what was in view slides
-/// away and the bottom is no longer the bottom. This remembers the place
-/// it was last seen at, read as it scrolls but never from the
-/// change of width itself, and says where to go after the width changes:
-/// the bottom when it was at the bottom, else the same top message.
+/// A narrower column wraps every line again and the transcript grows, so
+/// the bottom is no longer the bottom: that case scrolls back to it. A
+/// conversation scrolled up is left alone: the scroll view's own position
+/// (`scrollPosition(id:anchor:)`) keeps the message at the top and the
+/// point in it across the reflow. v0.14 fix: this used to scroll to the
+/// start of a remembered top message as well, which was coarse (the start
+/// of a long reply, not the line being read) and could be stale (noted
+/// only when the view left the bottom), so a space and back jumped the
+/// conversation to another place.
 struct ConversationScrollMemory: Equatable, Sendable {
     /// How close to the end still counts as at the bottom.
     static let bottomSlack: CGFloat = 24
@@ -17,13 +21,10 @@ struct ConversationScrollMemory: Equatable, Sendable {
     /// Where to scroll after the width changes.
     enum Target: Equatable, Sendable {
         case bottom
-        case item(String)
     }
 
     /// At the bottom until the person scrolls away: a conversation opens there.
     private(set) var atBottom = true
-    /// The message at the top of the view when it was last seen.
-    private(set) var topItem: String?
     /// The column's width the place was last seen at.
     private(set) var width: CGFloat?
 
@@ -33,18 +34,33 @@ struct ConversationScrollMemory: Equatable, Sendable {
     }
 
     /// The conversation is seen at this place (scrolled there, or following the newest message).
-    mutating func seen(atBottom: Bool, topItem: String?, width: CGFloat) {
+    mutating func seen(atBottom: Bool, width: CGFloat) {
         self.atBottom = atBottom
-        self.topItem = topItem
         self.width = width
     }
 
-    /// The column became `newWidth` wide: where to scroll so the person
-    /// sees what they saw, or `nil` when nothing changed or nothing is known.
+    /// One scroll-geometry reading, as the view gets it (its width and
+    /// whether it is at the end). Returns where to scroll, if anywhere.
+    ///
+    /// A reading taken on a frame whose width changed is the reflow's, not
+    /// the person's (fix round 1): scrolled up near the end, a step of the
+    /// column's animation can read as the bottom, and recording it would
+    /// snap the conversation to its end at the next change. Only readings
+    /// at an unchanged width say where the person is.
+    mutating func observe(width: CGFloat, atBottom: Bool) -> Target? {
+        if let known = self.width, abs(known - width) >= 1 {
+            return widthChanged(to: width)
+        }
+        seen(atBottom: atBottom, width: width)
+        return nil
+    }
+
+    /// The column became `newWidth` wide: `.bottom` when it was at the
+    /// bottom; `nil` when nothing changed, nothing is known, or it was
+    /// scrolled up (the scroll view keeps that place itself).
     mutating func widthChanged(to newWidth: CGFloat) -> Target? {
         defer { width = newWidth }
         guard let width, abs(width - newWidth) >= 1 else { return nil }
-        if atBottom { return .bottom }
-        return topItem.map(Target.item)
+        return atBottom ? .bottom : nil
     }
 }

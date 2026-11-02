@@ -4766,7 +4766,9 @@
             "click",
             "type",
             "scroll",
-            "back"
+            "back",
+            "mark",
+            "clear_marks"
           ],
           "title": "Action",
           "type": "string"

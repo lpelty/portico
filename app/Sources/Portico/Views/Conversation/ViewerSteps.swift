@@ -54,11 +54,14 @@ enum TranscriptEntry: Identifiable, Equatable {
 enum ViewerSteps {
     static let prefix = "mcp__portico__viewer_"
 
-    static func isStep(_ row: ToolRow) -> Bool { row.tool.hasPrefix(prefix) }
+    /// The Mark row stands alone, as "Show in viewer" does (v0.14 3.5).
+    static let markTool = "mcp__portico__viewer_mark"
 
-    /// `viewer_click` reads "Click".
+    static func isStep(_ row: ToolRow) -> Bool { row.tool.hasPrefix(prefix) && row.tool != markTool }
+
+    /// `viewer_click` reads "Click"; `viewer_clear_marks` reads "Clear marks".
     static func verb(_ row: ToolRow) -> String {
-        let name = row.tool.dropFirst(prefix.count)
+        let name = row.tool.dropFirst(prefix.count).replacingOccurrences(of: "_", with: " ")
         return name.prefix(1).uppercased() + name.dropFirst()
     }
 

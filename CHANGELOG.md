@@ -1,5 +1,107 @@
 # Changelog
 
+## v0.14.0 (2026-11-01)
+
+### What a person gets (app)
+
+- **The space switcher always shows.** With no spaces its menu lists Work,
+  "No spaces yet" and New space…. Against a gateway too old for spaces,
+  New space… is dimmed ("This Portico gateway is too old for spaces.").
+  The gateway uses `<state dir>/spaces` when `[spaces] folder` is not
+  set, creating it at start and advertising `spaces.v1` as for a
+  configured folder.
+
+- **The agent can point at things on a page.** After a critique, "show me
+  all three" draws a numbered accent box with a short note on each part of
+  the page, and scrolls to the first. Marks work on HTML files, Markdown,
+  spaces and outside sites (including ones the agent may only look at). On
+  an image, PDF, text file or table the agent says marks are for web
+  pages. Marks sit on top of the page, change nothing in it and don't
+  block clicks or scrolling.
+- **Marks belong to their page.** Leaving a page hides its marks and
+  coming back shows them. A new page's marks carry on the numbering (1-3
+  here, then 4 on the next screen). A jump to a `#` heading hides nothing.
+- **Kept until cleared or the session ends.** A click or Esc doesn't clear
+  them. A new or resumed session starts with none.
+- **A marks chip in the viewer header** ("4 marks · 2 pages"). It shows
+  only while there are marks and opens a list grouped by page. Choose a
+  mark to scroll to it, going to its page first if needed. Clear all marks
+  is at the bottom; numbering then starts again at 1.
+- **When the agent changes a marked page,** each mark is found again. One
+  whose element is gone is listed dimmed as "not on the page now".
+- **Show again on the conversation's Mark row** brings that call's marks
+  back, going to their page first. Rows from a resumed session don't have
+  it.
+- **The viewer header gives way by measured fit,** not fixed widths. When
+  it runs short: the Open buttons lose their words, the outside-site note
+  shortens, the chip shortens ("4 marks", then "4"), then the title
+  shortens in the middle. Focus and Collapse always stay.
+
+### Protocol and gateway
+
+- Two agent tools, `viewer_mark` (1-9 targets with optional notes of up to
+  60 characters, `replace` to start over) and `viewer_clear_marks`, over
+  `viewer.act` with the actions `mark` and `clear_marks`. They follow the
+  other viewer tools: off with **Agent can see the viewer**, same timeout.
+- The app announces `viewer.marks.v1`. With an older app both tools answer
+  "This Portico can't show marks yet; it needs updating."
+- `viewer_look` lists the marks in use, so the agent knows the numbers.
+- Marks live in the app, per chat; the gateway keeps nothing. Gateway
+  version 0.14.0 to match the app.
+
+### From the v0.13 field report
+
+- **`bin/update` stops the running gateway.** After moving to the new tag
+  (or pulling main) it stops a gateway still running the old version and
+  says "Stopped the running gateway (it was the old version); Portico
+  starts the new one." With no gateway running it says nothing. If the
+  install then fails, it says "update: install failed; the gateway was
+  stopped. Fix the error above, then run bin/install."
+- **The viewer divider is as easy to grab as the sidebar's.** Its 14 pt
+  grip now sits wholly on the conversation side; the web page beside it
+  had taken the half over it. The conversation's scrollers move in by as
+  much while the viewer is open, so they stay draggable.
+- **A brighter acting glow.** The line stays 3 pt at full accent; the glow
+  is wider, stronger and more blurred, and its pulse runs 75-100% (was
+  55-100%). Still steady with Reduce Motion.
+- **"The person used the page since your last look."** When a click,
+  typing, scroll-to or mark target isn't found and the person has clicked,
+  pressed a key or scrolled on the page since the agent's last look, the
+  agent hears "The person used the page since your last look; look
+  again." instead of "Not found — look again" (a mark call that finds
+  only some targets says it for the rest). The viewer is not locked; the
+  person's input still wins. A ref from a page that reloaded or was
+  replaced since the look says so: "The page reloaded since your last
+  look; look again."
+- **A space and back keeps the Work viewer as it was.** The Work page
+  stays loaded under an open space, so going back to Work does not load
+  it again: its scroll, what the person typed, and the refs of the
+  agent's last look are all still there.
+- **The conversation keeps its place across a space and back.** A
+  scrolled-up conversation no longer jumps to the start of a remembered
+  message when the column narrows and widens.
+- **New space… fills the composer on screen.** On the welcome that
+  continues the live session it went into that session's draft, which no
+  composer there shows; on an earlier, read-only session it had no
+  composer at all. It now fills the welcome's composer, or takes the
+  person to the live session and fills its composer.
+- **The services menu's Stop and Restart show for the whole row.** Only
+  the row's words were the hover target; now the whole row is, and the
+  buttons are drawn as the app's other small row actions.
+- **A heading inside a clickable card clicks the card.** Click by text
+  also matches headings, after buttons and links. When the heading sits in
+  a clickable card (a link, a button, `[role=button]`, an element with a
+  click handler or `cursor: pointer`), the heading is clicked and the
+  click reaches the card as a person's would. Something holding other
+  headings or covering most of the viewport (a list, a page, a dialog's
+  backdrop) is not a card. Otherwise the answer is "That's a heading, not
+  something to click; use its ref."
+- **Subfolders of the spaces folder are ignored**, now a documented
+  guarantee: only top-level `.md`, `.markdown`, `.html` and `.htm` files
+  are spaces, and nothing inside a subfolder is listed or watched, so a
+  deployment can keep a space's scripts in a same-named subfolder. Stated
+  in PROTOCOL.md and pinned by tests.
+
 ## v0.13.0 (2026-10-31)
 
 ### What a person gets (app)

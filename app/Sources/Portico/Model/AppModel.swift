@@ -403,6 +403,9 @@ final class AppModel: ObservableObject {
     /// gateway address override a stop without a socket looks at.
     let settings: Settings
 
+    /// The marks the agent has drawn in the viewer, per chat.
+    let markStore = MarkStore()
+
     /// What the app says it is in `hello`; the app sets it at launch, and
     /// `run` again, so a stop without the loop's socket can attach too.
     var appVersion: String = "0.0.0-dev"
@@ -567,8 +570,19 @@ final class AppModel: ObservableObject {
 
     /// "New space…": the composer gets "New space: " for the person to finish
     /// in plain words, and focus. No form (spec 4.4).
+    ///
+    /// The composer on screen, which is not always the shown chat's (v0.14
+    /// test fix): the welcome continuing the live session (Y1) has the start
+    /// composer, and an earlier session is read-only, so New space… takes
+    /// the person to the live session (or the welcome) and fills that.
     func beginNewSpace() {
-        if let chat = shownChat {
+        if let shown = documentMode ? filesChat : selected, showsEarlierBar(chat: shown) {
+            closeDocumentView()
+            if let live = backTarget(from: shown) { open(chat: live) } else { showStart() }
+        }
+        if documentMode, let chat = filesChat {
+            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
+        } else if case .conversation(let chat) = mainScreen {
             setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
         } else {
             startDraft = SpacesPresentation.newSpaceDraft(existing: startDraft)

@@ -117,6 +117,17 @@ def test_scan_ignores_dot_underscore(spaces_dir: Path) -> None:
     assert ids(scan(spaces_dir)) == ["real"]
 
 
+def test_scan_ignores_a_same_named_subfolder(spaces_dir: Path) -> None:
+    """v0.14 §6b.6: subfolders of the spaces folder are ignored; nothing inside them is listed."""
+    put(spaces_dir, "brief.html", "<!-- title: Brief -->\n<p>Acme</p>\n")
+    (spaces_dir / "brief").mkdir()
+    put(spaces_dir / "brief", "x.html", "<p>script output</p>")
+    put(spaces_dir / "brief", "y.md", "---\ntitle: Y\n---\n")
+    [space] = scan(spaces_dir)
+    assert (space.id, space.title) == ("brief", "Brief")
+    assert space.location == str((spaces_dir / "brief.html").resolve())
+
+
 def test_scan_bad_front_matter_listed_by_stem(spaces_dir: Path) -> None:
     put(spaces_dir, "oops.md", "---\ntitle Missing colon\nicon: x\n---\ntext\n")
     put(spaces_dir, "open.md", "---\ntitle: Never closed\n\ntext\n")
@@ -183,6 +194,33 @@ async def test_watcher_fires_on_add_change_remove(spaces_dir: Path) -> None:
     path.unlink()
     await watcher.poll()
     assert seen[-1] == [] and len(seen) == 3
+
+
+async def test_watcher_ignores_changes_inside_a_subfolder(spaces_dir: Path) -> None:
+    """v0.14 §6b.6: nothing inside a subfolder is watched: adding, changing or removing there sends no list."""
+    seen: list[list[Space]] = []
+
+    async def on_change(spaces: list[Space]) -> None:
+        seen.append(spaces)
+
+    put(spaces_dir, "brief.html", "<p>Acme</p>")
+    sub = spaces_dir / "brief"
+    sub.mkdir()
+    x = put(sub, "x.html", "<p>one</p>")
+    watcher = SpacesWatcher(spaces_dir, on_change)
+    assert ids(watcher.spaces) == ["brief"]
+    put(sub, "y.md", "---\ntitle: Y\n---\n")
+    await watcher.poll()
+    x.write_text("<p>two</p>")
+    os.utime(x, (1_900_000_000, 1_900_000_000))
+    os.utime(sub, (1_900_000_000, 1_900_000_000))
+    await watcher.poll()
+    (sub / "deeper").mkdir()
+    put(sub / "deeper", "z.htm", "<p>z</p>")
+    await watcher.poll()
+    x.unlink()
+    await watcher.poll()
+    assert seen == [], "no spaces.list for a change inside brief/"
 
 
 # --- rename ---------------------------------------------------------------------
@@ -377,20 +415,16 @@ async def test_hello_sends_spaces_list_after_services_status(server: GatewayServ
         await conn.close()
 
 
-async def test_no_spaces_no_list(state_dir: StateDir, tmp_path: Path) -> None:
+async def test_no_folder_set_still_sends_an_empty_spaces_list(state_dir: StateDir, tmp_path: Path) -> None:
+    """v0.14: no ``[spaces] folder`` means the default folder, so an app with spaces.v1 gets a (empty) list."""
     from tests.test_server import make_server
 
     srv = make_server(state_dir, make_config())
     await srv.serve(0)
     conn = await hello(srv)
     try:
-        types = []
-        while "chat.list" not in types or "services.status" not in types:
-            types.append(parse_server(await asyncio.wait_for(conn.recv(), 2)).type)
-        with pytest.raises(TimeoutError):
-            while True:
-                types.append(parse_server(await asyncio.wait_for(conn.recv(), 0.3)).type)
-        assert "spaces.list" not in types
+        listing = await frames_until(conn, "spaces.list")
+        assert listing.spaces == []
     finally:
         await conn.close()
         await srv.shutdown()
@@ -554,3 +588,50 @@ async def test_failed_refresh_answers_its_error_with_the_id(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.14: no [spaces] folder means <state dir>/spaces ---------------------------
+
+
+@pytest.fixture
+async def default_server(state_dir: StateDir, factory: EngineFactory) -> AsyncIterator[GatewayServer]:
+    config: Config = make_config(setting_sources=["project"])
+    assert config.spaces.folder is None
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    put(state_dir.path / "spaces", "brief.md", "---\ntitle: Brief\n---\n")  # created at construction; scanned at serve
+    await srv.serve(0)
+    try:
+        yield srv
+    finally:
+        await srv.shutdown()
+
+
+async def test_unset_folder_uses_state_dir_spaces(default_server: GatewayServer, state_dir: StateDir) -> None:
+    folder = state_dir.path / "spaces"
+    assert folder.is_dir()
+    assert default_server.spaces_watcher is not None and default_server.spaces_watcher.folder == folder.resolve()
+    conn = await hello(default_server)
+    try:
+        hello_frame = await frames_until(conn, "hello")
+        assert "spaces.v1" in hello_frame.capabilities
+        listing = await frames_until(conn, "spaces.list")
+        assert [s.id for s in listing.spaces] == ["brief"]
+    finally:
+        await conn.close()
+
+
+async def test_default_folder_works_across_restarts(state_dir: StateDir, factory: EngineFactory) -> None:
+    folder = state_dir.path / "spaces"
+    for run in range(2):
+        config: Config = make_config(setting_sources=["project"])
+        registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+        srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+        if run == 0:
+            put(folder, "kept.md", "---\ntitle: Kept\n---\n")
+        await srv.serve(0)
+        try:
+            assert srv.config.spaces.folder == str(folder.resolve())
+            assert [s.id for s in srv.spaces_watcher.spaces] == ["kept"]  # type: ignore[union-attr]
+        finally:
+            await srv.shutdown()

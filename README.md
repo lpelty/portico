@@ -185,7 +185,7 @@ agent_checks_html = true            # default for Settings > Agent checks HTML i
 act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and type on; ships empty (see below)
 
 [spaces]                            # optional (v0.12): files the agent keeps current, in the app's switcher
-folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space
+folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
 refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
 remove = "my-tool forget-space"     # optional: runs after the file is moved to the Trash; same environment
 ```
@@ -405,7 +405,9 @@ folder's agent instructions. A suggested instruction:
 
 **What the agent can do in the viewer (v0.12).** Beside `show_in_viewer`,
 the agent has `viewer_look`, `viewer_click`, `viewer_type`, `viewer_scroll`
-and `viewer_back`. A look returns a picture of what the viewer shows, an
+and `viewer_back`. Since v0.14 it also has `viewer_mark` (draw numbered,
+noted boxes around parts of a web page; needs `viewer.marks.v1`) and
+`viewer_clear_marks` (remove them all). A look returns a picture of what the viewer shows, an
 outline of the page (a ref such as `e12` on each heading, link, button and
 field) and any page errors since the last look; the other tools act on a
 ref or on a link's or button's visible text. The person sees every action
@@ -429,11 +431,16 @@ It ships empty, and `bin/doctor` prints it ("Agent can click and type on:
 figma.com, lovable.dev" or "Outside sites: look only").
 
 **Spaces.** A space is a Markdown or HTML file the agent keeps current, in
-`[spaces] folder`. The app lists them in a toolbar switcher and opens one
-beside the conversation. A space's name, icon and order come from front
+`[spaces] folder`, or, when that is not set, `spaces` in the state
+directory (`~/.portico/spaces`, created at start). The app always shows
+the toolbar switcher, with "No spaces yet" until there is one, and opens
+a space beside the conversation. On a gateway too old for spaces, New
+space… is dimmed. A space's name, icon and order come from front
 matter (`title`, `icon` as an SF Symbol name, `order`); an HTML file puts
 the same keys in a leading `<!-- ... -->` block. A file with no title is
 listed by its file name, and files starting with `.` or `_` are skipped.
+Subfolders of the spaces folder are ignored: nothing inside them is
+listed or watched.
 Portico schedules nothing: the deployment rewrites the files (it can ask
 the agent to). The gateway checks the folder every 5 seconds and tells the
 agent where it is in the system prompt. `refresh` and `remove` run
@@ -474,8 +481,11 @@ bin/update --channel main   # follow main instead (fast-forward pull), then the 
 ```
 
 `bin/update` refuses to run over local changes in the checkout and says
-so; move the change into a plug-in, or ask upstream for it. `bin/doctor`
-prints the tag or commit the checkout is on.
+so; move the change into a plug-in, or ask upstream for it. Once the
+checkout has moved it stops a gateway still running the old version
+(`portico-gateway stop`) and says so; Portico starts the new one. If the
+install then fails, it says to fix the error and run `bin/install`.
+`bin/doctor` prints the tag or commit the checkout is on.
 
 ## The agent's system prompt
 

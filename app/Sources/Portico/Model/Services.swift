@@ -243,6 +243,16 @@ enum GatewayControl: Equatable, Sendable {
         case .restart: "Restart"
         }
     }
+
+    /// The SF Symbol beside the title on the services menu's row action
+    /// (v0.14 test fix): as the app's other small row actions (Copy).
+    var systemImage: String {
+        switch self {
+        case .start: "play.fill"
+        case .stop: "stop.fill"
+        case .restart: "arrow.clockwise"
+        }
+    }
 }
 
 extension ServicesPresentation {

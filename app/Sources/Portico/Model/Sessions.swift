@@ -284,6 +284,7 @@ extension AppModel {
         upsertSummary(renewed.ended)
         upsertSummary(renewed.next)
         stopOpenWork(chat: renewed.ended.chat)
+        markStore.endSession(chat: renewed.ended.chat)
         renewing[renewed.ended.chat] = nil
         if let id = renewed.id {
             renewing = renewing.filter { $0.value != id }

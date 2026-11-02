@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import PDFKit
 import SwiftUI
@@ -52,6 +53,7 @@ final class ViewerAgentTests: XCTestCase {
         let agent: ViewerAgent
         let view: WKWebView
         let file: URL
+        var coordinator: WebPane.Coordinator? = nil
     }
 
     /// `body` written as a page (or a markdown file), shown in chat 1's
@@ -80,7 +82,7 @@ final class ViewerAgentTests: XCTestCase {
         window.contentView = view
         keepAlive = [view, coordinator, agent, model, window]
         coordinator.apply(media == .markdown ? .markdown(file) : .html(file), to: view)
-        return Rig(model: model, agent: agent, view: view, file: file)
+        return Rig(model: model, agent: agent, view: view, file: file, coordinator: coordinator)
     }
 
     private func act(_ action: ViewerAct.Action, _ args: [String: JSONValue] = [:], chat: Int = 1) -> ViewerAct {
@@ -280,12 +282,13 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(noText.text, "Not found — look again")
 
         // Another page (the person navigated): a ref from the last look
-        // never lands on the new page's element, even one carrying it.
+        // never lands on the new page's element, even one carrying it, and
+        // the agent is told the page changed (v0.14 test fix, issue 2).
         let delete = ref(for: "Delete", in: look.text)
         _ = try await evaluate(
             "window.__porticoAgent.page = 'another'; true", in: rig.view)
         let moved = await rig.agent.perform(act(.click, ["target": .string(delete)]))
-        XCTAssertEqual(moved.text, "Not found — look again")
+        XCTAssertEqual(moved.text, "The page reloaded since your last look; look again.")
     }
 
     // MARK: - page errors
@@ -884,6 +887,872 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(click.text, "This is an image; it can be looked at, not used.")
         let typed = await agent.perform(act(.type, ["target": .string("e1"), "text": .string("x")]))
         XCTAssertEqual(typed.text, "This is an image; it can be looked at, not used.")
+    }
+
+    // MARK: - marks (v0.14 §3.2–3.3, §4)
+
+    /// `targets` as the `mark` act's args: each `(target, note)`.
+    private func markArgs(_ targets: [(String, String?)], replace: Bool = false, toolUseId: String? = nil) -> [String: JSONValue] {
+        var args: [String: JSONValue] = [
+            "marks": .array(targets.map { target, note in
+                var item: [String: JSONValue] = ["target": .string(target)]
+                if let note { item["note"] = .string(note) }
+                return .object(item)
+            }),
+            "replace": .bool(replace),
+        ]
+        if let toolUseId { args["tool_use_id"] = .string(toolUseId) }
+        return args
+    }
+
+    private func boxCount(in view: WKWebView) async throws -> Int {
+        let count = try await evaluate("""
+            (function () { var host = document.querySelector('portico-marks');
+              return host ? host.shadowRoot.querySelectorAll('.box').length : 0; })()
+            """, in: view)
+        return (count as? Int) ?? -1
+    }
+
+    /// Polls `condition` until it holds or `timeout` passes; the last answer.
+    @discardableResult
+    private func waitFor(_ timeout: Duration = .seconds(4), _ condition: () async throws -> Bool) async rethrows -> Bool {
+        let due = ContinuousClock.now + timeout
+        while ContinuousClock.now < due {
+            if try await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+        return try await condition()
+    }
+
+    private static let trailPage = """
+        <script>window.addEventListener('pageshow', function (e) { (window.shows = window.shows || []).push(e.persisted) })</script>
+        <h1>Trail detail</h1>
+        <button>Save trail</button>
+        <button>Share trail</button>
+        <a href="b.html">Next page</a>
+        """
+
+    func testMarkActDrawsAndAnswersNumbers() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.mark, markArgs([("e2", "Start here"), ("e3", nil)], toolUseId: "tu-1")))
+        XCTAssertTrue(result.ok, result.text)
+        let marks = rig.model.markStore.marks[1] ?? []
+        XCTAssertEqual(marks.count, 2)
+        XCTAssertEqual(marks.map(\.number), [1, 2])
+        guard marks.count == 2 else { return }
+        XCTAssertFalse(marks[0].label.isEmpty)
+        XCTAssertEqual(result.text, "Marked 1 · \(marks[0].label), 2 · \(marks[1].label).")
+        XCTAssertEqual(marks[0].note, "Start here")
+        XCTAssertEqual(rig.model.markStore.call(chat: 1, toolUseId: "tu-1")?.marks.count, 2)
+        let boxes = try await boxCount(in: rig.view)
+        XCTAssertEqual(boxes, 2)
+    }
+
+    func testMarkCountOutOfRange() async throws {
+        let rig = try rig(Self.trailPage)
+        let none = await rig.agent.perform(act(.mark, markArgs([])))
+        XCTAssertFalse(none.ok)
+        XCTAssertEqual(none.text, "Mark 1 to 9 things at a time.")
+        let ten = await rig.agent.perform(act(.mark, markArgs(Array(repeating: ("Save trail", nil), count: 10))))
+        XCTAssertFalse(ten.ok)
+        XCTAssertEqual(ten.text, "Mark 1 to 9 things at a time.")
+        XCTAssertNil(rig.model.markStore.marks[1])
+    }
+
+    func testMarkActPartlyNotFound() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("nonexistent words", nil)])))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertTrue(result.text.hasPrefix("Marked 1 · "), result.text)
+        XCTAssertTrue(result.text.hasSuffix(" Not found: \"nonexistent words\" — look again."), result.text)
+        XCTAssertEqual(rig.model.markStore.marks[1]?.count, 1)
+    }
+
+    func testMarkActNoneFound() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.mark, markArgs([("nonexistent words", nil)])))
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(result.text, "Not found — look again")
+        XCTAssertNil(rig.model.markStore.marks[1])
+    }
+
+    func testMarkOnImagePane() async throws {
+        let (model, _) = model()
+        let file = try tempDir().appendingPathComponent("route.png")
+        try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")!
+            .write(to: file)
+        model.show(Artifact(id: "a-2", kind: .file, location: file.path, media: .image, title: "route.png", source: .tool, open: true), in: 1)
+        let agent = ViewerAgent(model: model)
+        let result = await agent.perform(act(.mark, markArgs([("e1", nil)])))
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(result.text, "Marks work on web pages; this is an image.")
+        // Clearing works on any pane.
+        let cleared = await agent.perform(act(.clearMarks))
+        XCTAssertTrue(cleared.ok, cleared.text)
+        XCTAssertEqual(cleared.text, "Cleared 0 marks.")
+    }
+
+    func testMarkOnOutsideSiteIsAllowed() async throws {
+        let rig = try urlRig("<button>Save trail</button>", at: URL(string: "https://example.com/trails")!, actHosts: [])
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.mark, markArgs([("e1", "This one")])))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(rig.model.markStore.marks[1]?.first?.page, MarkPage(key: "https://example.com/trails", name: "trails"))
+    }
+
+    func testClearMarksAct() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)])))
+        let before = try await boxCount(in: rig.view)
+        XCTAssertEqual(before, 2)
+        let result = await rig.agent.perform(act(.clearMarks))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Cleared 2 marks.")
+        let after = try await boxCount(in: rig.view)
+        XCTAssertEqual(after, 0, "the overlay is gone")
+        _ = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil)])))
+        let one = await rig.agent.perform(act(.clearMarks))
+        XCTAssertEqual(one.text, "Cleared 1 mark.")
+    }
+
+    func testLookListsMarks() async throws {
+        let rig = try rig(Self.trailPage)
+        let plain = await rig.agent.perform(act(.look))
+        XCTAssertFalse(plain.text.contains("Marks:"), "no block without marks")
+        _ = await rig.agent.perform(act(.mark, markArgs([("e2", "Start here")])))
+        let look = await rig.agent.perform(act(.look))
+        XCTAssertTrue(look.text.contains("\n\nMarks:\n- 1 · "), look.text)
+        XCTAssertTrue(look.text.contains("(this page)"), look.text)
+    }
+
+    /// Marks on A; follow the link to B; Back. WebKit fires `didFinish`
+    /// on Back whether the page came from the back-forward cache or was
+    /// loaded again (probed 2026-11-01), so both are redrawn there.
+    private func leaveAndReturn(cache: Bool) async throws {
+        let rig = try rig(Self.trailPage)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        if !cache { rig.view.configuration.preferences.setValue(false, forKey: "usesPageCache") }
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
+        XCTAssertTrue(onB)
+        let boxesB = try await boxCount(in: rig.view)
+        XCTAssertEqual(boxesB, 0, "no boxes on B")
+        rig.view.goBack()
+        let back = await waitFor { rig.view.url?.lastPathComponent == "trail-detail.html" && !rig.view.isLoading }
+        XCTAssertTrue(back)
+        let redrawn = try await waitFor { try await self.boxCount(in: rig.view) == 2 }
+        XCTAssertTrue(redrawn, "A has its 2 boxes again")
+        let persisted = try await evaluate("JSON.stringify(window.shows)", in: rig.view) as? String
+        XCTAssertEqual(persisted, cache ? "[false,true]" : "[false]", "the cache was \(cache ? "used" : "bypassed")")
+    }
+
+    func testLeaveAndReturnRedraws() async throws {
+        try await leaveAndReturn(cache: true)
+        try await leaveAndReturn(cache: false)
+    }
+
+    func testClearedMarksStayGoneAfterBack() async throws {
+        let rig = try rig(Self.trailPage)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        _ = await rig.agent.perform(act(.look))
+        _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)])))
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
+        XCTAssertTrue(onB)
+        let cleared = await rig.agent.perform(act(.clearMarks))
+        XCTAssertEqual(cleared.text, "Cleared 2 marks.")
+        rig.view.goBack()
+        let back = await waitFor { rig.view.url?.lastPathComponent == "trail-detail.html" && !rig.view.isLoading }
+        XCTAssertTrue(back)
+        // The cached page comes back with its old overlay until the redraw.
+        let gone = try await waitFor { try await self.boxCount(in: rig.view) == 0 }
+        try await Task.sleep(for: .milliseconds(200))
+        let still = try await boxCount(in: rig.view)
+        XCTAssertTrue(gone)
+        XCTAssertEqual(still, 0, "A has no boxes")
+    }
+
+    func testRenderedFileKeepsItsKeyAcrossReload() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil)])))
+        let first = await rig.agent.page(of: rig.view)
+        let before = rig.view.url
+        XCTAssertEqual(first?.name, "trail-detail.html")
+        try XCTUnwrap(rig.coordinator).apply(.html(rig.file), revision: "edited", to: rig.view)
+        let reloaded = await waitFor { rig.view.url != before && !rig.view.isLoading }
+        XCTAssertTrue(reloaded, "a new rendered URL")
+        XCTAssertNotEqual(rig.view.url?.host, before?.host)
+        let redrawn = try await waitFor { try await self.boxCount(in: rig.view) == 1 }
+        XCTAssertTrue(redrawn, "the mark is drawn again")
+        let second = await rig.agent.page(of: rig.view)
+        XCTAssertEqual(second, first)
+    }
+
+    func testEditedFileLosesOneMark() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        _ = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Share trail", nil)])))
+        let before = rig.view.url
+        try "<!doctype html><html><head><meta charset=utf-8><title>Trail detail</title></head><body><h1>Trail detail</h1><button>Save trail</button></body></html>"
+            .write(to: rig.file, atomically: true, encoding: .utf8)
+        try XCTUnwrap(rig.coordinator).apply(.html(rig.file), revision: "edited", to: rig.view)
+        let reloaded = await waitFor { rig.view.url != before && !rig.view.isLoading }
+        XCTAssertTrue(reloaded)
+        let flagged = await waitFor { rig.model.markStore.marks[1]?.contains { !$0.found } == true }
+        XCTAssertTrue(flagged)
+        let boxes = try await boxCount(in: rig.view)
+        XCTAssertEqual(boxes, 1)
+        XCTAssertEqual(rig.model.markStore.marks[1]?.map(\.found), [true, false])
+    }
+
+    /// Clear all and Show again from the list redraw through the store.
+    func testClearAllAndShowAgainRedraw() async throws {
+        let rig = try rig(Self.trailPage)
+        _ = await rig.agent.perform(act(.look))
+        _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)], toolUseId: "tu-7")))
+        rig.agent.clearMarks(chat: 1)
+        let gone = try await waitFor { try await self.boxCount(in: rig.view) == 0 }
+        XCTAssertTrue(gone, "Clear all takes the boxes away")
+        rig.agent.showAgain(toolUseId: "tu-7", chat: 1)
+        let back = try await waitFor { try await self.boxCount(in: rig.view) == 2 }
+        XCTAssertTrue(back, "Show again draws them again")
+        XCTAssertEqual(rig.model.markStore.marks[1]?.map(\.number), [1, 2])
+    }
+
+    /// A mark on a page the viewer has left: going to it loads that page
+    /// in the same view (so Back works) and draws its boxes.
+    func testGoToMarkOnAnotherPage() async throws {
+        let rig = try rig(Self.trailPage)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        _ = await rig.agent.perform(act(.look))
+        _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)])))
+        let mark = try XCTUnwrap(rig.model.markStore.marks[1]?.last)
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
+        XCTAssertTrue(onB)
+        rig.agent.goToMark(mark, chat: 1)
+        let returned = try await waitFor {
+            guard rig.view.url?.lastPathComponent == "trail-detail.html" else { return false }
+            return try await self.boxCount(in: rig.view) == 2
+        }
+        XCTAssertTrue(returned, "back on A with its boxes")
+        XCTAssertTrue(rig.view.canGoBack, "Back returns to B")
+    }
+
+    /// The header's list heads the page the viewer shows "THIS PAGE": the
+    /// agent publishes that page as each load is drawn.
+    func testCurrentPageFollowsTheLoadedPage() async throws {
+        let rig = try rig(Self.trailPage)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        let onA = await waitFor { rig.agent.currentPage?.name == "trail-detail.html" }
+        XCTAssertTrue(onA, "A once loaded")
+        XCTAssertEqual(rig.agent.currentPage?.key, rig.file.standardizedFileURL.resolvingSymlinksInPath().path)
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.agent.currentPage?.name == "b.html" }
+        XCTAssertTrue(onB, "B after the link")
+        rig.agent.detach(rig.view)
+        let gone = await waitFor { rig.agent.currentPage == nil }
+        XCTAssertTrue(gone, "no page once the pane goes")
+    }
+
+    /// Review Focus 2 for a rendered Markdown page: a re-render (a new
+    /// rendered URL) keeps the page's key and draws the mark again.
+    func testRenderedMarkdownKeepsItsKeyAcrossReload() async throws {
+        let rig = try rig("# Trail notes\n\n## Water\n\nTwo springs.\n", name: "notes.md", media: .markdown)
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Water", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        let first = await rig.agent.page(of: rig.view)
+        XCTAssertEqual(first?.name, "notes.md")
+        let before = rig.view.url
+        try XCTUnwrap(rig.coordinator).apply(.markdown(rig.file), revision: "edited", to: rig.view)
+        let reloaded = await waitFor { rig.view.url != before && !rig.view.isLoading }
+        XCTAssertTrue(reloaded, "a new rendered URL")
+        XCTAssertNotEqual(rig.view.url?.host, before?.host)
+        let redrawn = try await waitFor { try await self.boxCount(in: rig.view) == 1 }
+        XCTAssertTrue(redrawn, "the mark is drawn again")
+        let second = await rig.agent.page(of: rig.view)
+        XCTAssertEqual(second?.key, first?.key)
+    }
+
+    /// A mark made on a space's page (named for the space) is the same
+    /// page once the space is closed and the file is reached again: its
+    /// box is drawn, the viewer scrolls to it, the look calls it "this
+    /// page", and the re-rendered page hides the space's front matter.
+    func testSpaceMarkFoundAfterTheSpaceCloses() async throws {
+        let dir = try tempDir()
+        let file = dir.appendingPathComponent("brief.md")
+        let spacer = String(repeating: "Filler line.\n\n", count: 120)
+        try "---\ntitle: Brief\nicon: compass\nowner: Sam\n---\n# Morning brief\n\n[Plan](plan.md)\n\n\(spacer)## Route notes\n\nEnd.\n"
+            .write(to: file, atomically: true, encoding: .utf8)
+        try "<!doctype html><title>Plan</title><p>Plan</p>".write(
+            to: dir.appendingPathComponent("plan.html"), atomically: true, encoding: .utf8)
+        let (model, _) = model()
+        model.apply(.spacesList(SpacesList(spaces: [
+            SpaceInfo(id: "brief", title: "Brief", icon: "doc", order: nil, location: file.path, media: "markdown", updated: "2026-10-31T12:00:00Z")])))
+        model.openSpaceAt(1)
+        let agent = ViewerAgent(model: model)
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView = view
+        keepAlive = [view, coordinator, agent, model, window]
+        let spaceLoad = try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact))))
+        coordinator.apply(spaceLoad, to: view)
+        let marked = await agent.perform(act(.mark, markArgs([("Route notes", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        let mark = try XCTUnwrap(model.markStore.marks[1]?.first)
+        XCTAssertEqual(mark.page.name, "Brief")
+
+        // Leave the page, close the space, and go back to the mark.
+        view.loadHTMLString(Self.page("<p>Elsewhere</p>"), baseURL: URL(string: "https://example.com/elsewhere")!)
+        _ = await waitFor { view.url?.host == "example.com" && !view.isLoading }
+        model.setOpenSpace(nil)
+        // Work's viewer is a pane of its own, kept under the space (v0.14
+        // test fix, issue 2); this view plays it from here on, with the
+        // load its coordinator last applied (no artifact is shown in Work,
+        // so goToMark loads the mark's page in it).
+        coordinator.slot = .work
+        agent.attach(view, showing: spaceLoad, coordinator: coordinator, slot: .work)
+        agent.goToMark(mark, chat: 1)
+        let drawn = try await waitFor {
+            guard view.url?.scheme == RenderedPageHandler.scheme else { return false }
+            return try await self.boxCount(in: view) == 1
+        }
+        XCTAssertTrue(drawn, "the box is drawn on the file reached again")
+        let page = await agent.page(of: view)
+        XCTAssertEqual(page?.name, "brief.md", "no space is open now")
+        XCTAssertEqual(page?.key, mark.page.key)
+        let scrolled = try await waitFor { (try await self.evaluate("window.scrollY", in: view) as? Double ?? 0) > 100 }
+        XCTAssertTrue(scrolled, "it scrolled to the mark")
+        let look = model.markStore.lookText(chat: 1, current: page)
+        XCTAssertTrue(look?.contains("(this page)") == true, look ?? "")
+        XCTAssertEqual(model.markStore.marks[1]?.first?.found, true)
+        let text = try await evaluate("document.body.innerText", in: view) as? String ?? ""
+        XCTAssertTrue(text.contains("Sam"), text)
+        XCTAssertFalse(text.contains("compass"), "the space's front matter stays hidden")
+    }
+
+    func testSpacePageIsNamedForTheSpace() async throws {
+        let dir = try tempDir()
+        let file = dir.appendingPathComponent("brief.md")
+        try "# Morning brief\n\n[Plan](plan.md)".write(to: file, atomically: true, encoding: .utf8)
+        let (model, _) = model()
+        model.apply(.spacesList(SpacesList(spaces: [
+            SpaceInfo(id: "brief", title: "Brief", icon: "doc", order: nil, location: file.path, media: "markdown", updated: "2026-10-31T12:00:00Z")])))
+        model.openSpaceAt(1)
+        let agent = ViewerAgent(model: model)
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView = view
+        keepAlive = [view, coordinator, agent, model, window]
+        coordinator.apply(try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact)))), to: view)
+        let result = await agent.perform(act(.mark, markArgs([("Morning brief", nil)])))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(model.markStore.marks[1]?.first?.page, MarkPage(key: file.standardizedFileURL.resolvingSymlinksInPath().path, name: "Brief"))
+    }
+
+    // MARK: - final fix wave (v0.14)
+
+    /// A new pane for `load`, as SwiftUI makes one when the viewer comes
+    /// back: its own coordinator and view, wired to `agent`.
+    private func pane(for load: WebPane.Load, agent: ViewerAgent, size: NSSize = NSSize(width: 800, height: 600)) -> WKWebView {
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(origin: .zero, size: size)
+        window.contentView = view
+        keepAlive.append(contentsOf: [view, coordinator, window])
+        coordinator.apply(load, to: view)
+        return view
+    }
+
+    private static let tallPage = """
+        <h1>Trail detail</h1>
+        <div style="height: 2400px">Long description</div>
+        <button>Save trail</button>
+        <button>Share trail</button>
+        """
+
+    /// Fix 1: the viewer collapsed (its web pane taken down) and the mark
+    /// on the chat's shown artifact. Show again opens the viewer, and once
+    /// the pane is back the marks are drawn and the first is scrolled to.
+    func testShowAgainWithTheViewerCollapsedOpensItAndDraws() async throws {
+        let rig = try rig(Self.tallPage)
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Share trail", nil)], toolUseId: "tu-c")))
+        XCTAssertTrue(marked.ok, marked.text)
+        rig.agent.clearMarks(chat: 1)
+        // Collapse: SwiftUI takes the pane down.
+        rig.model.setViewer(visible: false, for: 1)
+        rig.agent.detach(rig.view)
+        rig.model.openDocumentView()
+
+        rig.agent.showAgain(toolUseId: "tu-c", chat: 1)
+        let opened = await waitFor { rig.model.isViewerShown(for: 1) && !rig.model.documentMode }
+        XCTAssertTrue(opened, "Show again opens the viewer and leaves the document view")
+        guard opened else { return }
+        // The viewer is back: SwiftUI makes a new pane on the shown artifact.
+        let load = try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(rig.model.shownArtifact(for: 1)))))
+        let view = pane(for: load, agent: rig.agent)
+        let drawn = try await waitFor { try await self.boxCount(in: view) == 2 }
+        XCTAssertTrue(drawn, "the marks are drawn on the pane that came back")
+        let scrolled = try await waitFor { (try await self.evaluate("window.scrollY", in: view) as? Double ?? 0) > 1000 }
+        XCTAssertTrue(scrolled, "the viewer scrolled to the first mark")
+    }
+
+    /// Follows the model's shown artifact for chat 1 into `view`, as the
+    /// viewer does: a web artifact loads in the pane, anything else takes
+    /// the pane down (and a web artifact after that makes a new one).
+    private final class Follower {
+        var view: WKWebView?
+        var watch: AnyCancellable?
+    }
+
+    private func follow(_ model: AppModel, agent: ViewerAgent, from view: WKWebView, coordinator: WebPane.Coordinator) -> Follower {
+        let follower = Follower()
+        follower.view = view
+        var coordinator: WebPane.Coordinator? = coordinator
+        follower.watch = model.$current.dropFirst().sink { [weak self] current in
+            MainActor.assumeIsolated {
+                guard let self, let artifact = current[1] else { return }
+                if let load = WebPane.Load(ArtifactPresentation(artifact: artifact)) {
+                    if let view = follower.view, let coordinator {
+                        coordinator.apply(load, to: view)
+                    } else {
+                        follower.view = self.pane(for: load, agent: agent)
+                    }
+                } else if let view = follower.view {
+                    agent.detach(view)
+                    follower.view = nil
+                    coordinator = nil
+                }
+            }
+        }
+        keepAlive.append(follower)
+        return follower
+    }
+
+    /// Fix 1 (coverage): a mark on another listed artifact is reached
+    /// through `model.show`, from a web page and from an image pane.
+    func testGoToMarkShowsAnotherListedArtifact() async throws {
+        let rig = try rig(Self.trailPage)
+        let dir = rig.file.deletingLastPathComponent()
+        let other = dir.appendingPathComponent("route.html")
+        try Self.page("<h1>Route</h1><button>Download route</button>").write(to: other, atomically: true, encoding: .utf8)
+        let image = dir.appendingPathComponent("map.png")
+        try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")!
+            .write(to: image)
+        let first = Artifact(id: "a-1", kind: .file, location: rig.file.path, media: .html, title: "trail-detail.html", source: .tool, open: false)
+        let route = Artifact(id: "a-2", kind: .file, location: other.path, media: .html, title: "route.html", source: .tool, open: false)
+        let map = Artifact(id: "a-3", kind: .file, location: image.path, media: .image, title: "map.png", source: .tool, open: false)
+        for artifact in [first, route, map] { rig.model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: artifact))) }
+        let follower = follow(rig.model, agent: rig.agent, from: rig.view, coordinator: try XCTUnwrap(rig.coordinator))
+
+        rig.model.show(route, in: 1)
+        let onRoute = await waitFor { rig.view.url != nil && !rig.view.isLoading && rig.agent.currentPage?.name == "route.html" }
+        XCTAssertTrue(onRoute)
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Download route", "Here")])))
+        XCTAssertTrue(marked.ok, marked.text)
+        let mark = try XCTUnwrap(rig.model.markStore.marks[1]?.first)
+
+        // From another web page.
+        rig.model.show(first, in: 1)
+        _ = await waitFor { rig.agent.currentPage?.name == "trail-detail.html" }
+        rig.agent.goToMark(mark, chat: 1)
+        let back = try await waitFor {
+            guard rig.model.shownArtifact(for: 1)?.id == "a-2", let view = follower.view else { return false }
+            return try await self.boxCount(in: view) == 1
+        }
+        XCTAssertTrue(back, "route.html is shown again with its box")
+
+        // From an image pane: no web pane at all until route.html is shown.
+        rig.model.show(map, in: 1)
+        XCTAssertNil(follower.view)
+        rig.agent.goToMark(mark, chat: 1)
+        let fromImage = try await waitFor {
+            guard rig.model.shownArtifact(for: 1)?.id == "a-2", let view = follower.view else { return false }
+            return try await self.boxCount(in: view) == 1
+        }
+        XCTAssertTrue(fromImage, "from the image, route.html is shown with its box")
+    }
+
+    /// Fix 3: a page that builds the marked element 500 ms after it loads.
+    /// After leaving and coming back (no page cache, so it is built again)
+    /// the mark is found and drawn, and the store says so.
+    func testMarkOnAScriptBuiltPageIsFoundAfterReturn() async throws {
+        let late = """
+            <h1>Trail detail</h1>
+            <a href="b.html">Next page</a>
+            <script>setTimeout(function () {
+              var b = document.createElement('button'); b.textContent = 'Late button'; document.body.appendChild(b);
+            }, 500)</script>
+            """
+        let rig = try rig(late)
+        try "<!doctype html><title>B</title><p>Second page</p>".write(
+            to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
+        rig.view.configuration.preferences.setValue(false, forKey: "usesPageCache")
+        let built = try await waitFor {
+            (try await self.evaluate("!!document.querySelector('button')", in: rig.view) as? Bool) == true
+        }
+        XCTAssertTrue(built)
+        _ = await rig.agent.perform(act(.look))
+        let marked = await rig.agent.perform(act(.mark, markArgs([("Late button", nil)])))
+        XCTAssertTrue(marked.ok, marked.text)
+        _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
+        let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
+        XCTAssertTrue(onB)
+        rig.view.goBack()
+        let back = await waitFor { rig.view.url?.lastPathComponent == "trail-detail.html" && !rig.view.isLoading }
+        XCTAssertTrue(back)
+        let drawn = try await waitFor(.seconds(5)) { try await self.boxCount(in: rig.view) == 1 }
+        XCTAssertTrue(drawn, "the late element gets its box")
+        let found = await waitFor(.seconds(5)) { rig.model.markStore.marks[1]?.first?.found == true }
+        XCTAssertTrue(found, "the store hears it was found")
+        // Settled: no redraw loop keeps the store publishing.
+        var publishes = 0
+        let watch = rig.model.markStore.$marks.dropFirst().sink { _ in publishes += 1 }
+        try await Task.sleep(for: .seconds(2.5))
+        watch.cancel()
+        XCTAssertEqual(publishes, 0, "the store stops changing once the mark is found")
+        let still = try await boxCount(in: rig.view)
+        XCTAssertEqual(still, 1)
+    }
+
+    /// Fix 5: clearing is store-only, so it works with nothing open.
+    func testClearMarksWithNothingOpen() async throws {
+        let (model, _) = model()
+        let agent = ViewerAgent(model: model)
+        model.markStore.add(
+            chat: 1, page: MarkPage(key: "/tmp/a.html", name: "a.html"),
+            items: [(label: "Save", note: "", locator: MarkLocator(path: "", tag: "button", text: "Save"))],
+            call: "c1", toolUseId: nil, replace: false)
+        XCTAssertNil(model.shownArtifact(for: 1))
+        let cleared = await agent.perform(act(.clearMarks))
+        XCTAssertTrue(cleared.ok, cleared.text)
+        XCTAssertEqual(cleared.text, "Cleared 1 mark.")
+        XCTAssertNil(model.markStore.marks[1])
+        // The setting and the other-chat checks still come first.
+        let other = await agent.perform(act(.clearMarks, chat: 2))
+        XCTAssertEqual(other.text, "The person is looking at another chat.")
+        model.settings.viewerAgentCanSee = false
+        let off = await agent.perform(act(.clearMarks))
+        XCTAssertEqual(off.text, "The person has turned off the agent's view of the viewer in Settings.")
+    }
+
+    // MARK: - the person used the page (v0.14 §6b.4)
+
+    private static let personUsed = "The person used the page since your last look; look again."
+
+    /// A page that records what reached it and whether the browser called it trusted.
+    private static let inputPage = """
+        <script>
+        window.seen = [];
+        ['click', 'keydown', 'wheel'].forEach(function (t) {
+          window.addEventListener(t, function (e) { seen.push(t + ':' + e.isTrusted) }, true);
+        });
+        </script>
+        <style>body{margin:0} .tall{height:3000px}</style>
+        <h1>Trail detail</h1>
+        <button>Save trail</button>
+        <div class="tall"></div>
+        """
+
+    /// Real AppKit events through the window, as the person's mouse,
+    /// keyboard and trackpad send them: WebKit marks these `isTrusted`,
+    /// which `dispatchEvent` from a script never is. The window is shown
+    /// for the test (borderless, briefly) so it can be key.
+    private enum PersonInput { case click, key, wheel }
+
+    private func person(_ input: PersonInput, on rig: Rig) async throws {
+        let window = try XCTUnwrap(rig.view.window)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(rig.view)
+        // A point on the empty part of the page, in window coordinates.
+        let point = rig.view.convert(NSPoint(x: 400, y: rig.view.bounds.height - 300), to: nil)
+        let now = ProcessInfo.processInfo.systemUptime
+        switch input {
+        case .click:
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: now, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                window.sendEvent(event)
+            }
+        case .key:
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                let event = try XCTUnwrap(NSEvent.keyEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: now, windowNumber: window.windowNumber,
+                    context: nil, characters: "j", charactersIgnoringModifiers: "j", isARepeat: false, keyCode: 38))
+                window.sendEvent(event)
+            }
+        case .wheel:
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -40, wheel2: 0, wheel3: 0))
+            let screen = window.convertPoint(toScreen: point)
+            let height = NSScreen.screens.first?.frame.height ?? 0
+            cg.location = CGPoint(x: screen.x, y: height - screen.y)
+            let event = try XCTUnwrap(NSEvent(cgEvent: cg))
+            rig.view.scrollWheel(with: event)
+        }
+        let name = switch input { case .click: "click"; case .key: "keydown"; case .wheel: "wheel" }
+        let arrived = try await waitFor {
+            ((try await self.evaluate("seen.join(',')", in: rig.view) as? String) ?? "").contains("\(name):true")
+        }
+        XCTAssertTrue(arrived, "the page saw a trusted \(name)")
+    }
+
+    // MARK: - the page reloaded since the look (v0.14 test fix, issue 2)
+
+    private static let pageReloaded = "The page reloaded since your last look; look again."
+
+    /// The page loaded again after the look: its refs are gone, and the
+    /// agent is told why rather than the generic not-found.
+    func test_a_ref_after_the_page_reloaded_says_the_page_reloaded() async throws {
+        let rig = try rig(Self.inputPage)
+        let look = await rig.agent.perform(act(.look))
+        let save = ref(for: "Save trail", in: look.text)
+        let token = try await evaluate("window.__porticoAgent.page", in: rig.view) as? String
+        rig.view.reload()
+        let reloaded = try await waitFor {
+            let now = try? await self.evaluate("window.__porticoAgent && window.__porticoAgent.page", in: rig.view) as? String
+            return now != nil && now != token
+        }
+        XCTAssertTrue(reloaded, "the page loaded again under a new token")
+
+        let click = await rig.agent.perform(act(.click, ["target": .string(save)]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, Self.pageReloaded)
+        let type = await rig.agent.perform(act(.type, ["target": .string(save), "text": .string("Sam")]))
+        XCTAssertEqual(type.text, Self.pageReloaded)
+        let scroll = await rig.agent.perform(act(.scroll, ["target": .string(save)]))
+        XCTAssertEqual(scroll.text, Self.pageReloaded)
+        let mark = await rig.agent.perform(act(.mark, markArgs([(save, nil)])))
+        XCTAssertEqual(mark.text, Self.pageReloaded)
+        let partly = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), (save, nil)])))
+        XCTAssertTrue(partly.ok, partly.text)
+        XCTAssertTrue(partly.text.hasSuffix("Not found: \"\(save)\" — the page reloaded since your last look; look again."), partly.text)
+
+        // By name the target is looked for on the page as it is: no reload to speak of.
+        let byName = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(byName.text, "Not found — look again")
+        // A look takes the new page's refs.
+        let again = await rig.agent.perform(act(.look))
+        let fresh = await rig.agent.perform(act(.mark, markArgs([(ref(for: "Save trail", in: again.text), nil)])))
+        XCTAssertTrue(fresh.ok, fresh.text)
+    }
+
+    func test_ref_detection_matches_the_script() {
+        XCTAssertTrue(ViewerAgent.isRef("e4"))
+        XCTAssertTrue(ViewerAgent.isRef(" e12 "))
+        XCTAssertFalse(ViewerAgent.isRef("Start Run"))
+        XCTAssertFalse(ViewerAgent.isRef("e4x"))
+        XCTAssertFalse(ViewerAgent.isRef("E4"))
+    }
+
+    func test_a_person_click_since_the_look_is_named_on_not_found() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.click, on: rig)
+
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, Self.personUsed)
+        let type = await rig.agent.perform(act(.type, ["target": .string("Nowhere"), "text": .string("Sam")]))
+        XCTAssertEqual(type.text, Self.personUsed)
+        let scroll = await rig.agent.perform(act(.scroll, ["target": .string("Nowhere")]))
+        XCTAssertEqual(scroll.text, Self.personUsed)
+        let mark = await rig.agent.perform(act(.mark, markArgs([("Nowhere", nil)])))
+        XCTAssertEqual(mark.text, Self.personUsed)
+        let stale = await rig.agent.perform(act(.click, ["target": .string("e999")]))
+        XCTAssertEqual(stale.text, Self.personUsed, "a ref that isn't there either")
+
+        // A look clears it.
+        _ = await rig.agent.perform(act(.look))
+        let after = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(after.text, "Not found — look again")
+    }
+
+    func test_a_person_key_since_the_look_is_named_on_not_found() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.key, on: rig)
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(click.text, Self.personUsed)
+    }
+
+    func test_a_person_scroll_since_the_look_is_named_on_not_found() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.wheel, on: rig)
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(click.text, Self.personUsed)
+    }
+
+    func test_a_partly_found_mark_after_person_input_says_so_for_the_missing() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.click, on: rig)
+        let result = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Nowhere", nil)])))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertTrue(result.text.hasPrefix("Marked 1 · "), result.text)
+        XCTAssertTrue(
+            result.text.hasSuffix(" Not found: \"Nowhere\" — the person used the page since your last look; look again."),
+            result.text)
+    }
+
+    func test_input_before_the_look_and_script_events_dont_count() async throws {
+        let rig = try rig(Self.inputPage)
+        _ = await rig.agent.perform(act(.look))
+        try await person(.click, on: rig)
+        _ = await rig.agent.perform(act(.look))
+        // The page's own (or the agent's) synthetic events are untrusted.
+        _ = try await evaluate("""
+            document.body.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+            document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'j', bubbles: true}));
+            document.body.dispatchEvent(new WheelEvent('wheel', {deltaY: 40, bubbles: true}));
+            window.scrollTo(0, 500); true
+            """, in: rig.view)
+        let clicked = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(clicked.ok, "the agent's own click is not the person's")
+        let click = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(click.text, "Not found — look again")
+    }
+
+    func test_the_script_marker_matches_the_app() throws {
+        let source = try XCTUnwrap(ViewerAgentScript.source)
+        let match = try XCTUnwrap(source.firstMatch(of: /var MARKER = "([^"]+)";/))
+        XCTAssertEqual(String(match.1), ViewerAgentScript.marker)
+        XCTAssertNotEqual(ViewerAgentScript.marker, "viewer-agent-3", "v0.14 changed what the script records")
+    }
+
+    // MARK: - a heading in a clickable card (v0.14 §6b.5)
+
+    private static let headingSentence = "That's a heading, not something to click; use its ref."
+
+    func test_clicking_a_cards_heading_clicks_the_card() async throws {
+        let rig = try rig("""
+            <script>window.clicks = []</script>
+            <div class="card" onclick="clicks.push('grocery')"><h3>Grocery run</h3><p>Tuesday, Sam</p></div>
+            <div class="card" id="laundry" style="cursor:pointer"><h3>Laundry</h3></div>
+            <script>document.getElementById('laundry').addEventListener('click', function () { clicks.push('laundry') })</script>
+            <div id="deep"><section><h4>Deep heading</h4></section></div>
+            <script>document.getElementById('deep').onclick = function () { clicks.push('deep') }</script>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let grocery = await rig.agent.perform(act(.click, ["target": .string("Grocery run")]))
+        XCTAssertTrue(grocery.ok, grocery.text)
+        XCTAssertTrue(grocery.text.contains("Grocery run"), grocery.text)
+        let laundry = await rig.agent.perform(act(.click, ["target": .string("laundry")]))
+        XCTAssertTrue(laundry.ok, "an addEventListener card found by cursor: pointer: \(laundry.text)")
+        let deep = await rig.agent.perform(act(.click, ["target": .string("Deep heading")]))
+        XCTAssertTrue(deep.ok, "an onclick property two levels up: \(deep.text)")
+        let clicks = try await evaluate("clicks.join(',')", in: rig.view)
+        XCTAssertEqual(clicks as? String, "grocery,laundry,deep", "each card's handler, once")
+    }
+
+    /// Fix I-3: the click lands on the heading itself and bubbles, so a
+    /// list that handles clicks for its cards (`closest('.card')`) opens
+    /// the right one.
+    func test_a_delegated_card_list_opens_the_cards_heading() async throws {
+        let rig = try rig("""
+            <style>.card{cursor:pointer;padding:8px}</style>
+            <script>window.opened = []</script>
+            <div id="list">
+              <div class="card" data-id="grocery"><h3>Grocery run</h3><p>Tuesday, Sam</p></div>
+              <div class="card" data-id="laundry"><h3>Laundry</h3><p>Friday, Priya</p></div>
+            </div>
+            <script>
+            // Delegated, from where the click landed: a card's title opens
+            // it; elsewhere on the card does nothing here.
+            document.getElementById('list').onclick = function (e) {
+              var title = e.target.closest('h3');
+              var card = e.target.closest('.card');
+              opened.push(title && card ? card.getAttribute('data-id') : 'none');
+            };
+            </script>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Grocery run")]))
+        XCTAssertTrue(result.ok, result.text)
+        let opened = try await evaluate("opened.join(',')", in: rig.view)
+        XCTAssertEqual(opened as? String, "grocery")
+    }
+
+    /// Fix I-3: a backdrop that closes the dialog on click is not the
+    /// heading's card: it covers the viewport.
+    func test_a_dialog_heading_on_a_click_to_close_backdrop_is_not_clicked() async throws {
+        let rig = try rig("""
+            <script>window.closed = 0</script>
+            <div id="backdrop" onclick="closed += 1" style="position:fixed;inset:0;background:rgba(0,0,0,.3)">
+              <div style="margin:100px auto;width:300px;background:#fff"><h2>Delete Acme board?</h2><p>This can't be undone.</p></div>
+            </div>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Delete Acme board?")]))
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(result.text, Self.headingSentence)
+        let closed = try await evaluate("closed", in: rig.view)
+        XCTAssertEqual(closed as? Int, 0, "the backdrop's handler did not fire")
+    }
+
+    /// Fix I-3: a wrapper holding several headings is not one heading's card.
+    func test_a_clickable_wrapper_around_several_headings_is_not_clicked() async throws {
+        let rig = try rig("""
+            <script>window.hits = 0</script>
+            <div onclick="hits += 1" style="width:300px"><h3>Jordan</h3><h3>Priya</h3></div>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Jordan")]))
+        XCTAssertEqual(result.text, Self.headingSentence)
+        let hits = try await evaluate("hits", in: rig.view)
+        XCTAssertEqual(hits as? Int, 0)
+    }
+
+    func test_a_bare_heading_is_not_something_to_click() async throws {
+        let rig = try rig("<h2>Trail notes</h2><p>Plain text.</p><button>Save trail</button>")
+        _ = await rig.agent.perform(act(.look))
+        let heading = await rig.agent.perform(act(.click, ["target": .string("Trail notes")]))
+        XCTAssertFalse(heading.ok)
+        XCTAssertEqual(heading.text, Self.headingSentence)
+        // Everything else as before: a button by its words, nothing found by other words.
+        let save = await rig.agent.perform(act(.click, ["target": .string("Save trail")]))
+        XCTAssertTrue(save.ok, save.text)
+        let none = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(none.text, "Not found — look again")
+    }
+
+    func test_a_button_with_the_same_words_beats_the_heading() async throws {
+        let rig = try rig("""
+            <script>window.clicks = []</script>
+            <div onclick="clicks.push('card')"><h3>Grocery run</h3></div>
+            <button onclick="clicks.push('button')">Grocery run</button>
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let result = await rig.agent.perform(act(.click, ["target": .string("Grocery run")]))
+        XCTAssertTrue(result.ok, result.text)
+        let clicks = try await evaluate("clicks.join(',')", in: rig.view)
+        XCTAssertEqual(clicks as? String, "button")
     }
 
     // MARK: - wiring

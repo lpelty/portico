@@ -1,0 +1,20 @@
+{
+  "action": "mark",
+  "args": {
+    "marks": [
+      {
+        "note": "No axis labels",
+        "target": "e3"
+      },
+      {
+        "target": "Sign up"
+      }
+    ],
+    "replace": false,
+    "tool_use_id": "toolu_01"
+  },
+  "chat": 1,
+  "id": "act-2",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "viewer.act"
+}
