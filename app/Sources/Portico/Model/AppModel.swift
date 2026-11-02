@@ -80,13 +80,6 @@ enum CardStatus: Equatable, Sendable {
 
 // MARK: - AppModel
 
-/// The app's state and the one reducer for gateway messages.
-///
-/// Every frame from the gateway goes through `apply`; everything the app
-/// wants to send goes out through `outbound`, which the connection layer
-/// sets to the socket and a test sets to an array. The reconnect policy
-/// (`handleHello`, sequence watermarks) lives here too, next to the state
-/// it protects.
 /// Where a conversation was left (v0.16 §5): at its bottom, or scrolled up
 /// with `topItem` at the top of the view, its top `topOffset` points from
 /// the view's top (negative: above it). Each conversation keeps its own.
@@ -96,6 +89,13 @@ struct ConversationPlace: Equatable {
     var topOffset: CGFloat = 0
 }
 
+/// The app's state and the one reducer for gateway messages.
+///
+/// Every frame from the gateway goes through `apply`; everything the app
+/// wants to send goes out through `outbound`, which the connection layer
+/// sets to the socket and a test sets to an array. The reconnect policy
+/// (`handleHello`, sequence watermarks) lives here too, next to the state
+/// it protects.
 @MainActor
 final class AppModel: ObservableObject {
     /// The gateway's latest `hello`; `nil` until the first attach.

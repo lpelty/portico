@@ -15,6 +15,9 @@ struct ConversationView: View {
     /// Where each drawn row sits in the view, for the place the
     /// conversation keeps while another is shown (v0.16 §5).
     @State private var rows = TranscriptRowFrames()
+    /// The row a restore scrolled to, while that target is still the
+    /// position (fix round 1): a key or VoiceOver move leaves it in force.
+    @State private var restoredTop: String?
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
@@ -115,7 +118,7 @@ struct ConversationView: View {
         ScrollView {
             // Each element brings its own gap above it (v0.13 decision 1):
             // tool rows that follow each other close up into one block.
-            let drawn = TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
+            let drawn = self.drawn
             let working = model.showsWorkingLine(chat: chat)
             let calling = model.callingCards(in: chat)
             let headed = sessionDivider != nil || items.isEmpty
@@ -198,7 +201,7 @@ struct ConversationView: View {
             // every input here (ConversationScroll.swift), so the person
             // is the scroll phase and the marked input, as in v0.15.
             let target = scrollMemory.observe(
-                width: now.width, atBottom: now.atBottom, userPositioned: personScrolling,
+                width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
             if target == .bottom {
                 toBottom()
@@ -209,6 +212,12 @@ struct ConversationView: View {
                 // back there when the content next grows (found hosted).
                 // An empty position leaves the view where it is.
                 position = ScrollPosition(idType: String.self)
+            } else if let top = restoredTop, position.viewID(type: String.self) == top,
+                      personInput.recent != nil, !personScrolling {
+                // Fix round 1: the same for the row a restore scrolled to;
+                // SwiftUI put the view back on it at the next delta.
+                position = ScrollPosition(idType: String.self)
+                restoredTop = nil
             }
         }
         // A conversation opens at its newest message (v0.13, found live
@@ -262,10 +271,15 @@ struct ConversationView: View {
         personScrolling || personInput.isRecent
     }
 
+    /// The transcript's drawn rows.
+    private var drawn: [TranscriptEntry] {
+        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
+    }
+
     /// The drawn rows' ids: a place whose top row is gone (the transcript
     /// read again) opens at the bottom instead.
     private var drawnIDs: Set<String> {
-        Set(TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) }).map(\.id))
+        Set(drawn.map(\.id))
     }
 
     /// A thread's first message, drawn as its brief (AM3).
@@ -306,6 +320,7 @@ struct ConversationView: View {
     private func restore(top: String, at offset: CGFloat) {
         scrollMemory.restored(atBottom: false)
         position.scrollTo(id: top, anchor: .top)
+        restoredTop = top
         Task { @MainActor in
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(16))

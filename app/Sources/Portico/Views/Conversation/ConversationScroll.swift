@@ -16,12 +16,12 @@
 //    growing reply leaves the view where it is; at the bottom it follows.
 //    Not adopted: following stays the memory's, which already holds.
 // So `isPositionedByUser` misses every input on macOS here, and v0.15's
-// marks all stay: the scroll phase, the key and wheel monitor and
-// VoiceOver's cursor (`TranscriptPersonInput`) are what `userPositioned`
-// and `marked` carry. What ScrollPosition brings: an edge target that
+// marks all stay: `scrolling` is the scroll phase, and `marked` the key
+// and wheel monitor and VoiceOver's cursor (`TranscriptPersonInput`). What ScrollPosition brings: an edge target that
 // SwiftUI drops when the person scrolls (v0.15's id target was put back
 // once, R10), so the first scroll after opening holds; the per-conversation
-// place (`ConversationPlace`); and a stale edge target to clear (3).
+// place (`ConversationPlace`); and stale app-set targets to clear (3): the
+// bottom edge, and the row a restore scrolled to (fix round 1).
 
 import SwiftUI
 
@@ -123,9 +123,9 @@ struct ConversationScrollMemory: Equatable, Sendable {
     /// the layout's rule, back to the bottom when the memory is there: found
     /// hosted, SwiftUI put 6756 back to 6710 again and again after a wheel
     /// back to the end, and ignoring those left the view short of the end.
-    /// A scroll phase (`userPositioned`) is the person's whatever the direction.
+    /// A scroll phase (`scrolling`) is the person's whatever the direction.
     mutating func observe(
-        width: CGFloat, atBottom: Bool, userPositioned: Bool, marked: Direction? = nil, offset: CGFloat? = nil
+        width: CGFloat, atBottom: Bool, scrolling: Bool, marked: Direction? = nil, offset: CGFloat? = nil
     ) -> Target? {
         let previous = self.offset
         if let offset { self.offset = offset }
@@ -134,8 +134,8 @@ struct ConversationScrollMemory: Equatable, Sendable {
         }
         // Toward the end is positive; unknown without two readings.
         let moved = offset.flatMap { now in previous.map { now - $0 } }
-        var person = userPositioned
-        if !userPositioned, let marked {
+        var person = scrolling
+        if !scrolling, let marked {
             switch marked {
             case .either:
                 person = true

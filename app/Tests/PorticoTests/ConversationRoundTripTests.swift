@@ -570,11 +570,13 @@ final class ConversationRoundTripTests: XCTestCase {
         XCTAssertEqual(after.text, before.text, "the same reply at the top")
     }
 
-    /// §5 case 2 (v0.15 N2): at the end, inside a live scroll, SwiftUI
-    /// puts its own offset back (the clip moves back 46 pt and forward
-    /// again); that is not the person leaving the bottom, so the reply
-    /// streaming next is still followed.
-    func testSwiftUIsOwnOffsetRestoreAtTheEndIsNotScrolledUp() throws {
+    /// §5 case 2 (v0.15 N2), a GUARD, not a proof: at the end, inside a
+    /// live scroll, the clip moves back 46 pt and forward again; the reply
+    /// streaming next is still followed. It cannot fail under the kept
+    /// phase rule (phase readings stay the person's, and the forward move
+    /// lands at the end), and it passed on v0.15. Case 2 stays open in
+    /// logic pending the on-screen check.
+    func testGuardAnOffsetPutBackInsideALiveScrollAtTheEndStillFollows() throws {
         let model = try model()
         let hosted = try host(model, width: 900)
         defer { hosted.window.close() }
@@ -602,9 +604,12 @@ final class ConversationRoundTripTests: XCTestCase {
         XCTAssertTrue(atBottom(hosted), "the next delta still lands at the bottom")
     }
 
-    /// §5 case 3 (v0.15 Task 2b round 4): a 4,000-word reply streamed in at
-    /// the bottom, then the column narrowed 900 → 640: at the end, not short of it.
-    func testALongStreamedReplyNarrowedAtTheBottomLandsAtTheEnd() throws {
+    /// §5 case 3 (v0.15 Task 2b round 4), a GUARD, not a proof: a
+    /// 4,000-word reply streamed in at the bottom, then the column narrowed
+    /// 900 → 640: at the end. It passed on v0.15 too; the original repro
+    /// (the document's height and SwiftUI's content height disagreeing) was
+    /// not reproduced here. Unproven pending the on-screen check.
+    func testGuardALongStreamedReplyNarrowedAtTheBottomLandsAtTheEnd() throws {
         let model = try model()
         let hosted = try host(model, width: 900)
         defer { hosted.window.close() }
@@ -738,5 +743,72 @@ final class ConversationRoundTripTests: XCTestCase {
         spin()
         XCTAssertNil(model.dockedCard(for: 3))
         XCTAssertTrue(atBottom(hosted), "at the bottom when it leaves")
+    }
+
+    /// Fix round 1 (review I1): after a place is put back, the person pages
+    /// up by key (no scroll phase: the position does not move); a reply
+    /// streaming next and a space and back leave the paged-to reply at the
+    /// top, not the row the restore scrolled to.
+    func testAfterAPlaceIsPutBackAKeyScrollHoldsThroughAStreamAndASpace() throws {
+        _ = NSApplication.shared
+        let model = try model(chats: [3, 5])
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        let height = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        for _ in 0..<60 where clip.bounds.origin.y > height / 3 {
+            Self.wheel(hosted.scroll, pixels: 300)
+            spin(0.05)
+        }
+        spin(0.3)
+        model.selected = 5
+        spin()
+        model.selected = 3
+        spin()
+        let three = try XCTUnwrap(Self.transcriptScroll(in: hosted.host))
+        let back = Hosted(window: hosted.window, host: hosted.host, scroll: three)
+        let restored = try XCTUnwrap(Self.topReply(in: three))
+        // Far enough that the row the restore scrolled to leaves the screen.
+        for _ in 0..<2 {
+            try animatedKey(116, "\u{F72C}", in: back, to: three.contentView.bounds.origin.y - 450)
+            spin(0.4)
+        }
+        let paged = try XCTUnwrap(Self.topReply(in: three))
+        XCTAssertNotEqual(paged.text, restored.text, "paged up")
+        let stream = streaming(model)
+        stream(2)
+        spin()
+        let streamed = try XCTUnwrap(Self.topReply(in: three))
+        XCTAssertEqual(streamed.text, paged.text, "a reply streaming below leaves the paged-to reply at the top")
+        XCTAssertEqual(streamed.dy, paged.dy, accuracy: 2)
+        resize(back, from: 900, to: 640)
+        resize(back, from: 640, to: 900)
+        let after = try XCTUnwrap(Self.topReply(in: three))
+        XCTAssertEqual(after.text, paged.text, "and a space and back keeps it")
+    }
+
+    /// Fix round 1: scrolled up, a card docking over the composer (the
+    /// transcript shortened from below) leaves the person's place.
+    func testScrolledUpACardDockingHoldsThePlace() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        let height = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        for _ in 0..<60 where clip.bounds.origin.y > height / 3 {
+            Self.wheel(hosted.scroll, pixels: 300)
+            spin(0.05)
+        }
+        spin(0.3)
+        let before = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+        model.apply(.cardAsk(CardAsk(
+            chat: 3, id: "card-p", kind: .permission, title: "Write a file",
+            permission: Permission(tool: "Write", summary: "/tmp/acme/a.md", input: [:]), questions: nil, form: nil, seq: 81)))
+        spin()
+        XCTAssertNotNil(model.dockedCard(for: 3))
+        let after = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+        XCTAssertFalse(atBottom(hosted), "not pulled to the end")
+        XCTAssertEqual(after.text, before.text, "the same reply at the top")
+        XCTAssertEqual(after.dy, before.dy, accuracy: 4, "at the same point in it")
     }
 }
