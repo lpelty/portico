@@ -7,9 +7,14 @@ import SwiftUI
 struct ConversationView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
-    /// The message at the top of the transcript's view (v0.11, item 67):
-    /// the scroll view keeps it, and the point in it, when the width changes.
-    @State private var topItem: String?
+    /// Where the transcript is scrolled (v0.16 §5): the app's own scrolls
+    /// set it; the person's scroll moves it to the message at the top,
+    /// which the scroll view keeps, and the point in it, when the width
+    /// changes (v0.11, item 67).
+    @State private var position = ScrollPosition(idType: String.self)
+    /// Where each drawn row sits in the view, for the place the
+    /// conversation keeps while another is shown (v0.16 §5).
+    @State private var rows = TranscriptRowFrames()
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
@@ -107,124 +112,145 @@ struct ConversationView: View {
     static let sideInset: CGFloat = 32
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                // Each element brings its own gap above it (v0.13 decision 1):
-                // tool rows that follow each other close up into one block.
-                let drawn = TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
-                let working = model.showsWorkingLine(chat: chat)
-                let calling = model.callingCards(in: chat)
-                let headed = sessionDivider != nil || items.isEmpty
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if let divider = sessionDivider {
-                        divider
-                    }
-                    if items.isEmpty {
-                        emptyState
-                            .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
-                    }
-                    ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
-                        let gap: CGFloat = index == 0
-                            ? (headed ? TranscriptSpacing.itemGap : 0)
-                            : standsApart(entry) || standsApart(drawn[index - 1])
-                                ? TranscriptSpacing.itemGap
-                                : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
-                        Group {
-                            if entry.id == briefItem, let info = model.thread(of: chat) {
-                                BriefBlock(info: info)
-                                    .atReplyWidth()
-                            } else {
-                                TranscriptEntryView(entry: entry, folder: folder, chat: chat)
-                            }
+        ScrollView {
+            // Each element brings its own gap above it (v0.13 decision 1):
+            // tool rows that follow each other close up into one block.
+            let drawn = TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
+            let working = model.showsWorkingLine(chat: chat)
+            let calling = model.callingCards(in: chat)
+            let headed = sessionDivider != nil || items.isEmpty
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if let divider = sessionDivider {
+                    divider
+                }
+                if items.isEmpty {
+                    emptyState
+                        .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
+                }
+                ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
+                    let gap: CGFloat = index == 0
+                        ? (headed ? TranscriptSpacing.itemGap : 0)
+                        : standsApart(entry) || standsApart(drawn[index - 1])
+                            ? TranscriptSpacing.itemGap
+                            : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
+                    Group {
+                        if entry.id == briefItem, let info = model.thread(of: chat) {
+                            BriefBlock(info: info)
+                                .atReplyWidth()
+                        } else {
+                            TranscriptEntryView(entry: entry, folder: folder, chat: chat)
                         }
-                            .padding(.top, gap)
-                            .id(entry.id)
-                            .modifier(MarksVoiceOverFocus(input: personInput))
                     }
-                    // A thread calling you (AM1): Main only, after the last
-                    // item, drawn by the app and never part of the transcript.
-                    ForEach(calling) { card in
-                        CallingCardView(card: card)
-                            .atReplyWidth()
-                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
-                            .id("calling:\(card.id)")
-                    }
-                    if working {
-                        WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
-                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
-                            .id("working")
-                    }
-                    Color.clear.frame(height: 1)
-                        .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
-                        .id("bottom")
+                        .padding(.top, gap)
+                        .id(entry.id)
+                        .modifier(MarksVoiceOverFocus(input: personInput))
+                        .modifier(ReportsRowFrame(rows: rows, id: entry.id))
                 }
-                .scrollTargetLayout()
-                // v0.11 (58): the reading column, centred; its items size
-                // themselves from its width (`conversationColumn`).
-                .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
-                .padding(.horizontal, Self.sideInset)
-                .padding(.top, 24)
-                .padding(.bottom, 16)
-                .frame(maxWidth: .infinity)
-                .background(TranscriptScrollViewProbe(input: personInput))
-            }
-            // Fix I-1: the scroller keeps clear of the viewer divider's grip.
-            .clearOfViewerGrip()
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
-            .environment(
-                \.conversationColumn,
-                transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset, scale: textScale) })
-            .scrollPosition(id: $topItem, anchor: .top)
-            // v0.11 (67): opening the viewer (or a space) narrows the column
-            // and every line wraps again; the bottom stays the bottom. Scrolled
-            // up, the scroll position above keeps the place (v0.14 fix).
-            .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
-                TranscriptGeometry(
-                    width: geometry.containerSize.width,
-                    content: geometry.contentSize.height,
-                    offset: geometry.contentOffset.y,
-                    atBottom: ConversationScrollMemory.isAtBottom(
-                        offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
-                        content: geometry.contentSize.height))
-            } action: { _, now in
-                // The marked input's direction decides which readings are
-                // the person's (fix round 4; no longer spent by the first).
-                let target = scrollMemory.observe(
-                    width: now.width, atBottom: now.atBottom, byPerson: personScrolling,
-                    marked: personInput.recent, offset: now.offset)
-                if target == .bottom {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                // A thread calling you (AM1): Main only, after the last
+                // item, drawn by the app and never part of the transcript.
+                ForEach(calling) { card in
+                    CallingCardView(card: card)
+                        .atReplyWidth()
+                        .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                        .id("calling:\(card.id)")
                 }
-            }
-            // A conversation opens at its newest message (v0.13, found live
-            // 10-31: a resumed session's transcript arrives in one batch and
-            // the scroll ran before the lazy stack had laid it out, leaving
-            // the view near the top). Anchor at the bottom, and scroll again
-            // once the new rows are laid out.
-            .defaultScrollAnchor(.bottom)
-            .onScrollPhaseChange { _, phase in
-                // `.animating` too (fix round 2): the app's own scrolls are not animated.
-                personScrolling = phase != .idle
-            }
-            // v0.15 task 2b fix round 1: the newest message is followed only
-            // at the bottom (scrolled up, a streaming reply no longer pulls
-            // the person back down), and once per change: the geometry
-            // reading above catches the rows laid out after it. The person's
-            // own message always goes to the bottom.
-            .onChange(of: followKey) { old, new in
-                if new.sent != old.sent {
-                    scrollToBottom(proxy)
-                } else if scrollMemory.atBottom && !byPerson {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                if working {
+                    WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
+                        .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                        .id("working")
                 }
+                Color.clear.frame(height: 1)
+                    .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
+                    .id("bottom")
             }
-            // VoiceOver's page scroll is the person's (fix round 2).
-            .accessibilityScrollAction { edge in personInput.page(toward: edge) }
-            .onAppear {
-                personInput.install()
-                scrollToBottom(proxy)
+            .scrollTargetLayout()
+            // v0.11 (58): the reading column, centred; its items size
+            // themselves from its width (`conversationColumn`).
+            .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
+            .padding(.horizontal, Self.sideInset)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity)
+            .background(TranscriptScrollViewProbe(input: personInput))
+        }
+        // Fix I-1: the scroller keeps clear of the viewer divider's grip.
+        .clearOfViewerGrip()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
+        .environment(
+            \.conversationColumn,
+            transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset, scale: textScale) })
+        .scrollPosition($position, anchor: .top)
+        // v0.11 (67): opening the viewer (or a space) narrows the column
+        // and every line wraps again; the bottom stays the bottom. Scrolled
+        // up, the scroll position above keeps the place (v0.14 fix).
+        .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+            TranscriptGeometry(
+                width: geometry.containerSize.width,
+                content: geometry.contentSize.height,
+                offset: geometry.contentOffset.y,
+                atBottom: ConversationScrollMemory.isAtBottom(
+                    offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
+                    content: geometry.contentSize.height))
+        } action: { _, now in
+            // The marked input's direction decides which readings are
+            // the person's (fix round 4; no longer spent by the first).
+            // v0.16 spike: `position.isPositionedByUser` stays false for
+            // every input here (ConversationScroll.swift), so the person
+            // is the scroll phase and the marked input, as in v0.15.
+            let target = scrollMemory.observe(
+                width: now.width, atBottom: now.atBottom, userPositioned: personScrolling,
+                marked: personInput.recent, offset: now.offset)
+            if target == .bottom {
+                toBottom()
+            } else if !scrollMemory.atBottom, position.edge == .bottom {
+                // The person left the end by a key or VoiceOver: AppKit
+                // moved the clip with no scroll phase, so the position
+                // still says the bottom edge, and SwiftUI would put it
+                // back there when the content next grows (found hosted).
+                // An empty position leaves the view where it is.
+                position = ScrollPosition(idType: String.self)
             }
-            .onDisappear { personInput.remove() }
+        }
+        // A conversation opens at its newest message (v0.13, found live
+        // 10-31: a resumed session's transcript arrives in one batch and
+        // the scroll ran before the lazy stack had laid it out, leaving
+        // the view near the top). Anchor at the bottom, and scroll again
+        // once the new rows are laid out.
+        .defaultScrollAnchor(.bottom)
+        .onScrollPhaseChange { _, phase in
+            // `.animating` too (fix round 2): the app's own scrolls are not animated.
+            personScrolling = phase != .idle
+        }
+        // v0.15 task 2b fix round 1: the newest message is followed only
+        // at the bottom (scrolled up, a streaming reply no longer pulls
+        // the person back down), and once per change: the geometry
+        // reading above catches the rows laid out after it. The person's
+        // own message always goes to the bottom.
+        .onChange(of: followKey) { old, new in
+            if new.sent != old.sent {
+                scrollToBottom()
+            } else if scrollMemory.atBottom && !byPerson {
+                toBottom()
+            }
+        }
+        // VoiceOver's page scroll is the person's (fix round 2).
+        .accessibilityScrollAction { edge in personInput.page(toward: edge) }
+        .onAppear {
+            personInput.install()
+            if let place = model.place(of: chat), !place.atBottom, let top = place.topItem, drawnIDs.contains(top) {
+                restore(top: top, at: place.topOffset)
+            } else {
+                scrollToBottom()
+            }
+        }
+        .onDisappear {
+            personInput.remove()
+            // Each conversation keeps its own place (v0.16 §5): Main and
+            // its threads, or a session opened from History, and back.
+            let top = rows.top()
+            model.notePlace(
+                ConversationPlace(atBottom: scrollMemory.atBottom, topItem: top?.id, topOffset: top?.offset ?? 0),
+                chat: chat)
         }
     }
 
@@ -234,6 +260,12 @@ struct ConversationView: View {
     /// layout's settling for the person's again.)
     private var byPerson: Bool {
         personScrolling || personInput.isRecent
+    }
+
+    /// The drawn rows' ids: a place whose top row is gone (the transcript
+    /// read again) opens at the bottom instead.
+    private var drawnIDs: Set<String> {
+        Set(TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) }).map(\.id))
     }
 
     /// A thread's first message, drawn as its brief (AM3).
@@ -251,12 +283,42 @@ struct ConversationView: View {
     /// To the bottom, and twice: once now, once after the rows are laid out.
     /// Recorded as at the bottom (v0.15 fix round 1): the jump's own
     /// reading is the layout's, so the memory would not see it.
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+    private func scrollToBottom() {
         scrollMemory.followed()
-        proxy.scrollTo("bottom", anchor: .bottom)
+        toBottom()
         Task { @MainActor in
             await Task.yield()
-            proxy.scrollTo("bottom", anchor: .bottom)
+            toBottom()
+        }
+    }
+
+    /// The app's own scroll to the end (v0.16 §5): the bottom edge, which
+    /// SwiftUI keeps as the content and the column change, and drops when
+    /// the person scrolls. Not the last row's id: SwiftUI put an id target
+    /// back once after the person's first scroll (v0.15 R10, found again
+    /// hosted here).
+    private func toBottom() {
+        position.scrollTo(edge: .bottom)
+    }
+
+    /// Back to the place this conversation was left at (v0.16 §5): the row
+    /// that was at the top, then the point in it, once that row is laid out.
+    private func restore(top: String, at offset: CGFloat) {
+        scrollMemory.restored(atBottom: false)
+        position.scrollTo(id: top, anchor: .top)
+        Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(16))
+                // The person scrolling meanwhile has the last word.
+                if byPerson { return }
+                guard let frame = rows.frames[top] else { continue }
+                let off = frame.minY - offset
+                if abs(off) < 0.5 { return }
+                guard let scroll = personInput.scrollView else { continue }
+                let clip = scroll.contentView
+                clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + off))
+                scroll.reflectScrolledClipView(clip)
+            }
         }
     }
 

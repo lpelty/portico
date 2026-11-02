@@ -87,6 +87,15 @@ enum CardStatus: Equatable, Sendable {
 /// sets to the socket and a test sets to an array. The reconnect policy
 /// (`handleHello`, sequence watermarks) lives here too, next to the state
 /// it protects.
+/// Where a conversation was left (v0.16 §5): at its bottom, or scrolled up
+/// with `topItem` at the top of the view, its top `topOffset` points from
+/// the view's top (negative: above it). Each conversation keeps its own.
+struct ConversationPlace: Equatable {
+    var atBottom: Bool
+    var topItem: String?
+    var topOffset: CGFloat = 0
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     /// The gateway's latest `hello`; `nil` until the first attach.
@@ -113,6 +122,15 @@ final class AppModel: ObservableObject {
     private(set) var conversationShown = false
     /// Per chat, what the conversation pane renders.
     @Published private(set) var transcripts: [Int: [TranscriptItem]] = [:]
+    /// Per chat, where its conversation was left (v0.16 §5). Not published:
+    /// only a conversation appearing reads it.
+    private(set) var scrollPlaces: [Int: ConversationPlace] = [:]
+
+    /// Where `chat`'s conversation was left, if it was shown before.
+    func place(of chat: Int) -> ConversationPlace? { scrollPlaces[chat] }
+
+    /// `chat`'s conversation is left at `place`.
+    func notePlace(_ place: ConversationPlace, chat: Int) { scrollPlaces[chat] = place }
     /// Per chat, the cards still waiting for an answer, in arrival order.
     @Published private(set) var openCards: [Int: [CardAsk]] = [:]
     /// Per chat, every artifact reported, oldest first, one per id.

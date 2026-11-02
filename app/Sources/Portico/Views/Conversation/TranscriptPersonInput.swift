@@ -16,6 +16,9 @@ import SwiftUI
 /// Found hosted, on v0.14.0 alike: the first scroll after the app's
 /// `scrollTo("bottom")` is put back once by SwiftUI (it re-applies that
 /// target on its next update), whatever the input; the next one holds.
+/// v0.16 §5: gone with the move to `ScrollPosition`'s edge target. Every
+/// mark here stays: the spike found `isPositionedByUser` false for all of
+/// these inputs (`ConversationScroll.swift`).
 @MainActor
 final class TranscriptPersonInput {
     /// How long one input counts for the readings that follow it.
