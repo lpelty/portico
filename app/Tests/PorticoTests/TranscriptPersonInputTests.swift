@@ -46,6 +46,22 @@ final class TranscriptPersonInputTests: XCTestCase {
         XCTAssertFalse(input.isRecent, "past the span")
     }
 
+    /// Fix round 3: the mark is spent by the reading of the input's own
+    /// scroll; and VoiceOver's cursor moving marks the same way (the view
+    /// calls `mark()` when its focused row changes).
+    func testAMarkIsSpentByTheScrollItMade() {
+        let input = TranscriptPersonInput()
+        var clock: TimeInterval = 10
+        input.now = { clock }
+        input.mark()
+        XCTAssertTrue(input.isRecent)
+        input.consume()
+        XCTAssertFalse(input.isRecent, "spent")
+        clock = 10.1
+        input.mark()
+        XCTAssertTrue(input.isRecent, "the next input marks again")
+    }
+
     func testTheScrollKeysCountWhileTheFocusIsInTheTranscript() throws {
         let f = fixture()
         let input = TranscriptPersonInput()

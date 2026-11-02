@@ -327,4 +327,45 @@ final class ConversationRoundTripTests: XCTestCase {
         for sub in view.subviews { if let found = firstTextView(in: sub) { return found } }
         return nil
     }
+
+    /// Fix round 3 (I2): at the bottom while a reply streams, the person
+    /// scrolls up and back down to the end; following resumes (the reading
+    /// after their scroll, off the end only because the reply grew, is not
+    /// taken for them leaving the bottom).
+    func testScrollingBackToTheEndWhileAReplyStreamsResumesFollowing() throws {
+        _ = NSApplication.shared
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        var seq = 80
+        func stream(_ count: Int) {
+            for _ in 0..<count {
+                seq += 1
+                model.apply(.textDelta(TextDelta(
+                    chat: 3, turn: 40, text: " Another long line of the reply, streamed in as it is written, part \(seq).",
+                    seq: seq)))
+                spin(0.05)
+            }
+        }
+        stream(2)
+        for _ in 0..<3 {
+            Self.wheel(hosted.scroll, pixels: 200)
+            stream(1)
+        }
+        XCTAssertFalse(atBottom(), "scrolled up")
+        // Down to the end by a wheel, as the app dispatches it (marked as
+        // the person's for a moment), the reply still streaming in.
+        for _ in 0..<12 where !atBottom() {
+            try Self.phaselessWheel(hosted, pixels: -300)
+            stream(1)
+        }
+        stream(6)
+        spin()
+        XCTAssertTrue(atBottom(), "following again")
+    }
 }

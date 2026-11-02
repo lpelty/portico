@@ -6,8 +6,9 @@ import SwiftUI
 /// trackpad, mouse (a plain wheel too, found hosted) or scroller; the keys (Page Up and Down, Home,
 /// End, the arrows, Space) and VoiceOver's page scroll report none, so at
 /// the bottom their scroll read as the layout's and snapped back to the
-/// end. An app event monitor marks them; the mark counts for the readings
-/// within `span` after it.
+/// end. An app event monitor marks them, and so does the view when
+/// VoiceOver's cursor moves to another row (fix round 3); the mark counts
+/// for the readings within `span` after it.
 ///
 /// Found hosted, on v0.14.0 alike: the first scroll after the app's
 /// `scrollTo("bottom")` is put back once by SwiftUI (it re-applies that
@@ -34,6 +35,14 @@ final class TranscriptPersonInput {
     /// The person scrolled the transcript.
     func mark() {
         last = now()
+    }
+
+    /// The input's own scroll was read (fix round 3): the mark is spent.
+    /// Found hosted: after a wheel, SwiftUI kept putting its own offset
+    /// back as a reply streamed in, and those moves, inside the span, read
+    /// as the person scrolling up.
+    func consume() {
+        last = nil
     }
 
     func install() {
@@ -120,5 +129,23 @@ struct TranscriptScrollViewProbe: NSViewRepresentable {
     func updateNSView(_ probe: Probe, context: Context) {
         probe.input = input
         if let scroll = probe.enclosingScrollView { input.scrollView = scroll }
+    }
+}
+
+/// A transcript row that marks the person's input when VoiceOver's cursor
+/// lands on it (v0.15 task 2b fix round 3): the cursor scrolls the row into
+/// view, with no scroll phase and no event. Each row keeps its own focus
+/// state: read in the transcript's body, it set off a loop of scrolls
+/// (found hosted, after a send).
+struct MarksVoiceOverFocus: ViewModifier {
+    let input: TranscriptPersonInput
+    @AccessibilityFocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityFocused($focused)
+            .onChange(of: focused) { _, now in
+                if now { input.mark() }
+            }
     }
 }

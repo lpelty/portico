@@ -115,6 +115,7 @@ struct ConversationView: View {
                         TranscriptEntryView(entry: entry, folder: folder, chat: chat)
                             .padding(.top, gap)
                             .id(entry.id)
+                            .modifier(MarksVoiceOverFocus(input: personInput))
                     }
                     if working {
                         WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
@@ -154,7 +155,12 @@ struct ConversationView: View {
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                if scrollMemory.observe(width: now.width, atBottom: now.atBottom, byPerson: byPerson) == .bottom {
+                let moved = scrollMemory.offset.map { abs($0 - now.offset) >= 0.5 } ?? true
+                let target = scrollMemory.observe(
+                    width: now.width, atBottom: now.atBottom, byPerson: byPerson, offset: now.offset)
+                // The marked input's scroll is read once (fix round 3).
+                if moved { personInput.consume() }
+                if target == .bottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -191,12 +197,11 @@ struct ConversationView: View {
     }
 
     /// Whether the readings now are the person's (v0.15 task 2b fix round 2):
-    /// a scroll phase, a recent scroll key or wheel, or VoiceOver with
-    /// nothing streaming (its cursor scrolls rows into view, with no phase
-    /// and no event; it is left where it put them).
+    /// a scroll phase, or a recent scroll key, wheel or VoiceOver move. (Fix
+    /// round 3: no longer every reading while VoiceOver is on; that took the
+    /// layout's settling for the person's again.)
     private var byPerson: Bool {
         personScrolling || personInput.isRecent
-            || (NSWorkspace.shared.isVoiceOverEnabled && !model.showsWorkingLine(chat: chat))
     }
 
     /// To the bottom, and twice: once now, once after the rows are laid out.

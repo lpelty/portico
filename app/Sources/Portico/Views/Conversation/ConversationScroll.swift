@@ -27,6 +27,8 @@ struct ConversationScrollMemory: Equatable, Sendable {
     private(set) var atBottom = true
     /// The column's width the place was last seen at.
     private(set) var width: CGFloat?
+    /// The offset at the last reading (v0.15 task 2b fix round 3).
+    private(set) var offset: CGFloat?
     /// Whether an offset is at the end of the content (or the content fits).
     static func isAtBottom(offset: CGFloat, visible: CGFloat, content: CGFloat) -> Bool {
         content <= visible || offset + visible >= content - bottomSlack
@@ -64,13 +66,26 @@ struct ConversationScrollMemory: Equatable, Sendable {
     /// app's `followed()`) moves the memory now. Any other reading off the
     /// end, while the memory says at the bottom, goes back to the bottom;
     /// scrolled up, it is left alone.
-    mutating func observe(width: CGFloat, atBottom: Bool, byPerson: Bool) -> Target? {
+    ///
+    /// Fix round 3: a reading of the person's off the end says they left
+    /// the bottom only when the offset moved toward the top since the last
+    /// reading. Back at the end while a reply streams, the reading after
+    /// their scroll (still theirs for a moment) can land off the end
+    /// because the content grew; it moved down or not at all, so it is the
+    /// layout's.
+    mutating func observe(width: CGFloat, atBottom: Bool, byPerson: Bool, offset: CGFloat? = nil) -> Target? {
+        let previous = self.offset
+        if let offset { self.offset = offset }
         if let known = self.width, abs(known - width) >= 1 {
             return widthChanged(to: width)
         }
         if byPerson {
-            seen(atBottom: atBottom, width: width)
-            return nil
+            let movedUp = offset.flatMap { now in previous.map { now < $0 - 0.5 } } ?? true
+            if atBottom || movedUp || !self.atBottom {
+                seen(atBottom: atBottom, width: width)
+                return nil
+            }
+            return .bottom
         }
         guard self.width != nil else {
             self.width = width  // the first look: a conversation opens at its bottom

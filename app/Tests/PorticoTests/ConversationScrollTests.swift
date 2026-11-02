@@ -114,4 +114,27 @@ final class ConversationScrollTests: XCTestCase {
         XCTAssertTrue(memory.atBottom)
         XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false), .bottom)
     }
+
+    /// Fix round 3 (I2): back at the end while a reply streams, a reading
+    /// still marked as the person's lands off the end because the content
+    /// grew. It moved down, not up: the layout's, so back to the bottom.
+    func testThePersonsReadingMovingDownWhileTheContentGrowsGoesBackToTheBottom() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595))
+        XCTAssertEqual(
+            memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6610), .bottom, "moved down, streamed past")
+        XCTAssertEqual(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6610), .bottom, "did not move")
+        XCTAssertTrue(memory.atBottom, "still following")
+    }
+
+    func testThePersonsReadingMovingUpIsRecorded() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6400), "scrolled up")
+        XCTAssertFalse(memory.atBottom)
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6500), "down a little: still up")
+        XCTAssertFalse(memory.atBottom)
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595), "back at the end")
+        XCTAssertTrue(memory.atBottom)
+    }
 }
