@@ -146,6 +146,35 @@ final class ConversationRoundTripTests: XCTestCase {
         XCTAssertEqual(after.dy, before.dy, accuracy: 4, "at the same point in it")
     }
 
+    /// Fix round 1 (Important 2): scrolled up about one screen from the
+    /// end, a step of the reflow can read as the bottom; it must not be
+    /// taken for the person's place and snap the conversation to its end.
+    /// A guard: hosted, the reflow did not produce such a reading, so this
+    /// passed before the fix too (`ConversationScrollTests` holds the RED).
+    /// Only the snap is checked here: near the end SwiftUI's own anchoring
+    /// moves the reply by up to a bubble's height (22 pt seen), before and
+    /// after this fix alike.
+    func testASpaceAndBackLeavesAConversationScrolledUpNearTheEndInPlace() throws {
+        let hosted = try host(try model(), width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        let height = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        let screen = clip.bounds.height
+        for _ in 0..<20 where clip.bounds.maxY > height - screen {
+            Self.wheel(hosted.scroll, pixels: 120)
+            spin(0.05)
+        }
+        spin(0.3)
+        let before = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+
+        resize(hosted, from: 900, to: 640)
+        resize(hosted, from: 640, to: 900)
+        let after = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+        XCTAssertEqual(after.text, before.text, "the same reply at the top, not the end")
+        let end = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        XCTAssertLessThan(clip.bounds.maxY, end - ConversationScrollMemory.bottomSlack, "not snapped to the end")
+    }
+
     func testASpaceAndBackLeavesAConversationAtItsBottomAtItsBottom() throws {
         let hosted = try host(try model(), width: 900)
         defer { hosted.window.close() }

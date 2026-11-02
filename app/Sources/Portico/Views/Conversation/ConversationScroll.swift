@@ -39,6 +39,22 @@ struct ConversationScrollMemory: Equatable, Sendable {
         self.width = width
     }
 
+    /// One scroll-geometry reading, as the view gets it (its width and
+    /// whether it is at the end). Returns where to scroll, if anywhere.
+    ///
+    /// A reading taken on a frame whose width changed is the reflow's, not
+    /// the person's (fix round 1): scrolled up near the end, a step of the
+    /// column's animation can read as the bottom, and recording it would
+    /// snap the conversation to its end at the next change. Only readings
+    /// at an unchanged width say where the person is.
+    mutating func observe(width: CGFloat, atBottom: Bool) -> Target? {
+        if let known = self.width, abs(known - width) >= 1 {
+            return widthChanged(to: width)
+        }
+        seen(atBottom: atBottom, width: width)
+        return nil
+    }
+
     /// The column became `newWidth` wide: `.bottom` when it was at the
     /// bottom; `nil` when nothing changed, nothing is known, or it was
     /// scrolled up (the scroll view keeps that place itself).

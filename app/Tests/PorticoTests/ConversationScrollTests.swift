@@ -27,6 +27,21 @@ final class ConversationScrollTests: XCTestCase {
         XCTAssertEqual(memory.widthChanged(to: 900), .bottom)
     }
 
+    /// Fix round 1 (Important 2): scrolled up near the end, a frame of the
+    /// column's reflow can read as "at the bottom". That reading is the
+    /// reflow's, not the person's: the next width change must not snap
+    /// the conversation to its end.
+    func testAReadingDuringTheReflowIsNotTakenAsWhereThePersonIs() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: false), "the person, scrolled up")
+        XCTAssertNil(memory.observe(width: 820, atBottom: true), "a reflow step that happens to read as the bottom")
+        XCTAssertNil(memory.observe(width: 640, atBottom: true), "still the reflow: no snap to the end")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false), "and back: still none")
+        // Settled at an unchanged width, the person's own readings count again.
+        XCTAssertNil(memory.observe(width: 900, atBottom: true))
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false), .bottom, "at the bottom by the person's own scroll")
+    }
+
     func testNoWidthChangeNoScroll() {
         var memory = ConversationScrollMemory()
         XCTAssertNil(memory.widthChanged(to: 900), "nothing is known before the first look")

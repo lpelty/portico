@@ -145,9 +145,8 @@ struct ConversationView: View {
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                switch scrollMemory.widthChanged(to: now.width) {
-                case .bottom: proxy.scrollTo("bottom", anchor: .bottom)
-                case nil: scrollMemory.seen(atBottom: now.atBottom, width: now.width)
+                if scrollMemory.observe(width: now.width, atBottom: now.atBottom) == .bottom {
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             // A conversation opens at its newest message (v0.13, found live
