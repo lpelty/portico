@@ -17,8 +17,8 @@
 //    Not adopted: following stays the memory's, which already holds.
 // So `isPositionedByUser` misses every input on macOS here, and v0.15's
 // marks all stay: `scrolling` is the scroll phase, and `marked` the key
-// and wheel monitor and VoiceOver's cursor (`TranscriptPersonInput`). What ScrollPosition brings: an edge target that
-// SwiftUI drops when the person scrolls (v0.15's id target was put back
+// and wheel monitor and VoiceOver's cursor (`TranscriptPersonInput`).
+// What ScrollPosition brings: an edge target that SwiftUI drops when the person scrolls (v0.15's id target was put back
 // once, R10), so the first scroll after opening holds; the per-conversation
 // place (`ConversationPlace`); and stale app-set targets to clear (3): the
 // bottom edge, and the row a restore scrolled to (fix round 1).

@@ -261,8 +261,12 @@ person skipped the question.", "The person dismissed the question.", or
 "The person replied in the conversation instead." For `replied` the app
 sends the reply as an ordinary `message.send` first; it is queued
 (`queue.v1`) and written into the turn right after the question's
-`tool.finished`, so the agent reads the decline and then the reply. Any
-other `declined` value is `card.invalid_answer`. An unknown, already-answered, or cancelled id is
+`tool.finished`, so the agent reads the decline and then the reply. An
+`answers` map with nothing in it is treated as `skipped`. Any
+other `declined` value is `card.invalid_answer`. *Plug-in and engine
+authors:* `EngineCallbacks.on_question` now receives the question tool's
+`tool_use_id` (`on_question(questions, tool_use_id="")`), so an owner with the
+old one-argument signature must add the parameter. An unknown, already-answered, or cancelled id is
 refused with `error code=card.stale` and nothing else happens; an answer
 whose shape does not fit the card's kind is refused with
 `error code=card.invalid_answer` and the card stays open. An accepted

@@ -577,6 +577,9 @@ class CardBroker:
             raise QuestionDeclined(DECLINES[declined], declined=declined)
         answers = answer.answer.get("answers")
         assert isinstance(answers, dict)
+        if not answers:
+            # Backstop: an answer with nothing in it is the person skipping every question.
+            raise QuestionDeclined(DECLINES["skipped"], declined="skipped")
         return dict(answers)
 
     # --- answering and cancelling ----------------------------------------------

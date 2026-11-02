@@ -52,7 +52,7 @@ class PlainCallbacks:
     async def on_permission(self, tool: str, input: dict, suggestions: list, tool_use_id: str) -> Any:
         return "allow"
 
-    async def on_question(self, questions: list) -> dict:
+    async def on_question(self, questions: list, tool_use_id: str = "") -> dict:
         return {}
 
     async def on_compacted(self, trigger: str) -> None: ...

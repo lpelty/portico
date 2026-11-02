@@ -527,6 +527,25 @@ async def test_partial_answers(server: GatewayServer, factory: EngineFactory, fo
         await conn.close()
 
 
+async def test_empty_answers_are_the_skipped_decline(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        _, card = await start_turn_with_card(
+            conn, number, engine, AskQuestion(QUESTIONS[:1], tool_use_id="toolu_q4"), fake_result()
+        )
+        await recv(conn)
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"answers": {}})))
+        await recv_until(conn, TurnFinished)
+        await engine.wait_idle()
+        assert engine.answers == [("declined", DECLINE_MESSAGES["skipped"])]
+        outcome = server.registry.get(number).answers["toolu_q4"]
+        assert (outcome.answers, outcome.declined) == (None, "skipped")
+    finally:
+        await conn.close()
+
+
 # --- hold while no app is attached ---------------------------------------------
 
 

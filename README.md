@@ -175,6 +175,9 @@ path = "~/projects"                 # absolute; a leading ~ is expanded
 [sessions]                          # optional (v0.11)
 next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's number (see Session numbers)
 
+[threads]                           # optional (v0.16): threads beside Main (single presentation only)
+max = 2                             # 0 to 2, default 2; 0 turns threads off (no tool, no thread UI)
+
 [files]                             # optional (v0.11): the Files pane
 hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
                                     # (it is still where the agent works, and a file in it still shows)
@@ -251,6 +254,29 @@ Settings → General → **Clear earlier sessions…** (after a confirmation)
 empties the list of ended sessions. Only Portico's list: the live session
 stays, the agent's transcripts stay on disk, and the numbers are not used
 again.
+
+### Threads, docked cards and New space (v0.16)
+
+Main's agent can propose a **thread**: another conversation with the same
+agent in the same folder, started from a brief (and the files named with
+it), for work that can run alongside. The proposal is a card in Main; the
+person starts it or says Not now. At most `[threads] max` (default 2, 0 =
+off) are open besides Main. ⌃0 is Main, ⌃1 and ⌃2 the threads, and the
+sidebar lists them with their state. A thread needing an answer shows a
+calling card in Main. Closing a thread writes a summary through the log
+step to History; a thread never renews. A thread takes the brief, not
+Main's conversation. Threads need `presentation = "single"` and an app that
+announces `threads.v1` (see `protocol/PROTOCOL.md`, Threads). ⌃1 and ⌃2 can
+be taken by macOS if the "Switch to Desktop N" shortcuts are on (Mission
+Control).
+
+Questions and permissions appear as a card docked above the composer:
+numbered options (keys 1-4, arrows and Return), a pager for several
+questions, "Something else", Skip, and × to dismiss; typing a reply in the
+composer instead declines the question and sends the reply. A preview on an
+option shows in a column beside the options when the agent sends one.
+**New space...** in the space switcher opens a dialog (name and what you
+want) instead of filling the composer.
 
 ### Session numbers
 

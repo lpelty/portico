@@ -16,13 +16,16 @@ struct ConversationView: View {
     /// conversation keeps while another is shown (v0.16 §5).
     @State private var rows = TranscriptRowFrames()
     /// The row a restore scrolled to, while that target is still the
-    /// position (fix round 1): a key or VoiceOver move leaves it in force.
+    /// position (fix round 1): a move by any recent person input (a key,
+    /// the wheel or VoiceOver) clears it; AppKit's own scroll does not.
     @State private var restoredTop: String?
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
     @State private var personScrolling = false
+    /// The scroll view's phase, named, for the blank-space diagnostic's line.
+    @State private var scrollPhaseName = "idle"
     /// The person's scroll keys, plain wheels and VoiceOver page scrolls,
     /// which may report no scroll phase (v0.15 task 2b fix round 2).
     @State private var personInput = TranscriptPersonInput()
@@ -206,15 +209,16 @@ struct ConversationView: View {
             if target == .bottom {
                 toBottom()
             } else if !scrollMemory.atBottom, position.edge == .bottom {
-                // The person left the end by a key or VoiceOver: AppKit
-                // moved the clip with no scroll phase, so the position
+                // The person left the end by input with no scroll phase (a
+                // key, or VoiceOver): AppKit moved the clip, so the position
                 // still says the bottom edge, and SwiftUI would put it
                 // back there when the content next grows (found hosted).
                 // An empty position leaves the view where it is.
                 position = ScrollPosition(idType: String.self)
             } else if let top = restoredTop, position.viewID(type: String.self) == top,
                       personInput.recent != nil, !personScrolling {
-                // Fix round 1: the same for the row a restore scrolled to;
+                // Fix round 1: the same for the row a restore scrolled to,
+                // on any recent person-input mark (key, wheel or VoiceOver);
                 // SwiftUI put the view back on it at the next delta.
                 position = ScrollPosition(idType: String.self)
                 restoredTop = nil
@@ -229,6 +233,7 @@ struct ConversationView: View {
         .onScrollPhaseChange { _, phase in
             // `.animating` too (fix round 2): the app's own scrolls are not animated.
             personScrolling = phase != .idle
+            scrollPhaseName = "\(phase)"
         }
         // v0.15 task 2b fix round 1: the newest message is followed only
         // at the bottom (scrolled up, a streaming reply no longer pulls
@@ -242,6 +247,7 @@ struct ConversationView: View {
                 toBottom()
             }
         }
+        .task(id: chat) { await watchForBlankSpace() }
         // VoiceOver's page scroll is the person's (fix round 2).
         .accessibilityScrollAction { edge in personInput.page(toward: edge) }
         .onAppear {
@@ -260,6 +266,29 @@ struct ConversationView: View {
             model.notePlace(
                 ConversationPlace(atBottom: scrollMemory.atBottom, topItem: top?.id, topOffset: top?.offset ?? 0),
                 chat: chat)
+        }
+    }
+
+    /// The field diagnostic for "empty space under the conversation" (v0.16):
+    /// twice a second, while this conversation is shown, one log line per
+    /// occurrence when rows exist but the view shows none of them, or shows
+    /// past the document's end, for over a second with no scroll phase.
+    private func watchForBlankSpace() async {
+        var watch = TranscriptBlankSpace.Watch()
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let scroll = personInput.scrollView, let document = scroll.documentView else { continue }
+            let clip = scroll.contentView.bounds
+            let frames = Array(rows.frames.values)
+            let blank = TranscriptBlankSpace.isBlank(
+                hasRows: !drawn.isEmpty, rowFrames: frames, clip: clip, documentHeight: document.frame.height)
+            if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {
+                let last = rows.frames.values.max { $0.minY < $1.minY }
+                TranscriptBlankSpace.log(
+                    TranscriptBlankSpace.line(
+                        chat: chat, documentHeight: document.frame.height, clip: clip, lastRow: last,
+                        phase: scrollPhaseName, atBottomEdge: position.edge == .bottom))
+            }
         }
     }
 
