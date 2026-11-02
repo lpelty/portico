@@ -144558,8 +144558,8 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "L6TgjM",
-                  "name": "Match the system",
+                  "id": "t5P0M",
+                  "name": "Appearance row",
                   "width": "fill_container",
                   "stroke": "$border",
                   "strokeWidth": {
@@ -144573,150 +144573,58 @@
                   "alignItems": "center",
                   "children": [
                     {
-                      "type": "ellipse",
-                      "id": "m1MAXI",
-                      "name": "Radio",
-                      "fill": "$accent",
-                      "width": 14,
-                      "height": 14
+                      "type": "text",
+                      "id": "xqKY9",
+                      "name": "T",
+                      "fill": "$text",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Appearance",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
                     },
                     {
                       "type": "frame",
-                      "id": "Ne0r9",
-                      "name": "T",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 2,
+                      "id": "o3CzI",
+                      "name": "Popup",
+                      "fill": "$control",
+                      "cornerRadius": 6,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "gap": 6,
+                      "padding": [
+                        4,
+                        8,
+                        4,
+                        10
+                      ],
+                      "alignItems": "center",
                       "children": [
                         {
                           "type": "text",
-                          "id": "wobUo",
-                          "name": "L",
+                          "id": "VWgkz",
+                          "name": "T",
                           "fill": "$text",
                           "content": "Match the system",
                           "fontFamily": "$font",
-                          "fontSize": 13,
+                          "fontSize": 12,
                           "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "cBHNb",
+                          "name": "Icon",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "chevrons-up-down",
+                          "library": "lucide",
+                          "fill": "$text-3"
                         }
                       ]
                     }
                   ]
                 },
-                {
-                  "type": "frame",
-                  "id": "LKqSu",
-                  "name": "Light",
-                  "width": "fill_container",
-                  "stroke": "$border",
-                  "strokeWidth": {
-                    "bottom": 1
-                  },
-                  "gap": 10,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "ellipse",
-                      "id": "Ejofw",
-                      "name": "Radio",
-                      "fill": "$control",
-                      "width": 14,
-                      "height": 14,
-                      "stroke": "$border",
-                      "strokeWidth": 1
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ZCblk",
-                      "name": "T",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 2,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "r41Vm",
-                          "name": "L",
-                          "fill": "$text",
-                          "content": "Light",
-                          "fontFamily": "$font",
-                          "fontSize": 13,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "oJ6am",
-                  "name": "Dark",
-                  "width": "fill_container",
-                  "gap": 10,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "ellipse",
-                      "id": "bwE7y",
-                      "name": "Radio",
-                      "fill": "$control",
-                      "width": 14,
-                      "height": 14,
-                      "stroke": "$border",
-                      "strokeWidth": 1
-                    },
-                    {
-                      "type": "frame",
-                      "id": "RjjsJ",
-                      "name": "T",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 2,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "svV7v",
-                          "name": "L",
-                          "fill": "$text",
-                          "content": "Dark",
-                          "fontFamily": "$font",
-                          "fontSize": 13,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "text",
-              "id": "u9i3lW",
-              "name": "H",
-              "fill": "$text-2",
-              "content": "Text",
-              "fontFamily": "$font",
-              "fontSize": 12,
-              "fontWeight": "600"
-            },
-            {
-              "type": "frame",
-              "id": "a2qjN",
-              "name": "Text size",
-              "width": "fill_container",
-              "fill": "$panel",
-              "cornerRadius": 9,
-              "stroke": "$border",
-              "strokeWidth": 1,
-              "layout": "vertical",
-              "children": [
                 {
                   "type": "frame",
                   "id": "L4F76",
