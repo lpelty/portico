@@ -144536,16 +144536,6 @@
           ],
           "children": [
             {
-              "type": "text",
-              "id": "OA9Bs",
-              "name": "H",
-              "fill": "$text-2",
-              "content": "Appearance",
-              "fontFamily": "$font",
-              "fontSize": 12,
-              "fontWeight": "600"
-            },
-            {
               "type": "frame",
               "id": "NENcm",
               "name": "Appearance",
@@ -144806,7 +144796,7 @@
       "fill": "$text-2",
       "textGrowth": "fixed-width",
       "width": 700,
-      "content": "AN3 · Text size, in Settings → Appearance. One scale, 85–150%. Everything Portico draws scales, the reading column too; HTML pages in the viewer don't.",
+      "content": "AN3 · Settings → Appearance: Appearance is a dropdown (Larry 11-01), and Text size sits under it. One scale, 85–150%. Everything Portico draws scales, the reading column too; HTML pages in the viewer don't.",
       "lineHeight": 1.45,
       "fontFamily": "$font",
       "fontSize": 14,
