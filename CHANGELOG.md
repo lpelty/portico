@@ -80,6 +80,9 @@
 - **The conversation keeps its place across a space and back.** A
   scrolled-up conversation no longer jumps to the start of a remembered
   message when the column narrows and widens.
+- **The services menu's Stop and Restart show for the whole row.** Only
+  the row's words were the hover target; now the whole row is, and the
+  buttons are drawn as the app's other small row actions.
 - **A heading inside a clickable card clicks the card.** Click by text
   also matches headings, after buttons and links. When the heading sits in
   a clickable card (a link, a button, `[role=button]`, an element with a

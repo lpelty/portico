@@ -98,3 +98,33 @@ extension View {
         modifier(HoverHighlight(shape: AnyShape(shape)))
     }
 }
+
+/// A small action shown on a row while the pointer is on it: an icon and a
+/// word, 11 pt in the third text colour, with the hover tint. The look of
+/// Copy under a reply (`CopyButton`), for the services menu's row actions.
+struct RowActionButton: View {
+    let title: String
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.text3)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .opacity(isEnabled ? 1 : 0.5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .help(help)
+        .accessibilityLabel(title)
+    }
+}

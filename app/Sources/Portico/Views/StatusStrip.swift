@@ -438,20 +438,25 @@ struct ServiceRowView: View {
                 ProgressView().controlSize(.small)
                     .help("Restarting \(row.name)…")
             } else if hovering {
-                // v0.12, item 1: the Gateway row's Stop and Restart, visible on hover.
-                ForEach(ServicesPresentation.hoverControls(row), id: \.title) { control in
-                    Button(control.title) { press(control) }
-                        .buttonStyle(.hover)
-                        .font(.system(size: 12))
-                        .help(Self.help(control))
+                // v0.12, item 1: the Gateway row's Stop and Restart, visible on hover,
+                // drawn as the app's other small row actions (Copy under a reply).
+                HStack(spacing: 2) {
+                    ForEach(ServicesPresentation.hoverControls(row), id: \.title) { control in
+                        RowActionButton(title: control.title, systemImage: control.systemImage, help: Self.help(control)) {
+                            press(control)
+                        }
                         .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
+                    }
                 }
             }
         }
-        .onHover { hovering = $0 }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        // The whole row, padding included, is the hover target (v0.14 test
+        // fix): before the padding and the shape, only the drawn dot and
+        // words counted, a thin strip the pointer had to find.
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .contextMenu { actions }
         .accessibilityElement(children: .combine)
     }
