@@ -190,8 +190,9 @@ final class PermissionUnitTests: XCTestCase {
             PermissionChoice.docked.contains { $0.answer(for: card).scope == .always }, "there is no Allow always")
     }
 
-    func testTheKeysAnswerAsTheShippedButtonsDid() {
-        let draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+    func testTheKeysAnswerAsTheShippedButtonsDidOnceTheFocusHasMoved() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        draft.move(by: 0)
         let once = draft.answer(for: .choose(0))
         XCTAssertEqual(once?.answer, ["decision": .string("allow")])
         XCTAssertEqual(once?.scope, .once)
@@ -209,18 +210,54 @@ final class PermissionUnitTests: XCTestCase {
     func testAStrayReturnGrantsNothingUntilTheFocusHasMoved() {
         var fresh = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
         XCTAssertNil(fresh.answer(for: .confirm), "Return right after the card appears does nothing")
-        XCTAssertEqual(fresh.answer(for: .choose(0))?.scope, .once, "a digit is deliberate: it acts at once")
         fresh.move(by: 1)
         XCTAssertEqual(fresh.answer(for: .confirm)?.scope, .chat, "after an arrow, Return answers that row")
-        var hovered = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
-        hovered.focus(2)
-        XCTAssertEqual(hovered.answer(for: .confirm)?.answer, ["decision": .string("deny")], "hovering a row counts")
+    }
+
+    /// Ruling R-c11: the card takes the focus when it appears over an empty
+    /// composer, so a "2" typed as the start of a sentence must not become
+    /// Allow for this session.
+    func testADigitOnAFreshCardGrantsNothing() {
+        let fresh = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        XCTAssertNil(fresh.answer(for: .choose(1)), "a 2 before the person moved the focus answers nothing")
+        XCTAssertNil(fresh.answer(for: .choose(0)))
+        XCTAssertNil(fresh.answer(for: .choose(2)))
+    }
+
+    func testADigitAnswersAfterAnArrow() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        draft.move(by: 1)
+        let answer = draft.answer(for: .choose(1))
+        XCTAssertEqual(answer?.answer, ["decision": .string("allow")])
+        XCTAssertEqual(answer?.scope, .chat, "↓ then 2 is Allow for this session")
+    }
+
+    func testAClickOnARowAnswersAtOnce() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        let answer = draft.click(0)
+        XCTAssertEqual(answer?.answer, ["decision": .string("allow")])
+        XCTAssertEqual(answer?.scope, .once, "a click on row 1 is Allow once, with no arrow first")
+        XCTAssertTrue(draft.focusMoved, "a click moves the focus")
+        XCTAssertNil(draft.click(7), "no such row")
+    }
+
+    func testHoverHighlightsButDoesNotArmReturnOrDigits() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        draft.hover(1)
+        XCTAssertEqual(draft.highlighted, 1, "the pointer's row still shows")
+        XCTAssertFalse(draft.focusMoved, "hover is not a move of the focus")
+        XCTAssertNil(draft.answer(for: .confirm), "hover then Return answers nothing")
+        XCTAssertNil(draft.answer(for: .choose(1)), "hover then a digit answers nothing")
+        draft.hover(nil)
+        XCTAssertNil(draft.highlighted, "the pointer left; nothing shows until the focus moves")
+        draft.move(by: 1)
+        XCTAssertEqual(draft.highlighted, 1)
     }
 
     func testReturnAnswersTheFocusedOptionAndTheArrowsMoveIt() {
         var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
         XCTAssertEqual(draft.focused, 0)
-        draft.focus(0)
+        draft.move(by: 0)
         XCTAssertEqual(draft.answer(for: .confirm)?.scope, .once)
         draft.move(by: 1)
         XCTAssertEqual(draft.answer(for: .confirm)?.scope, .chat)

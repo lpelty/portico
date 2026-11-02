@@ -52,10 +52,14 @@ struct PermissionDraft: Equatable {
     let card: CardAsk
     /// The focused option, an index into `PermissionChoice.docked`.
     private(set) var focused = 0
-    /// Whether the person has moved the focus (an arrow, or the pointer on a
-    /// row). Until then Return does nothing, so a stray Return cannot grant a
-    /// permission; the digits and clicks are deliberate and act at once.
+    /// Whether the person has moved the focus themselves: an arrow, or a
+    /// click on a row (Ruling R-c11). Until then neither Return nor a digit
+    /// answers: the card takes the focus when it appears over an empty
+    /// composer, so a "2" typed as the start of a sentence must not become
+    /// Allow for this session. The pointer resting on a row does not count.
     private(set) var focusMoved = false
+    /// The row under the pointer: highlighted, never armed.
+    private(set) var hovered: Int?
     private(set) var reason = ""
 
     init(card: CardAsk) {
@@ -68,20 +72,35 @@ struct PermissionDraft: Equatable {
         focused = min(max(focused + step, 0), PermissionChoice.docked.count - 1)
     }
 
-    mutating func focus(_ index: Int) {
-        guard PermissionChoice.docked.indices.contains(index) else { return }
-        focusMoved = true
-        focused = index
+    /// The pointer entered a row (or left them all, `nil`): it highlights,
+    /// but arms neither Return nor the digits (Ruling R-c11).
+    mutating func hover(_ index: Int?) {
+        hovered = index.flatMap { PermissionChoice.docked.indices.contains($0) ? $0 : nil }
     }
 
-    /// The answer a key gives: a digit chooses that option (3 is a deny
-    /// with no note), Return the focused one. Moving answers nothing.
+    /// A click on a row: unambiguous, so it answers at once, and it counts
+    /// as moving the focus.
+    mutating func click(_ index: Int) -> CardAnswer? {
+        guard PermissionChoice.docked.indices.contains(index) else { return nil }
+        focusMoved = true
+        focused = index
+        return PermissionChoice.docked[index].answer(for: card)
+    }
+
+    /// The row that shows as selected: the pointer's, else the focus once
+    /// the person has moved it.
+    var highlighted: Int? { hovered ?? (focusMoved ? focused : nil) }
+
+    /// The answer a key gives, once the person has moved the focus: a digit
+    /// chooses that option (3 is a deny with no note), Return the focused
+    /// one. Before that, and on a move, nothing.
     func answer(for action: QuestionDockKeys.Action) -> CardAnswer? {
+        guard focusMoved else { return nil }
         switch action {
         case .choose(let index):
             return PermissionChoice.docked.indices.contains(index) ? PermissionChoice.docked[index].answer(for: card) : nil
         case .confirm:
-            return focusMoved ? PermissionChoice.docked[focused].answer(for: card) : nil
+            return PermissionChoice.docked[focused].answer(for: card)
         case .move:
             return nil
         }
@@ -227,7 +246,7 @@ struct PermissionCard: View {
     private func optionRow(_ choice: PermissionChoice, at index: Int) -> some View {
         let primary = choice == .allowOnce
         return Button {
-            onAnswer(choice.answer(for: card))
+            if let answer = draft.click(index) { onAnswer(answer) }
         } label: {
             HStack(alignment: .center, spacing: 12) {
                 Text("\(index + 1)")
@@ -246,12 +265,18 @@ struct PermissionCard: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
-                draft.focusMoved && draft.focused == index ? Theme.selected : .clear,
+                draft.highlighted == index ? Theme.selected : .clear,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .onHover { inside in if inside { draft.focus(index) } }
+        .onHover { inside in
+            if inside {
+                draft.hover(index)
+            } else if draft.hovered == index {
+                draft.hover(nil)
+            }
+        }
         .pointerStyle(.link)
         .help(help(for: choice))
         .accessibilityLabel("\(index + 1). \(choice.label)")
