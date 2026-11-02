@@ -457,7 +457,8 @@ sessions…; v0.11: `queue.v1` when it queues a send made during a turn for
 an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 `[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
-see [Models](#models-v015)). Always followed by `chat.list`, so the app has the
+see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
+`[threads] max` above 0, see [Threads](#threads-v016)). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -1041,6 +1042,63 @@ choice it will start on. A switch never changes another session's running
 engine, so with several sessions open their `current` can differ until
 that engine restarts.
 
+## Threads *(v0.16)*
+
+A thread is another conversation with the same agent, in the same folder,
+opened from Main and kept beside it. Main's agent proposes one; the person
+starts it. Threads are for single presentation only. When the gateway's
+`hello` and the app's both list `threads.v1`:
+
+- **The capability.** The gateway lists `threads.v1` in single presentation
+  when `[threads] max` is above 0 (0 to 2, default 2; anything else fails
+  to load naming `threads.max`). With `max = 0` there is no tool and no
+  thread UI.
+- **A thread is a chat** with `ChatSummary.thread` set. It takes the next
+  session number as every chat does, has its own transcript and log, and
+  survives a gateway restart in `index.json`. A closed thread's slot is
+  used again; its number is not.
+- **Main** is the newest chat that has not ended and has no `thread`.
+  Everywhere the gateway looks up the live session it means Main: the
+  `chat.new` refusal (`session.live` names Main), `/v1/status`'s `session`,
+  the welcome's number preview (asked when no Main is live, even with a
+  thread open) and following `default_folder` (Main moves; a thread is
+  never ended or followed as the live session). This holds whatever the
+  capability says: a gateway turned to `max = 0` never makes a thread the
+  live session. An app finds Main the same way.
+- **Proposals are stored** in the gateway's index until started,
+  dismissed, or Main's session ends (then `dismissed`), and survive a
+  restart; the newest 100 are kept. Removing a chat drops its proposals.
+- An older app ignores `thread` and sees threads as chats, and is never
+  sent `thread.proposal`. An older gateway has no `threads.v1`, so the app
+  shows no thread UI.
+
+### `ChatSummary.thread`
+`{label, slot, parent, brief, files, opened_at}`: `label` "Thread 1" or
+"Thread 2"; `slot` 1 or 2, the key that switches to it (⌃1, ⌃2); `parent`
+the Main session it was opened from; `brief` what it is for; `files` the
+paths it started with; `opened_at` when it started (UTC, ISO 8601).
+Absent on Main and every chat that is not a thread.
+
+### `thread.proposal` — `ThreadProposal`
+`chat` (Main's), `proposal` (the proposal's id), `tool_use_id?` (the
+`open_thread` tool row the card is drawn in place of), `brief`, `files`,
+`state: pending | started | dismissed`, `thread?` (the chat it started,
+once `started`). A state frame like `chat.queue`: not stamped and not in
+the ring, sent on every change and after `chat.live` on every `chat.open`.
+Only to an app with `threads.v1`.
+
+### `thread.start` — `ThreadStart` *(app → gateway)*
+`chat` (Main's), `proposal`, `close?` (an open thread to close first, at
+the limit), `id`. Starting a thread never changes which chat is Main.
+
+### `thread.dismiss` — `ThreadDismiss` *(app → gateway)*
+`chat` (Main's), `proposal`, `id`. "Not now": the proposal becomes
+`dismissed`, so its record reads "Not started" after a restart too.
+
+### `thread.close` — `ThreadClose` *(app → gateway)*
+`chat` (the thread), `id`. Runs the thread's log step, then ends it into
+History.
+
 ## Subagents and workflows *(v0.10)*
 
 When the agent hands work to subagents, or runs a workflow, the gateway
@@ -1343,10 +1401,12 @@ for the reference gateway, not protocol messages.
   "state", "mode", "started_at", "config_stale"}`. Keys whose value is
   unknown are left out (no session yet: no `folder`, `session`, `state`,
   `mode`); `session` is the live session's number (the newest chat that
-  has not ended), `state` its state word, `mode` its permission mode,
+  has not ended and, v0.16, is not a thread: Main), `state` its state word, `mode` its permission mode,
   `started_at` when the gateway started (UTC, ISO 8601), `config_stale`
-  whether the config file changed since. `version` changes only if a key
-  changes meaning. Exit 0 when a gateway runs, 3 when none does. Without
+  whether the config file changed since. v0.16: `threads: [{label, title?,
+  state}]`, the open threads by slot, only when there are any (the line for
+  a person ends "; threads: Thread 1 (working), Thread 2 (idle)").
+  `version` changes only if a key changes meaning. Exit 0 when a gateway runs, 3 when none does. Without
   `--json`, one line for a person.
 - `stop` — stops the gateway running on this state directory through its
   own stop path (as `gateway.stop`: running turns reported as stopped,

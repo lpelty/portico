@@ -35,6 +35,9 @@ ServiceState = Literal["up", "down", "checking"]
 AgentOutcome = Literal["done", "failed", "stopped"]
 # Where one workflow phase stands (v0.10).
 PhaseState = Literal["pending", "running", "done", "failed"]
+# Where a thread proposal stands (v0.16): ``pending`` until the person starts
+# or dismisses it, or Main's session ends (then ``dismissed``).
+ProposalState = Literal["pending", "started", "dismissed"]
 
 # v0.10: the client capability an app lists in its ``hello`` when it
 # shows subagents and workflows. Only such an app is sent the ``agent.*`` and
@@ -46,6 +49,12 @@ AGENTS_CAPABILITY = "agents.v1"
 # arrives during a turn (``chat.queued``) instead of refusing it, but only
 # for an app that lists it too; only such an app is sent ``chat.queue``.
 QUEUE_CAPABILITY = "queue.v1"
+
+# v0.16: the capability, on both sides, for threads (more conversations with
+# the same agent, opened from Main). A gateway lists it in single
+# presentation with ``[threads] max`` above 0; only an app that lists it too
+# is sent ``thread.proposal``.
+THREADS_CAPABILITY = "threads.v1"
 
 
 class ProtocolError(Exception):
@@ -84,6 +93,22 @@ class Root(Strict):
     path: str
 
 
+class ThreadInfo(Strict):
+    """What makes a chat a thread (v0.16): opened from Main (``parent``) for ``brief``.
+
+    ``label`` is "Thread 1" or "Thread 2"; ``slot`` is its number, the key
+    that switches to it (a closed thread's slot is used again); ``files``
+    are the paths it started with; ``opened_at`` when it was started.
+    """
+
+    label: str
+    slot: int
+    parent: int
+    brief: str
+    files: list[str] = []
+    opened_at: str
+
+
 class ChatSummary(Strict):
     chat: int
     folder: str
@@ -110,6 +135,9 @@ class ChatSummary(Strict):
     # v0.6: when a turn last finished in the session (any outcome), so the
     # app can say how long ago the agent last answered.
     last_reply: str | None = None
+    # v0.16: set on a thread; absent on Main and every other chat. An app
+    # without ``threads.v1`` ignores it and sees threads as chats.
+    thread: ThreadInfo | None = None
 
 
 class Service(Strict):
@@ -283,6 +311,34 @@ class ModelSet(Envelope):
     type: Literal["model.set"] = "model.set"
     chat: int
     value: str | None = None
+
+
+class ThreadStart(Envelope):
+    """v0.16: start the thread a proposal on Main (``chat``) describes (``threads.v1``).
+
+    ``close`` names an open thread to close first when two are open (the
+    limit card's Close and start). Starting does not change which chat is Main.
+    """
+
+    type: Literal["thread.start"] = "thread.start"
+    chat: int
+    proposal: str
+    close: int | None = None
+
+
+class ThreadDismiss(Envelope):
+    """v0.16: "Not now" on a proposal on Main (``chat``); its record reads "Not started"."""
+
+    type: Literal["thread.dismiss"] = "thread.dismiss"
+    chat: int
+    proposal: str
+
+
+class ThreadClose(Envelope):
+    """v0.16: close the thread ``chat``: its log step, then it ends into History."""
+
+    type: Literal["thread.close"] = "thread.close"
+    chat: int
 
 
 class TurnStop(Envelope):
@@ -701,6 +757,26 @@ class ChatQueue(Envelope):
     returned: list[QueuedMessage] | None = None
 
 
+class ThreadProposal(Envelope):
+    """v0.16: a thread Main's agent proposed (``open_thread``), and where it stands.
+
+    ``chat`` is Main's; ``proposal`` the proposal's id; ``tool_use_id`` the
+    ``open_thread`` tool row the card is drawn in place of. ``thread`` is the
+    chat it started, once ``state`` is ``started``. A state frame like
+    ``chat.queue``: not in the ring, sent on every change and after
+    ``chat.live`` on every ``chat.open``. Only to an app with ``threads.v1``.
+    """
+
+    type: Literal["thread.proposal"] = "thread.proposal"
+    chat: int
+    proposal: str
+    tool_use_id: str | None = None
+    brief: str
+    files: list[str] = []
+    state: ProposalState
+    thread: int | None = None
+
+
 class ConfigStale(Envelope):
     """The config file changed after the gateway started; restart the gateway to apply it."""
 
@@ -963,6 +1039,9 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SpaceRename,
     SpaceRemove,
     ModelSet,
+    ThreadStart,
+    ThreadDismiss,
+    ThreadClose,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1004,6 +1083,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ViewerAct,
     SpacesList,
     Models,
+    ThreadProposal,
     Error,
 )
 
@@ -1126,6 +1206,9 @@ def example_messages() -> dict[str, BaseModel]:
         FilesSearch(ts=_TS, id="req-5", root="projects", query="synthesis"),
         SessionMode(ts=_TS, chat=14, mode="auto"),
         ModelSet(ts=_TS, chat=14, id="req-11", value="sonnet"),
+        ThreadStart(ts=_TS, chat=14, id="req-12", proposal="p-3f9a", close=15),
+        ThreadDismiss(ts=_TS, chat=14, id="req-13", proposal="p-3f9a"),
+        ThreadClose(ts=_TS, chat=15, id="req-14"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1171,8 +1254,15 @@ def example_messages() -> dict[str, BaseModel]:
                     logged_at="2026-10-27T11:40:00Z", unlogged=True, last_reply="2026-10-27T11:52:00Z",
                 ),
                 ChatSummary(chat=2, folder=f"{_FOLDER}-two", alias=None, state="working", created=_TS),
+                ChatSummary(
+                    chat=3, folder=_FOLDER, state="idle", created=_TS, title="Acme pricing page", parent=1,
+                    thread=ThreadInfo(
+                        label="Thread 1", slot=1, parent=1, brief="Review the Acme pricing page on its own.",
+                        files=[f"{_FOLDER}/pricing.html"], opened_at=_TS,
+                    ),
+                ),
             ],
-            next_chat=3,
+            next_chat=4,
         ),
         ChatState(ts=_TS, chat=1, seq=42, state="waiting on you", mode="default", unlogged=True),
         ChatHistory(
@@ -1368,6 +1458,16 @@ def example_messages() -> dict[str, BaseModel]:
                 ModelChoice(value="sonnet", display_name="Sonnet", description="Efficient for routine tasks"),
                 ModelChoice(value="haiku", display_name="Haiku", description="Fastest for quick answers"),
             ],
+        ),
+        ThreadProposal(
+            ts=_TS,
+            chat=14,
+            proposal="p-3f9a",
+            tool_use_id="toolu_09",
+            brief="Review the Acme pricing page on its own.",
+            files=[f"{_FOLDER}/pricing.html"],
+            state="started",
+            thread=15,
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

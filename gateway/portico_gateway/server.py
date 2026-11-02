@@ -182,6 +182,7 @@ from .messages import (
     AGENTS_CAPABILITY,
     PROTOCOL_VERSION,
     QUEUE_CAPABILITY,
+    THREADS_CAPABILITY,
     AgentCommand,
     Artifact,
     ArtifactCreated,
@@ -245,6 +246,7 @@ from .messages import (
     SessionRenewed,
     StatusSet,
     TextDelta,
+    ThreadProposal,
     ToolFinished,
     ToolStarted,
     TurnFinished,
@@ -465,6 +467,7 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     gaps are harmless, the app only skips what it has already seen.
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     ``models`` goes only to an app with ``models.v1`` (v0.15).
+    ``thread.proposal`` goes only to an app with ``threads.v1`` (v0.16).
     """
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
@@ -472,6 +475,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
         return None  # v0.15: an app that did not declare models.v1 cannot decode models
     if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
         return None  # v0.11: an app that cannot show a queue never had one
+    if isinstance(msg, ThreadProposal) and THREADS_CAPABILITY not in capabilities:
+        return None  # v0.16: an app without threads.v1 shows no thread UI
     if AGENTS_CAPABILITY in capabilities:
         return msg
     if _is_agent_frame(msg):
@@ -1112,8 +1117,10 @@ class GatewayServer:
     def status(self) -> dict[str, Any]:
         """What ``GET /v1/status`` answers (``portico-gateway status --json``): the live session, if any.
 
-        The live session is the newest chat that has not ended (in
-        ``multiple`` presentation, the newest open chat).
+        The live session is Main: the newest chat that has not ended and is
+        not a thread (in ``multiple`` presentation, the newest open chat).
+        ``threads`` (v0.16) lists the open threads by slot (label, title,
+        state), only when there are any.
         """
         out: dict[str, Any] = {
             "version": 1,
@@ -1123,12 +1130,18 @@ class GatewayServer:
             "started_at": self.started_at,
             "config_stale": self.config_stale(),
         }
-        live = [chat for chat in self.registry.chats() if chat.ended is None]
-        if live:
-            chat = live[-1]
+        main = self.registry.main()
+        if main is not None:
             out.update(
-                {"folder": str(chat.folder), "session": chat.number, "state": chat.state, "mode": chat.mode}
+                {"folder": str(main.folder), "session": main.number, "state": main.state, "mode": main.mode}
             )
+        threads = [
+            {k: v for k, v in {"label": t.thread.label, "title": t.title, "state": t.state}.items() if v is not None}
+            for t in self.registry.open_threads()
+            if t.thread is not None
+        ]
+        if threads:
+            out["threads"] = threads
         return {k: v for k, v in out.items() if v is not None}
 
     async def _status(self, request: HttpRequest) -> HttpResponse:
@@ -1408,7 +1421,7 @@ class GatewayServer:
             return
         recorded = self.registry.recorded_default_folder
         changed = recorded is None or Path(recorded) != folder
-        live = max((c for c in self.registry.chats() if c.ended is None), key=lambda c: c.number, default=None)
+        live = self.registry.main()
         if changed and live is not None and _resolved(live.folder) != folder:
             following = self.registry.create(folder, parent=live.number, number=await self._new_session_number())
             live.ended = _now()
@@ -1443,7 +1456,7 @@ class GatewayServer:
         """At start, with a ``next_number`` command and no live session in single presentation: ask it once for the welcome."""
         if not self.config.sessions.next_number or self.config.presentation != "single":
             return
-        if any(chat.ended is None for chat in self.registry.chats()):
+        if self.registry.main() is not None:
             return
         self._next_number_preview = await self._new_session_number()
 
@@ -2202,11 +2215,11 @@ class GatewayServer:
         if not folder.is_absolute() or not folder.is_dir():
             raise ProtocolError("chat.folder_invalid", f"not an absolute path to a directory: {msg.folder}")
         if self.config.presentation == "single":
-            live = [c.number for c in self.registry.chats() if c.ended is None]
-            if live:
+            main = self.registry.main()
+            if main is not None:
                 raise ProtocolError(
                     "session.live",
-                    f"this deployment keeps one session at a time and session {live[-1]} is live; "
+                    f"this deployment keeps one session at a time and session {main.number} is live; "
                     "end it with session.renew to start the next",
                 )
         await self._preflight()

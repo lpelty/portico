@@ -18,9 +18,29 @@
       "folder": "/Users/someone/projects/demo-two",
       "state": "working",
       "unlogged": false
+    },
+    {
+      "chat": 3,
+      "compactions": 0,
+      "created": "2026-10-27T12:00:00Z",
+      "folder": "/Users/someone/projects/demo",
+      "parent": 1,
+      "state": "idle",
+      "thread": {
+        "brief": "Review the Acme pricing page on its own.",
+        "files": [
+          "/Users/someone/projects/demo/pricing.html"
+        ],
+        "label": "Thread 1",
+        "opened_at": "2026-10-27T12:00:00Z",
+        "parent": 1,
+        "slot": 1
+      },
+      "title": "Acme pricing page",
+      "unlogged": false
     }
   ],
-  "next_chat": 3,
+  "next_chat": 4,
   "ts": "2026-10-27T12:00:00Z",
   "type": "chat.list"
 }

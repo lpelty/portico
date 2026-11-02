@@ -183,10 +183,11 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     assert hello.actions == config.actions
     assert hello.roots == config.roots
     assert hello.commands == []
-    # v0.11: single presentation (the default) also offers ``sessions.clear``.
+    # v0.11: single presentation (the default) also offers ``sessions.clear``;
+    # v0.16: and ``threads.v1`` (``[threads] max`` defaults to 2).
     assert hello.capabilities == [
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-        "models.v1", "sessions.clear",
+        "models.v1", "sessions.clear", "threads.v1",
     ]
     assert hello.presentation == "single"
     assert hello.can_log is False
@@ -639,3 +640,18 @@ def test_default_spaces_folder_keeps_refresh_and_remove(tmp_path: Path) -> None:
     out = with_default_spaces(cfg, tmp_path / "home")
     assert (out.spaces.refresh, out.spaces.remove) == ("true", "true")
     assert out.spaces.folder is not None
+
+
+def test_threads_max_defaults_to_2_and_is_bounded(tmp_path: Path) -> None:
+    # v0.16: 0 turns threads off; more than two is not v0.16.
+    assert Config().threads.max == 2
+    path = tmp_path / "config.toml"
+    path.write_text("[threads]\nmax = 0\n")
+    assert load_config(path).threads.max == 0
+    for bad in ("-1", "3"):
+        path.write_text(f"[threads]\nmax = {bad}\n")
+        with pytest.raises(ConfigError, match="threads.max"):
+            load_config(path)
+    path.write_text("[threads]\nmaximum = 1\n")
+    with pytest.raises(ConfigError, match="threads.maximum"):
+        load_config(path)

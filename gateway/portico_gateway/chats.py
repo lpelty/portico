@@ -19,8 +19,10 @@ number, folder, engine session id, alias, state word, creation time,
 the artifacts the chat produced, and (v0.2) the session facts: title,
 ended, logged, parent, compactions and the last context percentage, and
 (v0.3) the permission mode and the session's chat-scoped allows, and
-(v0.4) when it was last logged and whether a turn finished since, and (v0.6)
-when a turn last finished. A chat that came back from the index with
+(v0.4) when it was last logged and whether a turn finished since, (v0.6)
+when a turn last finished, and (v0.16) the ``thread`` record that makes it
+a thread. Main is the newest live chat without one (``ChatRegistry.main``).
+The index also keeps (v0.16) the thread proposals. A chat that came back from the index with
 a session is ``restored``: its conversation before this launch lives in
 the engine's transcript, which the server replays on ``chat.open``.
 """
@@ -32,8 +34,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
-from .messages import AgentProgress, Artifact, ChatState, ChatStateWord, ChatSummary, ModelChoice, PermissionMode, ServerMessage
-from .state import ChatRecord, Index, StateDir, ToolPermission
+from .messages import (
+    AgentProgress,
+    Artifact,
+    ChatState,
+    ChatStateWord,
+    ChatSummary,
+    ModelChoice,
+    PermissionMode,
+    ProposalState,
+    ServerMessage,
+    ThreadInfo,
+)
+from .state import ChatRecord, Index, ProposalRecord, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .engine import Engine
@@ -42,6 +55,9 @@ STATE_WORDS: frozenset[str] = frozenset(get_args(ChatStateWord))
 
 # How many tool uses' permission outcomes a chat record keeps (newest).
 TOOL_PERMISSIONS_KEPT = 500
+
+# How many thread proposals the index keeps (newest), v0.16.
+PROPOSALS_KEPT = 100
 
 # A session's title: the first line of its first message, at most this long.
 TITLE_LIMIT = 60
@@ -112,6 +128,7 @@ class Chat:
         logged_at: str | None = None,
         work_since_log: bool = False,
         last_reply: str | None = None,
+        thread: ThreadInfo | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -166,6 +183,8 @@ class Chat:
         # reply 12 min ago" from it; a transcript replay cannot (its events
         # carry the time of the replay), so the record keeps it.
         self.last_reply = last_reply
+        # v0.16: set when this chat is a thread opened from Main.
+        self.thread = thread
         self.can_log = False
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
@@ -269,6 +288,7 @@ class Chat:
             "mode": self.mode,
             "logged_at": self.logged_at,
             "last_reply": self.last_reply,
+            "thread": self.thread,
         }
 
     def summary(self) -> ChatSummary:
@@ -320,6 +340,7 @@ class Chat:
             permissions=record.permissions,
             logged_at=record.logged_at,
             last_reply=record.last_reply,
+            thread=record.thread,
             # An index from before v0.4 does not say: a session the engine
             # named has had a turn, and nothing in v0.4 has logged it.
             work_since_log=(
@@ -414,17 +435,20 @@ class ChatRegistry:
         """The number Portico's own counter gives the next chat."""
         return self._index.next_chat
 
-    def create(self, folder: Path, parent: int | None = None, number: int | None = None) -> Chat:
+    def create(
+        self, folder: Path, parent: int | None = None, number: int | None = None, thread: ThreadInfo | None = None
+    ) -> Chat:
         """A new chat on ``folder`` with the next number; saved to the index at once.
 
         ``number`` (v0.11, the deployment's ``[sessions] next_number``) is
         taken when it is at or above the next number, so no number is ever
-        handed out twice; the counter continues after it.
+        handed out twice; the counter continues after it. ``thread`` (v0.16)
+        makes it a thread.
         """
         if number is None or number < self._index.next_chat:
             number = self._index.next_chat
         self._index.next_chat = number + 1
-        chat = Chat(number, Path(folder), self._history_buffer, parent=parent, mode=self.default_mode)
+        chat = Chat(number, Path(folder), self._history_buffer, parent=parent, mode=self.default_mode, thread=thread)
         chat.can_log = self._can_log
         self._chats[number] = chat
         self.persist()
@@ -447,11 +471,71 @@ class ChatRegistry:
         return [c for c in self.chats() if c.ended is not None]
 
     def remove(self, number: int) -> Chat:
-        """Forget a chat. Its number is never handed out again. The caller closes its engine."""
+        """Forget a chat and its thread proposals. Its number is never handed out again. The caller closes its engine."""
         chat = self.get(number)
         del self._chats[number]
+        self._index.proposals = [p for p in self._index.proposals if p.chat != number]
         self.persist()
         return chat
+
+    # --- Main and its threads (v0.16) ---------------------------------------------
+
+    def main(self) -> Chat | None:
+        """Main: the newest live chat that is not a thread; ``None`` when there is none.
+
+        Every place the gateway looks up the live session asks this, so a
+        thread never becomes it (whatever ``[threads] max`` says).
+        """
+        return max(
+            (c for c in self._chats.values() if c.ended is None and c.thread is None),
+            key=lambda c: c.number,
+            default=None,
+        )
+
+    def open_threads(self) -> list[Chat]:
+        """The live threads, by slot."""
+        live = [c for c in self._chats.values() if c.ended is None and c.thread is not None]
+        return sorted(live, key=lambda c: (c.thread.slot, c.number))  # type: ignore[union-attr]
+
+    def free_slot(self, limit: int) -> int | None:
+        """The lowest slot of 1…``limit`` no open thread holds; ``None`` at the limit."""
+        held = {c.thread.slot for c in self.open_threads() if c.thread is not None}
+        return next((slot for slot in range(1, limit + 1) if slot not in held), None)
+
+    # --- thread proposals (v0.16) ---------------------------------------------------
+
+    def add_proposal(self, record: ProposalRecord) -> None:
+        """Keep a new proposal (the oldest go past ``PROPOSALS_KEPT``); saved at once."""
+        self._index.proposals = [*self._index.proposals, record][-PROPOSALS_KEPT:]
+        self.persist()
+
+    def proposal(self, id: str) -> ProposalRecord:
+        """The proposal ``id``; raises ``KeyError`` when the index has none."""
+        for record in self._index.proposals:
+            if record.id == id:
+                return record
+        raise KeyError(id)
+
+    def proposals_for(self, chat: int) -> list[ProposalRecord]:
+        """The proposals made in ``chat``, oldest first."""
+        return [p for p in self._index.proposals if p.chat == chat]
+
+    def resolve_proposal(self, id: str, state: ProposalState, thread: int | None = None) -> ProposalRecord:
+        """Set proposal ``id``'s state (and the thread it started); saved at once. ``KeyError`` when unknown."""
+        record = self.proposal(id)
+        record.state = state
+        record.thread = thread
+        self.persist()
+        return record
+
+    def dismiss_pending(self, chat: int) -> list[ProposalRecord]:
+        """Every pending proposal in ``chat`` becomes ``dismissed`` (Main's session ended); returns them."""
+        changed = [p for p in self._index.proposals if p.chat == chat and p.state == "pending"]
+        for record in changed:
+            record.state = "dismissed"
+        if changed:
+            self.persist()
+        return changed
 
     def persist(self) -> None:
         """Write every chat's record and ``next_chat`` to the index."""

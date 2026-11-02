@@ -85,6 +85,11 @@ EXPECTED_KEYS = {
     # v0.15 models
     "server.models",
     "client.model.set",
+    # v0.16 threads
+    "server.thread.proposal",
+    "client.thread.start",
+    "client.thread.dismiss",
+    "client.thread.close",
 }
 
 
@@ -100,7 +105,8 @@ def test_every_type_has_schema_def_and_example():
     # chat.unqueue, chat.queued, chat.queue, chat.commands
     # v0.12's viewer.act, viewer.settings, viewer.result, spaces.list, space.refresh, space.rename, space.remove
     # v0.15's models, model.set
-    assert len(ex) == 65
+    # v0.16's thread.proposal, thread.start, thread.dismiss, thread.close
+    assert len(ex) == 69
     assert set(ex) == EXPECTED_KEYS
 
 
@@ -230,3 +236,32 @@ def test_hello_example_shows_the_v012_fields():
     hello = example_messages()["server.hello"]
     assert hello.viewer_defaults is not None and hello.viewer_defaults.act_hosts == ["figma.com"]
     assert {"spaces.v1", "spaces.refresh"} <= set(hello.capabilities)
+
+
+def test_v016_thread_frames_round_trip_with_their_wire_shape():
+    start = parse_client(json.dumps({"type": "thread.start", "chat": 3, "proposal": "p1", "id": "r1", "ts": TS}))
+    assert start.type == "thread.start" and start.chat == 3 and start.proposal == "p1" and start.close is None
+    at_limit = parse_client(json.dumps({"type": "thread.start", "chat": 3, "proposal": "p1", "close": 5, "ts": TS}))
+    assert at_limit.close == 5
+    dismiss = parse_client(json.dumps({"type": "thread.dismiss", "chat": 3, "proposal": "p1", "ts": TS}))
+    assert dismiss.type == "thread.dismiss" and dismiss.proposal == "p1"
+    close = parse_client(json.dumps({"type": "thread.close", "chat": 5, "id": "r2", "ts": TS}))
+    assert close.type == "thread.close" and close.chat == 5
+    with pytest.raises(ProtocolError):
+        parse_client(json.dumps({"type": "thread.start", "chat": 3, "ts": TS}))
+
+    pending = parse_server(
+        json.dumps({"type": "thread.proposal", "chat": 3, "proposal": "p1", "brief": "Review the Acme pricing page", "state": "pending", "ts": TS})
+    )
+    assert pending.files == [] and pending.tool_use_id is None and pending.thread is None
+    assert json.loads(dump(pending)) == {
+        "type": "thread.proposal", "chat": 3, "proposal": "p1", "brief": "Review the Acme pricing page",
+        "files": [], "state": "pending", "ts": TS,
+    }
+    with pytest.raises(ProtocolError):
+        parse_server(json.dumps({"type": "thread.proposal", "chat": 3, "proposal": "p1", "brief": "b", "state": "open", "ts": TS}))
+
+    listing = example_messages()["server.chat.list"]
+    thread = json.loads(dump(listing))["chats"][-1]["thread"]
+    assert set(thread) == {"label", "slot", "parent", "brief", "files", "opened_at"}
+    assert "thread" not in json.loads(dump(listing))["chats"][0], "absent on a chat that is not a thread"
