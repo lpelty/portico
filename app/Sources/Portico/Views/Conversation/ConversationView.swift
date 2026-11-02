@@ -141,11 +141,12 @@ struct ConversationView: View {
             .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
                 TranscriptGeometry(
                     width: geometry.containerSize.width,
+                    content: geometry.contentSize.height,
                     atBottom: ConversationScrollMemory.isAtBottom(
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                if scrollMemory.observe(width: now.width, atBottom: now.atBottom) == .bottom {
+                if scrollMemory.observe(width: now.width, atBottom: now.atBottom, content: now.content) == .bottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -214,9 +215,12 @@ struct ConversationView: View {
 }
 
 /// The transcript's width and whether it is at its end, as its scroll
-/// geometry changes (v0.11, item 67).
+/// geometry changes (v0.11, item 67). v0.15 fix: and the content's height,
+/// so the rows resolving at a new width is a reading of its own (the end
+/// moved while `atBottom` read false throughout, and nothing followed it).
 private struct TranscriptGeometry: Equatable {
     var width: CGFloat
+    var content: CGFloat
     var atBottom: Bool
 }
 

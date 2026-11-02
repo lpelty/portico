@@ -54,4 +54,37 @@ final class ConversationScrollTests: XCTestCase {
         XCTAssertTrue(ConversationScrollMemory.isAtBottom(offset: 1390, visible: 600, content: 2000))
         XCTAssertFalse(ConversationScrollMemory.isAtBottom(offset: 1000, visible: 600, content: 2000))
     }
+
+    /// v0.15 fix (task 2b): at the bottom, the narrowing scrolled to the
+    /// end of the lazy stack's estimate; the stack then resolved its rows
+    /// at the new width and the end moved, at an unchanged width. That
+    /// reading is the layout's, not the person leaving the bottom.
+    func testAtTheBottomAContentChangeAtTheSameWidthGoesBackToTheBottom() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, content: 7097))
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, content: 10098), .bottom, "the width step")
+        XCTAssertEqual(
+            memory.observe(width: 640, atBottom: false, content: 9075), .bottom,
+            "the rows resolved, the end moved: back to it")
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, content: 9300), .bottom, "grew: back to it")
+        XCTAssertTrue(memory.atBottom, "not recorded as scrolled up")
+    }
+
+    func testAtTheBottomThePersonScrollingUpIsRecorded() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, content: 7097))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, content: 7097), "the person scrolled up")
+        XCTAssertFalse(memory.atBottom)
+        XCTAssertNil(memory.widthChanged(to: 640), "and the scroll view keeps that place")
+    }
+
+    func testScrolledUpAContentChangeIsLeftAlone() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, content: 7097))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, content: 7400), "a new message below: no jump")
+        XCTAssertNil(
+            memory.observe(width: 900, atBottom: true, content: 7300),
+            "a layout reading that happens to be at the end is not the person's")
+        XCTAssertFalse(memory.atBottom, "still scrolled up")
+    }
 }

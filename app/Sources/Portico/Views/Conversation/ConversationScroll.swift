@@ -27,6 +27,8 @@ struct ConversationScrollMemory: Equatable, Sendable {
     private(set) var atBottom = true
     /// The column's width the place was last seen at.
     private(set) var width: CGFloat?
+    /// The content's height at the last reading (v0.15 fix).
+    private(set) var content: CGFloat?
 
     /// Whether an offset is at the end of the content (or the content fits).
     static func isAtBottom(offset: CGFloat, visible: CGFloat, content: CGFloat) -> Bool {
@@ -39,17 +41,30 @@ struct ConversationScrollMemory: Equatable, Sendable {
         self.width = width
     }
 
-    /// One scroll-geometry reading, as the view gets it (its width and
-    /// whether it is at the end). Returns where to scroll, if anywhere.
+    /// One scroll-geometry reading, as the view gets it (its width, whether
+    /// it is at the end, and the content's height). Returns where to scroll,
+    /// if anywhere.
     ///
     /// A reading taken on a frame whose width changed is the reflow's, not
     /// the person's (fix round 1): scrolled up near the end, a step of the
     /// column's animation can read as the bottom, and recording it would
     /// snap the conversation to its end at the next change. Only readings
     /// at an unchanged width say where the person is.
-    mutating func observe(width: CGFloat, atBottom: Bool) -> Target? {
+    ///
+    /// v0.15 fix: nor does a reading whose content height changed. The
+    /// width step scrolled to the end of the lazy stack's estimate; the
+    /// stack then resolved its rows at the new width and the end moved
+    /// (189 pt, found hosted), at the same width. That reading is the
+    /// layout's: at the bottom it goes back to the bottom; scrolled up it
+    /// is left alone and not recorded. A person's own scroll changes the
+    /// offset, not the content, and is recorded as before.
+    mutating func observe(width: CGFloat, atBottom: Bool, content: CGFloat? = nil) -> Target? {
+        defer { if let content { self.content = content } }
         if let known = self.width, abs(known - width) >= 1 {
             return widthChanged(to: width)
+        }
+        if let content, let known = self.content, abs(known - content) >= 1 {
+            return self.atBottom && !atBottom ? .bottom : nil
         }
         seen(atBottom: atBottom, width: width)
         return nil
