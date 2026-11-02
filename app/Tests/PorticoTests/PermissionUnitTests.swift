@@ -211,7 +211,7 @@ final class PermissionUnitTests: XCTestCase {
         var fresh = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
         XCTAssertNil(fresh.answer(for: .confirm), "Return right after the card appears does nothing")
         fresh.move(by: 1)
-        XCTAssertEqual(fresh.answer(for: .confirm)?.scope, .chat, "after an arrow, Return answers that row")
+        XCTAssertEqual(fresh.answer(for: .confirm)?.scope, .once, "after the first arrow, Return answers the row it shows: Allow once")
     }
 
     /// Ruling R-c11: the card takes the focus when it appears over an empty
@@ -251,7 +251,21 @@ final class PermissionUnitTests: XCTestCase {
         draft.hover(nil)
         XCTAssertNil(draft.highlighted, "the pointer left; nothing shows until the focus moves")
         draft.move(by: 1)
+        XCTAssertEqual(draft.highlighted, 0, "the first arrow shows the first row, it doesn't skip it")
+    }
+
+    func testAnArrowTakesTheHighlightBackFromThePointer() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        draft.hover(2)
+        draft.move(by: 1)
+        XCTAssertEqual(draft.highlighted, draft.focused, "the last input wins, as in a menu")
+        XCTAssertEqual(draft.focused, 0)
+        draft.move(by: 1)
         XCTAssertEqual(draft.highlighted, 1)
+        XCTAssertEqual(draft.answer(for: .confirm), PermissionChoice.docked[1].answer(for: draft.card),
+                       "Return answers the row that shows")
+        draft.hover(2)
+        XCTAssertEqual(draft.highlighted, 2, "the pointer takes it again on entering a row")
     }
 
     func testReturnAnswersTheFocusedOptionAndTheArrowsMoveIt() {

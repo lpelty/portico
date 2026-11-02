@@ -66,9 +66,16 @@ struct PermissionDraft: Equatable {
         self.card = card
     }
 
-    /// Move the focus (↑/↓), stopping at the ends.
+    /// Move the focus (↑/↓), stopping at the ends. The first arrow shows
+    /// the focused row (Allow once) rather than stepping past it, and an
+    /// arrow takes the highlight back from the pointer: the last input
+    /// wins, as in a menu, so the row that shows is the one Return answers.
     mutating func move(by step: Int) {
-        focusMoved = true
+        hovered = nil
+        guard focusMoved else {
+            focusMoved = true
+            return
+        }
         focused = min(max(focused + step, 0), PermissionChoice.docked.count - 1)
     }
 

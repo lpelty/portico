@@ -35,9 +35,11 @@
   permission card has Allow once, Allow for this session and Deny; neither
   a stray Return nor a digit grants anything until you have moved the focus
   with an arrow or clicked a row (the pointer resting on a row does not
-  count); there is no "Allow always". The transcript keeps a one-line record ("Asked: Which tone for
-  step 2? · Plain"; "Asked 2 questions · Plain, Short"; "Not answered" for a
-  decline), which survives a restart.
+  count). The first arrow shows Allow once, and the highlighted row is
+  always the one Return answers. There is no "Allow always". The transcript
+  keeps a one-line record ("Asked: Which tone for step 2? · Plain"; "Asked 2
+  questions · Plain, Short"; "Not answered" for a decline), which survives a
+  restart.
 - **The preview column needs an agent that sends previews.** An option's
   `preview` shows beside the options, rendered as Markdown. The CLI does not
   offer previews to an SDK agent (Portico sets nothing to change that), so
