@@ -89,9 +89,77 @@ final class ModelMenuTests: XCTestCase {
         XCTAssertNil(idle.help)
     }
 
-    func testNoChoicesYetIsOneDimmedLine() {
-        XCTAssertEqual(presentation(choices: []).emptyLine, "Models appear once the session starts")
-        XCTAssertNil(presentation().emptyLine)
+    func testNoListYetIsPlainTextWithNoMenu() {
+        // 11-02: the "Models appear once the session starts" line is gone;
+        // with no list the strip shows the plain label until one arrives.
+        let none = presentation(choices: [])
+        XCTAssertFalse(none.menu, "no chevron, no popover")
+        XCTAssertFalse(none.enabled)
+        XCTAssertNil(none.help)
+        XCTAssertEqual(none.currentLabel, "Default", "nothing at all to name")
+        XCTAssertTrue(presentation().menu)
+    }
+
+    // MARK: - Default names its model (11-02)
+
+    private let resolved = [
+        ModelChoice(value: "default", displayName: "Default (recommended)", description: "Most capable for complex work",
+                    resolvedModel: "claude-fable-5-1"),
+        ModelChoice(value: "opus", displayName: "Opus", description: "Opus 5 for the hardest work", resolvedModel: "claude-opus-5"),
+        ModelChoice(value: "fable", displayName: "Fable 5.1", description: "Fable for long work", resolvedModel: "claude-fable-5-1"),
+        ModelChoice(value: "fable-1m", displayName: "Fable 5.1 (1M context)", description: "", resolvedModel: "claude-fable-5-1"),
+    ]
+
+    func testDefaultIsLabelledWithTheModelItResolvesTo() {
+        XCTAssertEqual(presentation(current: nil, choices: resolved).currentLabel, "Fable 5.1", "the first match")
+        XCTAssertEqual(presentation(current: "default", choices: resolved).currentLabel, "Fable 5.1")
+        XCTAssertEqual(presentation(current: "opus", choices: resolved).currentLabel, "Opus", "a chosen model is its own name")
+    }
+
+    func testDefaultWithNoMatchingChoiceShowsTheResolvedIdRaw() {
+        let lone = [
+            ModelChoice(value: "default", displayName: "Default (recommended)", description: "", resolvedModel: "claude-fable-5-1"),
+            ModelChoice(value: "opus", displayName: "Opus", description: "", resolvedModel: "claude-opus-5"),
+        ]
+        XCTAssertEqual(presentation(current: nil, choices: lone).currentLabel, "claude-fable-5-1")
+    }
+
+    func testDefaultWithoutAResolvedModelIsDefault() {
+        XCTAssertEqual(presentation(current: nil).currentLabel, "Default", "an older gateway sends no resolved_model")
+        XCTAssertNil(presentation(current: nil).defaultModelName)
+    }
+
+    func testDefaultsRowNamesItsModel() {
+        let menu = presentation(choices: resolved)
+        XCTAssertEqual(menu.defaultModelName, "Fable 5.1")
+        XCTAssertEqual(menu.secondaryText(for: resolved[0]), "Fable 5.1 · Most capable for complex work")
+        XCTAssertEqual(menu.secondaryText(for: resolved[1]), "Opus 5 for the hardest work", "other rows unchanged")
+        let named = ModelChoice(value: "default", displayName: "Default", description: "Fable 5.1 for complex work",
+                                resolvedModel: "claude-fable-5-1")
+        XCTAssertEqual(
+            presentation(choices: [named, resolved[2]]).secondaryText(for: named), "Fable 5.1 for complex work",
+            "never says the name twice")
+        let bare = ModelChoice(value: "default", displayName: "Default", description: "", resolvedModel: "claude-fable-5-1")
+        XCTAssertEqual(presentation(choices: [bare, resolved[2]]).secondaryText(for: bare), "Fable 5.1")
+        XCTAssertEqual(presentation().secondaryText(for: choices[0]), "Opus for complex work", "no resolved model: as before")
+    }
+
+    func testTheStripNamesDefaultsModelBeforeTheFirstReply() {
+        let model = model()
+        model.apply(.models(Models(chat: 3, current: nil, choices: resolved)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Fable 5.1")
+        // A switch back to the default names the model too.
+        model.apply(.models(Models(chat: 3, current: "opus", choices: resolved)))
+        model.apply(.models(Models(chat: 3, current: nil, choices: resolved)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Fable 5.1")
+    }
+
+    func testResolvedModelDecodesAndIsOptional() throws {
+        let json = #"{"type":"models","chat":1,"choices":[{"value":"default","display_name":"Default","description":"","resolved_model":"claude-fable-5-1"},{"value":"opus","display_name":"Opus","description":""}],"ts":"2026-11-01T12:00:00Z"}"#
+        guard case .models(let models) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else {
+            return XCTFail("not a models frame")
+        }
+        XCTAssertEqual(models.choices.map(\.resolvedModel), ["claude-fable-5-1", nil])
     }
 
     func testTheCheckIsOnTheCurrentChoice() {
@@ -135,12 +203,19 @@ final class ModelMenuTests: XCTestCase {
 
         XCTAssertEqual(model.modelMenu(for: 2).menu, false, "the ended session shows its model without a menu")
 
-        // No frame for the chat yet: the menu shows only the dimmed line.
+        // No frame for the chat yet: plain text, no menu, until a list arrives.
         model.apply(.chatList(ChatList(chats: [
             ChatSummary(chat: 3, folder: "/tmp/demo", alias: nil, state: .working, created: "2026-11-01T10:00:00Z"),
             ChatSummary(chat: 4, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T11:00:00Z"),
         ])))
-        XCTAssertEqual(model.modelMenu(for: 4).emptyLine, "Models appear once the session starts")
+        XCTAssertFalse(model.modelMenu(for: 4).menu)
+        model.selected = 4
+        let plain = model.statusStrip(gateway: .running(port: 1))
+        XCTAssertNil(plain.modelMenu, "no chevron before a list")
+        XCTAssertEqual(plain.model(at: .full), "Default", "the plain label")
+        model.apply(.models(Models(chat: 4, current: nil, choices: choices)))
+        XCTAssertNotNil(model.statusStrip(gateway: .running(port: 1)).modelMenu, "the menu once a list arrives")
+        model.selected = 3
         XCTAssertEqual(model.modelMenu(for: 3).enabled, false, "a reply is running")
 
         let older = self.model(capabilities: ["sessions"])

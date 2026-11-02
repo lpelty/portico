@@ -817,9 +817,7 @@ final class AppModel: ObservableObject {
             // A switch (the current choice changed): the strip names the
             // choice now rather than the old model until the next reply.
             if let before = models[list.chat], before.current != list.current {
-                chosenModelName[list.chat] = list.choices
-                    .first { $0.value == (list.current ?? Models.defaultValue) }
-                    .map { ModelMenuPresentation.shortChoiceName($0.displayName) }
+                chosenModelName[list.chat] = ModelMenuPresentation.label(for: list.current, in: list.choices)
             }
             models[list.chat] = list
 

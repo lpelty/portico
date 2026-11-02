@@ -230,13 +230,14 @@ extension AppModel {
     }
 
     /// The strip's model name (v0.15): a model just chosen in the menu,
-    /// else the one `context.usage` named, else (a menu before any reply)
-    /// the current choice, or "Model" while there is no list yet.
+    /// else the one `context.usage` named, else (before any reply, with a
+    /// gateway that offers `models.v1`) the current choice's label: Default
+    /// named by the model it resolves to (11-02), "Default" with no list.
     func stripModelName(for chat: Int, menu: ModelMenuPresentation?) -> String? {
         if let chosen = chosenModelName[chat] { return chosen }
         if let name = modelName(for: chat) { return StatusStripPresentation.modelDisplayName(name) }
-        guard menu?.menu == true else { return nil }
-        return menu?.currentName.map(ModelMenuPresentation.shortChoiceName) ?? "Model"
+        guard let menu, menu.hasCapability, menu.live else { return nil }
+        return menu.currentLabel
     }
 }
 
@@ -344,9 +345,9 @@ struct StatusStrip: View {
 }
 
 /// What the strip's model menu shows (v0.15, AN1): the engine's models
-/// with a check on the current one, dimmed while a reply runs, one dimmed
-/// line before any list has come, and plain text (no menu) for a past
-/// session or a gateway without `models.v1`.
+/// with a check on the current one, dimmed while a reply runs, and plain
+/// text (no menu) before any list has come (11-02), for a past session, or
+/// for a gateway without `models.v1`.
 struct ModelMenuPresentation: Equatable, Sendable {
     var choices: [ModelChoice]
     /// The current choice's `value`; `nil` is the deployment's default.
@@ -362,11 +363,13 @@ struct ModelMenuPresentation: Equatable, Sendable {
 
     static let busyHelp = "Change the model after this reply"
     static let disconnectedHelp = "Not connected"
-    static let emptyText = "Models appear once the session starts"
     static let footer = "Applies to this session and new ones."
+    /// The label when nothing names a model at all.
+    static let defaultLabel = "Default"
 
-    /// The model is a menu, not plain words.
-    var menu: Bool { hasCapability && live }
+    /// The model is a menu, not plain words: a live session, a gateway
+    /// with `models.v1`, and a list to choose from.
+    var menu: Bool { hasCapability && live && !choices.isEmpty }
     /// The menu opens; dimmed while a reply runs.
     var enabled: Bool { menu && !busy && connected }
     /// The dimmed menu's tooltip: why it is dimmed.
@@ -375,16 +378,47 @@ struct ModelMenuPresentation: Equatable, Sendable {
         if !connected { return Self.disconnectedHelp }
         return busy ? Self.busyHelp : nil
     }
-    /// The menu's one line when there is no list yet.
-    var emptyLine: String? { choices.isEmpty ? Self.emptyText : nil }
-
     func checked(_ value: String) -> Bool {
         (current ?? Models.defaultValue) == value
     }
 
-    /// The current choice's name, for the strip before a reply names the model.
-    var currentName: String? {
-        choices.first { checked($0.value) }?.displayName
+    /// The name of the model Default resolves to (11-02): the first other
+    /// choice running the same model (`resolvedModel`), else Default's
+    /// model id raw; `nil` when the list does not say.
+    var defaultModelName: String? {
+        Self.defaultModelName(in: choices)
+    }
+
+    static func defaultModelName(in choices: [ModelChoice]) -> String? {
+        guard let resolved = choices.first(where: { $0.value == Models.defaultValue })?.resolvedModel,
+              !resolved.isEmpty
+        else { return nil }
+        let same = choices.first { $0.value != Models.defaultValue && $0.resolvedModel == resolved }
+        return same.map { shortChoiceName($0.displayName) } ?? resolved
+    }
+
+    /// The current choice as the strip names it before a reply does.
+    var currentLabel: String {
+        Self.label(for: current, in: choices)
+    }
+
+    /// `value`'s label in `choices`: Default (`nil` or `"default"`) is the
+    /// model it resolves to when the list says, else the choice's short
+    /// name; a value the list lacks is itself; "Default" when nothing names it.
+    static func label(for value: String?, in choices: [ModelChoice]) -> String {
+        let wanted = value ?? Models.defaultValue
+        if wanted == Models.defaultValue, let name = defaultModelName(in: choices) { return name }
+        if let choice = choices.first(where: { $0.value == wanted }) { return shortChoiceName(choice.displayName) }
+        return wanted == Models.defaultValue ? defaultLabel : wanted
+    }
+
+    /// A row's secondary text: its description; Default's leads with the
+    /// model it resolves to, unless the description already names it.
+    func secondaryText(for choice: ModelChoice) -> String {
+        guard choice.value == Models.defaultValue, let name = defaultModelName else { return choice.description }
+        if choice.description.isEmpty { return name }
+        if choice.description.localizedCaseInsensitiveContains(name) { return choice.description }
+        return "\(name) · \(choice.description)"
     }
 
     /// A choice's name for the strip: without a trailing parenthetical
@@ -463,31 +497,23 @@ struct ModelMenu: View {
     var body: some View {
         let menu = model.modelMenu(for: chat)
         VStack(alignment: .leading, spacing: 1) {
-            if let empty = menu.emptyLine {
-                Text(empty)
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text3)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-            } else {
-                ForEach(menu.choices) { choice in
-                    ModelChoiceRow(
-                        choice: choice, checked: menu.checked(choice.value),
-                        accent: model.brand.accent ?? Theme.accent
-                    ) {
-                        model.setModel(choice.value, chat: chat)
-                        closeMenu()
-                    }
-                    .disabled(!menu.enabled)
+            ForEach(menu.choices) { choice in
+                ModelChoiceRow(
+                    choice: choice, secondary: menu.secondaryText(for: choice), checked: menu.checked(choice.value),
+                    accent: model.brand.accent ?? Theme.accent
+                ) {
+                    model.setModel(choice.value, chat: chat)
+                    closeMenu()
                 }
-                Text(ModelMenuPresentation.footer)
-                    .scaledFont(11)
-                    .foregroundStyle(Theme.text3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // Under the names: past the row's padding, check and gap.
-                    .padding(EdgeInsets(top: 8, leading: 10 + 14 + 9, bottom: 4, trailing: 10))
-                    .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+                .disabled(!menu.enabled)
             }
+            Text(ModelMenuPresentation.footer)
+                .scaledFont(11)
+                .foregroundStyle(Theme.text3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Under the names: past the row's padding, check and gap.
+                .padding(EdgeInsets(top: 8, leading: 10 + 14 + 9, bottom: 4, trailing: 10))
+                .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
         }
         .padding(6)
         .frame(width: 330)
@@ -499,6 +525,8 @@ struct ModelMenu: View {
 /// current), the description in the third text colour.
 struct ModelChoiceRow: View {
     let choice: ModelChoice
+    /// The line under the name: the description (Default's names its model).
+    let secondary: String
     let checked: Bool
     let accent: Color
     let action: () -> Void
@@ -517,8 +545,8 @@ struct ModelChoiceRow: View {
                     Text(choice.displayName)
                         .scaledFont(13, weight: checked ? .medium : .regular)
                         .foregroundStyle(Theme.text)
-                    if !choice.description.isEmpty {
-                        Text(choice.description)
+                    if !secondary.isEmpty {
+                        Text(secondary)
                             .scaledFont(11)
                             .foregroundStyle(Theme.text3)
                             .fixedSize(horizontal: false, vertical: true)

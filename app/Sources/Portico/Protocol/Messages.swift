@@ -1127,17 +1127,20 @@ struct ChatCommands: Codable, Equatable, Sendable {
 }
 
 /// One model the session can switch to (v0.15): the engine's own `/model`
-/// list, as the gateway passes it on.
+/// list, as the gateway passes it on. `resolvedModel` (11-02, optional) is
+/// the model id the entry runs, so Default can be named by its model.
 struct ModelChoice: Codable, Equatable, Sendable, Identifiable {
     var value: String
     var displayName: String
     var description: String
+    var resolvedModel: String? = nil
 
     var id: String { value }
 
     enum CodingKeys: String, CodingKey {
         case value, description
         case displayName = "display_name"
+        case resolvedModel = "resolved_model"
     }
 }
 
