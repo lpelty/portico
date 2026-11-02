@@ -6,8 +6,9 @@
 
 - **Threads.** Main's agent can propose another conversation with the same
   agent, in the same folder, for a task that can run alongside: a card in
-  Main reads "Proposed as Thread 1; it opens if the person starts it." with
-  the brief and Start Thread 1 / Not now. Starting it opens the thread on
+  Main titled "Start Thread 1" shows the brief with Start Thread 1 / Not now
+  (the agent is told "Proposed as Thread 1; it opens if the person starts
+  it."). Starting it opens the thread on
   that brief and leaves you in Main; the card then reads "Thread 1 started"
   with Go to Thread 1 ⌃1. A thread takes the brief and any files named with
   it, not Main's conversation ("It takes this brief, not this
@@ -31,9 +32,10 @@
   sends what you type as an ordinary message and declines the question. A
   question card takes the keyboard when it appears only if the composer is
   empty or unfocused, so a Return you were typing is never an answer. A
-  permission card has Allow once, Allow for this session and Deny; a stray
-  Return grants nothing until you have moved the focus; there is no "Allow
-  always". The transcript keeps a one-line record ("Asked: Which tone for
+  permission card has Allow once, Allow for this session and Deny; neither
+  a stray Return nor a digit grants anything until you have moved the focus
+  with an arrow or clicked a row (the pointer resting on a row does not
+  count); there is no "Allow always". The transcript keeps a one-line record ("Asked: Which tone for
   step 2? · Plain"; "Asked 2 questions · Plain, Short"; "Not answered" for a
   decline), which survives a restart.
 - **The preview column needs an agent that sends previews.** An option's

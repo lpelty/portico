@@ -270,10 +270,19 @@ announces `threads.v1` (see `protocol/PROTOCOL.md`, Threads). ⌃1 and ⌃2 can
 be taken by macOS if the "Switch to Desktop N" shortcuts are on (Mission
 Control).
 
-Questions and permissions appear as a card docked above the composer:
-numbered options (keys 1-4, arrows and Return), a pager for several
-questions, "Something else", Skip, and × to dismiss; typing a reply in the
-composer instead declines the question and sends the reply. A preview on an
+Questions and permissions appear as a card docked above the composer, with
+numbered options, a pager for several questions, "Something else", and Skip.
+The keys while the card has the focus:
+
+- **1–4** choose an option (on a permission card, only after you have moved
+  the focus with an arrow or clicked a row);
+- **↑/↓** move the focus;
+- **Return** confirms the focused option (on a multi-select question: the
+  next question, or submit on the last);
+- **×** dismisses the card.
+
+Digits type normally in the composer and in "Something else". Typing a reply
+in the composer instead declines the question and sends the reply. A preview on an
 option shows in a column beside the options when the agent sends one.
 **New space...** in the space switcher opens a dialog (name and what you
 want) instead of filling the composer.
