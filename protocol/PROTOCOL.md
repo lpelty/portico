@@ -1023,8 +1023,11 @@ default), `choices: [{value, display_name, description}]`, in the
 engine's order. Sent after `hello` for each live session (when a list is
 kept), after each engine start, after a renewal for the session that
 follows, and after a switch. Not stamped and not in the ring: each one
-replaces what the app had. The choice is the gateway's, not the
-session's, so every session's `models` carries the same `current`.
+replaces what the app had. The choice is the gateway's, but `current` is
+the model that session runs on: its running engine's, else the stored
+choice it will start on. A switch never changes another session's running
+engine, so with several sessions open their `current` can differ until
+that engine restarts.
 
 ## Subagents and workflows *(v0.10)*
 

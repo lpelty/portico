@@ -1488,7 +1488,13 @@ class GatewayServer:
     # --- models (v0.15) -------------------------------------------------------------
 
     def _models_frame(self, chat: Chat, id: str | None = None) -> Models:
-        return Models(ts=_now(), chat=chat.number, id=id, current=self.registry.model, choices=self.registry.models)
+        """``current`` is the model this chat runs on: its live engine's, else the stored choice it would start on.
+
+        A switch in one chat does not switch another chat's running engine,
+        so in multiple presentation the two can differ until that engine restarts.
+        """
+        current = chat.engine.model if chat.engine is not None else self.registry.model
+        return Models(ts=_now(), chat=chat.number, id=id, current=current, choices=self.registry.models)
 
     @staticmethod
     def _display_name(choices: list[ModelChoice], value: str | None) -> str:
@@ -1519,6 +1525,7 @@ class GatewayServer:
         if choices != kept:
             self.registry.record_models(choices)
         stored = self.registry.model
+        # Validated after the start because the CLI accepts an unknown --model at connect (verified 2026-11-01).
         if stored is not None and all(c.value != stored for c in choices):
             name = self._display_name(kept, stored)
             try:

@@ -392,3 +392,80 @@ async def test_an_engine_without_a_list_sends_nothing(state_dir: StateDir, tmp_p
         await conn.close()
     finally:
         await srv.shutdown()
+
+
+async def test_a_switch_in_one_chat_leaves_another_chats_engine(state_dir: StateDir, tmp_path: Path) -> None:
+    factory = ModelsFactory()
+    srv = await start_server(state_dir, factory)
+    try:
+        conn, _ = await attach_models(srv)
+        a, _ = await new_chat(conn, folder_at(tmp_path))
+        engine_a = factory.last
+        other = tmp_path / "other"
+        other.mkdir()
+        b, _ = await new_chat(conn, other)
+        engine_b = factory.last
+        await set_model(conn, a, "sonnet")
+        assert engine_a.model_switches == ["sonnet"] and engine_b.model_switches == []
+        await conn.close()
+        # Reconnect: each live chat's frame carries the model its engine runs on.
+        conn, first = await attach_models(srv)
+        assert {m.chat: m.current for m in models_in(first)} == {a: "sonnet", b: None}
+        # B's next session starts on the new choice.
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=b)))
+        got = await recv_until(conn, SessionRenewed)
+        renewed = got[-1]
+        assert isinstance(renewed, SessionRenewed)
+        following = renewed.next.chat
+        got += await drain(conn)
+        assert [(m.chat, m.current) for m in models_in(got)] == [(following, "sonnet")]
+        await conn.send(dump(MessageSend(ts=TS, chat=following, id="s1", text="hello")))
+        await drain(conn)
+        assert factory.last is not engine_b and factory.last.started_model == "sonnet"
+        await conn.close()
+    finally:
+        await srv.shutdown()
+
+
+async def test_a_choice_made_with_no_list_is_dropped_at_start(state_dir: StateDir, tmp_path: Path) -> None:
+    folder = folder_at(tmp_path)
+    record = ChatRecord(chat=5, folder=str(folder), state="idle", created=TS)
+    state_dir.save_index(Index(chats=[record], next_chat=6))
+    factory = ModelsFactory()
+    srv = await start_server(state_dir, factory)
+    try:
+        conn, _ = await attach_models(srv)
+        got = await set_model(conn, 5, "gpt")  # no list kept: taken, checked at the start
+        assert models_in(got)[0].current == "gpt" and notices(got) == ["Model: gpt"]
+        await conn.send(dump(MessageSend(ts=TS, chat=5, id="s1", text="hello")))
+        got = await drain(conn)
+        assert factory.last.started_model == "gpt" and factory.last.model_switches == [None]
+        assert notices(got) == ["Model: Default (gpt is no longer offered here)"]
+        assert [m.current for m in models_in(got)] == [None]
+        await conn.close()
+    finally:
+        await srv.shutdown()
+    index = state_dir.load_index()
+    assert index.model is None and index.models == CHOICES
+
+
+async def test_a_failed_switch_keeps_the_choice_and_answers_an_error(state_dir: StateDir, tmp_path: Path) -> None:
+    factory = ModelsFactory()
+    srv = await start_server(state_dir, factory)
+    try:
+        conn, _ = await attach_models(srv)
+        number, _ = await new_chat(conn, folder_at(tmp_path))
+
+        async def refuse(value: str | None) -> None:
+            raise RuntimeError("engine said no")
+
+        factory.last.set_model = refuse  # type: ignore[method-assign]
+        got = await set_model(conn, number, "sonnet")
+        errors = [m for m in got if isinstance(m, Error)]
+        assert [(e.code, e.id, e.chat) for e in errors] == [("gateway.error", "req-m", number)]
+        assert "engine said no" in errors[0].message
+        assert models_in(got) == [] and notices(got) == []
+        await conn.close()
+    finally:
+        await srv.shutdown()
+    assert state_dir.load_index().model is None
