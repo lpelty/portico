@@ -212,7 +212,8 @@ struct MainToolbar: View {
     private var items: [ToolbarLayout.Item] {
         ToolbarLayout.items(
             showSwitcher: ToolbarLayout.showsSwitcher,
-            showViewerToggle: model.shownChat != nil && !model.documentMode)
+            showViewerToggle: model.shownChat != nil && !model.documentMode,
+            inThread: model.sidebarCard?.thread != nil && !model.documentMode)
     }
 
     var body: some View {
@@ -256,6 +257,10 @@ struct MainToolbar: View {
         case .switcher:
             // The brand's name truncates first when the column is narrow.
             SpaceSwitcher().layoutPriority(1)
+        case .thread:
+            if let info = model.sidebarCard?.thread {
+                ThreadToolbarItem(info: info) { model.switchToConversation(slot: 0) }
+            }
         case .spacer:
             Spacer(minLength: 0)
         case .viewerToggle:
@@ -265,6 +270,48 @@ struct MainToolbar: View {
                     model.setViewer(visible: !shown, for: chat)
                 }
             }
+        }
+    }
+}
+
+/// In a thread (v0.16, AM3): the thread's chip, then "← Main ⌃0", which
+/// goes back to Main.
+struct ThreadToolbarItem: View {
+    let info: ThreadInfo
+    let backToMain: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(info.label)
+                .scaledFont(12, weight: .medium)
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .accessibilityLabel("In \(info.label)")
+            Button(action: backToMain) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.left")
+                        .font(Theme.iconFont(11))
+                    Text("Main")
+                        .scaledFont(12)
+                    Text("⌃0")
+                        .scaledFont(11)
+                        .foregroundStyle(Theme.text3)
+                }
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.hover)
+            .help(ToolbarLayout.backToMainLabel)
+            .accessibilityLabel("Back to Main")
         }
     }
 }

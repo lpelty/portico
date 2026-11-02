@@ -8,13 +8,20 @@ struct SessionSidebar: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SidebarSectionLabel("This session")
+            // v0.16 §2.5: with threads, the card is the conversation you're
+            // in and the others are rows under it.
+            SidebarSectionLabel(model.threadsOn ? "Conversations" : "This session")
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 8)
-            if let live = model.liveSession {
-                SessionCard(summary: live)
+            if let card = model.sidebarCard {
+                SessionCard(summary: card)
                     .padding(.horizontal, 8)
+                if model.threadsOn {
+                    ThreadRows()
+                        .padding(.horizontal, 8)
+                        .padding(.top, 6)
+                }
             } else {
                 Text("No session yet. Say something to start one.")
                     .scaledFont(12)
@@ -23,6 +30,19 @@ struct SessionSidebar: View {
             }
             earlier
         }
+        .alert(closeQuestion, isPresented: closeConfirm) {
+            Button("Close", role: .destructive) { model.confirmCloseThread() }
+            Button("Cancel", role: .cancel) { model.closingThread = nil }
+        }
+    }
+
+    /// "Thread 2 is still working. Close it anyway?" (`closingThread`).
+    private var closeQuestion: String {
+        ThreadsPresentation.closeQuestion(label: model.closingThread.flatMap { model.thread(of: $0)?.label } ?? "This thread")
+    }
+
+    private var closeConfirm: Binding<Bool> {
+        Binding(get: { model.closingThread != nil }, set: { if !$0 { model.closingThread = nil } })
     }
 
     // MARK: HISTORY
@@ -57,14 +77,14 @@ struct EarlierRow: View {
 
     var body: some View {
         let shown = SessionPresentation(summary: summary)
-        let title = Self.titleStyle(selected: selected, untitled: shown.title == nil)
+        let title = Self.titleStyle(selected: selected, untitled: shown.historyTitle == nil)
         Button(action: action) {
             HStack(spacing: 10) {
                 Text("\(summary.chat)")
                     .scaledFont(13, monospacedDigit: true)
                     .foregroundStyle(Theme.text2)
                     .frame(minWidth: 18, alignment: .leading)
-                Text(shown.title ?? "Untitled")
+                Text(shown.historyTitle ?? "Untitled")
                     .scaledFont(13, weight: title.weight)
                     .foregroundStyle(title.color)
                     .lineLimit(1)
@@ -120,7 +140,9 @@ struct SessionCard: View {
     @State private var hovering = false
 
     private var chat: Int { summary.chat }
-    private var nudging: Bool { model.shouldNudge(chat: chat) }
+    /// A thread's card (v0.16, AM3): Log session and Close thread, never New.
+    private var info: ThreadInfo? { summary.thread }
+    private var nudging: Bool { info == nil && model.shouldNudge(chat: chat) }
     private var renewing: Bool { model.isRenewing(chat: chat) }
     private var logging: Bool { model.isLogging(chat: chat) }
     private var pending: Bool { model.isSessionCommandPending(chat: chat) }
@@ -134,7 +156,8 @@ struct SessionCard: View {
     private var goesBack: Bool { opensLive && model.selected.map { model.isEnded(chat: $0) } == true }
     private var cardHelp: String {
         guard opensLive else { return "" }
-        return goesBack ? "Go back to Session \(chat)" : "Show Session \(chat)"
+        let name = info?.label ?? "Session \(chat)"
+        return goesBack ? "Go back to \(name)" : "Show \(name)"
     }
 
     var body: some View {
@@ -170,7 +193,7 @@ struct SessionCard: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Circle().fill(stateColor).frame(width: 7, height: 7)
-                Text(shown.number)
+                Text(info?.label ?? shown.number)
                     .scaledFont(14, weight: .semibold)
                     .foregroundStyle(Theme.text)
                 Spacer(minLength: 0)
@@ -183,7 +206,13 @@ struct SessionCard: View {
                     }
                 }
             }
-            if nudging {
+            if let info {
+                Text(ThreadsPresentation.openedLine(info))
+                    .scaledFont(12)
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if nudging {
                 Text(nudgeSentence)
                     .scaledFont(13)
                     .foregroundStyle(Theme.text)
@@ -204,7 +233,9 @@ struct SessionCard: View {
                 // (or the gap between two) does nothing, not open the session.
                 .contentShape(Rectangle())
                 .onTapGesture {}
-            if goesBack && !nudging {
+            if info != nil {
+                threadFootnote
+            } else if goesBack && !nudging {
                 Text("Click to go back to it")
                     .scaledFont(11)
                     .foregroundStyle(Theme.text3)
@@ -266,7 +297,9 @@ struct SessionCard: View {
 
     @ViewBuilder
     private var buttons: some View {
-        if model.canRenew(chat: chat) {
+        if info != nil {
+            threadButtons
+        } else if model.canRenew(chat: chat) {
             if nudging {
                 HStack(spacing: 8) {
                     Button(action: renew) { renewButtonLabel }
@@ -279,27 +312,7 @@ struct SessionCard: View {
                 .disabled(pending || model.connection != .connected)
             } else {
                 HStack(spacing: 8) {
-                    // Shown even when it cannot log (disabled, the hint
-                    // says why), so a missing log step is visible, not a mystery.
-                    Button { model.logSession(chat: chat) } label: {
-                        HStack(spacing: 6) {
-                            if logging {
-                                ProgressView().controlSize(.mini)
-                                Text("Logging…")
-                            } else {
-                                Image(systemName: "square.and.pencil")
-                                Text("Log session")
-                            }
-                        }
-                        .lineLimit(1)
-                        // Never "Log ses…": the label keeps its width, New gives way.
-                        .fixedSize()
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PillButtonStyle(kind: canLogSession ? .primary(model.brand.accent ?? Theme.accent) : .quiet))
-                    .disabled(!canLogSession)
-                    .help(model.logSessionOffReason(chat: chat)
-                        ?? "Save what this session did, so the next one can pick up where it left off. The session goes on.")
+                    logSessionButton
                     Button { model.requestNew(chat: chat) } label: {
                         HStack(spacing: 6) {
                             if renewing {
@@ -318,6 +331,81 @@ struct SessionCard: View {
                 }
                 .disabled(pending || model.connection != .connected)
             }
+        }
+    }
+
+    /// Log session: shown even when it cannot log (disabled, the hint
+    /// says why), so a missing log step is visible, not a mystery.
+    private var logSessionButton: some View {
+        Button { model.logSession(chat: chat) } label: {
+            HStack(spacing: 6) {
+                if logging {
+                    ProgressView().controlSize(.mini)
+                    Text("Logging…")
+                } else {
+                    Image(systemName: "square.and.pencil")
+                    Text("Log session")
+                }
+            }
+            .lineLimit(1)
+            // Never "Log ses…": the label keeps its width, New gives way.
+            .fixedSize()
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PillButtonStyle(kind: canLogSession ? .primary(model.brand.accent ?? Theme.accent) : .quiet))
+        .disabled(!canLogSession)
+        .help(model.logSessionOffReason(chat: chat)
+            ?? "Save what this session did, so the next one can pick up where it left off. The session goes on.")
+    }
+
+    /// A thread's Log session and Close thread (§2.5).
+    private var threadButtons: some View {
+        HStack(spacing: 8) {
+            logSessionButton
+            Button { model.requestCloseThread(chat: chat) } label: {
+                HStack(spacing: 6) {
+                    if closing {
+                        ProgressView().controlSize(.mini)
+                        Text("Closing…")
+                    } else {
+                        Image(systemName: "xmark")
+                        Text("Close thread")
+                    }
+                }
+                .lineLimit(1)
+                .fixedSize()
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PillButtonStyle(kind: .quiet))
+            .help("Close this thread; its summary goes to History")
+            .disabled(closing)
+        }
+        .disabled(pending || model.connection != .connected)
+    }
+
+    /// The thread's `thread.close` is out.
+    private var closing: Bool { model.closingThreads[chat] != nil }
+
+    /// "Close writes a summary to History"; after a refused close, why, and
+    /// "Close without logging" when the log step could not start.
+    @ViewBuilder
+    private var threadFootnote: some View {
+        if let failure = model.closeFailures[chat] {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(failure.message)
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.deny)
+                    .fixedSize(horizontal: false, vertical: true)
+                if failure.offersCloseWithoutLogging {
+                    Button("Close without logging") { model.closeThreadWithoutLogging(chat: chat) }
+                        .buttonStyle(PillButtonStyle(kind: .quiet))
+                        .disabled(closing || model.connection != .connected)
+                }
+            }
+        } else {
+            Text("Close writes a summary to History")
+                .scaledFont(11)
+                .foregroundStyle(Theme.text3)
         }
     }
 

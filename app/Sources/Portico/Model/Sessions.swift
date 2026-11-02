@@ -492,6 +492,13 @@ struct SessionPresentation: Equatable {
         return nil
     }
 
+    /// The title History shows: an ended thread is marked with its label,
+    /// "Thread 2 · Onboarding copy" (v0.16, Ruling 18); a session as `title`.
+    var historyTitle: String? {
+        guard let label = summary.thread?.label else { return title }
+        return [label, title].compactMap { $0 }.joined(separator: " · ")
+    }
+
     /// `Started today, 9:14 AM · Q3 synthesis` (v0.7 decision 1's full form).
     func startedLine(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         var parts: [String] = []

@@ -101,6 +101,7 @@ struct ConversationView: View {
                 // tool rows that follow each other close up into one block.
                 let drawn = TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
                 let working = model.showsWorkingLine(chat: chat)
+                let calling = model.callingCards(in: chat)
                 let headed = sessionDivider != nil || items.isEmpty
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if let divider = sessionDivider {
@@ -113,11 +114,28 @@ struct ConversationView: View {
                     ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
                         let gap: CGFloat = index == 0
                             ? (headed ? TranscriptSpacing.itemGap : 0)
-                            : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
-                        TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                            : isProposal(entry) || isProposal(drawn[index - 1])
+                                ? TranscriptSpacing.itemGap
+                                : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
+                        Group {
+                            if entry.id == briefItem, let info = model.thread(of: chat) {
+                                BriefBlock(info: info)
+                                    .atReplyWidth()
+                            } else {
+                                TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                            }
+                        }
                             .padding(.top, gap)
                             .id(entry.id)
                             .modifier(MarksVoiceOverFocus(input: personInput))
+                    }
+                    // A thread calling you (AM1): Main only, after the last
+                    // item, drawn by the app and never part of the transcript.
+                    ForEach(calling) { card in
+                        CallingCardView(card: card)
+                            .atReplyWidth()
+                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id("calling:\(card.id)")
                     }
                     if working {
                         WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
@@ -206,6 +224,17 @@ struct ConversationView: View {
         personScrolling || personInput.isRecent
     }
 
+    /// A thread's first message, drawn as its brief (AM3).
+    private var briefItem: String? {
+        BriefBlock.briefItem(in: items, isThread: model.thread(of: chat) != nil)
+    }
+
+    /// The proposal card stands apart from the tool rows around it.
+    private func isProposal(_ entry: TranscriptEntry) -> Bool {
+        guard case .item(.tool(let row)) = entry else { return false }
+        return model.proposal(forToolUse: row.toolUseId) != nil
+    }
+
     /// To the bottom, and twice: once now, once after the rows are laid out.
     /// Recorded as at the bottom (v0.15 fix round 1): the jump's own
     /// reading is the layout's, so the memory would not see it.
@@ -252,7 +281,8 @@ struct ConversationView: View {
     /// Changes whenever an item is added or the streaming tail grows.
     private var scrollKey: String {
         let working = model.showsWorkingLine(chat: chat) ? ":w" : ""
-        return itemsKey + working
+        let calling = model.callingCards(in: chat).map(\.id).joined(separator: ",")
+        return itemsKey + working + (calling.isEmpty ? "" : ":c:" + calling)
     }
 
     private var itemsKey: String {
@@ -311,7 +341,10 @@ struct TranscriptItemView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row):
             Group {
-                if row.tool == ViewerSteps.markTool {
+                if let proposal = model.proposal(forToolUse: row.toolUseId) {
+                    // Main's `open_thread` row is its proposal's card (AM2, AM4).
+                    ProposalCard(proposal: proposal)
+                } else if row.tool == ViewerSteps.markTool {
                     MarkRowView(row: row, chat: chat)
                 } else {
                     ToolRowView(
@@ -562,6 +595,24 @@ extension View {
     /// queued cards, the dock and the status line line up with the replies.
     func inConversationColumn(sideInset: CGFloat = ConversationView.sideInset) -> some View {
         modifier(InConversationColumn(sideInset: sideInset))
+    }
+}
+
+extension View {
+    /// At the replies' width (92% of the reading column), leading: the
+    /// thread cards (v0.16) line up with the agent's text.
+    func atReplyWidth() -> some View {
+        modifier(AtReplyWidth())
+    }
+}
+
+private struct AtReplyWidth: ViewModifier {
+    @Environment(\.conversationColumn) private var column
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: column.map(ConversationColumn.replyWidth) ?? .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

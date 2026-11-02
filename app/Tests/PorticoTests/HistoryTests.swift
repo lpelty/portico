@@ -40,6 +40,29 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(p.emptyMessage, "No session titled “zed”")
     }
 
+    // MARK: - threads in History (v0.16, Ruling 18)
+
+    private func endedThread(_ chat: Int, slot: Int, _ title: String?) -> ChatSummary {
+        var summary = ended(chat, title)
+        summary.thread = ThreadInfo(
+            label: "Thread \(slot)", slot: slot, parent: 3, brief: "Rewrite onboarding step 2.", files: [],
+            openedAt: "2026-10-27T12:00:00Z")
+        return summary
+    }
+
+    func testAnEndedThreadIsTitledWithItsLabel() {
+        XCTAssertEqual(SessionPresentation(summary: endedThread(14, slot: 2, "Onboarding copy")).historyTitle, "Thread 2 · Onboarding copy")
+        XCTAssertEqual(SessionPresentation(summary: endedThread(15, slot: 1, nil)).historyTitle, "Thread 1")
+        XCTAssertEqual(SessionPresentation(summary: ended(1, "Plan for Acme")).historyTitle, "Plan for Acme")
+        XCTAssertNil(SessionPresentation(summary: ended(2, nil)).historyTitle)
+    }
+
+    func testSearchFindsAThreadByItsLabel() {
+        let all = [ended(1, "Plan for Acme"), endedThread(14, slot: 2, "Onboarding copy")]
+        XCTAssertEqual(HistoryPresentation(sessions: all, query: "thread 2").shown.map(\.chat), [14])
+        XCTAssertEqual(HistoryPresentation(sessions: all, query: "onboarding").shown.map(\.chat), [14])
+    }
+
     func testTheSidebarBandIs36() {
         XCTAssertEqual(Theme.sidebarBandHeight, 36)
         XCTAssertEqual(Theme.toolbarHeight, 52)

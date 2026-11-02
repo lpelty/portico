@@ -231,12 +231,23 @@ struct InputBar: View {
     }
 
     private var placeholder: String {
+        Self.placeholder(
+            connected: connected, renewing: renewing, logging: logging, sending: sending, about: about,
+            agentName: model.hello?.brand.agentName ?? model.brand.name,
+            thread: model.thread(of: chat)?.label)
+    }
+
+    /// The editor's placeholder; in a thread, "Reply in Thread 2" (v0.16 §2.3).
+    static func placeholder(
+        connected: Bool, renewing: Bool, logging: Bool, sending: Bool, about: String?, agentName: String, thread: String?
+    ) -> String {
         if !connected { return "Not connected" }
         if renewing { return "Starting the next session…" }
         if logging { return "Logging the session…" }
         if sending { return "Sending…" }
         if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
-        return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
+        if let thread { return "Reply in \(thread)" }
+        return "Ask \(agentName), or drop a file here"
     }
 
     private var chips: some View {

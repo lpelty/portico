@@ -752,6 +752,8 @@ final class AppModel: ObservableObject {
             applySpaces(list.spaces)
 
         case .chatList(let list):
+            let wasLiveThread = selected.flatMap { shown in chats.first { $0.chat == shown } }
+                .map { $0.thread != nil && $0.ended == nil } ?? false
             chats = list.chats
             nextChat = list.nextChat
             chatsListed = true
@@ -763,6 +765,7 @@ final class AppModel: ObservableObject {
                 forget(chat: chat)
             }
             openLiveSessionIfNeeded()
+            returnToMainIfShownThreadEnded(wasLiveThread: wasLiveThread)
             proposals = proposals.filter { proposal in list.chats.contains { $0.chat == proposal.value.chat } }
             settleStartingProposal()
             loadLiveThreads()

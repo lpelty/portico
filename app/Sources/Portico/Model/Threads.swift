@@ -65,6 +65,35 @@ struct ThreadsPresentation: Equatable {
             .map(\.element)
     }
 
+    /// At the limit, the threads to pick from (AM4): label, then the title
+    /// and last activity, "Pricing page · last reply 20 min ago".
+    func limitChoices(now: Date) -> [LimitChoice] {
+        open.compactMap { summary in
+            guard let info = summary.thread else { return nil }
+            let row = row(summary, label: info.label, key: "", now: now)
+            let activity: String?
+            switch row.status {
+            case .working: activity = "working now"
+            case .needsYou: activity = "needs you"
+            case .lastReply(let ago): activity = "last reply \(ago)"
+            case .none: activity = nil
+            }
+            let line = [row.title, activity].compactMap { $0 }.joined(separator: " · ")
+            return LimitChoice(chat: summary.chat, label: info.label, line: line)
+        }
+    }
+
+    /// The confirm before closing a thread mid-turn.
+    static func closeQuestion(label: String) -> String {
+        "\(label) is still working. Close it anyway?"
+    }
+
+    /// The thread card's second line: "Opened from Main at 2:05 PM".
+    static func openedLine(_ info: ThreadInfo, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        guard let opened = SessionTime.parse(info.openedAt) else { return "Opened from Main" }
+        return "Opened from Main at \(SessionTime.clock(opened, calendar: calendar, locale: locale))"
+    }
+
     private func row(_ summary: ChatSummary, label: String, key: String, now: Date) -> ThreadRowPresentation {
         let status: ThreadRowPresentation.Status
         if summary.state == .waitingOnYou || waiting.contains(summary.chat) {
@@ -85,7 +114,11 @@ struct ThreadsPresentation: Equatable {
 struct CloseFailure: Equatable {
     /// The codes of a log step that could not start (its turn's engine
     /// could not start, or refused the message; Ruling 8).
-    static let logStepCannotStart: Set<String> = ["engine.start_failed", "engine.send_failed"]
+    /// The preflight refusing the log step's engine reaches the app as
+    /// `lifecycle.before_first_chat_failed`, as on `chat.new`.
+    static let logStepCannotStart: Set<String> = [
+        "engine.start_failed", "engine.send_failed", "lifecycle.before_first_chat_failed",
+    ]
 
     let code: String
     let message: String
@@ -93,6 +126,34 @@ struct CloseFailure: Equatable {
     /// "Close without logging" is the way out only when the log step could
     /// not start; `chat.busy` or `thread.not_open` are not helped by it.
     var offersCloseWithoutLogging: Bool { Self.logStepCannotStart.contains(code) }
+}
+
+/// One thread the limit card offers to close (AM4).
+struct LimitChoice: Equatable, Identifiable {
+    let chat: Int
+    /// "Thread 1".
+    let label: String
+    /// "Pricing page · last reply 20 min ago".
+    let line: String
+
+    var id: Int { chat }
+}
+
+/// The View menu's conversations (§2.4): "Main" ⌃0 and each open thread
+/// with its slot's key, only with threads on.
+struct ThreadMenuItem: Equatable, Identifiable {
+    let title: String
+    let slot: Int
+
+    /// The digit the menu binds with ⌃.
+    var key: String { "\(slot)" }
+    var id: Int { slot }
+
+    static func items(threads: ThreadsPresentation, threadsOn: Bool) -> [ThreadMenuItem] {
+        guard threadsOn else { return [] }
+        return [ThreadMenuItem(title: "Main", slot: 0)]
+            + threads.open.compactMap { $0.thread.map { ThreadMenuItem(title: $0.label, slot: $0.slot) } }
+    }
 }
 
 /// One conversation's row under the sidebar's card (AM1).
@@ -218,6 +279,28 @@ extension AppModel {
         ThreadsPresentation(
             chats: chats, current: shownChat, limit: hello?.threadsMax ?? 2,
             waiting: Set(openCards.filter { !$0.value.isEmpty }.keys))
+    }
+
+    /// The sidebar's card (§2.5): the open thread on screen, else Main.
+    var sidebarCard: ChatSummary? {
+        if threadsOn, let shown = shownChat, let summary = summary(of: shown), summary.thread != nil, summary.ended == nil {
+            return summary
+        }
+        return liveSession
+    }
+
+    /// Main and the threads as the sidebar draws them: the card's chat is
+    /// the one not listed as a row.
+    var sidebarThreads: ThreadsPresentation {
+        let now = threads
+        return ThreadsPresentation(chats: now.chats, current: sidebarCard?.chat, limit: now.limit, waiting: now.waiting)
+    }
+
+    /// The thread on screen ended (closed here or elsewhere): the window
+    /// goes back to Main. An ended thread opened from History stays.
+    func returnToMainIfShownThreadEnded(wasLiveThread: Bool) {
+        guard wasLiveThread, let shown = selected, isEnded(chat: shown), let main = liveSession?.chat else { return }
+        open(chat: main)
     }
 
     /// ⌃0 Main, ⌃1 Thread 1, ⌃2 Thread 2: that conversation, out of the
