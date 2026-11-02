@@ -14,6 +14,12 @@ struct StatusStripPresentation: Equatable, Sendable {
     var services: ServicesPresentation
     /// The supervisor's one line about the gateway, for Settings.
     var gatewayText: String
+    /// The model as a menu (v0.15, AN1): set only when the gateway has
+    /// `models.v1` and the shown session is live; `nil` is plain text.
+    var modelMenu: ModelMenuPresentation? = nil
+
+    /// The model segment is the menu, not plain words.
+    var hasModelMenu: Bool { modelMenu?.menu == true }
 
     static let separator = " · "
 
@@ -31,11 +37,14 @@ struct StatusStripPresentation: Equatable, Sendable {
     }
 
     /// The model segment at a fit: the name, the short name, nothing.
+    /// Before a reply has named the model, the menu still shows: it reads
+    /// the current choice's name (or "Model" while there is no list yet).
     func model(at fit: Fit) -> String? {
+        let name = modelText ?? (hasModelMenu ? modelMenu?.currentName ?? "Model" : nil)
         switch fit {
-        case .full: modelText
-        case .compact: modelText.map(Self.shortModelName)
-        case .minimal: nil
+        case .full: return name
+        case .compact: return modelText.map(Self.shortModelName) ?? name
+        case .minimal: return nil
         }
     }
 
@@ -56,6 +65,8 @@ struct StatusStripPresentation: Equatable, Sendable {
         /// The segments' icons, as drawn.
         static let modelIcon = Symbol(name: "cpu", size: 11)
         static let chevron = Symbol(name: "chevron.down", size: 8, weight: .semibold)
+        /// The model menu's own padding either side, inside its hover fill (AN1: 3 × 7).
+        static let modelMenuPadding: CGFloat = 7
         static let restartIcon = Symbol(name: "arrow.clockwise", size: 10, weight: .semibold)
         static let updateIcon = Symbol(name: "arrow.down.circle", size: 11)
         static let updateIconCompact = Symbol(name: "arrow.down.circle", size: 13)
@@ -112,7 +123,13 @@ struct StatusStripPresentation: Equatable, Sendable {
             metrics.symbol(icon) + Measure.iconGap + text
         }
         var segments: [CGFloat] = []
-        if let model = model(at: fit) { segments.append(labelled(Measure.modelIcon, metrics.text(model))) }
+        if let model = model(at: fit) {
+            var segment = labelled(Measure.modelIcon, metrics.text(model))
+            if hasModelMenu {
+                segment += Measure.iconGap + metrics.symbol(Measure.chevron) + 2 * Measure.modelMenuPadding
+            }
+            segments.append(segment)
+        }
         segments.append(Measure.servicesChrome + metrics.text(servicesLabel(at: fit)) + metrics.symbol(Measure.chevron))
         segments.append(0)  // the spacer
         if restart {
@@ -203,10 +220,12 @@ extension AppModel {
     /// The strip for the shown chat (or the session the welcome continues)
     /// and the supervisor's view of the gateway.
     func statusStrip(gateway: GatewaySupervisor.Status) -> StatusStripPresentation {
-        StatusStripPresentation(
+        let menu = shownChat.map { modelMenu(for: $0) }
+        return StatusStripPresentation(
             modelText: shownChat.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
             services: servicesPresentation(gateway: gateway),
-            gatewayText: StatusStripPresentation.gatewayText(gateway))
+            gatewayText: StatusStripPresentation.gatewayText(gateway),
+            modelMenu: menu?.menu == true ? menu : nil)
     }
 }
 
@@ -218,6 +237,7 @@ struct StatusStrip: View {
     /// `nil` until the strip has been laid out once.
     @State private var width: CGFloat?
     @State private var servicesShown = false
+    @State private var modelMenuShown = false
 
     var body: some View {
         let strip = model.statusStrip(gateway: supervisor.status)
@@ -225,7 +245,13 @@ struct StatusStrip: View {
         let fit = layout.fit
         HStack(spacing: StatusStripPresentation.Measure.spacing) {
             if let modelText = strip.model(at: fit) {
-                segment(StatusStripPresentation.Measure.modelIcon, modelText, help: strip.modelText)
+                if let menu = strip.modelMenu, menu.menu, let chat = model.shownChat {
+                    ModelMenuControl(
+                        menu: menu, chat: chat, label: modelText, help: strip.modelText ?? modelText,
+                        shown: $modelMenuShown)
+                } else {
+                    segment(StatusStripPresentation.Measure.modelIcon, modelText, help: strip.modelText)
+                }
             }
             ServicesControl(services: strip.services, label: strip.servicesLabel(at: fit), shown: $servicesShown)
             Spacer(minLength: 0)
@@ -301,6 +327,187 @@ struct StatusStrip: View {
         .buttonStyle(.hover)
         .help("\(StatusStripPresentation.updateText(version)). Install it: \(model.brand.name) closes, updates, and opens again")
         .accessibilityLabel(StatusStripPresentation.updateText(version))
+    }
+}
+
+/// What the strip's model menu shows (v0.15, AN1): the engine's models
+/// with a check on the current one, dimmed while a reply runs, one dimmed
+/// line before any list has come, and plain text (no menu) for a past
+/// session or a gateway without `models.v1`.
+struct ModelMenuPresentation: Equatable, Sendable {
+    var choices: [ModelChoice]
+    /// The current choice's `value`; `nil` is the deployment's default.
+    var current: String?
+    /// A reply is running or a send waits for its answer.
+    var busy: Bool
+    /// The session is not an ended one open read-only.
+    var live: Bool
+    /// The gateway's `hello` lists `models.v1`.
+    var hasCapability: Bool
+
+    static let busyHelp = "Change the model after this reply"
+    static let emptyText = "Models appear once the session starts"
+    static let footer = "Applies to this session and new ones."
+
+    /// The model is a menu, not plain words.
+    var menu: Bool { hasCapability && live }
+    /// The menu opens; dimmed while a reply runs.
+    var enabled: Bool { menu && !busy }
+    /// The dimmed menu's tooltip.
+    var help: String? { menu && busy ? Self.busyHelp : nil }
+    /// The menu's one line when there is no list yet.
+    var emptyLine: String? { choices.isEmpty ? Self.emptyText : nil }
+
+    func checked(_ value: String) -> Bool {
+        (current ?? Models.defaultValue) == value
+    }
+
+    /// The current choice's name, for the strip before a reply names the model.
+    var currentName: String? {
+        choices.first { checked($0.value) }?.displayName
+    }
+}
+
+/// The strip's model as a menu (v0.15, AN1): the chip and name, a chevron
+/// in the third text colour, the hover fill; a click opens the list.
+struct ModelMenuControl: View {
+    let menu: ModelMenuPresentation
+    let chat: Int
+    let label: String
+    /// The tooltip when the menu is not dimmed: the full model name.
+    let help: String
+    @Binding var shown: Bool
+    @EnvironmentObject private var model: AppModel
+
+    private typealias Measure = StatusStripPresentation.Measure
+
+    var body: some View {
+        // The tooltip sits on a wrapper: a disabled button's own may not show,
+        // and the dimmed menu's tooltip is the reason it is dimmed.
+        HStack(spacing: 0) {
+            Button {
+                shown.toggle()
+            } label: {
+                HStack(spacing: Measure.iconGap) {
+                    Image(systemName: Measure.modelIcon.name)
+                        .font(.system(size: Measure.modelIcon.size))
+                    Text(label)
+                        .font(.system(size: Measure.fontSize))
+                    Image(systemName: shown ? "chevron.up" : Measure.chevron.name)
+                        .font(.system(size: Measure.chevron.size, weight: .semibold))
+                        .foregroundStyle(Theme.text3)
+                }
+                .foregroundStyle(Theme.text2)
+                .fixedSize()
+                .padding(.horizontal, Measure.modelMenuPadding)
+                .padding(.vertical, 3)
+                .background(shown ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
+            .disabled(!menu.enabled)
+            .opacity(menu.enabled ? 1 : 0.5)
+        }
+        .help(menu.help ?? help)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Model: \(label)")
+        .accessibilityHint(menu.help ?? "Choose the model")
+        .onChange(of: menu.enabled) { _, enabled in
+            if !enabled { shown = false }
+        }
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            ModelMenu(chat: chat, closeMenu: { shown = false })
+                .lineLimit(nil)
+                .environmentObject(model)
+        }
+    }
+}
+
+/// The model menu (AN1): each choice's name over its description, a check
+/// in the accent on the current one, and the footer saying where it
+/// applies. Reads the model itself so a new `models` frame shows while open.
+struct ModelMenu: View {
+    let chat: Int
+    var closeMenu: () -> Void = {}
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let menu = model.modelMenu(for: chat)
+        VStack(alignment: .leading, spacing: 1) {
+            if let empty = menu.emptyLine {
+                Text(empty)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.text3)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+            } else {
+                ForEach(menu.choices) { choice in
+                    ModelChoiceRow(
+                        choice: choice, checked: menu.checked(choice.value),
+                        accent: model.brand.accent ?? Theme.accent
+                    ) {
+                        model.setModel(choice.value, chat: chat)
+                        closeMenu()
+                    }
+                    .disabled(!menu.enabled)
+                }
+                Text(ModelMenuPresentation.footer)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.text3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Under the names: past the row's padding, check and gap.
+                    .padding(EdgeInsets(top: 8, leading: 10 + 14 + 9, bottom: 4, trailing: 10))
+                    .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+            }
+        }
+        .padding(6)
+        .frame(width: 330)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// One choice in the model menu: the check's place, the name (medium when
+/// current), the description in the third text colour.
+struct ModelChoiceRow: View {
+    let choice: ModelChoice
+    let checked: Bool
+    let accent: Color
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .opacity(checked ? 1 : 0)
+                    .frame(width: 14, height: 14)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(choice.displayName)
+                        .font(.system(size: 13, weight: checked ? .medium : .regular))
+                        .foregroundStyle(Theme.text)
+                    if !choice.description.isEmpty {
+                        Text(choice.description)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.text3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                hovering && isEnabled ? Theme.selected : .clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.5)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(checked ? .isSelected : [])
     }
 }
 
