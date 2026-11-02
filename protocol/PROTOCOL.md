@@ -252,7 +252,17 @@ while the agent works), running or not.
 `note: string | absent`. A permission answer is
 `{"decision": "allow" | "deny"}` with `scope`; a question answer is
 `{"answers": {<question text>: <label> | [labels]}}` (a label list for a
-`multi_select` question). An unknown, already-answered, or cancelled id is
+`multi_select` question; a question the person skipped is left out). A
+question card may instead be declined (v0.16) with
+`{"declined": "skipped" | "dismissed" | "replied"}`: every question
+skipped, the card's ×, or a reply sent from the composer while the card
+was up. The engine's question tool is then denied with, in turn, "The
+person skipped the question.", "The person dismissed the question.", or
+"The person replied in the conversation instead." For `replied` the app
+sends the reply as an ordinary `message.send` first; it is queued
+(`queue.v1`) and written into the turn right after the question's
+`tool.finished`, so the agent reads the decline and then the reply. Any
+other `declined` value is `card.invalid_answer`. An unknown, already-answered, or cancelled id is
 refused with `error code=card.stale` and nothing else happens; an answer
 whose shape does not fit the card's kind is refused with
 `error code=card.invalid_answer` and the card stays open. An accepted
@@ -634,6 +644,14 @@ session, by this answer or an earlier one), `auto` (auto mode allowed it;
 only for tools that would otherwise ask), `declined` (with the person's
 `note`), `blocked` (auto mode's classifier refused it). Absent when
 nothing was decided (a read in `default` mode).
+`answers?` (v0.16): on an answered `AskUserQuestion` row, what the person
+chose, `{<question text>: <label> | [labels]}` as in the question card's
+`card.answer` (skipped questions left out). Absent on any other row and
+on a declined question, whose row has `ok: false` and the decline's
+message as its `summary`. The gateway records each question's outcome by
+`tool_use_id` on the chat record (the transcript's tool input holds only
+the questions), so a row replayed from the transcript after a restart
+carries its `answers` too; a session from before v0.16 has none.
 
 How the reference gateway decides, by the session's mode when the tool
 started: `blocked` when the tool started in `auto` mode, no person's
@@ -661,7 +679,7 @@ message. Always followed by `chat.state` (`idle`, or `stopped` after
 ### `card.ask` — `CardAsk`
 `chat`, `seq`, `id`, `kind: permission | question | form`, `title`, and one of
 `permission {tool, summary, input}`,
-`questions: [{question, header, options: [{label, description}], multi_select}]`,
+`questions: [{question, header, options: [{label, description, preview?}], multi_select}]`,
 `form: [{key, label, kind: text | choice | toggle, options?}]`.
 A `permission` card's `title` is a plain question about the step (v0.3:
 `Save changes to Q3-synthesis.md?`, `Run git status?`, else `Use <tool>?`;
@@ -672,7 +690,11 @@ it under the buttons; without it, something general), `summary` is the one-line
 summary also shown on the tool row (a path, the first line of a command),
 and `input` is the tool's full input. A `question` card maps the engine's
 question tool field for field (`multiSelect` → `multi_select`) and its
-`title` is the first question's `header`. `form` is defined for a
+`title` is the first question's `header`; its `tool_use_id` (v0.16) names
+the question tool's row. An option's `preview?` (v0.16) is the option's
+preview string as the engine sent it, Markdown (the app renders it as
+Markdown, never HTML); a non-string preview is dropped. The engine does
+not offer previews to an SDK agent unless asked, so most cards have none. `form` is defined for a
 deployment's gateway; the reference gateway never sends one.
 
 While a card is open the chat's state is `waiting on you` (sent right

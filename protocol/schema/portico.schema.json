@@ -3248,6 +3248,18 @@
         "label": {
           "title": "Label",
           "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preview"
         }
       },
       "required": [
@@ -4804,6 +4816,31 @@
           ],
           "default": null,
           "title": "Agent Id"
+        },
+        "answers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answers"
         },
         "chat": {
           "title": "Chat",

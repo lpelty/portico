@@ -171,6 +171,7 @@ from .engine import (
     READ_ONLY_TOOLS,
     Engine,
     PermissionDecision,
+    QuestionDeclined,
     append_prompt_line,
     deployment_system_prompt,
     friendly_model_name,
@@ -266,7 +267,7 @@ from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
-from .state import ProposalRecord, StateDir
+from .state import ProposalRecord, QuestionOutcome, StateDir
 from .threads import (
     CLOSE_LOGGING,
     CLOSE_PLAIN,
@@ -544,8 +545,8 @@ class ChatCallbacks:
     ) -> PermissionDecision:
         return await self.server.ask_permission(self.chat, tool, input, suggestions, tool_use_id)
 
-    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
-        return await self.server.ask_question(self.chat, questions)
+    async def on_question(self, questions: list[dict[str, Any]], tool_use_id: str = "") -> dict[str, str | list[str]]:
+        return await self.server.ask_question(self.chat, questions, tool_use_id)
 
     async def on_compacted(self, trigger: str) -> None:
         await self.server.compacted(self.chat, trigger)
@@ -1885,6 +1886,7 @@ class GatewayServer:
         read, or a step no one decided.
         """
         tool, mode = chat.started_tools.pop(event.tool_use_id, (None, chat.mode))
+        event = self._with_answers(chat, event)
         decided = chat.permissions.get(event.tool_use_id)
         if decided is not None and decided.outcome in ("auto", "blocked"):
             decided = None  # not a person's answer
@@ -1899,6 +1901,14 @@ class GatewayServer:
             return event.model_copy(update={"permission": None}) if event.permission is not None else event
         self.registry.persist()
         return event
+
+    @staticmethod
+    def _with_answers(chat: Chat, event: ToolFinished) -> ToolFinished:
+        """``event`` with its question's recorded answers (v0.16); unchanged for any other row or a decline."""
+        outcome = chat.answers.get(event.tool_use_id)
+        if outcome is None or outcome.answers is None:
+            return event
+        return event.model_copy(update={"answers": outcome.answers})
 
     async def _finish_run(self, chat: Chat, run: TurnRun) -> None:
         if self._runs.get(chat.number) is run:
@@ -2149,11 +2159,29 @@ class GatewayServer:
                 self.registry.persist()
             await self._resume_working(chat, run)
 
-    async def ask_question(self, chat: Chat, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
-        """A question card; raises ``QuestionDeclined`` (a deny to the engine) when nobody answered."""
+    async def ask_question(
+        self, chat: Chat, questions: list[dict[str, Any]], tool_use_id: str = ""
+    ) -> dict[str, str | list[str]]:
+        """A question card; raises ``QuestionDeclined`` (a deny to the engine) when nobody answered or the person declined.
+
+        v0.16: the outcome (the answers, or which decline) is recorded by
+        ``tool_use_id`` and on the record at once, so the question's
+        ``tool.finished`` carries the answers, live and in a replay. A
+        cancelled card records nothing.
+        """
         run = self._runs.get(chat.number)
         try:
-            return await self.cards.ask_question(chat, questions, self._emit_card)
+            try:
+                answers = await self.cards.ask_question(chat, questions, self._emit_card, tool_use_id)
+            except QuestionDeclined as e:
+                if e.declined is not None and tool_use_id:
+                    chat.note_answer(tool_use_id, QuestionOutcome(declined=e.declined))
+                    self.registry.persist()
+                raise
+            if tool_use_id:
+                chat.note_answer(tool_use_id, QuestionOutcome(answers=answers))
+                self.registry.persist()
+            return answers
         finally:
             await self._resume_working(chat, run)
 
@@ -2428,8 +2456,11 @@ class GatewayServer:
 
     @staticmethod
     def _replayed_permission(chat: Chat, event: ServerMessage) -> ServerMessage:
-        """A transcript's ``tool.finished`` with the outcome recorded for it live."""
-        if not isinstance(event, ToolFinished) or event.permission is not None:
+        """A transcript's ``tool.finished`` with the outcome (and, v0.16, the answers) recorded for it live."""
+        if not isinstance(event, ToolFinished):
+            return event
+        event = GatewayServer._with_answers(chat, event)
+        if event.permission is not None:
             return event
         decided = chat.permissions.get(event.tool_use_id)
         if decided is None:

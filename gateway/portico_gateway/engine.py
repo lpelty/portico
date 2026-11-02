@@ -159,11 +159,18 @@ PermissionDecision = (
 
 
 class QuestionDeclined(Exception):
-    """Raised by ``on_question`` when nobody answered (the card was cancelled or nobody was there).
+    """Raised by ``on_question`` when the question was not answered.
 
-    The adapter turns it into a deny with the message, so the engine's
-    question tool is refused rather than answered with nothing.
+    Nobody answered (the card was cancelled or nobody was there), or (v0.16)
+    the person declined it: ``declined`` is then the decline's key
+    (``skipped``, ``dismissed``, ``replied``). The adapter turns it into a
+    deny with the message, so the engine's question tool is refused rather
+    than answered with nothing.
     """
+
+    def __init__(self, message: str = "", declined: str | None = None) -> None:
+        super().__init__(message)
+        self.declined = declined
 
 
 @runtime_checkable
@@ -174,7 +181,11 @@ class EngineCallbacks(Protocol):
         self, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision: ...
 
-    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]: ...
+    # ``tool_use_id`` (v0.16): the question tool's row, so its outcome can be
+    # recorded for ``tool.finished``.
+    async def on_question(
+        self, questions: list[dict[str, Any]], tool_use_id: str = ""
+    ) -> dict[str, str | list[str]]: ...
 
     async def on_compacted(self, trigger: str) -> None: ...
 
@@ -431,7 +442,7 @@ def build_can_use_tool(callbacks: EngineCallbacks):
         if tool == QUESTION_TOOL:
             questions = list(input.get("questions") or [])
             try:
-                answers = await callbacks.on_question(questions)
+                answers = await callbacks.on_question(questions, context.tool_use_id or "")
             except QuestionDeclined as e:
                 return PermissionResultDeny(message=str(e) or DEFAULT_DENY_MESSAGE)
             return PermissionResultAllow(updated_input={"questions": questions, "answers": answers})
@@ -1010,7 +1021,7 @@ class _ProbeCallbacks:
     ) -> PermissionDecision:
         return "deny"
 
-    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+    async def on_question(self, questions: list[dict[str, Any]], tool_use_id: str = "") -> dict[str, str | list[str]]:
         raise QuestionDeclined("no session")
 
     async def on_compacted(self, trigger: str) -> None:

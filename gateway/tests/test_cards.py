@@ -424,6 +424,109 @@ async def test_question_answer_without_answers_is_invalid(server: GatewayServer,
         await conn.close()
 
 
+# --- v0.16: previews, declines, partial answers ---------------------------------
+
+# The three declines and the message the engine reads for each (spec §3.3).
+DECLINE_MESSAGES = {
+    "skipped": "The person skipped the question.",
+    "dismissed": "The person dismissed the question.",
+    "replied": "The person replied in the conversation instead.",
+}
+
+
+async def test_preview_mapped(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    questions = [
+        {
+            "question": "Which tone for step 2?",
+            "header": "Tone",
+            "options": [
+                {"label": "Plain", "description": "short lines", "preview": "## Plain\nShort lines"},
+                {"label": "Warm", "description": "friendlier", "preview": 42},
+                {"label": "Formal", "description": "no preview"},
+            ],
+            "multiSelect": False,
+        }
+    ]
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        _, card = await start_turn_with_card(
+            conn, number, engine, AskQuestion(questions, tool_use_id="toolu_q1"), fake_result()
+        )
+        await recv(conn)  # waiting on you
+        assert card.questions is not None
+        assert [o.preview for o in card.questions[0].options] == ["## Plain\nShort lines", None, None]
+        # The card names the question tool's row, as a permission card does.
+        assert card.tool_use_id == "toolu_q1"
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"answers": {"Which tone for step 2?": "Plain"}})))
+        await recv_until(conn, TurnFinished)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize("key", sorted(DECLINE_MESSAGES))
+async def test_declines(server: GatewayServer, factory: EngineFactory, folder: Path, key: str) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        _, card = await start_turn_with_card(
+            conn, number, engine, AskQuestion(QUESTIONS[:1], tool_use_id="toolu_q2"), fake_result()
+        )
+        await recv(conn)  # waiting on you
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"declined": key})))
+        answered = await recv(conn)
+        assert isinstance(answered, CardAnswered) and answered.id == card.id, answered
+        await recv_until(conn, TurnFinished)
+        await engine.wait_idle()
+        # The engine's question tool is denied with the decline's message.
+        assert engine.answers == [("declined", DECLINE_MESSAGES[key])]
+        outcome = server.registry.get(number).answers["toolu_q2"]
+        assert (outcome.answers, outcome.declined) == (None, key)
+    finally:
+        await conn.close()
+
+
+async def test_unknown_decline_is_invalid(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        _, card = await start_turn_with_card(conn, number, engine, AskQuestion(QUESTIONS[:1]), fake_result())
+        await recv(conn)
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"declined": "ignored"})))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "card.invalid_answer"
+        # The card stays open: a decline it knows still lands.
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"declined": "dismissed"})))
+        answered = await recv(conn)
+        assert isinstance(answered, CardAnswered) and answered.id == card.id, answered
+        await recv_until(conn, TurnFinished)
+        assert engine.answers == [("declined", DECLINE_MESSAGES["dismissed"])]
+    finally:
+        await conn.close()
+
+
+async def test_partial_answers(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        _, card = await start_turn_with_card(
+            conn, number, engine, AskQuestion(QUESTIONS, tool_use_id="toolu_q3"), fake_result()
+        )
+        await recv(conn)
+        # The second question was skipped: only the first is answered.
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"answers": {"Which colour?": "Red"}})))
+        await recv_until(conn, TurnFinished)
+        assert engine.answers == [{"Which colour?": "Red"}]
+        outcome = server.registry.get(number).answers["toolu_q3"]
+        assert (outcome.answers, outcome.declined) == ({"Which colour?": "Red"}, None)
+    finally:
+        await conn.close()
+
+
 # --- hold while no app is attached ---------------------------------------------
 
 
@@ -746,3 +849,17 @@ async def test_broker_answer_unknown_is_stale_and_cancel_resolves_deny(tmp_path:
     with pytest.raises(QuestionDeclined) as declined:
         await task2
     assert str(declined.value) == "chat stopped"
+
+
+def test_question_outcomes_are_bounded_and_kept_on_the_record(tmp_path: Path) -> None:
+    from portico_gateway.chats import TOOL_PERMISSIONS_KEPT
+    from portico_gateway.state import QuestionOutcome
+
+    chat = Chat(1, tmp_path, 100)
+    for i in range(TOOL_PERMISSIONS_KEPT + 2):
+        chat.note_answer(f"toolu_{i}", QuestionOutcome(answers={"Q?": "A"}))
+    chat.note_answer("", QuestionOutcome(declined="skipped"))  # no row: nothing to record
+    assert len(chat.answers) == TOOL_PERMISSIONS_KEPT
+    assert "toolu_0" not in chat.answers and "toolu_1" not in chat.answers
+    back = Chat.from_record(chat.record(), 100)
+    assert back.answers == chat.answers

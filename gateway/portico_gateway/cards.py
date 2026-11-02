@@ -22,7 +22,9 @@ expect:
   ``deny`` → ``("deny", note)``. The keys are kept on the chat record, so
   they last for the session, across gateway restarts (v0.3).
 - question → ``{<question text>: <label> | [labels]}``, the answers the
-  engine's question tool expects.
+  engine's question tool expects (a question the person skipped is left
+  out). Or (v0.16) ``{"declined": <key>}``, one of ``DECLINES``: the
+  question tool is denied with that decline's message.
 
 **Held cards.** While no app is attached the card stays open and the hold
 clock runs; after ``hold_seconds`` the card is cancelled with the reason
@@ -60,6 +62,7 @@ from .engine import PermissionDecision, QuestionDeclined, summarize_tool
 from .messages import CardAnswer, CardAsk, CardCancel, Option, Permission, ProtocolError, Question, ServerMessage
 
 __all__ = [
+    "DECLINES",
     "NOBODY_ANSWERED",
     "CardBroker",
     "QuestionDeclined",
@@ -73,6 +76,15 @@ log = logging.getLogger(__name__)
 # The reason on the ``card.cancel`` and the message the engine sees when a
 # held card times out (spec §5.5; Global Constraints).
 NOBODY_ANSWERED = "nobody was there to answer"
+
+# The ways a person declines a question card (v0.16, spec §3.3), and the
+# message the engine's question tool is denied with for each: Skip on every
+# question, the card's ×, and a reply sent from the composer instead.
+DECLINES: dict[str, str] = {
+    "skipped": "The person skipped the question.",
+    "dismissed": "The person dismissed the question.",
+    "replied": "The person replied in the conversation instead.",
+}
 
 # ``send(chat, msg)`` stamps the message with the chat's next ``seq``, keeps
 # it in the ring, sends it to the app if one is attached, and returns the
@@ -240,12 +252,20 @@ def _inside(target: Path, folder: Path) -> bool:
     return True
 
 
-def question_card(chat: int, questions: list[dict[str, Any]]) -> CardAsk:
-    """The engine's question-tool input, mapped field for field (``multiSelect`` → ``multi_select``)."""
+def question_card(chat: int, questions: list[dict[str, Any]], tool_use_id: str | None = None) -> CardAsk:
+    """The engine's question-tool input, mapped field for field (``multiSelect`` → ``multi_select``).
+
+    An option's ``preview`` (v0.16) is kept when it is a string; anything
+    else is dropped. ``tool_use_id`` names the question tool's row.
+    """
     mapped: list[Question] = []
     for q in questions:
         options = [
-            Option(label=str(o.get("label", "")), description=str(o.get("description") or ""))
+            Option(
+                label=str(o.get("label", "")),
+                description=str(o.get("description") or ""),
+                preview=o.get("preview") if isinstance(o.get("preview"), str) else None,
+            )
             for o in (q.get("options") or [])
             if isinstance(o, dict)
         ]
@@ -258,7 +278,9 @@ def question_card(chat: int, questions: list[dict[str, Any]]) -> CardAsk:
             )
         )
     title = next((q.header for q in mapped if q.header), None) or "A question"
-    return CardAsk(ts=_now(), chat=chat, id=_new_id(), kind="question", title=title, questions=mapped)
+    return CardAsk(
+        ts=_now(), chat=chat, id=_new_id(), kind="question", title=title, questions=mapped, tool_use_id=tool_use_id or None
+    )
 
 
 def _rule_covers(rule: str, command: str) -> bool:
@@ -325,6 +347,13 @@ def _check_answer(card: CardAsk, answer: CardAnswer) -> None:
             raise ProtocolError("card.invalid_answer", 'a permission answer is {"decision": "allow" | "deny"}')
         return
     if card.kind == "question":
+        if "declined" in body:
+            declined = body["declined"]
+            if not isinstance(declined, str) or declined not in DECLINES:
+                raise ProtocolError(
+                    "card.invalid_answer", 'a declined question is {"declined": "skipped" | "dismissed" | "replied"}'
+                )
+            return
         answers = body.get("answers")
         if not isinstance(answers, dict) or not all(
             isinstance(k, str) and (isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v)))
@@ -532,12 +561,20 @@ class CardBroker:
         return "allow"
 
     async def ask_question(
-        self, chat: Chat, questions: list[dict[str, Any]], send: Send
+        self, chat: Chat, questions: list[dict[str, Any]], send: Send, tool_use_id: str | None = None
     ) -> dict[str, str | list[str]]:
-        """A question card; returns the answers, or raises ``QuestionDeclined`` when the card was cancelled."""
-        answer = await self.ask(chat, question_card(chat.number, questions), send)
+        """A question card; returns the answers.
+
+        Raises ``QuestionDeclined`` when the card was cancelled (no
+        ``declined`` key) or the person declined it (v0.16: the message is
+        ``DECLINES[key]``, ``declined`` the key).
+        """
+        answer = await self.ask(chat, question_card(chat.number, questions, tool_use_id), send)
         if _is_cancelled(answer):
             raise QuestionDeclined(answer.note or "the question was not answered")
+        declined = answer.answer.get("declined")
+        if declined is not None:
+            raise QuestionDeclined(DECLINES[declined], declined=declined)
         answers = answer.answer.get("answers")
         assert isinstance(answers, dict)
         return dict(answers)

@@ -46,7 +46,7 @@ from .messages import (
     ServerMessage,
     ThreadInfo,
 )
-from .state import ChatRecord, Index, ProposalRecord, StateDir, ToolPermission
+from .state import ChatRecord, Index, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .engine import Engine
@@ -125,6 +125,7 @@ class Chat:
         mode: PermissionMode | None = None,
         allows: list[str] | None = None,
         permissions: dict[str, ToolPermission] | None = None,
+        answers: dict[str, QuestionOutcome] | None = None,
         logged_at: str | None = None,
         work_since_log: bool = False,
         last_reply: str | None = None,
@@ -171,6 +172,10 @@ class Chat:
         # Recorded when decided, attached to ``tool.finished``, kept on the
         # record for replays from the transcript.
         self.permissions: dict[str, ToolPermission] = dict(permissions or {})
+        # Question outcomes by ``tool_use_id`` (v0.16): the answers, or which
+        # decline. Recorded when answered, attached to ``tool.finished``,
+        # kept on the record for replays from the transcript.
+        self.answers: dict[str, QuestionOutcome] = dict(answers or {})
         # The tool of every ``tool.started`` this launch and the session's
         # mode when it started, by ``tool_use_id``, until its ``tool.finished``.
         self.started_tools: dict[str, tuple[str, PermissionMode | None]] = {}
@@ -258,6 +263,15 @@ class Chat:
         while len(self.permissions) > TOOL_PERMISSIONS_KEPT:
             del self.permissions[next(iter(self.permissions))]
 
+    def note_answer(self, tool_use_id: str, outcome: QuestionOutcome) -> None:
+        """Record what became of ``tool_use_id``'s question; the oldest go past ``TOOL_PERMISSIONS_KEPT``."""
+        if not tool_use_id:
+            return
+        self.answers.pop(tool_use_id, None)
+        self.answers[tool_use_id] = outcome
+        while len(self.answers) > TOOL_PERMISSIONS_KEPT:
+            del self.answers[next(iter(self.answers))]
+
     # --- logging ----------------------------------------------------------------
 
     def note_turn_done(self) -> None:
@@ -313,6 +327,7 @@ class Chat:
             artifacts=list(self.artifacts),
             allows=sorted(self.chat_allows),
             permissions=dict(self.permissions),
+            answers=dict(self.answers),
             work_since_log=self.work_since_log,
             **self._session_facts(),  # type: ignore[arg-type]
         )
@@ -338,6 +353,7 @@ class Chat:
             mode=record.mode,
             allows=record.allows,
             permissions=record.permissions,
+            answers=record.answers,
             logged_at=record.logged_at,
             last_reply=record.last_reply,
             thread=record.thread,

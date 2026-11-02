@@ -655,3 +655,72 @@ def test_the_agent_record_is_rebuilt_from_the_transcript() -> None:
     assert [(e.id, e.steps, e.elapsed) for e in progress] == [("a1", 2, 4.789)]
     # Never seen to end: over, since the engine that ran it is gone.
     assert finished["a2"].outcome == "done" and events[-1] == finished["a2"]
+
+
+async def test_answers_ride_on_tool_finished(state_dir: StateDir, folder: Path, config_dir: Path) -> None:
+    # v0.16: a question's answers are recorded by its tool row's id and ride
+    # on that row's ``tool.finished``, live and in a replay after a restart
+    # (the transcript's tool input holds only the questions).
+    from portico_gateway.messages import CardAnswer, CardAsk
+    from tests.conftest import AskQuestion, FakeEngine
+    from tests.test_turns import tool_result as sdk_tool_result, tool_use as sdk_tool_use
+
+    class SessionFactory(EngineFactory):
+        def __call__(self) -> FakeEngine:
+            engine = FakeEngine(session_id=SESSION)
+            self.engines.append(engine)
+            return engine
+
+    questions = [
+        {
+            "question": "Which tone for step 2?",
+            "header": "Tone",
+            "options": [{"label": "Plain", "description": "short"}, {"label": "Warm", "description": "friendly"}],
+            "multiSelect": False,
+        }
+    ]
+    answers = {"Which tone for step 2?": "Plain"}
+    factory = SessionFactory()
+    srv = await start_server(state_dir, factory)
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        factory.last.script(
+            sdk_tool_use("toolu_q", "AskUserQuestion", {"questions": questions}),
+            AskQuestion(questions, tool_use_id="toolu_q"),
+            sdk_tool_result("toolu_q", 'User has answered your questions: "Which tone for step 2?"="Plain".'),
+            fake_result(session_id=SESSION),
+        )
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="Draft step 2.")))
+        card = (await recv_until(conn, CardAsk))[-1]
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"answers": answers})))
+        frames = await recv_until(conn, TurnFinished)
+        live = next(f for f in frames if isinstance(f, ToolFinished) and f.tool_use_id == "toolu_q")
+        assert live.answers == answers
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+    # The next launch replays the turn from the engine's transcript.
+    write_transcript(
+        config_dir,
+        folder,
+        SESSION,
+        [
+            user("Draft step 2."),
+            assistant(tool_use("toolu_q", "AskUserQuestion", {"questions": questions})),
+            user([tool_result("toolu_q", 'User has answered your questions: "Which tone for step 2?"="Plain".')]),
+            assistant(text("Plain it is.")),
+        ],
+    )
+    srv = await start_server(state_dir, EngineFactory())
+    conn = await attach(srv)
+    try:
+        await conn.send(dump(ChatOpen(ts=TS, chat=number)))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory)
+        replayed = next(e for e in history.events if isinstance(e, ToolFinished) and e.tool_use_id == "toolu_q")
+        assert replayed.answers == answers
+    finally:
+        await conn.close()
+        await srv.shutdown()

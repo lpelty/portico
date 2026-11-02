@@ -165,6 +165,9 @@ class Permission(Strict):
 class Option(Strict):
     label: str
     description: str
+    # v0.16: the option's preview, as the engine's question tool sends it
+    # (Markdown); absent when the option has none.
+    preview: str | None = None
 
 
 class Question(Strict):
@@ -611,6 +614,9 @@ class ToolFinished(Envelope):
     note: str | None = None
     # v0.10: as on ``tool.started``.
     agent_id: str | None = None
+    # v0.16: on an answered ``AskUserQuestion`` row, what the person chose
+    # ({<question text>: <label> | [labels]}); absent on a decline.
+    answers: dict[str, str | list[str]] | None = None
 
 
 class TurnFinished(Envelope):

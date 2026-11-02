@@ -200,6 +200,7 @@ async def test_question_routes_to_on_question_and_returns_updated_input() -> Non
     assert result.updated_input == {"questions": questions, "answers": {"Which colour?": "Blue"}}
     assert result.updated_permissions is None
     assert cb.questions == [questions]
+    assert cb.question_ids == ["toolu_9"]  # v0.16: the outcome is recorded by the tool row's id
     assert cb.permissions == []  # never treated as a permission
 
 

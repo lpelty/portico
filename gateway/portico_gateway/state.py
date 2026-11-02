@@ -66,6 +66,15 @@ class ToolPermission(BaseModel):
     note: str | None = None
 
 
+class QuestionOutcome(BaseModel):
+    """What became of one question tool use (v0.16): its answers, or the decline's key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answers: dict[str, str | list[str]] | None = None
+    declined: str | None = None
+
+
 class ChatRecord(BaseModel):
     """One chat as the gateway remembers it across launches.
 
@@ -98,6 +107,10 @@ class ChatRecord(BaseModel):
     # ``tool_use_id`` (newest ``TOOL_PERMISSIONS_KEPT``), so rows replayed
     # from the transcript after a restart read as they did live.
     permissions: dict[str, ToolPermission] = {}
+    # v0.16: the outcome of each question tool use, by ``tool_use_id``
+    # (newest ``TOOL_PERMISSIONS_KEPT``), so the question's row replayed from
+    # the transcript carries its answers.
+    answers: dict[str, QuestionOutcome] = {}
     # v0.4: when the session was last logged (``session.log``, or a
     # renewal's log step that finished cleanly), and whether a turn has
     # finished since (``None`` in an older index: the registry infers it).
