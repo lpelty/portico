@@ -522,7 +522,7 @@ struct CopyButton: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 Text(copied ? "Copied" : "Copy")
             }
-            .font(.system(size: 11))
+            .scaledFont(11)
             .foregroundStyle(Theme.text3)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
@@ -598,7 +598,7 @@ struct MarkdownBlockView: View {
             Group {
                 if let number = item.number {
                     Text(number)
-                        .font(.system(size: Self.bodySize * textScale).monospacedDigit())
+                        .scaledFont(Self.bodySize, monospacedDigit: true)
                 } else {
                     Text(item.level == 0 ? "•" : "◦")
                         .scaledFont(Self.bodySize)
@@ -624,7 +624,7 @@ struct MarkdownBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(language ?? "")
-                    .font(.system(size: 11, design: .monospaced))
+                    .scaledFont(11, design: .monospaced)
                     .foregroundStyle(Theme.text3)
                 Spacer(minLength: 0)
                 CopyButton(help: "Copy the code") { MarkdownCopy.code(text) }
@@ -678,7 +678,7 @@ struct MarkdownBlockView: View {
 
     private func tableCell(_ text: String, weight: Font.Weight = .regular) -> some View {
         Text(MarkdownParser.inline(text, codeBackground: Theme.border))
-            .font(.system(size: 12, weight: weight))
+            .scaledFont(12, weight: weight)
             .fixedSize()
     }
 }

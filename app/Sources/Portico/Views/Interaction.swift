@@ -116,7 +116,7 @@ struct RowActionButton: View {
                 Image(systemName: systemImage)
                 Text(title)
             }
-            .font(.system(size: 11))
+            .scaledFont(11)
             .foregroundStyle(Theme.text3)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)

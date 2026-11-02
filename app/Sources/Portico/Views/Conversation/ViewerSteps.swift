@@ -125,23 +125,23 @@ struct ViewerStepsView: View {
                 HStack(spacing: 8) {
                     mark.frame(width: 14, height: 14)
                     Text(ViewerSteps.title(rows))
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
                     Text(ViewerSteps.count(rows))
-                        .font(.system(size: 11).monospacedDigit())
+                        .scaledFont(11, monospacedDigit: true)
                         .foregroundStyle(Theme.text2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
                         .background(Theme.surface, in: Capsule())
                     Text(ViewerSteps.latest(rows))
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(Theme.text3)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 8)
                     Image(systemName: shown ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Theme.iconFont(10, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                 }
                 .padding(.vertical, 6)
@@ -165,11 +165,11 @@ struct ViewerStepsView: View {
     @ViewBuilder
     private var mark: some View {
         if ViewerSteps.troubled(rows) {
-            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.deny)
+            Image(systemName: "xmark").font(Theme.iconFont(11, weight: .semibold)).foregroundStyle(Theme.deny)
         } else if ViewerSteps.live(rows) {
             ProgressView().controlSize(.mini)
         } else {
-            Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.working)
+            Image(systemName: "checkmark").font(Theme.iconFont(11, weight: .semibold)).foregroundStyle(Theme.working)
         }
     }
 }

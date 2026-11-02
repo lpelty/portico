@@ -24,7 +24,7 @@ struct SessionSidebar: View {
                     .padding(.horizontal, 8)
             } else {
                 Text("No session yet. Say something to start one.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 16)
             }
@@ -46,7 +46,7 @@ struct SessionSidebar: View {
                     if !searching { query = "" }
                 } label: {
                     Image(systemName: searching ? "xmark" : "magnifyingglass")
-                        .font(.system(size: 12))
+                        .font(Theme.iconFont(12))
                         .foregroundStyle(Theme.text2)
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
@@ -60,7 +60,7 @@ struct SessionSidebar: View {
             if searching {
                 TextField("Search titles", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -82,7 +82,7 @@ struct SessionSidebar: View {
             .frame(height: all.isEmpty ? 0 : height)
             if searching && all.isEmpty {
                 Text("No session titled “\(query)”")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 16)
             }
@@ -123,11 +123,11 @@ struct EarlierRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Text("\(summary.chat)")
-                    .font(.system(size: 13).monospacedDigit())
+                    .scaledFont(13, monospacedDigit: true)
                     .foregroundStyle(Theme.text3)
                     .frame(minWidth: 18, alignment: .leading)
                 Text(shown.title ?? "Untitled")
-                    .font(.system(size: 13, weight: title.weight))
+                    .scaledFont(13, weight: title.weight)
                     .foregroundStyle(title.color)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -152,7 +152,7 @@ struct EarlierRow: View {
         switch summary.logged {
         case true?:
             Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .semibold))
+                .font(Theme.iconFont(10, weight: .semibold))
                 .foregroundStyle(Theme.text3)
         case false?:
             Circle().fill(Theme.wait).frame(width: 6, height: 6)
@@ -233,28 +233,28 @@ struct SessionCard: View {
             HStack(spacing: 8) {
                 Circle().fill(stateColor).frame(width: 7, height: 7)
                 Text(shown.number)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(Theme.text)
                 Spacer(minLength: 0)
                 if let start = SessionTime.parse(summary.created) {
                     // Re-reads the clock each minute so the age moves.
                     TimelineView(.everyMinute) { context in
                         Text(SessionTime.age(since: start, now: context.date))
-                            .font(.system(size: 12).monospacedDigit())
+                            .scaledFont(12, monospacedDigit: true)
                             .foregroundStyle(Theme.text3)
                     }
                 }
             }
             if nudging {
                 Text(nudgeSentence)
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 // Re-read each minute so "Started 12 min ago" moves (v0.7 decision 1).
                 TimelineView(.everyMinute) { context in
                     Text(shown.startedLine(now: context.date))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -268,11 +268,11 @@ struct SessionCard: View {
                 .onTapGesture {}
             if goesBack && !nudging {
                 Text("Click to go back to it")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
             } else if !nudging && model.canRenew(chat: chat) {
                 Text(hint)
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -314,11 +314,11 @@ struct SessionCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(compactions > 0 ? "Context · summarized \(compactions)×" : "Context")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                     Spacer(minLength: 0)
                     Text("\(Int(percent.rounded()))%")
-                        .font(.system(size: 12, weight: nudging ? .semibold : .regular).monospacedDigit())
+                        .scaledFont(12, weight: nudging ? .semibold : .regular, monospacedDigit: true)
                         .foregroundStyle(nudging ? Theme.wait : Theme.text2)
                 }
                 ContextMeter(percent: percent, color: nudging ? Theme.wait : Theme.meterFill)
@@ -335,7 +335,7 @@ struct SessionCard: View {
                         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
                     Button("Not now") { model.dismissNudge(chat: chat) }
                         .buttonStyle(.hoverText)
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(Theme.text2)
                 }
                 .disabled(pending || model.connection != .connected)
@@ -435,7 +435,7 @@ struct CompactTime: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
             Text(SessionTime.compact(date, now: context.date))
-                .font(.system(size: 11).monospacedDigit())
+                .scaledFont(11, monospacedDigit: true)
                 .foregroundStyle(Theme.text3)
                 .lineLimit(1)
                 .fixedSize()

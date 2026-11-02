@@ -250,7 +250,7 @@ struct MainToolbar: View {
                 } else {
                     BrandMark(brand: model.brand)
                     Text(model.brand.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -333,7 +333,7 @@ struct PanelToggle: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: side == .leading ? "sidebar.left" : "sidebar.right")
-                .font(.system(size: 15, weight: .regular))
+                .font(Theme.iconFont(15, weight: .regular))
                 .foregroundStyle(shown ? Theme.text2 : Theme.text)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())

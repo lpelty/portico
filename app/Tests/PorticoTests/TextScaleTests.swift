@@ -152,6 +152,9 @@ final class TextScaleTests: XCTestCase {
 
     func testCommandEqualsIsBiggerTextToo() {
         XCTAssertTrue(TextScaleKeys.isBiggerAlternate(characters: "=", modifiers: .command))
+        XCTAssertTrue(TextScaleKeys.isBiggerAlternate(characters: "=", modifiers: [.command, .capsLock]))
+        XCTAssertTrue(TextScaleKeys.isBiggerAlternate(characters: "=", modifiers: [.command, .numericPad, .function]))
+        XCTAssertFalse(TextScaleKeys.isBiggerAlternate(characters: "=", modifiers: [.command, .shift, .capsLock]))
         XCTAssertFalse(TextScaleKeys.isBiggerAlternate(characters: "=", modifiers: [.command, .option]))
         XCTAssertFalse(TextScaleKeys.isBiggerAlternate(characters: "=", modifiers: []))
         XCTAssertFalse(TextScaleKeys.isBiggerAlternate(characters: "0", modifiers: .command))

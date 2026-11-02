@@ -51,7 +51,7 @@ struct ConversationView: View {
             }
             if let status = model.status[chat], !status.isEmpty {
                 Text(status)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(2)
                     .textSelection(.enabled)
@@ -264,10 +264,10 @@ struct ConversationView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(model.isSinglePresentation ? "Session \(chat)" : "Chat #\(chat)")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text(model.isLive(chat: chat) ? "Nothing yet. Say something below." : "Loading the transcript…")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
         }
     }
@@ -368,7 +368,7 @@ struct UserBubble: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: MarkdownText.bodySize))
+            .scaledFont(MarkdownText.bodySize)
             .lineSpacing(MarkdownText.lineSpacing)
             .foregroundStyle(Theme.text)
             .textSelection(.enabled)
@@ -405,9 +405,9 @@ struct TurnMarkerView: View {
         if let label = Self.label(marker.outcome) {
             HStack(spacing: 6) {
                 Image(systemName: marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                 Text(label)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
             }
             .foregroundStyle(marker.outcome == .error ? Theme.deny : Theme.text3)
             .accessibilityElement(children: .combine)
@@ -436,17 +436,17 @@ struct SessionDivider: View {
                 HStack(spacing: 6) {
                     if parent.summary.logged == true {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(Theme.iconFont(10, weight: .semibold))
                     }
                     Text(parent.parentLine(now: now))
                 }
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
                 .fixedSize()
                 Rectangle().fill(Theme.border).frame(height: 1)
             }
             Text(current.startedSecondLine(now: now))
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
         }
         .frame(maxWidth: .infinity)
@@ -462,10 +462,10 @@ struct CompactedLine: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "rectangle.compress.vertical")
-                .font(.system(size: 11))
+                .font(Theme.iconFont(11))
                 .foregroundStyle(Theme.text3)
             Text(Self.text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(Theme.text2)
             Spacer(minLength: 0)
         }
@@ -483,9 +483,9 @@ struct NoticeLine: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
+                .font(Theme.iconFont(11))
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
@@ -504,11 +504,11 @@ struct EndedSessionBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.text3)
             TimelineView(.everyMinute) { context in
                 Text(line(now: context.date))
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .truncationMode(.tail)

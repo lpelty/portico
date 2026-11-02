@@ -71,10 +71,10 @@ struct DocumentView: View {
                         .help("Clear the search")
                 }
                 Text("⌘⇧F")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
             }
-            .font(.system(size: 13))
+            .scaledFont(13)
             .padding(.horizontal, 12)
             .frame(height: 34)
             .background(Theme.control, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -131,17 +131,17 @@ struct DocumentView: View {
                     .foregroundStyle(Theme.text2)
                     .frame(width: 16)
                 Text(name)
-                    .font(.system(size: 13, weight: model.documentFile == path ? .semibold : .regular))
+                    .scaledFont(13, weight: model.documentFile == path ? .semibold : .regular)
                     .lineLimit(1)
             }
             Text(location)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
                 .lineLimit(1)
                 .truncationMode(.head)
             if let snippet, !snippet.isEmpty {
                 Text(snippet)
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(2)
             }
@@ -202,15 +202,15 @@ struct DocumentHeader: View {
         let obsidian = Obsidian.isInstalled
         HStack(spacing: 10) {
             Image(systemName: FileIcon.systemName(for: path))
-                .font(.system(size: 15))
+                .font(Theme.iconFont(15))
                 .foregroundStyle(Theme.text2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(URL(fileURLWithPath: path).lastPathComponent)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Text(model.location(of: path, chat: chat))
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -221,7 +221,7 @@ struct DocumentHeader: View {
                 model.toggleBookmark(path)
             } label: {
                 Image(systemName: bookmarked ? "bookmark.fill" : "bookmark")
-                    .font(.system(size: 12))
+                    .font(Theme.iconFont(12))
                     .foregroundStyle(bookmarked ? (model.brand.accent ?? Theme.accent) : Theme.text2)
                     .frame(width: 28, height: 26)
                     .background(bookmarked ? Theme.accentSoft : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))

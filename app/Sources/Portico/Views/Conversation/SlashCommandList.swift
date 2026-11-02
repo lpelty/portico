@@ -124,7 +124,7 @@ struct SlashCommandList: View {
                 Text(SlashCompletion.keyHints)
                     .lineLimit(1)
             }
-            .font(.system(size: 11))
+            .scaledFont(11)
             .foregroundStyle(Theme.text3)
             .padding(.horizontal, 14)
             .frame(height: 30)
@@ -137,7 +137,7 @@ struct SlashCommandList: View {
 
     private func header(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .semibold))
+            .scaledFont(11, weight: .semibold)
             .tracking(0.4)
             .foregroundStyle(Theme.text3)
             .lineLimit(1)
@@ -157,7 +157,7 @@ struct SlashCommandList: View {
     private func row(_ item: SlashCompletion.Item, selected: Bool) -> some View {
         HStack(spacing: 14) {
             Text("/\(item.name)")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -165,14 +165,14 @@ struct SlashCommandList: View {
                 // The name wins the row; a long description is the one cut.
                 .layoutPriority(1)
             Text(item.description)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
             if selected {
                 Text("↵")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text3)
             }
         }

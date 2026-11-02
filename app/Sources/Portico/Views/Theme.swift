@@ -85,6 +85,12 @@ extension EnvironmentValues {
 extension Theme {
     /// An AppKit system font at `size` points times `scale`: AppKit-backed
     /// text does not read SwiftUI's environment, so it is given the scale.
+    /// A symbol's font: the size it is drawn at, never scaled (spec §3.4:
+    /// icons keep their size when the text grows).
+    static func iconFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
+    }
+
     static func nsFont(_ size: CGFloat, scale: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
         NSFont.systemFont(ofSize: size * scale, weight: weight)
     }
@@ -95,10 +101,12 @@ private struct ScaledFont: ViewModifier {
     let size: CGFloat
     let weight: Font.Weight
     let design: Font.Design
+    let monospacedDigit: Bool
     @Environment(\.textScale) private var scale
 
     func body(content: Content) -> some View {
-        content.font(.system(size: size * scale, weight: weight, design: design))
+        let font = Font.system(size: size * scale, weight: weight, design: design)
+        content.font(monospacedDigit ? font.monospacedDigit() : font)
     }
 }
 
@@ -106,7 +114,10 @@ extension View {
     /// `.font(.system(size:weight:design:))` at the person's text scale:
     /// every piece of text the app draws goes through this (v0.15 §3).
     /// Icons do not: they keep their size.
-    func scaledFont(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
-        modifier(ScaledFont(size: size, weight: weight, design: design))
+    func scaledFont(
+        _ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default,
+        monospacedDigit: Bool = false
+    ) -> some View {
+        modifier(ScaledFont(size: size, weight: weight, design: design, monospacedDigit: monospacedDigit))
     }
 }

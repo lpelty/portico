@@ -18,10 +18,10 @@ struct AskToLogDialog: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(Self.title(chat: chat))
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text(Self.body)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .lineSpacing(4)
                 .foregroundStyle(Theme.text2)
                 .fixedSize(horizontal: false, vertical: true)

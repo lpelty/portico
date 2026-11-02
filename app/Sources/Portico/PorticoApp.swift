@@ -217,6 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// so the test reads it without an event.
 enum TextScaleKeys {
     static func isBiggerAlternate(characters: String?, modifiers: NSEvent.ModifierFlags) -> Bool {
-        characters == "=" && modifiers.intersection(.deviceIndependentFlagsMask) == .command
+        // Caps Lock, the numeric pad and Fn ride along in the flags; only the
+        // four chord modifiers decide whether this is a plain ⌘=.
+        characters == "=" && modifiers.intersection([.command, .shift, .option, .control]) == .command
     }
 }

@@ -116,15 +116,18 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         /// The Markdown file a rendered page was made from (v0.14), so a
         /// mark on it keeps its file across re-renders and Back.
         var source: URL? = nil
+        /// The front-matter keys that page hid, kept for a re-render.
+        var hiding: Set<String> = []
     }
 
     private var renders: [String: Render] = [:]
 
     /// Register a page whose relative references resolve under `root`
     /// (a directory). Returns the URL to load.
-    func register(page: String, root: URL, source: URL? = nil) -> URL {
+    func register(page: String, root: URL, source: URL? = nil, hiding: Set<String> = []) -> URL {
         let id = UUID().uuidString.lowercased()
-        renders[id] = Render(page: Data(page.utf8), root: Self.resolved(root), entry: nil, source: source.map(Self.resolved))
+        renders[id] = Render(
+            page: Data(page.utf8), root: Self.resolved(root), entry: nil, source: source.map(Self.resolved), hiding: hiding)
         return URL(string: "\(Self.scheme)://\(id)/")!
     }
 
@@ -152,6 +155,12 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         guard url.scheme == Self.scheme, let host = url.host, let render = renders[host],
               render.page != nil, Self.isRenderedPage(url.path) else { return nil }
         return render.source
+    }
+
+    /// The front-matter keys a rendered page's URL hid when first shown.
+    func hiding(for url: URL) -> Set<String> {
+        guard url.scheme == Self.scheme, let host = url.host else { return [] }
+        return renders[host]?.hiding ?? []
     }
 
     private static func isRenderedPage(_ path: String) -> Bool {
@@ -408,6 +417,17 @@ struct WebPane: NSViewRepresentable {
             view.evaluateJavaScript(Self.readScroll) { [weak self, weak view] value, _ in
                 MainActor.assumeIsolated {
                     guard let self, let view, self.loaded == load else { return }
+                    // The pane may have gone to another Markdown page (a
+                    // mark's page, Back): that is the page to draw again,
+                    // with its own scroll, not the file first loaded.
+                    if case .markdown(let file, _) = load, let url = view.url,
+                       let shown = self.handler.source(for: url),
+                       shown != file.standardizedFileURL.resolvingSymlinksInPath(),
+                       let again = self.renderedURL(for: shown, hiding: self.handler.hiding(for: url)) {
+                        self.pendingScroll = (value as? NSNumber)?.doubleValue
+                        view.load(URLRequest(url: again))
+                        return
+                    }
                     self.start(load, in: view, scroll: (value as? NSNumber)?.doubleValue)
                 }
             }
@@ -470,7 +490,7 @@ struct WebPane: NSViewRepresentable {
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
                     let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
-                    let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
+                    let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
                     view.load(URLRequest(url: url))
                 } catch {
                     showFailure("Cannot read \(file.path): \(error)", in: view)
@@ -501,7 +521,7 @@ struct WebPane: NSViewRepresentable {
                 guard let source = try? String(contentsOf: file, encoding: .utf8),
                       let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
                 else { return nil }
-                return handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
+                return handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
             default:
                 return nil
             }

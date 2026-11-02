@@ -36,11 +36,11 @@ struct QuickOpenView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15))
+                    .font(Theme.iconFont(15))
                     .foregroundStyle(Theme.text2)
                 TextField("Find a file by name", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 16))
+                    .scaledFont(16)
                     .foregroundStyle(Theme.text)
                     .focused($focused)
                     .onKeyPress(.downArrow) { move(1); return .handled }
@@ -68,7 +68,7 @@ struct QuickOpenView: View {
         let items = self.items
         if items.isEmpty {
             Text(query.isEmpty ? "Listing files…" : "No file named “\(query)” in what has been listed")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text3)
                 .frame(maxWidth: .infinity, minHeight: 60)
         } else {
@@ -99,26 +99,26 @@ struct QuickOpenView: View {
     private func row(_ item: QuickOpenItem, selected: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: FileIcon.systemName(for: item.name))
-                .font(.system(size: 13))
+                .font(Theme.iconFont(13))
                 .foregroundStyle(Theme.text2)
                 .frame(width: 16)
             Text(item.name)
-                .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                .scaledFont(14, weight: selected ? .semibold : .regular)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
             Text(item.location)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text3)
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer(minLength: 4)
             if item.pinned {
                 Label("bookmarked", systemImage: "bookmark")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
             } else if item.touched {
                 Text("this session")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
             }
         }
@@ -145,13 +145,13 @@ struct QuickOpenView: View {
     private func hint(_ keys: String, _ text: String) -> some View {
         HStack(spacing: 6) {
             Text(keys)
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).stroke(Theme.border, lineWidth: 1))
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
         }
         .foregroundStyle(Theme.text2)
     }

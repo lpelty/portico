@@ -250,7 +250,7 @@ struct TextScaleStepper: View {
     private func segment(_ label: String, help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.iconFont(13, weight: .medium))
                 .foregroundStyle(enabled ? Theme.text : Theme.text3)
                 .frame(width: 28)
                 .frame(minHeight: 24)

@@ -38,7 +38,7 @@ struct SidebarFooter: View {
                 mark
                 if let first = person.first {
                     Text(first)
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                 }
@@ -46,7 +46,7 @@ struct SidebarFooter: View {
                 // The same Settings scene ⌘, opens (SwiftUI's openSettings).
                 Button { openSettings() } label: {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 14))
+                        .font(Theme.iconFont(14))
                         .foregroundStyle(Theme.text2)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
@@ -66,11 +66,11 @@ struct SidebarFooter: View {
             Circle().fill(Theme.accent)
             if let initial = person.initial {
                 Text(initial)
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(.white)
             } else {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                     .foregroundStyle(.white)
             }
         }

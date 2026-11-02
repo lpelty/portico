@@ -220,7 +220,7 @@ struct ViewerView: View {
                 model.setViewer(visible: false, for: chat)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.iconFont(13, weight: .medium))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
@@ -303,7 +303,7 @@ struct ViewerView: View {
 
     private func noteText(_ outside: URL) -> some View {
         Text(outsideNote(outside))
-            .font(.system(size: 12))
+            .scaledFont(12)
             .foregroundStyle(Theme.text3)
             .lineLimit(1)
     }
@@ -330,10 +330,10 @@ struct ViewerView: View {
         HStack(spacing: 7) {
             if let outside = page.outside {
                 Image(systemName: "globe")
-                    .font(.system(size: 13))
+                    .font(Theme.iconFont(13))
                     .foregroundStyle(Theme.text2)
                 Text(ViewerPageAddress.display(outside))
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -344,27 +344,27 @@ struct ViewerView: View {
             } else if let current = model.current[chat] {
                 let shown = ArtifactPresentation(artifact: current)
                 Image(systemName: shown.systemImage)
-                    .font(.system(size: 13))
+                    .font(Theme.iconFont(13))
                     .foregroundStyle(Theme.text2)
                 Text(shown.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else {
                 Text(made.isEmpty ? "Viewer" : model.madeHereLabel)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text2)
             }
             if !made.isEmpty {
                 Text("\(made.count)")
-                    .font(.system(size: 11).monospacedDigit())
+                    .scaledFont(11, monospacedDigit: true)
                     .foregroundStyle(Theme.text2)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Theme.surface, in: Capsule())
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(Theme.iconFont(9, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
         }
@@ -402,10 +402,10 @@ struct ViewerHeaderButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(Theme.iconFont(10, weight: .semibold))
                 if labelled {
                     Text(title)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                 }
             }
             .foregroundStyle(Theme.text2)
@@ -434,7 +434,7 @@ struct ViewerFocusButton: View {
             model.toggleFocus(chat: chat)
         } label: {
             Image(systemName: on ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(on ? accent : Theme.text2)
                 .frame(width: 24, height: 24)
                 .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -543,10 +543,10 @@ struct SpaceViewer: View {
     private func spaceTitle(_ space: SpaceInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: space.icon)
-                .font(.system(size: 13))
+                .font(Theme.iconFont(13))
                 .foregroundStyle(Theme.text2)
             Text(space.title)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -555,7 +555,7 @@ struct SpaceViewer: View {
 
     private func updatedText(_ space: SpaceInfo) -> some View {
         Text(SpacesPresentation.updatedText(space.updatedDate))
-            .font(.system(size: 12))
+            .scaledFont(12)
             .foregroundStyle(Theme.text3)
             .lineLimit(1)
     }
@@ -586,7 +586,7 @@ struct SpaceViewer: View {
                 model.setOpenSpace(nil)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.iconFont(13, weight: .medium))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
@@ -693,7 +693,7 @@ struct ArtifactMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(model.madeHereLabel.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .foregroundStyle(Theme.text3)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
@@ -719,23 +719,23 @@ struct ArtifactMenu: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: shown.systemImage)
-                    .font(.system(size: 12))
+                    .font(Theme.iconFont(12))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(shown.title)
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(shown.kindLabel)
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(Theme.text3)
                 }
                 Spacer(minLength: 8)
                 if isCurrent {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(model.brand.accent ?? Theme.accent)
                 }
             }
@@ -960,7 +960,7 @@ struct ViewerFootnote: View {
         VStack(spacing: 0) {
             Rectangle().fill(Theme.border).frame(height: 1)
             Text(text)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 10)
@@ -977,7 +977,7 @@ struct LoadingPane: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Loading…")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
         }
         .padding(.vertical, 12)
@@ -994,18 +994,18 @@ struct MissingPane: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "doc.questionmark")
-                .font(.system(size: 36))
+                .font(Theme.iconFont(36))
                 .foregroundStyle(Theme.text3)
             Text("\(shown.title) isn't on disk")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text("The agent's write may have been declined, or the file was moved or deleted after it was made.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Text(shown.displayPath)
-                .font(.system(size: 11, design: .monospaced))
+                .scaledFont(11, design: .monospaced)
                 .foregroundStyle(Theme.text3)
                 .textSelection(.enabled)
                 .multilineTextAlignment(.center)
@@ -1026,13 +1026,13 @@ struct OtherPane: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "doc")
-                .font(.system(size: 36))
+                .font(Theme.iconFont(36))
                 .foregroundStyle(Theme.text3)
             Text(shown.title)
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text(message ?? "Portico can't show \(shown.kindPhrase) here. Open it in the app that can.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
@@ -1041,9 +1041,9 @@ struct OtherPane: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Theme.iconFont(10, weight: .semibold))
                     Text(shown.openLabel)
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                 }
                 .foregroundStyle(Theme.text)
                 .padding(.vertical, 6)

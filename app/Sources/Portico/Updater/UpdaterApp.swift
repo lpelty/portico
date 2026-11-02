@@ -45,7 +45,7 @@ struct UpdaterView: View {
                     ProgressView().controlSize(.small)
                 }
                 Text(headline)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(Theme.text)
                 Spacer()
             }
@@ -54,7 +54,7 @@ struct UpdaterView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         ForEach(Array(runner.lines.enumerated()), id: \.offset) { index, line in
                             Text(line.isEmpty ? " " : line)
-                                .font(.system(size: 11, design: .monospaced))
+                                .scaledFont(11, design: .monospaced)
                                 .foregroundStyle(Theme.text)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -72,7 +72,7 @@ struct UpdaterView: View {
             if failed {
                 HStack {
                     Text("Nothing was reopened. The log above says what happened.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text2)
                     Spacer()
                     Button("Open \(brand)") { Updater.reopenApp() }

@@ -56,11 +56,11 @@ struct ModeChip: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: shown.icon)
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                 Text(shown.label)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(Theme.iconFont(8, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
             .foregroundStyle(Theme.text2)
@@ -81,7 +81,7 @@ struct ModeChip: View {
     private var menu: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(PermissionModePresentation.heading(agentName: agentName))
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .foregroundStyle(Theme.text3)
                 .padding(.horizontal, 10)
                 .padding(.top, 4)
@@ -94,22 +94,22 @@ struct ModeChip: View {
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: shown.icon)
-                            .font(.system(size: 13))
+                            .font(Theme.iconFont(13))
                             .foregroundStyle(Theme.text2)
                             .frame(width: 16)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(shown.label)
-                                .font(.system(size: 13, weight: .medium))
+                                .scaledFont(13, weight: .medium)
                                 .foregroundStyle(Theme.text)
                             Text(shown.detail)
-                                .font(.system(size: 12))
+                                .scaledFont(12)
                                 .foregroundStyle(Theme.text2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
                         if option == mode {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(Theme.iconFont(11, weight: .semibold))
                                 .foregroundStyle(Theme.accent)
                         }
                     }
@@ -122,7 +122,7 @@ struct ModeChip: View {
             }
             Rectangle().fill(Theme.border).frame(height: 1).padding(.vertical, 4)
             Text(PermissionModePresentation.footer)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
@@ -144,11 +144,11 @@ struct WorkingLine: View {
                 .controlSize(.small)
                 .frame(width: 14, height: 14)
             Text("Working")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(Theme.text)
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(detail(now: context.date))
-                    .font(.system(size: 13).monospacedDigit())
+                    .scaledFont(13, monospacedDigit: true)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .truncationMode(.middle)

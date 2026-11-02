@@ -189,17 +189,17 @@ struct SpaceSwitcher: View {
         Button { open.toggle() } label: {
             HStack(spacing: 6) {
                 Image(systemName: current?.icon ?? "briefcase")
-                    .font(.system(size: 12))
+                    .font(Theme.iconFont(12))
                     .foregroundStyle(Theme.text2)
                 Text(current?.title ?? "Work")
-                    .font(.system(size: 12.5, weight: .medium))
+                    .scaledFont(12.5, weight: .medium)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: ToolbarLayout.switcherTitleMaxWidth, alignment: .leading)
                 if anyNew { Circle().fill(Theme.accent).frame(width: 6, height: 6) }
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(Theme.iconFont(8, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
             .padding(.horizontal, 9)
@@ -250,12 +250,12 @@ private struct SpaceMenu: View {
         VStack(alignment: .leading, spacing: 0) {
             if !state.query.isEmpty {
                 Text(state.query)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if entries.isEmpty {
-                Text("No match").font(.system(size: 12)).foregroundStyle(Theme.text3).padding(10)
+                Text("No match").scaledFont(12).foregroundStyle(Theme.text3).padding(10)
             }
             if entries.contains(.work) {
                 row(.work, icon: "briefcase", title: "Work", detail: "Chat, files and the viewer", shortcut: "⌘0", current: model.openSpace == nil)
@@ -264,13 +264,13 @@ private struct SpaceMenu: View {
             let emptyNote = SpacesPresentation.showsEmptyNote(spaces: model.spaces, query: state.query)
             if !spaceEntries.isEmpty || emptyNote {
                 Text("SPACES")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .scaledFont(10.5, weight: .medium)
                     .tracking(0.5)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
                 if emptyNote {
                     Text(SpacesPresentation.noSpacesText)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                         .padding(.horizontal, 10).padding(.bottom, 6)
                 }
@@ -294,7 +294,7 @@ private struct SpaceMenu: View {
                 row(.newSpace, icon: "plus", title: "New space…", detail: "Say what you want kept up to date; \(model.hello?.brand.agentName ?? "the agent") sets it up", shortcut: nil, current: false, enabled: canCreate)
             }
             Text("↑↓ move · Return opens · ⌘0–9 from anywhere")
-                .font(.system(size: 10.5))
+                .scaledFont(10.5)
                 .foregroundStyle(Theme.text3)
                 .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
         }
@@ -342,14 +342,14 @@ private struct SpaceMenu: View {
     private func row(_ entry: SpaceMenuState.Entry, icon: String, title: String, detail: String, shortcut: String?, current: Bool, enabled: Bool = true) -> some View {
         Button { pick(entry) } label: {
             HStack(spacing: 10) {
-                Image(systemName: icon).font(.system(size: 13)).foregroundStyle(Theme.text2).frame(width: 18)
+                Image(systemName: icon).font(Theme.iconFont(13)).foregroundStyle(Theme.text2).frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
-                    Text(detail).font(.system(size: 11.5)).foregroundStyle(Theme.text2).lineLimit(1)
+                    Text(title).scaledFont(13, weight: .medium).foregroundStyle(Theme.text)
+                    Text(detail).scaledFont(11.5).foregroundStyle(Theme.text2).lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                if current { Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text2) }
-                if let shortcut { Text(shortcut).font(.system(size: 11)).foregroundStyle(Theme.text3) }
+                if current { Image(systemName: "checkmark").font(Theme.iconFont(11, weight: .semibold)).foregroundStyle(Theme.text2) }
+                if let shortcut { Text(shortcut).scaledFont(11).foregroundStyle(Theme.text3) }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -369,7 +369,7 @@ private struct SpaceMenu: View {
         let isNew = model.hasNew(space.id)
         if renaming == space.id {
             HStack(spacing: 10) {
-                Image(systemName: space.icon).font(.system(size: 13)).foregroundStyle(Theme.text2).frame(width: 18)
+                Image(systemName: space.icon).font(Theme.iconFont(13)).foregroundStyle(Theme.text2).frame(width: 18)
                 TextField("Name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
                     .focused($renameFocused)
@@ -381,17 +381,17 @@ private struct SpaceMenu: View {
         } else {
             Button { pick(entry) } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: space.icon).font(.system(size: 13)).foregroundStyle(Theme.text2).frame(width: 18)
+                    Image(systemName: space.icon).font(Theme.iconFont(13)).foregroundStyle(Theme.text2).frame(width: 18)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(space.title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                        Text(space.title).scaledFont(13, weight: .medium).foregroundStyle(Theme.text).lineLimit(1)
                         Text(SpacesPresentation.updatedText(space.updatedDate))
-                            .font(.system(size: 11.5))
+                            .scaledFont(11.5)
                             .foregroundStyle(isNew ? Theme.accent : Theme.text2)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
                     if isNew { Circle().fill(Theme.accent).frame(width: 6, height: 6) }
-                    if number <= 9 { Text("⌘\(number)").font(.system(size: 11)).foregroundStyle(Theme.text3) }
+                    if number <= 9 { Text("⌘\(number)").scaledFont(11).foregroundStyle(Theme.text3) }
                 }
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)

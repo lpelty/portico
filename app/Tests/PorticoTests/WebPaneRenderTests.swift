@@ -302,6 +302,38 @@ final class WebPaneRenderTests: XCTestCase {
         XCTAssertEqual(view.url, shownURL)
     }
 
+    /// v0.15: a text-size change on a pane that went to another Markdown page
+    /// (a mark's page, Back) draws that page again, not the file first loaded.
+    func testRescaleRedrawsThePageShownNotTheOneFirstLoaded() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-rescale-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let first = dir.appendingPathComponent("first.md"), other = dir.appendingPathComponent("other.md")
+        try "# First page\n".write(to: first, atomically: true, encoding: .utf8)
+        try "# Other page\n".write(to: other, atomically: true, encoding: .utf8)
+
+        let coordinator = WebPane.Coordinator()
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.markdown(first), scale: 1, to: view)
+        try await poll("the first page loads") { !view.isLoading && view.url?.scheme == RenderedPageHandler.scheme }
+        let otherURL = try XCTUnwrap(coordinator.renderedURL(for: other))
+        _ = view.load(URLRequest(url: otherURL))
+        try await poll("the other page loads") { !view.isLoading && view.url == otherURL }
+
+        coordinator.apply(.markdown(first), scale: 1.5, to: view)
+        var heading = "", size = ""
+        for _ in 0..<250 {
+            heading = try await view.evaluateJavaScript("document.querySelector('h1') ? document.querySelector('h1').textContent : ''") as? String ?? ""
+            size = try await view.evaluateJavaScript("getComputedStyle(document.body).fontSize") as? String ?? ""
+            if size == "22.5px" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(size, "22.5px", "redrawn at the new scale")
+        XCTAssertEqual(heading, "Other page", "the page shown, not the file first loaded")
+    }
+
     /// M8 + A3c: an opened HTML file that is itself a symlink is served
     /// (from the folder it really lives in), and an HTML file with no meta
     /// charset is read as UTF-8.

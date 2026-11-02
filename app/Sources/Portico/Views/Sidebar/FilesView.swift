@@ -101,7 +101,7 @@ struct FilesView: View {
                 .help("Clear the filter")
             }
         }
-        .font(.system(size: 12))
+        .scaledFont(12)
         .foregroundStyle(Theme.text2)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
@@ -438,7 +438,7 @@ struct FileLine<Trailing: View>: View {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: FileTree.indent(depth: disclosure.depth), height: 1)
                     Image(systemName: disclosure.expanded == true ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Theme.iconFont(9, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                         .opacity(disclosure.expanded == nil ? 0 : 1)
                         .frame(width: FileRow.disclosureWidth)
@@ -555,7 +555,7 @@ struct HeaderIcon: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.text2)
                 .frame(width: 20, height: 18)
                 .contentShape(Rectangle())
@@ -619,10 +619,10 @@ struct BookmarksView: View {
     private var empty: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(Self.emptyTitle)
-                .font(.system(size: 12.5))
+                .scaledFont(12.5)
                 .foregroundStyle(Theme.text2)
             Text(Self.emptyHint)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(Theme.text3)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -656,11 +656,11 @@ struct BookmarkRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isDirectory ? "folder" : FileIcon.systemName(for: name))
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.text2)
                 .frame(width: 16)
             Text(name)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -739,7 +739,7 @@ struct FilesTabSwitch: View {
         let on = selection == tab
         return Button { selection = tab } label: {
             Text(title)
-                .font(.system(size: 11, weight: on ? .semibold : .regular))
+                .scaledFont(11, weight: on ? .semibold : .regular)
                 .foregroundStyle(on ? Theme.text : Theme.text2)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 3)

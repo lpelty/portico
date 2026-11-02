@@ -288,9 +288,9 @@ struct StatusStrip: View {
     private func segment(_ icon: StatusStripPresentation.Symbol, _ text: String, help: String? = nil) -> some View {
         HStack(spacing: StatusStripPresentation.Measure.iconGap) {
             Image(systemName: icon.name)
-                .font(.system(size: icon.size))
+                .font(Theme.iconFont(icon.size))
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
         }
         .foregroundStyle(Theme.text2)
         .fixedSize()
@@ -304,10 +304,10 @@ struct StatusStrip: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: StatusStripPresentation.Measure.restartIcon.name)
-                    .font(.system(size: StatusStripPresentation.Measure.restartIcon.size, weight: .semibold))
+                    .font(Theme.iconFont(StatusStripPresentation.Measure.restartIcon.size, weight: .semibold))
                 if !compact {
                     Text(model.restarting ? "Restarting…" : StatusStripPresentation.restartText)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                 }
             }
             .foregroundStyle(Theme.wait)
@@ -327,10 +327,10 @@ struct StatusStrip: View {
             HStack(spacing: 5) {
                 let icon = compact ? StatusStripPresentation.Measure.updateIconCompact : StatusStripPresentation.Measure.updateIcon
                 Image(systemName: icon.name)
-                    .font(.system(size: icon.size))
+                    .font(Theme.iconFont(icon.size))
                 if !compact {
                     Text(StatusStripPresentation.updateText(version))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                 }
             }
             .foregroundStyle(model.brand.accent ?? Theme.accent)
@@ -418,11 +418,11 @@ struct ModelMenuControl: View {
             } label: {
                 HStack(spacing: Measure.iconGap) {
                     Image(systemName: Measure.modelIcon.name)
-                        .font(.system(size: Measure.modelIcon.size))
+                        .font(Theme.iconFont(Measure.modelIcon.size))
                     Text(label)
-                        .font(.system(size: Measure.fontSize))
+                        .scaledFont(Measure.fontSize)
                     Image(systemName: shown ? "chevron.up" : Measure.chevron.name)
-                        .font(.system(size: Measure.chevron.size, weight: .semibold))
+                        .font(Theme.iconFont(Measure.chevron.size, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                 }
                 .foregroundStyle(Theme.text2)
@@ -465,7 +465,7 @@ struct ModelMenu: View {
         VStack(alignment: .leading, spacing: 1) {
             if let empty = menu.emptyLine {
                 Text(empty)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
@@ -481,7 +481,7 @@ struct ModelMenu: View {
                     .disabled(!menu.enabled)
                 }
                 Text(ModelMenuPresentation.footer)
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Under the names: past the row's padding, check and gap.
@@ -509,17 +509,17 @@ struct ModelChoiceRow: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.iconFont(11, weight: .semibold))
                     .foregroundStyle(accent)
                     .opacity(checked ? 1 : 0)
                     .frame(width: 14, height: 14)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(choice.displayName)
-                        .font(.system(size: 13, weight: checked ? .medium : .regular))
+                        .scaledFont(13, weight: checked ? .medium : .regular)
                         .foregroundStyle(Theme.text)
                     if !choice.description.isEmpty {
                         Text(choice.description)
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(Theme.text3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -558,10 +558,10 @@ struct ServicesControl: View {
                     .fill(ServiceColors.tone(services.tone))
                     .frame(width: 6, height: 6)
                 Text(label)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(services.tone == .down ? Theme.wait : Theme.text2)
                 Image(systemName: shown ? "chevron.up" : StatusStripPresentation.Measure.chevron.name)
-                    .font(.system(size: StatusStripPresentation.Measure.chevron.size, weight: .semibold))
+                    .font(Theme.iconFont(StatusStripPresentation.Measure.chevron.size, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
             .fixedSize()
@@ -658,7 +658,7 @@ struct ServiceRowView: View {
                 .padding(.top, 5)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.name)
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(Theme.text)
                 // The whole line, wrapped: a down service's reason is the
                 // part worth reading, so it is never cut short (v0.5).
@@ -699,7 +699,7 @@ struct ServiceRowView: View {
 
     private func line(_ text: String, error: Bool) -> some View {
         Text(text)
-            .font(.system(size: 12))
+            .scaledFont(12)
             .foregroundStyle(error ? Theme.deny : Theme.text2)
             .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
@@ -770,11 +770,11 @@ struct RestartAllRow: View {
                         ProgressView().controlSize(.mini)
                     } else {
                         Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(Theme.iconFont(11, weight: .medium))
                             .foregroundStyle(Theme.text2)
                     }
                     Text(busy ? "Restarting…" : ServicesPresentation.restartAllTitle)
-                        .font(.system(size: 12.5))
+                        .scaledFont(12.5)
                         .foregroundStyle(Theme.text)
                 }
                 .frame(maxWidth: .infinity)
@@ -792,7 +792,7 @@ struct RestartAllRow: View {
             if let reason = model.restartAllError {
                 // As a down row's reason: the whole of it, wrapped, red.
                 Text(reason)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.deny)
                     .fixedSize(horizontal: false, vertical: true)
             }
