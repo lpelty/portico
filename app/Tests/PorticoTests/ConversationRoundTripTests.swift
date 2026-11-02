@@ -249,4 +249,82 @@ final class ConversationRoundTripTests: XCTestCase {
         XCTAssertEqual(after.text, before.text, "the same reply at the top")
         XCTAssertEqual(after.dy, before.dy, accuracy: 4, "at the same point in it")
     }
+
+    /// A wheel event as the app dispatches it, without gesture phases (a
+    /// plain wheel mouse): `NSApp.sendEvent` runs the app's event monitors
+    /// (the window is off screen, so it is not routed further), then the
+    /// scroll view scrolls by it.
+    private static func phaselessWheel(_ hosted: Hosted, pixels: Int32) throws {
+        let scroll = hosted.scroll
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0))
+        let inWindow = scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil)
+        let screen = hosted.window.convertPoint(toScreen: inWindow)
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        cg.location = CGPoint(x: screen.x, y: top - screen.y)  // CG: top-left origin
+        let event = try XCTUnwrap(NSEvent(cgEvent: cg))
+        XCTAssertEqual(event.phase, [], "no gesture phase")
+        NSApp.sendEvent(event)
+        scroll.scrollWheel(with: event)
+    }
+
+    /// v0.15 task 2b fix round 2 (C1): a plain wheel mouse, at the bottom,
+    /// scrolls up and stays up. A guard: SwiftUI reports a scroll phase for
+    /// a wheel without gesture phases too, so this passed before the fix.
+    func testAtTheBottomAPlainWheelScrollUpStaysUp() throws {
+        _ = NSApplication.shared
+        let hosted = try host(try model(), width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        XCTAssertTrue(atBottom())
+        for _ in 0..<4 {
+            try Self.phaselessWheel(hosted, pixels: 150)
+            spin(0.05)
+        }
+        spin(0.6)
+        XCTAssertFalse(atBottom(), "still scrolled up")
+        resize(hosted, from: 900, to: 640)
+        XCTAssertFalse(atBottom(), "and a space keeps that place")
+    }
+
+    /// Fix round 2 (C1): Page Up from inside the transcript (its rows are
+    /// selectable, so the scroll keys reach it) stays up; before, the app
+    /// snapped it back to the end. Pressed twice: SwiftUI puts the first
+    /// scroll after the app's scroll to the bottom back once, whatever the
+    /// input (v0.14.0 alike; not the app's memory).
+    func testAtTheBottomPageUpStaysUp() throws {
+        _ = NSApplication.shared
+        let hosted = try host(try model(), width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        XCTAssertTrue(atBottom())
+        let reply = try XCTUnwrap(Self.firstTextView(in: try XCTUnwrap(hosted.scroll.documentView)))
+        XCTAssertTrue(hosted.window.makeFirstResponder(reply))
+        let before = clip.bounds.origin.y
+        for _ in 0..<2 {
+            let pageUp = try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: hosted.window.windowNumber, context: nil, characters: "\u{F72C}",
+                charactersIgnoringModifiers: "\u{F72C}", isARepeat: false, keyCode: 116))
+            NSApp.sendEvent(pageUp)  // as the app dispatches it: its event monitors see it
+            hosted.window.sendEvent(pageUp)  // the window is not key: hand it to the first responder
+            spin(0.3)
+        }
+        spin(0.6)
+        XCTAssertLessThan(clip.bounds.origin.y, before - 100, "paged up")
+        XCTAssertFalse(atBottom(), "still scrolled up")
+    }
+
+    private static func firstTextView(in view: NSView) -> NSTextView? {
+        if let text = view as? NSTextView { return text }
+        for sub in view.subviews { if let found = firstTextView(in: sub) { return found } }
+        return nil
+    }
 }

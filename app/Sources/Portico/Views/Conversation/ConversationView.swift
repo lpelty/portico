@@ -15,6 +15,9 @@ struct ConversationView: View {
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
     @State private var personScrolling = false
+    /// The person's scroll keys, plain wheels and VoiceOver page scrolls,
+    /// which may report no scroll phase (v0.15 task 2b fix round 2).
+    @State private var personInput = TranscriptPersonInput()
     /// The transcript's width, for the reading column's (v0.11, item 58).
     @State private var transcriptWidth: CGFloat?
 
@@ -130,6 +133,7 @@ struct ConversationView: View {
                 .padding(.top, 24)
                 .padding(.bottom, 16)
                 .frame(maxWidth: .infinity)
+                .background(TranscriptScrollViewProbe(input: personInput))
             }
             // Fix I-1: the scroller keeps clear of the viewer divider's grip.
             .clearOfViewerGrip()
@@ -150,7 +154,7 @@ struct ConversationView: View {
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                if scrollMemory.observe(width: now.width, atBottom: now.atBottom, byPerson: personScrolling) == .bottom {
+                if scrollMemory.observe(width: now.width, atBottom: now.atBottom, byPerson: byPerson) == .bottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -161,7 +165,8 @@ struct ConversationView: View {
             // once the new rows are laid out.
             .defaultScrollAnchor(.bottom)
             .onScrollPhaseChange { _, phase in
-                personScrolling = phase == .interacting || phase == .tracking || phase == .decelerating
+                // `.animating` too (fix round 2): the app's own scrolls are not animated.
+                personScrolling = phase != .idle
             }
             // v0.15 task 2b fix round 1: the newest message is followed only
             // at the bottom (scrolled up, a streaming reply no longer pulls
@@ -171,12 +176,27 @@ struct ConversationView: View {
             .onChange(of: followKey) { old, new in
                 if new.sent != old.sent {
                     scrollToBottom(proxy)
-                } else if scrollMemory.atBottom && !personScrolling {
+                } else if scrollMemory.atBottom && !byPerson {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            .onAppear { scrollToBottom(proxy) }
+            // VoiceOver's page scroll is the person's (fix round 2).
+            .accessibilityScrollAction { edge in personInput.page(toward: edge) }
+            .onAppear {
+                personInput.install()
+                scrollToBottom(proxy)
+            }
+            .onDisappear { personInput.remove() }
         }
+    }
+
+    /// Whether the readings now are the person's (v0.15 task 2b fix round 2):
+    /// a scroll phase, a recent scroll key or wheel, or VoiceOver with
+    /// nothing streaming (its cursor scrolls rows into view, with no phase
+    /// and no event; it is left where it put them).
+    private var byPerson: Bool {
+        personScrolling || personInput.isRecent
+            || (NSWorkspace.shared.isVoiceOverEnabled && !model.showsWorkingLine(chat: chat))
     }
 
     /// To the bottom, and twice: once now, once after the rows are laid out.
