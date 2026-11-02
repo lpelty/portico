@@ -100,6 +100,9 @@ def describe(status: dict[str, Any], state: StateDir) -> str:
     if "started_at" in status:
         parts.append(f"started {status['started_at']}")
     line = ", ".join(parts)
+    threads = [t for t in status.get("threads") or [] if isinstance(t, dict)]
+    if threads:
+        line += "; threads: " + ", ".join(f"{t.get('label', '?')} ({t.get('state', '?')})" for t in threads)
     if status.get("config_stale"):
         line += "; the config changed after it started: restart the gateway to apply"
     return line

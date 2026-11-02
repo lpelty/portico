@@ -109,11 +109,11 @@ final class AppModelTests: XCTestCase {
     func testCardAskAppendsToOpenCardsAndTranscript() {
         let (model, _) = model()
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
-        // A question card keeps its inline record (a permission card does
-        // not: PermissionUnitTests).
+        // A form keeps its inline record (a permission card and, v0.16, a
+        // question card do not: PermissionUnitTests, DockedQuestionCardTests).
         let card = CardAsk(
-            chat: 1, id: "card-7", kind: .question, title: "File",
-            permission: nil, questions: [Question(question: "Which file?", header: "File", options: [Option(label: "a.md", description: "")], multiSelect: false)], form: nil, seq: 2)
+            chat: 1, id: "card-7", kind: .form, title: "File",
+            permission: nil, questions: nil, form: [FormField(key: "file", label: "File", kind: .text, options: nil)], seq: 2)
         model.apply(.cardAsk(card))
         model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
 
@@ -138,8 +138,8 @@ final class AppModelTests: XCTestCase {
         let (model, sent) = model()
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 1, seq: 1)))
         let card = CardAsk(
-            chat: 1, id: "card-9", kind: .question, title: "File",
-            permission: nil, questions: [Question(question: "Which file?", header: "File", options: [Option(label: "a.md", description: "")], multiSelect: false)], form: nil, seq: 2)
+            chat: 1, id: "card-9", kind: .form, title: "File",
+            permission: nil, questions: nil, form: [FormField(key: "file", label: "File", kind: .text, options: nil)], seq: 2)
         model.apply(.cardAsk(card))
         model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
 
@@ -173,7 +173,7 @@ final class AppModelTests: XCTestCase {
             permission: Permission(tool: "Write", summary: "/tmp/demo/a.md", input: [:]),
             questions: nil, form: nil, seq: 1)
         model.apply(.cardAsk(card))
-        XCTAssertEqual(model.pinnedCards(for: 2).map(\.id), ["card-3"])
+        XCTAssertEqual(model.dockedCard(for: 2)?.id, "card-3")
 
         model.answerCard(CardAnswer(chat: 2, id: "card-3", answer: ["decision": .string("allow")], scope: .chat, note: "fine here"))
         guard case .cardAnswer(let sentAnswer)? = sent.frames.last else { return XCTFail("expected card.answer, got \(sent.frames)") }
@@ -183,7 +183,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(sentAnswer.scope, .chat)
         XCTAssertEqual(sentAnswer.note, "fine here")
 
-        XCTAssertEqual(model.pinnedCards(for: 2), [], "an answered card is no longer pinned")
+        XCTAssertNil(model.dockedCard(for: 2), "an answered card is no longer docked")
         XCTAssertEqual(model.cardStatus(chat: 2, id: "card-3"), .answered)
         XCTAssertEqual(CardStatusPresentation(status: .answered).label, "answered")
         XCTAssertEqual((model.transcripts[2] ?? []).count, 0, "a permission card leaves no copy of its own (V1)")
@@ -195,7 +195,7 @@ final class AppModelTests: XCTestCase {
 
         // The gateway confirms: the card stays closed, and the inline copy is still one.
         model.apply(.cardAnswered(CardAnswered(chat: 2, id: "card-3", seq: 2)))
-        XCTAssertEqual(model.pinnedCards(for: 2), [])
+        XCTAssertNil(model.dockedCard(for: 2))
         XCTAssertEqual(model.cardStatus(chat: 2, id: "card-3"), .answered)
         XCTAssertEqual((model.transcripts[2] ?? []).count, 0)
     }
@@ -221,7 +221,7 @@ final class AppModelTests: XCTestCase {
         model.apply(.chatState(ChatState(chat: 1, state: .waitingOnYou, seq: 3)))
         model.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")], scope: .once))
         XCTAssertEqual(sent.types().last, "card.answer")
-        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertNil(model.dockedCard(for: 1))
         XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .answered)
 
         // The socket drops and comes back to the same gateway: chat.open
@@ -234,7 +234,7 @@ final class AppModelTests: XCTestCase {
         model.apply(.chatLive(ChatLive(chat: 1, id: open.id, seq: 3)))
         model.apply(.cardAsk(card))
 
-        XCTAssertEqual(model.pinnedCards(for: 1).map(\.id), ["card-1"], "the card the gateway still holds is open again")
+        XCTAssertEqual(model.dockedCard(for: 1)?.id, "card-1", "the card the gateway still holds is open again")
         XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .open)
         let inline = (model.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }
         XCTAssertEqual(inline.count, 0, "a permission card has no inline copy to duplicate")
@@ -245,7 +245,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(sent.frames.count, before + 1)
         XCTAssertEqual(sent.types().last, "card.answer")
         model.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-1", seq: 4)))
-        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertNil(model.dockedCard(for: 1))
         XCTAssertEqual(model.cardStatus(chat: 1, id: "card-1"), .answered)
 
         // A card the gateway cancelled stays cancelled if its ask ever comes
@@ -257,7 +257,7 @@ final class AppModelTests: XCTestCase {
         model.apply(.cardAsk(other))
         model.apply(.cardCancel(CardCancel(chat: 1, id: "card-2", reason: "turn stopped", seq: 6)))
         model.apply(.cardAsk(other))
-        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertNil(model.dockedCard(for: 1))
         XCTAssertEqual(model.cardStatus(chat: 1, id: "card-2"), .cancelled("turn stopped"))
     }
 
@@ -277,7 +277,7 @@ final class AppModelTests: XCTestCase {
         first.answerCard(CardAnswer(chat: 1, id: "card-1", answer: ["decision": .string("allow")], scope: .once))
         first.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-1", seq: 3)))
         first.apply(.turnFinished(TurnFinished(chat: 1, turn: 1, outcome: .done, seq: 4)))
-        XCTAssertEqual(first.pinnedCards(for: 1), [])
+        XCTAssertNil(first.dockedCard(for: 1))
         XCTAssertEqual(first.cardStatus(chat: 1, id: "card-1"), .answered)
 
         // Run 2: a fresh app on the same gateway opens from the beginning and
@@ -299,7 +299,7 @@ final class AppModelTests: XCTestCase {
             truncated: false, id: open.id)))
         second.apply(.chatLive(ChatLive(chat: 1, id: open.id, seq: 4)))
 
-        XCTAssertEqual(second.pinnedCards(for: 1), [], "an answered card does not come back as open after a relaunch")
+        XCTAssertNil(second.dockedCard(for: 1), "an answered card does not come back as open after a relaunch")
         XCTAssertEqual(second.cardStatus(chat: 1, id: "card-1"), .answered)
         XCTAssertEqual((second.transcripts[1] ?? []).filter { if case .card = $0 { return true } else { return false } }.count, 0, "a permission card leaves no record of its own")
         // Answering it sends nothing: there is no open card to answer.

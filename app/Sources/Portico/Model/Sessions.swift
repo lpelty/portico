@@ -55,10 +55,9 @@ extension AppModel {
         return "Working in \(folder.lastPathComponent) · chosen at setup, change it in Settings"
     }
 
-    /// The live session: the newest chat that has not ended.
-    var liveSession: ChatSummary? {
-        chats.filter { $0.ended == nil }.max { $0.chat < $1.chat }
-    }
+    /// The live session (Main): the newest chat that has not ended and is
+    /// not a thread (v0.16, Ruling 11: whatever the capability says).
+    var liveSession: ChatSummary? { ChatSummary.main(in: chats) }
 
     /// Ended sessions, newest first.
     var earlierSessions: [ChatSummary] {
@@ -158,8 +157,15 @@ extension AppModel {
     // MARK: renewing
 
     /// Renewing is offered in single presentation, by a gateway that
-    /// speaks sessions, for a session that has not ended.
+    /// speaks sessions, for a session that has not ended and is not a
+    /// thread: a thread closes, it never renews (v0.16, Ruling 10).
     func canRenew(chat: Int) -> Bool {
+        speaksSessions(chat: chat) && summary(of: chat)?.thread == nil
+    }
+
+    /// Single presentation, a gateway that speaks sessions, a session that
+    /// has not ended: Main or a thread.
+    private func speaksSessions(chat: Int) -> Bool {
         isSinglePresentation && offers("sessions") && !isEnded(chat: chat)
     }
 
@@ -184,7 +190,7 @@ extension AppModel {
 
     /// The card's Log session and `/log` are offered for this session.
     func canLogSession(chat: Int) -> Bool {
-        canRenew(chat: chat) && canLogWithoutEnding
+        speaksSessions(chat: chat) && canLogWithoutEnding
     }
 
     /// Why Log session and `/log` are off for this live session, in the
@@ -193,7 +199,7 @@ extension AppModel {
     /// A deployment without a log step says so; a v0.3 gateway that has
     /// one but logs only on renewal says that instead.
     func logSessionOffReason(chat: Int) -> String? {
-        guard canRenew(chat: chat), !canLogWithoutEnding else { return nil }
+        guard speaksSessions(chat: chat), !canLogWithoutEnding else { return nil }
         return canLog ? Self.logsOnlyOnRenewal : Self.noLogStep
     }
 
@@ -322,6 +328,14 @@ extension AppModel {
     /// "Not now": the nudge stays away for this session.
     func dismissNudge(chat: Int) {
         nudgeDismissed.insert(chat)
+    }
+}
+
+extension ChatSummary {
+    /// Main in `chats`: the newest chat that has not ended and is not a
+    /// thread (v0.16, Ruling 11). The one place Main is decided.
+    static func main(in chats: [ChatSummary]) -> ChatSummary? {
+        chats.filter { $0.ended == nil && $0.thread == nil }.max { $0.chat < $1.chat }
     }
 }
 
@@ -476,6 +490,13 @@ struct SessionPresentation: Equatable {
             if !trimmed.isEmpty { return trimmed }
         }
         return nil
+    }
+
+    /// The title History shows: an ended thread is marked with its label,
+    /// "Thread 2 · Onboarding copy" (v0.16, Ruling 18); a session as `title`.
+    var historyTitle: String? {
+        guard let label = summary.thread?.label else { return title }
+        return [label, title].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// `Started today, 9:14 AM · Q3 synthesis` (v0.7 decision 1's full form).

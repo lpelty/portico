@@ -27,6 +27,9 @@ struct ToolRow: Equatable, Sendable, Identifiable {
     /// When the use last moved: its start's `ts`, then its finish's (v0.4:
     /// "Changed this session" shows when a file last changed).
     var at: String? = nil
+    /// An answered question's choices by question text (v0.16,
+    /// `tool.finished`'s `answers`, live and replayed).
+    var answers: [String: QuestionAnswer]? = nil
 
     var id: String { toolUseId }
 }
@@ -77,6 +80,15 @@ enum CardStatus: Equatable, Sendable {
 
 // MARK: - AppModel
 
+/// Where a conversation was left (v0.16 §5): at its bottom, or scrolled up
+/// with `topItem` at the top of the view, its top `topOffset` points from
+/// the view's top (negative: above it). Each conversation keeps its own.
+struct ConversationPlace: Equatable {
+    var atBottom: Bool
+    var topItem: String?
+    var topOffset: CGFloat = 0
+}
+
 /// The app's state and the one reducer for gateway messages.
 ///
 /// Every frame from the gateway goes through `apply`; everything the app
@@ -96,6 +108,7 @@ final class AppModel: ObservableObject {
             if let focus = viewerFocus, focus.chat != selected { endFocus() }
             if selected != nil { conversationShown = true }
             if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
+            if let selected { noteThreadSeen(chat: selected) }
         }
     }
     /// The first `chat.list` of this run has arrived (v0.6). Until then the
@@ -110,6 +123,15 @@ final class AppModel: ObservableObject {
     private(set) var conversationShown = false
     /// Per chat, what the conversation pane renders.
     @Published private(set) var transcripts: [Int: [TranscriptItem]] = [:]
+    /// Per chat, where its conversation was left (v0.16 §5). Not published:
+    /// only a conversation appearing reads it.
+    private(set) var scrollPlaces: [Int: ConversationPlace] = [:]
+
+    /// Where `chat`'s conversation was left, if it was shown before.
+    func place(of chat: Int) -> ConversationPlace? { scrollPlaces[chat] }
+
+    /// `chat`'s conversation is left at `place`.
+    func notePlace(_ place: ConversationPlace, chat: Int) { scrollPlaces[chat] = place }
     /// Per chat, the cards still waiting for an answer, in arrival order.
     @Published private(set) var openCards: [Int: [CardAsk]] = [:]
     /// Per chat, every artifact reported, oldest first, one per id.
@@ -209,6 +231,35 @@ final class AppModel: ObservableObject {
     @Published var logging: [Int: String] = [:]
     /// The session whose New is asking "Log Session N first?" (W2).
     @Published var askingToLog: Int?
+
+    // Threads (v0.16; read and acted on in Threads.swift).
+
+    /// Main's thread proposals by id, as the gateway last said (`thread.proposal`).
+    @Published private(set) var proposals: [String: ThreadProposal] = [:]
+    /// The proposal whose `thread.start` is out: its card is dimmed until
+    /// the gateway answers (the `started` proposal) or refuses (an `error`).
+    @Published private(set) var startingProposal: String?
+    /// That `thread.start`'s request id.
+    private(set) var startingRequest: String?
+    /// The thread that `thread.start` closes first (Close and start).
+    @Published private(set) var startingClose: Int?
+    /// The working thread whose close is asking "Close it anyway?".
+    @Published var closingThread: Int?
+    /// Per thread, the id of a `thread.close` the gateway has not answered.
+    @Published private(set) var closingThreads: [Int: String] = [:]
+    /// Per thread, why its last close was refused (its log step could not
+    /// start): the thread stays open and "Close without logging" is offered.
+    @Published private(set) var closeFailures: [Int: CloseFailure] = [:]
+    /// Proposals whose `thread.dismiss` is out, by proposal id, with the
+    /// request id: Not now waits, so a double click sends one.
+    @Published private(set) var dismissing: [String: String] = [:]
+    /// Per thread, the calling cards put off with Later (card ids).
+    @Published private(set) var dismissedCalls: [Int: Set<String>] = [:]
+    /// Threads whose turn ended while you were elsewhere, not opened since
+    /// (§9.3): the row's New reply dot and Main's done card. In memory only.
+    @Published var newThreadReplies: Set<Int> = []
+    /// Threads whose done card was dismissed (the dot stays).
+    @Published var dismissedDone: Set<Int> = []
     /// The deployment's services from the latest `services.status`; `nil`
     /// until the first one on this connection ("Checking…").
     @Published var services: [Service]?
@@ -350,6 +401,12 @@ final class AppModel: ObservableObject {
     }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
+    /// Reply directly (v0.16), per chat: the send that is the reply and the
+    /// question it declines once the gateway has accepted that send.
+    private(set) var pendingReplies: [Int: PendingReply] = [:]
+    /// The chat whose composer has the keyboard focus, as the composer
+    /// reports it: a card docking there leaves typed text alone (v0.16 fix).
+    var focusedComposer: Int?
     /// Per chat, the messages the gateway holds for the agent's next step
     /// (v0.11, item 74), oldest first, as its last `chat.queue` listed them.
     @Published private(set) var queued: [Int: [QueuedMessage]] = [:]
@@ -574,26 +631,51 @@ final class AppModel: ObservableObject {
     /// Bumped to ask whichever composer is on screen to take focus.
     @Published private(set) var composerFocusRequests = 0
 
-    /// "New space…": the composer gets "New space: " for the person to finish
-    /// in plain words, and focus. No form (spec 4.4).
-    ///
-    /// The composer on screen, which is not always the shown chat's (v0.14
-    /// test fix): the welcome continuing the live session (Y1) has the start
-    /// composer, and an earlier session is read-only, so New space… takes
-    /// the person to the live session (or the welcome) and fills that.
+    /// The New space dialog is up (AO2).
+    @Published var newSpaceShown = false
+
+    /// "New space…": the dialog opens. Nothing in any composer changes.
     func beginNewSpace() {
-        if let shown = documentMode ? filesChat : selected, showsEarlierBar(chat: shown) {
+        newSpaceShown = true
+    }
+
+    /// Why Create cannot send right now, in a line for the dialog; nil when
+    /// it can. The dialog dims Create and shows this, so Create never looks
+    /// live and then does nothing.
+    func newSpaceBlockedReason() -> String? {
+        if let main = liveSession?.chat {
+            if isSending(chat: main) { return "Main is still sending your last message." }
+            if isSessionCommandPending(chat: main) { return "Main is finishing a session step." }
+            if !queuesWhileWorking, isBusy(chat: main) { return "Main is busy; try again when it finishes." }
+            return nil
+        }
+        if isStarting { return "Starting your first session…" }
+        if startFolder == nil { return "Pick a folder on the start screen first." }
+        return nil
+    }
+
+    /// The dialog's Create: one ordinary message to Main, shown as sent
+    /// (Main's draft untouched; queued if Main is working). The window
+    /// leaves the document view and goes to Main when it is on a thread,
+    /// an earlier session or the welcome. With no Main yet, the message
+    /// starts the first session (Ruling 19). A send that cannot go now
+    /// (another is still in flight, or there is no folder to start in)
+    /// leaves the dialog open with its words.
+    func createSpace(_ draft: NewSpaceDraft) {
+        guard draft.canCreate, newSpaceBlockedReason() == nil else { return }
+        let message = draft.message
+        if let main = liveSession?.chat {
+            guard !isSending(chat: main) else { return }
+            newSpaceShown = false
             closeDocumentView()
-            if let live = backTarget(from: shown) { open(chat: live) } else { showStart() }
-        }
-        if documentMode, let chat = filesChat {
-            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
-        } else if case .conversation(let chat) = mainScreen {
-            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
+            if selected != main { open(chat: main) }
+            dispatch(chat: main, text: message, attachments: [], fromComposer: false)
         } else {
-            startDraft = SpacesPresentation.newSpaceDraft(existing: startDraft)
+            guard startFolder != nil, !isStarting else { return }
+            newSpaceShown = false
+            closeDocumentView()
+            startChat(text: message, fromComposer: false)
         }
-        composerFocusRequests += 1
     }
 
     func refreshSpace(_ id: String) { send(.spaceRefresh(SpaceRefresh(id: id))) }
@@ -622,6 +704,7 @@ final class AppModel: ObservableObject {
             // A restarted gateway never saw (or will never answer) a send in
             // flight; the replay from the beginning carries any turn that ran.
             pendingSends = [:]
+            pendingReplies = [:]
             // Its queue went with it (v0.11); `chat.open` says what is held.
             queued = [:]
         }
@@ -698,6 +781,13 @@ final class AppModel: ObservableObject {
             // that follows says how each session is now.
             logging = [:]
             renewing = [:]
+            // Likewise a thread start or close in flight (v0.16): the
+            // proposals and `chat.list` that follow say how each stands.
+            startingProposal = nil
+            startingRequest = nil
+            startingClose = nil
+            closingThreads = [:]
+            dismissing = [:]
             // A gateway without spaces has no list to trust: what an earlier
             // one sent is stale, and so is a space open from it.
             if !hello.capabilities.contains(SpacesList.capability) {
@@ -721,6 +811,8 @@ final class AppModel: ObservableObject {
             applySpaces(list.spaces)
 
         case .chatList(let list):
+            let wasLiveThread = selected.flatMap { shown in chats.first { $0.chat == shown } }
+                .map { $0.thread != nil && $0.ended == nil } ?? false
             chats = list.chats
             nextChat = list.nextChat
             chatsListed = true
@@ -732,6 +824,10 @@ final class AppModel: ObservableObject {
                 forget(chat: chat)
             }
             openLiveSessionIfNeeded()
+            returnToMainIfShownThreadEnded(wasLiveThread: wasLiveThread)
+            proposals = proposals.filter { proposal in list.chats.contains { $0.chat == proposal.value.chat } }
+            settleStartingProposal()
+            loadLiveThreads()
             awaitServicesStatus()
 
         case .chatState(let state):
@@ -755,7 +851,13 @@ final class AppModel: ObservableObject {
                     dispatch(chat: state.chat, text: start.text, attachments: start.attachments, fromComposer: true)
                 }
             }
+            if let id = state.id { noteThreadAnswer(id: id, chat: state.chat) }
             noteSeq(of: message)
+
+        case .threadProposal(let proposal):
+            proposals[proposal.proposal] = proposal
+            if proposal.state != .pending { dismissing[proposal.proposal] = nil }
+            settleStartingProposal()
 
         case .chatHistory(let history):
             applyHistory(history)
@@ -765,6 +867,11 @@ final class AppModel: ObservableObject {
             // the card comes with the `chat.queue` that follows.
             if let id = accepted.id, pendingSends[accepted.chat]?.id == id {
                 pendingSends[accepted.chat] = nil
+            }
+            // Reply directly: the reply is held, so now the question is declined.
+            if let id = accepted.id, let reply = pendingReplies[accepted.chat], reply.send == id {
+                pendingReplies[accepted.chat] = nil
+                answerCard(.declining(chat: accepted.chat, id: reply.card, .replied))
             }
 
         case .chatQueue(let list):
@@ -874,6 +981,7 @@ final class AppModel: ObservableObject {
                 lastRestartAllId = nil
                 restartAllError = error.message
             }
+            if let id = error.id { noteThreadRefusal(id: id, code: error.code, message: error.message) }
             if let id = error.id, fileSearch?.pending[id] != nil {
                 fileSearch?.pending[id] = nil
             }
@@ -889,6 +997,10 @@ final class AppModel: ObservableObject {
                 setStatus(error.message, for: chat)
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
                     restore(pending, to: chat)
+                }
+                // A refused reply declines nothing: the question stays docked.
+                if let id = error.id, pendingReplies[chat]?.send == id {
+                    pendingReplies[chat] = nil
                 }
             }
             // A refused listing: the directory is no longer pending (so it
@@ -915,6 +1027,7 @@ final class AppModel: ObservableObject {
                 finished.outcome != .error || turnHadAgentOutput(chat: chat, turn: finished.turn)
             {
                 noteLastReply(chat: chat, at: finished.ts)
+                noteThreadTurnFinished(chat: chat)
             }
             if FolderRelist.triggers(message, tool: { toolName(chat: chat, toolUseId: $0) }) {
                 scheduleRelist(chat: chat)
@@ -1103,13 +1216,14 @@ final class AppModel: ObservableObject {
                     row.permission = permission
                     row.note = finished.note ?? row.note
                 }
+                row.answers = finished.answers ?? row.answers
                 items[index] = .tool(row)
             } else {
                 // The start fell off the ring; show the finish rather than lose it.
                 items.append(.tool(ToolRow(
                     toolUseId: finished.toolUseId, turn: finished.turn, tool: "tool", summary: finished.summary,
                     input: [:], finished: true, ok: finished.ok, result: finished.summary,
-                    permission: finished.permission, note: finished.note, at: finished.ts)))
+                    permission: finished.permission, note: finished.note, at: finished.ts, answers: finished.answers)))
             }
 
         case .turnFinished(let finished):
@@ -1131,11 +1245,12 @@ final class AppModel: ObservableObject {
             closedCards[chat]?[card.id] = nil
             open.append(card)
             openCards[chat] = open
-            // V1: a permission card is one unit with its tool row — pinned
+            // V1: a permission card is one unit with its tool row — docked
             // above the composer while open, its outcome drawn on the row
-            // after. It leaves no copy of its own in the transcript. Other
-            // cards keep their inline record.
-            if card.kind != .permission {
+            // after. v0.16: a question card too, docked, its record drawn on
+            // its `AskUserQuestion` row. Neither leaves a copy of its own in
+            // the transcript; a form keeps its inline record.
+            if card.kind == .form {
                 let inline = TranscriptItem.card(card)
                 if !items.contains(where: { $0.id == inline.id }) {
                     items.append(inline)
@@ -1243,7 +1358,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal:
             break
         }
     }
@@ -1320,9 +1435,23 @@ final class AppModel: ObservableObject {
     /// The `closedCards` reason that means "answered from this app".
     static let answeredMarker = "answered"
 
-    /// The cards pinned above the input: the chat's open cards, oldest first.
+    /// The cards pinned above the input: the chat's open forms, oldest
+    /// first. Questions and permission cards dock instead (`dockedCard`).
     func pinnedCards(for chat: Int) -> [CardAsk] {
-        openCards[chat] ?? []
+        (openCards[chat] ?? []).filter { $0.kind == .form }
+    }
+
+    /// The card docked above the composer (v0.16, AO1): the chat's oldest
+    /// open question or permission card. One at a time; the next docks
+    /// when it is answered.
+    func dockedCard(for chat: Int) -> CardAsk? {
+        openCards[chat]?.first { $0.kind != .form }
+    }
+
+    /// The docked card when it is a question: a send from the composer
+    /// then replies directly (§3.3).
+    func dockedQuestion(for chat: Int) -> CardAsk? {
+        dockedCard(for: chat).flatMap { $0.kind == .question ? $0 : nil }
     }
 
     /// How the transcript's inline copy of a card reads: open while the
@@ -1337,7 +1466,7 @@ final class AppModel: ObservableObject {
     /// already, cancelled, never seen) gets nothing: the gateway would only
     /// refuse it as `card.stale`, and there is nothing to show for it.
     func answerCard(_ answer: CardAnswer) {
-        guard let card = pinnedCards(for: answer.chat).first(where: { $0.id == answer.id }) else { return }
+        guard let card = openCards[answer.chat]?.first(where: { $0.id == answer.id }) else { return }
         send(.cardAnswer(answer))
         closeCard(chat: answer.chat, id: answer.id, why: Self.answeredMarker)
         // The row shows the answer at once; the gateway's `card.answered`
@@ -1780,9 +1909,44 @@ final class AppModel: ObservableObject {
             appendNotice(reason, to: chat)
             return
         }
+        // With a question docked, the send is the reply that declines it (v0.16 §3.3).
+        if dockedQuestion(for: chat) != nil {
+            replyDirectly(chat: chat, text: text, about: about)
+            return
+        }
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
         dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
+    }
+
+    /// Reply directly (v0.16 §3.3): a send from the composer while a
+    /// question card is docked. The message goes first, as any send (the
+    /// gateway queues it mid-turn); once the gateway accepts it
+    /// (`chat.queued` with its id), the `replied` decline for the question.
+    /// The gateway writes the reply into the turn right after the
+    /// question's row, so the agent reads the decline and then the reply.
+    /// A message that does not go (blank, another still out) or that the
+    /// gateway refuses declines nothing: the card stays docked and the
+    /// text goes back in the composer. With no question docked it is an
+    /// ordinary send.
+    func replyDirectly(chat: Int, text: String, about: String? = nil) {
+        guard let question = dockedQuestion(for: chat) else {
+            sendMessage(chat: chat, text: text, about: about)
+            return
+        }
+        var attachments = draftAttachments[chat] ?? []
+        if let about, !attachments.contains(about) { attachments.append(about) }
+        guard dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true),
+            let send = pendingSends[chat]?.id
+        else { return }
+        pendingReplies[chat] = PendingReply(send: send, card: question.id)
+    }
+
+    /// A reply sent while a question was docked, waiting for the gateway to
+    /// accept it before the question is declined.
+    struct PendingReply: Equatable, Sendable {
+        var send: String
+        var card: String
     }
 
     /// The agent's commands for the slash list in `folder` (v0.11 item 66):
@@ -1826,9 +1990,11 @@ final class AppModel: ObservableObject {
         dispatch(chat: chat, text: text, attachments: [], fromComposer: false)
     }
 
-    private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) {
+    /// Send a message; `false` when it did not go (blank, or another send still out).
+    @discardableResult
+    private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending(chat: chat) else { return }
+        guard !trimmed.isEmpty, !isSending(chat: chat) else { return false }
         let id = Self.requestId()
         pendingSends[chat] = PendingSend(
             id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
@@ -1837,6 +2003,7 @@ final class AppModel: ObservableObject {
             draftAttachments[chat] = nil
             drafts[chat] = nil
         }
+        return true
     }
 
     /// Put a refused send back where it was composed. Text typed since the
@@ -1960,6 +2127,7 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = nil
         drafts[chat] = nil
         pendingSends[chat] = nil
+        pendingReplies[chat] = nil
         queued[chat] = nil
         transcripts[chat] = nil
         openCards[chat] = nil
@@ -1987,6 +2155,13 @@ final class AppModel: ObservableObject {
         renewing[chat] = nil
         logging[chat] = nil
         if askingToLog == chat { askingToLog = nil }
+        proposals = proposals.filter { $0.value.chat != chat }
+        if closingThread == chat { closingThread = nil }
+        closingThreads[chat] = nil
+        closeFailures[chat] = nil
+        dismissedCalls[chat] = nil
+        newThreadReplies.remove(chat)
+        dismissedDone.remove(chat)
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
     }
@@ -2033,6 +2208,108 @@ final class AppModel: ObservableObject {
     private static func itemId(_ counter: inout Int) -> String {
         counter += 1
         return String(counter)
+    }
+}
+
+// MARK: - Threads: what writes the thread state (v0.16)
+
+/// The thread actions and reducer steps that write `AppModel`'s
+/// `private(set)` thread state; the rest of threads is in Threads.swift.
+extension AppModel {
+    /// Start Thread N (or, with `closing`, Close and start at the limit).
+    /// One start at a time, and only for a proposal still pending: a second
+    /// click sends nothing (Review Focus 1). The window stays where it is:
+    /// the thread works on its brief while the person carries on here.
+    func startThread(_ proposal: ThreadProposal, closing: Int?) {
+        guard threadsOn, startingProposal == nil, (proposals[proposal.proposal] ?? proposal).state == .pending else { return }
+        let id = Self.requestId()
+        startingProposal = proposal.proposal
+        startingRequest = id
+        startingClose = closing
+        if let closing { closeFailures[closing] = nil }
+        send(.threadStart(ThreadStart(chat: proposal.chat, proposal: proposal.proposal, close: closing, id: id)))
+    }
+
+    /// "Not now": the gateway answers with the proposal `dismissed`. One
+    /// at a time per proposal, so a double click sends one.
+    func dismissProposal(_ proposal: ThreadProposal) {
+        guard dismissing[proposal.proposal] == nil else { return }
+        let id = Self.requestId()
+        dismissing[proposal.proposal] = id
+        send(.threadDismiss(ThreadDismiss(chat: proposal.chat, proposal: proposal.proposal, id: id)))
+    }
+
+    /// The start in flight is settled once its proposal is dismissed, or
+    /// started with its thread listed: the card stays dimmed until it can
+    /// name the thread (never a "Thread started" placeholder).
+    private func settleStartingProposal() {
+        guard let id = startingProposal, let proposal = proposals[id] else { return }
+        let settled: Bool
+        switch proposal.state {
+        case .pending: settled = false
+        case .dismissed: settled = true
+        case .started: settled = proposal.thread.map { thread in chats.contains { $0.chat == thread } } ?? true
+        }
+        if settled {
+            startingProposal = nil
+            startingRequest = nil
+            startingClose = nil
+        }
+    }
+
+    /// `thread.close` for an open thread, with or without its log step;
+    /// one close at a time per thread.
+    func closeThread(chat: Int, log: Bool) {
+        guard thread(of: chat) != nil, !isEnded(chat: chat), !isClosing(chat: chat) else { return }
+        let id = Self.requestId()
+        closingThreads[chat] = id
+        closeFailures[chat] = nil
+        send(.threadClose(ThreadClose(chat: chat, log: log, id: id)))
+    }
+
+    /// Later on a calling card: hidden from Main; the thread's row still says Needs you.
+    func dismissCalling(_ card: CallingCard) {
+        dismissedCalls[card.thread, default: []].insert(card.cardId)
+    }
+
+    /// A `chat.state` answering a request: a thread start's answer names
+    /// the new thread, which is loaded (not shown: Ruling 6 as overridden,
+    /// the selection stays); a close's answer ends its wait.
+    func noteThreadAnswer(id: String, chat: Int) {
+        if id == startingRequest {
+            startingRequest = nil
+            startingClose = nil
+            if !openedChats.contains(chat) && !isLoading(chat: chat) { load(chat: chat) }
+        }
+        if let closing = closingThreads.first(where: { $0.value == id })?.key {
+            closingThreads[closing] = nil
+        }
+    }
+
+    /// An `error` answering a request: a refused start un-dims its card
+    /// (Review Focus 2) and Main's status line says why; a refused close
+    /// keeps the thread open.
+    func noteThreadRefusal(id: String, code: String, message: String) {
+        if id == startingRequest {
+            startingProposal = nil
+            startingRequest = nil
+            // A Close and start whose close's log step could not start: the
+            // thread stays open and offers Close without logging, as Close thread does.
+            let failure = CloseFailure(code: code, message: message)
+            if let closing = startingClose, failure.offersCloseWithoutLogging { closeFailures[closing] = failure }
+            startingClose = nil
+        }
+        if let proposal = dismissing.first(where: { $0.value == id })?.key {
+            dismissing[proposal] = nil
+        }
+        // A refused close: only a log step that could not start goes on the
+        // red line (with Close without logging); any other refusal is said
+        // on the thread's status line, as every error with a chat is.
+        if let closing = closingThreads.first(where: { $0.value == id })?.key {
+            closingThreads[closing] = nil
+            let failure = CloseFailure(code: code, message: message)
+            if failure.offersCloseWithoutLogging { closeFailures[closing] = failure }
+        }
     }
 }
 

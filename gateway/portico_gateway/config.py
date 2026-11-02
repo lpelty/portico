@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -300,6 +300,19 @@ class SpacesConfig(BaseModel):
         return value if value is not None and value.strip() else None
 
 
+class ThreadsConfig(BaseModel):
+    """``[threads]`` (v0.16): how many threads Main may have open beside it.
+
+    ``max`` is 0 to 2 (default 2); 0 turns threads off: Main's agent gets no
+    ``open_thread`` tool and the gateway does not offer ``threads.v1``.
+    Threads are single presentation only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max: int = Field(2, ge=0, le=2)
+
+
 def with_default_spaces(config: Config, state_path: Path) -> Config:
     """v0.14: with no ``[spaces] folder``, the spaces folder is ``<state dir>/spaces``, created if missing.
 
@@ -391,6 +404,8 @@ class Config(BaseModel):
     # v0.12: the viewer (``[viewer]``) and spaces (``[spaces]``).
     viewer: ViewerConfig = ViewerConfig()
     spaces: SpacesConfig = SpacesConfig()
+    # v0.16: threads beside Main (``[threads] max``).
+    threads: ThreadsConfig = ThreadsConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -528,8 +543,9 @@ def hello_for(
     session starts in; ``commands`` lists ``log`` when the deployment can log;
     ``hide_session_folder`` (v0.11) is ``[files] hide_session_folder``.
     ``capabilities`` (v0.8) adds ``services.restart_all`` when the
-    deployment can restart all its services, and (v0.11) ``sessions.clear``
-    in single presentation.
+    deployment can restart all its services, (v0.11) ``sessions.clear``
+    in single presentation, and (v0.16) ``threads.v1`` in single
+    presentation with ``[threads] max`` above 0, with ``threads_max`` set to it.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
@@ -537,6 +553,8 @@ def hello_for(
         capabilities.append(RESTART_ALL_CAPABILITY)
     if config.presentation == "single":
         capabilities.append(CLEAR_SESSIONS_CAPABILITY)
+        if config.threads.max > 0:
+            capabilities.append(THREADS_CAPABILITY)
     if config.spaces.folder:
         capabilities.append(SPACES_CAPABILITY)
         if config.spaces.refresh:
@@ -560,6 +578,7 @@ def hello_for(
         permission_mode=config.permission_mode,
         hide_session_folder=config.files.hide_session_folder,
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
+        threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

@@ -62,6 +62,7 @@ from claude_agent_sdk import (
 
 from .artifacts import paths_in
 from .agents import AgentTracker
+from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
 from .viewer import VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
@@ -94,6 +95,9 @@ ATTENDED_ENV = "PORTICO_ATTENDED"
 # The SDK reads the CLI's stdout as JSON lines, 1 MiB at most by default; a look's base64 image is one line.
 CLI_MAX_BUFFER_BYTES = 32 * 2**20
 SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
+# v0.16: the in-process tool Main's agent proposes a thread with, on the same server.
+OPEN_THREAD_TOOL = "open_thread"
+OPEN_THREAD_TOOL_NAME = f"mcp__{SHOW_SERVER}__{OPEN_THREAD_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
 # What the agent sees when its ``open <file>`` was shown instead of run.
 OPEN_SHOWN_REASON = "Shown in Portico's viewer instead of opening it."
@@ -132,9 +136,10 @@ _READ_ONLY_ENGINE_TOOLS: frozenset[str] = frozenset(
 
 # Portico's own tools, allowed outright with no permission card in any mode:
 # ``show_in_viewer`` only shows a file; the viewer tools include ones that act
-# (click, type) but the person watches each action and has Stop. Not read-only,
-# yet auto mode has nothing to decide for them either.
-ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset({SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES})
+# (click, type) but the person watches each action and has Stop; (v0.16)
+# ``open_thread`` only proposes, and the person decides. Not read-only, yet
+# auto mode has nothing to decide for them either.
+ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset({SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES})
 
 # What the permission row treats as "nothing to decide" (see server.py).
 READ_ONLY_TOOLS: frozenset[str] = _READ_ONLY_ENGINE_TOOLS | ALLOWED_OUTRIGHT_TOOLS
@@ -154,11 +159,18 @@ PermissionDecision = (
 
 
 class QuestionDeclined(Exception):
-    """Raised by ``on_question`` when nobody answered (the card was cancelled or nobody was there).
+    """Raised by ``on_question`` when the question was not answered.
 
-    The adapter turns it into a deny with the message, so the engine's
-    question tool is refused rather than answered with nothing.
+    Nobody answered (the card was cancelled or nobody was there), or (v0.16)
+    the person declined it: ``declined`` is then the decline's key
+    (``skipped``, ``dismissed``, ``replied``). The adapter turns it into a
+    deny with the message, so the engine's question tool is refused rather
+    than answered with nothing.
     """
+
+    def __init__(self, message: str = "", declined: str | None = None) -> None:
+        super().__init__(message)
+        self.declined = declined
 
 
 @runtime_checkable
@@ -169,7 +181,11 @@ class EngineCallbacks(Protocol):
         self, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision: ...
 
-    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]: ...
+    # ``tool_use_id`` (v0.16): the question tool's row, so its outcome can be
+    # recorded for ``tool.finished``.
+    async def on_question(
+        self, questions: list[dict[str, Any]], tool_use_id: str = ""
+    ) -> dict[str, str | list[str]]: ...
 
     async def on_compacted(self, trigger: str) -> None: ...
 
@@ -178,6 +194,12 @@ class EngineCallbacks(Protocol):
     # files in the viewer, all or none, and answers ``None`` when shown,
     # else why not (a relative path is the chat folder's). An owner without
     # it gives the engine no show tool and no ``open`` hook.
+    # Optional (v0.16), Main's owner only: ``async def on_open_thread(self,
+    # brief: str, files: list[str]) -> str`` proposes a thread and answers
+    # what the agent reads (a refusal starts "Not proposed: "), and
+    # ``note_thread_use(tool_use_id, tool_input)`` hears the call's id and
+    # input first (the handler is matched to it by input). An owner
+    # without them gives the engine no ``open_thread`` tool.
 
 
 @runtime_checkable
@@ -420,7 +442,7 @@ def build_can_use_tool(callbacks: EngineCallbacks):
         if tool == QUESTION_TOOL:
             questions = list(input.get("questions") or [])
             try:
-                answers = await callbacks.on_question(questions)
+                answers = await callbacks.on_question(questions, context.tool_use_id or "")
             except QuestionDeclined as e:
                 return PermissionResultDeny(message=str(e) or DEFAULT_DENY_MESSAGE)
             return PermissionResultAllow(updated_input={"questions": questions, "answers": answers})
@@ -506,18 +528,14 @@ def deployment_system_prompt(kind: str, append: str | None) -> Any:
     return {"type": "preset", "preset": "claude_code", **({"append": text} if text else {})}
 
 
-def with_viewer_prompt(system_prompt: Any, spaces_folder: Path | str | None = None) -> Any:
-    """``system_prompt`` (as ``ClaudeAgentOptions`` takes it) with ``VIEWER_PROMPT`` appended.
+def append_prompt_line(system_prompt: Any, line: str) -> Any:
+    """``system_prompt`` (as ``ClaudeAgentOptions`` takes it) with ``line`` appended, never replacing it.
 
-    With a ``spaces_folder`` (v0.12) the spaces line follows the viewer line.
     ``None`` is the SDK's default, an empty prompt: the line becomes the
     prompt. A preset keeps its ``append`` and gets the line after it; a
     custom prompt gets the line after its text. A prompt file cannot be
     appended to and is left as it is.
     """
-    line = VIEWER_PROMPT
-    if spaces_folder:
-        line = f"{VIEWER_PROMPT} {SPACES_PROMPT.format(folder=spaces_folder)}"
     if system_prompt is None:
         return line
     if isinstance(system_prompt, str):
@@ -531,6 +549,17 @@ def with_viewer_prompt(system_prompt: Any, spaces_folder: Path | str | None = No
             before = system_prompt.get("prompt") or ""
             return {**system_prompt, "prompt": f"{before}\n\n{line}" if before else line}
     return system_prompt
+
+
+def with_viewer_prompt(system_prompt: Any, spaces_folder: Path | str | None = None) -> Any:
+    """``system_prompt`` with ``VIEWER_PROMPT`` appended (``append_prompt_line``).
+
+    With a ``spaces_folder`` (v0.12) the spaces line follows the viewer line.
+    """
+    line = VIEWER_PROMPT
+    if spaces_folder:
+        line = f"{VIEWER_PROMPT} {SPACES_PROMPT.format(folder=spaces_folder)}"
+    return append_prompt_line(system_prompt, line)
 
 
 def build_show_tool(callbacks: EngineCallbacks):
@@ -684,13 +713,64 @@ def build_mark_hook(bridge: Any, chat: int):
     return mark_hook
 
 
+def build_thread_tool(callbacks: Any):
+    """The ``open_thread`` tool (v0.16): Main's agent proposes a thread; the person starts it or not.
+
+    Returns at once with what the owner answers; a refusal (an empty brief,
+    a path that is not a file) is ``is_error``.
+    """
+
+    @tool(
+        OPEN_THREAD_TOOL,
+        TOOL_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "brief": {"type": "string", "description": "What the thread is for, in one or two sentences."},
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Files the thread should start with; a path may be relative to this session's folder.",
+                },
+            },
+            "required": ["brief"],
+        },
+    )
+    async def open_thread(args: dict[str, Any]) -> dict[str, Any]:
+        brief = args.get("brief")
+        raw = args.get("files") or []
+        if not isinstance(brief, str) or not brief.strip():
+            return {"content": [{"type": "text", "text": EMPTY_BRIEF}], "is_error": True}
+        files = [f for f in raw if isinstance(f, str) and f.strip()] if isinstance(raw, list) else []
+        text = await callbacks.on_open_thread(brief.strip(), [f.strip() for f in files])
+        if text.startswith(REFUSAL_PREFIX):
+            return {"content": [{"type": "text", "text": text}], "is_error": True}
+        return {"content": [{"type": "text", "text": text}]}
+
+    return open_thread
+
+
+def build_thread_hook(callbacks: Any):
+    """The ``PreToolUse`` hook on ``open_thread``: the owner notes the call's id and input, which the proposal carries."""
+
+    async def thread_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
+        use_id = input.get("tool_use_id") if isinstance(input, Mapping) else None
+        if isinstance(tool_input, Mapping) and isinstance(use_id or tool_use_id, str):
+            callbacks.note_thread_use(use_id or tool_use_id, dict(tool_input))
+        return {}
+
+    return thread_hook
+
+
 # The show tool is allowed outright on purpose (it only shows a file), so the
 # SDK's advisory that ``can_use_tool`` will not see it is expected.
 # The v0.12 viewer tools are allowed outright the same way (the person watches
-# each action and has Stop), so the advisory is expected for them too.
+# each action and has Stop), so the advisory is expected for them too, and
+# (v0.16) for ``open_thread``, which only proposes.
 warnings.filterwarnings(
     "ignore",
-    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES))})(?:, )?)+\.",
+    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES))})(?:, )?)+\.",
     category=CanUseToolShadowedWarning,
 )
 
@@ -718,6 +798,11 @@ def build_options(
     ``system_prompt`` (the deployment's, ``deployment_system_prompt``;
     ``None`` is the SDK's empty prompt).
 
+    With an owner that can propose threads (``on_open_thread``, v0.16,
+    Main's only): the ``open_thread`` tool on the same server, allowed
+    outright, and a ``PreToolUse`` hook that notes its call's id. The
+    owner's prompt line (``MAIN_PROMPT``) is already in ``system_prompt``.
+
     ``PORTICO_ATTENDED=1`` is always in the engine's environment: a person
     drives this chat (v0.11).
 
@@ -731,10 +816,13 @@ def build_options(
     # has the permissions of writing in the chat's folder.
     spaces_folder = getattr(callbacks, "spaces_folder", None)
     add_dirs: list[str | Path] = [spaces_folder] if spaces_folder else []
+    tools: list[Any] = []
+    allowed: list[str] = []
+    prompt = system_prompt
     if callable(getattr(callbacks, "on_show", None)):
         pre_tool_use.append(HookMatcher(matcher="Bash", hooks=[build_open_hook(callbacks)]))
-        tools = [build_show_tool(callbacks)]
-        allowed = [SHOW_TOOL_NAME]
+        tools.append(build_show_tool(callbacks))
+        allowed.append(SHOW_TOOL_NAME)
         bridge = getattr(callbacks, "viewer_bridge", None)
         if bridge is not None:
             # v0.12: the agent sees and uses the viewer; the tools answer "not available" when no app can.
@@ -747,10 +835,17 @@ def build_options(
             post_tool_use.append(
                 HookMatcher(matcher="Write|Edit|MultiEdit|Bash", hooks=[build_check_html_hook(bridge, folder, roots)])
             )
+        prompt = with_viewer_prompt(system_prompt, spaces_folder)
+    if callable(getattr(callbacks, "on_open_thread", None)):
+        # v0.16: Main's owner only (the server gives a thread's engine no such owner).
+        tools.append(build_thread_tool(callbacks))
+        allowed.append(OPEN_THREAD_TOOL_NAME)
+        pre_tool_use.append(HookMatcher(matcher=OPEN_THREAD_TOOL_NAME, hooks=[build_thread_hook(callbacks)]))
+    if tools:
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
             "allowed_tools": allowed,
-            "system_prompt": with_viewer_prompt(system_prompt, spaces_folder),
+            **({} if prompt is None else {"system_prompt": prompt}),
         }
     if model is not None:
         extra["model"] = model
@@ -810,7 +905,7 @@ def without_price(description: str) -> str:
     """``description`` without its price parts (Larry 11-02: no pricing shown).
 
     API-key logins append `` · $4/$20 per Mtok`` (sometimes with a long-prompt
-    rate); it is wrong for Bedrock and not for display. Any `` · `` part
+    rate); it is wrong for other providers and not for display. Any `` · `` part
     holding a ``$`` amount or "per Mtok" goes; the others stay in order.
     """
     parts = [p for p in description.split(" · ") if not re.search(r"\$\d|per Mtok", p)]
@@ -926,7 +1021,7 @@ class _ProbeCallbacks:
     ) -> PermissionDecision:
         return "deny"
 
-    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+    async def on_question(self, questions: list[dict[str, Any]], tool_use_id: str = "") -> dict[str, str | list[str]]:
         raise QuestionDeclined("no session")
 
     async def on_compacted(self, trigger: str) -> None:

@@ -133,9 +133,12 @@ extension AppModel {
 
     /// The Files pane's CHANGED THIS SESSION for the chat on screen: in
     /// single presentation "this session" is the live one, even while an
-    /// earlier session is open read-only.
+    /// earlier session is open read-only. An open thread is a session of
+    /// its own (v0.16 §2.6): in it, the list is the thread's own changes.
     func changedThisSession(chat: Int) -> [ChangedFile] {
-        changedFiles(chat: isSinglePresentation ? (liveSession?.chat ?? chat) : chat)
+        guard isSinglePresentation else { return changedFiles(chat: chat) }
+        if thread(of: chat) != nil && !isEnded(chat: chat) { return changedFiles(chat: chat) }
+        return changedFiles(chat: liveSession?.chat ?? chat)
     }
 
     /// A write that may have happened: not failed, and its permission

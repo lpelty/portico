@@ -1933,6 +1933,17 @@
           "title": "State",
           "type": "string"
         },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "title": {
           "anyOf": [
             {
@@ -2083,6 +2094,15 @@
         },
         {
           "$ref": "#/$defs/ModelSet"
+        },
+        {
+          "$ref": "#/$defs/ThreadStart"
+        },
+        {
+          "$ref": "#/$defs/ThreadDismiss"
+        },
+        {
+          "$ref": "#/$defs/ThreadClose"
         }
       ]
     },
@@ -2929,6 +2949,18 @@
           "default": null,
           "title": "Seq"
         },
+        "threads_max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threads Max"
+        },
         "ts": {
           "title": "Ts",
           "type": "string"
@@ -3228,6 +3260,18 @@
         "label": {
           "title": "Label",
           "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preview"
         }
       },
       "required": [
@@ -3457,6 +3501,9 @@
         },
         {
           "$ref": "#/$defs/Models"
+        },
+        {
+          "$ref": "#/$defs/ThreadProposal"
         },
         {
           "$ref": "#/$defs/Error"
@@ -4443,6 +4490,330 @@
       "title": "TextDelta",
       "type": "object"
     },
+    "ThreadClose": {
+      "additionalProperties": false,
+      "description": "v0.16: close the thread ``chat``: its log step, then it ends into History.\n\n``log`` false skips the log step (the thread ends ``logged: false``): the\napp's \"Close without logging\" after a close whose log step cannot start.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "log": {
+          "default": true,
+          "title": "Log",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "thread.close",
+          "default": "thread.close",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "ThreadClose",
+      "type": "object"
+    },
+    "ThreadDismiss": {
+      "additionalProperties": false,
+      "description": "v0.16: \"Not now\" on a proposal on Main (``chat``); its record reads \"Not started\".",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "proposal": {
+          "title": "Proposal",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "thread.dismiss",
+          "default": "thread.dismiss",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "proposal"
+      ],
+      "title": "ThreadDismiss",
+      "type": "object"
+    },
+    "ThreadInfo": {
+      "additionalProperties": false,
+      "description": "What makes a chat a thread (v0.16): opened from Main (``parent``) for ``brief``.\n\n``label`` is \"Thread 1\" or \"Thread 2\"; ``slot`` is its number, the key\nthat switches to it (a closed thread's slot is used again); ``files``\nare the paths it started with; ``opened_at`` when it was started.",
+      "properties": {
+        "brief": {
+          "title": "Brief",
+          "type": "string"
+        },
+        "files": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "opened_at": {
+          "title": "Opened At",
+          "type": "string"
+        },
+        "parent": {
+          "title": "Parent",
+          "type": "integer"
+        },
+        "slot": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Slot",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "slot",
+        "parent",
+        "brief",
+        "opened_at"
+      ],
+      "title": "ThreadInfo",
+      "type": "object"
+    },
+    "ThreadProposal": {
+      "additionalProperties": false,
+      "description": "v0.16: a thread Main's agent proposed (``open_thread``), and where it stands.\n\n``chat`` is Main's; ``proposal`` the proposal's id; ``tool_use_id`` the\n``open_thread`` tool row the card is drawn in place of. ``thread`` is the\nchat it started, once ``state`` is ``started``. A state frame like\n``chat.queue``: not in the ring, sent on every change and after\n``chat.live`` on every ``chat.open``. Only to an app with ``threads.v1``.",
+      "properties": {
+        "brief": {
+          "title": "Brief",
+          "type": "string"
+        },
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "files": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "proposal": {
+          "title": "Proposal",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "started",
+            "dismissed"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        },
+        "tool_use_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Use Id"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "thread.proposal",
+          "default": "thread.proposal",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "proposal",
+        "brief",
+        "state"
+      ],
+      "title": "ThreadProposal",
+      "type": "object"
+    },
+    "ThreadStart": {
+      "additionalProperties": false,
+      "description": "v0.16: start the thread a proposal on Main (``chat``) describes (``threads.v1``).\n\n``close`` names an open thread to close first when two are open (the\nlimit card's Close and start). Starting does not change which chat is Main.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "close": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Close"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "proposal": {
+          "title": "Proposal",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "thread.start",
+          "default": "thread.start",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "proposal"
+      ],
+      "title": "ThreadStart",
+      "type": "object"
+    },
     "ToolFinished": {
       "additionalProperties": false,
       "properties": {
@@ -4457,6 +4828,31 @@
           ],
           "default": null,
           "title": "Agent Id"
+        },
+        "answers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Answers"
         },
         "chat": {
           "title": "Chat",

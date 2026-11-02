@@ -12,11 +12,12 @@ struct HistoryPresentation: Equatable {
 
     private var needle: String { query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
-    /// Sessions whose title, alias or number contains the query, in the order given.
+    /// Sessions whose title, alias, number or thread label ("Thread 2",
+    /// v0.16) contains the query, in the order given.
     var shown: [ChatSummary] {
         guard !needle.isEmpty else { return sessions }
         return sessions.filter { summary in
-            [summary.title, summary.alias, String(summary.chat)].compactMap { $0 }
+            [summary.title, summary.alias, String(summary.chat), summary.thread?.label].compactMap { $0 }
                 .contains { $0.lowercased().contains(needle) }
         }
     }

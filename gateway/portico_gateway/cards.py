@@ -22,7 +22,9 @@ expect:
   ``deny`` → ``("deny", note)``. The keys are kept on the chat record, so
   they last for the session, across gateway restarts (v0.3).
 - question → ``{<question text>: <label> | [labels]}``, the answers the
-  engine's question tool expects.
+  engine's question tool expects (a question the person skipped is left
+  out). Or (v0.16) ``{"declined": <key>}``, one of ``DECLINES``: the
+  question tool is denied with that decline's message.
 
 **Held cards.** While no app is attached the card stays open and the hold
 clock runs; after ``hold_seconds`` the card is cancelled with the reason
@@ -60,6 +62,7 @@ from .engine import PermissionDecision, QuestionDeclined, summarize_tool
 from .messages import CardAnswer, CardAsk, CardCancel, Option, Permission, ProtocolError, Question, ServerMessage
 
 __all__ = [
+    "DECLINES",
     "NOBODY_ANSWERED",
     "CardBroker",
     "QuestionDeclined",
@@ -73,6 +76,15 @@ log = logging.getLogger(__name__)
 # The reason on the ``card.cancel`` and the message the engine sees when a
 # held card times out (spec §5.5; Global Constraints).
 NOBODY_ANSWERED = "nobody was there to answer"
+
+# The ways a person declines a question card (v0.16, spec §3.3), and the
+# message the engine's question tool is denied with for each: Skip on every
+# question, the card's ×, and a reply sent from the composer instead.
+DECLINES: dict[str, str] = {
+    "skipped": "The person skipped the question.",
+    "dismissed": "The person dismissed the question.",
+    "replied": "The person replied in the conversation instead.",
+}
 
 # ``send(chat, msg)`` stamps the message with the chat's next ``seq``, keeps
 # it in the ring, sends it to the app if one is attached, and returns the
@@ -160,6 +172,9 @@ def permission_card(
     tool_use_id: str | None = None,
     folder: Path | None = None,
     suggestions: list[dict[str, Any]] | None = None,
+    *,
+    thread: bool = False,
+    threads_on: bool = False,
 ) -> CardAsk:
     return CardAsk(
         ts=_now(),
@@ -169,34 +184,44 @@ def permission_card(
         title=title_for(tool, input, folder),
         permission=Permission(tool=tool, summary=summarize_tool(tool, input), input=dict(input)),
         tool_use_id=tool_use_id or None,
-        scope_note=scope_note_for(tool, input, folder, suggestions or []),
+        scope_note=scope_note_for(tool, input, folder, suggestions or [], thread=thread, threads_on=threads_on),
     )
 
 
 def scope_note_for(
-    tool: str, input: dict[str, Any], folder: Path | None, suggestions: list[dict[str, Any]]
+    tool: str,
+    input: dict[str, Any],
+    folder: Path | None,
+    suggestions: list[dict[str, Any]],
+    *,
+    thread: bool = False,
+    threads_on: bool = False,
 ) -> str | None:
     """What "Allow for this session" would cover, in words, for the line under the card's buttons.
 
     It says exactly what ``CardBroker.chat_allow_keys`` records, so the
-    person reads the reach of the allow before giving it.
+    person reads the reach of the allow before giving it. With threads on
+    (v0.16) an allow covers only the conversation the card is in: the note
+    says "For this conversation", and in a ``thread`` it lasts "until you
+    close this thread".
     """
-    until = "until you start a new session"
+    until = "until you close this thread" if thread else "until you start a new session"
+    scope = "For this conversation" if threads_on else "For this session"
     if tool in EDIT_TOOLS:
         path = _edit_path(input)
         if path is None or folder is None:
             return None
         if _inside(_absolute(path, folder), folder):
-            return f"For this session: edits to files in {Path(folder).name or folder}, {until}."
-        return f"For this session: changes to this file only ({_resolved(_absolute(path, folder))}), {until}."
+            return f"{scope}: edits to files in {Path(folder).name or folder}, {until}."
+        return f"{scope}: changes to this file only ({_resolved(_absolute(path, folder))}), {until}."
     if tool in COMMAND_TOOLS:
         rules = _suggested_rules(tool, suggestions)
         prefixes = [rule[:-2].strip() for rule in rules if rule.endswith(":*") and rule[:-2].strip()]
         if prefixes:
             shown = ", ".join(prefixes)
-            return f"For this session: commands that start with {shown}, {until}."
-        return f"For this session: this exact command, {until}."
-    return f"For this session: every use of {tool}, {until}."
+            return f"{scope}: commands that start with {shown}, {until}."
+        return f"{scope}: this exact command, {until}."
+    return f"{scope}: every use of {tool}, {until}."
 
 
 def _edit_path(input: dict[str, Any]) -> str | None:
@@ -227,12 +252,20 @@ def _inside(target: Path, folder: Path) -> bool:
     return True
 
 
-def question_card(chat: int, questions: list[dict[str, Any]]) -> CardAsk:
-    """The engine's question-tool input, mapped field for field (``multiSelect`` → ``multi_select``)."""
+def question_card(chat: int, questions: list[dict[str, Any]], tool_use_id: str | None = None) -> CardAsk:
+    """The engine's question-tool input, mapped field for field (``multiSelect`` → ``multi_select``).
+
+    An option's ``preview`` (v0.16) is kept when it is a string; anything
+    else is dropped. ``tool_use_id`` names the question tool's row.
+    """
     mapped: list[Question] = []
     for q in questions:
         options = [
-            Option(label=str(o.get("label", "")), description=str(o.get("description") or ""))
+            Option(
+                label=str(o.get("label", "")),
+                description=str(o.get("description") or ""),
+                preview=o.get("preview") if isinstance(o.get("preview"), str) else None,
+            )
             for o in (q.get("options") or [])
             if isinstance(o, dict)
         ]
@@ -245,7 +278,9 @@ def question_card(chat: int, questions: list[dict[str, Any]]) -> CardAsk:
             )
         )
     title = next((q.header for q in mapped if q.header), None) or "A question"
-    return CardAsk(ts=_now(), chat=chat, id=_new_id(), kind="question", title=title, questions=mapped)
+    return CardAsk(
+        ts=_now(), chat=chat, id=_new_id(), kind="question", title=title, questions=mapped, tool_use_id=tool_use_id or None
+    )
 
 
 def _rule_covers(rule: str, command: str) -> bool:
@@ -312,6 +347,13 @@ def _check_answer(card: CardAsk, answer: CardAnswer) -> None:
             raise ProtocolError("card.invalid_answer", 'a permission answer is {"decision": "allow" | "deny"}')
         return
     if card.kind == "question":
+        if "declined" in body:
+            declined = body["declined"]
+            if not isinstance(declined, str) or declined not in DECLINES:
+                raise ProtocolError(
+                    "card.invalid_answer", 'a declined question is {"declined": "skipped" | "dismissed" | "replied"}'
+                )
+            return
         answers = body.get("answers")
         if not isinstance(answers, dict) or not all(
             isinstance(k, str) and (isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v)))
@@ -352,6 +394,8 @@ class CardBroker:
             raise ValueError("hold_seconds must not be negative")
         self.hold_seconds = float(hold_seconds)
         self.attached = False
+        # v0.16: set by the server when threads are on; the scope note then names the conversation.
+        self.threads_on = False
         self._open: dict[int, dict[str, _Pending]] = {}
         self._attach_waiters: set[asyncio.Future[None]] = set()
 
@@ -502,7 +546,10 @@ class CardBroker:
         """A permission card for ``tool``, unless the chat already allows it; returns the engine's decision."""
         if self.allowed(chat, tool, input):
             return "allow"
-        card = permission_card(chat.number, tool, input, tool_use_id, chat.folder, suggestions)
+        card = permission_card(
+            chat.number, tool, input, tool_use_id, chat.folder, suggestions,
+            thread=chat.thread is not None, threads_on=self.threads_on,
+        )
         answer = await self.ask(chat, card, send)
         if _is_cancelled(answer) or answer.answer.get("decision") != "allow":
             return ("deny", answer.note)
@@ -514,14 +561,25 @@ class CardBroker:
         return "allow"
 
     async def ask_question(
-        self, chat: Chat, questions: list[dict[str, Any]], send: Send
+        self, chat: Chat, questions: list[dict[str, Any]], send: Send, tool_use_id: str | None = None
     ) -> dict[str, str | list[str]]:
-        """A question card; returns the answers, or raises ``QuestionDeclined`` when the card was cancelled."""
-        answer = await self.ask(chat, question_card(chat.number, questions), send)
+        """A question card; returns the answers.
+
+        Raises ``QuestionDeclined`` when the card was cancelled (no
+        ``declined`` key) or the person declined it (v0.16: the message is
+        ``DECLINES[key]``, ``declined`` the key).
+        """
+        answer = await self.ask(chat, question_card(chat.number, questions, tool_use_id), send)
         if _is_cancelled(answer):
             raise QuestionDeclined(answer.note or "the question was not answered")
+        declined = answer.answer.get("declined")
+        if declined is not None:
+            raise QuestionDeclined(DECLINES[declined], declined=declined)
         answers = answer.answer.get("answers")
         assert isinstance(answers, dict)
+        if not answers:
+            # Backstop: an answer with nothing in it is the person skipping every question.
+            raise QuestionDeclined(DECLINES["skipped"], declined="skipped")
         return dict(answers)
 
     # --- answering and cancelling ----------------------------------------------

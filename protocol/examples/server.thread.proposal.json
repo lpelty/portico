@@ -1,0 +1,13 @@
+{
+  "brief": "Review the Acme pricing page on its own.",
+  "chat": 14,
+  "files": [
+    "/Users/someone/projects/demo/pricing.html"
+  ],
+  "proposal": "p-3f9a",
+  "state": "started",
+  "thread": 15,
+  "tool_use_id": "toolu_09",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "thread.proposal"
+}

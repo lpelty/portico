@@ -272,6 +272,8 @@ final class ViewerPageAddress: ObservableObject {
     static func display(_ url: URL) -> String {
         var host = url.host(percentEncoded: false) ?? url.absoluteString
         if host.hasPrefix("www.") { host.removeFirst(4) }
+        // The port tells two local servers apart (localhost:3000, :8080).
+        if let port = url.port { host += ":\(port)" }
         let path = url.path(percentEncoded: false)
         let base = path.isEmpty || path == "/" ? host : host + path
         guard let fragment = url.fragment(percentEncoded: false), isRoute(fragment) else { return base }
@@ -358,6 +360,16 @@ struct WebPane: NSViewRepresentable {
         /// the same dead URL again, flickering between the attempt and the
         /// failure page. The failure page carries the one way to ask again.
         private(set) var failed: Load?
+        /// The outside link whose navigation failed (the pane shows the
+        /// failure page, whose own URL says nothing), until it loads or
+        /// another load starts. The header names it and Retry asks for it
+        /// (v0.16, candidate 18).
+        private var failedURL: URL?
+        /// The revision and text scale the shown file was last drawn at: a
+        /// visit to an outside site holds re-reads back, and coming back to
+        /// a file drawn for older ones reads it once (v0.16).
+        private var readRevision: String?
+        private var readScale: CGFloat = 1
         /// What the open space's pane was last drawn for (`nil` elsewhere).
         private var revision: String?
         /// The text scale a Markdown page is rendered at (v0.15 §3).
@@ -436,7 +448,15 @@ struct WebPane: NSViewRepresentable {
             let revised = revision != nil && revision != self.revision
             let reread = load == loaded && failed == nil && (revised || rescaled)
             self.revision = revision
-            if reread { return rereadKeepingScroll(load, in: view, scaleOnly: !revised) }
+            // A re-read would take a pane that is on an outside site back
+            // to the file: the revision is noted, the person stays where
+            // they went (v0.16, candidate 18).
+            if reread && (address?.outside != nil || failedURL != nil) { return }
+            if reread {
+                readRevision = self.revision
+                readScale = self.scale
+                return rereadKeepingScroll(load, in: view, scaleOnly: !revised)
+            }
             guard load != loaded else { return }
             start(load, in: view)
         }
@@ -497,7 +517,13 @@ struct WebPane: NSViewRepresentable {
         }
 
         private func noteAddress(of webView: WKWebView) {
-            let outside = ViewerPageAddress.outside(current: webView.url, loaded: loaded)
+            // The failure page has no address of its own: while it is up,
+            // the link that failed is the address.
+            var current = webView.url
+            if let failedURL {
+                if current == nil || current?.absoluteString == "about:blank" { current = failedURL } else { self.failedURL = nil }
+            }
+            let outside = ViewerPageAddress.outside(current: current, loaded: loaded)
             if address?.outside != outside { address?.outside = outside }
         }
 
@@ -506,13 +532,35 @@ struct WebPane: NSViewRepresentable {
             // Marks are drawn again on every load. WebKit calls this on
             // Back too, from its back-forward cache or not (v0.14).
             agent?.pageLoaded(webView)
+            rereadIfDrawnForOlder(in: webView)
             guard let y = pendingScroll else { return }
             pendingScroll = nil
             webView.evaluateJavaScript(Self.restoreScroll(y))
         }
 
+        /// Back on the file after a visit outside, when its revision (or a
+        /// Markdown page's text size) moved meanwhile: read it once.
+        private func rereadIfDrawnForOlder(in view: WKWebView) {
+            guard let load = loaded, failed == nil, failedURL == nil, address?.outside == nil,
+                  let url = view.url, url.absoluteString != "about:blank"
+            else { return }
+            let revised = revision != readRevision
+            var rescaled = false
+            if case .markdown = load { rescaled = scale != readScale }
+            guard revised || rescaled else { return }
+            readRevision = revision
+            readScale = scale
+            rereadKeepingScroll(load, in: view, scaleOnly: !revised)
+        }
+
         /// Ask for the current load again: the failure page's link.
         func retry(in view: WKWebView) {
+            if let link = failedURL {
+                failed = nil
+                pendingScroll = nil
+                view.load(URLRequest(url: link))
+                return
+            }
             guard let load = loaded else { return }
             start(load, in: view)
         }
@@ -520,6 +568,9 @@ struct WebPane: NSViewRepresentable {
         private func start(_ load: Load, in view: WKWebView, scroll: Double? = nil) {
             loaded = load
             failed = nil
+            failedURL = nil
+            readRevision = revision
+            readScale = scale
             pendingScroll = scroll
             view.setValue(Self.drawsBackground(for: load), forKey: "drawsBackground")
             agent?.attach(view, showing: load, coordinator: self, slot: slot)
@@ -568,9 +619,14 @@ struct WebPane: NSViewRepresentable {
             }
         }
 
-        private func showFailure(_ message: String, in view: WKWebView) {
-            failed = loaded
+        /// `link`: an outside page that failed. Then the file's own load did
+        /// not fail (`failed` stays clear, so the space goes on refreshing
+        /// once the person is back); the link is the address and Retry's target.
+        private func showFailure(_ message: String, in view: WKWebView, link: URL? = nil) {
+            failed = link == nil ? loaded : nil
+            failedURL = link
             pendingScroll = nil
+            if let link, address?.outside != link { address?.outside = link }
             view.loadHTMLString(Self.errorPage(message), baseURL: nil)
         }
 
@@ -579,7 +635,12 @@ struct WebPane: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Swift.Error) {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
-            showFailure(error.localizedDescription, in: webView)
+            // The link that failed, when it was an outside page (the
+            // failure page replaces it, and Retry must ask for it).
+            let link = (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL).flatMap {
+                ViewerPageAddress.outside(current: $0, loaded: loaded)
+            }
+            showFailure(error.localizedDescription, in: webView, link: link)
         }
 
         func webView(

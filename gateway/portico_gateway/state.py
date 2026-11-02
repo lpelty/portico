@@ -6,7 +6,8 @@ Everything the gateway keeps between launches lives in one directory,
 - ``token``        per-launch secret the app presents at connect (mode 0600)
 - ``ledger.json``  host, port, pid, epoch of the running gateway — a hint the
                    app probes with ``hello`` and the token, never trusted
-- ``index.json``   the chats: numbers, folders, engine session ids, artifacts
+- ``index.json``   the chats: numbers, folders, engine session ids, artifacts;
+                   (v0.16) thread proposals
 - ``commands.json`` the agent's slash commands, last list per folder (v0.11
                    item 66) — a cache: unreadable is empty, never an error
 - ``gateway.lock`` flock that refuses a second gateway on the same directory
@@ -23,7 +24,16 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .messages import AgentCommand, Artifact, ChatStateWord, ModelChoice, PermissionMode, PermissionOutcome
+from .messages import (
+    AgentCommand,
+    Artifact,
+    ChatStateWord,
+    ModelChoice,
+    PermissionMode,
+    PermissionOutcome,
+    ProposalState,
+    ThreadInfo,
+)
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
@@ -54,6 +64,15 @@ class ToolPermission(BaseModel):
 
     outcome: PermissionOutcome
     note: str | None = None
+
+
+class QuestionOutcome(BaseModel):
+    """What became of one question tool use (v0.16): its answers, or the decline's key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answers: dict[str, str | list[str]] | None = None
+    declined: str | None = None
 
 
 class ChatRecord(BaseModel):
@@ -88,6 +107,10 @@ class ChatRecord(BaseModel):
     # ``tool_use_id`` (newest ``TOOL_PERMISSIONS_KEPT``), so rows replayed
     # from the transcript after a restart read as they did live.
     permissions: dict[str, ToolPermission] = {}
+    # v0.16: the outcome of each question tool use, by ``tool_use_id``
+    # (newest ``TOOL_PERMISSIONS_KEPT``), so the question's row replayed from
+    # the transcript carries its answers.
+    answers: dict[str, QuestionOutcome] = {}
     # v0.4: when the session was last logged (``session.log``, or a
     # renewal's log step that finished cleanly), and whether a turn has
     # finished since (``None`` in an older index: the registry infers it).
@@ -96,6 +119,26 @@ class ChatRecord(BaseModel):
     # v0.6: when a turn last finished (``None`` before the first, or in an
     # older index).
     last_reply: str | None = None
+    # v0.16: set on a thread (``None`` on Main, every other chat, and in an
+    # older index).
+    thread: ThreadInfo | None = None
+
+
+class ProposalRecord(BaseModel):
+    """A thread Main's agent proposed (v0.16), kept until started, dismissed, or Main's session ends.
+
+    ``chat`` is the Main session it was proposed in; ``tool_use_id`` the
+    ``open_thread`` tool row it belongs to; ``thread`` the chat it started.
+    """
+
+    id: str
+    chat: int
+    tool_use_id: str | None
+    brief: str
+    files: list[str]
+    created: str
+    state: ProposalState
+    thread: int | None = None
 
 
 class Index(BaseModel):
@@ -113,6 +156,8 @@ class Index(BaseModel):
     # starts. Defaults so an older index loads unchanged.
     model: str | None = None
     models: list[ModelChoice] = []
+    # v0.16: thread proposals, oldest first (the newest ``PROPOSALS_KEPT``).
+    proposals: list[ProposalRecord] = []
 
 
 class CommandLists(BaseModel):

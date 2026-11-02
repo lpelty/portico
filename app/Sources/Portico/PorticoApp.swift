@@ -145,6 +145,15 @@ struct PorticoApp: App {
                     Button(space.title) { model.openSpaceAt(index + 1) }
                         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
+                // v0.16 §2.4: Main and the open threads take ⌃0–⌃2 (⌘ is the spaces').
+                let conversations = ThreadMenuItem.items(threads: model.threads, threadsOn: model.threadsOn)
+                if !conversations.isEmpty {
+                    Divider()
+                    ForEach(conversations) { item in
+                        Button(item.title) { model.switchToConversation(slot: item.slot) }
+                            .keyboardShortcut(KeyEquivalent(Character(item.key)), modifiers: .control)
+                    }
+                }
             }
             CommandGroup(replacing: .appInfo) {
                 Button("About \(model.brand.name)") {

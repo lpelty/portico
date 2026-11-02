@@ -82,6 +82,7 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         let coordinator: WebPane.Coordinator
         let address: ViewerPageAddress
         let view: WKWebView
+        let file: URL
     }
 
     /// An HTML file with an anchor, opened in a pane wired to an address.
@@ -104,7 +105,7 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         window.contentView = view
         keepAlive = [window, view, coordinator, address]
         coordinator.apply(.html(file), to: view)
-        return Rig(coordinator: coordinator, address: address, view: view)
+        return Rig(coordinator: coordinator, address: address, view: view, file: file)
     }
 
     private func poll(_ what: String, seconds: Double = 10, _ condition: @MainActor () -> Bool) async throws {
@@ -180,5 +181,156 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         rig.view.loadHTMLString("<!doctype html><p>Away</p>", baseURL: URL(string: "https://example.com/away")!)
         try await poll("the old view went on") { !rig.view.isLoading && rig.view.url?.host == "example.com" }
         XCTAssertNil(rig.address.outside, "nothing written after dismantling")
+    }
+
+    /// Wait until every JavaScript call asked so far has been answered (and
+    /// so every re-read it would have started has been started).
+    private func settle(_ rig: Rig) async throws {
+        _ = try await rig.view.evaluateJavaScript("0")
+        await Task.yield()
+    }
+
+    private func heading(_ rig: Rig) async -> String {
+        (try? await rig.view.evaluateJavaScript("document.querySelector('h1') ? document.querySelector('h1').textContent : ''")) as? String ?? ""
+    }
+
+    /// The space's file, edited the way an agent edits it between heartbeats.
+    private func rewrite(_ rig: Rig, heading: String) throws {
+        try """
+            <!doctype html><html><head><meta charset=utf-8><title>Trail</title></head>
+            <body><h1>\(heading)</h1><div style="height:3000px"></div></body></html>
+            """.write(to: rig.file, atomically: true, encoding: .utf8)
+    }
+
+    /// The file open as a space at revision "1", settled.
+    private func openedSpace() async throws -> Rig {
+        let rig = try rig()
+        try await poll("the file loads") { !rig.view.isLoading && rig.view.url?.lastPathComponent == "trail-detail.html" }
+        rig.coordinator.apply(.html(rig.file), revision: "1", to: rig.view)  // a new revision: read again
+        try await settle(rig)
+        try await poll("the file is settled") { !rig.view.isLoading && rig.view.url?.lastPathComponent == "trail-detail.html" }
+        return rig
+    }
+
+    private func goOutside(_ rig: Rig) async throws {
+        rig.view.loadHTMLString(
+            "<!doctype html><html><body><h1>Elsewhere</h1><div style=\"height:3000px\"></div></body></html>",
+            baseURL: URL(string: "https://example.com/start")!)
+        try await poll("the outside page is noted") {
+            !rig.view.isLoading && rig.view.url?.host == "example.com" && self.shown(rig) == "example.com/start"
+        }
+    }
+
+    private func backAtTheFile(_ rig: Rig) async throws {
+        rig.view.goBack()
+        try await poll("back at the file") {
+            !rig.view.isLoading && rig.view.url?.lastPathComponent == "trail-detail.html" && rig.address.outside == nil
+        }
+    }
+
+    private func failedLink(_ rig: Rig) async throws -> URL {
+        let port = try await freeLoopbackPort()
+        let link = URL(string: "http://127.0.0.1:\(port)/docs")!
+        rig.view.load(URLRequest(url: link))
+        try await poll("the link fails") {
+            rig.address.outside == link && rig.view.url?.absoluteString == "about:blank" && !rig.view.isLoading
+        }
+        return link
+    }
+
+    /// v0.16 candidate 18: a space's heartbeat re-read does not pull a pane
+    /// that is on an outside site back to the space's file.
+    func testAHeartbeatRereadLeavesAnOutsidePageWhereItIs() async throws {
+        let rig = try await openedSpace()
+        try await goOutside(rig)
+
+        rig.coordinator.apply(.html(rig.file), revision: "2", to: rig.view)
+        try await settle(rig)
+        XCTAssertEqual(rig.view.url?.host, "example.com", "the re-read leaves the outside page in place")
+        XCTAssertEqual(shown(rig), "example.com/start")
+    }
+
+    /// The normal case: back from an outside page, a new revision is read again.
+    func testAfterBackFromAnOutsidePageANewRevisionIsReadAgain() async throws {
+        let rig = try await openedSpace()
+        try await goOutside(rig)
+        try await backAtTheFile(rig)
+        try rewrite(rig, heading: "Acme trail v2")
+        rig.coordinator.apply(.html(rig.file), revision: "2", to: rig.view)
+        try await poll("the file is read again") { rig.view.url?.lastPathComponent == "trail-detail.html" && !rig.view.isLoading }
+        try await pollAsync("the new revision shows") { await self.heading(rig) == "Acme trail v2" }
+    }
+
+    /// A revision that arrived during the visit is read when the person comes back.
+    func testARevisionThatMovedDuringTheVisitIsReadOnBack() async throws {
+        let rig = try await openedSpace()
+        try await goOutside(rig)
+        try rewrite(rig, heading: "Acme trail v2")
+        rig.coordinator.apply(.html(rig.file), revision: "2", to: rig.view)
+        try await settle(rig)
+        XCTAssertEqual(rig.view.url?.host, "example.com")
+        try await backAtTheFile(rig)
+        try await pollAsync("the new revision shows") { await self.heading(rig) == "Acme trail v2" }
+    }
+
+    /// v0.16 candidate 18: a failed outside link shows its own address, and
+    /// Retry asks for it, not for the file.
+    func testAFailedOutsideLinkShowsItsAddressAndRetryRetriesIt() async throws {
+        let rig = try await openedSpace()
+        let link = try await failedLink(rig)
+        XCTAssertEqual(rig.address.outside, link, "the header names the link, not the file")
+        XCTAssertEqual(rig.address.outside.map(ViewerPageAddress.display), "127.0.0.1:\(link.port ?? 0)/docs")
+
+        let server = FakeHealthServer(port: UInt16(link.port ?? 0))
+        try await server.start()
+        defer { server.stop() }
+        rig.coordinator.retry(in: rig.view)
+        try await poll("the link is asked for") { server.requests > 0 }
+        try await poll("the page arrives") { !rig.view.isLoading && rig.view.url == link }
+        XCTAssertEqual(rig.address.outside, link)
+        XCTAssertNil(rig.coordinator.failed)
+
+        // Back goes to the space's file, not to the failure page.
+        try await backAtTheFile(rig)
+    }
+
+    /// The failure of an outside link does not freeze the space: Back to the
+    /// file, and a new revision is read.
+    func testAfterAFailedOutsideLinkAndBackTheSpaceRefreshesAgain() async throws {
+        let rig = try await openedSpace()
+        _ = try await failedLink(rig)
+        try await backAtTheFile(rig)
+        try rewrite(rig, heading: "Acme trail v2")
+        rig.coordinator.apply(.html(rig.file), revision: "2", to: rig.view)
+        try await pollAsync("the new revision shows") { await self.heading(rig) == "Acme trail v2" }
+    }
+
+    /// A failure of the address the viewer opened is its own: Retry asks for it through the load.
+    func testAFailureOfTheOpenedAddressStillRetriesTheLoad() async throws {
+        let port = try await freeLoopbackPort()
+        let dead = URL(string: "http://127.0.0.1:\(port)/")!
+        let address = ViewerPageAddress()
+        let coordinator = WebPane.Coordinator()
+        coordinator.address = address
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator, address]
+        coordinator.apply(.url(dead), to: view)
+        try await poll("it fails") { coordinator.failed == .url(dead) && view.url?.absoluteString == "about:blank" && !view.isLoading }
+        XCTAssertNil(address.outside, "the opened address is not an outside site")
+        let server = FakeHealthServer(port: UInt16(port))
+        try await server.start()
+        defer { server.stop() }
+        coordinator.retry(in: view)
+        try await poll("the address is asked for") { server.requests > 0 }
+        XCTAssertNil(coordinator.failed)
+    }
+
+    private func pollAsync(_ what: String, seconds: Double = 10, _ condition: @MainActor () async -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while !(await condition()) {
+            if ContinuousClock.now >= deadline { throw PollTimeout(what: what) }
+            try await Task.sleep(for: .milliseconds(20))
+        }
     }
 }

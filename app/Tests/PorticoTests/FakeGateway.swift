@@ -199,10 +199,21 @@ final class FakeHealthServer: @unchecked Sendable {
     private var _port: UInt16 = 0
     let body: String
     let status: String
+    /// Listen on this port instead of any free one (a port that was dead a moment ago).
+    let fixedPort: UInt16?
+    private var _requests = 0
 
-    init(body: String = #"{"epoch":"abc","protocol":1}"#, status: String = "200 OK") {
+    init(body: String = #"{"epoch":"abc","protocol":1}"#, status: String = "200 OK", port: UInt16? = nil) {
         self.body = body
         self.status = status
+        self.fixedPort = port
+    }
+
+    /// How many requests have been answered.
+    var requests: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _requests
     }
 
     var port: Int {
@@ -214,7 +225,7 @@ final class FakeHealthServer: @unchecked Sendable {
     func start() async throws {
         let params = NWParameters.tcp
         params.requiredInterfaceType = .loopback
-        let listener = try NWListener(using: params, on: .any)
+        let listener = try NWListener(using: params, on: fixedPort.flatMap { NWEndpoint.Port(rawValue: $0) } ?? .any)
         self.listener = listener
         listener.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
@@ -222,6 +233,9 @@ final class FakeHealthServer: @unchecked Sendable {
             conn.start(queue: self.queue)
             conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] _, _, _, _ in
                 guard let self else { return }
+                self.lock.lock()
+                self._requests += 1
+                self.lock.unlock()
                 let payload = Data(self.body.utf8)
                 let head = "HTTP/1.1 \(self.status)\r\nContent-Type: application/json\r\nContent-Length: \(payload.count)\r\nConnection: close\r\n\r\n"
                 conn.send(content: Data(head.utf8) + payload, completion: .contentProcessed { _ in

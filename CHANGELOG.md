@@ -1,5 +1,127 @@
 # Changelog
 
+## v0.16.0 (2026-11-02)
+
+### What a person gets (app)
+
+- **Threads.** Main's agent can propose another conversation with the same
+  agent, in the same folder, for a task that can run alongside: a card in
+  Main titled "Start Thread 1" shows the brief with Start Thread 1 / Not now
+  (the agent is told "Proposed as Thread 1; it opens if the person starts
+  it."). Starting it opens the thread on
+  that brief and leaves you in Main; the card then reads "Thread 1 started"
+  with Go to Thread 1. A thread takes the brief and any files named with
+  it, not Main's conversation ("It takes this brief, not this
+  conversation."). There are at most two besides Main. At the limit the
+  card offers "Close a thread to start another" and Close and start.
+- **Moving between them.** ⌃0 is Main, ⌃1 and ⌃2 the threads (also in the
+  View menu); ⌘0-⌘9 stay Work and the spaces. The sidebar's Conversations
+  section is one list in a fixed order, Main, Thread 1, Thread 2, so
+  nothing moves when you switch: Main (a speech bubble, "Session 4 ·
+  Mobile login screen") and each thread (a branch, its title) on the same
+  left edge, each with its state (working, needs you, new reply, last
+  reply). The row you're in opens into its card: Context and its meter,
+  then Log session and New for Main, or Log session and Close thread for
+  a thread ("Close writes a summary to History"); the two buttons share a
+  row when they fit and stack when they don't, so the list fits the
+  sidebar at any text size. Click a row to switch to it. There is no
+  toolbar button back to Main: the list says where you are. In a thread the
+  first message is drawn as its brief ("BRIEF FROM MAIN · 2:05 PM").
+  Buttons, cards and rows show no key glyph: the tooltip spells the key
+  ("Go to Thread 1 (Control-1)"). With threads off, the sidebar is the
+  single-session card as before.
+  Close a working thread and it asks first. If the log step can't start, the
+  card offers Close without logging.
+- **A thread that needs you** shows "Needs you" on its sidebar row, and in
+  Main a calling card ("Thread 2 has a question") with Go to Thread 2 and
+  Later. The calling card shows in Main only.
+- **A thread that finishes while you're elsewhere** shows Main a card
+  "Thread 1 is done" with the first line of its last reply, Go to Thread 1
+  and Dismiss, and its sidebar row an accent dot and "New reply" until you
+  open it. Opening the thread clears both; Dismiss clears the card. A
+  thread's question shows instead of its done card. Like the calling card,
+  the app draws it: it never enters Main's transcript or its agent's
+  context, and it does not come back after a restart.
+- **Questions and permissions dock above the composer,** in the pattern of
+  Claude's own: numbered options (1-4 on the keyboard, ↑/↓ and Return), the
+  recommended option first, a pager for several questions ("1 of 2"), a
+  "Something else" field, Skip, and × to dismiss. "Or reply directly..."
+  sends what you type as an ordinary message and declines the question. A
+  question card takes the keyboard when it appears only if the composer is
+  empty or unfocused, so a Return you were typing is never an answer. A
+  permission card has Allow once, Allow for this session and Deny; neither
+  a stray Return nor a digit grants anything until you have moved the focus
+  with an arrow or clicked a row (the pointer resting on a row does not
+  count). The first arrow shows Allow once, and the highlighted row is
+  always the one Return answers. There is no "Allow always". An answered
+  question shows in the transcript as your reply: a bubble like a sent
+  message, "Answer to: Which tone for step 2?" over the option you chose or
+  the words you typed in full, one pair per question. A declined question
+  keeps a one-line record ("Asked: Which tone for step 2? · Not answered").
+  Both survive a restart.
+- **The preview column needs an agent that sends previews.** An option's
+  `preview` shows beside the options, rendered as Markdown. The CLI does not
+  offer previews to an SDK agent (Portico sets nothing to change that), so
+  most cards have none until an agent sends one.
+- **New space is a dialog.** Name and "What do you want?", then Create; it
+  sends "New space: <name>" and the words to Main (or starts the first
+  session when there is no Main). Create is dimmed with the reason shown when
+  Main is busy or no folder is set. The old prefill of the composer is gone.
+- **Each conversation keeps its place.** Main, a thread or an earlier session
+  reopens at the row and point you left it, and at the bottom if you were
+  following. The transcript's scroll is now on `ScrollPosition`.
+- **An outside site in a space** keeps its page when the space is re-read
+  in the background, a failed link keeps its address (with its port) and Retry
+  retries that link, and Back after a visit reads a revision that moved
+  meanwhile.
+
+### Protocol and gateway
+
+- Capability `threads.v1`, in single presentation when `[threads] max` is
+  above 0 (0 to 2, default 2; 0 turns threads off: no tool, no thread UI).
+  `ChatSummary.thread` (`label, slot, parent, brief, files, opened_at`),
+  `thread.proposal` (state frame), `thread.start`, `thread.dismiss`,
+  `thread.close` (with `log: false` to close without a log step), and
+  `hello.threads_max`. Additive: an older app sees threads as chats; an
+  older gateway has no capability and the app shows no thread UI.
+- Main's engine gets an in-process `open_thread` tool; a thread is a gateway
+  chat that never renews (`thread.renew`). Main is the newest live chat
+  without a `thread`, in the gateway and the app, whatever the capability.
+  A folder change, or `max = 0` at start, closes open threads with their log
+  steps.
+- Questions: `Option.preview`, `card.answer` `{"declined": "skipped" |
+  "dismissed" | "replied"}` (the agent reads the matching message), and
+  `tool.finished.answers`, live and in replay, recorded per `tool_use_id`.
+  `CardAsk.tool_use_id` is set on question cards. An answer with an empty
+  `answers` map is treated as the "skipped" decline.
+- **For plug-in and engine authors:** `EngineCallbacks.on_question` now
+  receives `tool_use_id` (`on_question(questions, tool_use_id="")`); an owner
+  with the old one-argument signature must add it.
+- Gateway version 0.16.0 to match the app.
+
+### Small items
+
+- **A thread's "Allow for this session"** covers that thread only; its scope
+  note says "until you start a new session" in Main and "until you close
+  this thread" in a thread.
+- **Three v0.15 strings** that named a particular cloud provider in the
+  model-pricing note are now neutral.
+- **Owed, and said plainly.** Two cases of the scroll rework are guard
+  tests only, unproven pending an on-screen check: (2) SwiftUI restoring an offset during a trackpad
+  gesture, and (3) a long streamed reply when the column narrows from 900 to
+  640. The field report of "empty space under the
+  conversation" (11-02, item 11) is not reproduced; guards added, and a
+  diagnostic now logs it (next item).
+- **If the blank space comes back,** please send the log line the app writes
+  when it sees it (it logs once per occurrence, after a second of blank with
+  no scrolling):
+  `log show --predicate 'subsystem BEGINSWITH "dev.portico" AND category == "transcript"' --last 1h`.
+  It names the chat, the document height, the clip bounds, the last row's
+  frame, the scroll phase and whether the view was at the bottom edge.
+- **Deployments:** ⌃1 and ⌃2 can be taken by macOS when "Switch to Desktop N"
+  is on in Mission Control's keyboard shortcuts; turn those off, or use the
+  View menu or the sidebar.
+
 ## v0.15.0 (2026-11-02)
 
 ### What a person gets (app)
@@ -13,7 +135,7 @@
   model it runs ("Fable 5.1", not "Default"), in the strip and in its menu
   row. Until a list has ever arrived, the strip shows the name without a
   menu. Descriptions show no pricing (an API-key login adds it; it is
-  wrong for Bedrock).
+  wrong for other providers).
 - **Text size.** Settings → Appearance has a Text size setting, under
   Appearance, which is now a pop-up. It scales the conversation, the
   sidebar (the Files tree's names and headers too), the menus and the

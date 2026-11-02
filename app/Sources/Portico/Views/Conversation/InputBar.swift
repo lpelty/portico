@@ -96,6 +96,15 @@ struct InputBar: View {
         }
         .onAppear { editorFocused = true }
         .onChange(of: model.composerFocusRequests) { editorFocused = true }
+        // Said to the model, so a card docking leaves typed text alone (v0.16).
+        .onChange(of: editorFocused, initial: true) { _, focused in
+            if focused {
+                model.focusedComposer = chat
+            } else if model.focusedComposer == chat {
+                model.focusedComposer = nil
+            }
+        }
+        .onDisappear { if model.focusedComposer == chat { model.focusedComposer = nil } }
     }
 
     /// The frame's Input: one bordered box in the control colour holding the
@@ -172,7 +181,10 @@ struct InputBar: View {
         }
         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
         .keyboardShortcut(.return, modifiers: .command)
-        .help(busy ? "Send at \(model.hello?.brand.agentName ?? model.brand.name)'s next step (Enter)" : "Send (Enter)")
+        .help(
+            model.dockedQuestion(for: chat) != nil
+                ? "Reply instead of answering the question (Enter)"
+                : busy ? "Send at \(model.hello?.brand.agentName ?? model.brand.name)'s next step (Enter)" : "Send (Enter)")
         .disabled(!canSend)
     }
 
@@ -231,12 +243,28 @@ struct InputBar: View {
     }
 
     private var placeholder: String {
+        Self.placeholder(
+            connected: connected, renewing: renewing, logging: logging, sending: sending, about: about,
+            agentName: model.hello?.brand.agentName ?? model.brand.name,
+            thread: model.thread(of: chat)?.label,
+            questionDocked: model.dockedQuestion(for: chat) != nil)
+    }
+
+    /// The editor's placeholder; in a thread, "Reply in Thread 2" (v0.16
+    /// §2.3); under a docked question, "Or reply directly…" (§3.2): a send
+    /// then declines the question and goes as the reply (`replyDirectly`).
+    static func placeholder(
+        connected: Bool, renewing: Bool, logging: Bool, sending: Bool, about: String?, agentName: String, thread: String?,
+        questionDocked: Bool = false
+    ) -> String {
         if !connected { return "Not connected" }
         if renewing { return "Starting the next session…" }
         if logging { return "Logging the session…" }
         if sending { return "Sending…" }
+        if questionDocked { return "Or reply directly…" }
         if let about { return "Ask about \(URL(fileURLWithPath: about).lastPathComponent)" }
-        return "Ask \(model.hello?.brand.agentName ?? model.brand.name), or drop a file here"
+        if let thread { return "Reply in \(thread)" }
+        return "Ask \(agentName), or drop a file here"
     }
 
     private var chips: some View {
@@ -360,24 +388,28 @@ struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary(Color), quiet }
 
     let kind: Kind
+    /// 12-pt text and 10-pt sides, for two pills sharing a sidebar card's
+    /// row (v0.16 §9.6, AP4/AP5).
+    var compact = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Pill(kind: kind, configuration: configuration)
+        Pill(kind: kind, compact: compact, configuration: configuration)
     }
 
     /// The drawn pill; a view of its own so it can track the pointer.
     private struct Pill: View {
         let kind: Kind
+        let compact: Bool
         let configuration: ButtonStyleConfiguration
         @Environment(\.isEnabled) private var isEnabled
         @State private var hovering = false
 
     var body: some View {
         configuration.label
-            .scaledFont(13, weight: .medium)
+            .scaledFont(compact ? 12 : 13, weight: .medium)
             .foregroundStyle(foreground)
             .padding(.vertical, 6)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, compact ? 10 : 14)
             .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
                 if case .quiet = kind {

@@ -31,6 +31,8 @@ enum ToolbarLayout {
         }
     }
 
+    /// No thread item (v0.16 §9.6): the sidebar's conversation list says
+    /// where you are and is the way back; ⌃0 and the View menu still work.
     static func items(showSwitcher: Bool, showViewerToggle: Bool) -> [Item] {
         var items: [Item] = [.sidebarToggle, .brand]
         if showSwitcher { items.append(.switcher) }
@@ -43,8 +45,6 @@ enum ToolbarLayout {
 enum SpacesPresentation {
     /// ⌘0 is Work; ⌘1–⌘9 the first nine spaces.
     static let shortcutDigits = Array(0...9)
-
-    static let newSpacePrefill = "New space: "
 
     /// The SPACES section's note when there are none yet.
     static let noSpacesText = "No spaces yet"
@@ -74,13 +74,6 @@ enum SpacesPresentation {
         f.dateStyle = .none
         f.timeStyle = .short
         return "Updated — " + f.string(from: date)
-    }
-
-    /// "New space: " before whatever is already typed; a blank draft just gets the prefill.
-    static func newSpaceDraft(existing: String) -> String {
-        if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return newSpacePrefill }
-        if existing.hasPrefix(newSpacePrefill) { return existing }
-        return newSpacePrefill + existing
     }
 
     /// The menu's list scrolls past this height (about nine rows); Work, New space… and the hint stay put.

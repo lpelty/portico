@@ -16,9 +16,17 @@ import pytest
 from portico_gateway import __version__
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config, ConfigError, load_config
-from portico_gateway.engine import VIEWER_PROMPT, build_options, deployment_system_prompt
+from portico_gateway.engine import (
+    OPEN_THREAD_TOOL_NAME,
+    SHOW_TOOL_NAME,
+    VIEWER_PROMPT,
+    append_prompt_line,
+    build_options,
+    deployment_system_prompt,
+)
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import StateDir
+from portico_gateway.threads import MAIN_PROMPT
 from tests.conftest import make_config
 from tests.test_server import attach
 from tests.test_turns import EngineFactory, new_chat
@@ -123,6 +131,49 @@ def test_without_a_viewer_the_prompt_is_passed_as_is(tmp_path: Path) -> None:
     assert options.system_prompt == PRESET
     empty = build_options(tmp_path, None, ["project"], PlainCallbacks())  # type: ignore[arg-type]
     assert empty.system_prompt is None
+
+
+def test_append_prompt_line() -> None:
+    assert append_prompt_line(None, "Line.") == "Line."
+    assert append_prompt_line("", "Line.") == "Line."
+    assert append_prompt_line("Mine.", "Line.") == "Mine.\n\nLine."
+    assert append_prompt_line(PRESET, "Line.") == {**PRESET, "append": "Line."}
+    assert append_prompt_line({**PRESET, "append": "Acme."}, "Line.") == {**PRESET, "append": "Acme.\n\nLine."}
+    assert append_prompt_line({"type": "custom", "prompt": "Mine."}, "Line.") == {"type": "custom", "prompt": "Mine.\n\nLine."}
+    unknown = {"type": "file", "path": "/x"}
+    assert append_prompt_line(unknown, "Line.") == unknown
+
+
+class MainCallbacks(ShowingCallbacks):
+    async def on_open_thread(self, brief: str, files: list[str]) -> str:
+        return "Proposed."
+
+    def note_thread_use(self, tool_use_id: str, tool_input: dict[str, object]) -> None:
+        pass
+
+
+class ThreadOnlyCallbacks:
+    async def on_open_thread(self, brief: str, files: list[str]) -> str:
+        return "Proposed."
+
+    def note_thread_use(self, tool_use_id: str, tool_input: dict[str, object]) -> None:
+        pass
+
+
+def test_mains_line_comes_before_the_viewer_line(tmp_path: Path) -> None:
+    base = append_prompt_line(PRESET, MAIN_PROMPT)
+    options = build_options(tmp_path, None, ["project"], MainCallbacks(), system_prompt=base)  # type: ignore[arg-type]
+    assert options.system_prompt == {**PRESET, "append": f"{MAIN_PROMPT}\n\n{VIEWER_PROMPT}"}
+    assert options.allowed_tools == [SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME]
+    matchers = [m.matcher for m in options.hooks["PreToolUse"]]  # type: ignore[index]
+    assert OPEN_THREAD_TOOL_NAME in matchers
+
+
+def test_the_thread_tool_without_a_viewer(tmp_path: Path) -> None:
+    options = build_options(tmp_path, None, ["project"], ThreadOnlyCallbacks(), system_prompt=PRESET)  # type: ignore[arg-type]
+    assert options.allowed_tools == [OPEN_THREAD_TOOL_NAME]
+    assert options.system_prompt == PRESET, "no viewer line without a viewer"
+    assert "portico" in options.mcp_servers  # type: ignore[operator]
 
 
 # --- the gateway sets it on every engine ----------------------------------------

@@ -23,9 +23,11 @@ from claude_agent_sdk import (
 )
 
 from portico_gateway import engine as engine_mod
+from portico_gateway.cards import DECLINES
 from portico_gateway.engine import (
     Engine,
     EngineCallbacks,
+    QuestionDeclined,
     SDKEngine,
     build_can_use_tool,
     build_options,
@@ -200,7 +202,18 @@ async def test_question_routes_to_on_question_and_returns_updated_input() -> Non
     assert result.updated_input == {"questions": questions, "answers": {"Which colour?": "Blue"}}
     assert result.updated_permissions is None
     assert cb.questions == [questions]
+    assert cb.question_ids == ["toolu_9"]  # v0.16: the outcome is recorded by the tool row's id
     assert cb.permissions == []  # never treated as a permission
+
+
+async def test_a_declined_question_denies_with_the_decline_message() -> None:
+    class Declining(RecordingCallbacks):
+        async def on_question(self, questions: list[dict[str, Any]], tool_use_id: str = "") -> dict[str, str | list[str]]:
+            raise QuestionDeclined(DECLINES["replied"], declined="replied")
+
+    result = await build_can_use_tool(Declining())("AskUserQuestion", {"questions": []}, _ctx())
+    assert isinstance(result, PermissionResultDeny)
+    assert result.message == "The person replied in the conversation instead."
 
 
 async def test_permission_routes_to_on_permission_with_suggestions_as_dicts() -> None:

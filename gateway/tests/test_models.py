@@ -729,7 +729,7 @@ def test_hooks_off_merges_into_existing_settings() -> None:
 
 
 def test_model_choices_drop_the_price_from_descriptions() -> None:
-    """Larry 11-02: no pricing in the menu (API-key logins add it; it's wrong for Bedrock); the rest stays."""
+    """Larry 11-02: no pricing in the menu (API-key logins add it; it's wrong for other providers); the rest stays."""
     raw = [
         {"value": "default", "displayName": "Default (recommended)",
          "description": "Use the default model (currently Opus 5.5) · $4/$20 per Mtok"},

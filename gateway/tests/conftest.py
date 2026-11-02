@@ -38,9 +38,10 @@ class AskPermission:
 
 @dataclass
 class AskQuestion:
-    """Mid-turn: the engine asks ``on_question``."""
+    """Mid-turn: the engine asks ``on_question`` (v0.16: with the question tool's ``tool_use_id``)."""
 
     questions: list[dict[str, Any]]
+    tool_use_id: str = ""
 
 
 @dataclass
@@ -103,6 +104,7 @@ class RecordingCallbacks:
         self.events: list[ServerMessage] = []
         self.permissions: list[tuple[str, dict[str, Any], list[dict[str, Any]], str]] = []
         self.questions: list[list[dict[str, Any]]] = []
+        self.question_ids: list[str] = []
         self.compactions: list[str] = []
         # v0.10: every ``on_show`` call, and what it answers (``None``: shown).
         self.shown: list[list[str]] = []
@@ -124,8 +126,9 @@ class RecordingCallbacks:
         self.permissions.append((tool, input, suggestions, tool_use_id))
         return self.permission_decision
 
-    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+    async def on_question(self, questions: list[dict[str, Any]], tool_use_id: str = "") -> dict[str, str | list[str]]:
         self.questions.append(questions)
+        self.question_ids.append(tool_use_id)
         return dict(self.question_answers)
 
 
@@ -238,7 +241,7 @@ class FakeEngine:
                 self.decisions.append(decision)
             elif isinstance(item, AskQuestion):
                 try:
-                    self.answers.append(await cb.on_question(item.questions))
+                    self.answers.append(await cb.on_question(item.questions, item.tool_use_id))
                 except QuestionDeclined as e:
                     self.answers.append(("declined", str(e)))
             elif isinstance(item, Compact):

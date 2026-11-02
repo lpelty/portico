@@ -495,3 +495,57 @@ async def test_a_message_queued_while_the_stop_winds_down_returns_too(
         assert not any(call[0] == "inject" or call == ("send", "after the stop") for call in engine.calls)
     finally:
         await conn.close()
+
+
+async def test_reply_directly_order(server: GatewayServer, factory: EngineFactory, folder: Path) -> None:
+    # v0.16 "Reply directly": a send while a question card is up is queued;
+    # the app declines the card as ``replied``; the agent reads the decline,
+    # then the reply, in the same turn.
+    from portico_gateway.messages import CardAnswer, CardAnswered, CardAsk
+    from tests.conftest import AskQuestion
+
+    questions = [
+        {
+            "question": "Which tone for step 2?",
+            "header": "Tone",
+            "options": [{"label": "Plain", "description": "short"}, {"label": "Warm", "description": "friendly"}],
+            "multiSelect": False,
+        }
+    ]
+    replied = "The person replied in the conversation instead."
+    conn = await attach_queueing(server)
+    try:
+        number = await new_chat(conn, folder)
+        engine = factory.last
+        engine.script(
+            tool_use("toolu_q", "AskUserQuestion", {"questions": questions}),
+            AskQuestion(questions, tool_use_id="toolu_q"),
+            tool_result("toolu_q", replied, is_error=True),
+            text_delta("Short it is."),
+            fake_result(),
+        )
+        await conn.send(dump(MessageSend(ts=TS, chat=number, id="req-1", text="Draft step 2.")))
+        card = (await recv_until(conn, CardAsk))[-1]
+        await recv(conn)  # chat.state waiting on you
+
+        listing = await queue(conn, number, "Use the short one", "req-2")
+        assert [i.text for i in listing.items] == ["Use the short one"]
+
+        await conn.send(dump(CardAnswer(ts=TS, chat=number, id=card.id, answer={"declined": "replied"})))
+        answered = await recv(conn)
+        assert isinstance(answered, CardAnswered) and answered.id == card.id, answered
+        frames = await recv_until(conn, TurnFinished)
+        await engine.wait_idle()
+        assert engine.answers == [("declined", replied)]
+        # Right after the question's row ends: the queue empties and the reply
+        # is the person's, inside the same turn.
+        at = next(i for i, f in enumerate(frames) if isinstance(f, ToolFinished) and f.tool_use_id == "toolu_q")
+        finished = frames[at]
+        assert isinstance(finished, ToolFinished) and finished.ok is False and finished.answers is None
+        assert [type(f) for f in frames[at : at + 3]] == [ToolFinished, ChatQueue, UserText]
+        said = frames[at + 2]
+        assert isinstance(said, UserText) and said.text == "Use the short one" and said.turn == 1
+        assert ("inject", "Use the short one") in engine.calls
+        assert [m for m in frames if isinstance(m, TurnStarted)] == []
+    finally:
+        await conn.close()

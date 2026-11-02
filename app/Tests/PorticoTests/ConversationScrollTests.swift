@@ -33,13 +33,13 @@ final class ConversationScrollTests: XCTestCase {
     /// the conversation to its end.
     func testAReadingDuringTheReflowIsNotTakenAsWhereThePersonIs() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true), "the person, scrolled up")
-        XCTAssertNil(memory.observe(width: 820, atBottom: true, byPerson: false), "a reflow step that happens to read as the bottom")
-        XCTAssertNil(memory.observe(width: 640, atBottom: true, byPerson: false), "still the reflow: no snap to the end")
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false), "and back: still none")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true), "the person, scrolled up")
+        XCTAssertNil(memory.observe(width: 820, atBottom: true, scrolling: false), "a reflow step that happens to read as the bottom")
+        XCTAssertNil(memory.observe(width: 640, atBottom: true, scrolling: false), "still the reflow: no snap to the end")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false), "and back: still none")
         // The person's own scroll at an unchanged width counts again.
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true))
-        XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false), .bottom, "at the bottom by the person's own scroll")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: true))
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, scrolling: false), .bottom, "at the bottom by the person's own scroll")
     }
 
     func testNoWidthChangeNoScroll() {
@@ -61,17 +61,17 @@ final class ConversationScrollTests: XCTestCase {
     /// That reading is the layout's, not the person leaving the bottom.
     func testAtTheBottomTheLayoutMovingTheEndGoesBackToTheBottom() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 673, atBottom: true, byPerson: false), "the first look")
-        XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false), .bottom, "the width step")
-        XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false), .bottom, "the rows resolved: back to the end")
+        XCTAssertNil(memory.observe(width: 673, atBottom: true, scrolling: false), "the first look")
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, scrolling: false), .bottom, "the width step")
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, scrolling: false), .bottom, "the rows resolved: back to the end")
         XCTAssertTrue(memory.atBottom, "not recorded as scrolled up")
-        XCTAssertEqual(memory.observe(width: 900, atBottom: false, byPerson: false), .bottom, "and back to Work")
+        XCTAssertEqual(memory.observe(width: 900, atBottom: false, scrolling: false), .bottom, "and back to Work")
     }
 
     func testAtTheBottomThePersonScrollingUpIsRecorded() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false))
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true), "the person scrolled up")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true), "the person scrolled up")
         XCTAssertFalse(memory.atBottom)
         XCTAssertNil(memory.widthChanged(to: 640), "and the scroll view keeps that place")
     }
@@ -80,27 +80,27 @@ final class ConversationScrollTests: XCTestCase {
     /// up; the reading is theirs (the scroll phase), however the content moved.
     func testAtTheBottomThePersonScrollingUpWhileAReplyStreamsIsRecorded() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false))
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true), "streamed and scrolled up: no pull back")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true), "streamed and scrolled up: no pull back")
         XCTAssertFalse(memory.atBottom)
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false), "the next streamed rows: left alone")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false), "the next streamed rows: left alone")
     }
 
     func testAtTheBottomStreamingGoesBackToTheBottom() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false))
-        XCTAssertEqual(memory.observe(width: 900, atBottom: false, byPerson: false), .bottom, "the reply grew past the end")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false))
+        XCTAssertEqual(memory.observe(width: 900, atBottom: false, scrolling: false), .bottom, "the reply grew past the end")
         XCTAssertTrue(memory.atBottom)
     }
 
     func testScrolledUpALayoutReadingIsLeftAlone() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true))
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false), "a new message below: no jump")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false), "a new message below: no jump")
         // A re-estimate that happens to put the view at the end is the
         // layout's, like a reflow step (fix round 1). The app's own jumps
         // to the end are recorded through `followed()`.
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false))
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false))
         XCTAssertFalse(memory.atBottom, "still scrolled up")
     }
 
@@ -108,11 +108,11 @@ final class ConversationScrollTests: XCTestCase {
     /// person's send) is recorded, so the next narrowing keeps it there.
     func testScrolledUpThenTheAppFollowsToTheBottomTheNextWidthChangeGoesToTheBottom() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true))
         memory.followed()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false), "the jump's reading")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false), "the jump's reading")
         XCTAssertTrue(memory.atBottom)
-        XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false), .bottom)
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, scrolling: false), .bottom)
     }
 
     /// Fix round 3 (I2): back at the end while a reply streams, a reading
@@ -120,21 +120,21 @@ final class ConversationScrollTests: XCTestCase {
     /// grew. It moved down, not up: the layout's, so back to the bottom.
     func testThePersonsReadingMovingDownWhileTheContentGrowsGoesBackToTheBottom() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: true, offset: 6595))
         XCTAssertEqual(
-            memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6610), .bottom, "moved down, streamed past")
-        XCTAssertEqual(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6610), .bottom, "did not move")
+            memory.observe(width: 900, atBottom: false, scrolling: true, offset: 6610), .bottom, "moved down, streamed past")
+        XCTAssertEqual(memory.observe(width: 900, atBottom: false, scrolling: true, offset: 6610), .bottom, "did not move")
         XCTAssertTrue(memory.atBottom, "still following")
     }
 
     func testThePersonsReadingMovingUpIsRecorded() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595))
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6400), "scrolled up")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: true, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true, offset: 6400), "scrolled up")
         XCTAssertFalse(memory.atBottom)
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 6500), "down a little: still up")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true, offset: 6500), "down a little: still up")
         XCTAssertFalse(memory.atBottom)
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595), "back at the end")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: true, offset: 6595), "back at the end")
         XCTAssertTrue(memory.atBottom)
     }
 
@@ -144,17 +144,17 @@ final class ConversationScrollTests: XCTestCase {
     /// go-back-to-the-bottom, and the mark is not spent by them.
     func testAnUpMarkIgnoresReadingsMovingDownAndRecordsThoseMovingUp() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false, offset: 6595))
         XCTAssertNil(
-            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6620),
+            memory.observe(width: 900, atBottom: false, scrolling: false, marked: .up, offset: 6620),
             "a delta before the key's first frame: ignored, not .bottom")
         XCTAssertTrue(memory.atBottom, "not recorded")
         XCTAssertNil(
-            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6620), "nor one not moving")
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6400), "the key's frame")
+            memory.observe(width: 900, atBottom: false, scrolling: false, marked: .up, offset: 6620), "nor one not moving")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, marked: .up, offset: 6400), "the key's frame")
         XCTAssertFalse(memory.atBottom, "scrolled up")
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6450), "settling down")
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6100), "the next frame")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, marked: .up, offset: 6450), "settling down")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, marked: .up, offset: 6100), "the next frame")
         XCTAssertFalse(memory.atBottom)
     }
 
@@ -164,31 +164,53 @@ final class ConversationScrollTests: XCTestCase {
     /// offset back) is the layout's, never the person's.
     func testADownMarkReachingTheEndFollowsAgain() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 5000))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: true, offset: 5000))
         XCTAssertFalse(memory.atBottom)
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5300), "first frame")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, marked: .down, offset: 5300), "first frame")
         XCTAssertNil(
-            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5250), "settling up: not the person's")
+            memory.observe(width: 900, atBottom: false, scrolling: false, marked: .down, offset: 5250), "settling up: not the person's")
         XCTAssertFalse(memory.atBottom)
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, marked: .down, offset: 5595), "at the end")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false, marked: .down, offset: 5595), "at the end")
         XCTAssertTrue(memory.atBottom, "following again")
         XCTAssertEqual(
-            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5595), .bottom,
+            memory.observe(width: 900, atBottom: false, scrolling: false, marked: .down, offset: 5595), .bottom,
             "the reply grew past the end")
         XCTAssertEqual(
-            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5550), .bottom,
+            memory.observe(width: 900, atBottom: false, scrolling: false, marked: .down, offset: 5550), .bottom,
             "SwiftUI putting its own offset back: the layout's, back to the end")
         XCTAssertTrue(memory.atBottom, "not taken for the person scrolling up")
-        XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false, offset: 5595), .bottom, "a width change")
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, scrolling: false, offset: 5595), .bottom, "a width change")
     }
 
     /// Fix round 4 (N1): VoiceOver's cursor marks `.either`: readings either way are the person's.
     func testAnEitherMarkAcceptsBothWays() {
         var memory = ConversationScrollMemory()
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, offset: 6595))
-        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .either, offset: 6000))
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, marked: .either, offset: 6000))
         XCTAssertFalse(memory.atBottom, "up")
-        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, marked: .either, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, scrolling: false, marked: .either, offset: 6595))
         XCTAssertTrue(memory.atBottom, "down to the end")
+    }
+
+    /// v0.16 §5: a place put back is scrolled up until the person scrolls;
+    /// a layout reading off the end does not send it to the bottom.
+    func testAPlacePutBackScrolledUpIsLeftAlone() {
+        var memory = ConversationScrollMemory()
+        memory.restored(atBottom: false)
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, offset: 3500), "the first look")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, scrolling: false, offset: 3600), "the restore's correction")
+        XCTAssertFalse(memory.atBottom)
+    }
+
+    /// v0.16 §5: each conversation keeps its own place in the model.
+    @MainActor
+    func testEachConversationsPlaceIsKeptApart() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "portico-place-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        XCTAssertNil(model.place(of: 3), "never shown")
+        model.notePlace(ConversationPlace(atBottom: false, topItem: "assistant:17", topOffset: -40), chat: 3)
+        model.notePlace(ConversationPlace(atBottom: true, topItem: nil), chat: 5)
+        XCTAssertEqual(model.place(of: 3), ConversationPlace(atBottom: false, topItem: "assistant:17", topOffset: -40))
+        XCTAssertEqual(model.place(of: 5)?.atBottom, true)
     }
 }

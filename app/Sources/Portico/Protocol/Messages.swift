@@ -199,9 +199,12 @@ struct ChatSummary: Codable, Equatable, Sendable {
     /// When a turn last finished (v0.6): the welcome's "last reply 12 min
     /// ago". Absent before the first turn, and from an older gateway.
     var lastReply: String? = nil
+    /// What makes this chat a thread (v0.16, `threads.v1`); absent on Main,
+    /// on every other chat, and from an older gateway.
+    var thread: ThreadInfo? = nil
 
     enum CodingKeys: String, CodingKey {
-        case chat, folder, alias, state, created, title, ended, logged, parent, compactions, mode, unlogged
+        case chat, folder, alias, state, created, title, ended, logged, parent, compactions, mode, unlogged, thread
         case contextPercent = "context_percent"
         case loggedAt = "logged_at"
         case lastReply = "last_reply"
@@ -209,6 +212,24 @@ struct ChatSummary: Codable, Equatable, Sendable {
 
     /// `unlogged`, absent read as false.
     var hasUnloggedWork: Bool { unlogged ?? false }
+}
+
+/// What makes a chat a thread (v0.16): opened from Main (`parent`) for
+/// `brief`. `label` is "Thread 1" or "Thread 2"; `slot` (1 or 2) is its
+/// number and its key (⌃1, ⌃2), used again once it closes; `files` are
+/// the paths it started with; `openedAt` when it started.
+struct ThreadInfo: Codable, Equatable, Sendable {
+    var label: String
+    var slot: Int
+    var parent: Int
+    var brief: String
+    var files: [String] = []
+    var openedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case label, slot, parent, brief, files
+        case openedAt = "opened_at"
+    }
 }
 
 /// What a service check last said (v0.4).
@@ -250,6 +271,8 @@ struct Permission: Codable, Equatable, Sendable {
 struct Option: Codable, Equatable, Sendable {
     var label: String
     var description: String
+    /// The option's preview (v0.16), Markdown, when the agent sent one.
+    var preview: String? = nil
 }
 
 struct Question: Codable, Equatable, Sendable {
@@ -313,7 +336,7 @@ struct HelloClient: Codable, Equatable, Sendable {
     /// messages typed while the agent works).
     static let appCapabilities = [
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
-        MarkStore.capability, Models.capability,
+        MarkStore.capability, Models.capability, ThreadProposal.capability,
     ]
 }
 
@@ -379,6 +402,25 @@ struct CardAnswer: Codable, Equatable, Sendable {
     var scope: Scope? = nil
     var note: String? = nil
     var ts: String = ProtocolClock.now()
+}
+
+/// How a question card was declined (v0.16): every question skipped, the
+/// card's ×, or a reply sent from the composer while it was up. Sent as
+/// `card.answer`'s `{"declined": <word>}`.
+enum QuestionDecline: String, Codable, Sendable, CaseIterable {
+    case skipped, dismissed, replied
+}
+
+extension CardAnswer {
+    /// A question card's decline: `{"declined": "skipped" | "dismissed" | "replied"}`.
+    static func declining(chat: Int, id: String, _ decline: QuestionDecline) -> CardAnswer {
+        CardAnswer(chat: chat, id: id, answer: ["declined": .string(decline.rawValue)])
+    }
+
+    /// The decline this answer carries, if it is one.
+    var declined: QuestionDecline? {
+        answer["declined"]?.stringValue.flatMap(QuestionDecline.init(rawValue:))
+    }
 }
 
 struct FilesListRequest: Codable, Equatable, Sendable {
@@ -469,6 +511,41 @@ struct ModelSet: Codable, Equatable, Sendable {
     static let messageType = "model.set"
     var chat: Int
     var value: String?
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Start the thread a proposal on Main (`chat`) describes (v0.16,
+/// `threads.v1`); `close` names an open thread to close first at the limit
+/// (Close and start). Answered with `chat.state idle` for the new thread
+/// (with the `id`), `chat.list`, then `thread.proposal` `started`; or an
+/// `error` with the `id`. Starting never changes which chat is Main.
+struct ThreadStart: Codable, Equatable, Sendable {
+    static let messageType = "thread.start"
+    var chat: Int
+    var proposal: String
+    var close: Int? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// "Not now" on a proposal on Main (`chat`) (v0.16): it becomes
+/// `dismissed`, answered with `thread.proposal` carrying the `id`.
+struct ThreadDismiss: Codable, Equatable, Sendable {
+    static let messageType = "thread.dismiss"
+    var chat: Int
+    var proposal: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Close the thread `chat` (v0.16): its log step (unless `log` is false,
+/// the app's "Close without logging"), then it ends into History.
+/// Answered with `chat.state stopped` (with the `id`), then `chat.list`.
+struct ThreadClose: Codable, Equatable, Sendable {
+    static let messageType = "thread.close"
+    var chat: Int
+    var log: Bool = true
     var id: String? = nil
     var ts: String = ProtocolClock.now()
 }
@@ -603,6 +680,9 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The deployment's defaults for the viewer switches (v0.12, config
     /// `[viewer]`); absent from an older gateway.
     var viewerDefaults: ViewerDefaults? = nil
+    /// How many threads may be open beside Main (v0.16, config `[threads]
+    /// max`), sent with `threads.v1`; absent from an older gateway (2).
+    var threadsMax: Int? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -611,6 +691,7 @@ struct HelloServer: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts
         case viewerDefaults = "viewer_defaults"
+        case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
         case canLog = "can_log"
         case configStale = "config_stale"
@@ -906,17 +987,52 @@ struct ToolFinished: Codable, Equatable, Sendable {
     var note: String? = nil
     /// The subagent this step belongs to (v0.10 decision 4).
     var agentId: String? = nil
+    /// An answered question's choices (v0.16), by question text; absent on
+    /// any other row and on a declined question.
+    var answers: [String: QuestionAnswer]? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case chat, turn, ok, summary, permission, note, id, seq, ts
+        case chat, turn, ok, summary, permission, note, answers, id, seq, ts
         case toolUseId = "tool_use_id"
         case agentId = "agent_id"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// One question's answer on the wire (v0.16): a label, or a label list
+/// for a `multi_select` question.
+enum QuestionAnswer: Codable, Equatable, Sendable {
+    case one(String)
+    case many([String])
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let label = try? c.decode(String.self) {
+            self = .one(label)
+        } else {
+            self = .many(try c.decode([String].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .one(let label): try c.encode(label)
+        case .many(let labels): try c.encode(labels)
+        }
+    }
+
+    /// The chosen labels, in order.
+    var labels: [String] {
+        switch self {
+        case .one(let label): [label]
+        case .many(let labels): labels
+        }
+    }
 }
 
 struct TurnFinished: Codable, Equatable, Sendable {
@@ -1236,6 +1352,39 @@ struct ChatQueue: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// Where a thread proposal stands (v0.16): `pending` until the person
+/// starts or dismisses it, or Main's session ends (then `dismissed`).
+enum ProposalState: String, Codable, Sendable {
+    case pending, started, dismissed
+}
+
+/// A thread Main's agent proposed (`open_thread`, v0.16), and where it
+/// stands. `chat` is Main's; `toolUseId` the tool row the card is drawn in
+/// place of; `thread` the chat it started, once `started`. A state frame
+/// like `chat.queue`: unstamped, sent on each change and on `chat.open`.
+struct ThreadProposal: Codable, Equatable, Sendable {
+    static let messageType = "thread.proposal"
+    /// Both sides list it in `hello` for threads to show.
+    static let capability = "threads.v1"
+    var chat: Int
+    var proposal: String
+    var toolUseId: String? = nil
+    var brief: String
+    var files: [String] = []
+    var state: ProposalState
+    var thread: Int? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, proposal, brief, files, state, thread, id, seq, ts
+        case toolUseId = "tool_use_id"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The config file changed after the gateway started; restart to apply it.
 struct ConfigStale: Codable, Equatable, Sendable {
     static let messageType = "config.stale"
@@ -1474,6 +1623,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case spaceRename(SpaceRename)
     case spaceRemove(SpaceRemove)
     case modelSet(ModelSet)
+    case threadStart(ThreadStart)
+    case threadDismiss(ThreadDismiss)
+    case threadClose(ThreadClose)
 
     var type: String {
         switch self {
@@ -1503,6 +1655,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .spaceRename: SpaceRename.messageType
         case .spaceRemove: SpaceRemove.messageType
         case .modelSet: ModelSet.messageType
+        case .threadStart: ThreadStart.messageType
+        case .threadDismiss: ThreadDismiss.messageType
+        case .threadClose: ThreadClose.messageType
         }
     }
 
@@ -1535,6 +1690,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SpaceRename.messageType: self = .spaceRename(try SpaceRename(from: decoder))
         case SpaceRemove.messageType: self = .spaceRemove(try SpaceRemove(from: decoder))
         case ModelSet.messageType: self = .modelSet(try ModelSet(from: decoder))
+        case ThreadStart.messageType: self = .threadStart(try ThreadStart(from: decoder))
+        case ThreadDismiss.messageType: self = .threadDismiss(try ThreadDismiss(from: decoder))
+        case ThreadClose.messageType: self = .threadClose(try ThreadClose(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1569,6 +1727,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .spaceRename(let m): try m.encode(to: encoder)
         case .spaceRemove(let m): try m.encode(to: encoder)
         case .modelSet(let m): try m.encode(to: encoder)
+        case .threadStart(let m): try m.encode(to: encoder)
+        case .threadDismiss(let m): try m.encode(to: encoder)
+        case .threadClose(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1615,6 +1776,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case viewerAct(ViewerAct)
     case spacesList(SpacesList)
     case models(Models)
+    case threadProposal(ThreadProposal)
 
     var type: String {
         switch self {
@@ -1657,6 +1819,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .viewerAct: ViewerAct.messageType
         case .spacesList: SpacesList.messageType
         case .models: Models.messageType
+        case .threadProposal: ThreadProposal.messageType
         }
     }
 
@@ -1701,6 +1864,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .viewerAct(let m): m.envelope
         case .spacesList(let m): m.envelope
         case .models(let m): m.envelope
+        case .threadProposal(let m): m.envelope
         }
     }
 
@@ -1746,6 +1910,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ViewerAct.messageType: self = .viewerAct(try ViewerAct(from: decoder))
         case SpacesList.messageType: self = .spacesList(try SpacesList(from: decoder))
         case Models.messageType: self = .models(try Models(from: decoder))
+        case ThreadProposal.messageType: self = .threadProposal(try ThreadProposal(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1793,6 +1958,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .viewerAct(let m): try m.encode(to: encoder)
         case .spacesList(let m): try m.encode(to: encoder)
         case .models(let m): try m.encode(to: encoder)
+        case .threadProposal(let m): try m.encode(to: encoder)
         }
     }
 }

@@ -126,6 +126,86 @@ final class ProtocolExamplesTests: XCTestCase {
         XCTAssertNotNil(ISO8601DateFormatter().date(from: ts), "ts must parse as ISO-8601: \(ts)")
     }
 
+    // MARK: - v0.16 fields no example carries
+
+    func testThreadExamplesDecodeIntoTheirCases() throws {
+        let decoder = JSONDecoder()
+        func client(_ name: String) throws -> ClientMessage {
+            try decoder.decode(ClientMessage.self, from: Data(contentsOf: Self.examplesDir.appendingPathComponent(name)))
+        }
+        guard case .threadStart(let start) = try client("client.thread.start.json") else { return XCTFail("thread.start") }
+        XCTAssertEqual(start.close, 15)
+        guard case .threadDismiss(let dismiss) = try client("client.thread.dismiss.json") else { return XCTFail("thread.dismiss") }
+        XCTAssertEqual(dismiss.proposal, "p-7c21")
+        guard case .threadClose(let close) = try client("client.thread.close.json") else { return XCTFail("thread.close") }
+        XCTAssertTrue(close.log)
+    }
+
+    func testThreadCloseWithoutLoggingEncodesLogFalse() throws {
+        let data = try JSONEncoder().encode(ClientMessage.threadClose(ThreadClose(chat: 15, log: false, id: "req-1")))
+        let raw = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(raw["type"] as? String, "thread.close")
+        XCTAssertEqual(raw["log"] as? Bool, false)
+        let back = try JSONDecoder().decode(ClientMessage.self, from: data)
+        guard case .threadClose(let close) = back else { return XCTFail("thread.close") }
+        XCTAssertFalse(close.log)
+    }
+
+    func testAQuestionCardCarriesItsToolUseAndPreviews() throws {
+        let json = #"""
+            {"type":"card.ask","chat":1,"id":"card-9","kind":"question","title":"Acme asks","tool_use_id":"toolu_q",
+             "questions":[{"question":"Which tone for step 2?","header":"Tone","multi_select":false,
+               "options":[{"label":"Plain","description":"Short words","preview":"**Plain**: we ship today."},
+                          {"label":"Warm","description":"Friendly"}]}],
+             "seq":3,"ts":"2026-11-02T12:00:00Z"}
+            """#
+        guard case .cardAsk(let card) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else {
+            return XCTFail("card.ask")
+        }
+        XCTAssertEqual(card.toolUseId, "toolu_q")
+        XCTAssertEqual(card.questions?.first?.options.map(\.preview), ["**Plain**: we ship today.", nil])
+        let encoded = try JSONEncoder().encode(Option(label: "Warm", description: "Friendly"))
+        let raw = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(raw["preview"], "no preview: none on the wire")
+    }
+
+    func testACardAnswerMayDecline() throws {
+        for decline in QuestionDecline.allCases {
+            let answer = CardAnswer.declining(chat: 1, id: "card-9", decline)
+            let data = try JSONEncoder().encode(ClientMessage.cardAnswer(answer))
+            let raw = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual((raw["answer"] as? [String: Any])?["declined"] as? String, decline.rawValue)
+            guard case .cardAnswer(let back) = try JSONDecoder().decode(ClientMessage.self, from: data) else {
+                return XCTFail("card.answer")
+            }
+            XCTAssertEqual(back.declined, decline)
+        }
+        XCTAssertEqual(QuestionDecline.allCases.map(\.rawValue), ["skipped", "dismissed", "replied"])
+        let answered = CardAnswer(chat: 1, id: "card-9", answer: ["answers": .object(["Which tone?": .string("Plain")])])
+        XCTAssertNil(answered.declined)
+    }
+
+    func testToolFinishedCarriesAnswers() throws {
+        let json = #"""
+            {"type":"tool.finished","chat":1,"turn":2,"tool_use_id":"toolu_q","ok":true,"summary":"Answered",
+             "answers":{"Which tone for step 2?":"Plain","Which steps?":["One","Two"]},"seq":7,"ts":"2026-11-02T12:00:00Z"}
+            """#
+        let data = Data(json.utf8)
+        guard case .toolFinished(let finished) = try JSONDecoder().decode(ServerMessage.self, from: data) else {
+            return XCTFail("tool.finished")
+        }
+        XCTAssertEqual(finished.answers?["Which tone for step 2?"], .one("Plain"))
+        XCTAssertEqual(finished.answers?["Which steps?"], .many(["One", "Two"]))
+        XCTAssertEqual(
+            try Self.canonical(JSONEncoder().encode(ServerMessage.toolFinished(finished))), try Self.canonical(data))
+
+        let older = #"{"type":"tool.finished","chat":1,"turn":2,"tool_use_id":"toolu_r","ok":true,"summary":"Read","ts":"2026-11-02T12:00:00Z"}"#
+        guard case .toolFinished(let plain) = try JSONDecoder().decode(ServerMessage.self, from: Data(older.utf8)) else {
+            return XCTFail("tool.finished")
+        }
+        XCTAssertNil(plain.answers)
+    }
+
     func testUnknownServerTypeFailsToDecode() {
         let data = Data(#"{"type":"nope","ts":"2026-10-27T12:00:00Z"}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ServerMessage.self, from: data))

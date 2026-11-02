@@ -1,4 +1,29 @@
-import CoreGraphics
+// v0.16 §5 spike (Task 9), hosted (`ConversationRoundTripTests`' window,
+// wheel and key helpers), the transcript on `.scrollPosition($position)`:
+// 1. The app's `position.scrollTo(edge: .bottom)`: `isPositionedByUser`
+//    false, as it should be.
+// 2. A wheel (the clip moved inside a live scroll, and a trackpad's phased
+//    events alike): `isPositionedByUser` false. The position does move to
+//    the message at the top (`viewID`), and the scroll phase is reported.
+// 3. Page Up through `animatedKey` (the clip moved, no live scroll):
+//    `isPositionedByUser` false, and the position does not move: it still
+//    says the bottom edge, and SwiftUI puts the view back there when the
+//    content next grows.
+// 4. VoiceOver's page (`accessibilityScrollAction`, a pixel wheel handed
+//    to the scroll view): `isPositionedByUser` false; the position moves
+//    to the message at the top.
+// 5. `.defaultScrollAnchor(.bottom, for: .sizeChanges)`: scrolled up, a
+//    growing reply leaves the view where it is; at the bottom it follows.
+//    Not adopted: following stays the memory's, which already holds.
+// So `isPositionedByUser` misses every input on macOS here, and v0.15's
+// marks all stay: `scrolling` is the scroll phase, and `marked` the key
+// and wheel monitor and VoiceOver's cursor (`TranscriptPersonInput`).
+// What ScrollPosition brings: an edge target that SwiftUI drops when the person scrolls (v0.15's id target was put back
+// once, R10), so the first scroll after opening holds; the per-conversation
+// place (`ConversationPlace`); and stale app-set targets to clear (3): the
+// bottom edge, and the row a restore scrolled to (fix round 1).
+
+import SwiftUI
 
 /// Whether the conversation was last seen at its bottom, so a change of
 /// the column's width (the viewer opening or closing, a space opening or
@@ -47,6 +72,12 @@ struct ConversationScrollMemory: Equatable, Sendable {
         self.width = width
     }
 
+    /// The conversation is put back at the place it was left at (v0.16
+    /// §5): its readings until the person scrolls are the restore's.
+    mutating func restored(atBottom: Bool) {
+        self.atBottom = atBottom
+    }
+
     /// The app scrolled to the end itself (the person's send, or following
     /// the newest message): the conversation is at its bottom (v0.15 task 2b
     /// fix round 1; the jump's own readings are not the person's).
@@ -92,9 +123,9 @@ struct ConversationScrollMemory: Equatable, Sendable {
     /// the layout's rule, back to the bottom when the memory is there: found
     /// hosted, SwiftUI put 6756 back to 6710 again and again after a wheel
     /// back to the end, and ignoring those left the view short of the end.
-    /// A scroll phase (`byPerson`) is the person's whatever the direction.
+    /// A scroll phase (`scrolling`) is the person's whatever the direction.
     mutating func observe(
-        width: CGFloat, atBottom: Bool, byPerson: Bool, marked: Direction? = nil, offset: CGFloat? = nil
+        width: CGFloat, atBottom: Bool, scrolling: Bool, marked: Direction? = nil, offset: CGFloat? = nil
     ) -> Target? {
         let previous = self.offset
         if let offset { self.offset = offset }
@@ -103,8 +134,8 @@ struct ConversationScrollMemory: Equatable, Sendable {
         }
         // Toward the end is positive; unknown without two readings.
         let moved = offset.flatMap { now in previous.map { now - $0 } }
-        var person = byPerson
-        if !byPerson, let marked {
+        var person = scrolling
+        if !scrolling, let marked {
             switch marked {
             case .either:
                 person = true
@@ -137,5 +168,53 @@ struct ConversationScrollMemory: Equatable, Sendable {
         defer { width = newWidth }
         guard let width, abs(width - newWidth) >= 1 else { return nil }
         return atBottom ? .bottom : nil
+    }
+}
+
+/// Where each drawn transcript row sits in the scroll view's visible area
+/// (v0.16 §5), as the lazy stack lays them out: the place a conversation
+/// keeps while another is shown is the row at the top and the point in it.
+/// A reference, not state: a row moving redraws nothing.
+@MainActor
+final class TranscriptRowFrames {
+    private(set) var frames: [String: CGRect] = [:]
+
+    func note(_ frame: CGRect, id: String) { frames[id] = frame }
+    func forget(_ id: String) { frames[id] = nil }
+
+    /// What else the stack draws under the rows (calling cards, the working
+    /// line): counted as drawn by the blank-space diagnostic, never the
+    /// place a conversation keeps.
+    private(set) var others: [String: CGRect] = [:]
+
+    func noteOther(_ frame: CGRect, id: String) { others[id] = frame }
+    func forgetOther(_ id: String) { others[id] = nil }
+
+    /// Every drawn thing's frame: the rows and the others.
+    var allFrames: [CGRect] { Array(frames.values) + Array(others.values) }
+
+    /// The row at the top of the view (the first whose bottom is below the
+    /// view's top) and its top's distance from the view's top.
+    func top() -> (id: String, offset: CGFloat)? {
+        frames.filter { $0.value.maxY > 0 }.min { $0.value.minY < $1.value.minY }
+            .map { ($0.key, $0.value.minY) }
+    }
+}
+
+/// A transcript row that reports its frame in the scroll view to `rows`
+/// while it is laid out (v0.16 §5).
+struct ReportsRowFrame: ViewModifier {
+    let rows: TranscriptRowFrames
+    let id: String
+    /// A transcript row (the place a conversation keeps can be it), or
+    /// something drawn under the rows (a calling card, the working line).
+    var isRow = true
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                if isRow { rows.note(frame, id: id) } else { rows.noteOther(frame, id: id) }
+            }
+            .onDisappear { if isRow { rows.forget(id) } else { rows.forgetOther(id) } }
     }
 }

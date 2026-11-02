@@ -20,9 +20,9 @@ final class CardTests: XCTestCase {
 
     func testPermissionChoicesMapToDecisionAndScope() {
         let card = permissionCard()
-        // V1: Deny… · Allow for this session · Allow once — no "Always allow".
-        XCTAssertEqual(PermissionChoice.allCases.map(\.label), ["Deny…", "Allow for this session", "Allow once"])
-        XCTAssertFalse(PermissionChoice.allCases.contains { $0.scope == .always }, "the app does not offer always")
+        // Allow once · Allow for this session · Deny… — no "Always allow".
+        XCTAssertEqual(PermissionChoice.docked.map(\.label), ["Allow once", "Allow for this session", "Deny…"])
+        XCTAssertFalse(PermissionChoice.docked.contains { $0.scope == .always }, "the app does not offer always")
 
         let once = PermissionChoice.allowOnce.answer(for: card, note: "")
         XCTAssertEqual(once.chat, 1)
@@ -43,12 +43,8 @@ final class CardTests: XCTestCase {
 
     func testPermissionCardReadsAsAPlainQuestionWithTheToolAsATag() {
         var card = permissionCard()
-        card.title = "Save changes to Q3-synthesis.md?"
         let shown = PermissionPresentation(card: card)
-        XCTAssertEqual(shown.question, "Save changes to Q3-synthesis.md?")
         XCTAssertEqual(shown.tool, "Write")
-        card.title = "  "
-        XCTAssertEqual(PermissionPresentation(card: card).question, "Use Write?")
         XCTAssertEqual(PermissionPresentation.whereLine(folder: "/Users/x/Research vault"), "in Research vault")
         XCTAssertNil(PermissionPresentation.whereLine(folder: nil))
         XCTAssertEqual(shown.scopeNote, PermissionPresentation.generalScopeNote, "an older gateway says nothing: the general line")
@@ -74,7 +70,7 @@ final class CardTests: XCTestCase {
 
     // MARK: - question
 
-    func testQuestionAnswersMapLabelsAndOther() {
+    func testQuestionAnswersMapLabelsAndOther() throws {
         let questions = [
             Question(question: "Which format?", header: "Format", options: [
                 Option(label: "Markdown", description: "a .md file"), Option(label: "PDF", description: "a .pdf"),
@@ -85,47 +81,31 @@ final class CardTests: XCTestCase {
         ]
         let card = CardAsk(chat: 3, id: "card-q", kind: .question, title: "Format", permission: nil, questions: questions, form: nil, seq: 2)
 
+        // v0.16: one question at a time; the answer goes after the last.
         var draft = QuestionDraft(card: card)
-        XCTAssertFalse(draft.isComplete, "nothing chosen yet")
-        XCTAssertNil(draft.answer())
-
-        draft.choose("Markdown", for: 0)
-        XCTAssertFalse(draft.isComplete, "the second question is still unanswered")
+        XCTAssertNil(draft.choose("Markdown", for: 0), "the second question is still open")
         draft.toggle("Details", for: 1)
         draft.toggle("Summary", for: 1)
-        XCTAssertTrue(draft.isComplete)
-
-        let answer = try! XCTUnwrap(draft.answer())
+        XCTAssertEqual(draft.labels(for: 1), ["Summary", "Details"], "multi-select answers keep the option order")
+        draft.toggle("Details", for: 1)
+        draft.setOther("Glossary", for: 1)
+        let answer = try XCTUnwrap(draft.next())
         XCTAssertEqual(answer.chat, 3)
         XCTAssertEqual(answer.id, "card-q")
         XCTAssertNil(answer.scope)
         XCTAssertEqual(answer.answer, [
             "answers": .object([
                 "Which format?": .string("Markdown"),
-                "Which sections?": .array([.string("Summary"), .string("Details")]),
+                "Which sections?": .array([.string("Summary"), .string("Glossary")]),
             ]),
-        ])
-        XCTAssertEqual(draft.labels(for: 1), ["Summary", "Details"], "multi-select answers keep the option order")
+        ], "typed text is one more label for a multi-select")
 
-        // Single select: choosing again replaces; toggling off a multi-select removes it.
-        draft.choose("PDF", for: 0)
-        draft.toggle("Details", for: 1)
-        XCTAssertEqual(draft.answer()?.answer["answers"]?["Which format?"], .string("PDF"))
-        XCTAssertEqual(draft.answer()?.answer["answers"]?["Which sections?"], .array([.string("Summary")]))
-
-        // "Other" text is the label for a single-select and one more label for a multi-select.
-        draft.setOther("Plain text", for: 0)
-        draft.setOther("Glossary", for: 1)
-        XCTAssertEqual(draft.answer()?.answer["answers"]?["Which format?"], .string("Plain text"))
-        XCTAssertEqual(draft.answer()?.answer["answers"]?["Which sections?"], .array([.string("Summary"), .string("Glossary")]))
-
-        // Other alone answers a question; blank other does not.
-        var fresh = QuestionDraft(card: card)
-        fresh.setOther("Plain text", for: 0)
-        fresh.setOther("   ", for: 1)
-        XCTAssertFalse(fresh.isComplete)
-        fresh.toggle("Appendix", for: 1)
-        XCTAssertTrue(fresh.isComplete)
+        // "Something else" is the label for a single-select, replacing the option.
+        var other = QuestionDraft(card: card)
+        other.setOther("Plain text", for: 0)
+        XCTAssertNil(other.submitOther(for: 0))
+        other.toggle("Appendix", for: 1)
+        XCTAssertEqual(other.next()?.answer["answers"]?["Which format?"], .string("Plain text"))
     }
 
     // MARK: - form
