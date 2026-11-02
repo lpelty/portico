@@ -39,27 +39,28 @@ final class TranscriptPersonInputTests: XCTestCase {
         var clock: TimeInterval = 10
         input.now = { clock }
         XCTAssertFalse(input.isRecent, "nothing yet")
-        input.mark()
+        input.mark(direction: .up)
         clock = 10.2
         XCTAssertTrue(input.isRecent)
+        XCTAssertEqual(input.recent, .up)
         clock = 10.4
         XCTAssertFalse(input.isRecent, "past the span")
     }
 
-    /// Fix round 3: the mark is spent by the reading of the input's own
-    /// scroll; and VoiceOver's cursor moving marks the same way (the view
-    /// calls `mark()` when its focused row changes).
-    func testAMarkIsSpentByTheScrollItMade() {
+    /// Fix round 4: a mark carries its direction for the whole span (no
+    /// longer spent by the first reading); the next input replaces it.
+    /// VoiceOver's cursor marks `.either`.
+    func testAMarkKeepsItsDirectionForItsSpan() {
         let input = TranscriptPersonInput()
         var clock: TimeInterval = 10
         input.now = { clock }
-        input.mark()
-        XCTAssertTrue(input.isRecent)
-        input.consume()
-        XCTAssertFalse(input.isRecent, "spent")
+        input.mark(direction: .down)
         clock = 10.1
-        input.mark()
-        XCTAssertTrue(input.isRecent, "the next input marks again")
+        XCTAssertEqual(input.recent, .down)
+        clock = 10.25
+        XCTAssertEqual(input.recent, .down, "still marked late in the span")
+        input.mark(direction: .either)
+        XCTAssertEqual(input.recent, .either, "the next input replaces it")
     }
 
     func testTheScrollKeysCountWhileTheFocusIsInTheTranscript() throws {
@@ -70,6 +71,16 @@ final class TranscriptPersonInputTests: XCTestCase {
         for code: UInt16 in [116, 121, 115, 119, 126, 125, 49] {
             XCTAssertTrue(input.takes(try key(code, in: f.window)), "key \(code)")
         }
+        // Fix round 4: each key's direction.
+        for (code, direction): (UInt16, TranscriptPersonInput.Direction) in [
+            (116, .up), (115, .up), (126, .up), (121, .down), (119, .down), (125, .down), (49, .down),
+        ] {
+            XCTAssertEqual(input.direction(of: try key(code, in: f.window)), direction, "key \(code)")
+        }
+        let shiftSpace = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.shift], timestamp: 0, windowNumber: f.window.windowNumber,
+            context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49))
+        XCTAssertEqual(input.direction(of: shiftSpace), .up, "Shift-Space")
         XCTAssertFalse(input.takes(try key(0, in: f.window)), "a letter")
         XCTAssertTrue(f.window.makeFirstResponder(f.outside))
         XCTAssertFalse(input.takes(try key(116, in: f.window)), "the focus elsewhere (the composer)")
@@ -79,13 +90,17 @@ final class TranscriptPersonInputTests: XCTestCase {
         let f = fixture()
         let input = TranscriptPersonInput()
         input.scrollView = f.scroll
-        func wheel(at point: NSPoint) throws -> NSEvent {
-            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 10, wheel2: 0, wheel3: 0))
+        func wheel(at point: NSPoint, delta: Int32 = 10) throws -> NSEvent {
+            let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0))
             let screen = f.window.convertPoint(toScreen: point)
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             return try XCTUnwrap(NSEvent(cgEvent: cg))
         }
         XCTAssertTrue(input.takes(try wheel(at: NSPoint(x: 300, y: 150))), "over the transcript")
         XCTAssertFalse(input.takes(try wheel(at: NSPoint(x: 300, y: 350))), "over the composer")
+        // Fix round 4: a positive wheel delta is toward the top, as the
+        // hosted tests and `page(toward:)` post it.
+        XCTAssertEqual(input.direction(of: try wheel(at: NSPoint(x: 300, y: 150), delta: 10)), .up)
+        XCTAssertEqual(input.direction(of: try wheel(at: NSPoint(x: 300, y: 150), delta: -10)), .down)
     }
 }

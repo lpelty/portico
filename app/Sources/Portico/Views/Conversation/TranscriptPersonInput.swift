@@ -8,7 +8,10 @@ import SwiftUI
 /// the bottom their scroll read as the layout's and snapped back to the
 /// end. An app event monitor marks them, and so does the view when
 /// VoiceOver's cursor moves to another row (fix round 3); the mark counts
-/// for the readings within `span` after it.
+/// for the readings within `span` after it. Fix round 4: the mark carries
+/// the input's direction, and only readings moving that way are the
+/// person's (`ConversationScrollMemory.observe`); it is no longer spent by
+/// the first one.
 ///
 /// Found hosted, on v0.14.0 alike: the first scroll after the app's
 /// `scrollTo("bottom")` is put back once by SwiftUI (it re-applies that
@@ -19,37 +22,38 @@ final class TranscriptPersonInput {
     static let span: TimeInterval = 0.3
     /// Page Up, Page Down, Home, End, Up, Down, Space.
     static let scrollKeys: Set<UInt16> = [116, 121, 115, 119, 126, 125, 49]
+    /// The keys toward earlier messages (Space too, with Shift).
+    static let upKeys: Set<UInt16> = [116, 115, 126]
+    typealias Direction = ConversationScrollMemory.Direction
     /// The transcript's scroll view, found by `TranscriptScrollViewProbe`.
     weak var scrollView: NSScrollView?
     /// The clock (a test sets its own).
     var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
-    private var last: TimeInterval?
+    private var last: (time: TimeInterval, direction: Direction)?
     private var monitor: Any?
 
     /// Whether the person's input came within the last `span`.
-    var isRecent: Bool {
-        guard let last else { return false }
-        return now() - last < Self.span
+    var isRecent: Bool { recent != nil }
+
+    /// The direction of the person's input within the last `span`, if any.
+    var recent: Direction? {
+        guard let last, now() - last.time < Self.span else { return nil }
+        return last.direction
     }
 
-    /// The person scrolled the transcript.
-    func mark() {
-        last = now()
-    }
-
-    /// The input's own scroll was read (fix round 3): the mark is spent.
-    /// Found hosted: after a wheel, SwiftUI kept putting its own offset
-    /// back as a reply streamed in, and those moves, inside the span, read
-    /// as the person scrolling up.
-    func consume() {
-        last = nil
+    /// The person scrolled the transcript, `direction` (fix round 4; the
+    /// round 3 `consume()` is gone: SwiftUI putting its own offset back
+    /// after a wheel moves against the wheel, so the direction tells it
+    /// apart, and an animated key scroll's later frames stay the person's).
+    func mark(direction: Direction) {
+        last = (now(), direction)
     }
 
     func install() {
         guard monitor == nil, NSApp != nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
             MainActor.assumeIsolated {
-                if self?.takes(event) == true { self?.mark() }
+                if let direction = self?.direction(of: event) { self?.mark(direction: direction) }
             }
             return event
         }
@@ -60,28 +64,35 @@ final class TranscriptPersonInput {
         monitor = nil
     }
 
-    /// Whether an event scrolls the transcript: a wheel over it (any
-    /// phase), or a scroll key while the focus is inside it (its rows are
+    /// Whether an event scrolls the transcript.
+    func takes(_ event: NSEvent) -> Bool { direction(of: event) != nil }
+
+    /// Which way an event scrolls the transcript, if it does: a wheel over
+    /// it (any phase; a positive delta is toward the top, as `page(toward:)`
+    /// sends it), or a scroll key while the focus is inside it (its rows are
     /// selectable, so the keys reach it).
-    func takes(_ event: NSEvent) -> Bool {
-        guard let scroll = scrollView, let window = scroll.window else { return false }
+    func direction(of event: NSEvent) -> Direction? {
+        guard let scroll = scrollView, let window = scroll.window else { return nil }
         switch event.type {
         case .scrollWheel:
             let point: NSPoint
             if let eventWindow = event.window {
-                guard eventWindow === window else { return false }
+                guard eventWindow === window else { return nil }
                 point = event.locationInWindow
             } else {
                 // Not bound to a window: the location is on the screen.
                 point = window.convertPoint(fromScreen: event.locationInWindow)
             }
-            return scroll.bounds.contains(scroll.convert(point, from: nil))
+            guard scroll.bounds.contains(scroll.convert(point, from: nil)) else { return nil }
+            let delta = event.scrollingDeltaY
+            return delta > 0 ? .up : delta < 0 ? .down : .either
         case .keyDown:
             guard Self.scrollKeys.contains(event.keyCode), event.window === window,
-                  let focus = window.firstResponder as? NSView else { return false }
-            return focus.isDescendant(of: scroll)
+                  let focus = window.firstResponder as? NSView, focus.isDescendant(of: scroll) else { return nil }
+            if event.keyCode == 49 { return event.modifierFlags.contains(.shift) ? .up : .down }
+            return Self.upKeys.contains(event.keyCode) ? .up : .down
         default:
-            return false
+            return nil
         }
     }
 
@@ -90,7 +101,7 @@ final class TranscriptPersonInput {
     /// view: SwiftUI follows it; a move of its clip view it puts back).
     func page(toward edge: Edge) {
         guard edge == .top || edge == .bottom, let scroll = scrollView, let window = scroll.window else { return }
-        mark()
+        mark(direction: edge == .top ? .up : .down)
         let clip = scroll.contentView
         let page = max(clip.bounds.height - scroll.verticalPageScroll, clip.bounds.height / 2)
         // A wheel's delta is up the content: positive scrolls toward the top.
@@ -145,7 +156,7 @@ struct MarksVoiceOverFocus: ViewModifier {
         content
             .accessibilityFocused($focused)
             .onChange(of: focused) { _, now in
-                if now { input.mark() }
+                if now { input.mark(direction: .either) }
             }
     }
 }

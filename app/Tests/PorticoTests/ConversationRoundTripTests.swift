@@ -368,4 +368,161 @@ final class ConversationRoundTripTests: XCTestCase {
         spin()
         XCTAssertTrue(atBottom(), "following again")
     }
+
+    /// A scroll key pressed in the transcript, as the app dispatches it
+    /// (its event monitors see it), then handed to the first responder
+    /// (the window is not key).
+    private static func press(_ code: UInt16, _ character: Character, in hosted: Hosted) throws {
+        let key = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: hosted.window.windowNumber, context: nil, characters: String(character),
+            charactersIgnoringModifiers: String(character), isARepeat: false, keyCode: code))
+        NSApp.sendEvent(key)
+        hosted.window.sendEvent(key)
+    }
+
+    private func streaming(_ model: AppModel) -> (Int) -> Void {
+        var seq = 80
+        return { count in
+            for _ in 0..<count {
+                seq += 1
+                model.apply(.textDelta(TextDelta(
+                    chat: 3, turn: 40, text: " Another long line of the reply, streamed in as it is written, part \(seq).",
+                    seq: seq)))
+                self.spin(0.05)
+            }
+        }
+    }
+
+    /// Fix round 4 (N1): at the bottom while a reply streams, Page Up
+    /// leaves the end and stays up; a reply delta landing between the key
+    /// and its scroll is not taken for the person going back down.
+    func testPageUpWhileAReplyStreamsStaysUp() throws {
+        _ = NSApplication.shared
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        let stream = streaming(model)
+        stream(2)
+        XCTAssertTrue(atBottom(), "following the reply")
+        let reply = try XCTUnwrap(Self.firstTextView(in: try XCTUnwrap(hosted.scroll.documentView)))
+        XCTAssertTrue(hosted.window.makeFirstResponder(reply))
+        // Twice: SwiftUI puts the first scroll after the app's scroll to the
+        // bottom back once (round 2). A delta right after each key.
+        for _ in 0..<2 {
+            try Self.press(116, "\u{F72C}", in: hosted)
+            stream(1)
+            spin(0.3)
+        }
+        stream(6)
+        spin(0.6)
+        XCTAssertFalse(atBottom(), "still scrolled up")
+    }
+
+    private static func visibleTextView(in scroll: NSScrollView) -> NSTextView? {
+        guard let document = scroll.documentView else { return nil }
+        let visible = scroll.contentView.bounds
+        func walk(_ view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView, !text.isHidden, text.convert(text.bounds, to: document).intersects(visible) {
+                return text
+            }
+            for sub in view.subviews { if let found = walk(sub) { return found } }
+            return nil
+        }
+        return walk(document)
+    }
+
+    /// A scroll key AppKit animates (on screen, smooth scrolling): the app
+    /// dispatches it (its event monitors mark it), then the clip view moves
+    /// over a few frames to `y`, no scroll phase; `before` runs between the
+    /// key and its first frame. Off screen, AppKit does not animate it (it lands in one
+    /// jump), so the frames are made here.
+    private func animatedKey(
+        _ code: UInt16, _ character: Character, in hosted: Hosted, to y: CGFloat, frames: Int = 4,
+        before: () -> Void = {}
+    ) throws {
+        let key = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: hosted.window.windowNumber, context: nil, characters: String(character),
+            charactersIgnoringModifiers: String(character), isARepeat: false, keyCode: code))
+        // The focus in a reply on screen (the lazy stack drops rows scrolled away).
+        let reply = try XCTUnwrap(Self.visibleTextView(in: hosted.scroll), "a reply on screen")
+        XCTAssertTrue(hosted.window.makeFirstResponder(reply))
+        NSApp.sendEvent(key)  // the monitor; off screen, it goes no further
+        before()
+        let clip = hosted.scroll.contentView
+        let from = clip.bounds.origin.y
+        for frame in 1...frames {
+            let next = from + (y - from) * CGFloat(frame) / CGFloat(frames)
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: next.rounded()))
+            hosted.scroll.reflectScrolledClipView(clip)
+            spin(0.02)
+        }
+    }
+
+    /// Fix round 4 (N1): at the bottom while a reply streams, Page Up and
+    /// then Page Down back to the end, each animated over several frames:
+    /// following resumes. Before, the first frame spent the mark, the
+    /// frames reaching the end were not the person's, and the memory
+    /// stayed scrolled up.
+    func testAnimatedPageUpThenPageDownWhileAReplyStreamsResumesFollowing() throws {
+        _ = NSApplication.shared
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        let stream = streaming(model)
+        stream(2)
+        spin()
+        // Twice: SwiftUI puts the first scroll after the app's scroll to the
+        // bottom back once (round 2).
+        for _ in 0..<2 {
+            try animatedKey(116, "\u{F72C}", in: hosted, to: clip.bounds.origin.y - 450)
+            spin(0.4)
+        }
+        XCTAssertFalse(atBottom(), "paged up")
+        for _ in 0..<4 where !atBottom() {
+            let end = (hosted.scroll.documentView?.frame.height ?? 0) - clip.bounds.height
+            try animatedKey(121, "\u{F72D}", in: hosted, to: min(end, clip.bounds.origin.y + 450))
+            spin(0.4)
+        }
+        XCTAssertTrue(atBottom(), "back at the end")
+        stream(8)
+        spin()
+        XCTAssertTrue(atBottom(), "following again")
+    }
+
+    /// Fix round 4 (N1): at the bottom while a reply streams, a delta lands
+    /// between Page Up and its first animated frame. Before, its reading
+    /// spent the mark and went back to the bottom, swallowing the key.
+    func testAnimatedPageUpWithADeltaBeforeItsFirstFrameStaysUp() throws {
+        _ = NSApplication.shared
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        func atBottom() -> Bool {
+            let height = hosted.scroll.documentView?.frame.height ?? 0
+            return clip.bounds.maxY >= height - ConversationScrollMemory.bottomSlack
+        }
+        let stream = streaming(model)
+        stream(2)
+        spin()
+        // Once: before, this one press was swallowed (a second one held).
+        try animatedKey(116, "\u{F72C}", in: hosted, to: clip.bounds.origin.y - 450, before: { stream(1) })
+        spin(0.4)
+        XCTAssertFalse(atBottom(), "paged up")
+        stream(4)
+        spin()
+        XCTAssertFalse(atBottom(), "still up as the reply streams")
+    }
 }

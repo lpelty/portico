@@ -155,11 +155,11 @@ struct ConversationView: View {
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                let moved = scrollMemory.offset.map { abs($0 - now.offset) >= 0.5 } ?? true
+                // The marked input's direction decides which readings are
+                // the person's (fix round 4; no longer spent by the first).
                 let target = scrollMemory.observe(
-                    width: now.width, atBottom: now.atBottom, byPerson: byPerson, offset: now.offset)
-                // The marked input's scroll is read once (fix round 3).
-                if moved { personInput.consume() }
+                    width: now.width, atBottom: now.atBottom, byPerson: personScrolling,
+                    marked: personInput.recent, offset: now.offset)
                 if target == .bottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }

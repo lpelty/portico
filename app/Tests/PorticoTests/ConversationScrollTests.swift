@@ -137,4 +137,58 @@ final class ConversationScrollTests: XCTestCase {
         XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: true, offset: 6595), "back at the end")
         XCTAssertTrue(memory.atBottom)
     }
+
+    /// Fix round 4 (N1): an up mark (Page Up, a wheel toward the top) counts
+    /// for every reading moving up within its span, and ignores readings
+    /// moving down or not at all (a reply delta, SwiftUI's settling): no
+    /// go-back-to-the-bottom, and the mark is not spent by them.
+    func testAnUpMarkIgnoresReadingsMovingDownAndRecordsThoseMovingUp() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, offset: 6595))
+        XCTAssertNil(
+            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6620),
+            "a delta before the key's first frame: ignored, not .bottom")
+        XCTAssertTrue(memory.atBottom, "not recorded")
+        XCTAssertNil(
+            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6620), "nor one not moving")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6400), "the key's frame")
+        XCTAssertFalse(memory.atBottom, "scrolled up")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6450), "settling down")
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .up, offset: 6100), "the next frame")
+        XCTAssertFalse(memory.atBottom)
+    }
+
+    /// Fix round 4 (N1): a down mark (Page Down, End, a wheel toward the
+    /// end) reaching the end over several animated frames goes back to
+    /// following; a reading moving up under it (SwiftUI putting its own
+    /// offset back) is the layout's, never the person's.
+    func testADownMarkReachingTheEndFollowsAgain() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: true, offset: 5000))
+        XCTAssertFalse(memory.atBottom)
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5300), "first frame")
+        XCTAssertNil(
+            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5250), "settling up: not the person's")
+        XCTAssertFalse(memory.atBottom)
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, marked: .down, offset: 5595), "at the end")
+        XCTAssertTrue(memory.atBottom, "following again")
+        XCTAssertEqual(
+            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5595), .bottom,
+            "the reply grew past the end")
+        XCTAssertEqual(
+            memory.observe(width: 900, atBottom: false, byPerson: false, marked: .down, offset: 5550), .bottom,
+            "SwiftUI putting its own offset back: the layout's, back to the end")
+        XCTAssertTrue(memory.atBottom, "not taken for the person scrolling up")
+        XCTAssertEqual(memory.observe(width: 640, atBottom: false, byPerson: false, offset: 5595), .bottom, "a width change")
+    }
+
+    /// Fix round 4 (N1): VoiceOver's cursor marks `.either`: readings either way are the person's.
+    func testAnEitherMarkAcceptsBothWays() {
+        var memory = ConversationScrollMemory()
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, offset: 6595))
+        XCTAssertNil(memory.observe(width: 900, atBottom: false, byPerson: false, marked: .either, offset: 6000))
+        XCTAssertFalse(memory.atBottom, "up")
+        XCTAssertNil(memory.observe(width: 900, atBottom: true, byPerson: false, marked: .either, offset: 6595))
+        XCTAssertTrue(memory.atBottom, "down to the end")
+    }
 }

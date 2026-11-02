@@ -23,6 +23,13 @@ struct ConversationScrollMemory: Equatable, Sendable {
         case bottom
     }
 
+    /// Which way the person's marked input scrolls (v0.15 fix round 4):
+    /// `.up` toward earlier messages, `.down` toward the newest, `.either`
+    /// when the input says nothing of it (VoiceOver's cursor).
+    enum Direction: Equatable, Sendable {
+        case up, down, either
+    }
+
     /// At the bottom until the person scrolls away: a conversation opens there.
     private(set) var atBottom = true
     /// The column's width the place was last seen at.
@@ -73,14 +80,43 @@ struct ConversationScrollMemory: Equatable, Sendable {
     /// their scroll (still theirs for a moment) can land off the end
     /// because the content grew; it moved down or not at all, so it is the
     /// layout's.
-    mutating func observe(width: CGFloat, atBottom: Bool, byPerson: Bool, offset: CGFloat? = nil) -> Target? {
+    ///
+    /// Fix round 4: a marked input (a scroll key, a wheel, VoiceOver;
+    /// `marked`, its direction) counts for the readings that move the offset
+    /// its way, all of them: an animated key scroll reaches the end over
+    /// several frames. A reading moving the other way, or not at all, is
+    /// the layout's (SwiftUI putting its own offset back, a reply delta),
+    /// never recorded as the person's. Under an up mark it is ignored
+    /// outright: going back to the bottom there (a delta landing before the
+    /// key's first frame) would swallow the key. Under a down mark it gets
+    /// the layout's rule, back to the bottom when the memory is there: found
+    /// hosted, SwiftUI put 6756 back to 6710 again and again after a wheel
+    /// back to the end, and ignoring those left the view short of the end.
+    /// A scroll phase (`byPerson`) is the person's whatever the direction.
+    mutating func observe(
+        width: CGFloat, atBottom: Bool, byPerson: Bool, marked: Direction? = nil, offset: CGFloat? = nil
+    ) -> Target? {
         let previous = self.offset
         if let offset { self.offset = offset }
         if let known = self.width, abs(known - width) >= 1 {
             return widthChanged(to: width)
         }
-        if byPerson {
-            let movedUp = offset.flatMap { now in previous.map { now < $0 - 0.5 } } ?? true
+        // Toward the end is positive; unknown without two readings.
+        let moved = offset.flatMap { now in previous.map { now - $0 } }
+        var person = byPerson
+        if !byPerson, let marked {
+            switch marked {
+            case .either:
+                person = true
+            case .up:
+                guard moved.map({ $0 < -0.5 }) ?? true else { return nil }
+                person = true
+            case .down:
+                person = moved.map { $0 > 0.5 } ?? true
+            }
+        }
+        if person {
+            let movedUp = moved.map { $0 < -0.5 } ?? true
             if atBottom || movedUp || !self.atBottom {
                 seen(atBottom: atBottom, width: width)
                 return nil
