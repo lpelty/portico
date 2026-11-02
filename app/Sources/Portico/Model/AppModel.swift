@@ -607,26 +607,36 @@ final class AppModel: ObservableObject {
     /// Bumped to ask whichever composer is on screen to take focus.
     @Published private(set) var composerFocusRequests = 0
 
-    /// "New space…": the composer gets "New space: " for the person to finish
-    /// in plain words, and focus. No form (spec 4.4).
-    ///
-    /// The composer on screen, which is not always the shown chat's (v0.14
-    /// test fix): the welcome continuing the live session (Y1) has the start
-    /// composer, and an earlier session is read-only, so New space… takes
-    /// the person to the live session (or the welcome) and fills that.
+    /// The New space dialog is up (AO2).
+    @Published var newSpaceShown = false
+
+    /// "New space…": the dialog opens. Nothing in any composer changes.
     func beginNewSpace() {
-        if let shown = documentMode ? filesChat : selected, showsEarlierBar(chat: shown) {
+        newSpaceShown = true
+    }
+
+    /// The dialog's Create: one ordinary message to Main, shown as sent
+    /// (Main's draft untouched; queued if Main is working). The window
+    /// leaves the document view and goes to Main when it is on a thread,
+    /// an earlier session or the welcome. With no Main yet, the message
+    /// starts the first session (Ruling 19). A send that cannot go now
+    /// (another is still in flight, or there is no folder to start in)
+    /// leaves the dialog open with its words.
+    func createSpace(_ draft: NewSpaceDraft) {
+        guard draft.canCreate else { return }
+        let message = draft.message
+        if let main = liveSession?.chat {
+            guard !isSending(chat: main) else { return }
+            newSpaceShown = false
             closeDocumentView()
-            if let live = backTarget(from: shown) { open(chat: live) } else { showStart() }
-        }
-        if documentMode, let chat = filesChat {
-            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
-        } else if case .conversation(let chat) = mainScreen {
-            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
+            if selected != main { open(chat: main) }
+            dispatch(chat: main, text: message, attachments: [], fromComposer: false)
         } else {
-            startDraft = SpacesPresentation.newSpaceDraft(existing: startDraft)
+            guard startFolder != nil, !isStarting else { return }
+            newSpaceShown = false
+            closeDocumentView()
+            startChat(text: message, fromComposer: false)
         }
-        composerFocusRequests += 1
     }
 
     func refreshSpace(_ id: String) { send(.spaceRefresh(SpaceRefresh(id: id))) }

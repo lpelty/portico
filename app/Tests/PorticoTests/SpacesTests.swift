@@ -165,72 +165,18 @@ final class SpacesTests: XCTestCase {
 
     // MARK: - new space
 
-    func test_new_space_prefills_composer() {
+    func test_new_space_opens_the_dialog_and_leaves_the_composers_alone() {
         let (model, _) = model(spaces: [space("a")])
-        XCTAssertEqual(model.composerFocusRequests, 0)
-        // Before any session: the start composer.
+        XCTAssertFalse(model.newSpaceShown)
         model.beginNewSpace()
-        XCTAssertEqual(model.startDraft, "New space: ")
-        XCTAssertEqual(model.composerFocusRequests, 1, "asks the composer to take focus")
+        XCTAssertTrue(model.newSpaceShown)
+        XCTAssertEqual(model.startDraft, "")
+        XCTAssertEqual(model.composerFocusRequests, 0, "no composer is asked for focus")
 
-        // With a chat shown: that chat's composer.
         model.apply(.chatList(ChatList(chats: [ChatSummary(chat: 1, folder: "/tmp/d", alias: nil, state: .idle, created: "2026-10-28T12:00:00Z")])))
         model.selected = 1
         model.beginNewSpace()
-        XCTAssertEqual(model.draft(for: 1), "New space: ")
-        XCTAssertEqual(model.composerFocusRequests, 2)
-    }
-
-    // MARK: - New space… lands in the composer on screen (v0.14 test fix, issue 4)
-
-    /// Single presentation, Session 2 ended and Session 3 live, listed.
-    private func singleWithSessions() -> AppModel {
-        let (model, _) = model(spaces: [space("a")])
-        model.setConnection(.connected)
-        model.apply(.hello(HelloServer(
-            protocol: protocolVersion, gatewayVersion: "0.14.0", epoch: "e1",
-            brand: Brand(name: "Acme", agentName: "Agent"), actions: [], roots: [], commands: [],
-            capabilities: ["sessions", SpacesList.capability], presentation: "single", canLog: true)))
-        model.apply(.chatList(ChatList(chats: [
-            ChatSummary(chat: 2, folder: "/tmp/d", alias: nil, state: .stopped, created: "2026-10-31T09:00:00Z", ended: "2026-10-31T17:00:00Z"),
-            ChatSummary(chat: 3, folder: "/tmp/d", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z"),
-        ])))
-        return model
-    }
-
-    /// The welcome continuing the live session (Y1, the launch screen with
-    /// one) shows the start composer: "New space: " goes there, not into
-    /// the live session's own draft, which no composer on screen shows.
-    func test_new_space_on_the_welcome_continuing_a_session_fills_the_welcome_composer() {
-        let model = singleWithSessions()
-        XCTAssertEqual(model.mainScreen, .continuing(3))
-        model.beginNewSpace()
-        XCTAssertEqual(model.startDraft, "New space: ", "the composer on screen")
-        XCTAssertEqual(model.draft(for: 3), "", "not the live session's hidden draft")
-        XCTAssertEqual(model.composerFocusRequests, 1)
-    }
-
-    /// An earlier session is read-only (no composer): New space… goes back
-    /// to the live session and fills its composer.
-    func test_new_space_on_an_earlier_session_goes_to_the_live_sessions_composer() {
-        let model = singleWithSessions()
-        model.open(chat: 2)
-        XCTAssertTrue(model.showsEarlierBar(chat: 2))
-        model.beginNewSpace()
-        XCTAssertEqual(model.mainScreen, .conversation(3), "the live session, where a composer is")
-        XCTAssertEqual(model.draft(for: 3), "New space: ")
-        XCTAssertEqual(model.draft(for: 2), "")
-        XCTAssertEqual(model.composerFocusRequests, 1)
-    }
-
-    /// The document view has the shown chat's composer: it gets it there.
-    func test_new_space_in_the_document_view_fills_its_composer() {
-        let model = singleWithSessions()
-        model.open(chat: 3)
-        model.documentMode = true
-        model.beginNewSpace()
-        XCTAssertEqual(model.draft(for: 3), "New space: ")
-        XCTAssertTrue(model.documentMode, "the document view stays")
+        XCTAssertEqual(model.draft(for: 1), "")
     }
 
     // MARK: - rename, remove
@@ -269,17 +215,6 @@ final class SpacesTests: XCTestCase {
         model.setOpenSpace("a")
         model.setOpenSpace("b")
         XCTAssertFalse(model.spaces.contains { model.hasNew($0.id) })
-    }
-
-    func test_new_space_keeps_an_existing_draft() {
-        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: ""), "New space: ")
-        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: "  \n"), "New space: ")
-        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: "fix the bug"), "New space: fix the bug")
-        XCTAssertEqual(SpacesPresentation.newSpaceDraft(existing: "New space: a brief"), "New space: a brief")
-        let (model, _) = model(spaces: [space("a")])
-        model.startDraft = "half a thought"
-        model.beginNewSpace()
-        XCTAssertEqual(model.startDraft, "New space: half a thought")
     }
 
     func test_escape_clears_the_filter_then_closes() {
