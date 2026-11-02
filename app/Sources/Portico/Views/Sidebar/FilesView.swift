@@ -153,6 +153,7 @@ struct FilesView: View {
                     }
                 } header: {
                     Text("Changed this session")
+                        .scaledFont(FileTree.headerSize, weight: .semibold)
                 }
             }
             ForEach(nodes) { node in
@@ -195,6 +196,13 @@ struct FileTree: View {
         var id: String { node.id }
     }
 
+    /// The sizes a `.sidebar` list draws by default, set explicitly because
+    /// the list's default font ignores the text scale (v0.15 §3.3, amended
+    /// 11-02): rows 13 pt, section headers 11 pt semibold. At 100% they draw
+    /// exactly as the defaults did (checked pixel for pixel, light and dark).
+    static let rowSize: CGFloat = 13
+    static let headerSize: CGFloat = 11
+
     /// Full steps for the first four levels, then small ones, so a file
     /// eight folders down still has room for its name.
     static func indent(depth: Int) -> CGFloat {
@@ -212,8 +220,15 @@ struct FileTree: View {
                         row(line)
                     }
                 } header: {
-                    Label(root.name, systemImage: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
-                        .help(root.path)
+                    Label {
+                        Text(root.name)
+                            .scaledFont(Self.headerSize, weight: .semibold)
+                    } icon: {
+                        // Icons keep their size (§3.4); this is the size the header drew it at before.
+                        Image(systemName: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
+                            .font(Theme.iconFont(Self.headerSize, weight: .semibold))
+                    }
+                    .help(root.path)
                 }
             }
         }
@@ -254,6 +269,7 @@ struct FileTree: View {
                 }
             } header: {
                 Text("Changed this session")
+                    .scaledFont(Self.headerSize, weight: .semibold)
             }
         }
     }
@@ -450,6 +466,7 @@ struct FileLine<Trailing: View>: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name)
+                    .scaledFont(FileTree.rowSize)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let subtitle {
