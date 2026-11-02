@@ -20,9 +20,9 @@ final class CardTests: XCTestCase {
 
     func testPermissionChoicesMapToDecisionAndScope() {
         let card = permissionCard()
-        // V1: Deny… · Allow for this session · Allow once — no "Always allow".
-        XCTAssertEqual(PermissionChoice.allCases.map(\.label), ["Deny…", "Allow for this session", "Allow once"])
-        XCTAssertFalse(PermissionChoice.allCases.contains { $0.scope == .always }, "the app does not offer always")
+        // Allow once · Allow for this session · Deny… — no "Always allow".
+        XCTAssertEqual(PermissionChoice.docked.map(\.label), ["Allow once", "Allow for this session", "Deny…"])
+        XCTAssertFalse(PermissionChoice.docked.contains { $0.scope == .always }, "the app does not offer always")
 
         let once = PermissionChoice.allowOnce.answer(for: card, note: "")
         XCTAssertEqual(once.chat, 1)
@@ -43,12 +43,8 @@ final class CardTests: XCTestCase {
 
     func testPermissionCardReadsAsAPlainQuestionWithTheToolAsATag() {
         var card = permissionCard()
-        card.title = "Save changes to Q3-synthesis.md?"
         let shown = PermissionPresentation(card: card)
-        XCTAssertEqual(shown.question, "Save changes to Q3-synthesis.md?")
         XCTAssertEqual(shown.tool, "Write")
-        card.title = "  "
-        XCTAssertEqual(PermissionPresentation(card: card).question, "Use Write?")
         XCTAssertEqual(PermissionPresentation.whereLine(folder: "/Users/x/Research vault"), "in Research vault")
         XCTAssertNil(PermissionPresentation.whereLine(folder: nil))
         XCTAssertEqual(shown.scopeNote, PermissionPresentation.generalScopeNote, "an older gateway says nothing: the general line")

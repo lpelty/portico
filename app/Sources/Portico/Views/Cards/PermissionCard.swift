@@ -1,17 +1,16 @@
 import SwiftUI
 
-/// The answers a permission card takes (V1), in the order the buttons
-/// show them, left to right. Scope words are the protocol's: `once` and
+/// The answers a permission card takes (V1). Scope words are the protocol's: `once` and
 /// `chat` ("this session"); deny carries none. The protocol's `always`
 /// scope stays in the types, but the app does not offer it until it
 /// writes a rule we have seen written (spec decision 4).
-enum PermissionChoice: CaseIterable, Equatable {
-    case deny
-    case allowSession
+enum PermissionChoice: Equatable {
     case allowOnce
+    case allowSession
+    case deny
 
-    /// The button's label. `Deny…` opens the note first; the note's own
-    /// button says `Deny`.
+    /// The row's label. `Deny…` refuses with no note; the deny with a
+    /// reason is the "Something else" row.
     var label: String {
         switch self {
         case .deny: "Deny…"
@@ -53,6 +52,10 @@ struct PermissionDraft: Equatable {
     let card: CardAsk
     /// The focused option, an index into `PermissionChoice.docked`.
     private(set) var focused = 0
+    /// Whether the person has moved the focus (an arrow, or the pointer on a
+    /// row). Until then Return does nothing, so a stray Return cannot grant a
+    /// permission; the digits and clicks are deliberate and act at once.
+    private(set) var focusMoved = false
     private(set) var reason = ""
 
     init(card: CardAsk) {
@@ -61,11 +64,13 @@ struct PermissionDraft: Equatable {
 
     /// Move the focus (↑/↓), stopping at the ends.
     mutating func move(by step: Int) {
+        focusMoved = true
         focused = min(max(focused + step, 0), PermissionChoice.docked.count - 1)
     }
 
     mutating func focus(_ index: Int) {
         guard PermissionChoice.docked.indices.contains(index) else { return }
+        focusMoved = true
         focused = index
     }
 
@@ -76,7 +81,7 @@ struct PermissionDraft: Equatable {
         case .choose(let index):
             return PermissionChoice.docked.indices.contains(index) ? PermissionChoice.docked[index].answer(for: card) : nil
         case .confirm:
-            return PermissionChoice.docked[focused].answer(for: card)
+            return focusMoved ? PermissionChoice.docked[focused].answer(for: card) : nil
         case .move:
             return nil
         }
@@ -99,9 +104,8 @@ struct PermissionDraft: Equatable {
     }
 }
 
-/// What a permission card shows: the plain question (the gateway's
-/// title), the tool as a tag, the one-line summary, and the full input
-/// behind the disclosure.
+/// What a permission card shows: the tool and its summary (the header), the
+/// scope note, and the full input behind the disclosure.
 struct PermissionPresentation: Equatable {
     let card: CardAsk
 
@@ -110,12 +114,6 @@ struct PermissionPresentation: Equatable {
     var tool: String { card.permission?.tool ?? "tool" }
     var summary: String { card.permission?.summary ?? "" }
     var prettyInput: String { PrettyJSON.render(card.permission?.input ?? [:]) }
-
-    /// The question; a card without a title asks `Use <tool>?`.
-    var question: String {
-        let trimmed = card.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Use \(tool)?" : trimmed
-    }
 
     /// `in Research vault`: the folder the step happens in, by name.
     static func whereLine(folder: String?) -> String? {
@@ -248,7 +246,7 @@ struct PermissionCard: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
-                draft.focused == index ? Theme.selected : .clear,
+                draft.focusMoved && draft.focused == index ? Theme.selected : .clear,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }

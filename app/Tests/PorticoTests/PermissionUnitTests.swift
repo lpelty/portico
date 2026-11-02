@@ -206,9 +206,21 @@ final class PermissionUnitTests: XCTestCase {
         XCTAssertNil(draft.answer(for: .move(1)))
     }
 
+    func testAStrayReturnGrantsNothingUntilTheFocusHasMoved() {
+        var fresh = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        XCTAssertNil(fresh.answer(for: .confirm), "Return right after the card appears does nothing")
+        XCTAssertEqual(fresh.answer(for: .choose(0))?.scope, .once, "a digit is deliberate: it acts at once")
+        fresh.move(by: 1)
+        XCTAssertEqual(fresh.answer(for: .confirm)?.scope, .chat, "after an arrow, Return answers that row")
+        var hovered = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        hovered.focus(2)
+        XCTAssertEqual(hovered.answer(for: .confirm)?.answer, ["decision": .string("deny")], "hovering a row counts")
+    }
+
     func testReturnAnswersTheFocusedOptionAndTheArrowsMoveIt() {
         var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
         XCTAssertEqual(draft.focused, 0)
+        draft.focus(0)
         XCTAssertEqual(draft.answer(for: .confirm)?.scope, .once)
         draft.move(by: 1)
         XCTAssertEqual(draft.answer(for: .confirm)?.scope, .chat)
