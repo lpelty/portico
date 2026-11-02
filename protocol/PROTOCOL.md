@@ -983,7 +983,7 @@ list `models.v1`:
 
 - **The list is the engine's own.** When an engine starts, the Claude Code
   CLI behind the Agent SDK answers its initialize request with `models`:
-  the same list `/model` shows (on Bedrock, built from the deployment's
+  the same list `/model` shows (on a hosted provider, built from the deployment's
   own settings). The gateway passes each entry's `value`, `displayName`
   and `description` on as `{value, display_name, description}`; no
   Portico config chooses them. The last list is kept in the gateway's

@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.15.0 (unreleased)
+
+### What a person gets (app)
+
+- **The model in the status strip is a menu.** Choose from the same list
+  `/model` shows in a terminal; the strip names your choice at once
+  ("Default (recommended)" shows as "Default"). Each chat's menu shows the
+  model that chat runs on, and your choice carries to new sessions. The
+  menu is dimmed while a reply runs ("Change the model after this reply")
+  and while disconnected ("Not connected").
+- **Text size.** Settings → Appearance has a Text size setting, under
+  Appearance, which is now a pop-up. It scales the conversation, the
+  sidebar, the menus and the viewer's Markdown together. ⌘+ and ⌘= make
+  text bigger, ⌘- smaller; Actual Size has no shortcut (⌘0 stays Work).
+- **Earlier is now History,** a popover with one title filter. The sidebar
+  starts under the traffic lights, in a band 36 pt tall.
+- **The conversation stays at the newest message.** At the bottom, it stays
+  there when a space or the viewer opens and closes, and follows new text
+  only while you are at the bottom. Your own scroll (trackpad, wheel, keys,
+  VoiceOver) is respected; returning to the bottom resumes following.
+  (Found on v0.14.0 too.)
+- **A space shows an outside site.** The space header gives the site's
+  address with the same note as Work, and offers Open externally in place
+  of Refresh there. The header address follows in-page navigation (route-
+  like `#fragments` only).
+
+### Protocol and gateway
+
+- Two frames, `models` (the engine's own list, plus `current`: the model
+  that chat runs on, absent for the default) and `model.set` (a value, or
+  `"default"` or `null` for the deployment's default). Both sides announce
+  `models.v1`; without it the strip stays plain text.
+- `model.set` during a reply is refused with `chat.busy`, and a model not
+  in the list with `model.unknown`. A choice the deployment stops offering
+  is dropped at the next engine start, with a notice.
+- Gateway version 0.15.0 to match the app.
+
+### Small items
+
+- **Open in Obsidian** is offered only for md, markdown, canvas, pdf and
+  image files.
+- **A mark on a page that didn't load** says "That page didn't load; the
+  marks are kept for when it does."
+- **The gateway checks mark items:** "Each mark needs a target, and a note
+  of at most 60 characters."
+- **A long space title shortens in the middle.**
+- **The services test flake is fixed;** CJK input, 24-hour times and
+  declined writes are now pinned by tests.
+
 ## v0.14.0 (2026-11-01)
 
 ### What a person gets (app)
