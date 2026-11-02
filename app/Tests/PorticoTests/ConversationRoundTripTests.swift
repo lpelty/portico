@@ -105,11 +105,20 @@ final class ConversationRoundTripTests: XCTestCase {
         return best.map { ($0.text, $0.top - visible.minY) }
     }
 
-    /// One scroll-wheel event over the scroll view (positive: up the transcript).
+    /// The person scrolls by `pixels` (positive: up the transcript): the
+    /// clip view moves inside a live scroll, as a wheel or trackpad scroll
+    /// does, so SwiftUI tracks the message at the top. (Fix round 1: posted
+    /// wheel events were dropped or not depending on the machine's own
+    /// pointer and input state, so the test came and went with it.)
     private static func wheel(_ scroll: NSScrollView, pixels: Int32) {
-        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0),
-              let event = NSEvent(cgEvent: cg) else { return }
-        scroll.scrollWheel(with: event)
+        let clip = scroll.contentView
+        let center = NotificationCenter.default
+        center.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        let y = max(0, clip.bounds.origin.y - CGFloat(pixels))
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scroll.reflectScrolledClipView(clip)
+        center.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
+        center.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
     }
 
     /// The column's width eased over a few frames, as the viewer's slide animates it.
@@ -135,7 +144,6 @@ final class ConversationRoundTripTests: XCTestCase {
         }
         spin(0.3)
         let before = try XCTUnwrap(Self.topReply(in: hosted.scroll))
-
         resize(hosted, from: 900, to: 640)  // a space opens beside it
         let inSpace = try XCTUnwrap(Self.topReply(in: hosted.scroll))
         XCTAssertEqual(inSpace.text, before.text, "the same reply stays at the top while the space is open")
