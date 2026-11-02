@@ -29,10 +29,20 @@ enum QuestionRecord {
     static func line(input: [String: JSONValue], answers: [String: QuestionAnswer]?, finished: Bool, ok: Bool? = nil) -> String {
         guard finished else { return asking }
         let asked = questions(in: input)
-        let chosen = asked.flatMap { answers?[$0]?.labels ?? [] }
+        let chosen = asked.flatMap { answers?[$0]?.labels ?? [] }.map(shown)
         let head = asked.count > 1 ? "Asked \(asked.count) questions" : asked.first.map { "Asked: \($0)" } ?? "Asked a question"
         if !chosen.isEmpty { return "\(head) · \(chosen.joined(separator: ", "))" }
         return ok == true && (answers ?? [:]).isEmpty ? head : "\(head) · \(notAnswered)"
+    }
+
+    /// A label as the record shows it: without a trailing "(Recommended)"
+    /// (fix round 1). The answer the agent got keeps the label as written.
+    static func shown(_ label: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        let suffix = "(Recommended)"
+        guard trimmed.hasSuffix(suffix) else { return label }
+        let bare = trimmed.dropLast(suffix.count).trimmingCharacters(in: .whitespaces)
+        return bare.isEmpty ? label : bare
     }
 
     static func line(for row: ToolRow) -> String {

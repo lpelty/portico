@@ -214,6 +214,37 @@ final class DockedQuestionCardTests: XCTestCase {
         XCTAssertNil(QuestionDockKeys.action(for: .escape, cardFocused: true, optionCount: 3), "Esc does nothing (Ruling 15)")
     }
 
+    // MARK: - focus (fix round 1)
+
+    func testTheCardsKeysAreLiveOnlyWhileTheCardItselfHasTheFocus() {
+        XCTAssertTrue(QuestionDockKeys.isActive(cardFocused: true, fieldFocused: false), "the card focused")
+        XCTAssertFalse(QuestionDockKeys.isActive(cardFocused: true, fieldFocused: true), "typing in Something else")
+        XCTAssertFalse(QuestionDockKeys.isActive(cardFocused: false, fieldFocused: false), "the composer focused")
+        // Typed in the field, the keys reach the card as inactive: digits, arrows and Return are the field's.
+        let inField = QuestionDockKeys.isActive(cardFocused: true, fieldFocused: true)
+        XCTAssertNil(QuestionDockKeys.action(for: "2", cardFocused: inField, optionCount: 3))
+        XCTAssertNil(QuestionDockKeys.action(for: .downArrow, cardFocused: inField, optionCount: 3))
+        XCTAssertNil(QuestionDockKeys.action(for: .return, cardFocused: inField, optionCount: 3), "Return submits the text")
+    }
+
+    func testADockingCardLeavesTypedTextItsFocus() {
+        XCTAssertTrue(QuestionDockKeys.takesFocusOnAppear(composerFocused: false, composerText: "half a thought"))
+        XCTAssertTrue(QuestionDockKeys.takesFocusOnAppear(composerFocused: true, composerText: ""))
+        XCTAssertTrue(QuestionDockKeys.takesFocusOnAppear(composerFocused: true, composerText: "  \n"))
+        XCTAssertFalse(QuestionDockKeys.takesFocusOnAppear(composerFocused: true, composerText: "half a thought"))
+    }
+
+    // MARK: - the dock's height (fix round 1)
+
+    func testTheDockIsCappedNearHalfTheConversation() {
+        XCTAssertEqual(DockedCardLayout.maxHeight(available: 800), 360)
+        XCTAssertNil(DockedCardLayout.bodyCap(dockMax: nil, header: 30), "unmeasured: no cap")
+        XCTAssertEqual(DockedCardLayout.bodyCap(dockMax: 360, header: 30), 360 - 30 - DockedCardLayout.chrome)
+        XCTAssertEqual(DockedCardLayout.bodyCap(dockMax: 100, header: 30), DockedCardLayout.minBody, "never below the floor")
+        XCTAssertEqual(DockedCardLayout.bodyHeight(content: 200, cap: 298), 200, "short content: its own height")
+        XCTAssertEqual(DockedCardLayout.bodyHeight(content: 900, cap: 298), 298, "long content scrolls inside")
+    }
+
     // MARK: - the transcript's record (Ruling 12)
 
     private static func input(_ questions: [String]) -> [String: JSONValue] {
@@ -249,6 +280,17 @@ final class DockedQuestionCardTests: XCTestCase {
         XCTAssertEqual(
             QuestionRecord.line(input: one, answers: [Self.tone: .many(["One", "Two"])], finished: true),
             "Asked: Which tone for step 2? · One, Two")
+        XCTAssertEqual(
+            QuestionRecord.line(input: one, answers: [Self.tone: .one("Plain (Recommended)")], finished: true),
+            "Asked: Which tone for step 2? · Plain", "the record drops the Recommended mark")
+        XCTAssertEqual(QuestionRecord.shown("(Recommended)"), "(Recommended)", "a bare mark stays")
+        XCTAssertEqual(QuestionRecord.shown("Recommended"), "Recommended")
+
+        // The answer the agent gets keeps the label as written.
+        var draft = QuestionDraft(card: Self.card([Self.question(labels: ["Plain (Recommended)", "Explained"])]))
+        XCTAssertEqual(
+            draft.choose("Plain (Recommended)", for: 0)?.answer,
+            ["answers": .object([Self.tone: .string("Plain (Recommended)")])])
     }
 
     // MARK: - the model
@@ -280,13 +322,27 @@ final class DockedQuestionCardTests: XCTestCase {
         XCTAssertNil(model.dockedCard(for: 2), "a card docks only in its own conversation")
     }
 
-    func testReplyDirectlySendsTheMessageThenTheDecline() throws {
+    /// The gateway accepts the latest message.send: `chat.queued` with its id.
+    private func accept(_ model: AppModel, _ sent: Sent) throws {
+        guard case .messageSend(let send)? = sent.frames.last(where: { $0.type == "message.send" }) else {
+            return XCTFail("expected a message.send")
+        }
+        model.apply(.chatQueued(ChatQueued(chat: 1, id: try XCTUnwrap(send.id))))
+    }
+
+    func testReplyDirectlySendsTheMessageThenTheDeclineOnceItIsAccepted() throws {
         let (model, sent) = model()
         model.apply(.cardAsk(Self.twoQuestions()))
         model.setDraft("Use the short one", for: 1)
         XCTAssertTrue(InputBar.canSend(model, chat: 1, text: "Use the short one"))
 
         model.replyDirectly(chat: 1, text: "Use the short one")
+        XCTAssertEqual(sent.types().last, "message.send")
+        XCTAssertFalse(sent.types().contains("card.answer"), "nothing is declined before the reply is accepted")
+        XCTAssertEqual(model.dockedCard(for: 1)?.id, "card-q")
+        XCTAssertEqual(model.draft(for: 1), "", "the composer is cleared, as any send")
+
+        try accept(model, sent)
         let sends = sent.frames.filter { if case .messageSend = $0 { true } else if case .cardAnswer = $0 { true } else { false } }
         XCTAssertEqual(sends.map(\.type), ["message.send", "card.answer"], "the message first, then the decline")
         guard case .messageSend(let message) = sends[0], case .cardAnswer(let answer) = sends[1] else {
@@ -296,13 +352,38 @@ final class DockedQuestionCardTests: XCTestCase {
         XCTAssertEqual(answer.answer, ["declined": .string("replied")])
         XCTAssertEqual(answer.id, "card-q")
         XCTAssertNil(model.dockedCard(for: 1), "the card goes")
-        XCTAssertEqual(model.draft(for: 1), "", "the composer is cleared, as any send")
     }
 
-    func testTheComposersSendRepliesDirectlyWhileAQuestionIsDocked() {
+    func testARefusedReplyDeclinesNothingAndTheCardStays() throws {
+        let (model, sent) = model()
+        model.apply(.cardAsk(Self.twoQuestions()))
+        model.replyDirectly(chat: 1, text: "Use the short one")
+        guard case .messageSend(let send)? = sent.frames.last else { return XCTFail("expected message.send") }
+        model.apply(.error(ErrorMessage(code: "attachment.missing", message: "That file is gone.", chat: 1, id: send.id)))
+        XCTAssertEqual(model.draft(for: 1), "Use the short one", "the text goes back in the composer")
+        XCTAssertEqual(model.status[1], "That file is gone.", "the refusal shows")
+        XCTAssertEqual(model.dockedCard(for: 1)?.id, "card-q", "the question is still asked")
+
+        // A late chat.queued with that id declines nothing either.
+        model.apply(.chatQueued(ChatQueued(chat: 1, id: send.id)))
+        XCTAssertFalse(sent.types().contains("card.answer"))
+    }
+
+    func testAnOptionChosenWhileTheReplyWaitsIsTheAnswer() throws {
+        let (model, sent) = model()
+        let card = Self.twoQuestions()
+        model.apply(.cardAsk(card))
+        model.replyDirectly(chat: 1, text: "And one more thing")
+        model.answerCard(QuestionDraft(card: card).decline(.dismissed))
+        try accept(model, sent)
+        XCTAssertEqual(sent.types().filter { $0 == "card.answer" }.count, 1, "the card was answered once; the reply is just a message")
+    }
+
+    func testTheComposersSendRepliesDirectlyWhileAQuestionIsDocked() throws {
         let (model, sent) = model()
         model.apply(.cardAsk(Self.twoQuestions()))
         model.sendMessage(chat: 1, text: "Neither, keep it as is")
+        try accept(model, sent)
         XCTAssertEqual(sent.types().suffix(2), ["message.send", "card.answer"])
         XCTAssertEqual(
             InputBar.placeholder(

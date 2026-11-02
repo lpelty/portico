@@ -20,6 +20,8 @@ struct ConversationView: View {
     @State private var personInput = TranscriptPersonInput()
     /// The transcript's width, for the reading column's (v0.11, item 58).
     @State private var transcriptWidth: CGFloat?
+    /// The conversation's height, for the docked card's cap (v0.16).
+    @State private var conversationHeight: CGFloat?
     /// The column grows with the text (v0.15 §3).
     @Environment(\.textScale) private var textScale
 
@@ -53,6 +55,7 @@ struct ConversationView: View {
             // composer's width above it; the composer stays under it.
             if model.dockedCard(for: chat) != nil {
                 CardDock(chat: chat, folder: folder)
+                    .environment(\.dockMaxHeight, conversationHeight.map(DockedCardLayout.maxHeight))
                     .padding(.horizontal, Self.sideInset)
                     .padding(.bottom, 8)
                     .inConversationColumn()
@@ -88,6 +91,7 @@ struct ConversationView: View {
                     .zIndex(1)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { conversationHeight = $0 }
     }
 
     /// S5: a session that followed another opens with the line that says

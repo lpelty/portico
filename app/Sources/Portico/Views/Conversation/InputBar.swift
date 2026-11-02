@@ -96,6 +96,15 @@ struct InputBar: View {
         }
         .onAppear { editorFocused = true }
         .onChange(of: model.composerFocusRequests) { editorFocused = true }
+        // Said to the model, so a card docking leaves typed text alone (v0.16).
+        .onChange(of: editorFocused, initial: true) { _, focused in
+            if focused {
+                model.focusedComposer = chat
+            } else if model.focusedComposer == chat {
+                model.focusedComposer = nil
+            }
+        }
+        .onDisappear { if model.focusedComposer == chat { model.focusedComposer = nil } }
     }
 
     /// The frame's Input: one bordered box in the control colour holding the

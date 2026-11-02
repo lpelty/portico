@@ -208,6 +208,21 @@ enum QuestionDockKeys {
         case confirm
     }
 
+    /// Whether the card's keys are live: the card has the focus and its own
+    /// "Something else" field does not (typed there, a digit is a digit and
+    /// Return submits the text). The composer focused is the card not.
+    static func isActive(cardFocused: Bool, fieldFocused: Bool) -> Bool {
+        cardFocused && !fieldFocused
+    }
+
+    /// Whether a card that docks takes the focus (controller ruling, fix
+    /// round 1, refining Ruling 15): only when the composer does not have it,
+    /// or has it with nothing typed. Typing is never interrupted; the card
+    /// is a click (or Tab) away.
+    static func takesFocusOnAppear(composerFocused: Bool, composerText: String) -> Bool {
+        !composerFocused || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     static func action(for key: KeyEquivalent, cardFocused: Bool, optionCount: Int) -> Action? {
         guard cardFocused else { return nil }
         switch key {
@@ -235,10 +250,17 @@ struct QuestionCard: View {
     @State private var draft: QuestionDraft
     @State private var expanded = false
     @FocusState private var cardFocused: Bool
+    @FocusState private var fieldFocused: Bool
+    /// Asked once the card is on screen: whether to take the focus.
+    var takesFocus: () -> Bool = { true }
 
-    init(card: CardAsk, accent: Color = Theme.accent, onAnswer: @escaping (CardAnswer) -> Void) {
+    init(
+        card: CardAsk, accent: Color = Theme.accent, takesFocus: @escaping () -> Bool = { true },
+        onAnswer: @escaping (CardAnswer) -> Void
+    ) {
         self.card = card
         self.accent = accent
+        self.takesFocus = takesFocus
         self.onAnswer = onAnswer
         _draft = State(initialValue: QuestionDraft(card: card))
     }
@@ -265,7 +287,8 @@ struct QuestionCard: View {
         .focusEffectDisabled()
         .focused($cardFocused)
         .onKeyPress(phases: .down) { press in
-            guard let action = QuestionDockKeys.action(for: press.key, cardFocused: cardFocused, optionCount: options.count)
+            let active = QuestionDockKeys.isActive(cardFocused: cardFocused, fieldFocused: fieldFocused)
+            guard let action = QuestionDockKeys.action(for: press.key, cardFocused: active, optionCount: options.count)
             else { return .ignored }
             perform(action)
             return .handled
@@ -274,7 +297,7 @@ struct QuestionCard: View {
         // conversation opened with a card already docked gives it the card.
         .task {
             await Task.yield()
-            cardFocused = true
+            if takesFocus() { cardFocused = true }
         }
         .sheet(isPresented: $expanded) {
             PreviewSheet(title: question?.question ?? card.title, text: draft.preview(page) ?? "") { expanded = false }
@@ -399,6 +422,7 @@ struct QuestionCard: View {
                 .textFieldStyle(.plain)
                 .scaledFont(13)
                 .foregroundStyle(Theme.text)
+                .focused($fieldFocused)
                 .onSubmit { finish(draft.submitOther(for: page)) }
                 .help(multi ? "An answer of your own, with the ticked ones (Return)" : "An answer of your own (Return)")
             Button("Skip") { finish(draft.skip(page)) }

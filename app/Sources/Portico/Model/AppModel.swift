@@ -377,6 +377,12 @@ final class AppModel: ObservableObject {
     }
     /// Per chat, the one send in flight (a second is refused `chat.busy`).
     private(set) var pendingSends: [Int: PendingSend] = [:]
+    /// Reply directly (v0.16), per chat: the send that is the reply and the
+    /// question it declines once the gateway has accepted that send.
+    private(set) var pendingReplies: [Int: PendingReply] = [:]
+    /// The chat whose composer has the keyboard focus, as the composer
+    /// reports it: a card docking there leaves typed text alone (v0.16 fix).
+    var focusedComposer: Int?
     /// Per chat, the messages the gateway holds for the agent's next step
     /// (v0.11, item 74), oldest first, as its last `chat.queue` listed them.
     @Published private(set) var queued: [Int: [QueuedMessage]] = [:]
@@ -649,6 +655,7 @@ final class AppModel: ObservableObject {
             // A restarted gateway never saw (or will never answer) a send in
             // flight; the replay from the beginning carries any turn that ran.
             pendingSends = [:]
+            pendingReplies = [:]
             // Its queue went with it (v0.11); `chat.open` says what is held.
             queued = [:]
         }
@@ -812,6 +819,11 @@ final class AppModel: ObservableObject {
             if let id = accepted.id, pendingSends[accepted.chat]?.id == id {
                 pendingSends[accepted.chat] = nil
             }
+            // Reply directly: the reply is held, so now the question is declined.
+            if let id = accepted.id, let reply = pendingReplies[accepted.chat], reply.send == id {
+                pendingReplies[accepted.chat] = nil
+                answerCard(.declining(chat: accepted.chat, id: reply.card, .replied))
+            }
 
         case .chatQueue(let list):
             queued[list.chat] = list.items.isEmpty ? nil : list.items
@@ -936,6 +948,10 @@ final class AppModel: ObservableObject {
                 setStatus(error.message, for: chat)
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
                     restore(pending, to: chat)
+                }
+                // A refused reply declines nothing: the question stays docked.
+                if let id = error.id, pendingReplies[chat]?.send == id {
+                    pendingReplies[chat] = nil
                 }
             }
             // A refused listing: the directory is no longer pending (so it
@@ -1855,11 +1871,14 @@ final class AppModel: ObservableObject {
 
     /// Reply directly (v0.16 §3.3): a send from the composer while a
     /// question card is docked. The message goes first, as any send (the
-    /// gateway queues it mid-turn), then the `replied` decline for the
-    /// docked question; the gateway writes the reply into the turn right
-    /// after the question's row, so the agent reads the decline and then
-    /// the reply. A message that does not go (blank, another still out)
-    /// declines nothing. With no question docked it is an ordinary send.
+    /// gateway queues it mid-turn); once the gateway accepts it
+    /// (`chat.queued` with its id), the `replied` decline for the question.
+    /// The gateway writes the reply into the turn right after the
+    /// question's row, so the agent reads the decline and then the reply.
+    /// A message that does not go (blank, another still out) or that the
+    /// gateway refuses declines nothing: the card stays docked and the
+    /// text goes back in the composer. With no question docked it is an
+    /// ordinary send.
     func replyDirectly(chat: Int, text: String, about: String? = nil) {
         guard let question = dockedQuestion(for: chat) else {
             sendMessage(chat: chat, text: text, about: about)
@@ -1867,8 +1886,17 @@ final class AppModel: ObservableObject {
         }
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
-        guard dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true) else { return }
-        answerCard(.declining(chat: chat, id: question.id, .replied))
+        guard dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true),
+            let send = pendingSends[chat]?.id
+        else { return }
+        pendingReplies[chat] = PendingReply(send: send, card: question.id)
+    }
+
+    /// A reply sent while a question was docked, waiting for the gateway to
+    /// accept it before the question is declined.
+    struct PendingReply: Equatable, Sendable {
+        var send: String
+        var card: String
     }
 
     /// The agent's commands for the slash list in `folder` (v0.11 item 66):
@@ -2049,6 +2077,7 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = nil
         drafts[chat] = nil
         pendingSends[chat] = nil
+        pendingReplies[chat] = nil
         queued[chat] = nil
         transcripts[chat] = nil
         openCards[chat] = nil
