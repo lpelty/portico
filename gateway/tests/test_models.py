@@ -495,16 +495,22 @@ class ProbingFactory(ModelsFactory):
         self.gate: asyncio.Event | None = None
         self.hang = False
         self.probes: list[tuple[Path, list[str]]] = []
+        self.disconnected = False
 
     async def probe_models(self, folder: Path, setting_sources: list[str]) -> list[ModelChoice] | None:
         self.probes.append((folder, list(setting_sources)))
-        if self.gate is not None:
-            await self.gate.wait()
-        if self.hang:
-            await asyncio.Event().wait()
-        if self.error is not None:
-            raise self.error
-        return self.answer
+        try:
+            if self.gate is not None:
+                await self.gate.wait()
+            if self.hang:
+                await asyncio.Event().wait()
+            if self.error is not None:
+                raise self.error
+            return self.answer
+        finally:
+            # Like the real probe: disconnecting takes a moment and is awaited.
+            await asyncio.sleep(0.05)
+            self.disconnected = True
 
 
 def live_index(state_dir: StateDir, tmp_path: Path, **index: object) -> None:
@@ -592,11 +598,14 @@ async def test_a_probe_that_hangs_times_out(state_dir: StateDir, tmp_path: Path,
     with caplog.at_level(logging.WARNING, logger="portico_gateway.server"):
         await srv.serve(0)
         try:
-            await asyncio.sleep(0.3)
+            for _ in range(200):  # up to 2 s; fails below if the timeout never fires
+                if any("no answer within" in r.getMessage() for r in caplog.records):
+                    break
+                await asyncio.sleep(0.01)
+            assert any("no answer within" in r.getMessage() for r in caplog.records)
             assert srv.registry.models == CHOICES
         finally:
             await srv.shutdown()
-    assert any("model list" in r.getMessage() for r in caplog.records)
 
 
 async def test_an_unchanged_probe_list_is_not_rewritten(state_dir: StateDir, tmp_path: Path) -> None:
@@ -668,3 +677,52 @@ async def test_the_sdk_probe_disconnects_after_a_failure(tmp_path: Path, monkeyp
     with pytest.raises(RuntimeError):
         await SDKEngine.probe_models(tmp_path, [])
     assert seen == ["connect", "disconnect"]
+
+
+async def test_shutdown_mid_probe_waits_for_its_disconnect(state_dir: StateDir, tmp_path: Path) -> None:
+    live_index(state_dir, tmp_path)
+    factory = ProbingFactory()
+    factory.hang = True
+    srv = await start_server(state_dir, factory)
+    for _ in range(100):
+        if factory.probes:
+            break
+        await asyncio.sleep(0.01)
+    assert factory.probes and not factory.disconnected
+    await asyncio.wait_for(srv.shutdown(), 5)
+    assert factory.disconnected
+
+
+async def test_the_probe_disables_the_deployments_hooks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    captured: list[object] = []
+
+    class Client:
+        def __init__(self, options: object) -> None:
+            captured.append(options)
+
+        async def connect(self) -> None:
+            pass
+
+        async def get_server_info(self) -> dict[str, object]:
+            return {"models": RAW}
+
+        async def disconnect(self) -> None:
+            pass
+
+    monkeypatch.setattr("portico_gateway.engine.ClaudeSDKClient", Client)
+    await SDKEngine.probe_models(tmp_path, ["project"])
+    (options,) = captured
+    assert json.loads(options.settings) == {"disableAllHooks": True}  # type: ignore[attr-defined]
+    # A real engine's options never carry it.
+    assert build_options(tmp_path, None, ["project"], RecordingCallbacks()).settings is None
+
+
+def test_hooks_off_merges_into_existing_settings() -> None:
+    import json
+
+    from portico_gateway.engine import with_hooks_disabled
+
+    assert json.loads(with_hooks_disabled(None)) == {"disableAllHooks": True}
+    assert json.loads(with_hooks_disabled('{"model": "sonnet"}')) == {"model": "sonnet", "disableAllHooks": True}

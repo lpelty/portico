@@ -993,7 +993,9 @@ list `models.v1`:
   serving it asks the CLI for the list once, in the background: it
   connects with the same options an engine uses (in the deployment's
   `default_folder`, else the home folder), reads the server info and
-  disconnects, sending no message. A new list is kept and each live
+  disconnects, sending no message, with the deployment's hooks off
+  (`disableAllHooks`, so no `SessionStart`/`SessionEnd` hook fires for a
+  session nobody opened; engines keep their hooks). A new list is kept and each live
   session hears `models`. A failure, or no answer within 30 s, is logged
   and the kept list stands; `hello` never waits for it.
 - **The choice persists.** `model.set` switches the running engine at once

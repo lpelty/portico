@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
 import re
 import shlex
@@ -881,6 +882,27 @@ def agent_commands(raw: Any) -> list[AgentCommand]:
 # --- the SDK adapter -------------------------------------------------------------
 
 
+def with_hooks_disabled(settings: str | None) -> str:
+    """``settings`` (the SDK's JSON string, or none) with ``disableAllHooks`` on, for the model probe only.
+
+    The SDK's ``settings`` is a JSON string or a settings file path; either
+    is read and merged, so the setting is added rather than replacing them.
+    """
+    merged: dict[str, Any] = {}
+    if settings:
+        try:
+            loaded = json.loads(settings)
+        except ValueError:
+            try:
+                loaded = json.loads(Path(settings).expanduser().read_text())
+            except (OSError, ValueError):
+                loaded = {}
+        if isinstance(loaded, dict):
+            merged.update(loaded)
+    merged["disableAllHooks"] = True
+    return json.dumps(merged)
+
+
 class _ProbeCallbacks:
     """The owner of a model probe: it sends no message, so nothing reaches here; anything that did is refused."""
 
@@ -1042,8 +1064,15 @@ class SDKEngine:
         Built with the same ``build_options`` an engine uses, so the CLI reads
         the same settings and provider environment; no message is sent. The
         owner bounds the time; a failure raises, after disconnecting.
+
+        Unlike an engine, the probe runs with ``disableAllHooks`` (merged into
+        any ``settings``): connecting and disconnecting would otherwise fire
+        the deployment's ``SessionStart`` and ``SessionEnd`` hooks for a
+        session nobody opened (verified 11-02; the list still comes back).
         """
-        client = ClaudeSDKClient(build_options(folder, None, setting_sources, _ProbeCallbacks()))
+        options = build_options(folder, None, setting_sources, _ProbeCallbacks())
+        options.settings = with_hooks_disabled(options.settings)
+        client = ClaudeSDKClient(options)
         try:
             await client.connect()
             info = await client.get_server_info()

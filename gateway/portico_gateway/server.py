@@ -831,6 +831,7 @@ class GatewayServer:
         self.next_number_timeout = NEXT_NUMBER_TIMEOUT
         # v0.15 (amended 11-02): how long the gateway-start model probe may take.
         self.model_probe_timeout = MODEL_PROBE_TIMEOUT
+        self._probe_task: asyncio.Task[None] | None = None
         self._next_number_preview: int | None = None
         # The deployment's services (v0.4); started with ``serve``. v0.8: a
         # plug-in's hooks, else ``[deployment]``, give one status and one
@@ -958,7 +959,7 @@ class GatewayServer:
             self.spaces_watcher.spaces = await asyncio.to_thread(spaces_mod.scan, self.spaces_watcher.folder)
             self._spawn(self.spaces_watcher.run(), name="portico-spaces")
         if callable(getattr(self.engine_factory, "probe_models", None)):
-            self._spawn(self._probe_models(), name="portico-model-probe")
+            self._probe_task = self._spawn(self._probe_models(), name="portico-model-probe")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -975,6 +976,10 @@ class GatewayServer:
         self._cancel_preflight()
         for task in list(self._tasks):
             task.cancel()
+        probe, self._probe_task = self._probe_task, None
+        if probe is not None:
+            # Its client disconnects as it is cancelled: let that finish first.
+            await asyncio.gather(probe, return_exceptions=True)
         for chat in self.registry.chats():
             await self.cards.cancel_all(chat, "gateway stopping", self.emit)
             await self._close_engine(chat)
@@ -1176,11 +1181,12 @@ class GatewayServer:
         if task is not None and not task.done():
             task.cancel()
 
-    def _spawn(self, coro: Coroutine[Any, Any, None], name: str) -> None:
+    def _spawn(self, coro: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
         """Run ``coro`` in the background; the task is cancelled at ``shutdown``."""
         task = asyncio.create_task(coro, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     # --- connections ----------------------------------------------------------
 
