@@ -403,6 +403,80 @@ final class DockedQuestionCardTests: XCTestCase {
         XCTAssertEqual(model.dockedCard(for: 1)?.id, "card-p")
     }
 
+    // MARK: - the answer as the person's reply (v0.16 §9.4)
+
+    private static func input(_ questions: [(String, [String])]) -> [String: JSONValue] {
+        ["questions": .array(questions.map { text, labels in
+            .object([
+                "question": .string(text), "header": .string("H"),
+                "options": .array(labels.map { .object(["label": .string($0), "description": .string("")]) }),
+            ])
+        })]
+    }
+
+    func testOneAnsweredQuestionIsOneBubbleWithItsHeader() {
+        let input = Self.input([(Self.tone, ["Plain", "Explained"])])
+        XCTAssertEqual(
+            QuestionRecord.answerPairs(input: input, answers: [Self.tone: .one("Plain")], finished: true),
+            [AnswerPair(question: Self.tone, answer: "Plain")])
+        XCTAssertEqual(AnswerPair(question: Self.tone, answer: "Plain").header, "Answer to: Which tone for step 2?")
+    }
+
+    func testSeveralQuestionsAreOnePairEachInQuestionOrder() {
+        let input = Self.input([(Self.tone, ["Plain", "Explained"]), (Self.length, ["Short", "Long"])])
+        XCTAssertEqual(
+            QuestionRecord.answerPairs(
+                input: input, answers: [Self.length: .one("Short"), Self.tone: .one("Plain")], finished: true),
+            [AnswerPair(question: Self.tone, answer: "Plain"), AnswerPair(question: Self.length, answer: "Short")])
+        XCTAssertEqual(
+            QuestionRecord.answerPairs(input: input, answers: [Self.length: .one("Short")], finished: true),
+            [AnswerPair(question: Self.length, answer: "Short")], "a skipped question has no pair")
+        XCTAssertEqual(
+            QuestionRecord.answerPairs(input: input, answers: [Self.tone: .many(["Plain", "Explained"])], finished: true),
+            [AnswerPair(question: Self.tone, answer: "Plain, Explained")], "a multi-select's labels, joined")
+    }
+
+    func testATypedAnswerShowsInFull() {
+        let input = Self.input([(Self.tone, ["Plain", "Explained"])])
+        let typed = "Something else goes here. A second sentence, kept whole (Recommended)"
+        XCTAssertEqual(
+            QuestionRecord.answerPairs(input: input, answers: [Self.tone: .one(typed)], finished: true),
+            [AnswerPair(question: Self.tone, answer: typed)], "typed text is not an option: nothing is stripped")
+    }
+
+    func testTheRecommendedMarkIsStrippedFromAChosenOption() {
+        let input = Self.input([(Self.tone, ["Plain (Recommended)", "Explained"])])
+        XCTAssertEqual(
+            QuestionRecord.answerPairs(input: input, answers: [Self.tone: .one("Plain (Recommended)")], finished: true),
+            [AnswerPair(question: Self.tone, answer: "Plain")])
+    }
+
+    func testADeclineOrAnOpenQuestionHasNoBubble() {
+        let input = Self.input([(Self.tone, ["Plain", "Explained"])])
+        XCTAssertNil(QuestionRecord.answerPairs(input: input, answers: nil, finished: true), "declined: the record line")
+        XCTAssertNil(QuestionRecord.answerPairs(input: input, answers: [:], finished: true))
+        XCTAssertNil(
+            QuestionRecord.answerPairs(input: input, answers: [Self.tone: .one("Plain")], finished: false),
+            "still asking: the pill")
+        XCTAssertEqual(
+            QuestionRecord.line(input: input, answers: nil, finished: true, ok: false),
+            "Asked: Which tone for step 2? · Not answered")
+    }
+
+    func testAReplayedAnswerIsABubble() {
+        let (model, _) = model()
+        model.apply(.chatHistory(ChatHistory(chat: 1, events: [
+            .toolStarted(ToolStarted(
+                chat: 1, turn: 1, toolUseId: "toolu_q", tool: "AskUserQuestion", summary: "Asking a question",
+                input: Self.input([(Self.tone, ["Plain", "Explained"])]), seq: 1)),
+            .toolFinished(ToolFinished(
+                chat: 1, turn: 1, toolUseId: "toolu_q", ok: true, summary: "Answered",
+                answers: [Self.tone: .one("Explained")], seq: 2)),
+        ], truncated: false)))
+        guard case .tool(let row)? = model.transcripts[1]?.last else { return XCTFail("expected the question's row") }
+        XCTAssertEqual(QuestionRecord.answerPairs(for: row), [AnswerPair(question: Self.tone, answer: "Explained")])
+    }
+
     func testAReplyThatCannotGoSendsNoDecline() {
         let (model, sent) = model()
         model.apply(.cardAsk(Self.twoQuestions()))

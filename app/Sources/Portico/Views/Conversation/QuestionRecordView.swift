@@ -48,6 +48,48 @@ enum QuestionRecord {
     static func line(for row: ToolRow) -> String {
         line(input: row.input, answers: row.answers, finished: row.finished, ok: row.ok)
     }
+
+    /// An answered question as the person's reply (v0.16 §9.4): one pair
+    /// per answered question, in question order; a skipped one has none.
+    /// `nil` while asking and for a decline (no answers): those keep the
+    /// pill and the one-line record. A chosen option's label loses its
+    /// "(Recommended)"; typed "Something else" text, not one of the
+    /// question's options, is shown in full.
+    static func answerPairs(input: [String: JSONValue], answers: [String: QuestionAnswer]?, finished: Bool) -> [AnswerPair]? {
+        guard finished, let answers, !answers.isEmpty else { return nil }
+        let pairs = questionsWithOptions(in: input).compactMap { question, options -> AnswerPair? in
+            guard let labels = answers[question]?.labels, !labels.isEmpty else { return nil }
+            let shownLabels = labels.map { options.contains($0) ? shown($0) : $0 }
+            return AnswerPair(question: question, answer: shownLabels.joined(separator: ", "))
+        }
+        return pairs.isEmpty ? nil : pairs
+    }
+
+    static func answerPairs(for row: ToolRow) -> [AnswerPair]? {
+        answerPairs(input: row.input, answers: row.answers, finished: row.finished)
+    }
+
+    /// Each question's text with its options' labels.
+    private static func questionsWithOptions(in input: [String: JSONValue]) -> [(String, Set<String>)] {
+        guard case .array(let list)? = input["questions"] else { return [] }
+        return list.compactMap { item in
+            guard let question = item["question"]?.stringValue else { return nil }
+            var labels: Set<String> = []
+            if case .array(let options)? = item["options"] {
+                for option in options { if let label = option["label"]?.stringValue { labels.insert(label) } }
+            }
+            return (question, labels)
+        }
+    }
+}
+
+/// One answered question in the answer bubble: "Answer to: <question>"
+/// over what was chosen or typed.
+struct AnswerPair: Equatable {
+    let question: String
+    let answer: String
+
+    var header: String { "Answer to: \(question)" }
 }
 
 /// The question's place in the transcript (v0.16 §3.1): a small amber
@@ -97,5 +139,43 @@ struct QuestionRecordView: View {
         }
         .accessibilityElement(children: .combine)
         .help(QuestionRecord.line(for: row))
+    }
+}
+
+/// An answered question drawn as the person's reply (v0.16 §9.4): a
+/// right-aligned bubble like a sent message, each answered question's
+/// small "Answer to: <question>" header (one line, cut in the middle)
+/// over the chosen label or the typed text. Rebuilt after a restart from
+/// the row's recorded answers.
+struct AnswerBubble: View {
+    let pairs: [AnswerPair]
+    /// The bubble's widest (`ConversationColumn.bubbleMaxWidth`).
+    var maxWidth: CGFloat = UserBubble.fallbackMaxWidth
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pair.header)
+                        .scaledFont(11, weight: .medium)
+                        .foregroundStyle(Theme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(pair.question)
+                    Text(pair.answer)
+                        .scaledFont(MarkdownText.bodySize)
+                        .lineSpacing(MarkdownText.lineSpacing)
+                        .foregroundStyle(Theme.text)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(maxWidth: maxWidth, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

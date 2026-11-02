@@ -462,13 +462,18 @@ struct TranscriptItemView: View {
             MarkdownText(text: text, id: id)
                 .frame(maxWidth: replyWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        case .tool(let row) where QuestionRecord.isRecord(row) && QuestionRecord.answerPairs(for: row) != nil:
+            // v0.16 §9.4: an answered question is the person's reply.
+            AnswerBubble(
+                pairs: QuestionRecord.answerPairs(for: row) ?? [],
+                maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth)
         case .tool(let row):
             Group {
                 if let proposal = model.proposal(forToolUse: row.toolUseId) {
                     // Main's `open_thread` row is its proposal's card (AM2, AM4).
                     ProposalCard(proposal: proposal)
                 } else if QuestionRecord.isRecord(row) {
-                    // v0.16 §3.1: the pill while asking, then the one-line record.
+                    // v0.16 §3.1: the pill while asking; a decline's one-line record.
                     QuestionRecordView(row: row)
                 } else if row.tool == ViewerSteps.markTool {
                     MarkRowView(row: row, chat: chat)
