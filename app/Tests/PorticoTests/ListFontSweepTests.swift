@@ -5,7 +5,9 @@ import XCTest
 /// list's own default font when they set none, and that font ignores the
 /// text scale (the Files tree's names did not grow). So in every source file
 /// that builds a `List`, each `Text(...)` or `Label(...)` view must carry a
-/// `.scaledFont(...)` (or a `.font(...)`) in its own modifier chain.
+/// `.scaledFont(...)` (or, for a symbol's size, `.font(Theme.iconFont(...))`)
+/// in its own modifier chain. Any other `.font` (`.body`, `.headline`) is a
+/// fixed size and fails.
 ///
 /// A `Text` passed as an argument (`description: Text(...)`) and a button's
 /// `label: { ... }` are styled by the view they are given to (the button
@@ -31,7 +33,7 @@ final class ListFontSweepTests: XCTestCase {
         }
         XCTAssertTrue(listFiles.contains("FilesView.swift"), "the scan must find the Files tree: \(listFiles)")
         XCTAssertTrue(listFiles.contains("DocumentView.swift"), "and the document view's lists: \(listFiles)")
-        XCTAssertEqual(offenders, [], "Text/Label in a List file with no .scaledFont: \(offenders)")
+        XCTAssertEqual(offenders, [], "Text/Label in a List file with no .scaledFont (or a fixed .font): \(offenders)")
     }
 
     func test_the_checker_catches_an_unsized_row() {
@@ -49,10 +51,14 @@ final class ListFontSweepTests: XCTestCase {
                 } label: {
                     Label("styled by the button", systemImage: "x")
                 }
+                Text("fixed").font(.body)
+                Text("fixed too")
+                    .font(.headline)
+                Label("icon sized", systemImage: "x").font(Theme.iconFont(11))
             }
             """
         XCTAssertTrue(Self.buildsAList(source))
-        XCTAssertEqual(Self.unsizedViews(in: source), [2, 8])
+        XCTAssertEqual(Self.unsizedViews(in: source), [2, 8, 14, 15])
         XCTAssertFalse(Self.buildsAList(Self.withoutComments("ScrollView { Text(\"a\") } // List {")))
     }
 
@@ -96,9 +102,10 @@ final class ListFontSweepTests: XCTestCase {
                 var end = next + 1
                 while end < chars.count, chars[end].isLetter || chars[end].isNumber || chars[end] == "_" { end += 1 }
                 let name = String(chars[(next + 1)..<end])
-                if name == "scaledFont" || name == "font" { sized = true }
                 if end < chars.count, chars[end] == "(" {
                     guard let close = closing(chars, from: end) else { break }
+                    let argument = String(chars[(end + 1)..<close]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if name == "scaledFont" || (name == "font" && argument.hasPrefix("Theme.iconFont")) { sized = true }
                     index = close
                 } else {
                     index = end - 1
