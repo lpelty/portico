@@ -75,6 +75,7 @@ struct ModeChip: View {
         .accessibilityLabel("Permission mode: \(shown.label)")
         .popover(isPresented: $open, arrowEdge: .top) {
             menu
+                .popoverSurface()
         }
     }
 
@@ -82,7 +83,7 @@ struct ModeChip: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(PermissionModePresentation.heading(agentName: agentName))
                 .scaledFont(10, weight: .semibold)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.text2)
                 .padding(.horizontal, 10)
                 .padding(.top, 4)
                 .padding(.bottom, 4)
@@ -123,7 +124,7 @@ struct ModeChip: View {
             Rectangle().fill(Theme.border).frame(height: 1).padding(.vertical, 4)
             Text(PermissionModePresentation.footer)
                 .scaledFont(11)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.text2)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
         }

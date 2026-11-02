@@ -65,6 +65,7 @@ struct HistoryRow: View {
             HistoryPopover { open = false }
                 .environmentObject(model)
                 .environment(\.textScale, textScale)
+                .popoverSurface()
         }
     }
 }
@@ -87,7 +88,7 @@ struct HistoryPopover: View {
                 Spacer(minLength: 0)
                 Text(history.header)
                     .scaledFont(11)
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(Theme.text2)
             }
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
@@ -105,7 +106,7 @@ struct HistoryPopover: View {
             if let empty = history.emptyMessage {
                 Text(empty)
                     .scaledFont(12)
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(Theme.text2)
                     .padding(.horizontal, 4)
             } else {
                 ScrollView {

@@ -122,6 +122,8 @@ struct ToolRowView: View {
     var waiting: Bool = false
     @State private var expanded = false
     @State private var hovering = false
+    /// In an agent's steps popover its faint text is brighter (v0.15 §5.7).
+    @Environment(\.inPopover) private var inPopover
 
     private var shown: ToolRowPresentation { ToolRowPresentation(row: row) }
 
@@ -146,7 +148,7 @@ struct ToolRowView: View {
         switch shown.outcomeTone(waiting: waiting) {
         case .wait: Theme.wait
         case .deny: Theme.deny
-        case .quiet: Theme.text3
+        case .quiet: Theme.faintText(inPopover: inPopover)
         }
     }
 
@@ -166,7 +168,7 @@ struct ToolRowView: View {
                     if let summary = shown.summaryText {
                         Text(Self.display(summary, in: folder))
                             .scaledFont(13)
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(Theme.faintText(inPopover: inPopover))
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }

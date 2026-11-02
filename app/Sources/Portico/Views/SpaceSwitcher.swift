@@ -216,6 +216,7 @@ struct SpaceSwitcher: View {
                 pendingRemove = space
             })
             .environmentObject(model)
+            .popoverSurface()
         }
         .confirmationDialog(
             pendingRemove.map { SpacesPresentation.removeConfirmation(title: $0.title) } ?? "",
@@ -255,7 +256,7 @@ private struct SpaceMenu: View {
                     .padding(.horizontal, 10).padding(.bottom, 6)
             }
             if entries.isEmpty {
-                Text("No match").scaledFont(12).foregroundStyle(Theme.text3).padding(10)
+                Text("No match").scaledFont(12).foregroundStyle(Theme.text2).padding(10)
             }
             if entries.contains(.work) {
                 row(.work, icon: "briefcase", title: "Work", detail: "Chat, files and the viewer", shortcut: "⌘0", current: model.openSpace == nil)
@@ -266,12 +267,12 @@ private struct SpaceMenu: View {
                 Text("SPACES")
                     .scaledFont(10.5, weight: .medium)
                     .tracking(0.5)
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(Theme.text2)
                     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
                 if emptyNote {
                     Text(SpacesPresentation.noSpacesText)
                         .scaledFont(12)
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(Theme.text2)
                         .padding(.horizontal, 10).padding(.bottom, 6)
                 }
                 ScrollViewReader { proxy in
@@ -295,7 +296,7 @@ private struct SpaceMenu: View {
             }
             Text("↑↓ move · Return opens · ⌘0–9 from anywhere")
                 .scaledFont(10.5)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.text2)
                 .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
         }
         .padding(6)
@@ -349,7 +350,7 @@ private struct SpaceMenu: View {
                 }
                 Spacer(minLength: 8)
                 if current { Image(systemName: "checkmark").font(Theme.iconFont(11, weight: .semibold)).foregroundStyle(Theme.text2) }
-                if let shortcut { Text(shortcut).scaledFont(11).foregroundStyle(Theme.text3) }
+                if let shortcut { Text(shortcut).scaledFont(11).foregroundStyle(Theme.text2) }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -391,7 +392,7 @@ private struct SpaceMenu: View {
                     }
                     Spacer(minLength: 8)
                     if isNew { Circle().fill(Theme.accent).frame(width: 6, height: 6) }
-                    if number <= 9 { Text("⌘\(number)").scaledFont(11).foregroundStyle(Theme.text3) }
+                    if number <= 9 { Text("⌘\(number)").scaledFont(11).foregroundStyle(Theme.text2) }
                 }
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -29,6 +29,7 @@ struct MarksChip: View {
         .accessibilityLabel(Self.spokenLabel(count: list.count, pages: Set(list.map(\.page)).count))
         .popover(isPresented: $open, arrowEdge: .bottom) {
             MarksList(chat: chat, store: store, agent: agent, accent: accent, onDone: { open = false })
+                .popoverSurface()
         }
     }
 }
@@ -123,14 +124,14 @@ struct MarksList: View {
         HStack(spacing: 8) {
             Text(title)
                 .scaledFont(10, weight: .semibold)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if let aside {
                 Text(aside)
                     .scaledFont(10)
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -160,7 +161,7 @@ struct MarksList: View {
                     if !mark.found {
                         Text("not on the page now")
                             .scaledFont(11)
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(Theme.text2)
                     }
                 }
                 Spacer(minLength: 8)

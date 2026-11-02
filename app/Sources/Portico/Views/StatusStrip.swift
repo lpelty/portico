@@ -482,6 +482,7 @@ struct ModelMenuControl: View {
             ModelMenu(chat: chat, closeMenu: { shown = false })
                 .lineLimit(nil)
                 .environmentObject(model)
+                .popoverSurface()
         }
     }
 }
@@ -509,7 +510,7 @@ struct ModelMenu: View {
             }
             Text(ModelMenuPresentation.footer)
                 .scaledFont(11)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.text2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Under the names: past the row's padding, check and gap.
                 .padding(EdgeInsets(top: 8, leading: 10 + 14 + 9, bottom: 4, trailing: 10))
@@ -548,7 +549,7 @@ struct ModelChoiceRow: View {
                     if !secondary.isEmpty {
                         Text(secondary)
                             .scaledFont(11)
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(Theme.text2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -610,6 +611,7 @@ struct ServicesControl: View {
                 .lineLimit(nil)
                 .environmentObject(model)
                 .environmentObject(supervisor)
+                .popoverSurface()
         }
     }
 }

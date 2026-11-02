@@ -50,7 +50,8 @@ struct EarlierRow: View {
 
     /// The title's colour and weight: brighter and medium when selected.
     static func titleStyle(selected: Bool, untitled: Bool) -> (color: Color, weight: Font.Weight) {
-        if untitled { return (Theme.text3, selected ? .medium : .regular) }
+        // Drawn only in the History popover: its faint text is `text2` (v0.15 §5.7).
+        if untitled { return (Theme.text2, selected ? .medium : .regular) }
         return selected ? (Theme.text, .medium) : (Theme.text2, .regular)
     }
 
@@ -61,7 +62,7 @@ struct EarlierRow: View {
             HStack(spacing: 10) {
                 Text("\(summary.chat)")
                     .scaledFont(13, monospacedDigit: true)
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(Theme.text2)
                     .frame(minWidth: 18, alignment: .leading)
                 Text(shown.title ?? "Untitled")
                     .scaledFont(13, weight: title.weight)
@@ -368,12 +369,13 @@ struct ContextMeter: View {
 /// minute so "12 min ago" moves, with the full date and time as its tooltip.
 struct CompactTime: View {
     let date: Date
+    @Environment(\.inPopover) private var inPopover
 
     var body: some View {
         TimelineView(.everyMinute) { context in
             Text(SessionTime.compact(date, now: context.date))
                 .scaledFont(11, monospacedDigit: true)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.faintText(inPopover: inPopover))
                 .lineLimit(1)
                 .fixedSize()
                 .help(SessionTime.tooltip(date))

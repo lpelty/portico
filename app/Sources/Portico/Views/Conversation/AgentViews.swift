@@ -259,6 +259,7 @@ struct AgentRowView: View {
         .help("Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
+                .popoverSurface()
         }
     }
 }
@@ -295,7 +296,7 @@ struct AgentStepsView: View {
                     } else {
                         Text("No steps yet.")
                             .scaledFont(12)
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(Theme.text2)
                     }
                     if let summary = agent.summary, !summary.isEmpty, status.isFinished {
                         Text(summary)
@@ -318,12 +319,13 @@ struct AgentStepsView: View {
 /// One record line (AF1): `⎿ Read transcripts/p11.md`.
 struct StepLine: View {
     let text: String
+    @Environment(\.inPopover) private var inPopover
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(AgentPresentation.stepMark)
                 .scaledFont(12)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.faintText(inPopover: inPopover))
             Text(text)
                 .scaledFont(12)
                 .foregroundStyle(Theme.text2)
@@ -641,6 +643,7 @@ struct PhaseAgentRow: View {
         .help("Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
+                .popoverSurface()
         }
     }
 }

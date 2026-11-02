@@ -124,3 +124,44 @@ extension View {
         modifier(ScaledFont(size: size, weight: weight, design: design, monospacedDigit: monospacedDigit))
     }
 }
+
+// MARK: - popovers (v0.15 §5.7, 11-02)
+
+extension EnvironmentValues {
+    /// The view is drawn inside a Portico popover (set by `popoverSurface()`),
+    /// so views shared with the window draw their faint text brighter.
+    @Entry var inPopover: Bool = false
+}
+
+extension Theme {
+    /// How opaque the window-background tint behind a popover's content is:
+    /// enough that text no longer sits on the bare glass, little enough that
+    /// the glass still shows (Larry, 11-02).
+    static let popoverTintOpacity: Double = 0.6
+
+    /// The faint secondary colour: `text3` in the window, `text2` inside a
+    /// popover, where the glass behind would wash `text3` out.
+    static func faintText(inPopover: Bool) -> Color {
+        inPopover ? text2 : text3
+    }
+}
+
+/// A tint of the window's background behind a popover's whole content, edge
+/// to edge, over the system glass (which stays).
+private struct PopoverSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background {
+                Theme.window.opacity(Theme.popoverTintOpacity)
+                    .ignoresSafeArea()
+            }
+            .environment(\.inPopover, true)
+    }
+}
+
+extension View {
+    /// Every `.popover` content gets this (guarded by `PopoverSurfaceTests`).
+    func popoverSurface() -> some View {
+        modifier(PopoverSurface())
+    }
+}

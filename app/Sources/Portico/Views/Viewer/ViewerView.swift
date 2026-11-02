@@ -318,6 +318,7 @@ struct ViewerView: View {
         .help(model.current[chat].map { "\(ArtifactPresentation(artifact: $0).kindLabel) · \($0.location)" } ?? model.madeHereLabel)
         .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
             ArtifactMenu(chat: chat, artifacts: made, onPick: { menuOpen = false })
+                .popoverSurface()
         }
     }
 
@@ -756,7 +757,7 @@ struct ArtifactMenu: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(model.madeHereLabel.uppercased())
                 .scaledFont(10, weight: .semibold)
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(Theme.text2)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
             ScrollView {
@@ -792,7 +793,7 @@ struct ArtifactMenu: View {
                         .truncationMode(.middle)
                     Text(shown.kindLabel)
                         .scaledFont(11)
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(Theme.text2)
                 }
                 Spacer(minLength: 8)
                 if isCurrent {
