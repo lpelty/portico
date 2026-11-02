@@ -49,6 +49,14 @@ struct ConversationView: View {
             if !model.pinnedCards(for: chat).isEmpty {
                 pinnedCards
             }
+            // v0.16 (AO1): the docked question or permission card, at the
+            // composer's width above it; the composer stays under it.
+            if model.dockedCard(for: chat) != nil {
+                CardDock(chat: chat, folder: folder)
+                    .padding(.horizontal, Self.sideInset)
+                    .padding(.bottom, 8)
+                    .inConversationColumn()
+            }
             if let status = model.status[chat], !status.isEmpty {
                 Text(status)
                     .scaledFont(12)
@@ -114,7 +122,7 @@ struct ConversationView: View {
                     ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
                         let gap: CGFloat = index == 0
                             ? (headed ? TranscriptSpacing.itemGap : 0)
-                            : isProposal(entry) || isProposal(drawn[index - 1])
+                            : standsApart(entry) || standsApart(drawn[index - 1])
                                 ? TranscriptSpacing.itemGap
                                 : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
                         Group {
@@ -229,10 +237,11 @@ struct ConversationView: View {
         BriefBlock.briefItem(in: items, brief: model.thread(of: chat)?.brief)
     }
 
-    /// The proposal card stands apart from the tool rows around it.
-    private func isProposal(_ entry: TranscriptEntry) -> Bool {
+    /// The proposal card and a question's pill or record (v0.16) stand
+    /// apart from the tool rows around them.
+    private func standsApart(_ entry: TranscriptEntry) -> Bool {
         guard case .item(.tool(let row)) = entry else { return false }
-        return model.proposal(forToolUse: row.toolUseId) != nil
+        return model.proposal(forToolUse: row.toolUseId) != nil || QuestionRecord.isRecord(row)
     }
 
     /// To the bottom, and twice: once now, once after the rows are laid out.
@@ -247,9 +256,9 @@ struct ConversationView: View {
         }
     }
 
-    /// The chat's open cards, pinned above the input until answered or
+    /// The chat's open forms, pinned above the input until answered or
     /// cancelled. The answer goes through the model, which unpins the card
-    /// and marks the inline copy.
+    /// and marks the inline copy. Questions and permission cards dock.
     private var pinnedCards: some View {
         ScrollView {
             VStack(spacing: 8) {
@@ -282,7 +291,9 @@ struct ConversationView: View {
     private var scrollKey: String {
         let working = model.showsWorkingLine(chat: chat) ? ":w" : ""
         let calling = model.callingCards(in: chat).map(\.id).joined(separator: ",")
-        return itemsKey + working + (calling.isEmpty ? "" : ":c:" + calling)
+        // A card docking or leaving changes the transcript's height (v0.16).
+        let docked = model.dockedCard(for: chat).map { ":d:" + $0.id } ?? ""
+        return itemsKey + working + (calling.isEmpty ? "" : ":c:" + calling) + docked
     }
 
     private var itemsKey: String {
@@ -344,6 +355,9 @@ struct TranscriptItemView: View {
                 if let proposal = model.proposal(forToolUse: row.toolUseId) {
                     // Main's `open_thread` row is its proposal's card (AM2, AM4).
                     ProposalCard(proposal: proposal)
+                } else if QuestionRecord.isRecord(row) {
+                    // v0.16 §3.1: the pill while asking, then the one-line record.
+                    QuestionRecordView(row: row)
                 } else if row.tool == ViewerSteps.markTool {
                     MarkRowView(row: row, chat: chat)
                 } else {

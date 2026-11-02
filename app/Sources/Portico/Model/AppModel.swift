@@ -1179,11 +1179,12 @@ final class AppModel: ObservableObject {
             closedCards[chat]?[card.id] = nil
             open.append(card)
             openCards[chat] = open
-            // V1: a permission card is one unit with its tool row — pinned
+            // V1: a permission card is one unit with its tool row — docked
             // above the composer while open, its outcome drawn on the row
-            // after. It leaves no copy of its own in the transcript. Other
-            // cards keep their inline record.
-            if card.kind != .permission {
+            // after. v0.16: a question card too, docked, its record drawn on
+            // its `AskUserQuestion` row. Neither leaves a copy of its own in
+            // the transcript; a form keeps its inline record.
+            if card.kind == .form {
                 let inline = TranscriptItem.card(card)
                 if !items.contains(where: { $0.id == inline.id }) {
                     items.append(inline)
@@ -1368,9 +1369,23 @@ final class AppModel: ObservableObject {
     /// The `closedCards` reason that means "answered from this app".
     static let answeredMarker = "answered"
 
-    /// The cards pinned above the input: the chat's open cards, oldest first.
+    /// The cards pinned above the input: the chat's open forms, oldest
+    /// first. Questions and permission cards dock instead (`dockedCard`).
     func pinnedCards(for chat: Int) -> [CardAsk] {
-        openCards[chat] ?? []
+        (openCards[chat] ?? []).filter { $0.kind == .form }
+    }
+
+    /// The card docked above the composer (v0.16, AO1): the chat's oldest
+    /// open question or permission card. One at a time; the next docks
+    /// when it is answered.
+    func dockedCard(for chat: Int) -> CardAsk? {
+        openCards[chat]?.first { $0.kind != .form }
+    }
+
+    /// The docked card when it is a question: a send from the composer
+    /// then replies directly (§3.3).
+    func dockedQuestion(for chat: Int) -> CardAsk? {
+        dockedCard(for: chat).flatMap { $0.kind == .question ? $0 : nil }
     }
 
     /// How the transcript's inline copy of a card reads: open while the
@@ -1385,7 +1400,7 @@ final class AppModel: ObservableObject {
     /// already, cancelled, never seen) gets nothing: the gateway would only
     /// refuse it as `card.stale`, and there is nothing to show for it.
     func answerCard(_ answer: CardAnswer) {
-        guard let card = pinnedCards(for: answer.chat).first(where: { $0.id == answer.id }) else { return }
+        guard let card = openCards[answer.chat]?.first(where: { $0.id == answer.id }) else { return }
         send(.cardAnswer(answer))
         closeCard(chat: answer.chat, id: answer.id, why: Self.answeredMarker)
         // The row shows the answer at once; the gateway's `card.answered`
@@ -1828,9 +1843,32 @@ final class AppModel: ObservableObject {
             appendNotice(reason, to: chat)
             return
         }
+        // With a question docked, the send is the reply that declines it (v0.16 §3.3).
+        if dockedQuestion(for: chat) != nil {
+            replyDirectly(chat: chat, text: text, about: about)
+            return
+        }
         var attachments = draftAttachments[chat] ?? []
         if let about, !attachments.contains(about) { attachments.append(about) }
         dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true)
+    }
+
+    /// Reply directly (v0.16 §3.3): a send from the composer while a
+    /// question card is docked. The message goes first, as any send (the
+    /// gateway queues it mid-turn), then the `replied` decline for the
+    /// docked question; the gateway writes the reply into the turn right
+    /// after the question's row, so the agent reads the decline and then
+    /// the reply. A message that does not go (blank, another still out)
+    /// declines nothing. With no question docked it is an ordinary send.
+    func replyDirectly(chat: Int, text: String, about: String? = nil) {
+        guard let question = dockedQuestion(for: chat) else {
+            sendMessage(chat: chat, text: text, about: about)
+            return
+        }
+        var attachments = draftAttachments[chat] ?? []
+        if let about, !attachments.contains(about) { attachments.append(about) }
+        guard dispatch(chat: chat, text: text, attachments: attachments, fromComposer: true) else { return }
+        answerCard(.declining(chat: chat, id: question.id, .replied))
     }
 
     /// The agent's commands for the slash list in `folder` (v0.11 item 66):
@@ -1874,9 +1912,11 @@ final class AppModel: ObservableObject {
         dispatch(chat: chat, text: text, attachments: [], fromComposer: false)
     }
 
-    private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) {
+    /// Send a message; `false` when it did not go (blank, or another send still out).
+    @discardableResult
+    private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending(chat: chat) else { return }
+        guard !trimmed.isEmpty, !isSending(chat: chat) else { return false }
         let id = Self.requestId()
         pendingSends[chat] = PendingSend(
             id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
@@ -1885,6 +1925,7 @@ final class AppModel: ObservableObject {
             draftAttachments[chat] = nil
             drafts[chat] = nil
         }
+        return true
     }
 
     /// Put a refused send back where it was composed. Text typed since the

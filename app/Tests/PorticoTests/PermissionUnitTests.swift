@@ -51,7 +51,7 @@ final class PermissionUnitTests: XCTestCase {
         let card = ask("card-1", tool: "tu-1", seq: 3)
         model.apply(.cardAsk(card))
 
-        XCTAssertEqual(model.pinnedCards(for: 1).map(\.id), ["card-1"], "one card, pinned")
+        XCTAssertEqual(model.dockedCard(for: 1)?.id, "card-1", "one card, docked")
         XCTAssertEqual(cards(model), 0, "no inline duplicate")
         XCTAssertEqual(model.permissionCard(chat: 1, toolUseId: "tu-1")?.id, "card-1")
         let waiting = ToolRowPresentation(row: try XCTUnwrap(row(model, "tu-1")))
@@ -69,7 +69,7 @@ final class PermissionUnitTests: XCTestCase {
 
         guard case .cardAnswer(let answer)? = sent.frames.last else { return XCTFail("expected card.answer") }
         XCTAssertEqual(answer.scope, .once)
-        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertNil(model.dockedCard(for: 1))
         XCTAssertNil(model.permissionCard(chat: 1, toolUseId: "tu-1"), "the row no longer waits")
         XCTAssertEqual(row(model, "tu-1")?.permission, .once, "drawn before the gateway confirms")
 
@@ -144,7 +144,7 @@ final class PermissionUnitTests: XCTestCase {
             start("tu-2", seq: 5),
             .toolFinished(ToolFinished(chat: 1, turn: 1, toolUseId: "tu-2", ok: true, summary: "ok", permission: .auto, seq: 6)),
         ], truncated: false)))
-        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertNil(model.dockedCard(for: 1))
         XCTAssertEqual(cards(model), 0)
         XCTAssertEqual(row(model, "tu-1")?.permission, .declined)
         XCTAssertEqual(row(model, "tu-1")?.note, "not now")
@@ -154,7 +154,7 @@ final class PermissionUnitTests: XCTestCase {
     func testAnOutcomeAheadOfItsRowWaitsForTheRow() {
         let (model, _) = model()
         model.apply(.cardAsk(ask("card-1", tool: "tu-9", seq: 1)))
-        XCTAssertEqual(model.pinnedCards(for: 1).count, 1, "the card pins even before its row")
+        XCTAssertNotNil(model.dockedCard(for: 1), "the card docks even before its row")
         model.apply(.cardAnswered(CardAnswered(chat: 1, id: "card-1", toolUseId: "tu-9", outcome: .session, seq: 2)))
         model.apply(start("tu-9", seq: 3))
         XCTAssertEqual(row(model, "tu-9")?.permission, .session)
@@ -165,7 +165,7 @@ final class PermissionUnitTests: XCTestCase {
         model.apply(start("tu-1", seq: 1))
         model.apply(.cardAsk(ask("card-1", tool: "tu-1", seq: 2)))
         model.apply(.cardCancel(CardCancel(chat: 1, id: "card-1", reason: "nobody was there to answer", seq: 3)))
-        XCTAssertEqual(model.pinnedCards(for: 1), [])
+        XCTAssertNil(model.dockedCard(for: 1))
         let shown = try XCTUnwrap(row(model, "tu-1"))
         XCTAssertEqual(shown.unanswered, "nobody was there to answer")
         XCTAssertEqual(ToolRowPresentation(row: shown).outcomeText(waiting: false), "not answered")
