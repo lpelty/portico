@@ -71,6 +71,9 @@
   again." instead of "Not found — look again" (a mark call that finds
   only some targets says it for the rest). The viewer is not locked; the
   person's input still wins.
+- **The conversation keeps its place across a space and back.** A
+  scrolled-up conversation no longer jumps to the start of a remembered
+  message when the column narrows and widens.
 - **A heading inside a clickable card clicks the card.** Click by text
   also matches headings, after buttons and links. When the heading sits in
   a clickable card (a link, a button, `[role=button]`, an element with a

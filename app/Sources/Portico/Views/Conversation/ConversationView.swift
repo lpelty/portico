@@ -7,9 +7,10 @@ import SwiftUI
 struct ConversationView: View {
     let chat: Int
     @EnvironmentObject private var model: AppModel
-    /// The message at the top of the transcript's view (v0.11, item 67).
+    /// The message at the top of the transcript's view (v0.11, item 67):
+    /// the scroll view keeps it, and the point in it, when the width changes.
     @State private var topItem: String?
-    /// Where the transcript was seen, put back when its width changes (v0.11, item 67).
+    /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
     /// The transcript's width, for the reading column's (v0.11, item 58).
     @State private var transcriptWidth: CGFloat?
@@ -134,9 +135,9 @@ struct ConversationView: View {
                 \.conversationColumn,
                 transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset) })
             .scrollPosition(id: $topItem, anchor: .top)
-            // v0.11 (67): opening the viewer narrows the column and every
-            // line wraps again; put the conversation back where it was seen
-            // (the bottom stays the bottom, else the same top message).
+            // v0.11 (67): opening the viewer (or a space) narrows the column
+            // and every line wraps again; the bottom stays the bottom. Scrolled
+            // up, the scroll position above keeps the place (v0.14 fix).
             .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
                 TranscriptGeometry(
                     width: geometry.containerSize.width,
@@ -146,8 +147,7 @@ struct ConversationView: View {
             } action: { _, now in
                 switch scrollMemory.widthChanged(to: now.width) {
                 case .bottom: proxy.scrollTo("bottom", anchor: .bottom)
-                case .item(let id): proxy.scrollTo(id, anchor: .top)
-                case nil: scrollMemory.seen(atBottom: now.atBottom, topItem: topItem, width: now.width)
+                case nil: scrollMemory.seen(atBottom: now.atBottom, width: now.width)
                 }
             }
             // A conversation opens at its newest message (v0.13, found live
