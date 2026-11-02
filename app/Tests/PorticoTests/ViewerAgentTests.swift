@@ -1211,7 +1211,8 @@ final class ViewerAgentTests: XCTestCase {
         view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         window.contentView = view
         keepAlive = [view, coordinator, agent, model, window]
-        coordinator.apply(try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact)))), to: view)
+        let spaceLoad = try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact))))
+        coordinator.apply(spaceLoad, to: view)
         let marked = await agent.perform(act(.mark, markArgs([("Route notes", nil)])))
         XCTAssertTrue(marked.ok, marked.text)
         let mark = try XCTUnwrap(model.markStore.marks[1]?.first)
@@ -1222,9 +1223,11 @@ final class ViewerAgentTests: XCTestCase {
         _ = await waitFor { view.url?.host == "example.com" && !view.isLoading }
         model.setOpenSpace(nil)
         // Work's viewer is a pane of its own, kept under the space (v0.14
-        // test fix, issue 2); this view plays it from here on.
+        // test fix, issue 2); this view plays it from here on, with the
+        // load its coordinator last applied (no artifact is shown in Work,
+        // so goToMark loads the mark's page in it).
         coordinator.slot = .work
-        agent.attach(view, showing: .html(dir.appendingPathComponent("plan.html")), coordinator: coordinator, slot: .work)
+        agent.attach(view, showing: spaceLoad, coordinator: coordinator, slot: .work)
         agent.goToMark(mark, chat: 1)
         let drawn = try await waitFor {
             guard view.url?.scheme == RenderedPageHandler.scheme else { return false }

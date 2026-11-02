@@ -150,8 +150,11 @@ final class ViewerAgent: ObservableObject {
         }
         // A space opened or Work again: the page on screen changed, so
         // "THIS PAGE" and the drawn marks follow it.
-        slotWatch = model?.$openSpace.map { $0 != nil }.removeDuplicates().dropFirst().sink { [weak self] _ in
-            MainActor.assumeIsolated { self?.queueRedraw() }
+        slotWatch = model?.$openSpace.map { $0 != nil }.removeDuplicates().dropFirst().sink { [weak self] spaceOpen in
+            MainActor.assumeIsolated {
+                self?.workPane(hidden: spaceOpen)
+                self?.queueRedraw()
+            }
         }
     }
 
@@ -171,6 +174,22 @@ final class ViewerAgent: ObservableObject {
         Task { [weak self] in
             guard let self, self.web == nil else { return }
             self.setCurrentPage(nil)
+        }
+    }
+
+    /// The Work viewer's web page goes under an open space, or comes back
+    /// (fix round 1). Hidden, it gives up the keyboard (typing would go
+    /// into a page the person cannot see, and count as their use of it)
+    /// and its media is suspended; back, its media may play again.
+    private func workPane(hidden: Bool) {
+        guard let view = webs[.work]?.view else { return }
+        view.setAllMediaPlaybackSuspended(hidden, completionHandler: nil)
+        guard hidden, let window = view.window, Self.isInside(window.firstResponder, view) else { return }
+        // The space's page when it is already there, else nothing in particular.
+        if let space = webs[.space]?.view, space.window === window {
+            window.makeFirstResponder(space)
+        } else {
+            window.makeFirstResponder(nil)
         }
     }
 

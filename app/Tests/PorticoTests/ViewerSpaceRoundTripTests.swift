@@ -34,12 +34,12 @@ final class ViewerSpaceRoundTripTests: XCTestCase {
     }
 
     /// Chat 1 shows `run.html` in its viewer; a space, "Brief", is listed.
-    private func rig() throws -> Rig {
+    private func rig(extra: String = "") throws -> Rig {
         let dir = try tempDir()
         let page = dir.appendingPathComponent("run.html")
         try """
             <!doctype html><html><head><meta charset=utf-8><title>Runs</title></head>
-            <body><h1>Acme runs</h1><button>Start Run</button><button>Stop Run</button></body></html>
+            <body><h1>Acme runs</h1><button>Start Run</button><button>Stop Run</button>\(extra)</body></html>
             """.write(to: page, atomically: true, encoding: .utf8)
         let brief = dir.appendingPathComponent("brief.md")
         try "# Morning brief\n\nThree things for Priya today.".write(to: brief, atomically: true, encoding: .utf8)
@@ -125,6 +125,57 @@ final class ViewerSpaceRoundTripTests: XCTestCase {
         let mark = perform(act(.mark, Self.marks([start])), on: rig.model)
         XCTAssertTrue(mark.ok, mark.text)
         XCTAssertTrue(mark.text.hasPrefix("Marked 1 · "), mark.text)
+    }
+
+    private static func isInside(_ responder: NSResponder?, _ view: NSView) -> Bool {
+        (responder as? NSView)?.isDescendant(of: view) ?? false
+    }
+
+    /// Fix round 1 (Important 1): with the person's focus in the Work page,
+    /// opening a space (⌘1–9) must take the keyboard out of the now hidden
+    /// page, or typing goes into a page they cannot see.
+    func testOpeningASpaceTakesTheKeyboardOutOfTheHiddenWorkPage() throws {
+        let rig = try rig()
+        let work = try XCTUnwrap(Self.webView(showing: "run.html", in: rig.host))
+        XCTAssertTrue(rig.window.makeFirstResponder(work))
+        XCTAssertTrue(Self.isInside(rig.window.firstResponder, work), "the person is in the Work page")
+
+        rig.model.openSpaceAt(1)
+        spin()
+        XCTAssertFalse(Self.isInside(rig.window.firstResponder, work), "the hidden Work page has no keyboard")
+    }
+
+    /// Fix round 1 (Minor 1): the hidden Work page's media is suspended
+    /// while a space is open, and resumes on the way back.
+    /// A second of silence as a WAV file, inline: media for the page to hold.
+    private static var silence: String {
+        var data = Data()
+        func le<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        let rate: UInt32 = 8000, samples = rate
+        data.append(contentsOf: Array("RIFF".utf8)); le(UInt32(36 + samples)); data.append(contentsOf: Array("WAVEfmt ".utf8))
+        le(UInt32(16)); le(UInt16(1)); le(UInt16(1)); le(rate); le(rate); le(UInt16(1)); le(UInt16(8))
+        data.append(contentsOf: Array("data".utf8)); le(samples)
+        data.append(Data(repeating: 128, count: Int(samples)))
+        return "data:audio/wav;base64," + data.base64EncodedString()
+    }
+
+    func testTheHiddenWorkPagesMediaIsSuspendedUntilWorkIsBack() throws {
+        let rig = try rig(extra: "<audio id=\"clip\" loop src=\"\(Self.silence)\"></audio>")
+        let work = try XCTUnwrap(Self.webView(showing: "run.html", in: rig.host))
+        func state() -> WKMediaPlaybackState? {
+            var answer: WKMediaPlaybackState?
+            work.requestMediaPlaybackState { answer = $0 }
+            let until = Date().addingTimeInterval(3)
+            while answer == nil, Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+            return answer
+        }
+        XCTAssertNotEqual(state(), .suspended, "Work shown: not suspended")
+        rig.model.openSpaceAt(1)
+        spin()
+        XCTAssertEqual(state(), .suspended, "under the space")
+        rig.model.openSpaceAt(0)
+        spin()
+        XCTAssertNotEqual(state(), .suspended, "Work again")
     }
 
     func testTheSpaceIsWhatTheAgentSeesWhileItIsOpen() throws {
