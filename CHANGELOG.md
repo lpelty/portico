@@ -18,13 +18,13 @@
   starts under the traffic lights, in a band 36 pt tall.
 - **The conversation stays at the newest message.** At the bottom, it stays
   there when a space or the viewer opens and closes, and follows new text
-  only while you are at the bottom. Your own scroll (trackpad, wheel, keys,
-  VoiceOver) is respected; returning to the bottom resumes following.
+  only while you are at the bottom. Your own scroll (trackpad, wheel, keys) is
+  respected; returning to the bottom resumes following.
   (Found on v0.14.0 too.)
 - **A space shows an outside site.** The space header gives the site's
   address with the same note as Work, and offers Open externally in place
-  of Refresh there. The header address follows in-page navigation (route-
-  like `#fragments` only).
+  of Refresh there. The header address follows in-page navigation; a
+  `#fragment` shows only when it reads as a route.
 
 ### Protocol and gateway
 

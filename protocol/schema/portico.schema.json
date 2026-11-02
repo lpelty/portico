@@ -3138,7 +3138,7 @@
     },
     "Models": {
       "additionalProperties": false,
-      "description": "v0.15: the models the session can switch to and the stored choice (``models.v1``).\n\nSent after ``hello`` for each live session (from the list the gateway\nkept), after each engine start, and after a switch (with the\n``model.set`` request's ``id``). ``current`` is the stored choice's\n``value``; absent (``null``) is the deployment's default. A reading,\nnot history: no ``seq``.",
+      "description": "v0.15: the models the session can switch to and the one it runs on (``models.v1``).\n\nSent after ``hello`` for each live session (from the list the gateway\nkept), after each engine start, and after a switch (with the\n``model.set`` request's ``id``). ``current`` is the model this session\nruns on: its running engine's, else the stored choice it will start on;\nabsent (``null``) is the deployment's default. A reading, not history:\nno ``seq``.",
       "properties": {
         "chat": {
           "title": "Chat",

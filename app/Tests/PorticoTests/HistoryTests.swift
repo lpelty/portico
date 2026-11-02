@@ -35,6 +35,11 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(p.header, "1 ended session", "the header counts all, not the matches")
     }
 
+    func testTheEmptyLineQuotesTheTrimmedQuery() {
+        let p = HistoryPresentation(sessions: [ended(1, "Sam")], query: "  zed \n")
+        XCTAssertEqual(p.emptyMessage, "No session titled “zed”")
+    }
+
     func testTheSidebarBandIs36() {
         XCTAssertEqual(Theme.sidebarBandHeight, 36)
         XCTAssertEqual(Theme.toolbarHeight, 52)

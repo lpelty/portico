@@ -1018,8 +1018,8 @@ or `null`: the deployment's default), `id`. Answered with `models`
 carrying the `id` and the new `current`, or with `error` as above.
 
 ### `models` — `Models`
-`chat`, `current?: string` (the stored choice's `value`; absent: the
-default), `choices: [{value, display_name, description}]`, in the
+`chat`, `current?: string` (the model this session runs on (see below);
+absent: the default), `choices: [{value, display_name, description}]`, in the
 engine's order. Sent after `hello` for each live session (when a list is
 kept), after each engine start, after a renewal for the session that
 follows, and after a switch. Not stamped and not in the ring: each one

@@ -600,6 +600,7 @@ async def test_mark_rejects_zero_and_ten(marks: list[dict[str, str]]) -> None:
     [
         [{"note": "no target"}],
         [{"target": ""}],
+        [{"target": "   "}],
         [{"target": 3}],
         [{"target": "e1", "note": "x" * 61}],
         [{"target": "e1", "note": 7}],

@@ -754,13 +754,14 @@ class ModelChoice(Strict):
 
 
 class Models(Envelope):
-    """v0.15: the models the session can switch to and the stored choice (``models.v1``).
+    """v0.15: the models the session can switch to and the one it runs on (``models.v1``).
 
     Sent after ``hello`` for each live session (from the list the gateway
     kept), after each engine start, and after a switch (with the
-    ``model.set`` request's ``id``). ``current`` is the stored choice's
-    ``value``; absent (``null``) is the deployment's default. A reading,
-    not history: no ``seq``.
+    ``model.set`` request's ``id``). ``current`` is the model this session
+    runs on: its running engine's, else the stored choice it will start on;
+    absent (``null``) is the deployment's default. A reading, not history:
+    no ``seq``.
     """
 
     type: Literal["models"] = "models"

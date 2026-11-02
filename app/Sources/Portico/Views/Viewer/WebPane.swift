@@ -433,10 +433,10 @@ struct WebPane: NSViewRepresentable {
                 self.scale = scale
                 if case .markdown = load { rescaled = true }
             }
-            let reread = load == loaded && failed == nil
-                && ((revision != nil && revision != self.revision) || rescaled)
+            let revised = revision != nil && revision != self.revision
+            let reread = load == loaded && failed == nil && (revised || rescaled)
             self.revision = revision
-            if reread { return rereadKeepingScroll(load, in: view) }
+            if reread { return rereadKeepingScroll(load, in: view, scaleOnly: !revised) }
             guard load != loaded else { return }
             start(load, in: view)
         }
@@ -445,20 +445,27 @@ struct WebPane: NSViewRepresentable {
         /// re-read page has loaded.
         private var pendingScroll: Double?
 
-        private func rereadKeepingScroll(_ load: Load, in view: WKWebView) {
+        /// `scaleOnly`: only the text size changed (no new revision). Then
+        /// only a rendered Markdown page the pane shows is drawn again; a
+        /// page it went to from there (a linked HTML file, a site, a file
+        /// served beside it) is left alone (v0.15 final review).
+        private func rereadKeepingScroll(_ load: Load, in view: WKWebView, scaleOnly: Bool = false) {
             view.evaluateJavaScript(Self.readScroll) { [weak self, weak view] value, _ in
                 MainActor.assumeIsolated {
                     guard let self, let view, self.loaded == load else { return }
+                    let shown = view.url.flatMap { self.handler.source(for: $0) }
+                    if scaleOnly && shown == nil { return }
                     // The pane may have gone to another Markdown page (a
                     // mark's page, Back): that is the page to draw again,
-                    // with its own scroll, not the file first loaded.
-                    if case .markdown(let file, _) = load, let url = view.url,
-                       let shown = self.handler.source(for: url),
-                       shown != file.standardizedFileURL.resolvingSymlinksInPath(),
+                    // with its own scroll, not the file first loaded. A
+                    // rescale of the page itself is drawn the same way.
+                    if case .markdown(let file, _) = load, let url = view.url, let shown,
+                       scaleOnly || shown != file.standardizedFileURL.resolvingSymlinksInPath(),
                        let again = self.renderedURL(for: shown, hiding: self.handler.hiding(for: url)) {
                         self.pendingScroll = (value as? NSNumber)?.doubleValue
                         // Replace the entry, not push one: Back must not
-                        // step through the same page twice.
+                        // step through the same page twice, or through
+                        // copies of it at older sizes.
                         view.evaluateJavaScript("location.replace('\(again.absoluteString)')")
                         return
                     }

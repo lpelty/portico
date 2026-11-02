@@ -267,7 +267,7 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
             target = item.get("target") if isinstance(item, dict) else None
             if (
                 not isinstance(target, str)
-                or not target
+                or not target.strip()
                 or (note is not None and (not isinstance(note, str) or len(note) > MARK_NOTE_LIMIT))
             ):
                 return _error(MARK_ITEM)

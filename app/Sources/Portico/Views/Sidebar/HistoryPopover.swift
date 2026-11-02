@@ -24,7 +24,7 @@ struct HistoryPresentation: Equatable {
     /// Set when a search matched nothing.
     var emptyMessage: String? {
         guard !needle.isEmpty, shown.isEmpty else { return nil }
-        return "No session titled “\(query)”"
+        return "No session titled “\(query.trimmingCharacters(in: .whitespacesAndNewlines))”"
     }
 }
 
