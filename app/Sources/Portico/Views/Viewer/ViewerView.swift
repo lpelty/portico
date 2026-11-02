@@ -297,8 +297,7 @@ struct ViewerView: View {
 
     /// AL4: whether the agent may use the outside site, as the act rule has it.
     private func outsideNote(_ url: URL) -> String {
-        ViewerAgent.canAct(url: url, actHosts: model.hello?.viewerDefaults?.actHosts ?? [])
-            ? "outside site" : "outside site · look and scroll only"
+        ViewerPageAddress.note(for: url, actHosts: model.hello?.viewerDefaults?.actHosts ?? [])
     }
 
     private func noteText(_ outside: URL) -> some View {
@@ -489,6 +488,8 @@ struct SpaceViewer: View {
     @EnvironmentObject private var model: AppModel
     @State private var headerWidth: CGFloat?
     @State private var measured = HeaderFit.Widths.zero
+    /// Where the space's page has gone when a link left it (v0.15 §5.2).
+    @StateObject private var page = ViewerPageAddress()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -504,6 +505,7 @@ struct SpaceViewer: View {
                     .environment(\.webPaneRevision, ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
                     .environment(\.viewerAgent, model.viewerAgent)
                     .environment(\.viewerSlot, .space)
+                    .environment(\.viewerPageAddress, page)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if let chat {
@@ -515,6 +517,9 @@ struct SpaceViewer: View {
             }
         }
         .background(Theme.panel)
+        // Another space (or the space's file replaced) starts at its own name.
+        .onChange(of: model.openSpace) { page.outside = nil }
+        .onChange(of: model.openSpaceArtifact?.id) { page.outside = nil }
     }
 
     /// The chat whose marks the chip counts; none without a chat.
@@ -540,7 +545,28 @@ struct SpaceViewer: View {
             fixed: 32 + 8 + 8 + (8 + 20) + (chat != nil ? 8 + 24 : 0))
     }
 
+    /// The space's title, or, when a link left the space, the outside
+    /// site's address in its place, as the Work viewer shows it (v0.15 §5.2).
+    @ViewBuilder
     private func spaceTitle(_ space: SpaceInfo) -> some View {
+        if let outside = page.outside {
+            HStack(spacing: 8) {
+                Image(systemName: "globe")
+                    .font(Theme.iconFont(13))
+                    .foregroundStyle(Theme.text2)
+                Text(ViewerPageAddress.display(outside))
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .help(outside.absoluteString)
+        } else {
+            spaceName(space)
+        }
+    }
+
+    private func spaceName(_ space: SpaceInfo) -> some View {
         HStack(spacing: 8) {
             Image(systemName: space.icon)
                 .font(Theme.iconFont(13))
@@ -553,8 +579,11 @@ struct SpaceViewer: View {
         }
     }
 
+    /// "Updated <time>", or the outside note while the page is on another
+    /// site (the note slot gives way the same either way).
     private func updatedText(_ space: SpaceInfo) -> some View {
-        Text(SpacesPresentation.updatedText(space.updatedDate))
+        Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) }
+             ?? SpacesPresentation.updatedText(space.updatedDate))
             .scaledFont(12)
             .foregroundStyle(Theme.text3)
             .lineLimit(1)

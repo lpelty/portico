@@ -265,12 +265,21 @@ final class ViewerPageAddress: ObservableObject {
         return host + (url.port.map { ":\($0)" } ?? "")
     }
 
-    /// The address as the header shows it: host and path, no scheme or "www.".
+    /// The address as the header shows it: host and path, no scheme or
+    /// "www.", and the fragment when there is one, so a hash change shows
+    /// (v0.15 §5.1).
     static func display(_ url: URL) -> String {
         var host = url.host(percentEncoded: false) ?? url.absoluteString
         if host.hasPrefix("www.") { host.removeFirst(4) }
         let path = url.path(percentEncoded: false)
-        return path.isEmpty || path == "/" ? host : host + path
+        let fragment = url.fragment(percentEncoded: false).map { "#" + $0 } ?? ""
+        return (path.isEmpty || path == "/" ? host : host + path) + fragment
+    }
+
+    /// AL4: the note beside an outside site's address, as the act rule
+    /// has it (the Work viewer and a space say the same).
+    static func note(for url: URL, actHosts: [String]) -> String {
+        ViewerAgent.canAct(url: url, actHosts: actHosts) ? "outside site" : "outside site · look and scroll only"
     }
 }
 
@@ -381,11 +390,19 @@ struct WebPane: NSViewRepresentable {
             return true
         }
 
+        /// Watches the view's URL: a hash change or `history.pushState`
+        /// moves it without a commit or a finish (v0.15 §5.1).
+        private var urlObservation: NSKeyValueObservation?
+
         /// Wire a view made from `configuration()` to this coordinator.
         @discardableResult
         func attach(_ view: WKWebView) -> WKWebView {
             view.navigationDelegate = self
             view.setValue(false, forKey: "drawsBackground")
+            urlObservation = view.observe(\.url, options: [.new]) { [weak self] view, _ in
+                // WebKit reports it on the main thread.
+                MainActor.assumeIsolated { self?.noteAddress(of: view) }
+            }
             return view
         }
 
