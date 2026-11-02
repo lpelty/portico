@@ -984,10 +984,18 @@ list `models.v1`:
 - **The list is the engine's own.** When an engine starts, the Claude Code
   CLI behind the Agent SDK answers its initialize request with `models`:
   the same list `/model` shows (on a hosted provider, built from the deployment's
-  own settings). The gateway passes each entry's `value`, `displayName`
-  and `description` on as `{value, display_name, description}`; no
-  Portico config chooses them. The last list is kept in the gateway's
-  `index.json`, so an app hears it before any engine of this launch starts.
+  own settings). The gateway passes each entry's `value`, `displayName`,
+  `description` and `resolvedModel` on as `{value, display_name,
+  description, resolved_model?}`; no Portico config chooses them. The last
+  list is kept in the gateway's `index.json`, so an app hears it before any
+  engine of this launch starts.
+- **Read at gateway start** (amended 11-02). When the gateway starts
+  serving it asks the CLI for the list once, in the background: it
+  connects with the same options an engine uses (in the deployment's
+  `default_folder`, else the home folder), reads the server info and
+  disconnects, sending no message. A new list is kept and each live
+  session hears `models`. A failure, or no answer within 30 s, is logged
+  and the kept list stands; `hello` never waits for it.
 - **The choice persists.** `model.set` switches the running engine at once
   (the SDK's `set_model`) and is kept in the index: every later engine
   starts on it, whether the session's engine restarts, a new session
@@ -1019,9 +1027,11 @@ carrying the `id` and the new `current`, or with `error` as above.
 
 ### `models` — `Models`
 `chat`, `current?: string` (the model this session runs on (see below);
-absent: the default), `choices: [{value, display_name, description}]`, in the
-engine's order. Sent after `hello` for each live session (when a list is
-kept), after each engine start, after a renewal for the session that
+absent: the default), `choices: [{value, display_name, description,
+resolved_model?}]`, in the engine's order. `resolved_model` (11-02,
+additive: an older app ignores it) is the model id the entry runs, so the
+app can name the model Default resolves to. Sent after `hello` for each live session (when a list is
+kept), after the start-up read, after each engine start, after a renewal for the session that
 follows, and after a switch. Not stamped and not in the ring: each one
 replaces what the app had. The choice is the gateway's, but `current` is
 the model that session runs on: its running engine's, else the stored

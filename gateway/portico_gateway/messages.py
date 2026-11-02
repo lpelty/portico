@@ -745,12 +745,16 @@ class ModelChoice(Strict):
 
     ``value`` is what ``model.set`` sends back (``opus``, ``sonnet``,
     ``claude-fable-5-1[1m]``, ``default``); ``display_name`` and
-    ``description`` are the engine's own words.
+    ``description`` are the engine's own words. ``resolved_model`` (11-02)
+    is the model id the entry runs (the engine's ``resolvedModel``), so the
+    app can name what Default resolves to; absent when the engine did not
+    say, and an older app ignores it.
     """
 
     value: str
     display_name: str
     description: str = ""
+    resolved_model: str | None = None
 
 
 class Models(Envelope):
@@ -1352,8 +1356,15 @@ def example_messages() -> dict[str, BaseModel]:
             id="req-11",
             current="sonnet",
             choices=[
-                ModelChoice(value="default", display_name="Default (recommended)", description="Opus for complex work"),
-                ModelChoice(value="opus", display_name="Opus", description="Opus for the hardest work"),
+                ModelChoice(
+                    value="default",
+                    display_name="Default (recommended)",
+                    description="Opus for complex work",
+                    resolved_model="claude-opus-5",
+                ),
+                ModelChoice(
+                    value="opus", display_name="Opus", description="Opus for the hardest work", resolved_model="claude-opus-5"
+                ),
                 ModelChoice(value="sonnet", display_name="Sonnet", description="Efficient for routine tasks"),
                 ModelChoice(value="haiku", display_name="Haiku", description="Fastest for quick answers"),
             ],

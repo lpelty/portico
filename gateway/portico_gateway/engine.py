@@ -810,7 +810,8 @@ def model_choices(raw: Any) -> list[ModelChoice] | None:
 
     Each entry is ``{value, displayName, description, resolvedModel, ...}``;
     an entry without a usable ``value`` is skipped, a missing
-    ``displayName`` falls back to the value. Order is kept.
+    ``displayName`` falls back to the value, and ``resolvedModel`` is kept
+    as ``resolved_model`` when it is a non-empty string. Order is kept.
     """
     if not isinstance(raw, list):
         return None
@@ -823,11 +824,13 @@ def model_choices(raw: Any) -> list[ModelChoice] | None:
             continue
         name = entry.get("displayName")
         text = entry.get("description")
+        resolved = entry.get("resolvedModel")
         out.append(
             ModelChoice(
                 value=value,
                 display_name=name if isinstance(name, str) and name.strip() else value,
                 description=text if isinstance(text, str) else "",
+                resolved_model=resolved if isinstance(resolved, str) and resolved.strip() else None,
             )
         )
     return out
@@ -876,6 +879,24 @@ def agent_commands(raw: Any) -> list[AgentCommand]:
 
 
 # --- the SDK adapter -------------------------------------------------------------
+
+
+class _ProbeCallbacks:
+    """The owner of a model probe: it sends no message, so nothing reaches here; anything that did is refused."""
+
+    async def on_event(self, event: ServerMessage) -> None:
+        return None
+
+    async def on_permission(
+        self, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
+    ) -> PermissionDecision:
+        return "deny"
+
+    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+        raise QuestionDeclined("no session")
+
+    async def on_compacted(self, trigger: str) -> None:
+        return None
 
 
 class SDKEngine:
@@ -1013,6 +1034,25 @@ class SDKEngine:
 
     def models(self) -> list[ModelChoice] | None:
         return list(self._models) if self._models is not None else None
+
+    @staticmethod
+    async def probe_models(folder: Path, setting_sources: list[str]) -> list[ModelChoice] | None:
+        """The ``/model`` list without a session (v0.15 amendment 11-02): connect, read the server info, disconnect.
+
+        Built with the same ``build_options`` an engine uses, so the CLI reads
+        the same settings and provider environment; no message is sent. The
+        owner bounds the time; a failure raises, after disconnecting.
+        """
+        client = ClaudeSDKClient(build_options(folder, None, setting_sources, _ProbeCallbacks()))
+        try:
+            await client.connect()
+            info = await client.get_server_info()
+        finally:
+            try:
+                await client.disconnect()
+            except Exception as e:
+                log.debug("model probe: disconnect failed: %s", e)
+        return model_choices(info.get("models") if isinstance(info, Mapping) else None)
 
     async def set_model(self, value: str | None) -> None:
         """The SDK's ``set_model`` while connected; remembered for a later ``start`` either way."""

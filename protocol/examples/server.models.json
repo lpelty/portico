@@ -4,11 +4,13 @@
     {
       "description": "Opus for complex work",
       "display_name": "Default (recommended)",
+      "resolved_model": "claude-opus-5",
       "value": "default"
     },
     {
       "description": "Opus for the hardest work",
       "display_name": "Opus",
+      "resolved_model": "claude-opus-5",
       "value": "opus"
     },
     {

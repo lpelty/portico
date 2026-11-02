@@ -3051,7 +3051,7 @@
     },
     "ModelChoice": {
       "additionalProperties": false,
-      "description": "v0.15: one entry of the engine's model list, the CLI's ``/model`` list.\n\n``value`` is what ``model.set`` sends back (``opus``, ``sonnet``,\n``claude-fable-5-1[1m]``, ``default``); ``display_name`` and\n``description`` are the engine's own words.",
+      "description": "v0.15: one entry of the engine's model list, the CLI's ``/model`` list.\n\n``value`` is what ``model.set`` sends back (``opus``, ``sonnet``,\n``claude-fable-5-1[1m]``, ``default``); ``display_name`` and\n``description`` are the engine's own words. ``resolved_model`` (11-02)\nis the model id the entry runs (the engine's ``resolvedModel``), so the\napp can name what Default resolves to; absent when the engine did not\nsay, and an older app ignores it.",
       "properties": {
         "description": {
           "default": "",
@@ -3061,6 +3061,18 @@
         "display_name": {
           "title": "Display Name",
           "type": "string"
+        },
+        "resolved_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved Model"
         },
         "value": {
           "title": "Value",

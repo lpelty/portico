@@ -759,6 +759,10 @@ class _Connection(ServerConnection):
 Handler = Callable[[Any, ServerConnection], Awaitable[None]]
 
 
+# v0.15 (amended 11-02): the gateway-start model probe's bound; the CLI usually answers in a few seconds.
+MODEL_PROBE_TIMEOUT = 30.0
+
+
 class GatewayServer:
     """The WebSocket server, the HTTP routes, and the attached app."""
 
@@ -789,6 +793,8 @@ class GatewayServer:
         self.registry = registry
         # A new session starts in the deployment's mode.
         self.registry.default_mode = config.permission_mode
+        # An engine factory may also offer ``probe_models(folder, setting_sources)``
+        # (``SDKEngine`` does, v0.15 amended 11-02): the model list read at start.
         self.engine_factory = engine_factory
         self.version = version
         self.epoch = str(uuid.uuid4())
@@ -823,6 +829,8 @@ class GatewayServer:
         # and the number it gave for the welcome when the gateway started
         # with no live session (``None``: Portico's own counter).
         self.next_number_timeout = NEXT_NUMBER_TIMEOUT
+        # v0.15 (amended 11-02): how long the gateway-start model probe may take.
+        self.model_probe_timeout = MODEL_PROBE_TIMEOUT
         self._next_number_preview: int | None = None
         # The deployment's services (v0.4); started with ``serve``. v0.8: a
         # plug-in's hooks, else ``[deployment]``, give one status and one
@@ -949,6 +957,8 @@ class GatewayServer:
         if self.spaces_watcher is not None:
             self.spaces_watcher.spaces = await asyncio.to_thread(spaces_mod.scan, self.spaces_watcher.folder)
             self._spawn(self.spaces_watcher.run(), name="portico-spaces")
+        if callable(getattr(self.engine_factory, "probe_models", None)):
+            self._spawn(self._probe_models(), name="portico-model-probe")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
         log.info("listening on %s:%d epoch=%s", HOST, self.port, self.epoch)
         return self.port
@@ -1504,6 +1514,55 @@ class GatewayServer:
             if choice.value == wanted:
                 return choice.display_name
         return "Default" if value is None else value
+
+    def _probe_folder(self) -> Path:
+        """Where the model probe runs: the deployment's ``default_folder``, else the home folder."""
+        if self.config.default_folder:
+            folder = Path(self.config.default_folder).expanduser()
+            try:
+                folder = folder.resolve()
+            except OSError:
+                pass
+            if folder.is_dir():
+                return folder
+        return Path.home()
+
+    async def _probe_models(self) -> None:
+        """At start: the CLI's ``/model`` list before any engine (v0.15, amended 11-02).
+
+        The engine factory's ``probe_models`` connects, reads the server info
+        and disconnects; no message is sent. A new list is kept in the index
+        and each live session hears ``models``. A failure or a probe slower
+        than ``model_probe_timeout`` is logged at WARNING and the list kept
+        from the last run stands. Runs in the background, so ``hello`` never
+        waits for it. A stored choice the list lacks is still checked at
+        engine start (``_report_models``), not here.
+        """
+        probe = getattr(self.engine_factory, "probe_models", None)
+        if not callable(probe):
+            return
+        folder = self._probe_folder()
+        try:
+            choices = await asyncio.wait_for(
+                probe(folder, list(self.config.setting_sources)), self.model_probe_timeout
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            log.warning("could not read the model list at start: no answer within %.0fs; keeping the last list", self.model_probe_timeout)
+            return
+        except Exception as e:
+            log.warning("could not read the model list at start: %s; keeping the last list", e)
+            return
+        if not choices:
+            log.warning("could not read the model list at start: the engine named none; keeping the last list")
+            return
+        if choices != self.registry.models:
+            self.registry.record_models(choices)
+        log.info("model list read at start: %d choices", len(choices))
+        for chat in self.registry.chats():
+            if chat.ended is None:
+                await self.broadcast(self._models_frame(chat))
 
     async def _report_models(self, chat: Chat, engine: Engine) -> None:
         """After an engine starts: its model list as ``models``, kept in the index.

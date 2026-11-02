@@ -10,10 +10,16 @@ Only an app that declared ``models.v1`` hears ``models``.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
+
+import pytest
 
 from websockets.asyncio.client import ClientConnection, connect
 
+from portico_gateway import __version__
+from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import CAPABILITIES, MODELS_CAPABILITY
 from portico_gateway.engine import SDKEngine, build_options, model_choices
 from portico_gateway.messages import (
@@ -38,7 +44,7 @@ from portico_gateway.messages import (
 )
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import ChatRecord, Index, StateDir
-from tests.conftest import Block, FakeEngine, RecordingCallbacks
+from tests.conftest import Block, FakeEngine, RecordingCallbacks, make_config
 from tests.test_server import attach, ws_url
 from tests.test_sessions import drain, start_server
 from tests.test_turns import EngineFactory, recv, recv_until
@@ -52,6 +58,11 @@ RAW = [
 CHOICES = [
     ModelChoice(value="default", display_name="Default (recommended)", description="Opus 5 for complex work"),
     ModelChoice(value="sonnet", display_name="Sonnet", description="Sonnet 5.5 · Efficient for routine tasks"),
+]
+# The same list as the engine gives it, with what each entry resolves to (v0.15 amendment 11-02).
+RESOLVED = [
+    ModelChoice(value="default", display_name="Default (recommended)", description="Opus 5 for complex work", resolved_model="x"),
+    ModelChoice(value="sonnet", display_name="Sonnet", description="Sonnet 5.5 · Efficient for routine tasks", resolved_model="y"),
 ]
 OPUS = ModelChoice(value="opus", display_name="Opus", description="Opus 5 for the hardest work")
 
@@ -113,7 +124,7 @@ def folder_at(tmp_path: Path) -> Path:
 
 def test_model_choices_map_the_engine_list() -> None:
     raw = [*RAW, {"value": "", "displayName": "nameless"}, "junk", {"value": "haiku"}]
-    assert model_choices(raw) == [*CHOICES, ModelChoice(value="haiku", display_name="haiku", description="")]
+    assert model_choices(raw) == [*RESOLVED, ModelChoice(value="haiku", display_name="haiku", description="")]
     assert model_choices(None) is None
     assert model_choices({"value": "x"}) is None
 
@@ -122,7 +133,7 @@ def test_the_sdk_engine_keeps_the_models_from_its_server_info() -> None:
     engine = SDKEngine()
     assert engine.models() is None
     engine._note_models_from_server_info({"models": RAW})
-    assert engine.models() == CHOICES
+    assert engine.models() == RESOLVED
 
 
 def test_build_options_passes_the_model_only_when_set(tmp_path: Path) -> None:
@@ -469,3 +480,191 @@ async def test_a_failed_switch_keeps_the_choice_and_answers_an_error(state_dir: 
     finally:
         await srv.shutdown()
     assert state_dir.load_index().model is None
+
+
+# --- the list before the first message (v0.15 amendment 11-02) ----------------------------
+
+
+class ProbingFactory(ModelsFactory):
+    """``ModelsFactory`` plus the gateway-start probe; ``gate`` (when set) holds the probe until released."""
+
+    def __init__(self, answer: list[ModelChoice] | None = RESOLVED, error: Exception | None = None) -> None:
+        super().__init__()
+        self.answer = answer
+        self.error = error
+        self.gate: asyncio.Event | None = None
+        self.hang = False
+        self.probes: list[tuple[Path, list[str]]] = []
+
+    async def probe_models(self, folder: Path, setting_sources: list[str]) -> list[ModelChoice] | None:
+        self.probes.append((folder, list(setting_sources)))
+        if self.gate is not None:
+            await self.gate.wait()
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+
+def live_index(state_dir: StateDir, tmp_path: Path, **index: object) -> None:
+    record = ChatRecord(chat=5, folder=str(folder_at(tmp_path)), state="idle", created=TS)
+    state_dir.save_index(Index(chats=[record], next_chat=6, **index))  # type: ignore[arg-type]
+
+
+async def test_resolved_model_round_trips() -> None:
+    assert model_choices(RAW) == RESOLVED
+    frame = Models(ts=TS, chat=3, current=None, choices=RESOLVED)
+    assert parse_server(dump(frame)) == frame
+    assert '"resolved_model":"x"' in dump(frame)
+    assert "resolved_model" not in dump(Models(ts=TS, chat=3, choices=CHOICES))  # additive: absent when unknown
+
+
+def test_an_index_with_resolved_models_round_trips(state_dir: StateDir) -> None:
+    state_dir.save_index(Index(models=RESOLVED))
+    assert state_dir.load_index().models == RESOLVED
+
+
+async def test_the_probe_records_and_broadcasts_without_delaying_hello(state_dir: StateDir, tmp_path: Path) -> None:
+    live_index(state_dir, tmp_path)
+    factory = ProbingFactory()
+    factory.gate = asyncio.Event()
+    srv = await start_server(state_dir, factory, default_folder=str(tmp_path))
+    try:
+        conn, first = await attach_models(srv)  # hello arrives while the probe is held
+        assert models_in(first) == []
+        factory.gate.set()
+        got = await recv_until(conn, Models)
+        (frame,) = models_in(got)
+        assert (frame.chat, frame.current, frame.choices) == (5, None, RESOLVED)
+        assert factory.engines == []  # no engine started, no message sent
+        assert factory.probes == [(tmp_path.resolve(), list(srv.config.setting_sources))]
+        await conn.close()
+    finally:
+        await srv.shutdown()
+    assert state_dir.load_index().models == RESOLVED
+
+
+async def test_the_probe_list_is_heard_by_an_app_that_attaches_later(state_dir: StateDir, tmp_path: Path) -> None:
+    live_index(state_dir, tmp_path)
+    factory = ProbingFactory()
+    srv = await start_server(state_dir, factory)
+    try:
+        for _ in range(50):
+            if srv.registry.models:
+                break
+            await asyncio.sleep(0.01)
+        conn, first = await attach_models(srv)
+        (frame,) = models_in(first)
+        assert frame.choices == RESOLVED
+        await conn.close()
+    finally:
+        await srv.shutdown()
+
+
+async def test_a_failed_probe_keeps_the_stored_list_and_logs(
+    state_dir: StateDir, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    live_index(state_dir, tmp_path, models=CHOICES)
+    factory = ProbingFactory(error=RuntimeError("no CLI here"))
+    with caplog.at_level(logging.WARNING, logger="portico_gateway.server"):
+        srv = await start_server(state_dir, factory)
+        try:
+            conn, first = await attach_models(srv)
+            assert [m.choices for m in models_in(first)] == [CHOICES]
+            await drain(conn)
+            assert srv.registry.models == CHOICES
+            await conn.close()
+        finally:
+            await srv.shutdown()
+    assert any("model list" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
+    assert state_dir.load_index().models == CHOICES
+
+
+async def test_a_probe_that_hangs_times_out(state_dir: StateDir, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    live_index(state_dir, tmp_path, models=CHOICES)
+    factory = ProbingFactory()
+    factory.hang = True
+    cfg = make_config()
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=cfg.history_buffer)
+    srv = GatewayServer(config=cfg, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    srv.model_probe_timeout = 0.05
+    with caplog.at_level(logging.WARNING, logger="portico_gateway.server"):
+        await srv.serve(0)
+        try:
+            await asyncio.sleep(0.3)
+            assert srv.registry.models == CHOICES
+        finally:
+            await srv.shutdown()
+    assert any("model list" in r.getMessage() for r in caplog.records)
+
+
+async def test_an_unchanged_probe_list_is_not_rewritten(state_dir: StateDir, tmp_path: Path) -> None:
+    live_index(state_dir, tmp_path, models=RESOLVED)
+    factory = ProbingFactory()
+    srv = await start_server(state_dir, factory)
+    try:
+        calls: list[object] = []
+        original = srv.registry.record_models
+        srv.registry.record_models = lambda choices: (calls.append(choices), original(choices))  # type: ignore[method-assign]
+        await srv._probe_models()
+        assert calls == []
+    finally:
+        await srv.shutdown()
+
+
+async def test_no_probe_without_the_seam(state_dir: StateDir, tmp_path: Path) -> None:
+    live_index(state_dir, tmp_path)
+    srv = await start_server(state_dir, ModelsFactory())
+    try:
+        assert not any(t.get_name() == "portico-model-probe" for t in srv._tasks)
+    finally:
+        await srv.shutdown()
+
+
+async def test_the_sdk_probe_reads_server_info_and_sends_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    class Client:
+        def __init__(self, options: object) -> None:
+            seen.append(f"options cwd={getattr(options, 'cwd', None)} sources={getattr(options, 'setting_sources', None)}")
+
+        async def connect(self) -> None:
+            seen.append("connect")
+
+        async def get_server_info(self) -> dict[str, object]:
+            seen.append("info")
+            return {"models": RAW}
+
+        async def query(self, *_: object) -> None:  # pragma: no cover - must not be called
+            seen.append("query")
+
+        async def disconnect(self) -> None:
+            seen.append("disconnect")
+
+    monkeypatch.setattr("portico_gateway.engine.ClaudeSDKClient", Client)
+    got = await SDKEngine.probe_models(tmp_path, ["user", "project"])
+    assert got == RESOLVED
+    assert seen == [f"options cwd={tmp_path} sources=['user', 'project']", "connect", "info", "disconnect"]
+
+
+async def test_the_sdk_probe_disconnects_after_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    class Client:
+        def __init__(self, options: object) -> None:
+            pass
+
+        async def connect(self) -> None:
+            seen.append("connect")
+
+        async def get_server_info(self) -> dict[str, object]:
+            raise RuntimeError("broken")
+
+        async def disconnect(self) -> None:
+            seen.append("disconnect")
+
+    monkeypatch.setattr("portico_gateway.engine.ClaudeSDKClient", Client)
+    with pytest.raises(RuntimeError):
+        await SDKEngine.probe_models(tmp_path, [])
+    assert seen == ["connect", "disconnect"]
