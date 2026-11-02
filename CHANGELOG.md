@@ -10,21 +10,32 @@
   (the agent is told "Proposed as Thread 1; it opens if the person starts
   it."). Starting it opens the thread on
   that brief and leaves you in Main; the card then reads "Thread 1 started"
-  with Go to Thread 1 ⌃1. A thread takes the brief and any files named with
+  with Go to Thread 1. A thread takes the brief and any files named with
   it, not Main's conversation ("It takes this brief, not this
   conversation."). There are at most two besides Main. At the limit the
   card offers "Close a thread to start another" and Close and start.
 - **Moving between them.** ⌃0 is Main, ⌃1 and ⌃2 the threads (also in the
   View menu); ⌘0-⌘9 stay Work and the spaces. The sidebar's Conversations
-  section lists each thread with its state (working, needs you, last
-  reply). In a thread the toolbar shows its label and "← Main ⌃0", the first
-  message is drawn as its brief ("BRIEF FROM MAIN · 2:05 PM"), and the card
-  offers Log session and Close thread ("Close writes a summary to History").
+  section lists each thread with its state (working, needs you, new reply,
+  last reply). In a thread the toolbar shows "← Main" (the sidebar's card
+  says which thread you are in), the first message is drawn as its brief
+  ("BRIEF FROM MAIN · 2:05 PM"), and the card offers Log session and Close
+  thread ("Close writes a summary to History"); the two buttons share a row
+  when they fit and stack when they don't, so the card fits the sidebar at
+  any text size. Buttons, cards and rows show no key glyph: the tooltip
+  spells the key ("Control-1").
   Close a working thread and it asks first. If the log step can't start, the
   card offers Close without logging.
 - **A thread that needs you** shows "Needs you" on its sidebar row, and in
-  Main a calling card ("Thread 2 has a question") with Go to Thread 2 ⌃2 and
+  Main a calling card ("Thread 2 has a question") with Go to Thread 2 and
   Later. The calling card shows in Main only.
+- **A thread that finishes while you're elsewhere** shows Main a card
+  "Thread 1 is done" with the first line of its last reply, Go to Thread 1
+  and Dismiss, and its sidebar row an accent dot and "New reply" until you
+  open it. Opening the thread clears both; Dismiss clears the card. A
+  thread's question shows instead of its done card. Like the calling card,
+  the app draws it: it never enters Main's transcript or its agent's
+  context, and it does not come back after a restart.
 - **Questions and permissions dock above the composer,** in the pattern of
   Claude's own: numbered options (1-4 on the keyboard, ↑/↓ and Return), the
   recommended option first, a pager for several questions ("1 of 2"), a
@@ -36,10 +47,12 @@
   a stray Return nor a digit grants anything until you have moved the focus
   with an arrow or clicked a row (the pointer resting on a row does not
   count). The first arrow shows Allow once, and the highlighted row is
-  always the one Return answers. There is no "Allow always". The transcript
-  keeps a one-line record ("Asked: Which tone for step 2? · Plain"; "Asked 2
-  questions · Plain, Short"; "Not answered" for a decline), which survives a
-  restart.
+  always the one Return answers. There is no "Allow always". An answered
+  question shows in the transcript as your reply: a bubble like a sent
+  message, "Answer to: Which tone for step 2?" over the option you chose or
+  the words you typed in full, one pair per question. A declined question
+  keeps a one-line record ("Asked: Which tone for step 2? · Not answered").
+  Both survive a restart.
 - **The preview column needs an agent that sends previews.** An option's
   `preview` shows beside the options, rendered as Markdown. The CLI does not
   offer previews to an SDK agent (Portico sets nothing to change that), so
