@@ -134,7 +134,7 @@ struct SidebarColumn: View {
     var body: some View {
         VStack(spacing: 0) {
             Color.clear
-                .frame(height: Theme.toolbarHeight)
+                .frame(height: Theme.sidebarBandHeight)
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
             if model.isSinglePresentation {

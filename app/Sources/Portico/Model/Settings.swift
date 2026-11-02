@@ -101,7 +101,6 @@ final class Settings: ObservableObject {
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
         static let spaceWidth = "viewerWidth.space"
-        static let earlierHeight = "earlierHeight"
         static let viewerAtQuit = "viewerAtQuit"
         static let voiceInputEnabled = "voice.inputEnabled"
         static let sendWhenStopTalking = "voice.sendWhenStopTalking"
@@ -207,15 +206,6 @@ final class Settings: ObservableObject {
     }
     @Published var canvasWidth: CGFloat {
         didSet { defaults.set(Double(canvasWidth), forKey: Key.canvasWidth) }
-    }
-
-    /// The single-session sidebar's EARLIER list height as last dragged;
-    /// `nil` until the person drags it (the list then fits its sessions).
-    @Published var earlierHeight: CGFloat? {
-        didSet {
-            if let earlierHeight { defaults.set(Double(earlierHeight), forKey: Key.earlierHeight) }
-            else { defaults.removeObject(forKey: Key.earlierHeight) }
-        }
     }
 
     // MARK: voice (v0.9 decisions 1, 2; AE2 Voice pane)
@@ -336,7 +326,6 @@ final class Settings: ObservableObject {
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
         spaceWidth = Self.width(Key.spaceWidth, in: defaults) ?? ColumnWidths.spaceDefault
-        earlierHeight = Self.width(Key.earlierHeight, in: defaults)
         voiceInputEnabled = defaults.object(forKey: Key.voiceInputEnabled) as? Bool ?? true
         sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
         holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none

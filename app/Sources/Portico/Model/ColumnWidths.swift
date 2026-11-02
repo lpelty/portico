@@ -33,24 +33,6 @@ enum ColumnWidths {
     /// can still give way.
     static let conversationMinimum: CGFloat = 420
 
-    /// The single-session sidebar's EARLIER list: one row's height, four
-    /// rows to start, and how far it can be dragged (the files keep the rest).
-    static let earlierRow: CGFloat = 30
-    static let earlierDefault: CGFloat = 4 * earlierRow
-    static let earlierRange: ClosedRange<CGFloat> = earlierRow...480
-
-    static func clampEarlier(_ height: CGFloat) -> CGFloat {
-        min(max(height, earlierRange.lowerBound), earlierRange.upperBound)
-    }
-
-    /// The list's drawn height. Until the person drags it, it fits the
-    /// sessions, up to four rows (the files sit right under the last one);
-    /// once dragged, it is the dragged height, empty space and all.
-    static func earlierHeight(dragged: CGFloat?, sessions: Int) -> CGFloat {
-        if let dragged { return clampEarlier(dragged) }
-        return min(earlierDefault, CGFloat(max(sessions, 1)) * earlierRow)
-    }
-
     /// Focus (V3): the conversation keeps about a quarter of the window,
     /// never less than this; the viewer takes the rest.
     static let focusConversationShare: CGFloat = 0.25

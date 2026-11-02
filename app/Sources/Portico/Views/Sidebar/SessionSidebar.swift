@@ -2,17 +2,10 @@ import SwiftUI
 
 /// The single-session sidebar's upper part, frames "S1 · Session card +
 /// earlier" and "S2 · The nudge": THIS SESSION (the live session's card,
-/// which turns into the amber nudge when the session is long), then
-/// EARLIER (ended sessions, newest first, searchable by title, in a list
-/// whose height is dragged at the line under it and remembered).
+/// which turns into the amber nudge when the session is long), then the
+/// History row (v0.15, AN2), which opens the ended sessions in a popover.
 struct SessionSidebar: View {
     @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var settings: Settings
-    @State private var searching = false
-    @State private var query = ""
-    /// The list's height when its divider drag began.
-    @State private var dragStart: CGFloat?
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SidebarSectionLabel("This session")
@@ -32,71 +25,15 @@ struct SessionSidebar: View {
         }
     }
 
-    // MARK: EARLIER
+    // MARK: HISTORY
 
     @ViewBuilder
     private var earlier: some View {
-        let all = model.earlierSessions(matching: searching ? query : "")
-        if !model.earlierSessions.isEmpty {
-            HStack(spacing: 8) {
-                SidebarSectionLabel("Earlier")
-                Spacer(minLength: 0)
-                Button {
-                    searching.toggle()
-                    if !searching { query = "" }
-                } label: {
-                    Image(systemName: searching ? "xmark" : "magnifyingglass")
-                        .font(Theme.iconFont(12))
-                        .foregroundStyle(Theme.text2)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.hover)
-                .help(searching ? "Stop searching" : "Search earlier sessions by title")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 18)
-            .padding(.bottom, 6)
-            if searching {
-                TextField("Search titles", text: $query)
-                    .textFieldStyle(.plain)
-                    .scaledFont(12)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 4)
-            }
-            let height = ColumnWidths.earlierHeight(dragged: settings.earlierHeight, sessions: all.count)
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(all, id: \.chat) { summary in
-                        EarlierRow(summary: summary, selected: model.selected == summary.chat) {
-                            model.open(chat: summary.chat)
-                        }
-                    }
-                }
+        let history = HistoryPresentation(sessions: model.earlierSessions, query: "")
+        if history.showsRow {
+            HistoryRow(count: history.rowCount)
                 .padding(.horizontal, 8)
-            }
-            .frame(height: all.isEmpty ? 0 : height)
-            if searching && all.isEmpty {
-                Text("No session titled “\(query)”")
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text3)
-                    .padding(.horizontal, 16)
-            }
-            // Drag to show more or fewer earlier sessions; the files take the rest.
-            ColumnDivider(
-                axis: .horizontal,
-                onDrag: { dy in
-                    let start = dragStart ?? height
-                    dragStart = start
-                    settings.earlierHeight = ColumnWidths.clampEarlier(start + dy)
-                },
-                onEnd: { dragStart = nil },
-                onReset: { settings.earlierHeight = nil })
-                .padding(.top, 6)
+                .padding(.top, 14)
         }
     }
 }

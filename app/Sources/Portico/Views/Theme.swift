@@ -38,6 +38,9 @@ enum Theme {
     static let defaultWindowSize = CGSize(width: 1440, height: 900)
     static let minimumWindowSize = CGSize(width: 960, height: 600)
     static let toolbarHeight: CGFloat = 52
+    /// The sidebar's top band, under the traffic lights (the conversation
+    /// toolbar beside it stays `toolbarHeight`).
+    static let sidebarBandHeight: CGFloat = 36
     static let statusStripHeight: CGFloat = 30
     /// Room for the traffic lights when the sidebar (which normally holds
     /// them in its own top band) is collapsed.
