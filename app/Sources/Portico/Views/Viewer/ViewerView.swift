@@ -379,6 +379,7 @@ struct ViewerView: View {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
                 .environment(\.viewerAgent, model.viewerAgent)
+                .environment(\.viewerSlot, .work)
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",
@@ -449,15 +450,30 @@ struct ViewerFocusButton: View {
 
 /// The viewer column: an open space (it belongs to the window, so it shows
 /// with no chat too), else the shown chat's viewer.
+///
+/// v0.14 test fix: the chat's viewer stays alive under an open space,
+/// hidden and inert, rather than being taken down and made again. Its page
+/// is the person's: going back to Work must not load it again (that lost
+/// the scroll, what the person typed, and the refs of the agent's last
+/// look). The agent acts in whichever is shown (`ViewerAgent.Slot`).
 struct ViewerColumn: View {
     let chat: Int?
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        if model.openSpace != nil {
-            SpaceViewer(chat: chat, marks: model.markStore)
-        } else if let chat {
-            ViewerView(chat: chat, marks: model.markStore)
+        let spaceOpen = model.openSpace != nil
+        ZStack {
+            if let chat {
+                ViewerView(chat: chat, marks: model.markStore)
+                    .opacity(spaceOpen ? 0 : 1)
+                    .allowsHitTesting(!spaceOpen)
+                    // Its shortcuts (Focus, ⌘⇧↩) are the space's while one is open.
+                    .disabled(spaceOpen)
+                    .accessibilityHidden(spaceOpen)
+            }
+            if spaceOpen {
+                SpaceViewer(chat: chat, marks: model.markStore)
+            }
         }
     }
 }
@@ -487,6 +503,7 @@ struct SpaceViewer: View {
                     .id(artifact.id)
                     .environment(\.webPaneRevision, ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
                     .environment(\.viewerAgent, model.viewerAgent)
+                    .environment(\.viewerSlot, .space)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if let chat {
@@ -814,7 +831,7 @@ struct PDFPane: NSViewRepresentable {
         view.displayDirection = .vertical
         view.document = PDFDocument(url: file)
         // The agent reads and scrolls the viewer's PDF (v0.12).
-        context.environment.viewerAgent?.attachNative(view, file: file)
+        context.environment.viewerAgent?.attachNative(view, file: file, slot: context.environment.viewerSlot)
         return view
     }
 
@@ -822,7 +839,7 @@ struct PDFPane: NSViewRepresentable {
         if view.document?.documentURL != file {
             view.document = PDFDocument(url: file)
             // The same view, another file: the agent reads the new one.
-            context.environment.viewerAgent?.attachNative(view, file: file)
+            context.environment.viewerAgent?.attachNative(view, file: file, slot: context.environment.viewerSlot)
         }
     }
 }
@@ -867,6 +884,7 @@ struct TextBody: View {
     /// The file shown, for the agent (v0.12); `nil` draws the text alone.
     var file: URL? = nil
     @Environment(\.viewerAgent) private var agent
+    @Environment(\.viewerSlot) private var slot
     @State private var attributed: NSAttributedString?
     @State private var broke = false
 
@@ -909,7 +927,7 @@ struct TextBody: View {
     /// Gives the text view to the agent, in the viewer's panes only.
     private var onMake: ((NSTextView) -> Void)? {
         guard let agent, let file else { return nil }
-        return { agent.attachNative($0, file: file) }
+        return { [slot] in agent.attachNative($0, file: file, slot: slot) }
     }
 
     /// The line under the text, or `nil` when it is all there as written.

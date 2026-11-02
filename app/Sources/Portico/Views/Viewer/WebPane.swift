@@ -275,6 +275,7 @@ struct WebPane: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         context.coordinator.agent = context.environment.viewerAgent
+        context.coordinator.slot = context.environment.viewerSlot
         context.coordinator.address = context.environment.viewerPageAddress
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
@@ -293,6 +294,9 @@ struct WebPane: NSViewRepresentable {
         /// The agent that may act in this pane (v0.12): the viewer's panes
         /// have one, the document view's do not.
         var agent: ViewerAgent?
+        /// Which of the viewer column's viewers the pane is in (Work's or
+        /// the open space's); `nil`: the one on screen when it attaches.
+        var slot: ViewerAgent.Slot?
         /// The file viewer's header address (v0.13); `nil` elsewhere.
         weak var address: ViewerPageAddress?
         private var loaded: Load?
@@ -421,7 +425,7 @@ struct WebPane: NSViewRepresentable {
             failed = nil
             pendingScroll = scroll
             view.setValue(Self.drawsBackground(for: load), forKey: "drawsBackground")
-            agent?.attach(view, showing: load, coordinator: self)
+            agent?.attach(view, showing: load, coordinator: self, slot: slot)
             // Earlier pages stay registered for the coordinator's life: the
             // web view's Back (and the agent's viewer_back) can return to
             // them across an artifact switch.

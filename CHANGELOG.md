@@ -70,7 +70,13 @@
   agent hears "The person used the page since your last look; look
   again." instead of "Not found — look again" (a mark call that finds
   only some targets says it for the rest). The viewer is not locked; the
-  person's input still wins.
+  person's input still wins. A ref from a page that reloaded or was
+  replaced since the look says so: "The page reloaded since your last
+  look; look again."
+- **A space and back keeps the Work viewer as it was.** The Work page
+  stays loaded under an open space, so going back to Work does not load
+  it again: its scroll, what the person typed, and the refs of the
+  agent's last look are all still there.
 - **The conversation keeps its place across a space and back.** A
   scrolled-up conversation no longer jumps to the start of a remembered
   message when the column narrows and widens.

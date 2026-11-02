@@ -282,12 +282,13 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(noText.text, "Not found — look again")
 
         // Another page (the person navigated): a ref from the last look
-        // never lands on the new page's element, even one carrying it.
+        // never lands on the new page's element, even one carrying it, and
+        // the agent is told the page changed (v0.14 test fix, issue 2).
         let delete = ref(for: "Delete", in: look.text)
         _ = try await evaluate(
             "window.__porticoAgent.page = 'another'; true", in: rig.view)
         let moved = await rig.agent.perform(act(.click, ["target": .string(delete)]))
-        XCTAssertEqual(moved.text, "Not found — look again")
+        XCTAssertEqual(moved.text, "The page reloaded since your last look; look again.")
     }
 
     // MARK: - page errors
@@ -1220,6 +1221,10 @@ final class ViewerAgentTests: XCTestCase {
         view.loadHTMLString(Self.page("<p>Elsewhere</p>"), baseURL: URL(string: "https://example.com/elsewhere")!)
         _ = await waitFor { view.url?.host == "example.com" && !view.isLoading }
         model.setOpenSpace(nil)
+        // Work's viewer is a pane of its own, kept under the space (v0.14
+        // test fix, issue 2); this view plays it from here on.
+        coordinator.slot = .work
+        agent.attach(view, showing: .html(dir.appendingPathComponent("plan.html")), coordinator: coordinator, slot: .work)
         agent.goToMark(mark, chat: 1)
         let drawn = try await waitFor {
             guard view.url?.scheme == RenderedPageHandler.scheme else { return false }
@@ -1512,6 +1517,54 @@ final class ViewerAgentTests: XCTestCase {
             ((try await self.evaluate("seen.join(',')", in: rig.view) as? String) ?? "").contains("\(name):true")
         }
         XCTAssertTrue(arrived, "the page saw a trusted \(name)")
+    }
+
+    // MARK: - the page reloaded since the look (v0.14 test fix, issue 2)
+
+    private static let pageReloaded = "The page reloaded since your last look; look again."
+
+    /// The page loaded again after the look: its refs are gone, and the
+    /// agent is told why rather than the generic not-found.
+    func test_a_ref_after_the_page_reloaded_says_the_page_reloaded() async throws {
+        let rig = try rig(Self.inputPage)
+        let look = await rig.agent.perform(act(.look))
+        let save = ref(for: "Save trail", in: look.text)
+        let token = try await evaluate("window.__porticoAgent.page", in: rig.view) as? String
+        rig.view.reload()
+        let reloaded = try await waitFor {
+            let now = try? await self.evaluate("window.__porticoAgent && window.__porticoAgent.page", in: rig.view) as? String
+            return now != nil && now != token
+        }
+        XCTAssertTrue(reloaded, "the page loaded again under a new token")
+
+        let click = await rig.agent.perform(act(.click, ["target": .string(save)]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, Self.pageReloaded)
+        let type = await rig.agent.perform(act(.type, ["target": .string(save), "text": .string("Sam")]))
+        XCTAssertEqual(type.text, Self.pageReloaded)
+        let scroll = await rig.agent.perform(act(.scroll, ["target": .string(save)]))
+        XCTAssertEqual(scroll.text, Self.pageReloaded)
+        let mark = await rig.agent.perform(act(.mark, markArgs([(save, nil)])))
+        XCTAssertEqual(mark.text, Self.pageReloaded)
+        let partly = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), (save, nil)])))
+        XCTAssertTrue(partly.ok, partly.text)
+        XCTAssertTrue(partly.text.hasSuffix("Not found: \"\(save)\" — the page reloaded since your last look; look again."), partly.text)
+
+        // By name the target is looked for on the page as it is: no reload to speak of.
+        let byName = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
+        XCTAssertEqual(byName.text, "Not found — look again")
+        // A look takes the new page's refs.
+        let again = await rig.agent.perform(act(.look))
+        let fresh = await rig.agent.perform(act(.mark, markArgs([(ref(for: "Save trail", in: again.text), nil)])))
+        XCTAssertTrue(fresh.ok, fresh.text)
+    }
+
+    func test_ref_detection_matches_the_script() {
+        XCTAssertTrue(ViewerAgent.isRef("e4"))
+        XCTAssertTrue(ViewerAgent.isRef(" e12 "))
+        XCTAssertFalse(ViewerAgent.isRef("Start Run"))
+        XCTAssertFalse(ViewerAgent.isRef("e4x"))
+        XCTAssertFalse(ViewerAgent.isRef("E4"))
     }
 
     func test_a_person_click_since_the_look_is_named_on_not_found() async throws {

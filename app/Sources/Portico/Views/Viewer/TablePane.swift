@@ -142,7 +142,7 @@ struct TableContentAnchor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = Content()
-        agent.attachNative(view, file: file, table: table, rows: seen)
+        agent.attachNative(view, file: file, table: table, rows: seen, slot: context.environment.viewerSlot)
         return view
     }
 
@@ -152,7 +152,7 @@ struct TableContentAnchor: NSViewRepresentable {
         guard context.coordinator.file != file || context.coordinator.table != table else { return }
         context.coordinator.file = file
         context.coordinator.table = table
-        agent.attachNative(view, file: file, table: table, rows: seen)
+        agent.attachNative(view, file: file, table: table, rows: seen, slot: context.environment.viewerSlot)
     }
 
     func makeCoordinator() -> Shown { Shown(file: file, table: table) }

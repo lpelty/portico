@@ -23,6 +23,9 @@ final class ViewerAgent: ObservableObject {
         static let notFound = "Not found — look again"
         /// A target not found after the person used the page (v0.14 §6b.4).
         static let personUsed = "The person used the page since your last look; look again."
+        /// A ref not followed because the page was loaded again (or another
+        /// page put in its place) since the agent's look (v0.14 §6b.4).
+        static let pageReloaded = "The page reloaded since your last look; look again."
         /// A click by a heading's words with nothing clickable around it (v0.14 §6b.5).
         static let heading = "That's a heading, not something to click; use its ref."
         static let timedOut = "The viewer didn't answer in 10 s."
@@ -90,9 +93,28 @@ final class ViewerAgent: ObservableObject {
         let rows: TableRowsSeen?
     }
 
-    private var web: WebPaneRef?
-    private weak var paneView: NSView?
-    private var native: NativeRef?
+    /// The viewer column holds the Work viewer and, while one is open, a
+    /// space over it. The Work viewer stays alive under the space (its page
+    /// is the person's and is not loaded again on the way back), so each
+    /// pane registers in its own slot and the agent acts in the one shown.
+    enum Slot: Hashable, Sendable {
+        case work, space
+    }
+
+    private struct WeakView {
+        weak var view: NSView?
+    }
+
+    private var webs: [Slot: WebPaneRef] = [:]
+    private var paneViews: [Slot: WeakView] = [:]
+    private var natives: [Slot: NativeRef] = [:]
+
+    /// The slot on screen: the space's while one is open, else Work's.
+    var activeSlot: Slot { model?.openSpace != nil ? .space : .work }
+
+    private var web: WebPaneRef? { webs[activeSlot] }
+    private var paneView: NSView? { paneViews[activeSlot]?.view }
+    private var native: NativeRef? { natives[activeSlot] }
     /// Per chat, the page token (`__porticoAgent.page`) of the last look:
     /// refs are only followed on the page that numbered them.
     private(set) var lookedPages: [Int: String] = [:]
@@ -114,6 +136,7 @@ final class ViewerAgent: ObservableObject {
     /// (single presentation before a chat is picked).
     private var lastChat: Int?
     private var marksWatch: AnyCancellable?
+    private var slotWatch: AnyCancellable?
     private var redrawQueued = false
 
     init(model: AppModel?) {
@@ -125,18 +148,25 @@ final class ViewerAgent: ObservableObject {
         marksWatch = model?.markStore.$marks.dropFirst().sink { [weak self] _ in
             MainActor.assumeIsolated { self?.queueRedraw() }
         }
+        // A space opened or Work again: the page on screen changed, so
+        // "THIS PAGE" and the drawn marks follow it.
+        slotWatch = model?.$openSpace.map { $0 != nil }.removeDuplicates().dropFirst().sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.queueRedraw() }
+        }
     }
 
     // MARK: panes
 
-    /// A web pane now shows `load` in `view`.
-    func attach(_ view: WKWebView, showing load: WebPane.Load, coordinator: WebPane.Coordinator? = nil) {
-        web = WebPaneRef(view: view, load: load, coordinator: coordinator)
+    /// A web pane now shows `load` in `view`, in `slot` (by default the
+    /// slot on screen).
+    func attach(_ view: WKWebView, showing load: WebPane.Load, coordinator: WebPane.Coordinator? = nil, slot: Slot? = nil) {
+        webs[slot ?? activeSlot] = WebPaneRef(view: view, load: load, coordinator: coordinator)
     }
 
     func detach(_ view: WKWebView) {
-        guard web?.view === view else { return }
-        web = nil
+        guard let slot = webs.first(where: { $0.value.view === view })?.key else { return }
+        webs[slot] = nil
+        guard slot == activeSlot else { return }
         // Called while SwiftUI takes the pane down: publish after.
         Task { [weak self] in
             guard let self, self.web == nil else { return }
@@ -150,18 +180,18 @@ final class ViewerAgent: ObservableObject {
     }
 
     /// The view that holds a native pane (image, PDF, text, table), for its snapshot.
-    func attachPane(_ view: NSView) {
-        paneView = view
+    func attachPane(_ view: NSView, slot: Slot? = nil) {
+        paneViews[slot ?? activeSlot] = WeakView(view: view)
     }
 
     func detachPane(_ view: NSView) {
-        if paneView === view { paneView = nil }
+        for (slot, held) in paneViews where held.view === view { paneViews[slot] = nil }
     }
 
     /// A PDF's view, a text file's text view, or (with `table`) a view
     /// the size of a table's content, showing `file`.
-    func attachNative(_ view: NSView, file: URL, table: DelimitedTable? = nil, rows: TableRowsSeen? = nil) {
-        native = NativeRef(view: view, file: file.standardizedFileURL, table: table, rows: rows)
+    func attachNative(_ view: NSView, file: URL, table: DelimitedTable? = nil, rows: TableRowsSeen? = nil, slot: Slot? = nil) {
+        natives[slot ?? activeSlot] = NativeRef(view: view, file: file.standardizedFileURL, table: table, rows: rows)
     }
 
     // MARK: perform
@@ -302,7 +332,7 @@ final class ViewerAgent: ObservableObject {
             let answer = await call(
                 "return window.__porticoAgent.scroll(target, page)",
                 ["target": direction, "page": lookedPage ?? ""], in: view) as? [String: Any]
-            return await answered(act, answer, otherwise: "Scrolled.", in: view)
+            return await answered(act, answer, otherwise: "Scrolled.", targets: [direction], in: view)
         case .mark:
             return await mark(act, in: view)
         case .clearMarks:
@@ -345,16 +375,16 @@ final class ViewerAgent: ObservableObject {
         let page = lookedPage ?? ""
         switch await outline(target, page: page, field: false, in: view) {
         case .shown: break
-        case .missing: return await notFound(act, in: view)
+        case .missing: return await notFound(act, [target], in: view)
         case .heading: return fail(act, Message.heading)
         }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.click(target, page, place)", ["target": target, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
-        if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
+        if answer?["notFound"] as? Bool == true { return await notFound(act, [target], in: view) }
         if answer?["heading"] as? Bool == true { return fail(act, Message.heading) }
-        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", in: view) }
+        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", targets: [target], in: view) }
         let label = (answer?["label"] as? String) ?? target
         return ViewerResult(id: act.id, ok: true, text: "Clicked \(label)." + (await navigated(view, from: before)))
     }
@@ -364,25 +394,44 @@ final class ViewerAgent: ObservableObject {
         let text = act.args["text"]?.stringValue ?? ""
         let submit = act.args["submit"] == .bool(true)
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: true, in: view) == .shown else { return await notFound(act, in: view) }
+        guard await outline(target, page: page, field: true, in: view) == .shown else { return await notFound(act, [target], in: view) }
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.type(target, text, submit, page, place)",
             ["target": target, "text": text, "submit": submit, "page": page, "place": place], in: view) as? [String: Any]
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
-        if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
-        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", in: view) }
+        if answer?["notFound"] as? Bool == true { return await notFound(act, [target], in: view) }
+        guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", targets: [target], in: view) }
         let label = (answer?["label"] as? String) ?? target
         var said = "Typed into \(label)."
         if submit { said += " Pressed Return." }
         return ViewerResult(id: act.id, ok: true, text: said + (await navigated(view, from: before)))
     }
 
-    /// "Not found — look again", or, when the person clicked, typed or
-    /// scrolled on the page since the agent's last look, that they did
-    /// (v0.14 §6b.4): the page may have changed under the agent.
-    private func notFound(_ act: ViewerAct, in view: WKWebView) async -> ViewerResult {
-        fail(act, await personUsed(in: view) ? Message.personUsed : Message.notFound)
+    /// "Not found — look again", or why it may not be (v0.14 §6b.4): a ref
+    /// among `targets` from a page that has since reloaded (or been
+    /// replaced), or the person clicked, typed or scrolled on the page since
+    /// the agent's last look.
+    private func notFound(_ act: ViewerAct, _ targets: [String], in view: WKWebView) async -> ViewerResult {
+        fail(act, await notFoundText(targets, in: view))
+    }
+
+    private func notFoundText(_ targets: [String], in view: WKWebView) async -> String {
+        if await reloaded(targets, in: view) { return Message.pageReloaded }
+        return await personUsed(in: view) ? Message.personUsed : Message.notFound
+    }
+
+    /// A ref is one of the page's `eN` numbers, as the script reads it.
+    static func isRef(_ target: String) -> Bool {
+        target.trimmingCharacters(in: .whitespacesAndNewlines).wholeMatch(of: /e\d+/) != nil
+    }
+
+    /// Whether a ref among `targets` was numbered on a page that is no
+    /// longer the one shown: its token differs from the last look's.
+    private func reloaded(_ targets: [String], in view: WKWebView) async -> Bool {
+        guard let looked = lookedPage, !looked.isEmpty, targets.contains(where: Self.isRef) else { return false }
+        let now = await call("var a = window.__porticoAgent; return a ? a.page : null", in: view) as? String
+        return now != nil && now != looked
     }
 
     /// Whether the person clicked, pressed a key or scrolled on the page since the agent's last look.
@@ -391,8 +440,10 @@ final class ViewerAgent: ObservableObject {
     }
 
     /// The script's own answer `{ok, text}`, or a not-found.
-    private func answered(_ act: ViewerAct, _ answer: [String: Any]?, otherwise: String, in view: WKWebView) async -> ViewerResult {
-        if answer?["notFound"] as? Bool == true { return await notFound(act, in: view) }
+    private func answered(
+        _ act: ViewerAct, _ answer: [String: Any]?, otherwise: String, targets: [String] = [], in view: WKWebView
+    ) async -> ViewerResult {
+        if answer?["notFound"] as? Bool == true { return await notFound(act, targets, in: view) }
         let ok = answer?["ok"] as? Bool ?? false
         let text = (answer?["text"] as? String) ?? (ok ? otherwise : "The page didn't answer.")
         return ViewerResult(id: act.id, ok: ok, text: text)
@@ -617,7 +668,7 @@ final class ViewerAgent: ObservableObject {
                 missing.append(item.target)
             }
         }
-        guard !located.isEmpty else { return await notFound(act, in: view) }
+        guard !located.isEmpty else { return await notFound(act, missing, in: view) }
         let store = model.markStore
         let added = store.add(
             chat: runChat, page: page, items: located, call: act.id,
@@ -628,7 +679,12 @@ final class ViewerAgent: ObservableObject {
         }
         var text = "Marked " + added.map { "\($0.number) · \($0.label)" }.joined(separator: ", ") + "."
         if !missing.isEmpty {
-            let why = await personUsed(in: view) ? " — the person used the page since your last look; look again." : " — look again."
+            let why: String
+            switch await notFoundText(missing, in: view) {
+            case Message.pageReloaded: why = " — the page reloaded since your last look; look again."
+            case Message.personUsed: why = " — the person used the page since your last look; look again."
+            default: why = " — look again."
+            }
             text += " Not found: " + missing.map { "\"\($0)\"" }.joined(separator: ", ") + why
         }
         return ViewerResult(id: act.id, ok: true, text: text)
@@ -694,7 +750,12 @@ final class ViewerAgent: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             self.redrawQueued = false
-            if let view = self.web?.view, view.url != nil { await self.redraw(view) }
+            if let view = self.web?.view {
+                if view.url != nil { await self.redraw(view) }
+            } else {
+                // No web page on screen (a space closed onto a native pane).
+                self.setCurrentPage(nil)
+            }
         }
     }
 
@@ -1125,6 +1186,9 @@ extension EnvironmentValues {
     /// The agent that acts in the viewer; set by `ViewerView` for its
     /// panes only (the document view's panes are not the agent's).
     @Entry var viewerAgent: ViewerAgent? = nil
+    /// Which of the viewer column's two viewers a pane is in (Work's, or
+    /// the open space's over it); `nil` outside the viewer column.
+    @Entry var viewerSlot: ViewerAgent.Slot? = nil
 }
 
 /// Registers the view behind a native pane with the agent, for its snapshot.
@@ -1133,7 +1197,7 @@ struct ViewerPaneAnchor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        agent.attachPane(view)
+        agent.attachPane(view, slot: context.environment.viewerSlot)
         return view
     }
 

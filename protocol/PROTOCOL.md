@@ -1143,8 +1143,9 @@ sentence, never a hang, when:
 What the app puts in `text` and `ok: false` for a page it cannot act on
 (nothing open, a stale ref "Not found — look again" — or, when the
 person clicked, pressed a key or scrolled on the page since the agent's
-last look, "The person used the page since your last look; look again."
-— an image or PDF
+last look, "The person used the page since your last look; look again.",
+or, for a ref from a page that has reloaded or been replaced since that
+look, "The page reloaded since your last look; look again." — an image or PDF
 pane "can be looked at, not used", a page whose host is not allowed) is
 the app's. For outside sites the app checks the page's *current* host at
 every click and type against `viewer_defaults.act_hosts` (a redirect or a
