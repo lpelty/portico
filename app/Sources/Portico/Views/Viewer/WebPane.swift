@@ -358,6 +358,11 @@ struct WebPane: NSViewRepresentable {
         /// the same dead URL again, flickering between the attempt and the
         /// failure page. The failure page carries the one way to ask again.
         private(set) var failed: Load?
+        /// The outside link whose navigation failed (the pane shows the
+        /// failure page, whose own URL says nothing), until it loads or
+        /// another load starts. The header names it and Retry asks for it
+        /// (v0.16, candidate 18).
+        private var failedURL: URL?
         /// What the open space's pane was last drawn for (`nil` elsewhere).
         private var revision: String?
         /// The text scale a Markdown page is rendered at (v0.15 §3).
@@ -436,6 +441,10 @@ struct WebPane: NSViewRepresentable {
             let revised = revision != nil && revision != self.revision
             let reread = load == loaded && failed == nil && (revised || rescaled)
             self.revision = revision
+            // A re-read would take a pane that is on an outside site back
+            // to the file: the revision is noted, the person stays where
+            // they went (v0.16, candidate 18).
+            if reread && (address?.outside != nil || failedURL != nil) { return }
             if reread { return rereadKeepingScroll(load, in: view, scaleOnly: !revised) }
             guard load != loaded else { return }
             start(load, in: view)
@@ -497,7 +506,13 @@ struct WebPane: NSViewRepresentable {
         }
 
         private func noteAddress(of webView: WKWebView) {
-            let outside = ViewerPageAddress.outside(current: webView.url, loaded: loaded)
+            // The failure page has no address of its own: while it is up,
+            // the link that failed is the address.
+            var current = webView.url
+            if let failedURL {
+                if current == nil || current?.absoluteString == "about:blank" { current = failedURL } else { self.failedURL = nil }
+            }
+            let outside = ViewerPageAddress.outside(current: current, loaded: loaded)
             if address?.outside != outside { address?.outside = outside }
         }
 
@@ -513,6 +528,12 @@ struct WebPane: NSViewRepresentable {
 
         /// Ask for the current load again: the failure page's link.
         func retry(in view: WKWebView) {
+            if let link = failedURL {
+                failed = nil
+                pendingScroll = nil
+                view.load(URLRequest(url: link))
+                return
+            }
             guard let load = loaded else { return }
             start(load, in: view)
         }
@@ -520,6 +541,7 @@ struct WebPane: NSViewRepresentable {
         private func start(_ load: Load, in view: WKWebView, scroll: Double? = nil) {
             loaded = load
             failed = nil
+            failedURL = nil
             pendingScroll = scroll
             view.setValue(Self.drawsBackground(for: load), forKey: "drawsBackground")
             agent?.attach(view, showing: load, coordinator: self, slot: slot)
@@ -568,9 +590,13 @@ struct WebPane: NSViewRepresentable {
             }
         }
 
-        private func showFailure(_ message: String, in view: WKWebView) {
+        private func showFailure(_ message: String, in view: WKWebView, link: URL? = nil) {
             failed = loaded
+            failedURL = link
             pendingScroll = nil
+            if let link, address?.outside != ViewerPageAddress.outside(current: link, loaded: loaded) {
+                address?.outside = ViewerPageAddress.outside(current: link, loaded: loaded)
+            }
             view.loadHTMLString(Self.errorPage(message), baseURL: nil)
         }
 
@@ -579,7 +605,12 @@ struct WebPane: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Swift.Error) {
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
-            showFailure(error.localizedDescription, in: webView)
+            // The link that failed, when it was an outside page (the
+            // failure page replaces it, and Retry must ask for it).
+            let link = (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL).flatMap { url in
+                ["http", "https"].contains(url.scheme?.lowercased() ?? "") ? url : nil
+            }
+            showFailure(error.localizedDescription, in: webView, link: link)
         }
 
         func webView(

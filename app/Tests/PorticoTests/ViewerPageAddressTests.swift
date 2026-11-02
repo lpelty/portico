@@ -82,6 +82,7 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         let coordinator: WebPane.Coordinator
         let address: ViewerPageAddress
         let view: WKWebView
+        let file: URL
     }
 
     /// An HTML file with an anchor, opened in a pane wired to an address.
@@ -104,7 +105,7 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         window.contentView = view
         keepAlive = [window, view, coordinator, address]
         coordinator.apply(.html(file), to: view)
-        return Rig(coordinator: coordinator, address: address, view: view)
+        return Rig(coordinator: coordinator, address: address, view: view, file: file)
     }
 
     private func poll(_ what: String, seconds: Double = 10, _ condition: @MainActor () -> Bool) async throws {
@@ -180,5 +181,57 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         rig.view.loadHTMLString("<!doctype html><p>Away</p>", baseURL: URL(string: "https://example.com/away")!)
         try await poll("the old view went on") { !rig.view.isLoading && rig.view.url?.host == "example.com" }
         XCTAssertNil(rig.address.outside, "nothing written after dismantling")
+    }
+
+    /// v0.16 candidate 18: a space's heartbeat re-read does not pull a pane
+    /// that is on an outside site back to the space's file.
+    func testAHeartbeatRereadLeavesAnOutsidePageWhereItIs() async throws {
+        let rig = try rig()
+        let file = rig.file
+        try await poll("the file loads") { !rig.view.isLoading && rig.view.url?.lastPathComponent == "trail-detail.html" }
+        // The space's first revision: noted, nothing to re-read yet.
+        rig.coordinator.apply(.html(file), revision: "1", to: rig.view)
+        try await Task.sleep(for: .milliseconds(500))
+        try await poll("the file is settled") { !rig.view.isLoading }
+        rig.view.loadHTMLString(
+            "<!doctype html><html><body><h1>Elsewhere</h1><div style=\"height:3000px\"></div></body></html>",
+            baseURL: URL(string: "https://example.com/start")!)
+        try await poll("the outside page is noted") {
+            !rig.view.isLoading && rig.view.url?.host == "example.com" && self.shown(rig) == "example.com/start"
+        }
+
+        rig.coordinator.apply(.html(file), revision: "2", to: rig.view)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(rig.view.url?.host, "example.com", "the re-read leaves the outside page in place")
+        XCTAssertEqual(shown(rig), "example.com/start")
+
+        // The revision was recorded: the same one again is not news either,
+        // and going back to the file shows the file.
+        rig.coordinator.apply(.html(file), revision: "2", to: rig.view)
+        rig.view.goBack()
+        try await poll("back at the file") { rig.view.url?.lastPathComponent == "trail-detail.html" && rig.address.outside == nil }
+    }
+
+    /// v0.16 candidate 18: a failed outside link shows its own address, and
+    /// Retry asks for it, not for the file.
+    func testAFailedOutsideLinkShowsItsAddressAndRetryRetriesIt() async throws {
+        let rig = try rig()
+        try await poll("the file loads") { !rig.view.isLoading && rig.view.url?.lastPathComponent == "trail-detail.html" }
+        let port = try await freeLoopbackPort()
+        let link = URL(string: "http://127.0.0.1:\(port)/docs")!
+        rig.view.load(URLRequest(url: link))
+        try await poll("the link fails") { rig.coordinator.failed != nil }
+        try await poll("the failure page is up") { !rig.view.isLoading && rig.view.url?.absoluteString == "about:blank" }
+        XCTAssertEqual(rig.address.outside, link, "the header names the link, not the file")
+        XCTAssertEqual(rig.address.outside.map(ViewerPageAddress.display), "127.0.0.1/docs")
+
+        let server = FakeHealthServer(port: UInt16(port))
+        try await server.start()
+        defer { server.stop() }
+        rig.coordinator.retry(in: rig.view)
+        try await poll("the link is asked for") { server.requests > 0 }
+        try await poll("the page arrives") { !rig.view.isLoading && rig.view.url == link }
+        XCTAssertEqual(rig.address.outside, link)
+        XCTAssertNil(rig.coordinator.failed)
     }
 }
