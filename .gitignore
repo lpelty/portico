@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 .scratch/
 .pytest_cache/
+.superpowers/
