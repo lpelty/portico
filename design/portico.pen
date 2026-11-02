@@ -155982,7 +155982,7 @@
       "id": "t6GFEv",
       "x": 4680,
       "y": 34200,
-      "name": "AP4 · One list, the row you're in opens (in Thread 1)",
+      "name": "AP4 · One flat list, the row you're in opens (in Thread 1)",
       "theme": {
         "mode": "dark"
       },
@@ -156177,17 +156177,8 @@
                   "name": "Threads",
                   "width": "fill_container",
                   "stroke": "$border",
-                  "strokeWidth": {
-                    "left": 1
-                  },
                   "layout": "vertical",
                   "gap": 2,
-                  "padding": [
-                    0,
-                    0,
-                    0,
-                    14
-                  ],
                   "children": [
                     {
                       "type": "frame",
@@ -156216,7 +156207,7 @@
                               "name": "Icon",
                               "width": 14,
                               "height": 14,
-                              "icon": "corner-down-right",
+                              "icon": "git-branch",
                               "library": "lucide",
                               "fill": "$text"
                             },
@@ -156273,7 +156264,7 @@
                             2,
                             0,
                             0,
-                            23
+                            0
                           ],
                           "children": [
                             {
@@ -156305,12 +156296,6 @@
                           "id": "J4cCv",
                           "name": "Meter wrap",
                           "width": "fill_container",
-                          "padding": [
-                            0,
-                            0,
-                            0,
-                            23
-                          ],
                           "children": [
                             {
                               "type": "frame",
@@ -156344,7 +156329,7 @@
                             2,
                             0,
                             0,
-                            23
+                            0
                           ],
                           "children": [
                             {
@@ -156430,12 +156415,6 @@
                           "id": "QedgF",
                           "name": "Foot",
                           "width": "fill_container",
-                          "padding": [
-                            0,
-                            0,
-                            0,
-                            23
-                          ],
                           "children": [
                             {
                               "type": "text",
@@ -156476,7 +156455,7 @@
                               "name": "Icon",
                               "width": 14,
                               "height": 14,
-                              "icon": "corner-down-right",
+                              "icon": "git-branch",
                               "library": "lucide",
                               "fill": "$text-2"
                             },
@@ -157717,7 +157696,7 @@
       "id": "ZOWUj",
       "x": 6220,
       "y": 34200,
-      "name": "AP5 · The same list in Main",
+      "name": "AP5 · The same flat list in Main",
       "theme": {
         "mode": "dark"
       },
@@ -157915,7 +157894,7 @@
                         2,
                         0,
                         0,
-                        23
+                        0
                       ],
                       "children": [
                         {
@@ -157947,12 +157926,6 @@
                       "id": "v0CFD",
                       "name": "Meter wrap",
                       "width": "fill_container",
-                      "padding": [
-                        0,
-                        0,
-                        0,
-                        23
-                      ],
                       "children": [
                         {
                           "type": "frame",
@@ -157986,7 +157959,7 @@
                         2,
                         0,
                         0,
-                        23
+                        0
                       ],
                       "children": [
                         {
@@ -158072,12 +158045,6 @@
                       "id": "oynKB",
                       "name": "Foot",
                       "width": "fill_container",
-                      "padding": [
-                        0,
-                        0,
-                        0,
-                        23
-                      ],
                       "children": [
                         {
                           "type": "text",
@@ -158099,17 +158066,8 @@
                   "name": "Threads",
                   "width": "fill_container",
                   "stroke": "$border",
-                  "strokeWidth": {
-                    "left": 1
-                  },
                   "layout": "vertical",
                   "gap": 2,
-                  "padding": [
-                    0,
-                    0,
-                    0,
-                    14
-                  ],
                   "children": [
                     {
                       "type": "frame",
@@ -158136,7 +158094,7 @@
                               "name": "Icon",
                               "width": 14,
                               "height": 14,
-                              "icon": "corner-down-right",
+                              "icon": "git-branch",
                               "library": "lucide",
                               "fill": "$text-2"
                             },
@@ -158209,7 +158167,7 @@
                               "name": "Icon",
                               "width": 14,
                               "height": 14,
-                              "icon": "corner-down-right",
+                              "icon": "git-branch",
                               "library": "lucide",
                               "fill": "$text-2"
                             },
@@ -159413,7 +159371,7 @@
       "fill": "$text-2",
       "textGrowth": "fixed-width",
       "width": 2980,
-      "content": "AP4/AP5 · Larry 11-02: AP1+AP3 combined, no second box. One list in a fixed order — Main, then its threads hanging off it with a guide line. The row you're in opens into the card in place: its context, Log session and New (Main) or Close thread (a thread), with the footnote. Switching closes that row back to one line and opens the one you picked; nothing else moves. Status stays on every row: spinner while working, amber Needs you, an accent dot for a new reply. Main is always called Main; its session number is the subtitle. The toolbar has no thread chip and no Back link.",
+      "content": "AP4/AP5 · Larry 11-02: AP1+AP3 combined, no second box. One list in a fixed order — Main, then its threads, all on the same left edge (Larry 11-02: no indent — the open card needs the width). A thread is marked by its icon, not by indenting. The row you're in opens into the card in place: its context, Log session and New (Main) or Close thread (a thread), with the footnote. Switching closes that row back to one line and opens the one you picked; nothing else moves. Status stays on every row: spinner while working, amber Needs you, an accent dot for a new reply. Main is always called Main; its session number is the subtitle. The toolbar has no thread chip and no Back link.",
       "lineHeight": 1.45,
       "fontFamily": "$font",
       "fontSize": 14,
