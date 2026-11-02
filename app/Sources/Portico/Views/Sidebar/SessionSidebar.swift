@@ -358,29 +358,43 @@ struct SessionCard: View {
             ?? "Save what this session did, so the next one can pick up where it left off. The session goes on.")
     }
 
-    /// A thread's Log session and Close thread (§2.5).
+    /// A thread's Log session and Close thread (§2.5). Both labels keep
+    /// their width (never "Close th…"), so the two share the row only when
+    /// they fit it; otherwise they stack (§9.1). Two fixed-width labels in
+    /// one row were wider than the 260-pt sidebar, and the card, wider
+    /// than its column, pushed the sidebar's top section off its margin.
     private var threadButtons: some View {
-        HStack(spacing: 8) {
-            logSessionButton
-            Button { model.requestCloseThread(chat: chat) } label: {
-                HStack(spacing: 6) {
-                    if closing {
-                        ProgressView().controlSize(.mini)
-                        Text("Closing…")
-                    } else {
-                        Image(systemName: "xmark")
-                        Text("Close thread")
-                    }
-                }
-                .lineLimit(1)
-                .fixedSize()
-                .frame(maxWidth: .infinity)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                logSessionButton
+                closeThreadButton
             }
-            .buttonStyle(PillButtonStyle(kind: .quiet))
-            .help("Close this thread; its summary goes to History")
-            .disabled(closing)
+            VStack(alignment: .leading, spacing: 6) {
+                logSessionButton
+                closeThreadButton
+            }
         }
         .disabled(pending || model.connection != .connected)
+    }
+
+    private var closeThreadButton: some View {
+        Button { model.requestCloseThread(chat: chat) } label: {
+            HStack(spacing: 6) {
+                if closing {
+                    ProgressView().controlSize(.mini)
+                    Text("Closing…")
+                } else {
+                    Image(systemName: "xmark")
+                    Text("Close thread")
+                }
+            }
+            .lineLimit(1)
+            .fixedSize()
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PillButtonStyle(kind: .quiet))
+        .help("Close this thread; its summary goes to History")
+        .disabled(closing)
     }
 
     /// The thread is being closed (its `thread.close`, or a Close and start).

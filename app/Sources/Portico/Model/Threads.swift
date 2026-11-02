@@ -57,11 +57,11 @@ struct ThreadsPresentation: Equatable {
     func rows(now: Date) -> [ThreadRowPresentation] {
         var rows: [ThreadRowPresentation] = []
         if let main, main.chat != current {
-            rows.append(row(main, label: "Main", key: "⌃0", now: now))
+            rows.append(row(main, label: "Main", slot: 0, now: now))
         }
         for thread in open where thread.chat != current {
             guard let info = thread.thread else { continue }
-            rows.append(row(thread, label: info.label, key: "⌃\(info.slot)", now: now))
+            rows.append(row(thread, label: info.label, slot: info.slot, now: now))
         }
         return rows.enumerated()
             .sorted { a, b in
@@ -76,7 +76,7 @@ struct ThreadsPresentation: Equatable {
     func limitChoices(now: Date) -> [LimitChoice] {
         open.compactMap { summary in
             guard let info = summary.thread else { return nil }
-            let row = row(summary, label: info.label, key: "", now: now)
+            let row = row(summary, label: info.label, slot: info.slot, now: now)
             let activity: String?
             switch row.status {
             case .working: activity = "working now"
@@ -89,8 +89,13 @@ struct ThreadsPresentation: Equatable {
         }
     }
 
-    /// The Go button's spoken label, without the key glyph: "Go to Thread 2".
-    static func spokenGoLabel(label: String) -> String { "Go to \(label)" }
+    /// The Go button's label: "Go to Thread 2". Buttons, cards and rows
+    /// carry no key glyph (§9.2); the tooltip spells the key.
+    static func goLabel(label: String) -> String { "Go to \(label)" }
+
+    /// A conversation's key spelled out for a tooltip: "Control-0" for
+    /// Main, "Control-1", "Control-2" for the threads (§9.2).
+    static func keyName(slot: Int) -> String { "Control-\(slot)" }
 
     /// The confirm before closing a thread mid-turn.
     static func closeQuestion(label: String) -> String {
@@ -103,7 +108,7 @@ struct ThreadsPresentation: Equatable {
         return "Opened from Main at \(SessionTime.clock(opened, calendar: calendar, locale: locale))"
     }
 
-    private func row(_ summary: ChatSummary, label: String, key: String, now: Date) -> ThreadRowPresentation {
+    private func row(_ summary: ChatSummary, label: String, slot: Int, now: Date) -> ThreadRowPresentation {
         let status: ThreadRowPresentation.Status
         if summary.state == .waitingOnYou || waiting.contains(summary.chat) {
             status = .needsYou
@@ -115,7 +120,7 @@ struct ThreadsPresentation: Equatable {
             status = .none
         }
         return ThreadRowPresentation(
-            chat: summary.chat, label: label, title: SessionPresentation(summary: summary).title, status: status, key: key,
+            chat: summary.chat, label: label, title: SessionPresentation(summary: summary).title, status: status, keyName: Self.keyName(slot: slot),
             closeFailure: closeFailures[summary.chat])
     }
 }
@@ -151,13 +156,13 @@ struct LimitChoice: Equatable, Identifiable {
     var id: Int { chat }
 }
 
-/// The View menu's conversations (§2.4): "Main" ⌃0 and each open thread
+/// The View menu's conversations (§2.4): "Main" Control-0 and each open thread
 /// with its slot's key, only with threads on.
 struct ThreadMenuItem: Equatable, Identifiable {
     let title: String
     let slot: Int
 
-    /// The digit the menu binds with ⌃.
+    /// The digit the menu binds with Control.
     var key: String { "\(slot)" }
     var id: Int { slot }
 
@@ -183,12 +188,15 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     let label: String
     let title: String?
     let status: Status
-    /// "⌃0", "⌃1", "⌃2".
-    let key: String
+    /// The key spelled out, for the tooltip only: "Control-0".
+    let keyName: String
     /// The thread's last close was refused: the row says why.
     var closeFailure: CloseFailure? = nil
 
     var id: Int { chat }
+
+    /// The row's tooltip: "Go to Thread 2 (Control-2)".
+    var help: String { "Go to \(label) (\(keyName))" }
 
     /// What VoiceOver reads, without the key glyph: "Thread 2, needs you".
     var spokenLabel: String {
@@ -221,8 +229,10 @@ struct ProposalPresentation: Equatable {
     let takesLine: String
     /// "Thread 1 started" / "Not started"; `nil` while it is still an offer.
     let record: String?
-    /// "Go to Thread 1 ⌃1" on a started record while that thread is open.
+    /// "Go to Thread 1" on a started record while that thread is open.
     let goLabel: String?
+    /// Its tooltip, the key spelled out: "Control-1".
+    let goHelp: String?
     /// The slot Go switches to.
     let goSlot: Int?
 
@@ -240,6 +250,7 @@ struct ProposalPresentation: Equatable {
             }
             record = nil
             goLabel = nil
+            goHelp = nil
             goSlot = nil
         case .started:
             let info = threads.chats.first { $0.chat == proposal.thread }?.thread
@@ -249,10 +260,12 @@ struct ProposalPresentation: Equatable {
             record = started
             let stillOpen = threads.open.contains { $0.chat == proposal.thread }
             if stillOpen, let info {
-                goLabel = "Go to \(info.label) ⌃\(info.slot)"
+                goLabel = ThreadsPresentation.goLabel(label: info.label)
+                goHelp = ThreadsPresentation.keyName(slot: info.slot)
                 goSlot = info.slot
             } else {
                 goLabel = nil
+                goHelp = nil
                 goSlot = nil
             }
         case .dismissed:
@@ -260,6 +273,7 @@ struct ProposalPresentation: Equatable {
             title = "Not started"
             record = "Not started"
             goLabel = nil
+            goHelp = nil
             goSlot = nil
         }
     }
@@ -285,8 +299,10 @@ struct CallingCard: Equatable, Identifiable {
     let title: String
     /// The first line of the first question, or the permission's summary.
     let line: String
-    /// "Go to Thread 2 ⌃2".
+    /// "Go to Thread 2".
     let goLabel: String
+    /// Its tooltip, the key spelled out: "Control-2".
+    let goHelp: String
 
     var id: String { "\(thread):\(cardId)" }
 }
@@ -329,7 +345,7 @@ extension AppModel {
         open(chat: main)
     }
 
-    /// ⌃0 Main, ⌃1 Thread 1, ⌃2 Thread 2: that conversation, out of the
+    /// Control-0 Main, Control-1 Thread 1, Control-2 Thread 2: that conversation, out of the
     /// document view if it had the window. An empty slot does nothing.
     func switchToConversation(slot: Int) {
         let target: Int?
@@ -396,7 +412,8 @@ extension AppModel {
             guard let card = (openCards[summary.chat] ?? []).first(where: { !hidden.contains($0.id) }) else { return nil }
             return CallingCard(
                 thread: summary.chat, slot: info.slot, cardId: card.id, title: "\(info.label) has a question",
-                line: Self.callingLine(card), goLabel: "Go to \(info.label) ⌃\(info.slot)")
+                line: Self.callingLine(card), goLabel: ThreadsPresentation.goLabel(label: info.label),
+                goHelp: ThreadsPresentation.keyName(slot: info.slot))
         }
     }
 

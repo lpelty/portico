@@ -170,16 +170,17 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(rows[0].label, "Thread 2")
         XCTAssertEqual(rows[0].title, "Onboarding copy")
         XCTAssertEqual(rows[0].status, .needsYou)
-        XCTAssertEqual(rows[0].key, "⌃2")
+        XCTAssertEqual(rows[0].keyName, "Control-2")
+        XCTAssertEqual(rows[0].help, "Go to Thread 2 (Control-2)", "the tooltip spells the key; the row shows none")
         XCTAssertEqual(rows[1].label, "Main")
         XCTAssertEqual(rows[1].title, "Acme launch plan")
         XCTAssertEqual(rows[1].status, .lastReply(SessionTime.ago(lastReply, now: now)))
-        XCTAssertEqual(rows[1].key, "⌃0")
+        XCTAssertEqual(rows[1].keyName, "Control-0")
 
         let fromMain = ThreadsPresentation(chats: chats, current: 3).rows(now: now)
         XCTAssertEqual(fromMain.map(\.chat), [6, 5])
         XCTAssertEqual(fromMain[1].status, .working)
-        XCTAssertEqual(fromMain[1].key, "⌃1")
+        XCTAssertEqual(fromMain[1].keyName, "Control-1")
     }
 
     // MARK: - ProposalPresentation
@@ -217,7 +218,8 @@ final class ThreadsTests: XCTestCase {
         let started = ProposalPresentation(proposal: Self.proposal(state: .started, thread: 5), threads: open)
         XCTAssertEqual(started.kind, .started)
         XCTAssertEqual(started.record, "Thread 1 started")
-        XCTAssertEqual(started.goLabel, "Go to Thread 1 ⌃1")
+        XCTAssertEqual(started.goLabel, "Go to Thread 1")
+        XCTAssertEqual(started.goHelp, "Control-1")
         XCTAssertEqual(started.goSlot, 1)
 
         let closed = ThreadsPresentation(chats: [Self.main(3), Self.thread(5, slot: 1, ended: Self.created)], current: 3)
@@ -296,7 +298,7 @@ final class ThreadsTests: XCTestCase {
         let card = model.proposalPresentation(for: try XCTUnwrap(model.proposals["p1"]))
         XCTAssertEqual(card.kind, .started)
         XCTAssertEqual(card.record, "Thread 1 started")
-        XCTAssertEqual(card.goLabel, "Go to Thread 1 ⌃1")
+        XCTAssertEqual(card.goLabel, "Go to Thread 1")
     }
 
     func testARefusedStartClearsTheDimmedCard() throws {
@@ -520,7 +522,8 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(cards.first?.cardId, "card-1")
         XCTAssertEqual(cards.first?.title, "Thread 2 has a question")
         XCTAssertEqual(cards.first?.line, "Which tone for step 2?")
-        XCTAssertEqual(cards.first?.goLabel, "Go to Thread 2 ⌃2")
+        XCTAssertEqual(cards.first?.goLabel, "Go to Thread 2")
+        XCTAssertEqual(cards.first?.goHelp, "Control-2")
         XCTAssertEqual(model.callingCards(in: 5), [], "a thread never shows another's call")
         // Review Focus 4: never a transcript item in Main, never sent anywhere.
         XCTAssertFalse((model.transcripts[3] ?? []).contains { if case .card = $0 { true } else { false } })

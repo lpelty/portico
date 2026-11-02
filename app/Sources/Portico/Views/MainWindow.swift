@@ -259,8 +259,8 @@ struct MainToolbar: View {
             // The brand's name truncates first when the column is narrow.
             SpaceSwitcher().layoutPriority(1)
         case .thread:
-            if let info = model.sidebarCard?.thread {
-                ThreadToolbarItem(info: info) { model.switchToConversation(slot: 0) }
+            if model.sidebarCard?.thread != nil {
+                ThreadToolbarItem { model.switchToConversation(slot: 0) }
             }
         case .spacer:
             Spacer(minLength: 0)
@@ -275,45 +275,32 @@ struct MainToolbar: View {
     }
 }
 
-/// In a thread (v0.16, AM3): the thread's chip, then "← Main ⌃0", which
-/// goes back to Main.
+/// In a thread (v0.16, AM3): "← Main", which goes back to Main. No chip
+/// naming the thread (the sidebar's card says where you are) and no key
+/// glyph; the tooltip spells the key (§9.1–9.2). It keeps its width, so
+/// the space switcher beside it keeps its name.
 struct ThreadToolbarItem: View {
-    let info: ThreadInfo
     let backToMain: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(info.label)
-                .scaledFont(12, weight: .medium)
-                .foregroundStyle(Theme.text)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .accessibilityLabel("In \(info.label)")
-            Button(action: backToMain) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.left")
-                        .font(Theme.iconFont(11))
-                    Text("Main")
-                        .scaledFont(12)
-                    Text("⌃0")
-                        .scaledFont(11)
-                        .foregroundStyle(Theme.text3)
-                }
-                .foregroundStyle(Theme.text2)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
-                .contentShape(Rectangle())
+        Button(action: backToMain) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left")
+                    .font(Theme.iconFont(11))
+                Text("Main")
+                    .scaledFont(12)
             }
-            .buttonStyle(.hover)
-            .help(ToolbarLayout.backToMainLabel)
-            .accessibilityLabel("Back to Main")
+            .foregroundStyle(Theme.text2)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.hover)
+        .help(ToolbarLayout.backToMainHelp)
+        .accessibilityLabel("Back to Main")
     }
 }
 

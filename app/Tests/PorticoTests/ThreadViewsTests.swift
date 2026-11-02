@@ -58,7 +58,8 @@ final class ThreadViewsTests: XCTestCase {
             ToolbarLayout.items(showSwitcher: true, showViewerToggle: true, inThread: true),
             [.sidebarToggle, .brand, .switcher, .thread, .spacer, .viewerToggle])
         XCTAssertFalse(ToolbarLayout.items(showSwitcher: true, showViewerToggle: true, inThread: false).contains(.thread))
-        XCTAssertEqual(ToolbarLayout.backToMainLabel, "← Main ⌃0")
+        XCTAssertEqual(ToolbarLayout.backToMainLabel, "← Main")
+        XCTAssertEqual(ToolbarLayout.backToMainHelp, "Back to Main (Control-0)")
     }
 
     // MARK: - the View menu
@@ -244,14 +245,14 @@ final class ThreadViewsTests: XCTestCase {
     }
 
     func testSpokenLabels() {
-        XCTAssertEqual(ThreadsPresentation.spokenGoLabel(label: "Thread 2"), "Go to Thread 2")
-        let row = ThreadRowPresentation(chat: 6, label: "Thread 2", title: "Onboarding copy", status: .needsYou, key: "⌃2")
+        XCTAssertEqual(ThreadsPresentation.goLabel(label: "Thread 2"), "Go to Thread 2")
+        let row = ThreadRowPresentation(chat: 6, label: "Thread 2", title: "Onboarding copy", status: .needsYou, keyName: "Control-2")
         XCTAssertEqual(row.spokenLabel, "Thread 2, needs you")
         XCTAssertEqual(
-            ThreadRowPresentation(chat: 5, label: "Thread 1", title: nil, status: .working, key: "⌃1").spokenLabel,
+            ThreadRowPresentation(chat: 5, label: "Thread 1", title: nil, status: .working, keyName: "Control-1").spokenLabel,
             "Thread 1, working")
         XCTAssertEqual(
-            ThreadRowPresentation(chat: 3, label: "Main", title: nil, status: .lastReply("5 min ago"), key: "⌃0").spokenLabel,
+            ThreadRowPresentation(chat: 3, label: "Main", title: nil, status: .lastReply("5 min ago"), keyName: "Control-0").spokenLabel,
             "Main, last reply 5 min ago")
     }
 

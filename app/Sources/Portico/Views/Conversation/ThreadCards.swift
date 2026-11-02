@@ -81,7 +81,7 @@ private struct FileChips: View {
 /// The card drawn in place of Main's `open_thread` row (AM2, AM4): Start
 /// thread / Not now; at the limit the open threads to pick one to close,
 /// Close and start / Not now; afterwards the record, "Thread 1 started"
-/// with Go to Thread 1 ⌃1 while that thread is open, or "Not started".
+/// with Go to Thread 1 while that thread is open, or "Not started".
 struct ProposalCard: View {
     let proposal: ThreadProposal
     @EnvironmentObject private var model: AppModel
@@ -129,9 +129,7 @@ struct ProposalCard: View {
                 if let label = shown.goLabel, let slot = shown.goSlot {
                     Button(label) { model.switchToConversation(slot: slot) }
                         .buttonStyle(PillButtonStyle(kind: .quiet))
-                        .accessibilityLabel(model.thread(of: proposal.thread ?? -1).map {
-                            ThreadsPresentation.spokenGoLabel(label: $0.label)
-                        } ?? label)
+                        .help(shown.goHelp ?? "")
                 }
             case .notStarted:
                 brief(shown, quiet: true)
@@ -253,7 +251,7 @@ struct ProposalCard: View {
 }
 
 /// A thread calling you while you are in Main (AM1): amber, "Thread 2 has
-/// a question", its first line, Go to Thread 2 ⌃2 and Later. Drawn by the
+/// a question", its first line, Go to Thread 2 and Later. Drawn by the
 /// app; never part of Main's transcript.
 struct CallingCardView: View {
     let card: CallingCard
@@ -290,9 +288,7 @@ struct CallingCardView: View {
             HStack(spacing: 8) {
                 Button(card.goLabel) { model.switchToConversation(slot: card.slot) }
                     .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                    .accessibilityLabel(model.thread(of: card.thread).map {
-                        ThreadsPresentation.spokenGoLabel(label: $0.label)
-                    } ?? card.goLabel)
+                    .help(card.goHelp)
                 Button("Later") { model.dismissCalling(card) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
             }

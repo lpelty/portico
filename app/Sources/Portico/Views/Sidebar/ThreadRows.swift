@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The other conversations under the sidebar's card (v0.16 §2.5, AM1):
-/// label, title, a status (working spinner, amber Needs you, or the last
-/// reply's age) and the key. A click switches; a thread's row has Close
+/// label, title and a status (working spinner, amber Needs you, or the
+/// last reply's age). No key glyph: the tooltip spells the key (§9.2). A
+/// click switches; a thread's row has Close
 /// thread in its context menu.
 struct ThreadRows: View {
     @EnvironmentObject private var model: AppModel
@@ -50,9 +51,6 @@ private struct ThreadRow: View {
                 }
                 Spacer(minLength: 0)
                 status
-                Text(row.key)
-                    .scaledFont(11, monospacedDigit: true)
-                    .foregroundStyle(Theme.text3)
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
@@ -61,7 +59,7 @@ private struct ThreadRow: View {
         .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
         .background(needsYou ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .focusEffectDisabled()
-        .help("Go to \(row.label) (\(row.key))")
+        .help(row.help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.spokenLabel)
         .accessibilityAddTraits(.isButton)
