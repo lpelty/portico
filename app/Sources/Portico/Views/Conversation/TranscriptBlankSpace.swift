@@ -16,7 +16,7 @@ enum TranscriptBlankSpace {
     /// Whether the visible area now shows blank where the conversation should be.
     /// - Parameters:
     ///   - hasRows: the conversation has rows to draw.
-    ///   - rowFrames: the frames the drawn rows report, in the scroll view's own
+    ///   - rowFrames: the frames the drawn rows, calling cards and working line report, in the scroll view's own
     ///     space (its visible area has its top left at the origin).
     ///   - clip: the scroll view's clip bounds (its visible area in the document).
     ///   - documentHeight: the document view's height.

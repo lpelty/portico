@@ -31,6 +31,27 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         XCTAssertFalse(TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows, clip: clip, documentHeight: 899.5))
     }
 
+    /// A view that shows only the calling cards and the working line under
+    /// rows scrolled out of view is not blank: those report their frames
+    /// too, but never become the place a conversation keeps.
+    @MainActor
+    func testCallingCardsAndTheWorkingLineCountAsDrawnButNotAsThePlace() {
+        let rows = TranscriptRowFrames()
+        rows.note(CGRect(x: 0, y: -400, width: 600, height: 80), id: "item-1")
+        rows.note(CGRect(x: 0, y: 900, width: 600, height: 80), id: "item-2")
+        rows.noteOther(CGRect(x: 0, y: 20, width: 600, height: 120), id: "calling:card-1")
+        rows.noteOther(CGRect(x: 0, y: 160, width: 600, height: 24), id: "working")
+        XCTAssertEqual(rows.allFrames.count, 4)
+        XCTAssertFalse(
+            TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000),
+            "calling cards and the working line in view are not blank space")
+        XCTAssertEqual(rows.top()?.id, "item-2", "the kept place is a transcript row, never a calling card")
+        rows.forgetOther("calling:card-1")
+        rows.forgetOther("working")
+        XCTAssertTrue(
+            TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000))
+    }
+
     func testWatchReportsOncePerOccurrenceAfterTheGrace() {
         var watch = TranscriptBlankSpace.Watch()
         let t0 = Date(timeIntervalSince1970: 1000)

@@ -159,11 +159,13 @@ struct ConversationView: View {
                         .atReplyWidth()
                         .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
                         .id("calling:\(card.id)")
+                        .modifier(ReportsRowFrame(rows: rows, id: "calling:\(card.id)", isRow: false))
                 }
                 if working {
                     WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
                         .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
                         .id("working")
+                        .modifier(ReportsRowFrame(rows: rows, id: "working", isRow: false))
                 }
                 Color.clear.frame(height: 1)
                     .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
@@ -279,7 +281,7 @@ struct ConversationView: View {
             try? await Task.sleep(for: .milliseconds(500))
             guard let scroll = personInput.scrollView, let document = scroll.documentView else { continue }
             let clip = scroll.contentView.bounds
-            let frames = Array(rows.frames.values)
+            let frames = rows.allFrames
             let blank = TranscriptBlankSpace.isBlank(
                 hasRows: !drawn.isEmpty, rowFrames: frames, clip: clip, documentHeight: document.frame.height)
             if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {

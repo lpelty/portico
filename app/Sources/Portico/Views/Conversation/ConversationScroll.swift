@@ -182,6 +182,17 @@ final class TranscriptRowFrames {
     func note(_ frame: CGRect, id: String) { frames[id] = frame }
     func forget(_ id: String) { frames[id] = nil }
 
+    /// What else the stack draws under the rows (calling cards, the working
+    /// line): counted as drawn by the blank-space diagnostic, never the
+    /// place a conversation keeps.
+    private(set) var others: [String: CGRect] = [:]
+
+    func noteOther(_ frame: CGRect, id: String) { others[id] = frame }
+    func forgetOther(_ id: String) { others[id] = nil }
+
+    /// Every drawn thing's frame: the rows and the others.
+    var allFrames: [CGRect] { Array(frames.values) + Array(others.values) }
+
     /// The row at the top of the view (the first whose bottom is below the
     /// view's top) and its top's distance from the view's top.
     func top() -> (id: String, offset: CGFloat)? {
@@ -195,10 +206,15 @@ final class TranscriptRowFrames {
 struct ReportsRowFrame: ViewModifier {
     let rows: TranscriptRowFrames
     let id: String
+    /// A transcript row (the place a conversation keeps can be it), or
+    /// something drawn under the rows (a calling card, the working line).
+    var isRow = true
 
     func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { rows.note($0, id: id) }
-            .onDisappear { rows.forget(id) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                if isRow { rows.note(frame, id: id) } else { rows.noteOther(frame, id: id) }
+            }
+            .onDisappear { if isRow { rows.forget(id) } else { rows.forgetOther(id) } }
     }
 }
