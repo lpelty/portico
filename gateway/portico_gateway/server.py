@@ -171,6 +171,7 @@ from .engine import (
     READ_ONLY_TOOLS,
     Engine,
     PermissionDecision,
+    append_prompt_line,
     deployment_system_prompt,
     friendly_model_name,
     history_events,
@@ -246,7 +247,11 @@ from .messages import (
     SessionRenewed,
     StatusSet,
     TextDelta,
+    ThreadClose,
+    ThreadDismiss,
+    ThreadInfo,
     ThreadProposal,
+    ThreadStart,
     ToolFinished,
     ToolStarted,
     TurnFinished,
@@ -261,7 +266,20 @@ from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
-from .state import StateDir
+from .state import ProposalRecord, StateDir
+from .threads import (
+    CLOSE_LOGGING,
+    CLOSE_PLAIN,
+    CLOSED,
+    EMPTY_BRIEF,
+    LIMIT_MESSAGE,
+    MAIN_PROMPT,
+    RENEW_MESSAGE,
+    not_a_file,
+    proposed_text,
+    thread_label,
+    thread_prompt,
+)
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
 from .viewer import MARKS_CAPABILITY, VIEWER_CAPABILITY, ViewerBridge
@@ -557,6 +575,27 @@ class ChatCallbacks:
         return Path(folder) if folder else None
 
 
+class MainChatCallbacks(ChatCallbacks):
+    """Main's ``EngineCallbacks`` while threads are on (v0.16): the engine also gets ``open_thread``.
+
+    The tool's handler is not told its ``tool_use_id``; a ``PreToolUse``
+    hook hears it first (``note_thread_use``), and the proposal carries it.
+    Ids wait in call order, so calls the agent makes side by side each get
+    their own.
+    """
+
+    def __init__(self, server: GatewayServer, chat: Chat) -> None:
+        super().__init__(server, chat)
+        self._thread_uses: list[str] = []
+
+    def note_thread_use(self, tool_use_id: str) -> None:
+        self._thread_uses.append(tool_use_id)
+
+    async def on_open_thread(self, brief: str, files: list[str]) -> str:
+        use = self._thread_uses.pop(0) if self._thread_uses else None
+        return await self.server.propose_thread(self.chat, brief, files, use)
+
+
 # --- plain HTTP on the WebSocket port ----------------------------------------
 
 
@@ -814,6 +853,16 @@ class GatewayServer:
         self._renewing: set[int] = set()
         # Chats with a ``session.log`` in flight (v0.4): the same rule.
         self._logging: set[int] = set()
+        # v0.16: threads being closed (no send meanwhile), proposals being
+        # started (a second ``thread.start`` is ``thread.proposal_resolved``),
+        # and the lock that makes one thread start at a time (slots).
+        self._closing: set[int] = set()
+        self._starting: set[str] = set()
+        self._thread_lock = asyncio.Lock()
+        # v0.16: the threads closed at start (``default_folder`` moved Main,
+        # or threads are off), as a task that runs once the gateway listens.
+        self._close_at_start: list[Chat] = []
+        self.startup_closes: asyncio.Task[None] | None = None
         # v0.10: file writes that started with no turn in flight (a
         # background agent's), by chat and tool use, reported when they finish.
         self._loose_writes: dict[tuple[int, str], tuple[str, dict[str, Any]]] = {}
@@ -874,6 +923,7 @@ class GatewayServer:
         # Set once ``stop`` has run; the main loop waits on it, then calls ``shutdown``.
         self.stopping = asyncio.Event()
         self.cards = CardBroker(hold_seconds=config.card_hold_seconds)
+        self.cards.threads_on = self.threads_on()
         # Reads a session's transcript (``engine.read_history``); replaceable for tests.
         self.history_reader: Callable[[str | None, Path], list[dict[str, Any]]] = read_history
         # Runs Spotlight for ``files.search`` (``search.run_command``); replaceable for tests.
@@ -920,10 +970,17 @@ class GatewayServer:
         self.register("service.restart", self.on_service_restart)
         self.register("services.restart_all", self.on_services_restart_all)
         self.register("sessions.clear", self.on_sessions_clear)
+        self.register("thread.start", self.on_thread_start)
+        self.register("thread.dismiss", self.on_thread_dismiss)
+        self.register("thread.close", self.on_thread_close)
 
     @property
     def attached(self) -> bool:
         return self._app is not None
+
+    def threads_on(self) -> bool:
+        """v0.16: whether Main may have threads (single presentation, ``[threads] max`` above 0)."""
+        return self.config.presentation == "single" and self.config.threads.max > 0
 
     def register(self, type_name: str, handler: Handler) -> None:
         """Handle app frames of ``type_name`` (``message.send`` …) with ``handler(msg, conn)``."""
@@ -954,6 +1011,12 @@ class GatewayServer:
         await self._follow_default_folder()
         await self._preview_next_number()
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
+        if self.config.threads.max == 0:
+            # v0.16 (ruling 9): threads turned off close what is still open.
+            self._close_at_start += [t for t in self.registry.open_threads() if t not in self._close_at_start]
+        if self._close_at_start:
+            closing, self._close_at_start = self._close_at_start, []
+            self.startup_closes = self._spawn(self._close_threads_at_start(closing), name="portico-thread-closes")
         if self.config_path is not None:
             self._spawn(self._watch_config(), name="portico-config-watch")
         if self.config.update.check:
@@ -1427,6 +1490,10 @@ class GatewayServer:
             live.ended = _now()
             live.logged = None
             await self.set_state(live, "stopped")
+            # v0.16: Main's session ended: its pending proposals read "Not started"; its threads
+            # close with their log steps once the gateway listens (spec §2.6).
+            await self._dismiss_pending(live)
+            self._close_at_start += self.registry.open_threads()
             await self.notice(
                 live, f"Session ended · the deployment's folder changed · continues in Session {following.number}"
             )
@@ -1465,6 +1532,10 @@ class GatewayServer:
     async def _start_engine(self, chat: Chat) -> Engine:
         """A fresh engine for ``chat`` in its folder, resuming its session when it has one.
 
+        v0.16: a thread's engine gets ``THREAD_PROMPT`` with its number; with
+        threads on, any other chat's (Main's) gets ``MAIN_PROMPT`` and
+        ``MainChatCallbacks``, so ``open_thread``. A thread is never Main.
+
         The real engine often names its session only with the first turn's
         messages (``start`` then returns ``""``); ``_sync_session`` picks
         the id up from the engine as its events arrive.
@@ -1477,12 +1548,17 @@ class GatewayServer:
         engine = self.engine_factory()
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
-        engine.system_prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
+        prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
+        callbacks = ChatCallbacks(self, chat)
+        if chat.thread is not None:
+            prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot))
+        elif self.threads_on():
+            prompt = append_prompt_line(prompt, MAIN_PROMPT)
+            callbacks = MainChatCallbacks(self, chat)
+        engine.system_prompt = prompt
         # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
         engine.model = self.registry.model
-        session = await engine.start(
-            chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
-        )
+        session = await engine.start(chat.folder, chat.session_id, list(self.config.setting_sources), callbacks)
         chat.engine = engine
         if session:
             chat.session_id = session
@@ -2257,6 +2333,9 @@ class GatewayServer:
             await self._send(conn, card)
         # v0.11: what is still waiting to go, an empty list too (it replaces the app's).
         await self._send(conn, self._queue_frame(chat))
+        # v0.16: the proposals made in this chat, as they stand (only to an app with threads.v1).
+        for record in self.registry.proposals_for(chat.number):
+            await self._send(conn, self._proposal_frame(record))
 
     async def _history(self, chat: Chat, since: int | None) -> tuple[list[ServerMessage], bool, list[Artifact]]:
         """What ``chat.open`` replays: ring events, or the transcript when the ring cannot serve.
@@ -2405,6 +2484,8 @@ class GatewayServer:
         while it runs.
         """
         chat = self.registry.get(msg.chat)
+        if chat.thread is not None:
+            raise ProtocolError("thread.renew", RENEW_MESSAGE)
         if chat.ended is not None:
             raise ProtocolError("session.ended", f"session {chat.number} has already ended")
         self._check_can_send(chat)
@@ -2456,6 +2537,8 @@ class GatewayServer:
         chat.ended = _now()
         chat.logged = logged
         await self.set_state(chat, "stopped")
+        # v0.16 (ruling 7): its pending proposals end with it, kept as "Not started"; threads stay open.
+        await self._dismiss_pending(chat)
         following = self.registry.create(chat.folder, parent=chat.number, number=await self._new_session_number())
         # v0.11: what the person queued during the log step and is still held
         # was meant for the agent: it goes in the session that follows.
@@ -2481,11 +2564,19 @@ class GatewayServer:
         afterwards (``session.renew``) or it stays live (``session.log``).
         """
 
+        # v0.16 (ruling 8): a turn that could not start is a log step that could not start,
+        # through a plug-in too: it is raised, so nothing ends (or closes) after it.
+        refused: list[ProtocolError] = []
+
         async def send(text: str) -> Outcome:
             # Turns are this method's own: the renew holds the chat.
             if chat.number in self._runs:
                 raise ProtocolError("chat.busy", f"a turn is already running in chat {chat.number}")
-            run = await self.start_turn(chat, text)
+            try:
+                run = await self.start_turn(chat, text)
+            except ProtocolError as e:
+                refused.append(e)
+                raise
             await run.finished.wait()
             return run.outcome or "stopped"
 
@@ -2498,7 +2589,9 @@ class GatewayServer:
         )
         try:
             return bool(await hook(ctx, chat.summary()))
-        except Exception:
+        except Exception as e:
+            if refused and e is refused[-1]:
+                raise
             log.exception("chat %d: the plug-in's on_renew failed; the session is not logged", chat.number)
             return False
 
@@ -2566,6 +2659,223 @@ class GatewayServer:
         # ``chat`` is a summary here, not a number: the frame names the session in it.
         await self.broadcast(SessionLogged(ts=_now(), id=id, chat=chat.summary()))
         await self.send_chat_list()
+
+    # --- threads (v0.16) -------------------------------------------------------------
+
+    def _proposal_frame(self, record: ProposalRecord, id: str | None = None) -> ThreadProposal:
+        return ThreadProposal(
+            ts=_now(), chat=record.chat, id=id, proposal=record.id, tool_use_id=record.tool_use_id,
+            brief=record.brief, files=list(record.files), state=record.state, thread=record.thread,
+        )
+
+    async def _dismiss_pending(self, chat: Chat) -> None:
+        """Main's session ended: its pending proposals become ``dismissed`` ("Not started"), each sent."""
+        for record in self.registry.dismiss_pending(chat.number):
+            await self.broadcast(self._proposal_frame(record))
+
+    async def propose_thread(self, chat: Chat, brief: str, files: list[str], tool_use_id: str | None) -> str:
+        """Main's ``open_thread``: store the proposal and send ``thread.proposal``; returns what the agent reads.
+
+        A relative path is Main's folder's. An empty brief or a path that is
+        not a file is refused and nothing is stored. The answer names the
+        slot the thread would take now, or says the person picks one to close.
+        """
+        brief = brief.strip()
+        if not brief:
+            return EMPTY_BRIEF
+        resolved: list[str] = []
+        for raw in files:
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = chat.folder / path
+            if not path.is_file():
+                return not_a_file(raw)
+            resolved.append(str(path))
+        record = ProposalRecord(
+            id=f"p-{uuid.uuid4().hex[:8]}", chat=chat.number, tool_use_id=tool_use_id, brief=brief,
+            files=resolved, created=_now(), state="pending",
+        )
+        self.registry.add_proposal(record)
+        log.info("chat %d: the agent proposed a thread (%s)", chat.number, record.id)
+        await self.broadcast(self._proposal_frame(record))
+        return proposed_text(self.registry.free_slot(self.config.threads.max))
+
+    def _pending_proposal(self, chat: Chat, id: str) -> ProposalRecord:
+        """The proposal ``id`` made in ``chat``, still pending and not being started; else the refusal."""
+        try:
+            record = self.registry.proposal(id)
+        except KeyError:
+            raise ProtocolError("thread.proposal_unknown", f"no thread proposal {id} here") from None
+        if record.chat != chat.number:
+            raise ProtocolError("thread.proposal_unknown", f"no thread proposal {id} in session {chat.number}")
+        if record.state != "pending" or id in self._starting:
+            raise ProtocolError("thread.proposal_resolved", f"thread proposal {id} was already {record.state}")
+        return record
+
+    def _open_thread(self, number: int) -> Chat:
+        """The open thread ``number``; ``thread.not_open`` when it is not one (or is closing)."""
+        chat = self.registry.get(number)
+        if chat.thread is None or chat.ended is not None or number in self._closing:
+            raise ProtocolError("thread.not_open", f"chat {number} is not an open thread")
+        return chat
+
+    async def on_thread_start(self, msg: ThreadStart, conn: ServerConnection) -> None:
+        """Start the thread proposal ``proposal`` on Main describes; at the limit, close ``close`` first.
+
+        Checked here, run from a task (a close runs a log step, whose cards
+        are answered meanwhile). Answered with ``chat.state idle`` for the new
+        thread (with the request's ``id``), ``chat.list``, then ``thread.proposal``
+        (``started``); the brief, with its files, is the thread's first message.
+        Starting never changes which chat is Main.
+        """
+        if not self.threads_on():
+            raise ProtocolError("threads.off", "this deployment has threads off")
+        main = self.registry.get(msg.chat)
+        record = self._pending_proposal(main, msg.proposal)
+        if self.registry.free_slot(self.config.threads.max) is None:
+            if msg.close is None:
+                raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+            self._open_thread(msg.close)
+        self._starting.add(record.id)
+        self._spawn(self._start_task(main, record, msg, conn), name=f"portico-thread-start-{main.number}")
+
+    async def _start_task(self, main: Chat, record: ProposalRecord, msg: ThreadStart, conn: ServerConnection) -> None:
+        try:
+            async with self._thread_lock:
+                slot = self.registry.free_slot(self.config.threads.max)
+                if slot is None:
+                    if msg.close is None:
+                        raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+                    target = self._open_thread(msg.close)
+                    self._closing.add(target.number)
+                    try:
+                        await self.close_thread(target)
+                    finally:
+                        self._closing.discard(target.number)
+                    slot = self.registry.free_slot(self.config.threads.max)
+                    if slot is None:
+                        raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+                thread = await self._create_thread(main, record, slot, msg.id, conn)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, chat=main.number, id=msg.id))
+            return
+        except Exception as e:
+            log.exception("chat %d: thread.start failed", main.number)
+            await self._send(conn, self.error("gateway.error", f"thread.start failed: {e}", chat=main.number, id=msg.id))
+            return
+        finally:
+            self._starting.discard(record.id)
+        send = MessageSend(ts=_now(), chat=thread.number, text=record.brief, attachments=list(record.files))
+        try:
+            await self._send_message(thread, send, conn)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, chat=thread.number, id=msg.id))
+
+    async def _create_thread(
+        self, main: Chat, record: ProposalRecord, slot: int, id: str | None, conn: ServerConnection
+    ) -> Chat:
+        """The thread chat in Main's folder and mode, with the next session number; answered, the proposal started."""
+        info = ThreadInfo(
+            label=thread_label(slot), slot=slot, parent=main.number, brief=record.brief,
+            files=list(record.files), opened_at=_now(),
+        )
+        thread = self.registry.create(main.folder, parent=main.number, number=await self._new_session_number(), thread=info)
+        thread.mode = main.mode
+        state = thread.set_state("idle")
+        self.registry.persist()
+        log.info("chat %d: %s started as chat %d (%s)", main.number, info.label, thread.number, record.id)
+        await self._send(conn, state.model_copy(update={"id": id}))
+        await self.send_chat_list()
+        started = self.registry.resolve_proposal(record.id, "started", thread=thread.number)
+        await self.broadcast(self._proposal_frame(started))
+        if self.registry.models:
+            await self.broadcast(self._models_frame(thread))
+        return thread
+
+    async def on_thread_dismiss(self, msg: ThreadDismiss, conn: ServerConnection) -> None:
+        """"Not now": the proposal becomes ``dismissed``; answered with its ``thread.proposal`` (with the ``id``)."""
+        main = self.registry.get(msg.chat)
+        record = self._pending_proposal(main, msg.proposal)
+        dismissed = self.registry.resolve_proposal(record.id, "dismissed")
+        await self.broadcast(self._proposal_frame(dismissed, id=msg.id))
+
+    async def on_thread_close(self, msg: ThreadClose, conn: ServerConnection) -> None:
+        """Close the thread ``chat`` (``close_thread``), from a task; refusals answered with the ``id``."""
+        chat = self._open_thread(msg.chat)
+        if chat.number in self._renewing or chat.number in self._logging:
+            raise ProtocolError("chat.busy", f"a log step is running in chat {chat.number}")
+        self._closing.add(chat.number)
+        self._spawn(self._close_task(chat, msg, conn), name=f"portico-thread-close-{chat.number}")
+
+    async def _close_task(self, chat: Chat, msg: ThreadClose, conn: ServerConnection) -> None:
+        try:
+            await self.close_thread(chat, msg.id)
+        except ProtocolError as e:
+            await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
+        except Exception as e:
+            log.exception("chat %d: closing the thread failed", chat.number)
+            await self._send(conn, self.error("gateway.error", f"thread.close failed: {e}", chat=chat.number, id=msg.id))
+        finally:
+            self._closing.discard(chat.number)
+
+    async def close_thread(self, chat: Chat, id: str | None = None) -> None:
+        """Close the thread ``chat`` as New ends a session, opening nothing (spec §2.6).
+
+        A running turn is stopped first, as ``turn.stop`` does, and its end
+        waited for. Then the deployment's log step runs in the thread, when
+        there is one; one that cannot start raises and leaves the thread open
+        (ruling 8), one that runs but does not finish cleanly still closes
+        (``logged: false``). The engine is closed, anything still queued goes
+        back to the app, the thread gets ``ended`` and ``chat.state stopped``
+        (with ``id``), then ``chat.list``; its slot is free again. Recorded in
+        its conversation: "Close — logging, then closing this thread" (or
+        "Close — closing this thread") and "Thread closed".
+        """
+        run = self._runs.get(chat.number)
+        if run is not None:
+            await self._return_queued(chat)
+            run.stop_requested = True
+            if chat.engine is not None:
+                await self.cards.cancel_all(chat, "thread closing", self.emit)
+                await chat.engine.interrupt()
+                self._spawn(self._await_stop(chat, run), name=f"portico-stop-{chat.number}")
+            await run.finished.wait()
+        logging = self.has_log_step()
+        await self.notice(chat, CLOSE_LOGGING if logging else CLOSE_PLAIN)
+        logged: bool | None = None
+        if logging:
+            logged = await self._noted_log_step(chat, ending=True)
+            if logged:
+                chat.note_logged(_now())
+        await self.cards.cancel_all(chat, "thread closed", self.emit)
+        # A turn the engine began on its own after the log step ends with the thread.
+        run = self._runs.get(chat.number)
+        await self._close_engine(chat)
+        if run is not None:
+            await self._report_artifacts(chat, run)
+            await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=run.turn, outcome="stopped"))
+        await self._return_queued(chat)
+        chat.ended = _now()
+        chat.logged = logged
+        await self.notice(chat, CLOSED)
+        state = chat.set_state("stopped")
+        self.registry.persist()
+        await self.broadcast(state.model_copy(update={"id": id}))
+        log.info("chat %d: thread closed (logged=%s)", chat.number, logged)
+        await self.send_chat_list()
+
+    async def _close_threads_at_start(self, threads: list[Chat]) -> None:
+        """At start (ruling 9): close ``threads`` one by one; one that cannot close stays open and is logged."""
+        for chat in threads:
+            if chat.ended is not None or chat.number in self._closing:
+                continue
+            self._closing.add(chat.number)
+            try:
+                await self.close_thread(chat)
+            except Exception:
+                log.exception("chat %d: closing the thread at start failed; it stays open", chat.number)
+            finally:
+                self._closing.discard(chat.number)
 
     # --- handlers: services -------------------------------------------------------
 
@@ -2715,8 +3025,13 @@ class GatewayServer:
     # --- the queue (v0.11, item 74) ---------------------------------------------
 
     def _busy(self, chat: Chat) -> bool:
-        """A turn or a log step is running: a send now would be ``chat.busy`` (or queued)."""
-        return chat.number in self._runs or chat.number in self._renewing or chat.number in self._logging
+        """A turn, a log step or (v0.16) a thread's close is running: a send now would be ``chat.busy`` (or queued)."""
+        return (
+            chat.number in self._runs
+            or chat.number in self._renewing
+            or chat.number in self._logging
+            or chat.number in self._closing
+        )
 
     def queued(self, chat: int) -> list[QueuedMessage]:
         """The messages ``chat`` holds for the agent, oldest first."""

@@ -323,7 +323,9 @@ logging, then ending this session" when the log step runs, else "New —
 ending this session"; once it has ended, "Session ended · continues in
 Session M". In the next session, its first event: "Continues Session N".
 All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
-renew is running), `session.ended` (already ended). While a renew runs,
+renew is running), `session.ended` (already ended), `thread.renew` (v0.16:
+`chat` is a thread, which closes instead). v0.16: open threads stay open,
+and the ending session's pending thread proposals become `dismissed`. While a renew runs,
 `message.send` to that session is `chat.busy` (v0.11: queued, for an app
 with `queue.v1`; one still held when the session ends goes to the next
 session); `turn.stop` stops the log turn; `card.answer` answers its cards.
@@ -911,6 +913,10 @@ carries its last line and no chat was created),
 `space.not_configured`, `space.not_found`, `space.invalid`,
 `space.no_refresh`, `space.refresh_failed`, `space.rename_failed`,
 `space.remove_failed` (v0.12: see The viewer and spaces),
+`threads.off`, `thread.proposal_unknown`, `thread.proposal_resolved`,
+`thread.limit`, `thread.not_open`, `thread.renew` (v0.16: `session.renew`
+on a thread: "a thread closes rather than renews; close it with
+thread.close"; see Threads),
 `gateway.error` (a handler failed; the message says which).
 
 An `error` that answers a request carries the request's `id` and `chat`
@@ -1046,8 +1052,18 @@ that engine restarts.
 
 A thread is another conversation with the same agent, in the same folder,
 opened from Main and kept beside it. Main's agent proposes one; the person
-starts it. Threads are for single presentation only. When the gateway's
-`hello` and the app's both list `threads.v1`:
+starts it. Threads are for single presentation only.
+
+**Main** is the newest chat that has not ended and has no `thread`.
+Everywhere the gateway looks up the live session it means Main: the
+`chat.new` refusal (`session.live` names Main), `/v1/status`'s `session`,
+the welcome's number preview (asked when no Main is live, even with a
+thread open) and following `default_folder` (Main moves; a thread is
+never ended or followed as the live session). This holds whatever the
+capability says: a gateway turned to `max = 0` never makes a thread the
+live session. An app finds Main the same way.
+
+When the gateway's `hello` and the app's both list `threads.v1`:
 
 - **The capability.** The gateway lists `threads.v1` in single presentation
   when `[threads] max` is above 0 (0 to 2, default 2; anything else fails
@@ -1056,21 +1072,71 @@ starts it. Threads are for single presentation only. When the gateway's
 - **A thread is a chat** with `ChatSummary.thread` set. It takes the next
   session number as every chat does, has its own transcript and log, and
   survives a gateway restart in `index.json`. A closed thread's slot is
-  used again; its number is not.
-- **Main** is the newest chat that has not ended and has no `thread`.
-  Everywhere the gateway looks up the live session it means Main: the
-  `chat.new` refusal (`session.live` names Main), `/v1/status`'s `session`,
-  the welcome's number preview (asked when no Main is live, even with a
-  thread open) and following `default_folder` (Main moves; a thread is
-  never ended or followed as the live session). This holds whatever the
-  capability says: a gateway turned to `max = 0` never makes a thread the
-  live session. An app finds Main the same way.
+  used again; its number is not. Its engine starts in Main's folder, with
+  the deployment's system prompt and model, Main's permission mode at the
+  time it starts, and the line "This is Thread N, opened from the person's
+  main conversation for the brief below. Work on it here; the person
+  answers here." after the deployment's prompt. A thread never renews
+  (`session.renew` on it is `thread.renew`); it closes. Its "Allow for
+  this session" covers that thread only, and with threads on the card's
+  scope note says "For this conversation: …", ending "until you start a
+  new session" in Main and "until you close this thread" in a thread.
 - **Proposals are stored** in the gateway's index until started,
   dismissed, or Main's session ends (then `dismissed`), and survive a
   restart; the newest 100 are kept. Removing a chat drops its proposals.
+- **Main's New leaves threads open.** They don't depend on Main's
+  session. Main's pending proposals become `dismissed` when its session
+  ends (New, or `default_folder` moving it), each sent as `thread.proposal`.
+- **When Main moves** (`default_folder` changed at gateway start), its
+  open threads are closed as `thread.close` closes them, log steps
+  included. **With `max = 0`** open threads are closed the same way. Both
+  run from a task once the gateway is listening, so start-up is not held;
+  a thread whose close cannot start stays open.
 - An older app ignores `thread` and sees threads as chats, and is never
   sent `thread.proposal`. An older gateway has no `threads.v1`, so the app
   shows no thread UI.
+
+### The `open_thread` tool (what Main's agent sees)
+With threads on, Main's engine (never a thread's) gets an in-process tool,
+`mcp__portico__open_thread`, allowed outright (no card in any mode), and
+this line after the deployment's prompt: "When the person wants work done
+separately, alongside this conversation, call open_thread with a brief of
+one or two sentences and any files it should start with. It proposes a
+thread; the person decides whether to start it, and you won't see what it
+does." Its description: "Propose a thread: another conversation with the
+person, alongside this one, for work they want done separately. Give a
+brief of one or two sentences and the files it should start with. Returns
+at once; the person starts it or not."
+
+Input `{brief: string, files?: [string]}`; a relative path is Main's
+folder's. It stores the proposal (with the call's `tool_use_id`), sends
+`thread.proposal` (`pending`), and returns at once: "Proposed as Thread 1;
+it opens if the person starts it." (the slot it would take now), or, with
+both slots taken, "Proposed; two threads are open, so the person picks one
+to close before it starts." Refusals (`is_error`, nothing stored): "Not
+proposed: give a brief of one or two sentences." and "Not proposed: <path>
+isn't a file." The agent never hears whether the person started it.
+
+### Closing a thread
+`thread.close`, and `thread.start` with `close`, run the same routine, as
+New ends a session without opening one:
+
+1. A running turn is stopped (as `turn.stop`) and its end waited for.
+2. A `chat.notice` "Close — logging, then closing this thread" (or "Close —
+   closing this thread" with no log step).
+3. The deployment's log step (`log_prompt`, or the plug-in's `on_renew`
+   with `ending` true) runs in the thread as an ordinary turn. A log step
+   that **cannot start** (its turn's engine cannot start or refuses the
+   message, through a plug-in too) leaves the thread open: "The log step
+   didn't finish; the session isn't logged" in the thread and the error
+   answers the request. One that runs but doesn't finish `done` still
+   closes, `logged: false`.
+4. The engine is closed; anything still queued goes back to the app
+   (`chat.queue` with `returned`); the thread gets `ended`, "Thread closed"
+   in its conversation, `chat.state stopped` (with the request's `id`),
+   then `chat.list`. Its slot is free again.
+
+While a close runs, sends to the thread are `chat.busy` (or queued).
 
 ### `ChatSummary.thread`
 `{label, slot, parent, brief, files, opened_at}`: `label` "Thread 1" or
@@ -1089,15 +1155,35 @@ Only to an app with `threads.v1`.
 
 ### `thread.start` — `ThreadStart` *(app → gateway)*
 `chat` (Main's), `proposal`, `close?` (an open thread to close first, at
-the limit), `id`. Starting a thread never changes which chat is Main.
+the limit), `id`. Starting a thread never changes which chat is Main, and
+does not ask the app to switch to it. Answered with `chat.state idle` for
+the new thread (with the `id`), `chat.list`, then `thread.proposal`
+(`started`, `thread` set). The thread takes the lowest free slot and the
+next session number; its first message is the brief with the files
+attached (the `Attached files:` block), sent as a `message.send` would be.
+At the limit with `close`, that thread is closed first (see Closing a
+thread); if the close fails nothing starts and the proposal stays
+`pending`. Below the limit `close` is ignored. Errors: `threads.off`
+(threads are off: multiple presentation or `max = 0`),
+`thread.proposal_unknown` (no such proposal in that chat),
+`thread.proposal_resolved` (already started or dismissed, or a start of it
+is in flight: a second Start makes no second thread), `thread.limit` ("two
+threads are open; close one to start another": at the limit with no
+`close`), `thread.not_open` (`close` names no open thread).
 
 ### `thread.dismiss` — `ThreadDismiss` *(app → gateway)*
 `chat` (Main's), `proposal`, `id`. "Not now": the proposal becomes
 `dismissed`, so its record reads "Not started" after a restart too.
+Answered with `thread.proposal` (`dismissed`, with the `id`). Errors:
+`thread.proposal_unknown`, `thread.proposal_resolved`.
 
 ### `thread.close` — `ThreadClose` *(app → gateway)*
 `chat` (the thread), `id`. Runs the thread's log step, then ends it into
-History.
+History (see Closing a thread). Answered with `chat.state stopped` (with
+the `id`), then `chat.list`. Errors: `thread.not_open` (not a thread, ended,
+or already closing), `chat.busy` (a `session.log` is running in it), and
+the log step's own when it cannot start (`engine.start_failed`,
+`engine.send_failed`).
 
 ## Subagents and workflows *(v0.10)*
 

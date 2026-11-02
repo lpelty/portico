@@ -102,7 +102,7 @@ class ThreadInfo(Strict):
     """
 
     label: str
-    slot: int
+    slot: int = Field(ge=1, le=2)
     parent: int
     brief: str
     files: list[str] = []
@@ -1206,8 +1206,9 @@ def example_messages() -> dict[str, BaseModel]:
         FilesSearch(ts=_TS, id="req-5", root="projects", query="synthesis"),
         SessionMode(ts=_TS, chat=14, mode="auto"),
         ModelSet(ts=_TS, chat=14, id="req-11", value="sonnet"),
-        ThreadStart(ts=_TS, chat=14, id="req-12", proposal="p-3f9a", close=15),
-        ThreadDismiss(ts=_TS, chat=14, id="req-13", proposal="p-3f9a"),
+        # At the limit: start p-7c21 after closing thread 15 (which p-3f9a started).
+        ThreadStart(ts=_TS, chat=14, id="req-12", proposal="p-7c21", close=15),
+        ThreadDismiss(ts=_TS, chat=14, id="req-13", proposal="p-7c21"),
         ThreadClose(ts=_TS, chat=15, id="req-14"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),

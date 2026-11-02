@@ -623,3 +623,28 @@ async def test_an_answer_is_on_the_record_before_the_tool_finishes(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.16: the scope note names the conversation --------------------------------
+
+
+def test_scope_note_says_this_conversation() -> None:
+    from portico_gateway.cards import scope_note_for
+
+    folder = Path("/Users/someone/projects/acme")
+    assert (
+        scope_note_for("WebFetch", {}, folder, [], threads_on=True)
+        == "For this conversation: every use of WebFetch, until you start a new session."
+    )
+    assert (
+        scope_note_for("WebFetch", {}, folder, [], thread=True, threads_on=True)
+        == "For this conversation: every use of WebFetch, until you close this thread."
+    )
+    assert (
+        scope_note_for("Bash", {"command": "ls"}, folder, [], thread=True, threads_on=True)
+        == "For this conversation: this exact command, until you close this thread."
+    )
+    assert (
+        scope_note_for("WebFetch", {}, folder, [])
+        == "For this session: every use of WebFetch, until you start a new session."
+    ), "threads off: the v0.3 words"

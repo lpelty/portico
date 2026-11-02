@@ -160,6 +160,9 @@ def permission_card(
     tool_use_id: str | None = None,
     folder: Path | None = None,
     suggestions: list[dict[str, Any]] | None = None,
+    *,
+    thread: bool = False,
+    threads_on: bool = False,
 ) -> CardAsk:
     return CardAsk(
         ts=_now(),
@@ -169,34 +172,44 @@ def permission_card(
         title=title_for(tool, input, folder),
         permission=Permission(tool=tool, summary=summarize_tool(tool, input), input=dict(input)),
         tool_use_id=tool_use_id or None,
-        scope_note=scope_note_for(tool, input, folder, suggestions or []),
+        scope_note=scope_note_for(tool, input, folder, suggestions or [], thread=thread, threads_on=threads_on),
     )
 
 
 def scope_note_for(
-    tool: str, input: dict[str, Any], folder: Path | None, suggestions: list[dict[str, Any]]
+    tool: str,
+    input: dict[str, Any],
+    folder: Path | None,
+    suggestions: list[dict[str, Any]],
+    *,
+    thread: bool = False,
+    threads_on: bool = False,
 ) -> str | None:
     """What "Allow for this session" would cover, in words, for the line under the card's buttons.
 
     It says exactly what ``CardBroker.chat_allow_keys`` records, so the
-    person reads the reach of the allow before giving it.
+    person reads the reach of the allow before giving it. With threads on
+    (v0.16) an allow covers only the conversation the card is in: the note
+    says "For this conversation", and in a ``thread`` it lasts "until you
+    close this thread".
     """
-    until = "until you start a new session"
+    until = "until you close this thread" if thread else "until you start a new session"
+    scope = "For this conversation" if threads_on else "For this session"
     if tool in EDIT_TOOLS:
         path = _edit_path(input)
         if path is None or folder is None:
             return None
         if _inside(_absolute(path, folder), folder):
-            return f"For this session: edits to files in {Path(folder).name or folder}, {until}."
-        return f"For this session: changes to this file only ({_resolved(_absolute(path, folder))}), {until}."
+            return f"{scope}: edits to files in {Path(folder).name or folder}, {until}."
+        return f"{scope}: changes to this file only ({_resolved(_absolute(path, folder))}), {until}."
     if tool in COMMAND_TOOLS:
         rules = _suggested_rules(tool, suggestions)
         prefixes = [rule[:-2].strip() for rule in rules if rule.endswith(":*") and rule[:-2].strip()]
         if prefixes:
             shown = ", ".join(prefixes)
-            return f"For this session: commands that start with {shown}, {until}."
-        return f"For this session: this exact command, {until}."
-    return f"For this session: every use of {tool}, {until}."
+            return f"{scope}: commands that start with {shown}, {until}."
+        return f"{scope}: this exact command, {until}."
+    return f"{scope}: every use of {tool}, {until}."
 
 
 def _edit_path(input: dict[str, Any]) -> str | None:
@@ -352,6 +365,8 @@ class CardBroker:
             raise ValueError("hold_seconds must not be negative")
         self.hold_seconds = float(hold_seconds)
         self.attached = False
+        # v0.16: set by the server when threads are on; the scope note then names the conversation.
+        self.threads_on = False
         self._open: dict[int, dict[str, _Pending]] = {}
         self._attach_waiters: set[asyncio.Future[None]] = set()
 
@@ -502,7 +517,10 @@ class CardBroker:
         """A permission card for ``tool``, unless the chat already allows it; returns the engine's decision."""
         if self.allowed(chat, tool, input):
             return "allow"
-        card = permission_card(chat.number, tool, input, tool_use_id, chat.folder, suggestions)
+        card = permission_card(
+            chat.number, tool, input, tool_use_id, chat.folder, suggestions,
+            thread=chat.thread is not None, threads_on=self.threads_on,
+        )
         answer = await self.ask(chat, card, send)
         if _is_cancelled(answer) or answer.answer.get("decision") != "allow":
             return ("deny", answer.note)

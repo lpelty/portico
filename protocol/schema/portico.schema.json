@@ -4600,6 +4600,8 @@
           "type": "integer"
         },
         "slot": {
+          "maximum": 2,
+          "minimum": 1,
           "title": "Slot",
           "type": "integer"
         }
