@@ -12,6 +12,13 @@ struct ThreadRows: View {
             VStack(spacing: 2) {
                 ForEach(model.sidebarThreads.rows(now: context.date)) { row in
                     ThreadRow(row: row)
+                    // A refused close shows under its row, so Close without
+                    // logging is reachable from Main too.
+                    if let failure = row.closeFailure {
+                        CloseFailureLine(chat: row.chat, failure: failure)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 4)
+                    }
                 }
             }
         }
@@ -55,6 +62,9 @@ private struct ThreadRow: View {
         .background(needsYou ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .focusEffectDisabled()
         .help("Go to \(row.label) (\(row.key))")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.spokenLabel)
+        .accessibilityAddTraits(.isButton)
         .contextMenu {
             if isThread {
                 Button("Close thread") { model.requestCloseThread(chat: row.chat) }
@@ -74,6 +84,7 @@ private struct ThreadRow: View {
             HStack(spacing: 4) {
                 Image(systemName: "hourglass")
                     .font(Theme.iconFont(10))
+                    .accessibilityHidden(true)
                 Text("Needs you")
                     .scaledFont(11, weight: .medium)
             }

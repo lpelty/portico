@@ -391,17 +391,7 @@ struct SessionCard: View {
     @ViewBuilder
     private var threadFootnote: some View {
         if let failure = model.closeFailures[chat] {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(failure.message)
-                    .scaledFont(11)
-                    .foregroundStyle(Theme.deny)
-                    .fixedSize(horizontal: false, vertical: true)
-                if failure.offersCloseWithoutLogging {
-                    Button("Close without logging") { model.closeThreadWithoutLogging(chat: chat) }
-                        .buttonStyle(PillButtonStyle(kind: .quiet))
-                        .disabled(closing || model.connection != .connected)
-                }
-            }
+            CloseFailureLine(chat: chat, failure: failure)
         } else {
             Text("Close writes a summary to History")
                 .scaledFont(11)

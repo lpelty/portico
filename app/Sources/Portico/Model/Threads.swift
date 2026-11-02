@@ -14,12 +14,18 @@ struct ThreadsPresentation: Equatable {
     /// Chats with a card open (a question or a permission): Needs you even
     /// before the gateway's state word says so.
     let waiting: Set<Int>
+    /// Threads whose last close was refused, with why (`closeFailures`).
+    let closeFailures: [Int: CloseFailure]
 
-    init(chats: [ChatSummary], current: Int?, limit: Int = 2, waiting: Set<Int> = []) {
+    init(
+        chats: [ChatSummary], current: Int?, limit: Int = 2, waiting: Set<Int> = [],
+        closeFailures: [Int: CloseFailure] = [:]
+    ) {
         self.chats = chats
         self.current = current
         self.limit = limit
         self.waiting = waiting
+        self.closeFailures = closeFailures
     }
 
     /// Main: the newest chat that has not ended and is not a thread.
@@ -79,9 +85,12 @@ struct ThreadsPresentation: Equatable {
             case .none: activity = nil
             }
             let line = [row.title, activity].compactMap { $0 }.joined(separator: " · ")
-            return LimitChoice(chat: summary.chat, label: info.label, line: line)
+            return LimitChoice(chat: summary.chat, label: info.label, line: line, closeFailure: closeFailures[summary.chat])
         }
     }
+
+    /// The Go button's spoken label, without the key glyph: "Go to Thread 2".
+    static func spokenGoLabel(label: String) -> String { "Go to \(label)" }
 
     /// The confirm before closing a thread mid-turn.
     static func closeQuestion(label: String) -> String {
@@ -106,7 +115,8 @@ struct ThreadsPresentation: Equatable {
             status = .none
         }
         return ThreadRowPresentation(
-            chat: summary.chat, label: label, title: SessionPresentation(summary: summary).title, status: status, key: key)
+            chat: summary.chat, label: label, title: SessionPresentation(summary: summary).title, status: status, key: key,
+            closeFailure: closeFailures[summary.chat])
     }
 }
 
@@ -135,6 +145,8 @@ struct LimitChoice: Equatable, Identifiable {
     let label: String
     /// "Pricing page · last reply 20 min ago".
     let line: String
+    /// Its last close was refused (a Close and start's close included).
+    var closeFailure: CloseFailure? = nil
 
     var id: Int { chat }
 }
@@ -173,8 +185,20 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     let status: Status
     /// "⌃0", "⌃1", "⌃2".
     let key: String
+    /// The thread's last close was refused: the row says why.
+    var closeFailure: CloseFailure? = nil
 
     var id: Int { chat }
+
+    /// What VoiceOver reads, without the key glyph: "Thread 2, needs you".
+    var spokenLabel: String {
+        switch status {
+        case .working: "\(label), working"
+        case .needsYou: "\(label), needs you"
+        case .lastReply(let ago): "\(label), last reply \(ago)"
+        case .none: label
+        }
+    }
 }
 
 /// The proposal card drawn in place of Main's `open_thread` row (AM2, AM4),
@@ -278,7 +302,7 @@ extension AppModel {
     var threads: ThreadsPresentation {
         ThreadsPresentation(
             chats: chats, current: shownChat, limit: hello?.threadsMax ?? 2,
-            waiting: Set(openCards.filter { !$0.value.isEmpty }.keys))
+            waiting: Set(openCards.filter { !$0.value.isEmpty }.keys), closeFailures: closeFailures)
     }
 
     /// The sidebar's card (§2.5): the open thread on screen, else Main.
@@ -293,7 +317,9 @@ extension AppModel {
     /// the one not listed as a row.
     var sidebarThreads: ThreadsPresentation {
         let now = threads
-        return ThreadsPresentation(chats: now.chats, current: sidebarCard?.chat, limit: now.limit, waiting: now.waiting)
+        return ThreadsPresentation(
+            chats: now.chats, current: sidebarCard?.chat, limit: now.limit, waiting: now.waiting,
+            closeFailures: now.closeFailures)
     }
 
     /// The thread on screen ended (closed here or elsewhere): the window

@@ -226,7 +226,7 @@ struct ConversationView: View {
 
     /// A thread's first message, drawn as its brief (AM3).
     private var briefItem: String? {
-        BriefBlock.briefItem(in: items, isThread: model.thread(of: chat) != nil)
+        BriefBlock.briefItem(in: items, brief: model.thread(of: chat)?.brief)
     }
 
     /// The proposal card stands apart from the tool rows around it.

@@ -222,6 +222,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var startingProposal: String?
     /// That `thread.start`'s request id.
     private(set) var startingRequest: String?
+    /// The thread that `thread.start` closes first (Close and start).
+    private(set) var startingClose: Int?
     /// The working thread whose close is asking "Close it anyway?".
     @Published var closingThread: Int?
     /// Per thread, the id of a `thread.close` the gateway has not answered.
@@ -727,6 +729,7 @@ final class AppModel: ObservableObject {
             // proposals and `chat.list` that follow say how each stands.
             startingProposal = nil
             startingRequest = nil
+            startingClose = nil
             closingThreads = [:]
             dismissing = [:]
             // A gateway without spaces has no list to trust: what an earlier
@@ -2100,6 +2103,8 @@ extension AppModel {
         let id = Self.requestId()
         startingProposal = proposal.proposal
         startingRequest = id
+        startingClose = closing
+        if let closing { closeFailures[closing] = nil }
         send(.threadStart(ThreadStart(chat: proposal.chat, proposal: proposal.proposal, close: closing, id: id)))
     }
 
@@ -2126,6 +2131,7 @@ extension AppModel {
         if settled {
             startingProposal = nil
             startingRequest = nil
+            startingClose = nil
         }
     }
 
@@ -2150,6 +2156,7 @@ extension AppModel {
     func noteThreadAnswer(id: String, chat: Int) {
         if id == startingRequest {
             startingRequest = nil
+            startingClose = nil
             if !openedChats.contains(chat) && !isLoading(chat: chat) { load(chat: chat) }
         }
         if let closing = closingThreads.first(where: { $0.value == id })?.key {
@@ -2163,6 +2170,11 @@ extension AppModel {
         if id == startingRequest {
             startingProposal = nil
             startingRequest = nil
+            // A Close and start whose close's log step could not start: the
+            // thread stays open and offers Close without logging, as Close thread does.
+            let failure = CloseFailure(code: code, message: message)
+            if let closing = startingClose, failure.offersCloseWithoutLogging { closeFailures[closing] = failure }
+            startingClose = nil
         }
         if let proposal = dismissing.first(where: { $0.value == id })?.key {
             dismissing[proposal] = nil

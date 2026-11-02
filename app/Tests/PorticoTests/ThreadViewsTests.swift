@@ -100,11 +100,25 @@ final class ThreadViewsTests: XCTestCase {
     }
 
     func testOnlyAThreadsFirstMessageIsItsBrief() {
-        let first = TranscriptItem.userText(UserText(chat: 5, turn: 1, text: "Review the pricing page on its own."))
+        let brief = "Review the pricing page on its own."
+        let first = TranscriptItem.userText(UserText(chat: 5, turn: 1, text: brief))
         let second = TranscriptItem.userText(UserText(chat: 5, turn: 2, text: "Also the footer."))
         let items: [TranscriptItem] = [first, .assistantText(id: "a", text: "On it."), second]
-        XCTAssertEqual(BriefBlock.briefItem(in: items, isThread: true), first.id)
-        XCTAssertNil(BriefBlock.briefItem(in: items, isThread: false), "Main has no brief")
+        XCTAssertEqual(BriefBlock.briefItem(in: items, brief: brief), first.id)
+        XCTAssertNil(BriefBlock.briefItem(in: items, brief: nil), "Main has no brief")
+    }
+
+    func testTheBriefMatchesWithAttachmentsListedUnderIt() {
+        let brief = "Review the pricing page on its own."
+        let first = TranscriptItem.userText(UserText(
+            chat: 5, turn: 1, text: "  \(brief)\n\nAttached: /tmp/acme/pricing.html"))
+        XCTAssertEqual(BriefBlock.briefItem(in: [first], brief: brief + "\n"), first.id)
+    }
+
+    func testAFirstMessageThatIsNotTheBriefIsLeftAsItIs() {
+        let other = TranscriptItem.userText(UserText(chat: 5, turn: 1, text: "Something the person typed."))
+        XCTAssertNil(BriefBlock.briefItem(in: [other], brief: "Review the pricing page on its own."))
+        XCTAssertNil(BriefBlock.briefItem(in: [other], brief: "  "), "an empty brief matches nothing")
     }
 
     // MARK: - the composer
@@ -186,6 +200,59 @@ final class ThreadViewsTests: XCTestCase {
         model.apply(.error(ErrorMessage(
             code: "lifecycle.before_first_chat_failed", message: "cannot open a chat: the hook failed", chat: 5, id: close.id)))
         XCTAssertEqual(model.closeFailures[5]?.offersCloseWithoutLogging, true)
+    }
+
+    func testAFailedCloseShowsOnTheThreadsRowInMain() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 3)
+        model.requestCloseThread(chat: 5)
+        guard case .threadClose(let close)? = sent.frames.last else { return XCTFail("expected thread.close") }
+        model.apply(.error(ErrorMessage(code: "engine.start_failed", message: "the engine could not start", chat: 5, id: close.id)))
+        let row = model.sidebarThreads.rows(now: Date()).first { $0.chat == 5 }
+        XCTAssertEqual(row?.closeFailure?.message, "the engine could not start")
+        XCTAssertEqual(row?.closeFailure?.offersCloseWithoutLogging, true)
+        model.closeThreadWithoutLogging(chat: 5)
+        guard case .threadClose(let plain)? = sent.frames.last else { return XCTFail("expected thread.close") }
+        XCTAssertFalse(plain.log)
+    }
+
+    func testACloseAndStartWhoseCloseCannotLogOffersClosingWithoutLogging() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
+        let proposal = ThreadProposal(
+            chat: 3, proposal: "p1", toolUseId: "toolu_p1", brief: "Check the checkout flow.", state: .pending)
+        model.apply(.threadProposal(proposal))
+        model.startThread(proposal, closing: 5)
+        guard case .threadStart(let start)? = sent.frames.last else { return XCTFail("expected thread.start") }
+        model.apply(.error(ErrorMessage(
+            code: "lifecycle.before_first_chat_failed", message: "cannot open a chat: the hook failed", chat: 3, id: start.id)))
+        XCTAssertNil(model.startingProposal, "the limit card is usable again")
+        XCTAssertEqual(model.closeFailures[5]?.offersCloseWithoutLogging, true)
+        XCTAssertEqual(
+            model.threads.limitChoices(now: Date()).first { $0.chat == 5 }?.closeFailure?.message,
+            "cannot open a chat: the hook failed")
+    }
+
+    func testAStartRefusedForAnotherReasonRecordsNoCloseFailure() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
+        let proposal = ThreadProposal(
+            chat: 3, proposal: "p1", toolUseId: "toolu_p1", brief: "Check the checkout flow.", state: .pending)
+        model.apply(.threadProposal(proposal))
+        model.startThread(proposal, closing: 5)
+        guard case .threadStart(let start)? = sent.frames.last else { return XCTFail("expected thread.start") }
+        model.apply(.error(ErrorMessage(code: "thread.proposal_resolved", message: "already started", chat: 3, id: start.id)))
+        XCTAssertNil(model.closeFailures[5])
+    }
+
+    func testSpokenLabels() {
+        XCTAssertEqual(ThreadsPresentation.spokenGoLabel(label: "Thread 2"), "Go to Thread 2")
+        let row = ThreadRowPresentation(chat: 6, label: "Thread 2", title: "Onboarding copy", status: .needsYou, key: "⌃2")
+        XCTAssertEqual(row.spokenLabel, "Thread 2, needs you")
+        XCTAssertEqual(
+            ThreadRowPresentation(chat: 5, label: "Thread 1", title: nil, status: .working, key: "⌃1").spokenLabel,
+            "Thread 1, working")
+        XCTAssertEqual(
+            ThreadRowPresentation(chat: 3, label: "Main", title: nil, status: .lastReply("5 min ago"), key: "⌃0").spokenLabel,
+            "Main, last reply 5 min ago")
     }
 
     func testWhenTheThreadOnScreenEndsTheWindowGoesBackToMain() {

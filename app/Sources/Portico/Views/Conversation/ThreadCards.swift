@@ -13,10 +13,17 @@ struct BriefBlock: View {
         return "BRIEF FROM MAIN · \(SessionTime.clock(openedAt, calendar: calendar, locale: locale))"
     }
 
-    /// The transcript item drawn as the brief: a thread's first message.
-    static func briefItem(in items: [TranscriptItem], isThread: Bool) -> String? {
-        guard isThread else { return nil }
-        return items.first { if case .userText = $0 { true } else { false } }?.id
+    /// The transcript item drawn as the brief: a thread's first message,
+    /// only when it is the brief (its text starts with it; attachments may
+    /// be listed under it). Otherwise no item is replaced: a real message
+    /// is never hidden under a brief block.
+    static func briefItem(in items: [TranscriptItem], brief: String?) -> String? {
+        let wanted = brief?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !wanted.isEmpty,
+            case .userText(let first)? = items.first(where: { if case .userText = $0 { true } else { false } })
+        else { return nil }
+        let text = first.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.hasPrefix(wanted) ? TranscriptItem.userText(first).id : nil
     }
 
     var body: some View {
@@ -38,6 +45,7 @@ struct BriefBlock: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).stroke(Theme.border, lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
@@ -54,6 +62,7 @@ private struct FileChips: View {
                     HStack(spacing: 4) {
                         Image(systemName: "doc")
                             .font(Theme.iconFont(11))
+                            .accessibilityHidden(true)
                         Text(URL(fileURLWithPath: path).lastPathComponent)
                             .scaledFont(12)
                             .lineLimit(1)
@@ -88,6 +97,7 @@ struct ProposalCard: View {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(Theme.iconFont(12))
                     .foregroundStyle(shown.record == nil ? model.brand.accent ?? Theme.accent : Theme.text3)
+                    .accessibilityHidden(true)
                 Text(shown.title)
                     .scaledFont(13, weight: .semibold)
                     .foregroundStyle(shown.record == nil ? Theme.text : Theme.text2)
@@ -106,6 +116,7 @@ struct ProposalCard: View {
                     .scaledFont(12)
                     .foregroundStyle(Theme.text3)
                 limitChoices
+                limitCloseFailure
                 HStack(spacing: 8) {
                     Button("Close and start", action: closeAndStart)
                         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
@@ -118,6 +129,9 @@ struct ProposalCard: View {
                 if let label = shown.goLabel, let slot = shown.goSlot {
                     Button(label) { model.switchToConversation(slot: slot) }
                         .buttonStyle(PillButtonStyle(kind: .quiet))
+                        .accessibilityLabel(model.thread(of: proposal.thread ?? -1).map {
+                            ThreadsPresentation.spokenGoLabel(label: $0.label)
+                        } ?? label)
                 }
             case .notStarted:
                 brief(shown, quiet: true)
@@ -129,7 +143,11 @@ struct ProposalCard: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).stroke(Theme.border, lineWidth: 1))
         .opacity(starting ? 0.6 : 1)
         .alert(confirmQuestion, isPresented: $confirming) {
-            Button("Close", role: .destructive) { start(closing: pick) }
+            Button("Close", role: .destructive) {
+                // The pick may have closed while the alert was up.
+                guard let chat = pickedChoice else { return }
+                start(closing: chat)
+            }
             Button("Cancel", role: .cancel) {}
         }
     }
@@ -169,6 +187,7 @@ struct ProposalCard: View {
                             Image(systemName: on ? "largecircle.fill.circle" : "circle")
                                 .font(Theme.iconFont(13))
                                 .foregroundStyle(on ? model.brand.accent ?? Theme.accent : Theme.text3)
+                                .accessibilityHidden(true)
                             Text(choice.label)
                                 .scaledFont(13, weight: .medium)
                                 .foregroundStyle(Theme.text)
@@ -190,6 +209,20 @@ struct ProposalCard: View {
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(on ? .isSelected : [])
                 }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Thread to close")
+        }
+    }
+
+    /// A Close and start whose close could not log: why, and Close without
+    /// logging for that thread (as on its card).
+    @ViewBuilder
+    private var limitCloseFailure: some View {
+        let failed = model.threads.limitChoices(now: Date()).filter { $0.closeFailure != nil }
+        ForEach(failed) { choice in
+            if let failure = choice.closeFailure {
+                CloseFailureLine(chat: choice.chat, label: choice.label, failure: failure)
             }
         }
     }
@@ -232,6 +265,7 @@ struct CallingCardView: View {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(Theme.iconFont(12))
                     .foregroundStyle(Theme.wait)
+                    .accessibilityHidden(true)
                 Text(card.title)
                     .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
@@ -239,6 +273,7 @@ struct CallingCardView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "hourglass")
                         .font(Theme.iconFont(10))
+                        .accessibilityHidden(true)
                     Text("Waiting for you")
                         .scaledFont(11, weight: .medium)
                 }
@@ -255,6 +290,9 @@ struct CallingCardView: View {
             HStack(spacing: 8) {
                 Button(card.goLabel) { model.switchToConversation(slot: card.slot) }
                     .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                    .accessibilityLabel(model.thread(of: card.thread).map {
+                        ThreadsPresentation.spokenGoLabel(label: $0.label)
+                    } ?? card.goLabel)
                 Button("Later") { model.dismissCalling(card) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
             }
@@ -264,5 +302,31 @@ struct CallingCardView: View {
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).stroke(Theme.wait, lineWidth: 1))
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// Why a thread's close was refused, and "Close without logging" when its
+/// log step could not start: on the thread's card, its row in Main, and
+/// the limit card (v0.16, carry 2).
+struct CloseFailureLine: View {
+    let chat: Int
+    /// "Thread 1": named when the line is not on the thread's own card.
+    var label: String? = nil
+    let failure: CloseFailure
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.map { "\($0): \(failure.message)" } ?? failure.message)
+                .scaledFont(11)
+                .foregroundStyle(Theme.deny)
+                .fixedSize(horizontal: false, vertical: true)
+            if failure.offersCloseWithoutLogging {
+                Button("Close without logging") { model.closeThreadWithoutLogging(chat: chat) }
+                    .buttonStyle(PillButtonStyle(kind: .quiet))
+                    .disabled(model.closingThreads[chat] != nil || model.connection != .connected)
+                    .accessibilityLabel(label.map { "Close \($0) without logging" } ?? "Close without logging")
+            }
+        }
     }
 }
