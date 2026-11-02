@@ -38,10 +38,23 @@ EMPTY_BRIEF = f"{REFUSAL_PREFIX}give a brief of one or two sentences."
 CLOSE_LOGGING = "Close — logging, then closing this thread"
 CLOSE_PLAIN = "Close — closing this thread"
 CLOSED = "Thread closed"
+# A thread whose brief could not be sent (a file gone since the proposal) says so, then why.
+BRIEF_NOT_SENT = "The brief wasn't sent"
 
 # Refusals (``error.message``) whose words the plan fixes.
 LIMIT_MESSAGE = "two threads are open; close one to start another"
 RENEW_MESSAGE = "a thread closes rather than renews; close it with thread.close"
+
+
+def use_key(brief: object, files: object) -> tuple[str, tuple[str, ...]]:
+    """An ``open_thread`` call's input as both the hook and the tool see it (brief and files, trimmed).
+
+    The hook hears the call's ``tool_use_id`` with its raw input; the tool's
+    handler hears the input without the id. This key ties the two together.
+    """
+    text = brief.strip() if isinstance(brief, str) else ""
+    paths = tuple(f.strip() for f in files if isinstance(f, str) and f.strip()) if isinstance(files, list) else ()
+    return text, paths
 
 
 def thread_label(slot: int) -> str:

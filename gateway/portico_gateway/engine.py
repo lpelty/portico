@@ -186,7 +186,8 @@ class EngineCallbacks(Protocol):
     # Optional (v0.16), Main's owner only: ``async def on_open_thread(self,
     # brief: str, files: list[str]) -> str`` proposes a thread and answers
     # what the agent reads (a refusal starts "Not proposed: "), and
-    # ``note_thread_use(tool_use_id)`` hears the call's id first. An owner
+    # ``note_thread_use(tool_use_id, tool_input)`` hears the call's id and
+    # input first (the handler is matched to it by input). An owner
     # without them gives the engine no ``open_thread`` tool.
 
 
@@ -739,12 +740,13 @@ def build_thread_tool(callbacks: Any):
 
 
 def build_thread_hook(callbacks: Any):
-    """The ``PreToolUse`` hook on ``open_thread``: the owner notes the call's id, which the proposal carries."""
+    """The ``PreToolUse`` hook on ``open_thread``: the owner notes the call's id and input, which the proposal carries."""
 
     async def thread_hook(input: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = input.get("tool_input") if isinstance(input, Mapping) else None
         use_id = input.get("tool_use_id") if isinstance(input, Mapping) else None
-        if isinstance(use_id or tool_use_id, str):
-            callbacks.note_thread_use(use_id or tool_use_id)
+        if isinstance(tool_input, Mapping) and isinstance(use_id or tool_use_id, str):
+            callbacks.note_thread_use(use_id or tool_use_id, dict(tool_input))
         return {}
 
     return thread_hook

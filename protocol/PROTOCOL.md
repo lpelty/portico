@@ -1132,11 +1132,22 @@ New ends a session without opening one:
    answers the request. One that runs but doesn't finish `done` still
    closes, `logged: false`.
 4. The engine is closed; anything still queued goes back to the app
-   (`chat.queue` with `returned`); the thread gets `ended`, "Thread closed"
-   in its conversation, `chat.state stopped` (with the request's `id`),
-   then `chat.list`. Its slot is free again.
+   (`chat.queue` with `returned`); the thread gets `ended`, `chat.state
+   stopped` (with the request's `id`), "Thread closed" in its
+   conversation, then `chat.list`. Its slot is free again.
 
-While a close runs, sends to the thread are `chat.busy` (or queued).
+`thread.close` with `log: false` skips step 3: the thread ends `logged:
+false` (no log step configured: `logged` absent). It is the app's "Close
+without logging", the way out when a close fails because its log step
+cannot start. A close that fails leaves the thread open, and a message
+queued meanwhile goes as its next turn. While a close runs, sends to the
+thread are `chat.busy` (or queued), and a close is refused with
+`chat.busy` while a `session.log` runs in the thread (`thread.close`, and
+`thread.start`'s `close`).
+
+The plug-in rule in step 3 is the close's own: for `session.renew` and
+`session.log`, a plug-in whose `send` is refused still ends the step with
+its own verdict (renews unlogged), as before v0.16.
 
 ### `ChatSummary.thread`
 `{label, slot, parent, brief, files, opened_at}`: `label` "Thread 1" or
@@ -1161,9 +1172,13 @@ the new thread (with the `id`), `chat.list`, then `thread.proposal`
 (`started`, `thread` set). The thread takes the lowest free slot and the
 next session number; its first message is the brief with the files
 attached (the `Attached files:` block), sent as a `message.send` would be.
-At the limit with `close`, that thread is closed first (see Closing a
-thread); if the close fails nothing starts and the proposal stays
-`pending`. Below the limit `close` is ignored. Errors: `threads.off`
+The request is answered once: a brief that cannot go after that (a file
+removed since the proposal) is a `chat.notice` in the thread, "The brief
+wasn't sent: <why>", and the thread stays open, empty. At the limit with
+`close`, that thread is closed first (see Closing a thread); if the close
+fails nothing starts and the proposal stays `pending`. If Main's session
+ended meanwhile (New during the close), nothing starts and the answer is
+`thread.proposal_resolved`. Below the limit `close` is ignored. Errors: `threads.off`
 (threads are off: multiple presentation or `max = 0`),
 `thread.proposal_unknown` (no such proposal in that chat),
 `thread.proposal_resolved` (already started or dismissed, or a start of it
@@ -1178,8 +1193,9 @@ Answered with `thread.proposal` (`dismissed`, with the `id`). Errors:
 `thread.proposal_unknown`, `thread.proposal_resolved`.
 
 ### `thread.close` — `ThreadClose` *(app → gateway)*
-`chat` (the thread), `id`. Runs the thread's log step, then ends it into
-History (see Closing a thread). Answered with `chat.state stopped` (with
+`chat` (the thread), `log: bool` (default `true`), `id`. Runs the
+thread's log step (unless `log` is false), then ends it into History (see
+Closing a thread). Answered with `chat.state stopped` (with
 the `id`), then `chat.list`. Errors: `thread.not_open` (not a thread, ended,
 or already closing), `chat.busy` (a `session.log` is running in it), and
 the log step's own when it cannot start (`engine.start_failed`,

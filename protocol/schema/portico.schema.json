@@ -4468,7 +4468,7 @@
     },
     "ThreadClose": {
       "additionalProperties": false,
-      "description": "v0.16: close the thread ``chat``: its log step, then it ends into History.",
+      "description": "v0.16: close the thread ``chat``: its log step, then it ends into History.\n\n``log`` false skips the log step (the thread ends ``logged: false``): the\napp's \"Close without logging\" after a close whose log step cannot start.",
       "properties": {
         "chat": {
           "title": "Chat",
@@ -4485,6 +4485,11 @@
           ],
           "default": null,
           "title": "Id"
+        },
+        "log": {
+          "default": true,
+          "title": "Log",
+          "type": "boolean"
         },
         "seq": {
           "anyOf": [

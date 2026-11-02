@@ -274,11 +274,13 @@ from .threads import (
     EMPTY_BRIEF,
     LIMIT_MESSAGE,
     MAIN_PROMPT,
+    BRIEF_NOT_SENT,
     RENEW_MESSAGE,
     not_a_file,
     proposed_text,
     thread_label,
     thread_prompt,
+    use_key,
 )
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
@@ -579,20 +581,31 @@ class MainChatCallbacks(ChatCallbacks):
     """Main's ``EngineCallbacks`` while threads are on (v0.16): the engine also gets ``open_thread``.
 
     The tool's handler is not told its ``tool_use_id``; a ``PreToolUse``
-    hook hears it first (``note_thread_use``), and the proposal carries it.
-    Ids wait in call order, so calls the agent makes side by side each get
-    their own.
+    hook hears it first with the call's input (``note_thread_use``), and the
+    handler takes the oldest id noted for the same input (``use_key``). A
+    call refused before it reaches the owner (an empty brief) leaves its id
+    behind under its own input, never taken by another call; the newest
+    ``THREAD_USES_KEPT`` are kept.
     """
+
+    THREAD_USES_KEPT = 20
 
     def __init__(self, server: GatewayServer, chat: Chat) -> None:
         super().__init__(server, chat)
-        self._thread_uses: list[str] = []
+        self._thread_uses: list[tuple[tuple[str, tuple[str, ...]], str]] = []
 
-    def note_thread_use(self, tool_use_id: str) -> None:
-        self._thread_uses.append(tool_use_id)
+    def note_thread_use(self, tool_use_id: str, tool_input: dict[str, Any]) -> None:
+        key = use_key(tool_input.get("brief"), tool_input.get("files"))
+        self._thread_uses = [*self._thread_uses, (key, tool_use_id)][-self.THREAD_USES_KEPT :]
 
     async def on_open_thread(self, brief: str, files: list[str]) -> str:
-        use = self._thread_uses.pop(0) if self._thread_uses else None
+        key = use_key(brief, files)
+        use = None
+        for i, (noted, id) in enumerate(self._thread_uses):
+            if noted == key:
+                use = id
+                del self._thread_uses[i]
+                break
         return await self.server.propose_thread(self.chat, brief, files, use)
 
 
@@ -2557,15 +2570,16 @@ class GatewayServer:
         await self.send_chat_list()
         return following
 
-    async def _run_log_step(self, chat: Chat, ending: bool) -> bool:
+    async def _run_log_step(self, chat: Chat, ending: bool, raise_refusal: bool = False) -> bool:
         """The plug-in's ``on_renew``, else ``log_prompt`` as a message; whether it finished cleanly.
 
         ``ending`` tells the plug-in whether a renewal ends the session
         afterwards (``session.renew``) or it stays live (``session.log``).
         """
 
-        # v0.16 (ruling 8): a turn that could not start is a log step that could not start,
-        # through a plug-in too: it is raised, so nothing ends (or closes) after it.
+        # v0.16 (ruling 8), a thread's close only (``raise_refusal``): a turn that could not
+        # start is a log step that could not start, through a plug-in too: it is raised, so
+        # the thread stays open. New and Log session keep the plug-in's verdict as before.
         refused: list[ProtocolError] = []
 
         async def send(text: str) -> Outcome:
@@ -2590,15 +2604,15 @@ class GatewayServer:
         try:
             return bool(await hook(ctx, chat.summary()))
         except Exception as e:
-            if refused and e is refused[-1]:
+            if raise_refusal and refused and e is refused[-1]:
                 raise
             log.exception("chat %d: the plug-in's on_renew failed; the session is not logged", chat.number)
             return False
 
-    async def _noted_log_step(self, chat: Chat, ending: bool) -> bool:
+    async def _noted_log_step(self, chat: Chat, ending: bool, raise_refusal: bool = False) -> bool:
         """``_run_log_step``; one that raises (its turn could not start) says so in the conversation first."""
         try:
-            return await self._run_log_step(chat, ending)
+            return await self._run_log_step(chat, ending, raise_refusal)
         except Exception:
             await self.notice(chat, LOG_STEP_UNFINISHED)
             raise
@@ -2717,6 +2731,8 @@ class GatewayServer:
         chat = self.registry.get(number)
         if chat.thread is None or chat.ended is not None or number in self._closing:
             raise ProtocolError("thread.not_open", f"chat {number} is not an open thread")
+        if number in self._renewing or number in self._logging:
+            raise ProtocolError("chat.busy", f"a log step is running in chat {number}")
         return chat
 
     async def on_thread_start(self, msg: ThreadStart, conn: ServerConnection) -> None:
@@ -2752,9 +2768,14 @@ class GatewayServer:
                         await self.close_thread(target)
                     finally:
                         self._closing.discard(target.number)
+                        self._resume_queued_after_close(target)
                     slot = self.registry.free_slot(self.config.threads.max)
                     if slot is None:
                         raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+                # Main's New may have landed meanwhile (the lock, a close's log step): its
+                # pending proposals were dismissed then, and nothing starts from them now.
+                if record.state != "pending" or main.ended is not None:
+                    raise ProtocolError("thread.proposal_resolved", f"thread proposal {record.id} was already {record.state}")
                 thread = await self._create_thread(main, record, slot, msg.id, conn)
         except ProtocolError as e:
             await self._send(conn, self.error(e.code, e.message, chat=main.number, id=msg.id))
@@ -2765,11 +2786,14 @@ class GatewayServer:
             return
         finally:
             self._starting.discard(record.id)
+        # The request is answered (``chat.state`` carried its id): a brief that cannot go
+        # (a file gone since the proposal) is said in the thread, not as a second answer.
         send = MessageSend(ts=_now(), chat=thread.number, text=record.brief, attachments=list(record.files))
         try:
-            await self._send_message(thread, send, conn)
+            await self._send_message(thread, send, None)
         except ProtocolError as e:
-            await self._send(conn, self.error(e.code, e.message, chat=thread.number, id=msg.id))
+            log.warning("chat %d: the thread's brief was not sent: %s", thread.number, e.message)
+            await self.notice(thread, f"{BRIEF_NOT_SENT}: {e.message}")
 
     async def _create_thread(
         self, main: Chat, record: ProposalRecord, slot: int, id: str | None, conn: ServerConnection
@@ -2802,14 +2826,12 @@ class GatewayServer:
     async def on_thread_close(self, msg: ThreadClose, conn: ServerConnection) -> None:
         """Close the thread ``chat`` (``close_thread``), from a task; refusals answered with the ``id``."""
         chat = self._open_thread(msg.chat)
-        if chat.number in self._renewing or chat.number in self._logging:
-            raise ProtocolError("chat.busy", f"a log step is running in chat {chat.number}")
         self._closing.add(chat.number)
         self._spawn(self._close_task(chat, msg, conn), name=f"portico-thread-close-{chat.number}")
 
     async def _close_task(self, chat: Chat, msg: ThreadClose, conn: ServerConnection) -> None:
         try:
-            await self.close_thread(chat, msg.id)
+            await self.close_thread(chat, msg.id, log_step=msg.log)
         except ProtocolError as e:
             await self._send(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
         except Exception as e:
@@ -2817,8 +2839,14 @@ class GatewayServer:
             await self._send(conn, self.error("gateway.error", f"thread.close failed: {e}", chat=chat.number, id=msg.id))
         finally:
             self._closing.discard(chat.number)
+            self._resume_queued_after_close(chat)
 
-    async def close_thread(self, chat: Chat, id: str | None = None) -> None:
+    def _resume_queued_after_close(self, chat: Chat) -> None:
+        """A close that failed leaves the thread open: what it holds goes on, as after a log step."""
+        if chat.ended is None and self._queues.get(chat.number):
+            self._spawn(self._send_queued(chat), name=f"portico-queued-{chat.number}")
+
+    async def close_thread(self, chat: Chat, id: str | None = None, log_step: bool = True) -> None:
         """Close the thread ``chat`` as New ends a session, opening nothing (spec §2.6).
 
         A running turn is stopped first, as ``turn.stop`` does, and its end
@@ -2829,7 +2857,9 @@ class GatewayServer:
         back to the app, the thread gets ``ended`` and ``chat.state stopped``
         (with ``id``), then ``chat.list``; its slot is free again. Recorded in
         its conversation: "Close — logging, then closing this thread" (or
-        "Close — closing this thread") and "Thread closed".
+        "Close — closing this thread") and "Thread closed". With ``log_step``
+        false (``thread.close log=false``) the log step is skipped and the
+        thread ends ``logged: false``: the way out when the log step cannot start.
         """
         run = self._runs.get(chat.number)
         if run is not None:
@@ -2840,11 +2870,11 @@ class GatewayServer:
                 await chat.engine.interrupt()
                 self._spawn(self._await_stop(chat, run), name=f"portico-stop-{chat.number}")
             await run.finished.wait()
-        logging = self.has_log_step()
+        logging = log_step and self.has_log_step()
         await self.notice(chat, CLOSE_LOGGING if logging else CLOSE_PLAIN)
-        logged: bool | None = None
+        logged: bool | None = False if self.has_log_step() else None
         if logging:
-            logged = await self._noted_log_step(chat, ending=True)
+            logged = await self._noted_log_step(chat, ending=True, raise_refusal=True)
             if logged:
                 chat.note_logged(_now())
         await self.cards.cancel_all(chat, "thread closed", self.emit)
@@ -2857,10 +2887,10 @@ class GatewayServer:
         await self._return_queued(chat)
         chat.ended = _now()
         chat.logged = logged
-        await self.notice(chat, CLOSED)
         state = chat.set_state("stopped")
         self.registry.persist()
         await self.broadcast(state.model_copy(update={"id": id}))
+        await self.notice(chat, CLOSED)
         log.info("chat %d: thread closed (logged=%s)", chat.number, logged)
         await self.send_chat_list()
 
@@ -2876,6 +2906,7 @@ class GatewayServer:
                 log.exception("chat %d: closing the thread at start failed; it stays open", chat.number)
             finally:
                 self._closing.discard(chat.number)
+                self._resume_queued_after_close(chat)
 
     # --- handlers: services -------------------------------------------------------
 

@@ -148,7 +148,7 @@ class MainCallbacks(ShowingCallbacks):
     async def on_open_thread(self, brief: str, files: list[str]) -> str:
         return "Proposed."
 
-    def note_thread_use(self, tool_use_id: str) -> None:
+    def note_thread_use(self, tool_use_id: str, tool_input: dict[str, object]) -> None:
         pass
 
 
@@ -156,7 +156,7 @@ class ThreadOnlyCallbacks:
     async def on_open_thread(self, brief: str, files: list[str]) -> str:
         return "Proposed."
 
-    def note_thread_use(self, tool_use_id: str) -> None:
+    def note_thread_use(self, tool_use_id: str, tool_input: dict[str, object]) -> None:
         pass
 
 

@@ -14,6 +14,7 @@ behind every chat: no model.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -23,13 +24,14 @@ from websockets.asyncio.client import ClientConnection, connect
 
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import ConfigError, hello_for, load_config
-from portico_gateway.engine import OPEN_THREAD_TOOL_NAME, build_options, build_thread_tool
+from portico_gateway.engine import OPEN_THREAD_TOOL_NAME, build_options, build_thread_hook, build_thread_tool
 from portico_gateway.messages import (
     ChatList,
     ChatNew,
     ChatNotice,
     ChatOpen,
     ChatQueue,
+    ChatQueued,
     ChatState,
     Error,
     HelloClient,
@@ -37,6 +39,7 @@ from portico_gateway.messages import (
     MessageSend,
     ServerMessage,
     ServicesStatus,
+    SessionLog,
     SessionMode,
     SessionRenew,
     SessionRenewed,
@@ -54,7 +57,7 @@ from portico_gateway.server import GatewayServer, MainChatCallbacks, for_app, wi
 from portico_gateway.state import ProposalRecord, StateDir
 from portico_gateway.status import describe
 from portico_gateway.threads import MAIN_PROMPT, files_phrase, proposed_text, thread_prompt
-from tests.conftest import Block, make_config
+from tests.conftest import Block, Pause, fake_result, make_config
 from tests.test_server import attach, ws_url
 from tests.test_sessions import start_server
 from tests.test_turns import EngineFactory, new_chat, recv, recv_until
@@ -305,7 +308,7 @@ async def propose(srv: GatewayServer, main: int, conn: ClientConnection, files: 
     """Main's agent calls ``open_thread``; returns its answer and the ``thread.proposal`` the app got."""
     callbacks = srv.registry.get(main).engine.callbacks  # type: ignore[union-attr]
     assert isinstance(callbacks, MainChatCallbacks)
-    callbacks.note_thread_use(use)
+    callbacks.note_thread_use(use, {"brief": BRIEF, "files": list(files or [])})
     answer = await callbacks.on_open_thread(BRIEF, list(files or []))
     frame = (await recv_until(conn, ThreadProposal))[-1]
     assert isinstance(frame, ThreadProposal)
@@ -599,8 +602,9 @@ async def test_close_runs_the_log_step(
         await conn.send(dump(ThreadClose(ts=TS, id="req-c", chat=thread.number)))
         got = await recv_until(conn, ChatList, timeout=10)
         assert thread_notices(got, thread.number) == ["Close — logging, then closing this thread", "Thread closed"]
-        state = got[-2]
+        state, closed = got[-3], got[-2]
         assert isinstance(state, ChatState) and state.state == "stopped" and state.id == "req-c"
+        assert isinstance(closed, ChatNotice) and closed.text == "Thread closed", "chat.state, then the notice"
         assert thread.ended is not None and thread.logged is True
         assert srv.registry.free_slot(2) == 1 and srv.registry.open_threads() == []
         assert ("send", LOG) in factory.last.calls
@@ -821,3 +825,191 @@ def test_a_thread_slot_is_1_or_2() -> None:
     for slot in (0, 3):
         with pytest.raises(ValidationError):
             ThreadInfo(label="Thread 3", slot=slot, parent=1, brief=BRIEF, opened_at=TS)
+
+
+# --- Task 2, fix round 1 ------------------------------------------------------------
+
+
+def refusing_plugins() -> Plugins:
+    async def on_renew(ctx: Any, chat: Any) -> bool:
+        return await ctx.send("log this") == "done"
+
+    plugins = Plugins.none()
+    plugins.renew = on_renew
+    return plugins
+
+
+def refuse_once(engine: Any) -> None:
+    """The engine's next ``send`` is refused (the log step cannot start); later ones go through."""
+    real = engine.send
+
+    async def refuse(text: str) -> None:
+        engine.send = real
+        raise RuntimeError("the engine is gone")
+
+    engine.send = refuse
+
+
+async def test_thread_use_ids_match_by_input(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        callbacks = factory.last.callbacks
+        tool, hook = build_thread_tool(callbacks), build_thread_hook(callbacks)
+
+        async def call(use: str, args: dict[str, Any]) -> dict[str, Any]:
+            await hook({"tool_name": OPEN_THREAD_TOOL_NAME, "tool_input": args, "tool_use_id": use}, use, None)
+            return await tool.handler(args)
+
+        assert (await call("tu-empty", {"brief": " "}))["is_error"] is True
+        await call("tu-ok", {"brief": BRIEF})
+        # Side by side: both hooks before either handler, answered in the other order.
+        await hook({"tool_input": {"brief": "Draft A"}, "tool_use_id": "tu-a"}, "tu-a", None)
+        await hook({"tool_input": {"brief": "Draft B", "files": []}, "tool_use_id": "tu-b"}, "tu-b", None)
+        await tool.handler({"brief": "Draft B", "files": []})
+        await tool.handler({"brief": "Draft A"})
+        uses = {p.brief: p.tool_use_id for p in srv.registry.proposals_for(main)}
+        assert uses == {BRIEF: "tu-ok", "Draft B": "tu-b", "Draft A": "tu-a"}
+    finally:
+        await conn.close()
+
+
+async def test_new_during_a_close_and_start_starts_nothing(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers, log_prompt=LOG)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        for n in (1, 2):
+            _, frame = await propose(srv, main, conn, use=f"tu-{n}")
+            await start_thread(conn, main, frame.proposal, id=f"req-{n}")
+        first, second = srv.registry.open_threads()
+        _, frame = await propose(srv, main, conn, use="tu-3")
+        pause = Pause()
+        first.engine.script(pause, fake_result())  # type: ignore[union-attr]
+        await conn.send(dump(ThreadStart(ts=TS, id="req-3", chat=main, proposal=frame.proposal, close=first.number)))
+        await asyncio.wait_for(pause.reached.wait(), 5)
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=main, log=False)))
+        await recv_until(conn, SessionRenewed)
+        pause.go.set()
+        got = await recv_until(conn, Error, timeout=10)
+        assert got[-1].code == "thread.proposal_resolved" and got[-1].id == "req-3"  # type: ignore[attr-defined]
+        assert first.ended is not None, "the close itself went through"
+        assert srv.registry.open_threads() == [second], "no thread was created"
+        assert srv.registry.proposal(frame.proposal).state == "dismissed", "the card reads Not started"
+        assert not any(isinstance(m, ThreadProposal) and m.state == "started" for m in got)
+    finally:
+        await conn.close()
+
+
+async def test_close_and_start_refused_while_the_thread_logs(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers, log_prompt=LOG)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        for n in (1, 2):
+            _, frame = await propose(srv, main, conn, use=f"tu-{n}")
+            await start_thread(conn, main, frame.proposal, id=f"req-{n}")
+        first, _ = srv.registry.open_threads()
+        engine = first.engine
+        engine.script(Block())  # type: ignore[union-attr]
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=first.number)))
+        await engine.wait_blocked()  # type: ignore[union-attr]
+        _, frame = await propose(srv, main, conn, use="tu-3")
+        await conn.send(dump(ThreadStart(ts=TS, id="req-3", chat=main, proposal=frame.proposal, close=first.number)))
+        err = (await recv_until(conn, Error))[-1]
+        assert err.code == "chat.busy" and err.id == "req-3"  # type: ignore[attr-defined]
+        await conn.send(dump(ThreadClose(ts=TS, id="req-c", chat=first.number)))
+        err = (await recv_until(conn, Error))[-1]
+        assert err.code == "chat.busy" and err.id == "req-c"  # type: ignore[attr-defined]
+        assert first.ended is None and srv.registry.proposal(frame.proposal).state == "pending"
+        await engine.interrupt()  # type: ignore[union-attr]
+    finally:
+        await conn.close()
+
+
+async def test_new_with_a_refusing_plugin_renews_unlogged_as_before(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await start_server(state_dir, factory, plugins=refusing_plugins(), presentation="single")
+    servers.append(srv)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        refuse_once(factory.last)
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=main)))
+        got = await recv_until(conn, SessionRenewed, timeout=10)
+        assert not any(isinstance(m, Error) for m in got)
+        assert got[-1].ended.logged is False  # type: ignore[attr-defined]
+    finally:
+        await conn.close()
+
+
+async def test_close_with_a_refusing_plugin_stays_open_then_closes_without_logging(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    gate = asyncio.Event()
+
+    async def on_renew(ctx: Any, chat: Any) -> bool:
+        await gate.wait()
+        return await ctx.send("log this") == "done"
+
+    plugins = Plugins.none()
+    plugins.renew = on_renew
+    srv = await start_server(state_dir, factory, plugins=plugins, presentation="single")
+    servers.append(srv)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        _, frame = await propose(srv, main, conn)
+        await start_thread(conn, main, frame.proposal)
+        [thread] = srv.registry.open_threads()
+        engine = factory.last
+        refuse_once(engine)
+        await conn.send(dump(ThreadClose(ts=TS, id="req-c", chat=thread.number)))
+        await recv_until(conn, ChatNotice)  # "Close — logging, then closing this thread"
+        await conn.send(dump(MessageSend(ts=TS, id="req-held", chat=thread.number, text="held for later")))
+        assert isinstance((await recv_until(conn, ChatQueued))[-1], ChatQueued)
+        gate.set()
+        got = await recv_until(conn, Error, timeout=10)
+        assert got[-1].code == "engine.send_failed" and got[-1].id == "req-c"  # type: ignore[attr-defined]
+        assert thread.ended is None, "the thread stays open"
+        await recv_until(conn, TurnFinished)  # the held message went as the next turn
+        assert ("send", "held for later") in engine.calls
+        await recv(conn)  # idle
+
+        await conn.send(dump(ThreadClose(ts=TS, id="req-c2", chat=thread.number, log=False)))
+        got = await recv_until(conn, ChatList, timeout=10)
+        assert thread_notices(got, thread.number)[-2:] == ["Close — closing this thread", "Thread closed"]
+        assert thread.ended is not None and thread.logged is False
+        assert ("send", "log this") not in engine.calls
+    finally:
+        await conn.close()
+
+
+async def test_a_brief_that_cannot_go_is_said_in_the_thread(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    gone = folder / "pricing.html"
+    gone.write_text("<p>Acme</p>")
+    srv = await threads_server(state_dir, factory, servers)
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        _, frame = await propose(srv, main, conn, ["pricing.html"])
+        gone.unlink()
+        await conn.send(dump(ThreadStart(ts=TS, id="req-s", chat=main, proposal=frame.proposal)))
+        got = await recv_until(conn, ChatNotice)
+        [thread] = srv.registry.open_threads()
+        assert got[-1].chat == thread.number  # type: ignore[attr-defined]
+        assert got[-1].text == f"The brief wasn't sent: attachment does not exist: {gone}"  # type: ignore[attr-defined]
+        assert [type(m) for m in got] == [ChatState, ChatList, ThreadProposal, ChatNotice]
+        assert got[0].id == "req-s", "the request is answered once, by chat.state"  # type: ignore[attr-defined]
+    finally:
+        await conn.close()

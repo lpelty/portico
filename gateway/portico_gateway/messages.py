@@ -335,10 +335,15 @@ class ThreadDismiss(Envelope):
 
 
 class ThreadClose(Envelope):
-    """v0.16: close the thread ``chat``: its log step, then it ends into History."""
+    """v0.16: close the thread ``chat``: its log step, then it ends into History.
+
+    ``log`` false skips the log step (the thread ends ``logged: false``): the
+    app's "Close without logging" after a close whose log step cannot start.
+    """
 
     type: Literal["thread.close"] = "thread.close"
     chat: int
+    log: bool = True
 
 
 class TurnStop(Envelope):
