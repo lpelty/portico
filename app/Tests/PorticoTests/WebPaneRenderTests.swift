@@ -322,6 +322,7 @@ final class WebPaneRenderTests: XCTestCase {
         _ = view.load(URLRequest(url: otherURL))
         try await poll("the other page loads") { !view.isLoading && view.url == otherURL }
 
+        let before = view.backForwardList.backList.count
         coordinator.apply(.markdown(first), scale: 1.5, to: view)
         var heading = "", size = ""
         for _ in 0..<250 {
@@ -332,6 +333,9 @@ final class WebPaneRenderTests: XCTestCase {
         }
         XCTAssertEqual(size, "22.5px", "redrawn at the new scale")
         XCTAssertEqual(heading, "Other page", "the page shown, not the file first loaded")
+        XCTAssertEqual(view.backForwardList.backList.count, before, "a rescale replaces the entry, Back is unchanged")
+        XCTAssertEqual(view.backForwardList.backList.last?.url.path, "/")
+        XCTAssertNotEqual(view.url, otherURL)
     }
 
     /// M8 + A3c: an opened HTML file that is itself a symlink is served

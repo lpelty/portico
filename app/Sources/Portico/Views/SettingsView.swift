@@ -79,13 +79,13 @@ struct GeneralSettingsTab: View {
                     }
                 }
                 Text("The folder new sessions work in. A session that is already going keeps its folder.")
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             Section("Viewer") {
                 Toggle("Open files in the viewer automatically", isOn: $settings.autoOpen)
                 Text("When the agent creates or changes a file of these kinds. Anything else is listed in the chat and opens only when clicked.")
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 16) {
                     ForEach(AutoOpenKindPresentation.all) { kind in
@@ -96,19 +96,19 @@ struct GeneralSettingsTab: View {
                 .disabled(!settings.autoOpen)
                 Toggle("Agent can see the viewer", isOn: canSeeBinding)
                 Text(GeneralSettingsPresentation.canSeeNote)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
                 Toggle("Agent checks HTML it creates", isOn: checksHTMLBinding)
                     .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
                 Text(GeneralSettingsPresentation.checksHTMLNote)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             if titles.contains("Spaces") {
                 Section("Spaces") {
                     Toggle("Notify when a space is updated", isOn: $settings.spacesNotify)
                     Text(GeneralSettingsPresentation.spacesNote)
-                        .font(.caption)
+                        .scaledFont(10)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -302,7 +302,7 @@ struct GatewaySettingsTab: View {
                         .disabled(doctorRunning)
                 }
                 Text("Stop interrupts every running turn, runs the deployment's stop command, and exits the gateway. Restart stops it and starts it again, reading the config afresh. Doctor checks this machine, the state directory and the config, one line per check.")
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             if !doctorLines.isEmpty {
@@ -311,7 +311,7 @@ struct GatewaySettingsTab: View {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(doctorLines.enumerated()), id: \.offset) { _, line in
                                 Text(line)
-                                    .font(.system(.caption, design: .monospaced))
+                                    .scaledFont(10, design: .monospaced)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -330,7 +330,7 @@ struct GatewaySettingsTab: View {
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
                 Text(Settings.QuitBehaviour.caption)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             Section("Connection") {
@@ -339,7 +339,7 @@ struct GatewaySettingsTab: View {
                 TextField("Token file", text: optional($settings.tokenFile), prompt: Text(supervisor.stateDir.appendingPathComponent("token").path))
                     .textFieldStyle(.roundedBorder)
                 Text(GatewayConnectionPresentation.caption)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
         }

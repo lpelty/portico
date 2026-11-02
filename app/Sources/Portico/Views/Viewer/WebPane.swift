@@ -425,7 +425,9 @@ struct WebPane: NSViewRepresentable {
                        shown != file.standardizedFileURL.resolvingSymlinksInPath(),
                        let again = self.renderedURL(for: shown, hiding: self.handler.hiding(for: url)) {
                         self.pendingScroll = (value as? NSNumber)?.doubleValue
-                        view.load(URLRequest(url: again))
+                        // Replace the entry, not push one: Back must not
+                        // step through the same page twice.
+                        view.evaluateJavaScript("location.replace('\(again.absoluteString)')")
                         return
                     }
                     self.start(load, in: view, scroll: (value as? NSNumber)?.doubleValue)

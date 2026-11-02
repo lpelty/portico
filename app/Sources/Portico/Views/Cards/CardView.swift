@@ -96,10 +96,10 @@ struct CardView: View {
                 Image(systemName: CardStatusPresentation(status: .open).icon)
                     .foregroundStyle(.orange)
                 Text(card.title)
-                    .font(.headline)
+                    .scaledFont(13, weight: .semibold)
                 Spacer()
                 Text(card.kind.rawValue)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             switch card.kind {
@@ -137,14 +137,14 @@ struct CardInlineView: View {
                 Text(card.title)
                     .fontWeight(.medium)
                 Text(CardSummary.line(for: card))
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer()
             Text(shown.label ?? "waiting — answer below")
-                .font(.caption)
+                .scaledFont(10)
                 .foregroundStyle(status == .open ? .orange : .secondary)
                 .lineLimit(1)
         }

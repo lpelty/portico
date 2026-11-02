@@ -244,7 +244,7 @@ struct FileTree: View {
                         allChanged.toggle()
                     } label: {
                         Text(allChanged ? "Show fewer" : "\(changed.count - shown) more")
-                            .font(.caption)
+                            .scaledFont(10)
                             .foregroundStyle(.secondary)
                             .padding(.leading, FileRow.disclosureWidth + 2)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -309,7 +309,7 @@ struct FileTree: View {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
                 Text(refusal)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -322,7 +322,7 @@ struct FileTree: View {
                 ProgressView()
                     .controlSize(.mini)
                 Text(model.connection == .connected ? "Listing…" : "Not connected")
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             .onAppear { model.listFiles(chat: chat, root: node.root, path: node.path) }
@@ -369,7 +369,7 @@ struct FileRow: View {
         ) {
             if !node.dir, let size = node.size {
                 Text(Self.sizeText(size))
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
@@ -454,7 +454,7 @@ struct FileLine<Trailing: View>: View {
                     .truncationMode(.middle)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
+                        .scaledFont(10)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)

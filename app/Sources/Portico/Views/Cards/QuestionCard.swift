@@ -112,7 +112,7 @@ struct QuestionCard: View {
         VStack(alignment: .leading, spacing: 6) {
             if !question.header.isEmpty {
                 Text(question.header.uppercased())
-                    .font(.caption2)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             Text(question.question)
@@ -148,7 +148,7 @@ struct QuestionCard: View {
                     Text(option.label)
                     if !option.description.isEmpty {
                         Text(option.description)
-                            .font(.caption)
+                            .scaledFont(10)
                             .foregroundStyle(.secondary)
                     }
                 }

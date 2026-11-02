@@ -170,7 +170,7 @@ details.fm:not([open]) .fm-summary {
 .fm-rows { margin-top: 6px; display: grid; gap: 6px; }
 .fm-row { display: flex; gap: 12px; align-items: baseline; }
 .fm-key {
-  flex: 0 0 56px;
+  flex: 0 0 4.48em;
   color: var(--fm-key);
   overflow: hidden;
   text-overflow: ellipsis;

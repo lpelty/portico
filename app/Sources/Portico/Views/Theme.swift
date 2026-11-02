@@ -85,14 +85,14 @@ extension EnvironmentValues {
 extension Theme {
     /// An AppKit system font at `size` points times `scale`: AppKit-backed
     /// text does not read SwiftUI's environment, so it is given the scale.
+    static func nsFont(_ size: CGFloat, scale: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.systemFont(ofSize: size * scale, weight: weight)
+    }
+
     /// A symbol's font: the size it is drawn at, never scaled (spec §3.4:
     /// icons keep their size when the text grows).
     static func iconFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight)
-    }
-
-    static func nsFont(_ size: CGFloat, scale: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
-        NSFont.systemFont(ofSize: size * scale, weight: weight)
     }
 }
 
