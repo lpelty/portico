@@ -276,6 +276,8 @@ struct SessionCard: View {
             RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
                 .stroke(nudging ? Theme.wait : opensLive && hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .accessibilityElement(children: .contain)
+        // In the list (§9.6) the open card is the conversation you're in.
+        .accessibilityAddTraits(listed ? .isSelected : [])
     }
 
     /// The open row's first line (§9.6): the icon, the name over its
