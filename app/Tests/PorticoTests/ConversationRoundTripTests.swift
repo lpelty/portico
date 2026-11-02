@@ -811,4 +811,493 @@ final class ConversationRoundTripTests: XCTestCase {
         XCTAssertEqual(after.text, before.text, "the same reply at the top")
         XCTAssertEqual(after.dy, before.dy, accuracy: 4, "at the same point in it")
     }
+
+    // MARK: - v0.16 Task 10b: the content or the view changing size at a turn's end
+    //
+    // GUARDS, not proofs. The field report (v0.15.0, 11-02 item 11): the
+    // pane suddenly shows a large empty space, a small scroll up brings the
+    // conversation back. Each shape below (the workflow box, the tray, a
+    // docked card and the working line leaving at a turn's end, a
+    // background workflow finishing later, the tray folding itself, a
+    // transcript read again shorter, mixed rows that throw off the lazy
+    // stack's estimate, the turn ending mid-scroll, at the bottom by the
+    // app's edge target and after the person's own scroll back) passed on
+    // v0.15.0 and on v0.16 alike, hosted: AppKit clamps the view to the
+    // content when the view grows or the content shrinks. The field
+    // trigger is not reproduced here; these hold the end in view if a
+    // change to the scroll ever stops doing so.
+
+    /// Negative control for `assertTheEndIsInView`: scrolled up, it fails.
+    func testGuardTheEndInViewCheckFailsWhenScrolledUp() throws {
+        let hosted = try host(try model(), width: 900)
+        defer { hosted.window.close() }
+        Self.wheel(hosted.scroll, pixels: 600)
+        spin(0.3)
+        XCTExpectFailure("scrolled up, the last reply is below the view") {
+            assertTheEndIsInView(hosted, "scrolled up")
+        }
+    }
+
+    /// How far the visible area runs past the transcript's end (0 when it
+    /// does not): the "large empty space" of the field report (11-02, item 11).
+    private static func emptyBelow(_ scroll: NSScrollView) -> CGFloat {
+        let height = scroll.documentView?.frame.height ?? 0
+        return max(0, scroll.contentView.bounds.maxY - height)
+    }
+
+    /// How far below the last drawn reply the visible area ends: the last
+    /// row is a reply, so a big gap here is an empty view under the
+    /// conversation even when the document view is taller than its rows.
+    private static func gapBelowLastReply(_ scroll: NSScrollView) -> CGFloat? {
+        guard let document = scroll.documentView else { return nil }
+        var lowest: CGFloat?
+        func walk(_ view: NSView) {
+            if let text = view as? NSTextView, !text.isHidden, !text.string.isEmpty {
+                let frame = text.convert(text.bounds, to: document)
+                lowest = max(lowest ?? frame.maxY, frame.maxY)
+            }
+            for sub in view.subviews { walk(sub) }
+        }
+        walk(document)
+        return lowest.map { scroll.contentView.bounds.maxY - $0 }
+    }
+
+    /// The last row in view and no empty space under it.
+    private func assertTheEndIsInView(_ hosted: Hosted, _ what: String, file: StaticString = #filePath, line: UInt = #line) {
+        let scroll = try? XCTUnwrap(Self.transcriptScroll(in: hosted.host))
+        let view = scroll ?? hosted.scroll
+        XCTAssertLessThanOrEqual(Self.emptyBelow(view), 1, "\(what): no empty space past the end", file: file, line: line)
+        let gap = Self.gapBelowLastReply(view)
+        XCTAssertNotNil(gap, "\(what): a reply drawn", file: file, line: line)
+        // The bottom spacer, the stack's padding and the working line's gap.
+        XCTAssertLessThan(gap ?? .infinity, 120, "\(what): the last reply at the bottom of the view", file: file, line: line)
+        XCTAssertGreaterThan(gap ?? -.infinity, -40, "\(what): the last reply not cut off below", file: file, line: line)
+    }
+
+    /// A turn as the gateway sends it, the seqs after the history's.
+    @MainActor
+    private final class Turn {
+        let model: AppModel
+        let turn: Int
+        var seq: Int
+        private let spin: (Double) -> Void
+
+        init(_ model: AppModel, turn: Int = 41, seq: Int = 200, spin: @escaping (Double) -> Void) {
+            self.model = model
+            self.turn = turn
+            self.seq = seq
+            self.spin = spin
+        }
+
+        private func next() -> Int { seq += 1; return seq }
+
+        func start() {
+            model.apply(.turnStarted(TurnStarted(chat: 3, turn: turn, seq: next())))
+            model.apply(.userText(UserText(chat: 3, turn: turn, text: "Question \(turn) from Jordan", seq: next())))
+            model.apply(.chatState(ChatState(chat: 3, state: .working, seq: next())))
+            spin(0.2)
+        }
+
+        func text(_ text: String, times: Int = 1) {
+            for _ in 0..<times {
+                model.apply(.textDelta(TextDelta(chat: 3, turn: turn, text: text, seq: next())))
+                spin(0.05)
+            }
+        }
+
+        func tool(_ id: String, finished: Bool) {
+            model.apply(.toolStarted(ToolStarted(
+                chat: 3, turn: turn, toolUseId: id, tool: "Read", summary: "/tmp/demo/notes-\(id).md", input: [:], seq: next())))
+            if finished {
+                model.apply(.toolFinished(ToolFinished(chat: 3, turn: turn, toolUseId: id, ok: true, summary: "read", seq: next())))
+            }
+            spin(0.05)
+        }
+
+        func agents(_ ids: [String], workflow: String? = nil) {
+            for (index, id) in ids.enumerated() {
+                model.apply(.toolStarted(ToolStarted(
+                    chat: 3, turn: turn, toolUseId: "t-\(id)", tool: "Task", summary: "Agent \(id)", input: [:], seq: next())))
+                model.apply(.agentStarted(AgentStarted(
+                    chat: 3, turn: turn, id: id, toolUseId: "t-\(id)", description: "Checking the Acme notes, part \(index + 1)",
+                    kind: "subagent", workflowId: workflow, phase: workflow == nil ? nil : .index(index % 3),
+                    background: workflow == nil ? nil : true, seq: next())))
+            }
+            spin(0.1)
+        }
+
+        func workflow(_ id: String) {
+            model.apply(.workflowStarted(WorkflowStarted(
+                chat: 3, turn: turn, id: id, name: "Acme review", phases: ["Review", "Verify", "Report"], seq: next())))
+            model.apply(.workflowPhase(WorkflowPhase(chat: 3, id: id, index: 0, state: .running, seq: next())))
+            spin(0.1)
+        }
+
+        func finishAgents(_ ids: [String]) {
+            for id in ids {
+                model.apply(.agentFinished(AgentFinished(chat: 3, id: id, outcome: .done, summary: "Done.", seq: next())))
+            }
+        }
+
+        func finishWorkflow(_ id: String) {
+            for index in 0..<3 {
+                model.apply(.workflowPhase(WorkflowPhase(chat: 3, id: id, index: index, state: .done, seq: next())))
+            }
+            model.apply(.workflowFinished(WorkflowFinished(chat: 3, id: id, outcome: .done, summary: "Reviewed.", seq: next())))
+        }
+
+        /// The turn ends with nothing from the person: its marker, then idle.
+        func end() {
+            model.apply(.turnFinished(TurnFinished(chat: 3, turn: turn, outcome: .done, seq: next())))
+            model.apply(.chatState(ChatState(chat: 3, state: .idle, seq: next())))
+        }
+    }
+
+    private static let line = " Another long line of the reply, streamed in as it is written for Sam and Priya."
+
+    /// Task 10b: at the bottom, a workflow runs (its box, 290 pt, on the
+    /// composer) while the reply streams; the turn ends with the person
+    /// doing nothing, the box leaves, and the view grows by its height.
+    func testGuardAtTheBottomAWorkflowBoxLeavingAtATurnsEndLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.workflow("w")
+        turn.agents(["a", "b", "c"], workflow: "w")
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        spin()
+        XCTAssertNotNil(model.agentActivity[3]?.liveWorkflow, "the workflow box is up")
+        XCTAssertTrue(atBottom(hosted), "following the reply")
+        let before = hosted.scroll.frame.height
+        turn.finishAgents(["a", "b", "c"])
+        turn.finishWorkflow("w")
+        turn.text(Self.line)
+        turn.end()
+        spin()
+        XCTAssertNil(model.agentActivity[3]?.liveWorkflow, "the box left")
+        XCTAssertGreaterThan(hosted.scroll.frame.height, before + 100, "the view grew by the box")
+        assertTheEndIsInView(hosted, "after the turn ended")
+    }
+
+    /// Task 10b: the same with the tray (three agents, open) on the composer.
+    func testGuardAtTheBottomTheAgentTrayLeavingAtATurnsEndLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.agents(["a", "b", "c"])
+        model.setTrayCollapsed(false, chat: 3)
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        spin()
+        XCTAssertTrue(model.agentActivity[3]?.showsTray ?? false, "the tray is up")
+        XCTAssertTrue(atBottom(hosted), "following the reply")
+        turn.finishAgents(["a", "b", "c"])
+        turn.text(Self.line)
+        turn.end()
+        spin()
+        assertTheEndIsInView(hosted, "after the turn ended")
+    }
+
+    /// Task 10b: tool rows and a docked permission card at the bottom; the
+    /// turn ends (the card cancelled, the working line gone) at once.
+    func testGuardAtTheBottomADockedCardAndTheWorkingLineLeavingAtATurnsEndLeaveTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        for index in 0..<6 { turn.tool("r\(index)", finished: true) }
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 4)
+        turn.tool("w0", finished: false)
+        model.apply(.cardAsk(CardAsk(
+            chat: 3, id: "card-p", kind: .permission, title: "Write a file",
+            permission: Permission(tool: "Write", summary: "/tmp/acme/a.md", input: [:]), questions: nil, form: nil,
+            seq: turn.seq + 1)))
+        turn.seq += 1
+        spin()
+        XCTAssertNotNil(model.dockedCard(for: 3))
+        XCTAssertTrue(atBottom(hosted), "at the bottom with the card docked")
+        model.apply(.cardCancel(CardCancel(chat: 3, id: "card-p", reason: "turn stopped", seq: turn.seq + 1)))
+        turn.seq += 1
+        turn.text(" The end.")
+        turn.end()
+        spin()
+        XCTAssertNil(model.dockedCard(for: 3))
+        assertTheEndIsInView(hosted, "after the turn ended")
+    }
+
+    /// Task 10b: a long streamed reply read again shorter (the transcript
+    /// re-sent, as on a reconnect): the content drops by thousands of points
+    /// while the view sits at its old end.
+    func testGuardAtTheBottomATranscriptReadAgainShorterLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(String(repeating: Self.line, count: 8), times: 10)
+        spin()
+        XCTAssertTrue(atBottom(hosted), "following the reply")
+        let tall = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        let reply = Array(repeating: "Sam asked Priya about the Acme launch plan and the reply ran long.", count: 6)
+            .joined(separator: " ")
+        var events: [ServerMessage] = []
+        var seq = 0
+        for number in 1...41 {
+            seq += 1
+            events.append(.userText(UserText(chat: 3, turn: number, text: "Question \(number) from Jordan", seq: seq)))
+            seq += 1
+            events.append(.textDelta(TextDelta(chat: 3, turn: number, text: "Answer \(number). \(reply)", seq: seq)))
+        }
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: events, truncated: false)))
+        model.apply(.chatState(ChatState(chat: 3, state: .idle, seq: 400)))
+        spin()
+        let scroll = try XCTUnwrap(Self.transcriptScroll(in: hosted.host))
+        XCTAssertLessThan(try XCTUnwrap(scroll.documentView).frame.height, tall - 300, "the content got shorter")
+        assertTheEndIsInView(hosted, "after the shorter transcript")
+    }
+
+    /// Task 10b: scrolled up a little (past the bottom's slack) while the
+    /// workflow box is up; the turn ends and the box leaves. The view grows
+    /// below the person's place: no empty space past the end.
+    func testGuardScrolledSlightlyUpAWorkflowBoxLeavingAtATurnsEndLeavesNoEmptySpace() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.workflow("w")
+        turn.agents(["a", "b", "c"], workflow: "w")
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        spin()
+        XCTAssertTrue(atBottom(hosted))
+        // Twice: SwiftUI puts the first scroll after the app's scroll to the bottom back once.
+        Self.wheel(hosted.scroll, pixels: 40)
+        spin(0.1)
+        Self.wheel(hosted.scroll, pixels: 40)
+        spin(0.4)
+        XCTAssertFalse(atBottom(hosted), "scrolled up a little")
+        turn.finishAgents(["a", "b", "c"])
+        turn.finishWorkflow("w")
+        turn.end()
+        spin()
+        // The view grows by more than the person was above the end: the end
+        // comes into view, with no empty space below it.
+        assertTheEndIsInView(hosted, "after the turn ended")
+    }
+
+    /// The person scrolls up, then back down to the end by wheel: the
+    /// position is the row at the top now, not the bottom edge (spike 2).
+    private func scrollUpAndBack(_ hosted: Hosted) {
+        for _ in 0..<3 {
+            Self.wheel(hosted.scroll, pixels: 300)
+            spin(0.05)
+        }
+        spin(0.3)
+        XCTAssertFalse(atBottom(hosted), "scrolled up")
+        for _ in 0..<12 where !atBottom(hosted) {
+            Self.wheel(hosted.scroll, pixels: -300)
+            spin(0.05)
+        }
+        spin(0.3)
+        XCTAssertTrue(atBottom(hosted), "back at the end by wheel")
+    }
+
+    /// Task 10b: the turn ends while its workflow runs on in the background
+    /// (its agents are background ones), so the box stays; the person
+    /// scrolled up and back to the end meanwhile. Later the workflow
+    /// finishes, with nothing from the person and no new transcript item:
+    /// the box leaves and the view grows by its height.
+    func testGuardABackgroundWorkflowFinishingAfterTheTurnAtTheBottomLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.workflow("w")
+        turn.agents(["a", "b", "c"], workflow: "w")
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        turn.end()
+        spin()
+        XCTAssertNotNil(model.agentActivity[3]?.liveWorkflow, "the box stays while the workflow runs")
+        XCTAssertTrue(atBottom(hosted))
+        scrollUpAndBack(hosted)
+        let before = hosted.scroll.frame.height
+        turn.finishAgents(["a", "b", "c"])
+        turn.finishWorkflow("w")
+        spin()
+        XCTAssertNil(model.agentActivity[3]?.liveWorkflow, "the box left")
+        XCTAssertGreaterThan(hosted.scroll.frame.height, before + 100, "the view grew by the box")
+        assertTheEndIsInView(hosted, "after the workflow finished")
+    }
+
+    /// Task 10b: the same, the app having kept the bottom itself (no scroll
+    /// by the person since the turn began).
+    func testGuardABackgroundWorkflowFinishingAfterTheTurnLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.workflow("w")
+        turn.agents(["a", "b", "c"], workflow: "w")
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        turn.end()
+        spin()
+        XCTAssertTrue(atBottom(hosted))
+        turn.finishAgents(["a", "b", "c"])
+        turn.finishWorkflow("w")
+        spin()
+        XCTAssertNil(model.agentActivity[3]?.liveWorkflow, "the box left")
+        assertTheEndIsInView(hosted, "after the workflow finished")
+    }
+
+    /// Task 10b: the tray, open, at the bottom after the person scrolled up
+    /// and back; its agents finish before the turn does, so it folds itself
+    /// to one line (no new transcript item) and the view grows.
+    func testGuardTheAgentTrayFoldingItselfAtTheBottomLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.agents(["a", "b", "c", "d", "e"])
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        spin()
+        XCTAssertFalse(model.agentActivity[3]?.isTrayCollapsed ?? true, "the tray is open")
+        scrollUpAndBack(hosted)
+        let before = hosted.scroll.frame.height
+        turn.finishAgents(["a", "b", "c", "d", "e"])
+        spin()
+        XCTAssertTrue(model.agentActivity[3]?.isTrayCollapsed ?? false, "the tray folded itself")
+        XCTAssertGreaterThan(hosted.scroll.frame.height, before + 40, "the view grew")
+        assertTheEndIsInView(hosted, "after the tray folded")
+    }
+
+    /// Task 10b: a transcript of mixed rows, as a working session has: per
+    /// turn a dozen tool rows (30 pt each) and a reply of very different
+    /// length, so the lazy stack's estimate for rows not yet laid out is
+    /// far off. At the bottom (scrolled up and back first), a turn of tool
+    /// rows ends, then the column narrows and widens.
+    func testGuardWithMixedRowsATurnOfToolRowsEndingAtTheBottomLeavesTheEndInView() throws {
+        let model = try model()
+        var events: [ServerMessage] = []
+        var seq = 0
+        let long = String(repeating: "Sam asked Priya about the Acme launch plan and the reply ran long. ", count: 60)
+        for number in 1...40 {
+            seq += 1
+            events.append(.userText(UserText(chat: 3, turn: number, text: "Question \(number) from Jordan", seq: seq)))
+            for index in 0..<12 {
+                seq += 1
+                events.append(.toolStarted(ToolStarted(
+                    chat: 3, turn: number, toolUseId: "h\(number)-\(index)", tool: "Read",
+                    summary: "/tmp/demo/notes-\(index).md", input: [:], seq: seq)))
+                seq += 1
+                events.append(.toolFinished(ToolFinished(
+                    chat: 3, turn: number, toolUseId: "h\(number)-\(index)", ok: true, summary: "read", seq: seq)))
+            }
+            seq += 1
+            events.append(.textDelta(TextDelta(
+                chat: 3, turn: number, text: "Answer \(number). " + (number % 3 == 0 ? long : "Short."), seq: seq)))
+            seq += 1
+            events.append(.turnFinished(TurnFinished(chat: 3, turn: number, outcome: .done, seq: seq)))
+        }
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: events, truncated: false)))
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        XCTAssertTrue(atBottom(hosted), "opens at the end")
+        scrollUpAndBack(hosted)
+        let turn = Turn(model, seq: 2000, spin: { self.spin($0) })
+        turn.start()
+        for index in 0..<10 { turn.tool("n\(index)", finished: false) }
+        turn.text("Answer 41." + Self.line, times: 1)
+        for index in 0..<10 {
+            model.apply(.toolFinished(ToolFinished(chat: 3, turn: 41, toolUseId: "n\(index)", ok: true, summary: "read", seq: turn.seq + 1)))
+            turn.seq += 1
+        }
+        turn.text(" Done.")
+        turn.end()
+        spin()
+        assertTheEndIsInView(hosted, "after the turn ended")
+        resize(hosted, from: 900, to: 640)
+        assertTheEndIsInView(hosted, "beside a space")
+        resize(hosted, from: 640, to: 900)
+        assertTheEndIsInView(hosted, "back in Work")
+    }
+
+    /// Task 10b: at the bottom after the person scrolled up and back (the
+    /// position a row, not the edge), the transcript is read again shorter.
+    func testGuardAfterAScrollBackToTheEndATranscriptReadAgainShorterLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(String(repeating: Self.line, count: 8), times: 10)
+        turn.end()
+        spin()
+        scrollUpAndBack(hosted)
+        let reply = "Answer 41. Short now."
+        var events: [ServerMessage] = []
+        var seq = 0
+        for number in 1...41 {
+            seq += 1
+            events.append(.userText(UserText(chat: 3, turn: number, text: "Question \(number) from Jordan", seq: seq)))
+            seq += 1
+            events.append(.textDelta(TextDelta(chat: 3, turn: number, text: number == 41 ? reply : "Answer \(number). Short.", seq: seq)))
+        }
+        model.apply(.chatHistory(ChatHistory(chat: 3, events: events, truncated: false)))
+        spin()
+        assertTheEndIsInView(hosted, "after the shorter transcript")
+    }
+
+    /// Task 10b: the turn ends (the working line goes, the marker comes)
+    /// while the person's trackpad scroll is still under way at the end (a
+    /// live scroll: the app does not follow, the readings are the person's).
+    func testGuardATurnEndingDuringTheLastOfAScrollToTheEndLeavesTheEndInView() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let turn = Turn(model, spin: { self.spin($0) })
+        turn.start()
+        turn.workflow("w")
+        turn.agents(["a", "b"], workflow: "w")
+        for index in 0..<6 { turn.tool("r\(index)", finished: true) }
+        turn.text("Answer 41." + Self.line, times: 1)
+        turn.text(Self.line, times: 6)
+        spin()
+        for _ in 0..<3 { Self.wheel(hosted.scroll, pixels: 300); spin(0.05) }
+        spin(0.3)
+        let scroll = hosted.scroll
+        let clip = scroll.contentView
+        let center = NotificationCenter.default
+        center.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        for _ in 0..<12 where !atBottom(hosted) {
+            let end = (scroll.documentView?.frame.height ?? 0) - clip.bounds.height
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(end, clip.bounds.origin.y + 200)))
+            scroll.reflectScrolledClipView(clip)
+            center.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
+            spin(0.03)
+        }
+        // Still in the scroll: the turn ends, its box leaves.
+        turn.finishAgents(["a", "b"])
+        turn.finishWorkflow("w")
+        turn.end()
+        spin(0.1)
+        center.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+        spin()
+        assertTheEndIsInView(hosted, "after the turn ended mid-scroll")
+    }
 }
