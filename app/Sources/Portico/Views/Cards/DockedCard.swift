@@ -55,13 +55,15 @@ extension EnvironmentValues {
 /// composer's width. The header holds the title, an optional pager and ×;
 /// under it a left column (the options) and, when `showsTrailing`, a right
 /// column of the same height (a question's preview). Without the right
-/// column the left one takes the full width. A question card draws itself
-/// in it now; Task 7 draws a permission card in it too (tool and target
-/// as the title, its shipped options at the left, no pager).
+/// column the left one takes the full width. A question card and a
+/// permission card (tool and target as the title, its shipped options at
+/// the left, no pager) both draw in it.
 struct DockedCard<Leading: View, Trailing: View>: View {
     let title: String
     var pager: DockedCardPager? = nil
     var closeHelp: String = "Dismiss"
+    /// How many lines the title may take; `nil` for all of them.
+    var titleLines: Int? = nil
     let onClose: () -> Void
     var showsTrailing: Bool = false
     @ViewBuilder let leading: () -> Leading
@@ -111,6 +113,8 @@ struct DockedCard<Leading: View, Trailing: View>: View {
                 .scaledFont(14, weight: .semibold)
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
+                .lineLimit(titleLines)
+                .truncationMode(.middle)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
@@ -164,11 +168,11 @@ struct DockedCard<Leading: View, Trailing: View>: View {
 extension DockedCard where Trailing == EmptyView {
     /// A card with the left column only.
     init(
-        title: String, pager: DockedCardPager? = nil, closeHelp: String = "Dismiss", onClose: @escaping () -> Void,
-        @ViewBuilder leading: @escaping () -> Leading
+        title: String, pager: DockedCardPager? = nil, closeHelp: String = "Dismiss", titleLines: Int? = nil,
+        onClose: @escaping () -> Void, @ViewBuilder leading: @escaping () -> Leading
     ) {
         self.init(
-            title: title, pager: pager, closeHelp: closeHelp, onClose: onClose, showsTrailing: false,
+            title: title, pager: pager, closeHelp: closeHelp, titleLines: titleLines, onClose: onClose, showsTrailing: false,
             leading: leading, trailing: { EmptyView() })
     }
 }
@@ -177,8 +181,7 @@ extension DockedCard where Trailing == EmptyView {
 /// question or permission card (`AppModel.dockedCard(for:)`), above the
 /// status line and the composer, at the composer's width. One card at a
 /// time; the next docks when it is answered. A question draws in the
-/// `DockedCard` frame; a permission card keeps its shipped card here
-/// until Task 7 draws it in the same frame. In a thread it docks in the
+/// `DockedCard` frame; a permission card draws in the same frame. In a thread it docks in the
 /// thread (Main gets the calling card instead).
 struct CardDock: View {
     let chat: Int
@@ -197,7 +200,17 @@ struct CardDock: View {
                                 composerFocused: model.focusedComposer == chat, composerText: model.draft(for: chat))
                         }
                     ) { model.answerCard($0) }
-                case .permission, .form:
+                case .permission:
+                    PermissionCard(
+                        card: card, folder: folder,
+                        agentName: model.hello?.brand.agentName ?? model.brand.name,
+                        accent: model.brand.accent ?? Theme.accent,
+                        takesFocus: { [model, chat] in
+                            QuestionDockKeys.takesFocusOnAppear(
+                                composerFocused: model.focusedComposer == chat, composerText: model.draft(for: chat))
+                        }
+                    ) { model.answerCard($0) }
+                case .form:
                     CardView(card: card, folder: folder) { model.answerCard($0) }
                 }
             }

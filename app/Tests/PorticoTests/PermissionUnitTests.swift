@@ -179,4 +179,84 @@ final class PermissionUnitTests: XCTestCase {
         write.unanswered = "cancelled"
         XCTAssertFalse(AppModel.didWrite(write), "nobody allowed it, so it didn't run")
     }
+
+    // MARK: - docked (v0.16, §3.4)
+
+    func testTheDockedOptionsAreTheShippedOnesInTheDocksOrder() {
+        XCTAssertEqual(PermissionChoice.docked, [.allowOnce, .allowSession, .deny])
+        XCTAssertEqual(PermissionChoice.docked.map(\.label), ["Allow once", "Allow for this session", "Deny…"])
+        let card = ask("card-1", tool: "tu-1", seq: 1)
+        XCTAssertFalse(
+            PermissionChoice.docked.contains { $0.answer(for: card).scope == .always }, "there is no Allow always")
+    }
+
+    func testTheKeysAnswerAsTheShippedButtonsDid() {
+        let draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        let once = draft.answer(for: .choose(0))
+        XCTAssertEqual(once?.answer, ["decision": .string("allow")])
+        XCTAssertEqual(once?.scope, .once)
+        let session = draft.answer(for: .choose(1))
+        XCTAssertEqual(session?.answer, ["decision": .string("allow")])
+        XCTAssertEqual(session?.scope, .chat, "this session is the protocol's chat scope")
+        let deny = draft.answer(for: .choose(2))
+        XCTAssertEqual(deny?.answer, ["decision": .string("deny")])
+        XCTAssertNil(deny?.scope)
+        XCTAssertNil(deny?.note, "key 3 denies with no note")
+        XCTAssertNil(draft.answer(for: .choose(3)), "no fourth option")
+        XCTAssertNil(draft.answer(for: .move(1)))
+    }
+
+    func testReturnAnswersTheFocusedOptionAndTheArrowsMoveIt() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        XCTAssertEqual(draft.focused, 0)
+        XCTAssertEqual(draft.answer(for: .confirm)?.scope, .once)
+        draft.move(by: 1)
+        XCTAssertEqual(draft.answer(for: .confirm)?.scope, .chat)
+        draft.move(by: 5)
+        XCTAssertEqual(draft.focused, 2, "stops at the last option")
+        XCTAssertEqual(draft.answer(for: .confirm)?.answer, ["decision": .string("deny")])
+        draft.move(by: -9)
+        XCTAssertEqual(draft.focused, 0)
+    }
+
+    func testSomethingElseIsTheDenyWithAReason() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        XCTAssertNil(draft.submitReason(), "blank does nothing")
+        draft.setReason("   ")
+        XCTAssertNil(draft.submitReason())
+        draft.setReason(" Use the staging copy ")
+        let answer = draft.submitReason()
+        XCTAssertEqual(answer?.answer, ["decision": .string("deny")])
+        XCTAssertEqual(answer?.note, "Use the staging copy")
+        XCTAssertNil(answer?.scope)
+    }
+
+    func testCloseDeniesWithNoNote() {
+        var draft = PermissionDraft(card: ask("card-1", tool: "tu-1", seq: 1))
+        draft.setReason("typed but not sent")
+        let answer = draft.dismiss()
+        XCTAssertEqual(answer.answer, ["decision": .string("deny")])
+        XCTAssertNil(answer.note, "× is a deny with no note, even over typed text")
+        XCTAssertNil(answer.scope)
+        XCTAssertEqual(answer.id, "card-1")
+        XCTAssertEqual(answer.chat, 1)
+    }
+
+    func testTheHeaderIsTheToolAndItsTarget() {
+        let shown = PermissionPresentation(card: ask("card-1", tool: "tu-1", seq: 1))
+        XCTAssertEqual(shown.dockTitle, "Write · /tmp/demo/Q3-synthesis.md")
+        var bare = ask("card-2", tool: "tu-2", seq: 2)
+        bare.permission = Permission(tool: "WebFetch", summary: "", input: [:])
+        XCTAssertEqual(PermissionPresentation(card: bare).dockTitle, "WebFetch")
+    }
+
+    func testThePermissionCardsKeysFollowTheQuestionCardsFocusRules() {
+        // The same decisions, shared: keys only while the card (not its reason field) has the focus.
+        XCTAssertNil(QuestionDockKeys.action(for: "1", cardFocused: QuestionDockKeys.isActive(cardFocused: true, fieldFocused: true), optionCount: PermissionChoice.docked.count))
+        XCTAssertEqual(
+            QuestionDockKeys.action(for: "3", cardFocused: QuestionDockKeys.isActive(cardFocused: true, fieldFocused: false), optionCount: PermissionChoice.docked.count),
+            .choose(2))
+        XCTAssertNil(QuestionDockKeys.action(for: "4", cardFocused: true, optionCount: PermissionChoice.docked.count))
+        XCTAssertNil(QuestionDockKeys.action(for: .escape, cardFocused: true, optionCount: 3), "Esc does nothing; × is the only dismiss")
+    }
 }
