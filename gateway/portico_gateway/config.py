@@ -240,6 +240,8 @@ class ViewerConfig(BaseModel):
     Settings switches. ``act_hosts`` are the outside sites the agent may click
     and type on (it can only look at and scroll the rest); an entry is a bare
     host name matching that host and its subdomains. Set by the deployment only.
+    ``properties`` (v0.17) is how a front-matter Properties block first opens
+    in the app, until the person folds or unfolds one.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -247,6 +249,7 @@ class ViewerConfig(BaseModel):
     agent_can_see: bool = True
     agent_checks_html: bool = True
     act_hosts: list[str] = []
+    properties: Literal["folded", "open"] = "folded"
 
     @field_validator("act_hosts")
     @classmethod

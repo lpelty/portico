@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from portico_gateway import viewer as viewer_mod
+from portico_gateway.artifacts import artifact_for_location
 from portico_gateway.engine import SHOW_SERVER, SHOW_TOOL_NAME, build_check_html_hook, build_options
 from portico_gateway.messages import (
     HelloClient,
@@ -28,6 +30,7 @@ from portico_gateway.viewer import (
     NEEDS_UPDATE,
     NO_ANSWER,
     NOT_AVAILABLE,
+    QUEUE_NOTE,
     SETTING_OFF,
     VIEWER_TOOL_NAMES,
     ViewerBridge,
@@ -58,6 +61,7 @@ def make_bridge(
     capable: bool = True,
     defaults: tuple[bool, bool] = (True, True),
     marks_capable: bool = True,
+    show_capable: bool = True,
 ):
     holder: dict[str, FakeApp] = {}
 
@@ -65,7 +69,11 @@ def make_bridge(
         await holder["app"].send(conn, act)
 
     bridge = ViewerBridge(
-        send, capable=lambda conn: capable, defaults=defaults, marks_capable=lambda conn: marks_capable
+        send,
+        capable=lambda conn: capable,
+        defaults=defaults,
+        marks_capable=lambda conn: marks_capable,
+        show_capable=lambda conn: show_capable,
     )
     holder["app"] = FakeApp(bridge, reply)
     return bridge, holder["app"]
@@ -236,6 +244,138 @@ async def test_a_result_from_another_app_is_ignored() -> None:
     assert out["content"][0]["text"] == NO_ANSWER
 
 
+# --- v0.17: the show round trip, and one viewer call at a time per conversation ----------
+
+
+def web_page(url: str = "https://acme.example/pricing"):
+    return artifact_for_location(url, source="tool", open=True)
+
+
+async def settle() -> None:
+    """Let every ready task run up to its next wait."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def test_show_round_trip_waits_for_the_app() -> None:
+    bridge, app = make_bridge(None, show_capable=True)
+    conn = object()
+    bridge.set_target(conn, True, True)
+    art = web_page()
+    task = asyncio.create_task(bridge.show(1, art))
+    await settle()
+    assert [(a.chat, a.action, a.args) for a in app.acts] == [
+        (1, "show", {"artifact": art.id, "location": art.location})
+    ]
+    assert not task.done()  # pending until the app says the page loaded
+    bridge.resolve(conn, ok().model_copy(update={"id": app.acts[0].id}))
+    assert await asyncio.wait_for(task, 1) is True
+    assert bridge._pending == {}
+
+
+async def test_show_answered_not_ok_is_false() -> None:
+    bridge, app = make_bridge(ViewerResult(ts=TS, id="x", ok=False, text="Shown; still loading."))
+    bridge.set_target(object(), True, True)
+    assert await bridge.show(1, web_page()) is False
+    assert len(app.acts) == 1
+
+
+async def test_show_without_the_capability_sends_nothing() -> None:
+    bridge, app = make_bridge(ok(), show_capable=False)
+    bridge.set_target(object(), True, True)
+    assert await bridge.show(1, web_page()) is None
+    assert app.acts == []
+    # No target at all: no round trip possible either.
+    bridge2, app2 = make_bridge(ok())
+    assert await bridge2.show(1, web_page()) is None
+    assert app2.acts == []
+
+
+async def test_show_ignores_the_setting_off() -> None:
+    bridge, app = make_bridge(ok(), defaults=(False, True))
+    bridge.set_target(object(), False, True)
+    assert await bridge.show(1, web_page()) is True
+    assert [a.action for a in app.acts] == ["show"]
+
+
+async def test_a_show_that_times_out_releases_the_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(viewer_mod, "SHOW_TIMEOUT", 0.2)
+    bridge, app = make_bridge(None)  # the app never answers the show
+    conn = object()
+    bridge.set_target(conn, True, True)
+    tools = by_name(build_viewer_tools(bridge, 1))
+    shown: list[bool | None] = []
+
+    async def show() -> None:
+        async with bridge.queue(1):
+            shown.append(await bridge.show(1, web_page()))
+
+    show_task = asyncio.create_task(show())
+    await settle()
+    click_task = asyncio.create_task(tools["viewer_click"].handler({"target": "e3"}))
+    await settle()
+    assert [a.action for a in app.acts] == ["show"]  # the click waits behind the show
+    await asyncio.wait_for(show_task, 2)
+    assert shown == [False]
+    await until(lambda: len(app.acts) == 2)
+    assert app.acts[1].action == "click"
+    bridge.resolve(conn, ok("Clicked.").model_copy(update={"id": app.acts[1].id}))
+    assert (await asyncio.wait_for(click_task, 1))["content"][0]["text"] == "Clicked."
+
+
+async def test_calls_run_in_the_order_sent() -> None:
+    bridge, app = make_bridge(None)
+    conn = object()
+    bridge.set_target(conn, True, True)
+    tools = by_name(build_viewer_tools(bridge, 1))
+    other = by_name(build_viewer_tools(bridge, 2))
+
+    async def show() -> bool | None:
+        async with bridge.queue(1):
+            return await bridge.show(1, web_page())
+
+    tasks = [asyncio.create_task(show())]
+    await settle()
+    tasks.append(asyncio.create_task(tools["viewer_click"].handler({"target": "e1"})))
+    await settle()
+    tasks.append(asyncio.create_task(tools["viewer_click"].handler({"target": "e2"})))
+    await settle()
+    tasks.append(asyncio.create_task(tools["viewer_look"].handler({})))
+    await settle()
+    # Another conversation's look is not held by chat 1's queue.
+    elsewhere = asyncio.create_task(other["viewer_look"].handler({}))
+    await settle()
+    assert [(a.chat, a.action) for a in app.acts] == [(1, "show"), (2, "look")]
+    bridge.resolve(conn, ok().model_copy(update={"id": app.acts[1].id}))
+    await asyncio.wait_for(elsewhere, 1)
+    chat_one = [app.acts[0]]
+    for expected in ("click", "click", "look"):
+        bridge.resolve(conn, ok().model_copy(update={"id": chat_one[-1].id}))
+        await until(lambda: len([a for a in app.acts if a.chat == 1]) == len(chat_one) + 1)
+        await settle()
+        sent = [a for a in app.acts if a.chat == 1]
+        assert len(sent) == len(chat_one) + 1  # one at a time
+        chat_one.append(sent[-1])
+        assert sent[-1].action == expected
+    assert [a.args for a in chat_one[1:3]] == [{"target": "e1"}, {"target": "e2"}]
+    bridge.resolve(conn, ok().model_copy(update={"id": chat_one[-1].id}))
+    await asyncio.wait_for(asyncio.gather(*tasks), 1)
+    assert tasks[0].result() is True
+
+
+def test_every_viewer_tool_says_calls_run_in_order() -> None:
+    bridge, _ = make_bridge()
+    for t in build_viewer_tools(bridge, 1):
+        assert t.description.endswith(QUEUE_NOTE), t.name
+    assert QUEUE_NOTE == " Viewer calls run one at a time, in the order you send them."
+
+
+def test_mark_target_is_any_text_the_person_can_see() -> None:
+    bridge, _ = make_bridge()
+    mark = by_name(build_viewer_tools(bridge, 1))["viewer_mark"]
+    assert "target is a ref from your last viewer_look (e12), or any text the person can see on the page." in mark.description
+
+
 # --- registered beside show_in_viewer -------------------------------------------------
 
 
@@ -372,6 +512,41 @@ async def test_server_second_app_takes_over_pending_stays_with_first(server: Any
     await second.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="back")))
     assert (await asyncio.wait_for(task2, 2))["content"][0]["text"] == "back"
     await second.close()
+
+
+async def test_a_refused_show_releases_the_queue(server: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_turns import new_chat, recv_until
+    from portico_gateway.messages import ServicesStatus
+
+    conn = await attach_app(server, ["viewer.v1", "viewer.show.v1"])
+    await recv_until(conn, ServicesStatus)
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+    await until(lambda: server.viewer.settings is not None)
+    folder = tmp_path / "demo"
+    folder.mkdir()
+    number = await new_chat(conn, folder)
+    chat = server.registry.get(number)
+    look = by_name(build_viewer_tools(server.viewer, number))["viewer_look"]
+
+    assert await server.show_files(chat, ["missing.html"]) == "Not shown: there is no file at missing.html."
+    task = asyncio.create_task(look.handler({}))
+    act = await frames_until(conn, "viewer.act")
+    assert act.action == "look"
+    await conn.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="looked")))
+    assert (await asyncio.wait_for(task, 2))["content"][0]["text"] == "looked"
+
+    # A show that raises inside the queue releases it too.
+    def broken(chat: Any, raw: str) -> Any:
+        raise RuntimeError("disk gone")
+
+    monkeypatch.setattr(server, "_showable", broken)
+    with pytest.raises(RuntimeError):
+        await server.show_files(chat, ["a.html"])
+    task = asyncio.create_task(look.handler({}))
+    act = await frames_until(conn, "viewer.act")
+    await conn.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="again")))
+    assert (await asyncio.wait_for(task, 2))["content"][0]["text"] == "again"
+    await conn.close()
 
 
 async def test_stalled_send_is_bounded_by_the_same_timeout() -> None:

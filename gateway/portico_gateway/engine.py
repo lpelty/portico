@@ -63,7 +63,7 @@ from claude_agent_sdk import (
 from .artifacts import paths_in
 from .agents import AgentTracker
 from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
-from .viewer import VIEWER_TOOL_NAMES, build_viewer_tools
+from .viewer import QUEUE_NOTE, VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
     ModelChoice,
@@ -99,12 +99,24 @@ SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
 OPEN_THREAD_TOOL = "open_thread"
 OPEN_THREAD_TOOL_NAME = f"mcp__{SHOW_SERVER}__{OPEN_THREAD_TOOL}"
 SHOWN_TEXT = "Shown in the viewer."
+# v0.17: the app did not say the page had loaded within the show's 10 s.
+STILL_LOADING_TEXT = "Shown; still loading."
+
+
+@dataclasses.dataclass(frozen=True)
+class Shown:
+    """``on_show``'s success with words of its own (v0.17); a plain ``None`` is ``SHOWN_TEXT``."""
+
+    text: str
+
+
 # What the agent sees when its ``open <file>`` was shown instead of run.
 OPEN_SHOWN_REASON = "Shown in Portico's viewer instead of opening it."
 # Appended to the system prompt, never replacing it.
 VIEWER_PROMPT = (
-    "The person sees files in Portico's viewer beside this conversation. To show a file, "
-    "call show_in_viewer with its path; don't open files with the `open` command or a browser."
+    "The person sees files and web pages in Portico's viewer beside this conversation. To show one, "
+    "call show_in_viewer with its path or its http(s) address; don't open files with the `open` command "
+    "or a browser."
 )
 # v0.12: appended after the viewer line when the deployment has a spaces folder.
 SPACES_PROMPT = (
@@ -190,9 +202,10 @@ class EngineCallbacks(Protocol):
     async def on_compacted(self, trigger: str) -> None: ...
 
     # Optional (v0.10), so not part of the checked protocol:
-    # ``async def on_show(self, paths: list[str]) -> str | None`` shows the
-    # files in the viewer, all or none, and answers ``None`` when shown,
-    # else why not (a relative path is the chat folder's). An owner without
+    # ``async def on_show(self, paths: list[str]) -> str | Shown | None``
+    # shows the files (v0.17: or http(s) addresses) in the viewer, all or
+    # none, and answers ``None`` (or a ``Shown`` with its own words) when
+    # shown, else why not (a relative path is the chat folder's). An owner without
     # it gives the engine no show tool and no ``open`` hook.
     # Optional (v0.16), Main's owner only: ``async def on_open_thread(self,
     # brief: str, files: list[str]) -> str`` proposes a thread and answers
@@ -567,18 +580,20 @@ def build_show_tool(callbacks: EngineCallbacks):
 
     @tool(
         SHOW_TOOL,
-        "Show a file in the viewer beside this conversation, where the person sees it. "
-        "The path may be relative to the session's folder.",
+        "Show a file or a web page in the viewer beside this conversation, where the person sees it. "
+        "path is a file's path (relative to the session's folder, or absolute) or an http:// or https:// "
+        "address. Answers once the page has loaded." + QUEUE_NOTE,
         {"path": str},
     )
     async def show_in_viewer(args: dict[str, Any]) -> dict[str, Any]:
         path = args.get("path")
         if not isinstance(path, str) or not path.strip():
             return {"content": [{"type": "text", "text": "Not shown: give the path of a file."}], "is_error": True}
-        refusal = await callbacks.on_show([path.strip()])
-        if refusal is not None:
-            return {"content": [{"type": "text", "text": refusal}], "is_error": True}
-        return {"content": [{"type": "text", "text": SHOWN_TEXT}]}
+        answer = await callbacks.on_show([path.strip()])
+        if isinstance(answer, str):
+            return {"content": [{"type": "text", "text": answer}], "is_error": True}
+        text = answer.text if isinstance(answer, Shown) else SHOWN_TEXT
+        return {"content": [{"type": "text", "text": text}]}
 
     return show_in_viewer
 
@@ -616,11 +631,11 @@ def build_open_hook(callbacks: EngineCallbacks):
         if paths is None:
             return {"continue_": True}
         try:
-            refusal = await callbacks.on_show(paths)
+            answer = await callbacks.on_show(paths)
         except Exception:
             log.exception("showing %s in the viewer failed", paths)
             return {"continue_": True}
-        if refusal is not None:
+        if isinstance(answer, str):  # refused: the command runs as before
             return {"continue_": True}
         return {
             "hookSpecificOutput": {

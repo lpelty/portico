@@ -163,15 +163,17 @@ from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
 from .agents import AgentTracker
-from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
+from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
+    STILL_LOADING_TEXT,
     Engine,
     PermissionDecision,
     QuestionDeclined,
+    Shown,
     append_prompt_line,
     deployment_system_prompt,
     friendly_model_name,
@@ -285,7 +287,7 @@ from .threads import (
 )
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
-from .viewer import MARKS_CAPABILITY, VIEWER_CAPABILITY, ViewerBridge
+from .viewer import MARKS_CAPABILITY, SHOW_CAPABILITY, VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
@@ -551,7 +553,7 @@ class ChatCallbacks:
     async def on_compacted(self, trigger: str) -> None:
         await self.server.compacted(self.chat, trigger)
 
-    async def on_show(self, paths: list[str]) -> str | None:
+    async def on_show(self, paths: list[str]) -> str | Shown | None:
         return await self.server.show_files(self.chat, paths)
 
     @property
@@ -954,6 +956,7 @@ class GatewayServer:
             capable=lambda conn: VIEWER_CAPABILITY in _capabilities(conn),
             defaults=(config.viewer.agent_can_see, config.viewer.agent_checks_html),
             marks_capable=lambda conn: MARKS_CAPABILITY in _capabilities(conn),
+            show_capable=lambda conn: SHOW_CAPABILITY in _capabilities(conn),
         )
         # v0.12: spaces. The watcher tells every attached app when the folder's list changes.
         self.spaces_watcher: SpacesWatcher | None = (
@@ -2077,33 +2080,45 @@ class GatewayServer:
             return f"Not shown: the viewer shows pages, markdown, images and PDFs, and {candidate.name} is not one."
         return candidate
 
-    async def show_files(self, chat: Chat, paths: list[str]) -> str | None:
+    async def show_files(self, chat: Chat, paths: list[str]) -> str | Shown | None:
         """Show ``paths`` in the viewer (v0.10 decision 6), all or none: ``None`` when shown, else why not.
 
         The agent's ``show_in_viewer`` and a caught ``open`` come here. Each
         file is reported as an artifact with ``open=true``, as a written
         file is at the end of a turn (same ids, media, ring and index), and
         the turn's collector is told, so the end of the turn does not
-        report it again.
+        report it again. v0.17: an ``http(s)`` address is shown as a URL
+        artifact (no folder checks); the call holds the chat's viewer queue
+        and waits for the app to say the last one has loaded, answering
+        ``Shown(STILL_LOADING_TEXT)`` when it does not in time.
         """
-        shown: list[Path] = []
-        for raw in paths:
-            checked = self._showable(chat, raw)
-            if isinstance(checked, str):
-                return checked
-            shown.append(checked)
-        if not shown:
-            return "Not shown: give the path of a file."
-        run = self._runs.get(chat.number)
-        for path in shown:
-            artifact = artifact_for_location(str(path), source="tool", open=True)
-            artifact.space = self._space_of(artifact)
-            chat.artifacts.append(artifact)
-            await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
-            if run is not None:
-                run.collector.note_shown(path)
-        self.registry.persist()
-        return None
+        async with self.viewer.queue(chat.number):
+            shown: list[Path | str] = []
+            for raw in paths:
+                if is_url(raw):
+                    shown.append(raw)
+                    continue
+                checked = self._showable(chat, raw)
+                if isinstance(checked, str):
+                    return checked
+                shown.append(checked)
+            if not shown:
+                return "Not shown: give the path of a file."
+            run = self._runs.get(chat.number)
+            artifacts: list[Artifact] = []
+            for item in shown:
+                artifact = artifact_for_location(str(item), source="tool", open=True)
+                artifact.space = self._space_of(artifact)
+                chat.artifacts.append(artifact)
+                artifacts.append(artifact)
+                await self.emit(chat, ArtifactCreated(ts=_now(), chat=chat.number, artifact=artifact))
+                if run is not None and isinstance(item, Path):
+                    run.collector.note_shown(item)
+            self.registry.persist()
+            # The last one is the one in front: wait for it to load.
+            if await self.viewer.show(chat.number, artifacts[-1]) is False:
+                return Shown(STILL_LOADING_TEXT)
+            return None
 
     async def _producer(self, request: HttpRequest) -> HttpResponse:
         """``POST /v1/artifact`` ``{chat, location, title?}``: report an artifact now, ``open=true``."""

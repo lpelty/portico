@@ -21,12 +21,14 @@ from portico_gateway.engine import (
     SHOW_TOOL_NAME,
     VIEWER_PROMPT,
     append_prompt_line,
+    build_show_tool,
     build_options,
     deployment_system_prompt,
 )
 from portico_gateway.server import GatewayServer
 from portico_gateway.state import StateDir
 from portico_gateway.threads import MAIN_PROMPT
+from portico_gateway.viewer import QUEUE_NOTE, ViewerBridge, build_viewer_tools
 from tests.conftest import make_config
 from tests.test_server import attach
 from tests.test_turns import EngineFactory, new_chat
@@ -116,6 +118,23 @@ def test_an_unreadable_append_is_left_out(tmp_path: Path, caplog: pytest.LogCapt
     gone = tmp_path / "gone.md"
     assert deployment_system_prompt("claude_code", str(gone)) == PRESET
     assert "could not be read" in caplog.text
+
+
+def test_the_viewer_line_says_files_and_web_pages() -> None:
+    assert VIEWER_PROMPT == (
+        "The person sees files and web pages in Portico's viewer beside this conversation. To show one, "
+        "call show_in_viewer with its path or its http(s) address; don't open files with the `open` command "
+        "or a browser."
+    )
+
+
+def test_every_viewer_description_ends_with_the_queue_note() -> None:
+    async def send(conn: object, act: object) -> None: ...
+
+    tools = [build_show_tool(ShowingCallbacks()), *build_viewer_tools(ViewerBridge(send), 1)]  # type: ignore[arg-type]
+    assert len(tools) == 8
+    for t in tools:
+        assert t.description.endswith(QUEUE_NOTE), t.name
 
 
 def test_the_viewer_line_comes_last(tmp_path: Path) -> None:

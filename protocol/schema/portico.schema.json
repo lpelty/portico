@@ -5329,7 +5329,7 @@
     },
     "ViewerAct": {
       "additionalProperties": false,
-      "description": "v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``.",
+      "description": "v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``.\n\nv0.17: ``show`` (``{artifact, location}``), only to an app that declared\n``viewer.show.v1``, is answered once the shown page has loaded.",
       "properties": {
         "action": {
           "enum": [
@@ -5339,7 +5339,8 @@
             "scroll",
             "back",
             "mark",
-            "clear_marks"
+            "clear_marks",
+            "show"
           ],
           "title": "Action",
           "type": "string"
@@ -5411,6 +5412,15 @@
           "default": true,
           "title": "Agent Checks Html",
           "type": "boolean"
+        },
+        "properties": {
+          "default": "folded",
+          "enum": [
+            "folded",
+            "open"
+          ],
+          "title": "Properties",
+          "type": "string"
         }
       },
       "title": "ViewerDefaults",

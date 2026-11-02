@@ -523,15 +523,35 @@ def _load(tmp_path: Path, text: str) -> Config:
 def test_viewer_defaults_in_hello() -> None:
     hello = hello_for(Config(), "e1", "0.12.0")
     assert hello.viewer_defaults is not None
-    assert hello.viewer_defaults.model_dump() == {"agent_can_see": True, "agent_checks_html": True, "act_hosts": []}
+    assert hello.viewer_defaults.model_dump() == {
+        "agent_can_see": True, "agent_checks_html": True, "act_hosts": [], "properties": "folded",
+    }
 
 
 def test_viewer_defaults_follow_the_config(tmp_path: Path) -> None:
     cfg = _load(tmp_path, '[viewer]\nagent_can_see = false\nagent_checks_html = false\nact_hosts = ["figma.com"]\n')
     hello = hello_for(cfg, "e1", "0.12.0")
     assert hello.viewer_defaults.model_dump() == {
-        "agent_can_see": False, "agent_checks_html": False, "act_hosts": ["figma.com"],
+        "agent_can_see": False, "agent_checks_html": False, "act_hosts": ["figma.com"], "properties": "folded",
     }
+
+
+def test_viewer_properties(tmp_path: Path) -> None:
+    assert Config().viewer.properties == "folded"
+    cfg = _load(tmp_path, '[viewer]\nproperties = "open"\n')
+    assert cfg.viewer.properties == "open"
+    assert hello_for(cfg, "e1", "0.17.0").viewer_defaults.properties == "open"
+    assert hello_for(Config(), "e1", "0.17.0").viewer_defaults.properties == "folded"
+    with pytest.raises(ConfigError) as e:
+        _load(tmp_path, '[viewer]\nproperties = "closed"\n')
+    assert "viewer.properties" in str(e.value)
+    assert "viewer" in e.value.keys
+
+
+def test_viewer_properties_optional_on_decode() -> None:
+    from portico_gateway.messages import ViewerDefaults
+
+    assert ViewerDefaults.model_validate({"agent_can_see": True}).properties == "folded"
 
 
 @pytest.mark.parametrize("entry", ["https://figma.com", "figma.com/x", "figma.com:443", "*.figma.com", "figma .com", ".figma.com", "figma.com.", "com", "localhost"])

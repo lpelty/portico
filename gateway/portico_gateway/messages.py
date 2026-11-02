@@ -505,6 +505,8 @@ class ViewerDefaults(Strict):
     agent_can_see: bool = True
     agent_checks_html: bool = True
     act_hosts: list[str] = []
+    # v0.17: how a front-matter Properties block first opens, until the person folds or unfolds one.
+    properties: Literal["folded", "open"] = "folded"
 
 
 class HelloServer(Envelope):
@@ -1008,12 +1010,16 @@ class SpacesList(Envelope):
 
 
 class ViewerAct(Envelope):
-    """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``."""
+    """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``.
+
+    v0.17: ``show`` (``{artifact, location}``), only to an app that declared
+    ``viewer.show.v1``, is answered once the shown page has loaded.
+    """
 
     type: Literal["viewer.act"] = "viewer.act"
     id: str
     chat: int
-    action: Literal["look", "click", "type", "scroll", "back", "mark", "clear_marks"]
+    action: Literal["look", "click", "type", "scroll", "back", "mark", "clear_marks", "show"]
     args: dict[str, Any] = {}
 
 

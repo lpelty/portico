@@ -90,7 +90,9 @@ workflows): without it the gateway sends none of those frames; v0.11:
 `queue.v1` (see Messages while the agent works); v0.12: `viewer.v1`
 (the app can carry out `viewer.act`; see The viewer and spaces) and
 `spaces.v1` (it shows `spaces.list`); v0.14: `viewer.marks.v1` (it
-can draw the agent's marks; see The viewer and spaces). Absent
+can draw the agent's marks; see The viewer and spaces); v0.17:
+`viewer.show.v1` (it answers `viewer.act` `show` once the page has
+loaded; see The viewer and spaces). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -499,6 +501,11 @@ look and scroll only). `act_hosts` is the deployment's alone: no
 `127.0.0.1`, `::1`) are always usable. Absent from an older gateway: the
 app then uses `true` for both switches and an empty list.
 
+v0.17: `viewer_defaults.properties?: "folded" | "open"` (config
+`[viewer] properties`, default `"folded"`): how a front-matter Properties
+block first opens, until the person folds or unfolds one (the app then
+remembers the person's choice). Absent from an older gateway: `"folded"`.
+
 v0.16: `threads_max?: int` (config `[threads] max`, 1 or 2): how many
 threads may be open beside Main, sent with `threads.v1` and absent
 otherwise. The app's proposal card asks to close a thread at this limit;
@@ -778,7 +785,9 @@ the turn made. The agent can also show a file during the turn: its
 `show_in_viewer` tool, or a plain `open <path>` in its shell that the
 gateway catches, sends the file at once as `artifact.created` with
 `source: tool` and `open: true` — only a viewable file inside the chat's
-folder or a configured root. Such a file is not reported again at the end
+folder or a configured root (v0.17: or, through `show_in_viewer` only, an
+`http://` or `https://` address, sent as `kind: url`; a caught `open` of
+an address still runs as before). Such a file is not reported again at the end
 of the turn. A relative path given to `show_in_viewer` is the chat
 folder's; a relative path in a caught `open` is the shell's working
 directory's (the Bash tool's directory persists between calls, so after
@@ -1346,7 +1355,8 @@ the last look), `viewer_click(target)`, `viewer_type(target, text,
 submit?)`, `viewer_scroll(direction | target)`, `viewer_back()`, and (v0.14)
 `viewer_mark(marks, replace?)` and `viewer_clear_marks()`. A
 `target` is a ref from the last look, or the visible text of a button or
-link. Each carries out its action in the app over the connection and
+link (v0.17: for `viewer_mark`, any text the person can see on the
+page). Each carries out its action in the app over the connection and
 returns what happened. The tool texts are the reference gateway's and the
 app's; the protocol carries only the frames below.
 
@@ -1365,7 +1375,7 @@ it is the one `viewer.act` goes to. Until one does, the gateway uses
 
 #### `viewer.act` — `ViewerAct` *(gateway → app)*
 `id`, `chat`, `action: look | click | type | scroll | back | mark |
-clear_marks`, `args` (`{}` for `look`, `back` and `clear_marks`;
+clear_marks | show` (`show` v0.17), `args` (`{}` for `look`, `back` and `clear_marks`;
 `{target}` for `click`; `{target, text, submit}` for `type`;
 `{direction}` or `{target}` for `scroll`; v0.14: `{marks: [{target,
 note?}], replace: bool, tool_use_id?}` for `mark`, 1 to 9 marks, `note`
@@ -1378,6 +1388,27 @@ turned the agent's view off. The app shows the viewer for `chat` if it is
 not open. In multiple presentation an act for a chat that is not on
 screen is answered "The person is looking at another chat." (by the
 app, in its `viewer.result`).
+
+v0.17: `show`, `{artifact, location}` — the id and location of the
+artifact the gateway has just sent as `artifact.created` with `open:
+true` (for a show of several files, the last one, the one in front). Sent
+only to an app that declared `viewer.show.v1`, whatever the person's
+"agent can see" switch (it reports only that a page loaded, never what is
+on it), and it draws no acting glow. The app answers `viewer.result`
+`ok: true` once that page has loaded; at once when it will not put the
+artifact in front (auto-open off for that kind, or another chat on screen
+in multiple presentation); and, for a pane that is not a web page, once
+it is in front. The gateway waits 10 s: no answer, or `ok: false`, and
+the agent reads "Shown; still loading."; loaded, "Shown in the viewer.".
+An app without `viewer.show.v1` (or no app) is sent nothing and the agent
+reads "Shown in the viewer." at once, as before v0.17.
+
+v0.17 (gateway behaviour): a conversation's viewer calls run one at a
+time, in the order the gateway receives them — the seven tools,
+`show_in_viewer` and a caught `open`. Each starts only when the one before
+has finished (answered, timed out, or refused), so a show followed by two
+clicks and a look acts on the page the show loaded. Calls in different
+conversations do not wait for each other.
 
 #### `viewer.result` — `ViewerResult` *(app → gateway)*
 `id` (the act's), `ok: bool`, `text`, `image?: {data, media_type}`
