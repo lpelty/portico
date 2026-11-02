@@ -56,7 +56,7 @@ from portico_gateway.plugins import Plugins
 from portico_gateway.server import GatewayServer, MainChatCallbacks, for_app, with_attachments
 from portico_gateway.state import ProposalRecord, StateDir
 from portico_gateway.status import describe
-from portico_gateway.threads import MAIN_PROMPT, files_phrase, proposed_text, thread_prompt
+from portico_gateway.threads import MAIN_PROMPT, files_phrase, limit_message, proposed_text, thread_prompt
 from tests.conftest import Block, Pause, fake_result, make_config
 from tests.test_server import attach, ws_url
 from tests.test_sessions import start_server
@@ -187,6 +187,13 @@ def test_capability_by_config(tmp_path: Path) -> None:
         load_config(path)
     assert "threads.max" in str(e.value)
     assert "threads" in e.value.keys
+
+
+def test_hello_carries_threads_max() -> None:
+    assert hello_for(make_config(presentation="single"), "e", "0.16.0").threads_max == 2
+    assert hello_for(make_config(presentation="single", threads={"max": 1}), "e", "0.16.0").threads_max == 1
+    assert hello_for(make_config(presentation="single", threads={"max": 0}), "e", "0.16.0").threads_max is None
+    assert hello_for(make_config(presentation="multiple"), "e", "0.16.0").threads_max is None
 
 
 def test_thread_proposal_not_sent_to_old_app() -> None:
@@ -331,6 +338,9 @@ def thread_notices(frames: list[ServerMessage], chat: int) -> list[str]:
 def test_proposed_text_and_files_phrase() -> None:
     assert proposed_text(1) == "Proposed as Thread 1; it opens if the person starts it."
     assert proposed_text(None) == "Proposed; two threads are open, so the person picks one to close before it starts."
+    assert proposed_text(None, 1) == "Proposed; a thread is open, so the person picks one to close before it starts."
+    assert limit_message(2) == "two threads are open; close one to start another"
+    assert limit_message(1) == "a thread is open; close it to start another"
     assert files_phrase([]) == ""
     assert files_phrase(["/x/a.html", "b.md"]) == "a.html and b.md"
     assert files_phrase(["a", "b", "/y/c.md"]) == "a, b and c.md"
@@ -542,6 +552,25 @@ async def test_limit(
         assert new.thread is not None and new.thread.slot == 1 and new.thread.label == "Thread 1"
         assert [t.number for t in srv.registry.open_threads()] == [new.number, second.number]
         await recv_until(conn, TurnFinished)
+    finally:
+        await conn.close()
+
+
+async def test_limit_copy_at_max_1(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, servers: list[GatewayServer]
+) -> None:
+    srv = await threads_server(state_dir, factory, servers, log_prompt=LOG, threads={"max": 1})
+    conn = await attach_threads(srv)
+    try:
+        main = await new_chat(conn, folder)
+        _, frame = await propose(srv, main, conn, use="tu-1")
+        await start_thread(conn, main, frame.proposal, id="req-1")
+        answer, frame = await propose(srv, main, conn, use="tu-2")
+        assert answer == "Proposed; a thread is open, so the person picks one to close before it starts."
+        await conn.send(dump(ThreadStart(ts=TS, id="req-2", chat=main, proposal=frame.proposal)))
+        err = await recv(conn)
+        assert isinstance(err, Error) and err.code == "thread.limit" and err.id == "req-2"
+        assert err.message == "a thread is open; close it to start another"
     finally:
         await conn.close()
 

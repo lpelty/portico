@@ -228,7 +228,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var closingThreads: [Int: String] = [:]
     /// Per thread, why its last close was refused (its log step could not
     /// start): the thread stays open and "Close without logging" is offered.
-    @Published private(set) var closeFailures: [Int: String] = [:]
+    @Published private(set) var closeFailures: [Int: CloseFailure] = [:]
+    /// Proposals whose `thread.dismiss` is out, by proposal id, with the
+    /// request id: Not now waits, so a double click sends one.
+    @Published private(set) var dismissing: [String: String] = [:]
     /// Per thread, the calling cards put off with Later (card ids).
     @Published private(set) var dismissedCalls: [Int: Set<String>] = [:]
     /// The deployment's services from the latest `services.status`; `nil`
@@ -725,6 +728,7 @@ final class AppModel: ObservableObject {
             startingProposal = nil
             startingRequest = nil
             closingThreads = [:]
+            dismissing = [:]
             // A gateway without spaces has no list to trust: what an earlier
             // one sent is stale, and so is a space open from it.
             if !hello.capabilities.contains(SpacesList.capability) {
@@ -760,6 +764,7 @@ final class AppModel: ObservableObject {
             }
             openLiveSessionIfNeeded()
             proposals = proposals.filter { proposal in list.chats.contains { $0.chat == proposal.value.chat } }
+            settleStartingProposal()
             loadLiveThreads()
             awaitServicesStatus()
 
@@ -789,10 +794,8 @@ final class AppModel: ObservableObject {
 
         case .threadProposal(let proposal):
             proposals[proposal.proposal] = proposal
-            if proposal.proposal == startingProposal, proposal.state != .pending {
-                startingProposal = nil
-                startingRequest = nil
-            }
+            if proposal.state != .pending { dismissing[proposal.proposal] = nil }
+            settleStartingProposal()
 
         case .chatHistory(let history):
             applyHistory(history)
@@ -911,7 +914,7 @@ final class AppModel: ObservableObject {
                 lastRestartAllId = nil
                 restartAllError = error.message
             }
-            if let id = error.id { noteThreadRefusal(id: id, message: error.message) }
+            if let id = error.id { noteThreadRefusal(id: id, code: error.code, message: error.message) }
             if let id = error.id, fileSearch?.pending[id] != nil {
                 fileSearch?.pending[id] = nil
             }
@@ -2097,6 +2100,32 @@ extension AppModel {
         send(.threadStart(ThreadStart(chat: proposal.chat, proposal: proposal.proposal, close: closing, id: id)))
     }
 
+    /// "Not now": the gateway answers with the proposal `dismissed`. One
+    /// at a time per proposal, so a double click sends one.
+    func dismissProposal(_ proposal: ThreadProposal) {
+        guard dismissing[proposal.proposal] == nil else { return }
+        let id = Self.requestId()
+        dismissing[proposal.proposal] = id
+        send(.threadDismiss(ThreadDismiss(chat: proposal.chat, proposal: proposal.proposal, id: id)))
+    }
+
+    /// The start in flight is settled once its proposal is dismissed, or
+    /// started with its thread listed: the card stays dimmed until it can
+    /// name the thread (never a "Thread started" placeholder).
+    private func settleStartingProposal() {
+        guard let id = startingProposal, let proposal = proposals[id] else { return }
+        let settled: Bool
+        switch proposal.state {
+        case .pending: settled = false
+        case .dismissed: settled = true
+        case .started: settled = proposal.thread.map { thread in chats.contains { $0.chat == thread } } ?? true
+        }
+        if settled {
+            startingProposal = nil
+            startingRequest = nil
+        }
+    }
+
     /// `thread.close` for an open thread, with or without its log step;
     /// one close at a time per thread.
     func closeThread(chat: Int, log: Bool) {
@@ -2127,14 +2156,17 @@ extension AppModel {
 
     /// An `error` answering a request: a refused start un-dims its card
     /// (Review Focus 2); a refused close keeps the thread open and says why.
-    func noteThreadRefusal(id: String, message: String) {
+    func noteThreadRefusal(id: String, code: String, message: String) {
         if id == startingRequest {
             startingProposal = nil
             startingRequest = nil
         }
+        if let proposal = dismissing.first(where: { $0.value == id })?.key {
+            dismissing[proposal] = nil
+        }
         if let closing = closingThreads.first(where: { $0.value == id })?.key {
             closingThreads[closing] = nil
-            closeFailures[closing] = message
+            closeFailures[closing] = CloseFailure(code: code, message: message)
         }
     }
 }

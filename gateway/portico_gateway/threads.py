@@ -42,7 +42,16 @@ CLOSED = "Thread closed"
 BRIEF_NOT_SENT = "The brief wasn't sent"
 
 # Refusals (``error.message``) whose words the plan fixes.
-LIMIT_MESSAGE = "two threads are open; close one to start another"
+
+
+def _open_count(limit: int) -> str:
+    """How many threads are open at the limit, in words: "a thread is" or "two threads are"."""
+    return "a thread is" if limit == 1 else "two threads are"
+
+
+def limit_message(limit: int) -> str:
+    """``thread.limit``'s message at ``[threads] max`` = ``limit``."""
+    return f"{_open_count(limit)} open; close {'it' if limit == 1 else 'one'} to start another"
 RENEW_MESSAGE = "a thread closes rather than renews; close it with thread.close"
 
 
@@ -67,10 +76,10 @@ def thread_prompt(slot: int) -> str:
     return THREAD_PROMPT.format(n=slot)
 
 
-def proposed_text(slot: int | None) -> str:
+def proposed_text(slot: int | None, limit: int = 2) -> str:
     """What ``open_thread`` answers: the slot the thread would take, or (``None``) that the limit is reached."""
     if slot is None:
-        return "Proposed; two threads are open, so the person picks one to close before it starts."
+        return f"Proposed; {_open_count(limit)} open, so the person picks one to close before it starts."
     return f"Proposed as {thread_label(slot)}; it opens if the person starts it."
 
 

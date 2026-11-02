@@ -273,7 +273,7 @@ from .threads import (
     CLOSE_PLAIN,
     CLOSED,
     EMPTY_BRIEF,
-    LIMIT_MESSAGE,
+    limit_message,
     MAIN_PROMPT,
     BRIEF_NOT_SENT,
     RENEW_MESSAGE,
@@ -2743,7 +2743,7 @@ class GatewayServer:
         self.registry.add_proposal(record)
         log.info("chat %d: the agent proposed a thread (%s)", chat.number, record.id)
         await self.broadcast(self._proposal_frame(record))
-        return proposed_text(self.registry.free_slot(self.config.threads.max))
+        return proposed_text(self.registry.free_slot(self.config.threads.max), self.config.threads.max)
 
     def _pending_proposal(self, chat: Chat, id: str) -> ProposalRecord:
         """The proposal ``id`` made in ``chat``, still pending and not being started; else the refusal."""
@@ -2781,7 +2781,7 @@ class GatewayServer:
         record = self._pending_proposal(main, msg.proposal)
         if self.registry.free_slot(self.config.threads.max) is None:
             if msg.close is None:
-                raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+                raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
             self._open_thread(msg.close)
         self._starting.add(record.id)
         self._spawn(self._start_task(main, record, msg, conn), name=f"portico-thread-start-{main.number}")
@@ -2792,7 +2792,7 @@ class GatewayServer:
                 slot = self.registry.free_slot(self.config.threads.max)
                 if slot is None:
                     if msg.close is None:
-                        raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+                        raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
                     target = self._open_thread(msg.close)
                     self._closing.add(target.number)
                     try:
@@ -2802,7 +2802,7 @@ class GatewayServer:
                         self._resume_queued_after_close(target)
                     slot = self.registry.free_slot(self.config.threads.max)
                     if slot is None:
-                        raise ProtocolError("thread.limit", LIMIT_MESSAGE)
+                        raise ProtocolError("thread.limit", limit_message(self.config.threads.max))
                 # Main's New may have landed meanwhile (the lock, a close's log step): its
                 # pending proposals were dismissed then, and nothing starts from them now.
                 if record.state != "pending" or main.ended is not None:

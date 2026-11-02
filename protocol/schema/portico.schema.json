@@ -2949,6 +2949,18 @@
           "default": null,
           "title": "Seq"
         },
+        "threads_max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threads Max"
+        },
         "ts": {
           "title": "Ts",
           "type": "string"

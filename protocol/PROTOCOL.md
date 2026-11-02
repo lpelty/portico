@@ -495,6 +495,11 @@ look and scroll only). `act_hosts` is the deployment's alone: no
 `127.0.0.1`, `::1`) are always usable. Absent from an older gateway: the
 app then uses `true` for both switches and an empty list.
 
+v0.16: `threads_max?: int` (config `[threads] max`, 1 or 2): how many
+threads may be open beside Main, sent with `threads.v1` and absent
+otherwise. The app's proposal card asks to close a thread at this limit;
+an app that gets none (an older v0.16 gateway) assumes 2.
+
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
 folder (the `chat` root) when the deployment has roots of its own to show.
@@ -1090,7 +1095,8 @@ When the gateway's `hello` and the app's both list `threads.v1`:
 - **The capability.** The gateway lists `threads.v1` in single presentation
   when `[threads] max` is above 0 (0 to 2, default 2; anything else fails
   to load naming `threads.max`). With `max = 0` there is no tool and no
-  thread UI.
+  thread UI. `hello.threads_max` carries the limit, so the app's card
+  asks to close a thread at the right count.
 - **A thread is a chat** with `ChatSummary.thread` set. It takes the next
   session number as every chat does, has its own transcript and log, and
   survives a gateway restart in `index.json`. A closed thread's slot is
@@ -1134,8 +1140,8 @@ Input `{brief: string, files?: [string]}`; a relative path is Main's
 folder's. It stores the proposal (with the call's `tool_use_id`), sends
 `thread.proposal` (`pending`), and returns at once: "Proposed as Thread 1;
 it opens if the person starts it." (the slot it would take now), or, with
-both slots taken, "Proposed; two threads are open, so the person picks one
-to close before it starts." Refusals (`is_error`, nothing stored): "Not
+every slot taken, "Proposed; two threads are open, so the person picks one
+to close before it starts." ("a thread is open" with `max = 1`) Refusals (`is_error`, nothing stored): "Not
 proposed: give a brief of one or two sentences." and "Not proposed: <path>
 isn't a file." The agent never hears whether the person started it.
 
@@ -1205,8 +1211,8 @@ ended meanwhile (New during the close), nothing starts and the answer is
 `thread.proposal_unknown` (no such proposal in that chat),
 `thread.proposal_resolved` (already started or dismissed, or a start of it
 is in flight: a second Start makes no second thread), `thread.limit` ("two
-threads are open; close one to start another": at the limit with no
-`close`), `thread.not_open` (`close` names no open thread).
+threads are open; close one to start another", or with `max = 1` "a thread
+is open; close it to start another": at the limit with no `close`), `thread.not_open` (`close` names no open thread).
 
 ### `thread.dismiss` — `ThreadDismiss` *(app → gateway)*
 `chat` (Main's), `proposal`, `id`. "Not now": the proposal becomes

@@ -23,9 +23,7 @@ struct ThreadsPresentation: Equatable {
     }
 
     /// Main: the newest chat that has not ended and is not a thread.
-    var main: ChatSummary? {
-        chats.filter { $0.ended == nil && $0.thread == nil }.max { $0.chat < $1.chat }
-    }
+    var main: ChatSummary? { ChatSummary.main(in: chats) }
 
     /// The open threads, by slot.
     var open: [ChatSummary] {
@@ -81,6 +79,20 @@ struct ThreadsPresentation: Equatable {
         return ThreadRowPresentation(
             chat: summary.chat, label: label, title: SessionPresentation(summary: summary).title, status: status, key: key)
     }
+}
+
+/// Why a thread's close was refused: the gateway's code and message.
+struct CloseFailure: Equatable {
+    /// The codes of a log step that could not start (its turn's engine
+    /// could not start, or refused the message; Ruling 8).
+    static let logStepCannotStart: Set<String> = ["engine.start_failed", "engine.send_failed"]
+
+    let code: String
+    let message: String
+
+    /// "Close without logging" is the way out only when the log step could
+    /// not start; `chat.busy` or `thread.not_open` are not helped by it.
+    var offersCloseWithoutLogging: Bool { Self.logStepCannotStart.contains(code) }
 }
 
 /// One conversation's row under the sidebar's card (AM1).
@@ -204,7 +216,8 @@ extension AppModel {
     /// Main and the threads as the window shows them now.
     var threads: ThreadsPresentation {
         ThreadsPresentation(
-            chats: chats, current: shownChat, waiting: Set(openCards.filter { !$0.value.isEmpty }.keys))
+            chats: chats, current: shownChat, limit: hello?.threadsMax ?? 2,
+            waiting: Set(openCards.filter { !$0.value.isEmpty }.keys))
     }
 
     /// ⌃0 Main, ⌃1 Thread 1, ⌃2 Thread 2: that conversation, out of the
@@ -230,10 +243,8 @@ extension AppModel {
         ProposalPresentation(proposal: proposal, threads: threads)
     }
 
-    /// "Not now": the gateway answers with the proposal `dismissed`.
-    func dismissProposal(_ proposal: ThreadProposal) {
-        send(.threadDismiss(ThreadDismiss(chat: proposal.chat, proposal: proposal.proposal, id: Self.requestId())))
-    }
+    /// Not now is out for this proposal: its card waits for the answer.
+    var dismissingProposals: Set<String> { Set(dismissing.keys) }
 
     /// Close thread: a thread mid-turn asks "Thread N is still working.
     /// Close it anyway?" first (`closingThread`); otherwise it closes now.

@@ -47,12 +47,14 @@ final class ThreadsTests: XCTestCase {
             files: files, state: state, thread: thread)
     }
 
-    private func model(threads: Bool = true, chats: [ChatSummary]) -> (AppModel, Sent) {
+    private func model(threads: Bool = true, threadsMax: Int? = nil, chats: [ChatSummary]) -> (AppModel, Sent) {
         let model = AppModel()
         let sent = Sent()
         model.outbound = { sent.frames.append($0) }
         model.setConnection(.connected)
-        model.apply(.hello(Self.hello(threads: threads)))
+        var hello = Self.hello(threads: threads)
+        hello.threadsMax = threadsMax
+        model.apply(.hello(hello))
         model.apply(.chatList(ChatList(chats: chats)))
         return (model, sent)
     }
@@ -321,6 +323,34 @@ final class ThreadsTests: XCTestCase {
         XCTAssertNotNil(dismiss.id)
     }
 
+    func testADoubleClickOnNotNowSendsOneDismiss() {
+        let (model, sent) = model(chats: [Self.main(3)])
+        model.dismissProposal(Self.proposal())
+        model.dismissProposal(Self.proposal())
+        let dismisses = sent.frames.compactMap { if case .threadDismiss(let d) = $0 { d } else { nil } }
+        XCTAssertEqual(dismisses.count, 1)
+        XCTAssertTrue(model.dismissingProposals.contains("p1"))
+
+        // Refused: Not now works again. Answered: no longer in flight.
+        model.apply(.error(ErrorMessage(code: "thread.proposal_resolved", message: "already started", chat: 3, id: dismisses[0].id)))
+        XCTAssertFalse(model.dismissingProposals.contains("p1"))
+        model.dismissProposal(Self.proposal())
+        model.apply(.threadProposal(Self.proposal(state: .dismissed)))
+        XCTAssertFalse(model.dismissingProposals.contains("p1"))
+        XCTAssertEqual(sent.frames.filter { if case .threadDismiss = $0 { true } else { false } }.count, 2)
+    }
+
+    func testAStartedCardStaysDimmedUntilItsThreadIsListed() {
+        let (model, sent) = model(chats: [Self.main(3)])
+        model.startThread(Self.proposal(), closing: nil)
+        guard case .threadStart(let start)? = sent.frames.last else { return XCTFail("expected thread.start") }
+        model.apply(.chatState(ChatState(chat: 5, state: .idle, id: start.id)))
+        model.apply(.threadProposal(Self.proposal(state: .started, thread: 5)))
+        XCTAssertEqual(model.startingProposal, "p1", "no \"Thread started\" placeholder: dimmed until listed")
+        model.apply(.chatList(ChatList(chats: [Self.main(3), Self.thread(5, slot: 1)])))
+        XCTAssertNil(model.startingProposal)
+    }
+
     // MARK: - closing
 
     func testClosingAWorkingThreadAsksFirst() {
@@ -358,7 +388,8 @@ final class ThreadsTests: XCTestCase {
         guard case .threadClose(let close)? = sent.frames.last else { return XCTFail("expected thread.close") }
         model.apply(.error(ErrorMessage(code: "engine.send_failed", message: "The log step couldn't start.", chat: 5, id: close.id)))
         XCTAssertNil(model.closingThreads[5])
-        XCTAssertEqual(model.closeFailures[5], "The log step couldn't start.")
+        XCTAssertEqual(model.closeFailures[5]?.message, "The log step couldn't start.")
+        XCTAssertEqual(model.closeFailures[5]?.offersCloseWithoutLogging, true)
 
         model.closeThreadWithoutLogging(chat: 5)
         guard case .threadClose(let plain)? = sent.frames.last else { return XCTFail("expected thread.close") }
@@ -370,6 +401,48 @@ final class ThreadsTests: XCTestCase {
 
         model.apply(.chatState(ChatState(chat: 5, state: .stopped, id: plain.id)))
         XCTAssertNil(model.closingThreads[5])
+    }
+
+    func testOnlyALogStepThatCannotStartOffersClosingWithoutLogging() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
+        model.requestCloseThread(chat: 5)
+        guard case .threadClose(let busy)? = sent.frames.last else { return XCTFail("expected thread.close") }
+        model.apply(.error(ErrorMessage(code: "chat.busy", message: "a log step is running in chat 5", chat: 5, id: busy.id)))
+        XCTAssertEqual(model.closeFailures[5]?.code, "chat.busy")
+        XCTAssertEqual(model.closeFailures[5]?.offersCloseWithoutLogging, false)
+
+        model.requestCloseThread(chat: 6)
+        guard case .threadClose(let start)? = sent.frames.last else { return XCTFail("expected thread.close") }
+        model.apply(.error(ErrorMessage(code: "engine.start_failed", message: "the engine could not start", chat: 6, id: start.id)))
+        XCTAssertEqual(model.closeFailures[6]?.offersCloseWithoutLogging, true)
+    }
+
+    // MARK: - the limit the gateway sets
+
+    func testMaxOneWithOneOpenThreadIsAtTheLimit() throws {
+        let (model, _) = model(threadsMax: 1, chats: [Self.main(3), Self.thread(5, slot: 1)])
+        XCTAssertEqual(model.threads.limit, 1)
+        XCTAssertTrue(model.threads.atLimit)
+        let card = model.proposalPresentation(for: Self.proposal())
+        XCTAssertEqual(card.kind, .atLimit)
+        XCTAssertEqual(card.title, "Close a thread to start another")
+    }
+
+    func testNoThreadsMaxBehavesAsTwo() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        XCTAssertNil(model.hello?.threadsMax)
+        XCTAssertEqual(model.threads.limit, 2)
+        let card = model.proposalPresentation(for: Self.proposal())
+        XCTAssertEqual(card.kind, .offer)
+        XCTAssertEqual(card.title, "Start Thread 2")
+    }
+
+    func testTheHelloCarriesThreadsMax() throws {
+        let json = #"{"type":"hello","protocol":1,"gateway_version":"0.16.0","epoch":"e","brand":{"name":"Portico","agent_name":"Acme"},"actions":[],"roots":[],"commands":[],"capabilities":["threads.v1"],"threads_max":1,"ts":"2026-11-02T12:00:00Z"}"#
+        guard case .hello(let hello) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else {
+            return XCTFail("expected hello")
+        }
+        XCTAssertEqual(hello.threadsMax, 1)
     }
 
     // MARK: - a thread calling you

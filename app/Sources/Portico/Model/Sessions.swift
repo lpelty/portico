@@ -57,9 +57,7 @@ extension AppModel {
 
     /// The live session (Main): the newest chat that has not ended and is
     /// not a thread (v0.16, Ruling 11: whatever the capability says).
-    var liveSession: ChatSummary? {
-        chats.filter { $0.ended == nil && $0.thread == nil }.max { $0.chat < $1.chat }
-    }
+    var liveSession: ChatSummary? { ChatSummary.main(in: chats) }
 
     /// Ended sessions, newest first.
     var earlierSessions: [ChatSummary] {
@@ -330,6 +328,14 @@ extension AppModel {
     /// "Not now": the nudge stays away for this session.
     func dismissNudge(chat: Int) {
         nudgeDismissed.insert(chat)
+    }
+}
+
+extension ChatSummary {
+    /// Main in `chats`: the newest chat that has not ended and is not a
+    /// thread (v0.16, Ruling 11). The one place Main is decided.
+    static func main(in chats: [ChatSummary]) -> ChatSummary? {
+        chats.filter { $0.ended == nil && $0.thread == nil }.max { $0.chat < $1.chat }
     }
 }
 

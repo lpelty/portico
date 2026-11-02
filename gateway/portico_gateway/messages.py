@@ -536,6 +536,9 @@ class HelloServer(Envelope):
     # v0.12: the deployment's viewer defaults; the app uses them until the
     # person changes a switch. Absent from an older gateway.
     viewer_defaults: ViewerDefaults | None = None
+    # v0.16: how many threads may be open beside Main (config ``[threads] max``),
+    # sent with ``threads.v1``; absent otherwise. The app's limit card follows it.
+    threads_max: int | None = None
 
 
 class ChatList(Envelope):
@@ -1248,6 +1251,7 @@ def example_messages() -> dict[str, BaseModel]:
             commands=["log"],
             capabilities=[
                 "cards.form", "files", "producer", "sessions", "files.search", "context", "spaces.v1", "spaces.refresh",
+                "threads.v1",
             ],
             presentation="single",
             can_log=True,
@@ -1257,6 +1261,7 @@ def example_messages() -> dict[str, BaseModel]:
             permission_mode="auto",
             hide_session_folder=False,
             viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
+            threads_max=2,
         ),
         ChatList(
             ts=_TS,

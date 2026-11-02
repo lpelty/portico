@@ -680,6 +680,9 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The deployment's defaults for the viewer switches (v0.12, config
     /// `[viewer]`); absent from an older gateway.
     var viewerDefaults: ViewerDefaults? = nil
+    /// How many threads may be open beside Main (v0.16, config `[threads]
+    /// max`), sent with `threads.v1`; absent from an older gateway (2).
+    var threadsMax: Int? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
@@ -688,6 +691,7 @@ struct HelloServer: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts
         case viewerDefaults = "viewer_defaults"
+        case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
         case canLog = "can_log"
         case configStale = "config_stale"

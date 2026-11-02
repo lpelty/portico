@@ -545,7 +545,7 @@ def hello_for(
     ``capabilities`` (v0.8) adds ``services.restart_all`` when the
     deployment can restart all its services, (v0.11) ``sessions.clear``
     in single presentation, and (v0.16) ``threads.v1`` in single
-    presentation with ``[threads] max`` above 0.
+    presentation with ``[threads] max`` above 0, with ``threads_max`` set to it.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
@@ -578,6 +578,7 @@ def hello_for(
         permission_mode=config.permission_mode,
         hide_session_folder=config.files.hide_session_folder,
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
+        threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 
