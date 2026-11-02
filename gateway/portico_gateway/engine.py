@@ -892,7 +892,7 @@ def without_price(description: str) -> str:
     """``description`` without its price parts (Larry 11-02: no pricing shown).
 
     API-key logins append `` · $4/$20 per Mtok`` (sometimes with a long-prompt
-    rate); it is wrong for Bedrock and not for display. Any `` · `` part
+    rate); it is wrong for other providers and not for display. Any `` · `` part
     holding a ``$`` amount or "per Mtok" goes; the others stay in order.
     """
     parts = [p for p in description.split(" · ") if not re.search(r"\$\d|per Mtok", p)]
