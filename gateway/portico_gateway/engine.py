@@ -806,6 +806,17 @@ def friendly_model_name(model: str | None, environ: Mapping[str, str]) -> str | 
     return None
 
 
+def without_price(description: str) -> str:
+    """``description`` without its price parts (Larry 11-02: no pricing shown).
+
+    API-key logins append `` · $4/$20 per Mtok`` (sometimes with a long-prompt
+    rate); it is wrong for Bedrock and not for display. Any `` · `` part
+    holding a ``$`` amount or "per Mtok" goes; the others stay in order.
+    """
+    parts = [p for p in description.split(" · ") if not re.search(r"\$\d|per Mtok", p)]
+    return " · ".join(parts).strip()
+
+
 def model_choices(raw: Any) -> list[ModelChoice] | None:
     """The engine's ``models`` (``get_server_info()``) as ``ModelChoice``s (v0.15); ``None`` when not a list.
 
@@ -813,6 +824,7 @@ def model_choices(raw: Any) -> list[ModelChoice] | None:
     an entry without a usable ``value`` is skipped, a missing
     ``displayName`` falls back to the value, and ``resolvedModel`` is kept
     as ``resolved_model`` when it is a non-empty string. Order is kept.
+    Prices are dropped from descriptions (``without_price``).
     """
     if not isinstance(raw, list):
         return None
@@ -830,7 +842,7 @@ def model_choices(raw: Any) -> list[ModelChoice] | None:
             ModelChoice(
                 value=value,
                 display_name=name if isinstance(name, str) and name.strip() else value,
-                description=text if isinstance(text, str) else "",
+                description=without_price(text) if isinstance(text, str) else "",
                 resolved_model=resolved if isinstance(resolved, str) and resolved.strip() else None,
             )
         )

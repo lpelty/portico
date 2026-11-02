@@ -12,7 +12,8 @@
 - **The list is there before the first message,** and Default names the
   model it runs ("Fable 5.1", not "Default"), in the strip and in its menu
   row. Until a list has ever arrived, the strip shows the name without a
-  menu.
+  menu. Descriptions show no pricing (an API-key login adds it; it is
+  wrong for Bedrock).
 - **Text size.** Settings → Appearance has a Text size setting, under
   Appearance, which is now a pop-up. It scales the conversation, the
   sidebar (the Files tree's names and headers too), the menus and the

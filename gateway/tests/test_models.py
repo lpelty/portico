@@ -726,3 +726,20 @@ def test_hooks_off_merges_into_existing_settings() -> None:
 
     assert json.loads(with_hooks_disabled(None)) == {"disableAllHooks": True}
     assert json.loads(with_hooks_disabled('{"model": "sonnet"}')) == {"model": "sonnet", "disableAllHooks": True}
+
+
+def test_model_choices_drop_the_price_from_descriptions() -> None:
+    """Larry 11-02: no pricing in the menu (API-key logins add it; it's wrong for Bedrock); the rest stays."""
+    raw = [
+        {"value": "default", "displayName": "Default (recommended)",
+         "description": "Use the default model (currently Opus 5.5) · $4/$20 per Mtok"},
+        {"value": "haiku", "displayName": "Haiku 5.5",
+         "description": "Haiku 5.5 · Fastest for quick answers · $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100k)"},
+        {"value": "fable", "displayName": "Fable 5.1",
+         "description": "Fable 5.1 · Most capable for your hardest and longest-running tasks"},
+    ]
+    assert [c.description for c in model_choices(raw)] == [
+        "Use the default model (currently Opus 5.5)",
+        "Haiku 5.5 · Fastest for quick answers",
+        "Fable 5.1 · Most capable for your hardest and longest-running tasks",
+    ]
