@@ -108,6 +108,7 @@ final class AppModel: ObservableObject {
             if let focus = viewerFocus, focus.chat != selected { endFocus() }
             if selected != nil { conversationShown = true }
             if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
+            if let selected { noteThreadSeen(chat: selected) }
         }
     }
     /// The first `chat.list` of this run has arrived (v0.6). Until then the
@@ -254,6 +255,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var dismissing: [String: String] = [:]
     /// Per thread, the calling cards put off with Later (card ids).
     @Published private(set) var dismissedCalls: [Int: Set<String>] = [:]
+    /// Threads whose turn ended while you were elsewhere, not opened since
+    /// (§9.3): the row's New reply dot and Main's done card. In memory only.
+    @Published var newThreadReplies: Set<Int> = []
+    /// Threads whose done card was dismissed (the dot stays).
+    @Published var dismissedDone: Set<Int> = []
     /// The deployment's services from the latest `services.status`; `nil`
     /// until the first one on this connection ("Checking…").
     @Published var services: [Service]?
@@ -1021,6 +1027,7 @@ final class AppModel: ObservableObject {
                 finished.outcome != .error || turnHadAgentOutput(chat: chat, turn: finished.turn)
             {
                 noteLastReply(chat: chat, at: finished.ts)
+                noteThreadTurnFinished(chat: chat)
             }
             if FolderRelist.triggers(message, tool: { toolName(chat: chat, toolUseId: $0) }) {
                 scheduleRelist(chat: chat)
@@ -2153,6 +2160,8 @@ final class AppModel: ObservableObject {
         closingThreads[chat] = nil
         closeFailures[chat] = nil
         dismissedCalls[chat] = nil
+        newThreadReplies.remove(chat)
+        dismissedDone.remove(chat)
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
     }

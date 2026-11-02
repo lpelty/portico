@@ -28,6 +28,9 @@ final class ThreadFitTests: XCTestCase {
         main.lastReply = Self.created
         model.apply(.chatList(ChatList(chats: [main, Self.thread(5, slot: 1), Self.thread(6, slot: 2)])))
         model.open(chat: 5)
+        // Thread 2 finished while the window was in Thread 1: its row has
+        // the widest status, the dot and New reply (§9.3).
+        model.newThreadReplies = [6]
         return model
     }
 
@@ -63,6 +66,7 @@ final class ThreadFitTests: XCTestCase {
     func testTheThreadsSidebarSectionFitsTheDefaultSidebarAt100And150Percent() throws {
         let model = modelInThread()
         XCTAssertEqual(model.sidebarCard?.chat, 5, "the window shows Thread 1")
+        XCTAssertEqual(model.sidebarThreads.rows(now: Date()).map(\.status).last, .newReply)
         let sidebar = ColumnWidths.sidebarDefault
         for scale in [CGFloat(1), 1.5] {
             let widths = Widths()

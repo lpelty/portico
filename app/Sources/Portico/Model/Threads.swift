@@ -16,16 +16,20 @@ struct ThreadsPresentation: Equatable {
     let waiting: Set<Int>
     /// Threads whose last close was refused, with why (`closeFailures`).
     let closeFailures: [Int: CloseFailure]
+    /// Threads whose turn ended while you were elsewhere, not opened
+    /// since (§9.3): their rows say New reply.
+    let newReplies: Set<Int>
 
     init(
         chats: [ChatSummary], current: Int?, limit: Int = 2, waiting: Set<Int> = [],
-        closeFailures: [Int: CloseFailure] = [:]
+        closeFailures: [Int: CloseFailure] = [:], newReplies: Set<Int> = []
     ) {
         self.chats = chats
         self.current = current
         self.limit = limit
         self.waiting = waiting
         self.closeFailures = closeFailures
+        self.newReplies = newReplies
     }
 
     /// Main: the newest chat that has not ended and is not a thread.
@@ -81,6 +85,7 @@ struct ThreadsPresentation: Equatable {
             switch row.status {
             case .working: activity = "working now"
             case .needsYou: activity = "needs you"
+            case .newReply: activity = "new reply"
             case .lastReply(let ago): activity = "last reply \(ago)"
             case .none: activity = nil
             }
@@ -114,6 +119,8 @@ struct ThreadsPresentation: Equatable {
             status = .needsYou
         } else if summary.state == .working {
             status = .working
+        } else if newReplies.contains(summary.chat) {
+            status = .newReply
         } else if let reply = SessionTime.parse(summary.lastReply) {
             status = .lastReply(SessionTime.ago(reply, now: now))
         } else {
@@ -178,6 +185,9 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     enum Status: Equatable {
         case working
         case needsYou
+        /// The turn ended while you were elsewhere and the thread has not
+        /// been opened since: an accent dot and "New reply" (§9.3).
+        case newReply
         /// The last reply's age, "5 min ago".
         case lastReply(String)
         case none
@@ -203,6 +213,7 @@ struct ThreadRowPresentation: Equatable, Identifiable {
         switch status {
         case .working: "\(label), working"
         case .needsYou: "\(label), needs you"
+        case .newReply: "\(label), new reply"
         case .lastReply(let ago): "\(label), last reply \(ago)"
         case .none: label
         }
@@ -307,6 +318,61 @@ struct CallingCard: Equatable, Identifiable {
     var id: String { "\(thread):\(cardId)" }
 }
 
+/// A thread finishing while you are elsewhere (§9.3): "Thread 1 is done",
+/// the first line of its last reply, Go to Thread 1 and Dismiss. Drawn by
+/// the app in Main, like the calling card: never a gateway frame, never
+/// in Main's transcript or its agent's context. In memory only, so turns
+/// that ended before a restart never show one.
+struct DoneCard: Equatable, Identifiable {
+    /// The thread's chat.
+    let thread: Int
+    let slot: Int
+    /// "Thread 1 is done".
+    let title: String
+    /// The first line of the thread's last reply; `nil` when its last turn
+    /// said nothing.
+    let line: String?
+    /// "Go to Thread 1".
+    let goLabel: String
+    /// Its tooltip, the key spelled out: "Control-1".
+    let goHelp: String
+
+    var id: String { "done:\(thread)" }
+
+    /// Main's done cards: one per open thread with a new reply whose card
+    /// was not dismissed. A thread with a card open (a question or a
+    /// permission) shows its calling card instead.
+    static func cards(
+        threads: ThreadsPresentation, dismissed: Set<Int>, transcripts: [Int: [TranscriptItem]]
+    ) -> [DoneCard] {
+        threads.open.compactMap { summary in
+            guard let info = summary.thread, threads.newReplies.contains(summary.chat),
+                !dismissed.contains(summary.chat), !threads.waiting.contains(summary.chat)
+            else { return nil }
+            return DoneCard(
+                thread: summary.chat, slot: info.slot, title: "\(info.label) is done",
+                line: replyLine(in: transcripts[summary.chat] ?? []),
+                goLabel: ThreadsPresentation.goLabel(label: info.label), goHelp: ThreadsPresentation.keyName(slot: info.slot))
+        }
+    }
+
+    /// The first non-empty line of the last turn's last reply, trimmed:
+    /// only text after the person's last message counts, so a turn that
+    /// said nothing never borrows an older reply.
+    static func replyLine(in items: [TranscriptItem]) -> String? {
+        let start = items.lastIndex { if case .userText = $0 { true } else { false } }.map { $0 + 1 } ?? 0
+        for item in items[start...].reversed() {
+            guard case .assistantText(_, let text) = item else { continue }
+            if let line = text.split(whereSeparator: \.isNewline)
+                .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
+            {
+                return line
+            }
+        }
+        return nil
+    }
+}
+
 extension AppModel {
     /// Threads show in single presentation with a gateway that lists `threads.v1`.
     var threadsOn: Bool { offers(ThreadProposal.capability) && isSinglePresentation }
@@ -318,7 +384,8 @@ extension AppModel {
     var threads: ThreadsPresentation {
         ThreadsPresentation(
             chats: chats, current: shownChat, limit: hello?.threadsMax ?? 2,
-            waiting: Set(openCards.filter { !$0.value.isEmpty }.keys), closeFailures: closeFailures)
+            waiting: Set(openCards.filter { !$0.value.isEmpty }.keys), closeFailures: closeFailures,
+            newReplies: newThreadReplies)
     }
 
     /// The sidebar's card (§2.5): the open thread on screen, else Main.
@@ -335,7 +402,7 @@ extension AppModel {
         let now = threads
         return ThreadsPresentation(
             chats: now.chats, current: sidebarCard?.chat, limit: now.limit, waiting: now.waiting,
-            closeFailures: now.closeFailures)
+            closeFailures: now.closeFailures, newReplies: now.newReplies)
     }
 
     /// The thread on screen ended (closed here or elsewhere): the window
@@ -415,6 +482,34 @@ extension AppModel {
                 line: Self.callingLine(card), goLabel: ThreadsPresentation.goLabel(label: info.label),
                 goHelp: ThreadsPresentation.keyName(slot: info.slot))
         }
+    }
+
+    /// Main's done cards (§9.3): only in Main, with threads on.
+    func doneCards(in chat: Int) -> [DoneCard] {
+        guard threadsOn, chat == liveSession?.chat else { return [] }
+        return DoneCard.cards(threads: threads, dismissed: dismissedDone, transcripts: transcripts)
+    }
+
+    /// A live turn ended in `chat`: a thread you are not in gets its New
+    /// reply dot and Main's done card (again, if an earlier one was
+    /// dismissed). Main, other chats and the thread on screen get nothing.
+    func noteThreadTurnFinished(chat: Int) {
+        guard threadsOn, let summary = summary(of: chat), summary.thread != nil, summary.ended == nil,
+            shownChat != chat
+        else { return }
+        newThreadReplies.insert(chat)
+        dismissedDone.remove(chat)
+    }
+
+    /// The thread was opened: its dot and its done card go.
+    func noteThreadSeen(chat: Int) {
+        if newThreadReplies.contains(chat) { newThreadReplies.remove(chat) }
+        if dismissedDone.contains(chat) { dismissedDone.remove(chat) }
+    }
+
+    /// Dismiss on a done card: the card goes; the row keeps New reply.
+    func dismissDone(_ card: DoneCard) {
+        dismissedDone.insert(card.thread)
     }
 
     /// A question card's first question, first line; a permission's summary.

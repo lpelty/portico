@@ -124,6 +124,7 @@ struct ConversationView: View {
             let drawn = self.drawn
             let working = model.showsWorkingLine(chat: chat)
             let calling = model.callingCards(in: chat)
+            let done = model.doneCards(in: chat)
             let headed = sessionDivider != nil || items.isEmpty
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let divider = sessionDivider {
@@ -160,6 +161,15 @@ struct ConversationView: View {
                         .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
                         .id("calling:\(card.id)")
                         .modifier(ReportsRowFrame(rows: rows, id: "calling:\(card.id)", isRow: false))
+                }
+                // A thread that finished while you were here (§9.3): the
+                // same app-drawn kind, after the calls.
+                ForEach(done) { card in
+                    DoneCardView(card: card)
+                        .atReplyWidth()
+                        .padding(.top, headed || !drawn.isEmpty || !calling.isEmpty ? TranscriptSpacing.itemGap : 0)
+                        .id(card.id)
+                        .modifier(ReportsRowFrame(rows: rows, id: card.id, isRow: false))
                 }
                 if working {
                     WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
@@ -402,7 +412,8 @@ struct ConversationView: View {
     /// Changes whenever an item is added or the streaming tail grows.
     private var scrollKey: String {
         let working = model.showsWorkingLine(chat: chat) ? ":w" : ""
-        let calling = model.callingCards(in: chat).map(\.id).joined(separator: ",")
+        let calling = (model.callingCards(in: chat).map(\.id) + model.doneCards(in: chat).map(\.id))
+            .joined(separator: ",")
         // A card docking or leaving changes the transcript's height (v0.16).
         let docked = model.dockedCard(for: chat).map { ":d:" + $0.id } ?? ""
         return itemsKey + working + (calling.isEmpty ? "" : ":c:" + calling) + docked

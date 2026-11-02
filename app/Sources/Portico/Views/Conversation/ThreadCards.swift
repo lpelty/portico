@@ -301,6 +301,48 @@ struct CallingCardView: View {
     }
 }
 
+/// A thread finishing while you are in Main (§9.3): "Thread 1 is done",
+/// the first line of its last reply, Go to Thread 1 and Dismiss. Drawn by
+/// the app like the calling card; never part of Main's transcript.
+struct DoneCardView: View {
+    let card: DoneCard
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.bubble")
+                    .font(Theme.iconFont(12))
+                    .foregroundStyle(model.brand.accent ?? Theme.accent)
+                    .accessibilityHidden(true)
+                Text(card.title)
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(Theme.text)
+            }
+            if let line = card.line {
+                Text(line)
+                    .scaledFont(13)
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(line)
+            }
+            HStack(spacing: 8) {
+                Button(card.goLabel) { model.switchToConversation(slot: card.slot) }
+                    .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
+                    .help(card.goHelp)
+                Button("Dismiss") { model.dismissDone(card) }
+                    .buttonStyle(PillButtonStyle(kind: .quiet))
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// Why a thread's close was refused, and "Close without logging" when its
 /// log step could not start: on the thread's card, its row in Main, and
 /// the limit card (v0.16, carry 2).

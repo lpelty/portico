@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The other conversations under the sidebar's card (v0.16 §2.5, AM1):
-/// label, title and a status (working spinner, amber Needs you, or the
-/// last reply's age). No key glyph: the tooltip spells the key (§9.2). A
+/// label, title and a status (working spinner, amber Needs you, an accent
+/// dot and New reply, or the last reply's age). No key glyph: the tooltip spells the key (§9.2). A
 /// click switches; a thread's row has Close
 /// thread in its context menu.
 struct ThreadRows: View {
@@ -87,6 +87,19 @@ private struct ThreadRow: View {
                     .scaledFont(11, weight: .medium)
             }
             .foregroundStyle(Theme.wait)
+        case .newReply:
+            // §9.3: until the thread is opened.
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(model.brand.accent ?? Theme.accent)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                Text("New reply")
+                    .scaledFont(11, weight: .medium)
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         case .lastReply(let ago):
             Text(ago)
                 .scaledFont(11)

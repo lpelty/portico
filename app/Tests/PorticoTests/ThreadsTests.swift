@@ -561,6 +561,121 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(model.callingCards(in: 3), [])
     }
 
+    // MARK: - a thread finishing (§9.3)
+
+    /// One live turn in `chat`: the person's message, the agent's reply, the finish.
+    private func runTurn(_ model: AppModel, chat: Int, turn: Int = 1, reply: String, seq: Int = 1) {
+        model.apply(.turnStarted(TurnStarted(chat: chat, turn: turn, seq: seq)))
+        model.apply(.userText(UserText(chat: chat, turn: turn, text: "Go on.", seq: seq + 1)))
+        model.apply(.textDelta(TextDelta(chat: chat, turn: turn, text: reply, seq: seq + 2)))
+        model.apply(.turnFinished(TurnFinished(chat: chat, turn: turn, outcome: .done, seq: seq + 3)))
+    }
+
+    func testTheReplyLineIsTheFirstLineOfTheLastTurnsReply() {
+        let items: [TranscriptItem] = [
+            .userText(UserText(chat: 5, turn: 1, text: "Start.")),
+            .assistantText(id: "a1", text: "Older reply."),
+            .userText(UserText(chat: 5, turn: 2, text: "Go on.")),
+            .assistantText(id: "a2", text: "Looking."),
+            .assistantText(id: "a3", text: "\n   The notes page is built.  \nIt saves per email."),
+            .turnMarker(TurnMarker(turn: 2, outcome: .done)),
+        ]
+        XCTAssertEqual(DoneCard.replyLine(in: items), "The notes page is built.")
+        XCTAssertNil(
+            DoneCard.replyLine(in: Array(items.prefix(3))), "a turn with no reply of its own has no line, not an older one")
+        XCTAssertNil(DoneCard.replyLine(in: []))
+    }
+
+    func testANewReplyRowAndItsOrder() throws {
+        let now = try XCTUnwrap(SessionTime.parse("2026-11-02T14:05:00Z"))
+        let chats = [Self.main(3), Self.thread(5, slot: 1, lastReply: "2026-11-02T14:00:00Z"), Self.thread(6, slot: 2, state: .working)]
+        let rows = ThreadsPresentation(chats: chats, current: 3, newReplies: [5, 6]).rows(now: now)
+        XCTAssertEqual(rows.map(\.chat), [5, 6], "a new reply does not reorder the rows")
+        XCTAssertEqual(rows[0].status, .newReply)
+        XCTAssertEqual(rows[0].spokenLabel, "Thread 1, new reply")
+        XCTAssertEqual(rows[1].status, .working, "working again: the spinner, not the dot")
+        let waiting = ThreadsPresentation(chats: chats, current: 3, waiting: [5], newReplies: [5]).rows(now: now)
+        XCTAssertEqual(waiting.first { $0.chat == 5 }?.status, .needsYou, "Needs you wins over a new reply")
+    }
+
+    func testAThreadFinishingWhileYouAreInMainShowsADoneCard() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
+        model.open(chat: 3)
+        let count = sent.frames.count
+        runTurn(model, chat: 5, reply: "The notes page is built.\nIt saves per email.")
+
+        XCTAssertEqual(model.doneCards(in: 3), [DoneCard(
+            thread: 5, slot: 1, title: "Thread 1 is done", line: "The notes page is built.", goLabel: "Go to Thread 1",
+            goHelp: "Control-1")])
+        XCTAssertEqual(model.doneCards(in: 5), [], "only Main shows it")
+        XCTAssertEqual(model.doneCards(in: 6), [])
+        XCTAssertEqual(model.threads.rows(now: Date()).first { $0.chat == 5 }?.status, .newReply)
+        // Never in Main's transcript, never sent.
+        XCTAssertEqual(model.transcripts[3] ?? [], [])
+        XCTAssertEqual(sent.frames.count, count)
+    }
+
+    func testOpeningTheThreadClearsTheCardAndTheDot() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 3)
+        runTurn(model, chat: 5, reply: "Done.")
+        XCTAssertEqual(model.doneCards(in: 3).count, 1)
+
+        model.switchToConversation(slot: 1)
+        model.switchToConversation(slot: 0)
+        XCTAssertEqual(model.doneCards(in: 3), [])
+        XCTAssertNotEqual(model.threads.rows(now: Date()).first { $0.chat == 5 }?.status, .newReply)
+    }
+
+    func testDismissClearsTheCardOnlyAndTheNextTurnShowsItAgain() throws {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 3)
+        runTurn(model, chat: 5, reply: "Done.")
+        model.dismissDone(try XCTUnwrap(model.doneCards(in: 3).first))
+        XCTAssertEqual(model.doneCards(in: 3), [])
+        XCTAssertEqual(model.threads.rows(now: Date()).first { $0.chat == 5 }?.status, .newReply, "the dot stays")
+
+        runTurn(model, chat: 5, turn: 2, reply: "Done again.", seq: 5)
+        XCTAssertEqual(model.doneCards(in: 3).map(\.line), ["Done again."])
+    }
+
+    func testATurnEndingInTheThreadOnScreenShowsNothing() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 5)
+        runTurn(model, chat: 5, reply: "Done.")
+        model.switchToConversation(slot: 0)
+        XCTAssertEqual(model.doneCards(in: 3), [])
+        XCTAssertNotEqual(model.threads.rows(now: Date()).first { $0.chat == 5 }?.status, .newReply)
+    }
+
+    func testACallingCardTakesPrecedenceOverADoneCard() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 3)
+        runTurn(model, chat: 5, reply: "Done.")
+        model.apply(.cardAsk(Self.question(chat: 5, id: "card-9")))
+        XCTAssertEqual(model.callingCards(in: 3).map(\.thread), [5])
+        XCTAssertEqual(model.doneCards(in: 3), [], "the question shows, not the done card")
+    }
+
+    func testAReplayedTurnIsNotADoneCard() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 3)
+        model.apply(.chatHistory(ChatHistory(chat: 5, events: [
+            .turnStarted(TurnStarted(chat: 5, turn: 1, seq: 1)),
+            .textDelta(TextDelta(chat: 5, turn: 1, text: "Done before the restart.", seq: 2)),
+            .turnFinished(TurnFinished(chat: 5, turn: 1, outcome: .done, seq: 3)),
+        ], truncated: false)))
+        XCTAssertEqual(model.doneCards(in: 3), [], "turns that ended before this run are not news")
+    }
+
+    func testMainFinishingIsNeverADoneCard() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 5)
+        runTurn(model, chat: 3, reply: "Main's reply.")
+        model.switchToConversation(slot: 0)
+        XCTAssertEqual(model.doneCards(in: 3), [])
+    }
+
     // MARK: - loading and switching
 
     func testAChatListNamingALiveThreadLoadsIt() {
