@@ -192,6 +192,9 @@ final class AppModel: ObservableObject {
     /// Per chat, the models it can switch to and the one it runs on (v0.15,
     /// `models.v1`): the latest `models` frame, each replacing the last.
     @Published private(set) var models: [Int: Models] = [:]
+    /// Per chat, the name of a model just chosen (v0.15): the strip shows it
+    /// at once, until the next `context.usage` names the model itself.
+    @Published private(set) var chosenModelName: [Int: String] = [:]
     /// The agent's commands and skills per folder, from `chat.commands`
     /// (v0.11 item 66), for the composer's slash list.
     @Published private(set) var commandsByFolder: [String: [AgentCommand]] = [:]
@@ -687,6 +690,7 @@ final class AppModel: ObservableObject {
             // The models too (v0.15): the gateway sends its kept list for
             // each live session after hello, so nothing older outlives it.
             models = [:]
+            chosenModelName = [:]
             servicesFallback?.cancel()
             servicesFallback = nil
             // A log or renewal sent on the old connection was never
@@ -805,10 +809,18 @@ final class AppModel: ObservableObject {
 
         case .contextUsage(let usage):
             contextUsage[usage.chat] = usage
+            chosenModelName[usage.chat] = nil
             if let name = usage.displayModel { latestModel = name }
             noteSeq(of: message)
 
         case .models(let list):
+            // A switch (the current choice changed): the strip names the
+            // choice now rather than the old model until the next reply.
+            if let before = models[list.chat], before.current != list.current {
+                chosenModelName[list.chat] = list.choices
+                    .first { $0.value == (list.current ?? Models.defaultValue) }
+                    .map { ModelMenuPresentation.shortChoiceName($0.displayName) }
+            }
             models[list.chat] = list
 
         case .chatCommands(let commands):
@@ -1397,7 +1409,8 @@ final class AppModel: ObservableObject {
         return ModelMenuPresentation(
             choices: list?.choices ?? [], current: list?.current,
             busy: isBusy(chat: chat) || isSending(chat: chat),
-            live: !isEnded(chat: chat), hasCapability: offers(Models.capability))
+            live: !isEnded(chat: chat), hasCapability: offers(Models.capability),
+            connected: connection == .connected)
     }
 
     // MARK: - working line (V2)

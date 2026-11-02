@@ -37,14 +37,11 @@ struct StatusStripPresentation: Equatable, Sendable {
     }
 
     /// The model segment at a fit: the name, the short name, nothing.
-    /// Before a reply has named the model, the menu still shows: it reads
-    /// the current choice's name (or "Model" while there is no list yet).
     func model(at fit: Fit) -> String? {
-        let name = modelText ?? (hasModelMenu ? modelMenu?.currentName ?? "Model" : nil)
         switch fit {
-        case .full: return name
-        case .compact: return modelText.map(Self.shortModelName) ?? name
-        case .minimal: return nil
+        case .full: modelText
+        case .compact: modelText.map(Self.shortModelName)
+        case .minimal: nil
         }
     }
 
@@ -222,10 +219,20 @@ extension AppModel {
     func statusStrip(gateway: GatewaySupervisor.Status) -> StatusStripPresentation {
         let menu = shownChat.map { modelMenu(for: $0) }
         return StatusStripPresentation(
-            modelText: shownChat.flatMap { modelName(for: $0) }.map(StatusStripPresentation.modelDisplayName),
+            modelText: shownChat.flatMap { stripModelName(for: $0, menu: menu) },
             services: servicesPresentation(gateway: gateway),
             gatewayText: StatusStripPresentation.gatewayText(gateway),
             modelMenu: menu?.menu == true ? menu : nil)
+    }
+
+    /// The strip's model name (v0.15): a model just chosen in the menu,
+    /// else the one `context.usage` named, else (a menu before any reply)
+    /// the current choice, or "Model" while there is no list yet.
+    func stripModelName(for chat: Int, menu: ModelMenuPresentation?) -> String? {
+        if let chosen = chosenModelName[chat] { return chosen }
+        if let name = modelName(for: chat) { return StatusStripPresentation.modelDisplayName(name) }
+        guard menu?.menu == true else { return nil }
+        return menu?.currentName.map(ModelMenuPresentation.shortChoiceName) ?? "Model"
     }
 }
 
@@ -344,17 +351,24 @@ struct ModelMenuPresentation: Equatable, Sendable {
     var live: Bool
     /// The gateway's `hello` lists `models.v1`.
     var hasCapability: Bool
+    /// The socket is up: a choice made now would go nowhere.
+    var connected: Bool = true
 
     static let busyHelp = "Change the model after this reply"
+    static let disconnectedHelp = "Not connected"
     static let emptyText = "Models appear once the session starts"
     static let footer = "Applies to this session and new ones."
 
     /// The model is a menu, not plain words.
     var menu: Bool { hasCapability && live }
     /// The menu opens; dimmed while a reply runs.
-    var enabled: Bool { menu && !busy }
-    /// The dimmed menu's tooltip.
-    var help: String? { menu && busy ? Self.busyHelp : nil }
+    var enabled: Bool { menu && !busy && connected }
+    /// The dimmed menu's tooltip: why it is dimmed.
+    var help: String? {
+        guard menu else { return nil }
+        if !connected { return Self.disconnectedHelp }
+        return busy ? Self.busyHelp : nil
+    }
     /// The menu's one line when there is no list yet.
     var emptyLine: String? { choices.isEmpty ? Self.emptyText : nil }
 
@@ -365,6 +379,14 @@ struct ModelMenuPresentation: Equatable, Sendable {
     /// The current choice's name, for the strip before a reply names the model.
     var currentName: String? {
         choices.first { checked($0.value) }?.displayName
+    }
+
+    /// A choice's name for the strip: without a trailing parenthetical
+    /// ("Default (recommended)" reads "Default").
+    static func shortChoiceName(_ name: String) -> String {
+        guard name.hasSuffix(")"), let open = name.lastIndex(of: "(") else { return name }
+        let trimmed = name[..<open].trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? name : trimmed
     }
 }
 
@@ -410,6 +432,7 @@ struct ModelMenuControl: View {
         }
         .help(menu.help ?? help)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Model: \(label)")
         .accessibilityHint(menu.help ?? "Choose the model")
         .onChange(of: menu.enabled) { _, enabled in

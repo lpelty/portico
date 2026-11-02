@@ -47,6 +47,7 @@ final class ModelMenuTests: XCTestCase {
             ChatSummary(chat: 3, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T10:00:00Z"),
         ])))
         model.selected = 3
+        model.setConnection(.connected)
         return model
     }
 
@@ -155,7 +156,63 @@ final class ModelMenuTests: XCTestCase {
         model.apply(.models(Models(chat: 3, current: "sonnet", choices: choices)))
         XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Sonnet")
         model.apply(.models(Models(chat: 3, current: nil, choices: choices)))
-        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Default (recommended)")
+        XCTAssertEqual(
+            model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Default",
+            "the trailing parenthetical is trimmed")
+    }
+
+    func testASwitchNamesTheChoiceAtOnceUntilTheNextUsage() {
+        let model = model()
+        model.apply(.models(Models(chat: 3, current: nil, choices: choices)))
+        model.apply(.contextUsage(ContextUsage(chat: 3, percent: 10, model: "claude-opus-5-5")))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Claude Opus 5.5")
+
+        model.apply(.models(Models(chat: 3, current: "sonnet", choices: choices)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Sonnet", "at once")
+
+        model.apply(.contextUsage(ContextUsage(chat: 3, percent: 12, model: "claude-sonnet-5-5")))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Claude Sonnet 5.5")
+
+        // Back to the default: "Default (recommended)" reads "Default".
+        model.apply(.models(Models(chat: 3, current: nil, choices: choices)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Default")
+
+        // A frame that repeats the current choice is not a switch.
+        model.apply(.contextUsage(ContextUsage(chat: 3, percent: 13, model: "claude-opus-5-5")))
+        model.apply(.models(Models(chat: 3, current: nil, choices: choices)))
+        XCTAssertEqual(model.statusStrip(gateway: .running(port: 1)).model(at: .full), "Claude Opus 5.5")
+    }
+
+    func testShortChoiceName() {
+        XCTAssertEqual(ModelMenuPresentation.shortChoiceName("Default (recommended)"), "Default")
+        XCTAssertEqual(ModelMenuPresentation.shortChoiceName("Sonnet"), "Sonnet")
+        XCTAssertEqual(ModelMenuPresentation.shortChoiceName("(beta)"), "(beta)", "never empty")
+    }
+
+    func testTheCompactFitNeverWidensTheChoiceLabel() {
+        let model = model()
+        model.apply(.models(Models(chat: 3, current: nil, choices: [
+            ModelChoice(value: "default", displayName: "Claude Opus 5.5 (recommended)", description: ""),
+        ])))
+        let strip = model.statusStrip(gateway: .running(port: 1))
+        XCTAssertEqual(strip.model(at: .full), "Claude Opus 5.5")
+        XCTAssertEqual(strip.model(at: .compact), "Opus 5.5", "the same short-name path as a usage name")
+        let metrics = StatusStripPresentation.Metrics(text: { CGFloat($0.count * 7) }, symbol: { $0.size + 2 })
+        XCTAssertLessThanOrEqual(
+            strip.width(at: .compact, restart: false, update: nil, metrics: metrics),
+            strip.width(at: .full, restart: false, update: nil, metrics: metrics))
+    }
+
+    func testDisconnectedDimsTheMenu() {
+        let model = model()
+        model.apply(.models(Models(chat: 3, current: nil, choices: choices)))
+        XCTAssertTrue(model.modelMenu(for: 3).enabled)
+        model.setConnection(.disconnected)
+        let menu = model.modelMenu(for: 3)
+        XCTAssertTrue(menu.menu)
+        XCTAssertFalse(menu.enabled)
+        XCTAssertEqual(menu.help, "Not connected")
+        XCTAssertEqual(presentation().help, nil, "connected by default")
     }
 
     func testTheFitMeasuresTheChevron() {
