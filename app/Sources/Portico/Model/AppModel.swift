@@ -570,8 +570,19 @@ final class AppModel: ObservableObject {
 
     /// "New space…": the composer gets "New space: " for the person to finish
     /// in plain words, and focus. No form (spec 4.4).
+    ///
+    /// The composer on screen, which is not always the shown chat's (v0.14
+    /// test fix): the welcome continuing the live session (Y1) has the start
+    /// composer, and an earlier session is read-only, so New space… takes
+    /// the person to the live session (or the welcome) and fills that.
     func beginNewSpace() {
-        if let chat = shownChat {
+        if let shown = documentMode ? filesChat : selected, showsEarlierBar(chat: shown) {
+            closeDocumentView()
+            if let live = backTarget(from: shown) { open(chat: live) } else { showStart() }
+        }
+        if documentMode, let chat = filesChat {
+            setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
+        } else if case .conversation(let chat) = mainScreen {
             setDraft(SpacesPresentation.newSpaceDraft(existing: draft(for: chat)), for: chat)
         } else {
             startDraft = SpacesPresentation.newSpaceDraft(existing: startDraft)

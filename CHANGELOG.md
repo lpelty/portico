@@ -80,6 +80,11 @@
 - **The conversation keeps its place across a space and back.** A
   scrolled-up conversation no longer jumps to the start of a remembered
   message when the column narrows and widens.
+- **New space… fills the composer on screen.** On the welcome that
+  continues the live session it went into that session's draft, which no
+  composer there shows; on an earlier, read-only session it had no
+  composer at all. It now fills the welcome's composer, or takes the
+  person to the live session and fills its composer.
 - **The services menu's Stop and Restart show for the whole row.** Only
   the row's words were the hover target; now the whole row is, and the
   buttons are drawn as the app's other small row actions.
