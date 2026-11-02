@@ -280,6 +280,26 @@ async def test_show_answered_not_ok_is_false() -> None:
     assert len(app.acts) == 1
 
 
+async def test_show_when_the_app_leaves_mid_show_is_false() -> None:
+    bridge, app = make_bridge(None)
+    conn = object()
+    bridge.set_target(conn, True, True)
+    task = asyncio.create_task(bridge.show(1, web_page()))
+    await settle()
+    assert [a.action for a in app.acts] == ["show"]
+    bridge.drop(conn)
+    assert await asyncio.wait_for(task, 1) is False
+
+
+async def test_show_when_the_send_fails_is_false() -> None:
+    async def send(conn: Any, act: ViewerAct) -> None:
+        raise ConnectionError("closed")
+
+    bridge = ViewerBridge(send)
+    bridge.set_target(object(), True, True)
+    assert await bridge.show(1, web_page()) is False
+
+
 async def test_show_without_the_capability_sends_nothing() -> None:
     bridge, app = make_bridge(ok(), show_capable=False)
     bridge.set_target(object(), True, True)

@@ -63,7 +63,7 @@ from claude_agent_sdk import (
 from .artifacts import paths_in
 from .agents import AgentTracker
 from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
-from .viewer import QUEUE_NOTE, VIEWER_TOOL_NAMES, build_viewer_tools
+from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
     ModelChoice,
@@ -635,13 +635,14 @@ def build_open_hook(callbacks: EngineCallbacks):
         except Exception:
             log.exception("showing %s in the viewer failed", paths)
             return {"continue_": True}
-        if isinstance(answer, str):  # refused: the command runs as before
+        if isinstance(answer, str) and answer != STOPPED:  # refused: the command runs as before
             return {"continue_": True}
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": OPEN_SHOWN_REASON,
+                # v0.17: an `open` that waited in the viewer queue through a stop is not run either.
+                "permissionDecisionReason": STOPPED if answer == STOPPED else OPEN_SHOWN_REASON,
             }
         }
 

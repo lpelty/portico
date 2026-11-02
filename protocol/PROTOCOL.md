@@ -786,8 +786,9 @@ the turn made. The agent can also show a file during the turn: its
 gateway catches, sends the file at once as `artifact.created` with
 `source: tool` and `open: true` — only a viewable file inside the chat's
 folder or a configured root (v0.17: or, through `show_in_viewer` only, an
-`http://` or `https://` address, sent as `kind: url`; a caught `open` of
-an address still runs as before). Such a file is not reported again at the end
+`http://` or `https://` address, sent as `kind: url`; one with no host
+name, such as `https://` alone, is refused "Not shown: '<address>' is not
+a web address."; a caught `open` of an address still runs as before). Such a file is not reported again at the end
 of the turn. A relative path given to `show_in_viewer` is the chat
 folder's; a relative path in a caught `open` is the shell's working
 directory's (the Bash tool's directory persists between calls, so after
@@ -1398,8 +1399,9 @@ on it), and it draws no acting glow. The app answers `viewer.result`
 `ok: true` once that page has loaded; at once when it will not put the
 artifact in front (auto-open off for that kind, or another chat on screen
 in multiple presentation); and, for a pane that is not a web page, once
-it is in front. The gateway waits 10 s: no answer, or `ok: false`, and
-the agent reads "Shown; still loading."; loaded, "Shown in the viewer.".
+it is in front. The gateway waits 10 s: no answer, `ok: false`, or the
+app leaving (or the send failing) mid-show, and the agent reads "Shown;
+still loading."; loaded, "Shown in the viewer.".
 An app without `viewer.show.v1` (or no app) is sent nothing and the agent
 reads "Shown in the viewer." at once, as before v0.17.
 
@@ -1407,8 +1409,11 @@ v0.17 (gateway behaviour): a conversation's viewer calls run one at a
 time, in the order the gateway receives them — the seven tools,
 `show_in_viewer` and a caught `open`. Each starts only when the one before
 has finished (answered, timed out, or refused), so a show followed by two
-clicks and a look acts on the page the show loaded. Calls in different
-conversations do not wait for each other.
+clicks and a look acts on the page the show loaded. A caught `open` waits
+in the same queue as the viewer tools and `show_in_viewer`. When the turn
+a call was made in is stopped while the call waits, it does not act and
+answers "Stopped." (a call already sent finishes as before). Calls in
+different conversations do not wait for each other.
 
 #### `viewer.result` — `ViewerResult` *(app → gateway)*
 `id` (the act's), `ok: bool`, `text`, `image?: {data, media_type}`

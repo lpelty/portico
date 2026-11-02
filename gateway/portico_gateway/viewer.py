@@ -18,7 +18,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -45,6 +46,8 @@ MARK_COUNT = "Mark 1 to 9 things at a time."
 MARK_ITEM = "Each mark needs a target, and a note of at most 60 characters."
 MARK_NOTE_LIMIT = 60
 NO_ANSWER = "The viewer didn't answer in 10 s."
+# v0.17: a call that waited in the queue while its turn was stopped does not act.
+STOPPED = "Stopped."
 
 # Tool names as the agent sees them (the tool server is ``portico``, beside ``show_in_viewer``).
 VIEWER_SERVER = "portico"
@@ -52,6 +55,12 @@ VIEWER_TOOLS = ("viewer_look", "viewer_click", "viewer_type", "viewer_scroll", "
 VIEWER_TOOL_NAMES = tuple(f"mcp__{VIEWER_SERVER}__{name}" for name in VIEWER_TOOLS)
 
 Send = Callable[[Any, ViewerAct], Awaitable[None]]
+# ``turn_live(chat)`` -> whether the turn that is running on ``chat`` now is still running when asked later.
+TurnLive = Callable[[int], Callable[[], bool]]
+
+
+def _no_turn(chat: int) -> Callable[[], bool]:
+    return lambda: True
 
 
 def _error(text: str) -> dict[str, Any]:
@@ -69,7 +78,9 @@ class ViewerBridge:
 
     ``send(conn, act)`` delivers a frame; ``capable(conn)`` says whether that
     app declared ``viewer.v1``, ``show_capable(conn)`` whether it declared
-    ``viewer.show.v1``. ``defaults`` are the deployment's two switches
+    ``viewer.show.v1``. ``turn_live(chat)`` captures the chat's running turn
+    and answers whether it is still running (a stopped turn's queued calls
+    do not act). ``defaults`` are the deployment's two switches
     (``can_see``, ``check_html``), in force until an app sends
     ``viewer.settings``; the app is what applies the person's choice.
     """
@@ -81,6 +92,7 @@ class ViewerBridge:
         defaults: tuple[bool, bool] = (True, True),
         marks_capable: Callable[[Any], bool] = lambda conn: True,
         show_capable: Callable[[Any], bool] = lambda conn: True,
+        turn_live: TurnLive = _no_turn,
     ) -> None:
         self._send = send
         self._capable = capable
@@ -89,6 +101,7 @@ class ViewerBridge:
         # (chat, tool_use_id, tool_input) of viewer_mark calls the PreToolUse hook has seen, not yet taken.
         self._mark_uses: list[tuple[int, str, dict[str, Any]]] = []
         self._show_capable = show_capable
+        self._turn_live = turn_live
         # v0.17: one lock per chat; every viewer call holds it while it runs (asyncio.Lock is FIFO).
         self._queues: dict[int, asyncio.Lock] = {}
         self._target: Any = None
@@ -137,13 +150,26 @@ class ViewerBridge:
             lock = self._queues[chat] = asyncio.Lock()
         return lock
 
+    @asynccontextmanager
+    async def queued(self, chat: int) -> AsyncIterator[bool]:
+        """Hold ``chat``'s queue for one viewer call; yields whether the turn it was made in is still running.
+
+        The turn is the one running when the call arrives; it is checked
+        once the call's turn in the queue comes, so a call that waited
+        through a stop answers ``STOPPED`` instead of acting.
+        """
+        live = self._turn_live(chat)
+        async with self.queue(chat):
+            yield live()
+
     async def show(self, chat: int, artifact: Artifact) -> bool | None:
         """Ask the app to say when ``artifact`` (just announced) has loaded.
 
-        ``True`` loaded; ``False`` not within ``SHOW_TIMEOUT``, or the app
-        answered not ok; ``None`` when no round trip is possible (no target,
-        an app without ``viewer.show.v1``, the send failed or the app left),
-        which the caller treats as today's immediate "shown". The person's
+        ``True`` loaded; ``False`` not within ``SHOW_TIMEOUT``, the app
+        answered not ok, the send failed or the app left mid-show; ``None``
+        when no round trip is possible (no target, an app without
+        ``viewer.show.v1``), which the caller treats as today's immediate
+        "shown". The person's
         "agent can see" switch does not apply: the answer says only that a
         page loaded, never what is on it.
         """
@@ -155,9 +181,7 @@ class ViewerBridge:
             result = await self._round_trip(conn, chat, "show", args, SHOW_TIMEOUT)
         except asyncio.TimeoutError:
             return False
-        if result is None:
-            return None
-        return result.ok
+        return result is not None and result.ok
 
     def note_mark_use(self, chat: int, tool_use_id: str, tool_input: dict[str, Any]) -> None:
         """The hook saw a ``viewer_mark`` call: remember its id so the handler can pass it to the app."""
@@ -249,7 +273,9 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
         schema({}, []),
     )
     async def viewer_look(args: dict[str, Any]) -> dict[str, Any]:
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "look", {})
 
     @tool(
@@ -259,7 +285,9 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
         schema({"target": {"type": "string"}}, ["target"]),
     )
     async def viewer_click(args: dict[str, Any]) -> dict[str, Any]:
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "click", _args(args, "target"))
 
     @tool(
@@ -274,7 +302,9 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
     async def viewer_type(args: dict[str, Any]) -> dict[str, Any]:
         wire = _args(args, "target", "text")
         wire["submit"] = args.get("submit") is True  # the string "false" must not press Return
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "type", wire)
 
     @tool(
@@ -287,12 +317,16 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
         ),
     )
     async def viewer_scroll(args: dict[str, Any]) -> dict[str, Any]:
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "scroll", _args(args, "direction", "target"))
 
     @tool("viewer_back", "Go back in the viewer's own history." + QUEUE_NOTE, schema({}, []))
     async def viewer_back(args: dict[str, Any]) -> dict[str, Any]:
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "back", {})
 
     @tool(
@@ -336,12 +370,16 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
         tool_use_id = bridge.take_mark_use(chat, args)
         if tool_use_id is not None:
             wire["tool_use_id"] = tool_use_id
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "mark", wire, needs_marks=True)
 
     @tool("viewer_clear_marks", "Clear every mark in the viewer." + QUEUE_NOTE, schema({}, []))
     async def viewer_clear_marks(args: dict[str, Any]) -> dict[str, Any]:
-        async with bridge.queue(chat):
+        async with bridge.queued(chat) as live:
+            if not live:
+                return _error(STOPPED)
             return await bridge.act(chat, "clear_marks", {}, needs_marks=True)
 
     return [viewer_look, viewer_click, viewer_type, viewer_scroll, viewer_back, viewer_mark, viewer_clear_marks]

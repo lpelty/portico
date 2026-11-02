@@ -287,7 +287,7 @@ from .threads import (
 )
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
-from .viewer import MARKS_CAPABILITY, SHOW_CAPABILITY, VIEWER_CAPABILITY, ViewerBridge
+from .viewer import MARKS_CAPABILITY, SHOW_CAPABILITY, STOPPED, VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
@@ -467,6 +467,16 @@ _CAPABILITIES_ATTR = "portico_capabilities"
 
 def _set_capabilities(conn: ServerConnection, capabilities: list[str]) -> None:
     setattr(conn, _CAPABILITIES_ATTR, frozenset(capabilities))
+
+
+def _has_host(url: str) -> bool:
+    """An ``http(s)`` address with a host name and no spaces (v0.17: ``https://`` alone is not one)."""
+    if any(c.isspace() for c in url):
+        return False
+    try:
+        return bool(urlsplit(url).hostname)
+    except ValueError:
+        return False
 
 
 def _capabilities(conn: ServerConnection) -> frozenset[str]:
@@ -957,6 +967,7 @@ class GatewayServer:
             defaults=(config.viewer.agent_can_see, config.viewer.agent_checks_html),
             marks_capable=lambda conn: MARKS_CAPABILITY in _capabilities(conn),
             show_capable=lambda conn: SHOW_CAPABILITY in _capabilities(conn),
+            turn_live=self._turn_live,
         )
         # v0.12: spaces. The watcher tells every attached app when the folder's list changes.
         self.spaces_watcher: SpacesWatcher | None = (
@@ -2090,12 +2101,17 @@ class GatewayServer:
         report it again. v0.17: an ``http(s)`` address is shown as a URL
         artifact (no folder checks); the call holds the chat's viewer queue
         and waits for the app to say the last one has loaded, answering
-        ``Shown(STILL_LOADING_TEXT)`` when it does not in time.
+        ``Shown(STILL_LOADING_TEXT)`` when it does not in time. A show that
+        waited in the queue through a stop of its turn answers ``STOPPED``.
         """
-        async with self.viewer.queue(chat.number):
+        async with self.viewer.queued(chat.number) as live:
+            if not live:
+                return STOPPED
             shown: list[Path | str] = []
             for raw in paths:
                 if is_url(raw):
+                    if not _has_host(raw):
+                        return f"Not shown: '{raw}' is not a web address."
                     shown.append(raw)
                     continue
                 checked = self._showable(chat, raw)
@@ -2119,6 +2135,13 @@ class GatewayServer:
             if await self.viewer.show(chat.number, artifacts[-1]) is False:
                 return Shown(STILL_LOADING_TEXT)
             return None
+
+    def _turn_live(self, number: int) -> Callable[[], bool]:
+        """v0.17: the turn running on chat ``number`` now, as "is it still running?" (always yes with none)."""
+        run = self._runs.get(number)
+        if run is None:
+            return lambda: True
+        return lambda: not run.stop_requested and not run.finished.is_set()
 
     async def _producer(self, request: HttpRequest) -> HttpResponse:
         """``POST /v1/artifact`` ``{chat, location, title?}``: report an artifact now, ``open=true``."""
