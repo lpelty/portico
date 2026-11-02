@@ -157,30 +157,61 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(none.freeSlot, 1)
     }
 
-    func testRowsPutNeedsYouFirstThenMainAndTheThreads() throws {
+    /// §9.6: one flat list, Main, Thread 1, Thread 2, always in that order,
+    /// whichever is open and whatever needs you; nothing moves on a switch.
+    func testTheListIsMainThenTheThreadsInAFixedOrderWithTheOpenOneMarked() throws {
         let now = try XCTUnwrap(SessionTime.parse("2026-11-02T14:05:00Z"))
         let lastReply = now.addingTimeInterval(-5 * 60)
         let chats = [
+            Self.thread(6, slot: 2, state: .waitingOnYou, title: "Onboarding copy"),
             Self.main(3, lastReply: "2026-11-02T14:00:00Z"),
             Self.thread(5, slot: 1, state: .working, title: "Pricing review"),
-            Self.thread(6, slot: 2, state: .waitingOnYou, title: "Onboarding copy"),
         ]
         let rows = ThreadsPresentation(chats: chats, current: 5).rows(now: now)
-        XCTAssertEqual(rows.map(\.chat), [6, 3])
-        XCTAssertEqual(rows[0].label, "Thread 2")
-        XCTAssertEqual(rows[0].title, "Onboarding copy")
-        XCTAssertEqual(rows[0].status, .needsYou)
-        XCTAssertEqual(rows[0].keyName, "Control-2")
-        XCTAssertEqual(rows[0].help, "Go to Thread 2 (Control-2)", "the tooltip spells the key; the row shows none")
-        XCTAssertEqual(rows[1].label, "Main")
-        XCTAssertEqual(rows[1].title, "Acme launch plan")
-        XCTAssertEqual(rows[1].status, .lastReply(SessionTime.ago(lastReply, now: now)))
-        XCTAssertEqual(rows[1].keyName, "Control-0")
+        XCTAssertEqual(rows.map(\.chat), [3, 5, 6], "Needs you no longer sorts first")
+        XCTAssertEqual(rows.map(\.label), ["Main", "Thread 1", "Thread 2"])
+        XCTAssertEqual(rows.map(\.slot), [0, 1, 2])
+        XCTAssertEqual(rows.map(\.isOpen), [false, true, false])
+        XCTAssertEqual(rows.map(\.isThread), [false, true, true])
+        XCTAssertEqual(rows[2].title, "Onboarding copy")
+        XCTAssertEqual(rows[2].status, .needsYou)
+        XCTAssertEqual(rows[2].keyName, "Control-2")
+        XCTAssertEqual(rows[2].help, "Go to Thread 2 (Control-2)", "the tooltip spells the key; the row shows none")
+        XCTAssertEqual(rows[0].title, "Acme launch plan")
+        XCTAssertEqual(rows[0].status, .lastReply(SessionTime.ago(lastReply, now: now)))
+        XCTAssertEqual(rows[0].help, "Go to Main (Control-0)")
+        XCTAssertEqual(rows[1].status, .working)
+        XCTAssertEqual(rows[1].keyName, "Control-1")
 
         let fromMain = ThreadsPresentation(chats: chats, current: 3).rows(now: now)
-        XCTAssertEqual(fromMain.map(\.chat), [6, 5])
-        XCTAssertEqual(fromMain[1].status, .working)
-        XCTAssertEqual(fromMain[1].keyName, "Control-1")
+        XCTAssertEqual(fromMain.map(\.chat), [3, 5, 6], "switching moves nothing")
+        XCTAssertEqual(fromMain.map(\.isOpen), [true, false, false])
+
+        let none = ThreadsPresentation(chats: chats, current: nil).rows(now: now)
+        XCTAssertEqual(none.map(\.isOpen), [false, false, false])
+    }
+
+    /// §9.6: Main is always "Main"; its subtitle is "Session N · <title>"
+    /// closed, "Session N · started H:MM" open. A thread's subtitle is its title.
+    func testTheSubtitles() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "en_US")
+        let now = try XCTUnwrap(SessionTime.parse("2026-11-02T14:05:00Z"))
+        var untitled = Self.main(4)
+        untitled.title = nil
+        let chats = [Self.main(4), Self.thread(5, slot: 1, title: "Notes app login flow"), Self.thread(6, slot: 2)]
+
+        let inThread = ThreadsPresentation(chats: chats, current: 5).rows(now: now, calendar: calendar, locale: locale)
+        XCTAssertEqual(inThread.map(\.subtitle), ["Session 4 · Acme launch plan", "Notes app login flow", nil])
+
+        let inMain = ThreadsPresentation(chats: chats, current: 4).rows(now: now, calendar: calendar, locale: locale)
+        XCTAssertEqual(inMain[0].label, "Main")
+        XCTAssertEqual(inMain[0].subtitle, "Session 4 · started 12:00 PM")
+        XCTAssertEqual(inMain[1].subtitle, "Notes app login flow", "a thread's subtitle is its title, open or not")
+
+        let bare = ThreadsPresentation(chats: [untitled], current: nil).rows(now: now, calendar: calendar, locale: locale)
+        XCTAssertEqual(bare.map(\.subtitle), ["Session 4"], "no title yet: the number alone")
     }
 
     // MARK: - ProposalPresentation
@@ -589,7 +620,7 @@ final class ThreadsTests: XCTestCase {
     func testANewReplyRowAndItsOrder() throws {
         let now = try XCTUnwrap(SessionTime.parse("2026-11-02T14:05:00Z"))
         let chats = [Self.main(3), Self.thread(5, slot: 1, lastReply: "2026-11-02T14:00:00Z"), Self.thread(6, slot: 2, state: .working)]
-        let rows = ThreadsPresentation(chats: chats, current: 3, newReplies: [5, 6]).rows(now: now)
+        let rows = ThreadsPresentation(chats: chats, current: 3, newReplies: [5, 6]).rows(now: now).filter(\.isThread)
         XCTAssertEqual(rows.map(\.chat), [5, 6], "a new reply does not reorder the rows")
         XCTAssertEqual(rows[0].status, .newReply)
         XCTAssertEqual(rows[0].spokenLabel, "Thread 1, new reply")

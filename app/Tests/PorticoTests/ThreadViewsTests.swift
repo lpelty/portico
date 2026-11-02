@@ -3,7 +3,7 @@ import XCTest
 
 @testable import Portico
 
-/// v0.16 threads on screen (Task 5, AM1–AM4): the toolbar's chip, the
+/// v0.16 threads on screen (Task 5, AM1–AM4; §9.6): the toolbar, the
 /// View menu's ⌃0–⌃2, the brief block, the composer's placeholder, the
 /// sidebar's card and rows, the limit card's choices, and what the window
 /// does when the thread it shows ends.
@@ -53,13 +53,12 @@ final class ThreadViewsTests: XCTestCase {
 
     // MARK: - the toolbar
 
-    func testInAThreadTheToolbarShowsTheThreadItemAfterTheSwitcher() {
+    /// §9.6: no thread item in the toolbar; the list is the way back and
+    /// ⌃0 still works.
+    func testTheToolbarHasNoThreadItem() {
         XCTAssertEqual(
-            ToolbarLayout.items(showSwitcher: true, showViewerToggle: true, inThread: true),
-            [.sidebarToggle, .brand, .switcher, .thread, .spacer, .viewerToggle])
-        XCTAssertFalse(ToolbarLayout.items(showSwitcher: true, showViewerToggle: true, inThread: false).contains(.thread))
-        XCTAssertEqual(ToolbarLayout.backToMainLabel, "← Main")
-        XCTAssertEqual(ToolbarLayout.backToMainHelp, "Back to Main (Control-0)")
+            ToolbarLayout.items(showSwitcher: true, showViewerToggle: true),
+            [.sidebarToggle, .brand, .switcher, .spacer, .viewerToggle])
     }
 
     // MARK: - the View menu
@@ -143,38 +142,46 @@ final class ThreadViewsTests: XCTestCase {
 
     // MARK: - the sidebar
 
-    func testTheSidebarCardIsTheConversationYouAreIn() {
+    func testTheOpenRowIsTheConversationYouAreInAndNothingMoves() {
         let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
         model.open(chat: 3)
         XCTAssertEqual(model.sidebarCard?.chat, 3)
-        XCTAssertEqual(model.sidebarThreads.rows(now: Date()).map(\.label), ["Thread 1", "Thread 2"])
+        let inMain = model.sidebarThreads.rows(now: Date())
+        XCTAssertEqual(inMain.map(\.label), ["Main", "Thread 1", "Thread 2"])
+        XCTAssertEqual(inMain.filter(\.isOpen).map(\.chat), [3])
 
         model.switchToConversation(slot: 2)
         XCTAssertEqual(model.sidebarCard?.chat, 6)
-        XCTAssertEqual(model.sidebarThreads.rows(now: Date()).map(\.label), ["Main", "Thread 1"])
+        let inThread = model.sidebarThreads.rows(now: Date())
+        XCTAssertEqual(inThread.map(\.label), ["Main", "Thread 1", "Thread 2"], "the same order in a thread")
+        XCTAssertEqual(inThread.filter(\.isOpen).map(\.chat), [6])
     }
 
-    func testOnAnEndedSessionTheCardIsMainAndMainIsNotARow() {
+    func testOnAnEndedSessionMainsRowIsTheOpenOne() {
         var old = Self.main(1)
         old.ended = "2026-11-02T11:00:00Z"
         let (model, _) = model(chats: [old, Self.main(3), Self.thread(5, slot: 1)])
         model.open(chat: 1)
         XCTAssertEqual(model.sidebarCard?.chat, 3)
-        XCTAssertEqual(model.sidebarThreads.rows(now: Date()).map(\.label), ["Thread 1"])
+        let rows = model.sidebarThreads.rows(now: Date())
+        XCTAssertEqual(rows.map(\.label), ["Main", "Thread 1"], "an ended session is in History, not the list")
+        XCTAssertEqual(rows.filter(\.isOpen).map(\.chat), [3])
+    }
+
+    /// Threads off (threads.max 0, or a gateway without `threads.v1`): the
+    /// shipped single-session section, "This session" and "Session N".
+    func testWithThreadsOffTheSectionIsTheShippedSessionCard() {
+        let (off, _) = model(threads: false, chats: [Self.main(3)])
+        XCTAssertFalse(off.threadsOn)
+        XCTAssertEqual(SessionSidebar.sectionLabel(threadsOn: off.threadsOn), "This session")
+        XCTAssertEqual(SessionCard.title(summary: Self.main(3), threadsOn: false), "Session 3")
+        XCTAssertEqual(SessionSidebar.sectionLabel(threadsOn: true), "Conversations")
+        XCTAssertEqual(SessionCard.title(summary: Self.main(3), threadsOn: true), "Main")
+        XCTAssertEqual(SessionCard.title(summary: Self.thread(5, slot: 1), threadsOn: true), "Thread 1")
     }
 
     func testTheCloseQuestion() {
         XCTAssertEqual(ThreadsPresentation.closeQuestion(label: "Thread 2"), "Thread 2 is still working. Close it anyway?")
-    }
-
-    func testAThreadCardOpenedLine() throws {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
-        var info = try XCTUnwrap(Self.thread(5, slot: 2).thread)
-        info.openedAt = "2026-11-02T14:05:00Z"
-        XCTAssertEqual(
-            ThreadsPresentation.openedLine(info, calendar: calendar, locale: Locale(identifier: "en_US")),
-            "Opened from Main at 2:05 PM")
     }
 
     // MARK: - the limit card

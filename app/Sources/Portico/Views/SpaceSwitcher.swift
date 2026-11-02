@@ -9,13 +9,8 @@ import SwiftUI
 /// the session card names the session.
 enum ToolbarLayout {
     enum Item: String, Equatable {
-        case sidebarToggle, brand, switcher, thread, spacer, viewerToggle
+        case sidebarToggle, brand, switcher, spacer, viewerToggle
     }
-
-    /// In a thread, the way back to Main (v0.16 §2.3; §9.1–9.2: no chip
-    /// beside it, no key glyph on it; the tooltip spells the key).
-    static let backToMainLabel = "← Main"
-    static let backToMainHelp = "Back to Main (Control-0)"
 
     /// The gap between the brand and the switcher: 26 pt, as drawn in Pen (v0.13 decision 6; was 6).
     static let brandToSwitcherGap: CGFloat = 26
@@ -36,12 +31,11 @@ enum ToolbarLayout {
         }
     }
 
-    /// `inThread`: the window shows a thread, so "← Main" follows the
-    /// switcher (v0.16, AM3; the thread's chip was dropped in §9.1).
-    static func items(showSwitcher: Bool, showViewerToggle: Bool, inThread: Bool = false) -> [Item] {
+    /// No thread item (v0.16 §9.6): the sidebar's conversation list says
+    /// where you are and is the way back; ⌃0 and the View menu still work.
+    static func items(showSwitcher: Bool, showViewerToggle: Bool) -> [Item] {
         var items: [Item] = [.sidebarToggle, .brand]
         if showSwitcher { items.append(.switcher) }
-        if inThread { items.append(.thread) }
         items.append(.spacer)
         if showViewerToggle { items.append(.viewerToggle) }
         return items

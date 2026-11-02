@@ -16,14 +16,20 @@
   card offers "Close a thread to start another" and Close and start.
 - **Moving between them.** ⌃0 is Main, ⌃1 and ⌃2 the threads (also in the
   View menu); ⌘0-⌘9 stay Work and the spaces. The sidebar's Conversations
-  section lists each thread with its state (working, needs you, new reply,
-  last reply). In a thread the toolbar shows "← Main" (the sidebar's card
-  says which thread you are in), the first message is drawn as its brief
-  ("BRIEF FROM MAIN · 2:05 PM"), and the card offers Log session and Close
-  thread ("Close writes a summary to History"); the two buttons share a row
-  when they fit and stack when they don't, so the card fits the sidebar at
-  any text size. Buttons, cards and rows show no key glyph: the tooltip
-  spells the key ("Control-1").
+  section is one list in a fixed order, Main, Thread 1, Thread 2, so
+  nothing moves when you switch: Main (a speech bubble, "Session 4 ·
+  Mobile login screen") and each thread (a branch, its title) on the same
+  left edge, each with its state (working, needs you, new reply, last
+  reply). The row you're in opens into its card: Context and its meter,
+  then Log session and New for Main, or Log session and Close thread for
+  a thread ("Close writes a summary to History"); the two buttons share a
+  row when they fit and stack when they don't, so the list fits the
+  sidebar at any text size. Click a row to switch to it. There is no
+  toolbar button back to Main: the list says where you are. In a thread the
+  first message is drawn as its brief ("BRIEF FROM MAIN · 2:05 PM").
+  Buttons, cards and rows show no key glyph: the tooltip spells the key
+  ("Go to Thread 1 (Control-1)"). With threads off, the sidebar is the
+  single-session card as before.
   Close a working thread and it asks first. If the log step can't start, the
   card offers Close without logging.
 - **A thread that needs you** shows "Needs you" on its sidebar row, and in

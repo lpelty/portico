@@ -388,24 +388,28 @@ struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary(Color), quiet }
 
     let kind: Kind
+    /// 12-pt text and 10-pt sides, for two pills sharing a sidebar card's
+    /// row (v0.16 §9.6, AP4/AP5).
+    var compact = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Pill(kind: kind, configuration: configuration)
+        Pill(kind: kind, compact: compact, configuration: configuration)
     }
 
     /// The drawn pill; a view of its own so it can track the pointer.
     private struct Pill: View {
         let kind: Kind
+        let compact: Bool
         let configuration: ButtonStyleConfiguration
         @Environment(\.isEnabled) private var isEnabled
         @State private var hovering = false
 
     var body: some View {
         configuration.label
-            .scaledFont(13, weight: .medium)
+            .scaledFont(compact ? 12 : 13, weight: .medium)
             .foregroundStyle(foreground)
             .padding(.vertical, 6)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, compact ? 10 : 14)
             .background(background, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
                 if case .quiet = kind {

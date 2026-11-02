@@ -1,28 +1,53 @@
 import SwiftUI
 
-/// The other conversations under the sidebar's card (v0.16 §2.5, AM1):
-/// label, title and a status (working spinner, amber Needs you, an accent
-/// dot and New reply, or the last reply's age). No key glyph: the tooltip spells the key (§9.2). A
-/// click switches; a thread's row has Close
-/// thread in its context menu.
-struct ThreadRows: View {
+/// The sidebar's CONVERSATIONS list (v0.16 §9.6, Pen AP4/AP5): Main,
+/// Thread 1, Thread 2 in a fixed order, all on the same left edge and
+/// width, so nothing moves when you switch. The row you're in is the open
+/// card (`SessionCard`); the others are rows with their label, subtitle
+/// and a status (working spinner, amber Needs you, an accent dot and New
+/// reply, or the last reply's age). No key glyph: the tooltip spells the
+/// key (§9.2). A click switches; a thread's row has Close thread in its
+/// context menu.
+struct ConversationList: View {
     @EnvironmentObject private var model: AppModel
+
+    /// The rows' and the open card's inner left edge, so the icons line up.
+    static let rowInset: CGFloat = 10
 
     var body: some View {
         TimelineView(.everyMinute) { context in
             VStack(spacing: 2) {
                 ForEach(model.sidebarThreads.rows(now: context.date)) { row in
-                    ThreadRow(row: row)
-                    // A refused close shows under its row, so Close without
-                    // logging is reachable from Main too.
-                    if let failure = row.closeFailure {
-                        CloseFailureLine(chat: row.chat, failure: failure)
-                            .padding(.horizontal, 10)
-                            .padding(.bottom, 4)
+                    if row.isOpen, let card = model.sidebarCard, card.chat == row.chat {
+                        SessionCard(summary: card)
+                            .padding(.vertical, 2)
+                    } else {
+                        ThreadRow(row: row)
+                        // A refused close shows under its row, so Close without
+                        // logging is reachable from Main too. The open card
+                        // shows it in its footnote.
+                        if let failure = row.closeFailure {
+                            CloseFailureLine(chat: row.chat, failure: failure)
+                                .padding(.horizontal, Self.rowInset)
+                                .padding(.bottom, 4)
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/// Main's speech bubble, a thread's branch (§9.6).
+struct ConversationIcon: View {
+    let isThread: Bool
+
+    var body: some View {
+        Image(systemName: isThread ? "arrow.triangle.branch" : "bubble.left")
+            .font(Theme.iconFont(13))
+            .foregroundStyle(Theme.text2)
+            .frame(width: 16)
+            .accessibilityHidden(true)
     }
 }
 
@@ -31,20 +56,19 @@ private struct ThreadRow: View {
     @EnvironmentObject private var model: AppModel
 
     private var needsYou: Bool { row.status == .needsYou }
-    private var isThread: Bool { model.thread(of: row.chat) != nil }
-    private var slot: Int { model.thread(of: row.chat)?.slot ?? 0 }
 
     var body: some View {
-        Button { model.switchToConversation(slot: slot) } label: {
+        Button { model.switchToConversation(slot: row.slot) } label: {
             HStack(spacing: 8) {
+                ConversationIcon(isThread: row.isThread)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(row.label)
                         .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text)
-                    if let title = row.title {
-                        Text(title)
+                    if let subtitle = row.subtitle {
+                        Text(subtitle)
                             .scaledFont(11)
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(Theme.text2)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
@@ -53,7 +77,7 @@ private struct ThreadRow: View {
                 status
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, ConversationList.rowInset)
             .contentShape(Rectangle())
         }
         .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
@@ -64,7 +88,7 @@ private struct ThreadRow: View {
         .accessibilityLabel(row.spokenLabel)
         .accessibilityAddTraits(.isButton)
         .contextMenu {
-            if isThread {
+            if row.isThread {
                 Button("Close thread") { model.requestCloseThread(chat: row.chat) }
                     .disabled(model.isClosing(chat: row.chat) || model.connection != .connected)
             }
@@ -85,6 +109,8 @@ private struct ThreadRow: View {
                     .accessibilityHidden(true)
                 Text("Needs you")
                     .scaledFont(11, weight: .medium)
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .foregroundStyle(Theme.wait)
         case .newReply:

@@ -7,7 +7,7 @@ import Foundation
 /// card are tested without a window.
 struct ThreadsPresentation: Equatable {
     let chats: [ChatSummary]
-    /// The conversation on screen: its row is the card, not a row.
+    /// The conversation on screen: its row in the list opens into the card.
     let current: Int?
     /// How many threads may be open beside Main.
     let limit: Int
@@ -56,23 +56,35 @@ struct ThreadsPresentation: Equatable {
         chats.first { $0.chat == current }?.thread
     }
 
-    /// The sidebar's rows: every conversation but the one on screen, those
-    /// that need you first, else Main, Thread 1, Thread 2.
-    func rows(now: Date) -> [ThreadRowPresentation] {
+    /// The sidebar's list (§9.6): Main, then Thread 1, Thread 2, always in
+    /// that order, so nothing moves when you switch. The conversation in
+    /// `current` is the open row, drawn as its card.
+    func rows(now: Date, calendar: Calendar = .current, locale: Locale = .current) -> [ThreadRowPresentation] {
         var rows: [ThreadRowPresentation] = []
-        if let main, main.chat != current {
-            rows.append(row(main, label: "Main", slot: 0, now: now))
+        if let main {
+            var shown = row(main, label: "Main", slot: 0, now: now)
+            shown.subtitle = Self.mainSubtitle(main, open: shown.isOpen, calendar: calendar, locale: locale)
+            rows.append(shown)
         }
-        for thread in open where thread.chat != current {
+        for thread in open {
             guard let info = thread.thread else { continue }
             rows.append(row(thread, label: info.label, slot: info.slot, now: now))
         }
-        return rows.enumerated()
-            .sorted { a, b in
-                let (aNeeds, bNeeds) = (a.element.status == .needsYou, b.element.status == .needsYou)
-                return aNeeds != bNeeds ? aNeeds : a.offset < b.offset
-            }
-            .map(\.element)
+        return rows
+    }
+
+    /// Main's subtitle: "Session 4 · Mobile login screen" in a closed row,
+    /// "Session 4 · started 1:30 PM" when it is the open card (§9.6); the
+    /// number alone when there is nothing to add.
+    static func mainSubtitle(_ main: ChatSummary, open: Bool, calendar: Calendar, locale: Locale) -> String {
+        let shown = SessionPresentation(summary: main)
+        let detail: String?
+        if open {
+            detail = SessionTime.parse(main.created).map { "started \(SessionTime.clock($0, calendar: calendar, locale: locale))" }
+        } else {
+            detail = shown.title
+        }
+        return [shown.number, detail].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// At the limit, the threads to pick from (AM4): label, then the title
@@ -107,12 +119,6 @@ struct ThreadsPresentation: Equatable {
         "\(label) is still working. Close it anyway?"
     }
 
-    /// The thread card's second line: "Opened from Main at 2:05 PM".
-    static func openedLine(_ info: ThreadInfo, calendar: Calendar = .current, locale: Locale = .current) -> String {
-        guard let opened = SessionTime.parse(info.openedAt) else { return "Opened from Main" }
-        return "Opened from Main at \(SessionTime.clock(opened, calendar: calendar, locale: locale))"
-    }
-
     private func row(_ summary: ChatSummary, label: String, slot: Int, now: Date) -> ThreadRowPresentation {
         let status: ThreadRowPresentation.Status
         if summary.state == .waitingOnYou || waiting.contains(summary.chat) {
@@ -126,9 +132,10 @@ struct ThreadsPresentation: Equatable {
         } else {
             status = .none
         }
+        let title = SessionPresentation(summary: summary).title
         return ThreadRowPresentation(
-            chat: summary.chat, label: label, title: SessionPresentation(summary: summary).title, status: status, keyName: Self.keyName(slot: slot),
-            closeFailure: closeFailures[summary.chat])
+            chat: summary.chat, label: label, title: title, status: status, keyName: Self.keyName(slot: slot),
+            closeFailure: closeFailures[summary.chat], slot: slot, isOpen: summary.chat == current, subtitle: title)
     }
 }
 
@@ -180,7 +187,7 @@ struct ThreadMenuItem: Equatable, Identifiable {
     }
 }
 
-/// One conversation's row under the sidebar's card (AM1).
+/// One conversation in the sidebar's list (AM1; §9.6, AP4/AP5).
 struct ThreadRowPresentation: Equatable, Identifiable {
     enum Status: Equatable {
         case working
@@ -202,8 +209,17 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     let keyName: String
     /// The thread's last close was refused: the row says why.
     var closeFailure: CloseFailure? = nil
+    /// 0 for Main, 1 and 2 for the threads: the slot a click switches to.
+    var slot: Int = 0
+    /// The conversation you're in: this row is drawn as the open card.
+    var isOpen: Bool = false
+    /// The line under the name: Main's "Session 4 · …", a thread's title.
+    var subtitle: String? = nil
 
     var id: Int { chat }
+
+    /// A thread's row (the branch icon, Close thread in its menu), not Main's.
+    var isThread: Bool { slot > 0 }
 
     /// The row's tooltip: "Go to Thread 2 (Control-2)".
     var help: String { "Go to \(label) (\(keyName))" }
@@ -388,7 +404,8 @@ extension AppModel {
             newReplies: newThreadReplies)
     }
 
-    /// The sidebar's card (§2.5): the open thread on screen, else Main.
+    /// The sidebar's open card (§9.6): the open thread on screen, else Main
+    /// (an earlier session or the document view keeps Main's row open).
     var sidebarCard: ChatSummary? {
         if threadsOn, let shown = shownChat, let summary = summary(of: shown), summary.thread != nil, summary.ended == nil {
             return summary
@@ -396,8 +413,8 @@ extension AppModel {
         return liveSession
     }
 
-    /// Main and the threads as the sidebar draws them: the card's chat is
-    /// the one not listed as a row.
+    /// Main and the threads as the sidebar's list draws them: the card's
+    /// chat is the open row (§9.6).
     var sidebarThreads: ThreadsPresentation {
         let now = threads
         return ThreadsPresentation(

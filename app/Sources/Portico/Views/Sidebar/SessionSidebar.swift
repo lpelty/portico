@@ -4,24 +4,27 @@ import SwiftUI
 /// earlier" and "S2 · The nudge": THIS SESSION (the live session's card,
 /// which turns into the amber nudge when the session is long), then the
 /// History row (v0.15, AN2), which opens the ended sessions in a popover.
+///
+/// With threads on (v0.16 §9.6, AP4/AP5) the section is CONVERSATIONS: one
+/// flat list, Main, Thread 1, Thread 2, where the row you're in is the
+/// open card. With threads off it is the shipped single-session card.
 struct SessionSidebar: View {
     @EnvironmentObject private var model: AppModel
+
+    static func sectionLabel(threadsOn: Bool) -> String { threadsOn ? "Conversations" : "This session" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // v0.16 §2.5: with threads, the card is the conversation you're
-            // in and the others are rows under it.
-            SidebarSectionLabel(model.threadsOn ? "Conversations" : "This session")
+            SidebarSectionLabel(Self.sectionLabel(threadsOn: model.threadsOn))
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 8)
-            if let card = model.sidebarCard {
+            if model.threadsOn, !model.sidebarThreads.rows(now: Date()).isEmpty {
+                ConversationList()
+                    .padding(.horizontal, 8)
+            } else if let card = model.sidebarCard {
                 SessionCard(summary: card)
                     .padding(.horizontal, 8)
-                if model.threadsOn {
-                    ThreadRows()
-                        .padding(.horizontal, 8)
-                        .padding(.top, 6)
-                }
             } else {
                 Text("No session yet. Say something to start one.")
                     .scaledFont(12)
@@ -134,12 +137,25 @@ struct EarlierRow: View {
 /// button (Log session or New while a log is out): only the rest of the
 /// card opens the live session. VoiceOver reads it as "Show Session M" or
 /// "Go back to Session M", a button only while it opens the session.
+///
+/// With threads on (§9.6) it is the open row of the conversation list:
+/// the row's icon, name ("Main", "Thread 1") and subtitle, on the rows'
+/// left edge; the two buttons share the row when they fit, else stack.
 struct SessionCard: View {
     let summary: ChatSummary
     @EnvironmentObject private var model: AppModel
     @State private var hovering = false
 
     private var chat: Int { summary.chat }
+    /// Drawn as the conversation list's open row (threads on, §9.6).
+    private var listed: Bool { model.threadsOn }
+
+    /// The card's name: "Main" or "Thread 1" in the conversation list;
+    /// with threads off, the shipped "Session N".
+    static func title(summary: ChatSummary, threadsOn: Bool) -> String {
+        if let label = summary.thread?.label { return label }
+        return threadsOn ? "Main" : SessionPresentation(summary: summary).number
+    }
     /// A thread's card (v0.16, AM3): Log session and Close thread, never New.
     private var info: ThreadInfo? { summary.thread }
     private var nudging: Bool { info == nil && model.shouldNudge(chat: chat) }
@@ -156,7 +172,7 @@ struct SessionCard: View {
     private var goesBack: Bool { opensLive && model.selected.map { model.isEnded(chat: $0) } == true }
     private var cardHelp: String {
         guard opensLive else { return "" }
-        let name = info?.label ?? "Session \(chat)"
+        let name = Self.title(summary: summary, threadsOn: listed)
         return goesBack ? "Go back to \(name)" : "Show \(name)"
     }
 
@@ -191,41 +207,40 @@ struct SessionCard: View {
     private var card: some View {
         let shown = SessionPresentation(summary: summary)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Circle().fill(stateColor).frame(width: 7, height: 7)
-                Text(info?.label ?? shown.number)
-                    .scaledFont(14, weight: .semibold)
-                    .foregroundStyle(Theme.text)
-                Spacer(minLength: 0)
-                if let start = SessionTime.parse(summary.created) {
-                    // Re-reads the clock each minute so the age moves.
+            if listed {
+                listedTitleRow
+            } else {
+                HStack(spacing: 8) {
+                    Circle().fill(stateColor).frame(width: 7, height: 7)
+                    Text(info?.label ?? shown.number)
+                        .scaledFont(14, weight: .semibold)
+                        .foregroundStyle(Theme.text)
+                    Spacer(minLength: 0)
+                    if let start = SessionTime.parse(summary.created) {
+                        // Re-reads the clock each minute so the age moves.
+                        TimelineView(.everyMinute) { context in
+                            Text(SessionTime.age(since: start, now: context.date))
+                                .scaledFont(12, monospacedDigit: true)
+                                .foregroundStyle(Theme.text3)
+                        }
+                    }
+                }
+                if !nudging {
+                    // Re-read each minute so "Started 12 min ago" moves (v0.7 decision 1).
                     TimelineView(.everyMinute) { context in
-                        Text(SessionTime.age(since: start, now: context.date))
-                            .scaledFont(12, monospacedDigit: true)
-                            .foregroundStyle(Theme.text3)
+                        Text(shown.startedLine(now: context.date))
+                            .scaledFont(12)
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
             }
-            if let info {
-                Text(ThreadsPresentation.openedLine(info))
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            } else if nudging {
+            if nudging {
                 Text(nudgeSentence)
                     .scaledFont(13)
                     .foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                // Re-read each minute so "Started 12 min ago" moves (v0.7 decision 1).
-                TimelineView(.everyMinute) { context in
-                    Text(shown.startedLine(now: context.date))
-                        .scaledFont(12)
-                        .foregroundStyle(Theme.text2)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
             }
             contextRow
             buttons
@@ -246,7 +261,9 @@ struct SessionCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
+        // In the list the card's content sits on the rows' left edge (§9.6).
+        .padding(.horizontal, listed ? ConversationList.rowInset : 12)
+        .padding(.vertical, listed ? 10 : 12)
         .background(nudging ? Theme.waitSoft : Theme.panel, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .overlay {
             if opensLive && hovering {
@@ -259,6 +276,48 @@ struct SessionCard: View {
             RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
                 .stroke(nudging ? Theme.wait : opensLive && hovering ? Theme.borderStrong : Theme.border, lineWidth: 1))
         .accessibilityElement(children: .contain)
+    }
+
+    /// The open row's first line (§9.6): the icon, the name over its
+    /// subtitle ("Session 4 · started 1:30 PM", a thread's title), and the
+    /// spinner while it works, else the session's age.
+    private var listedTitleRow: some View {
+        HStack(spacing: 8) {
+            ConversationIcon(isThread: info != nil)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Self.title(summary: summary, threadsOn: true))
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(Theme.text)
+                if let subtitle = listedSubtitle {
+                    Text(subtitle)
+                        .scaledFont(11)
+                        .foregroundStyle(Theme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            Spacer(minLength: 0)
+            if summary.state == .working {
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityLabel("Working")
+            } else if let start = SessionTime.parse(summary.created) {
+                TimelineView(.everyMinute) { context in
+                    Text(SessionTime.age(since: start, now: context.date))
+                        .scaledFont(11, monospacedDigit: true)
+                        .foregroundStyle(Theme.text3)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+        }
+    }
+
+    /// Main's "Session 4 · started 1:30 PM"; a thread's title.
+    private var listedSubtitle: String? {
+        info == nil
+            ? ThreadsPresentation.mainSubtitle(summary, open: true, calendar: .current, locale: .current)
+            : SessionPresentation(summary: summary).title
     }
 
     /// The line under the buttons: what they do, and, when Log session is
@@ -310,35 +369,60 @@ struct SessionCard: View {
                         .foregroundStyle(Theme.text2)
                 }
                 .disabled(pending || model.connection != .connected)
+            } else if listed {
+                // §9.6: both labels keep their width; they share the row
+                // when they fit it, else stack, as a thread's do.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        logSessionButton
+                        newButton(keepsWidth: true)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        logSessionButton
+                        newButton(keepsWidth: true)
+                    }
+                }
+                .disabled(pending || model.connection != .connected)
             } else {
                 HStack(spacing: 8) {
                     logSessionButton
-                    Button { model.requestNew(chat: chat) } label: {
-                        HStack(spacing: 6) {
-                            if renewing {
-                                ProgressView().controlSize(.mini)
-                                Text("Starting…")
-                            } else {
-                                Image(systemName: "plus")
-                                Text("New")
-                            }
-                        }
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PillButtonStyle(kind: .quiet))
-                    .help("End this session and start the next")
+                    newButton(keepsWidth: false)
                 }
                 .disabled(pending || model.connection != .connected)
             }
         }
     }
 
+    /// The gap between a button's symbol and its words: tighter in the
+    /// list, so Log session and Close thread share a 260-pt sidebar's row.
+    private var labelGap: CGFloat { listed ? 4 : 6 }
+
+    /// New: in the shipped card it gives way to Log session; in the list
+    /// it keeps its width so the pair can stack instead (§9.6).
+    private func newButton(keepsWidth: Bool) -> some View {
+        Button { model.requestNew(chat: chat) } label: {
+            HStack(spacing: labelGap) {
+                if renewing {
+                    ProgressView().controlSize(.mini)
+                    Text("Starting…")
+                } else {
+                    Image(systemName: "plus")
+                    Text("New")
+                }
+            }
+            .lineLimit(1)
+            .fixedSize(horizontal: keepsWidth, vertical: false)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PillButtonStyle(kind: .quiet, compact: keepsWidth))
+        .help("End this session and start the next")
+    }
+
     /// Log session: shown even when it cannot log (disabled, the hint
     /// says why), so a missing log step is visible, not a mystery.
     private var logSessionButton: some View {
         Button { model.logSession(chat: chat) } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: labelGap) {
                 if logging {
                     ProgressView().controlSize(.mini)
                     Text("Logging…")
@@ -352,7 +436,7 @@ struct SessionCard: View {
             .fixedSize()
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(PillButtonStyle(kind: canLogSession ? .primary(model.brand.accent ?? Theme.accent) : .quiet))
+        .buttonStyle(PillButtonStyle(kind: canLogSession ? .primary(model.brand.accent ?? Theme.accent) : .quiet, compact: listed))
         .disabled(!canLogSession)
         .help(model.logSessionOffReason(chat: chat)
             ?? "Save what this session did, so the next one can pick up where it left off. The session goes on.")
@@ -379,12 +463,14 @@ struct SessionCard: View {
 
     private var closeThreadButton: some View {
         Button { model.requestCloseThread(chat: chat) } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: labelGap) {
                 if closing {
                     ProgressView().controlSize(.mini)
                     Text("Closing…")
                 } else {
+                    // A small ×, as drawn (AP4): the pair then shares the row at 100%.
                     Image(systemName: "xmark")
+                        .font(Theme.iconFont(10, weight: .medium))
                     Text("Close thread")
                 }
             }
@@ -392,7 +478,7 @@ struct SessionCard: View {
             .fixedSize()
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(PillButtonStyle(kind: .quiet))
+        .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
         .help("Close this thread; its summary goes to History")
         .disabled(closing)
     }

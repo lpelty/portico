@@ -213,8 +213,7 @@ struct MainToolbar: View {
     private var items: [ToolbarLayout.Item] {
         ToolbarLayout.items(
             showSwitcher: ToolbarLayout.showsSwitcher,
-            showViewerToggle: model.shownChat != nil && !model.documentMode,
-            inThread: model.sidebarCard?.thread != nil && !model.documentMode)
+            showViewerToggle: model.shownChat != nil && !model.documentMode)
     }
 
     var body: some View {
@@ -258,10 +257,6 @@ struct MainToolbar: View {
         case .switcher:
             // The brand's name truncates first when the column is narrow.
             SpaceSwitcher().layoutPriority(1)
-        case .thread:
-            if model.sidebarCard?.thread != nil {
-                ThreadToolbarItem { model.switchToConversation(slot: 0) }
-            }
         case .spacer:
             Spacer(minLength: 0)
         case .viewerToggle:
@@ -272,35 +267,6 @@ struct MainToolbar: View {
                 }
             }
         }
-    }
-}
-
-/// In a thread (v0.16, AM3): "← Main", which goes back to Main. No chip
-/// naming the thread (the sidebar's card says where you are) and no key
-/// glyph; the tooltip spells the key (§9.1–9.2). It keeps its width, so
-/// the space switcher beside it keeps its name.
-struct ThreadToolbarItem: View {
-    let backToMain: () -> Void
-
-    var body: some View {
-        Button(action: backToMain) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.left")
-                    .font(Theme.iconFont(11))
-                Text("Main")
-                    .scaledFont(12)
-            }
-            .foregroundStyle(Theme.text2)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.hover)
-        .help(ToolbarLayout.backToMainHelp)
-        .accessibilityLabel("Back to Main")
     }
 }
 
