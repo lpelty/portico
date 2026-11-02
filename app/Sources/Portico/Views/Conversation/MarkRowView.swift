@@ -65,23 +65,23 @@ private struct MarkRowBody: View {
                         .controlSize(.mini)
                 } else if shown.isFailed {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(Theme.deny)
                 } else {
                     Image(systemName: "scope")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(Theme.text2)
                 }
             }
             .frame(width: 14, height: 14)
             Text(shown.text)
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if let failure = shown.failureDetail {
                 Text(failure)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.deny)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -92,8 +92,8 @@ private struct MarkRowBody: View {
                     agent.showAgain(toolUseId: row.toolUseId, chat: chat)
                 } label: {
                     HStack(spacing: 4) {
-                        Text("Show again").font(.system(size: 12, weight: .medium))
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        Text("Show again").scaledFont(12, weight: .medium)
+                        Image(systemName: "chevron.right").font(Theme.iconFont(10, weight: .semibold))
                             .accessibilityHidden(true)
                     }
                     .foregroundStyle(model.brand.accent ?? Theme.accent)

@@ -82,6 +82,9 @@ EXPECTED_KEYS = {
     "client.space.refresh",
     "client.space.rename",
     "client.space.remove",
+    # v0.15 models
+    "server.models",
+    "client.model.set",
 }
 
 
@@ -96,7 +99,8 @@ def test_every_type_has_schema_def_and_example():
     # workflow.started, workflow.phase, workflow.finished, v0.11's sessions.clear,
     # chat.unqueue, chat.queued, chat.queue, chat.commands
     # v0.12's viewer.act, viewer.settings, viewer.result, spaces.list, space.refresh, space.rename, space.remove
-    assert len(ex) == 63
+    # v0.15's models, model.set
+    assert len(ex) == 65
     assert set(ex) == EXPECTED_KEYS
 
 

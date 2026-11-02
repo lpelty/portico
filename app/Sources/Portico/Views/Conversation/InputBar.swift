@@ -24,6 +24,7 @@ struct InputBar: View {
     var about: String? = nil
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var dictation: Dictation
+    @Environment(\.textScale) private var textScale
     @FocusState private var editorFocused: Bool
     @State private var slash = SlashListState()
 
@@ -108,7 +109,7 @@ struct InputBar: View {
             HStack(spacing: 8) {
                 Button(action: pickAttachments) {
                     Image(systemName: "plus")
-                        .font(.system(size: 14))
+                        .font(Theme.iconFont(14))
                         .foregroundStyle(Theme.text2)
                         .frame(width: InputBar.iconButtonSide, height: InputBar.iconButtonSide)
                         .contentShape(Rectangle())
@@ -125,7 +126,7 @@ struct InputBar: View {
                 Spacer(minLength: 0)
                 // While Talk listens, its line in place of the Enter hint.
                 Text(DictationLine.text(dictation, composer: voiceComposer.id) ?? InputBar.enterHint)
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .lineLimit(1)
                     .layoutPriority(-1)
@@ -179,17 +180,19 @@ struct InputBar: View {
         ZStack(alignment: .topLeading) {
             if draft.wrappedValue.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 15))
+                    .scaledFont(15)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 5)
                     .allowsHitTesting(false)
             }
+            // The composer's text follows the text scale (v0.15 §3); the
+            // NSTextView under TextEditor takes SwiftUI's font.
             TextEditor(text: draft)
-                .font(.system(size: 15))
+                .scaledFont(15)
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
                 .scrollIndicators(.never)
-                .frame(minHeight: 20, maxHeight: 160)
+                .frame(minHeight: 20 * textScale, maxHeight: 160 * textScale)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
                 .disabled(renewing && !queues)
@@ -251,7 +254,7 @@ struct InputBar: View {
                         .foregroundStyle(.secondary)
                         .help("Remove \(path)")
                     }
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -275,10 +278,10 @@ struct InputBar: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 11))
+                                .font(Theme.iconFont(11))
                                 .foregroundStyle(Theme.text2)
                             Text(action.label)
-                                .font(.system(size: 13))
+                                .scaledFont(13)
                                 .foregroundStyle(Theme.text)
                         }
                         .padding(.vertical, 6)
@@ -371,7 +374,7 @@ struct PillButtonStyle: ButtonStyle {
 
     var body: some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium))
+            .scaledFont(13, weight: .medium)
             .foregroundStyle(foreground)
             .padding(.vertical, 6)
             .padding(.horizontal, 14)

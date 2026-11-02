@@ -22,8 +22,9 @@ enum MarkdownPage {
 
     /// The page for `source`, titled `title`. Front matter at the top is
     /// taken out and drawn as the Properties block (v0.11, item 68); only
-    /// the body reaches the renderer.
-    static func html(source: String, title: String, hiding: Set<String> = []) throws -> String {
+    /// the body reaches the renderer. At a text scale other than 100% the
+    /// body's 15px (viewer.css) is multiplied by it (v0.15 §3).
+    static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
@@ -35,9 +36,22 @@ enum MarkdownPage {
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
-            .replacingOccurrences(of: "{{CSS}}", with: css)
+            .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(split.body))
+    }
+
+    /// The rule that scales the page's text, after the stylesheet so it
+    /// wins; nothing at 100%.
+    static func scaleRule(_ scale: CGFloat) -> String {
+        guard scale != 1 else { return "" }
+        return "\nbody { font-size: calc(15px * \(Self.scaleText(scale))); }\n"
+    }
+
+    /// `1.15`, not `1.1499999999999999`.
+    private static func scaleText(_ scale: CGFloat) -> String {
+        let rounded = (Double(scale) * 100).rounded() / 100
+        return String(format: "%g", rounded)
     }
 
     /// The markdown as a JavaScript string literal. JSON encoding handles
@@ -102,15 +116,18 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         /// The Markdown file a rendered page was made from (v0.14), so a
         /// mark on it keeps its file across re-renders and Back.
         var source: URL? = nil
+        /// The front-matter keys that page hid, kept for a re-render.
+        var hiding: Set<String> = []
     }
 
     private var renders: [String: Render] = [:]
 
     /// Register a page whose relative references resolve under `root`
     /// (a directory). Returns the URL to load.
-    func register(page: String, root: URL, source: URL? = nil) -> URL {
+    func register(page: String, root: URL, source: URL? = nil, hiding: Set<String> = []) -> URL {
         let id = UUID().uuidString.lowercased()
-        renders[id] = Render(page: Data(page.utf8), root: Self.resolved(root), entry: nil, source: source.map(Self.resolved))
+        renders[id] = Render(
+            page: Data(page.utf8), root: Self.resolved(root), entry: nil, source: source.map(Self.resolved), hiding: hiding)
         return URL(string: "\(Self.scheme)://\(id)/")!
     }
 
@@ -138,6 +155,12 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         guard url.scheme == Self.scheme, let host = url.host, let render = renders[host],
               render.page != nil, Self.isRenderedPage(url.path) else { return nil }
         return render.source
+    }
+
+    /// The front-matter keys a rendered page's URL hid when first shown.
+    func hiding(for url: URL) -> Set<String> {
+        guard url.scheme == Self.scheme, let host = url.host else { return [] }
+        return renders[host]?.hiding ?? []
     }
 
     private static func isRenderedPage(_ path: String) -> Bool {
@@ -242,12 +265,27 @@ final class ViewerPageAddress: ObservableObject {
         return host + (url.port.map { ":\($0)" } ?? "")
     }
 
-    /// The address as the header shows it: host and path, no scheme or "www.".
+    /// The address as the header shows it: host and path, no scheme or
+    /// "www.", and the fragment when it reads as a route ("#/settings",
+    /// "#!/inbox"), so an app's in-page navigation shows (v0.15 §5.1). A
+    /// fragment carrying values (an OAuth `#access_token=…`) never shows.
     static func display(_ url: URL) -> String {
         var host = url.host(percentEncoded: false) ?? url.absoluteString
         if host.hasPrefix("www.") { host.removeFirst(4) }
         let path = url.path(percentEncoded: false)
-        return path.isEmpty || path == "/" ? host : host + path
+        let base = path.isEmpty || path == "/" ? host : host + path
+        guard let fragment = url.fragment(percentEncoded: false), isRoute(fragment) else { return base }
+        return base + "#" + fragment
+    }
+
+    private static func isRoute(_ fragment: String) -> Bool {
+        (fragment.hasPrefix("/") || fragment.hasPrefix("!")) && !fragment.contains("=") && !fragment.contains("&")
+    }
+
+    /// AL4: the note beside an outside site's address, as the act rule
+    /// has it (the Work viewer and a space say the same).
+    static func note(for url: URL, actHosts: [String]) -> String {
+        ViewerAgent.canAct(url: url, actHosts: actHosts) ? "outside site" : "outside site · look and scroll only"
     }
 }
 
@@ -271,23 +309,36 @@ struct WebPane: NSViewRepresentable {
 
     let load: Load
 
+    /// The page the pane renders for `load` at a text scale: a Markdown
+    /// file's page, scaled (v0.15 §3). An HTML file and a site are shown
+    /// as they are, at their true size (`nil`: nothing is rendered).
+    static func renderedPage(for load: Load, scale: CGFloat) -> String? {
+        guard case .markdown(let file, let hiding) = load,
+              let source = try? String(contentsOf: file, encoding: .utf8)
+        else { return nil }
+        return try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
         context.coordinator.agent = context.environment.viewerAgent
         context.coordinator.slot = context.environment.viewerSlot
         context.coordinator.address = context.environment.viewerPageAddress
+        context.coordinator.scale = context.environment.textScale
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
+        context.coordinator.apply(
+            load, revision: context.environment.webPaneRevision, scale: context.environment.textScale, to: view)
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.agent?.detach(view)
+        coordinator.detachAddress()
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -309,6 +360,8 @@ struct WebPane: NSViewRepresentable {
         private(set) var failed: Load?
         /// What the open space's pane was last drawn for (`nil` elsewhere).
         private var revision: String?
+        /// The text scale a Markdown page is rendered at (v0.15 §3).
+        var scale: CGFloat = 1
         let handler = RenderedPageHandler()
 
         /// The link on the failure page that asks for the load again. It
@@ -344,11 +397,27 @@ struct WebPane: NSViewRepresentable {
             return true
         }
 
+        /// Watches the view's URL: a hash change or `history.pushState`
+        /// moves it without a commit or a finish (v0.15 §5.1).
+        private var urlObservation: NSKeyValueObservation?
+
+        /// A dismantled pane stops watching and lets go of the header's
+        /// address, so it cannot write into a viewer it no longer shows in.
+        func detachAddress() {
+            urlObservation?.invalidate()
+            urlObservation = nil
+            address = nil
+        }
+
         /// Wire a view made from `configuration()` to this coordinator.
         @discardableResult
         func attach(_ view: WKWebView) -> WKWebView {
             view.navigationDelegate = self
             view.setValue(false, forKey: "drawsBackground")
+            urlObservation = view.observe(\.url, options: [.new]) { [weak self] view, _ in
+                // WebKit reports it on the main thread.
+                MainActor.assumeIsolated { self?.noteAddress(of: view) }
+            }
             return view
         }
 
@@ -356,10 +425,18 @@ struct WebPane: NSViewRepresentable {
         /// and failed to): a SwiftUI redraw is not a request to try again.
         /// A new `revision` for the same load (an open space whose file
         /// changed) reads it again, keeping where the reader had scrolled.
-        func apply(_ load: Load, revision: String? = nil, to view: WKWebView) {
-            let reread = load == loaded && revision != nil && revision != self.revision && failed == nil
+        /// A new text `scale` re-renders a Markdown page the same way, in
+        /// place; an HTML file or a site is not touched.
+        func apply(_ load: Load, revision: String? = nil, scale: CGFloat? = nil, to view: WKWebView) {
+            var rescaled = false
+            if let scale, scale != self.scale {
+                self.scale = scale
+                if case .markdown = load { rescaled = true }
+            }
+            let revised = revision != nil && revision != self.revision
+            let reread = load == loaded && failed == nil && (revised || rescaled)
             self.revision = revision
-            if reread { return rereadKeepingScroll(load, in: view) }
+            if reread { return rereadKeepingScroll(load, in: view, scaleOnly: !revised) }
             guard load != loaded else { return }
             start(load, in: view)
         }
@@ -368,10 +445,30 @@ struct WebPane: NSViewRepresentable {
         /// re-read page has loaded.
         private var pendingScroll: Double?
 
-        private func rereadKeepingScroll(_ load: Load, in view: WKWebView) {
+        /// `scaleOnly`: only the text size changed (no new revision). Then
+        /// only a rendered Markdown page the pane shows is drawn again; a
+        /// page it went to from there (a linked HTML file, a site, a file
+        /// served beside it) is left alone (v0.15 final review).
+        private func rereadKeepingScroll(_ load: Load, in view: WKWebView, scaleOnly: Bool = false) {
             view.evaluateJavaScript(Self.readScroll) { [weak self, weak view] value, _ in
                 MainActor.assumeIsolated {
                     guard let self, let view, self.loaded == load else { return }
+                    let shown = view.url.flatMap { self.handler.source(for: $0) }
+                    if scaleOnly && shown == nil { return }
+                    // The pane may have gone to another Markdown page (a
+                    // mark's page, Back): that is the page to draw again,
+                    // with its own scroll, not the file first loaded. A
+                    // rescale of the page itself is drawn the same way.
+                    if case .markdown(let file, _) = load, let url = view.url, let shown,
+                       scaleOnly || shown != file.standardizedFileURL.resolvingSymlinksInPath(),
+                       let again = self.renderedURL(for: shown, hiding: self.handler.hiding(for: url)) {
+                        self.pendingScroll = (value as? NSNumber)?.doubleValue
+                        // Replace the entry, not push one: Back must not
+                        // step through the same page twice, or through
+                        // copies of it at older sizes.
+                        view.evaluateJavaScript("location.replace('\(again.absoluteString)')")
+                        return
+                    }
                     self.start(load, in: view, scroll: (value as? NSNumber)?.doubleValue)
                 }
             }
@@ -433,8 +530,8 @@ struct WebPane: NSViewRepresentable {
             case .markdown(let file, let hiding):
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
-                    let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
+                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+                    let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
                     view.load(URLRequest(url: url))
                 } catch {
                     showFailure("Cannot read \(file.path): \(error)", in: view)
@@ -463,9 +560,9 @@ struct WebPane: NSViewRepresentable {
                 return handler.register(file: file)
             case "md", "markdown":
                 guard let source = try? String(contentsOf: file, encoding: .utf8),
-                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
+                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
                 else { return nil }
-                return handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
+                return handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
             default:
                 return nil
             }

@@ -29,6 +29,7 @@ struct MarksChip: View {
         .accessibilityLabel(Self.spokenLabel(count: list.count, pages: Set(list.map(\.page)).count))
         .popover(isPresented: $open, arrowEdge: .bottom) {
             MarksList(chat: chat, store: store, agent: agent, accent: accent, onDone: { open = false })
+                .popoverSurface()
         }
     }
 }
@@ -45,11 +46,11 @@ struct MarksChipLabel: View {
                 .fill(accent)
                 .frame(width: 7, height: 7)
             Text(text)
-                .font(.system(size: 12).monospacedDigit())
+                .scaledFont(12, monospacedDigit: true)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
             Image(systemName: open ? "chevron.up" : "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
+                .font(Theme.iconFont(9, weight: .semibold))
                 .foregroundStyle(Theme.text3)
         }
         .padding(.vertical, 4)
@@ -102,10 +103,10 @@ struct MarksList: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "eraser")
-                        .font(.system(size: 12))
+                        .font(Theme.iconFont(12))
                         .frame(width: 18)
                     Text("Clear all marks")
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(accent)
@@ -122,15 +123,15 @@ struct MarksList: View {
     private func header(_ title: String, aside: String?) -> some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Theme.text3)
+                .scaledFont(10, weight: .semibold)
+                .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if let aside {
                 Text(aside)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.text3)
+                    .scaledFont(10)
+                    .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -147,26 +148,26 @@ struct MarksList: View {
         } label: {
             HStack(spacing: 10) {
                 Text("\(mark.number)")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .scaledFont(11, weight: .semibold, monospacedDigit: true)
                     .foregroundStyle(.white)
                     .frame(width: 18, height: 18)
                     .background(accent, in: Circle())
                 VStack(alignment: .leading, spacing: 1) {
                     Text(mark.note.isEmpty ? mark.label : mark.note)
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     if !mark.found {
                         Text("not on the page now")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.text3)
+                            .scaledFont(11)
+                            .foregroundStyle(Theme.text2)
                     }
                 }
                 Spacer(minLength: 8)
                 if !here {
                     Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                 }
             }
@@ -178,5 +179,21 @@ struct MarksList: View {
         .buttonStyle(.hover)
         .help(mark.label)
         .accessibilityLabel(Self.spokenLabel(for: mark))
+    }
+}
+
+/// The chip measured hidden in each of its three forms, for `HeaderFit`;
+/// the file header and the space header share it.
+struct MarksChipMeasures: View {
+    let chat: Int
+    let marks: MarkStore
+    let accent: Color
+    let report: (MarkStore.ChipForm, CGFloat) -> Void
+
+    var body: some View {
+        ForEach([MarkStore.ChipForm.full, .short, .count], id: \.self) { form in
+            MarksChipLabel(text: marks.chipText(chat: chat, form: form), accent: accent)
+                .headerMeasure { report(form, $0) }
+        }
     }
 }

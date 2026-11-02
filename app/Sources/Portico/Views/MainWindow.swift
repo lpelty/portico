@@ -134,15 +134,12 @@ struct SidebarColumn: View {
     var body: some View {
         VStack(spacing: 0) {
             Color.clear
-                .frame(height: Theme.toolbarHeight)
+                .frame(height: Theme.sidebarBandHeight)
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
             if model.isSinglePresentation {
-                // S1: the session card and Earlier, then the files. Earlier
-                // is drawn above the files so all of the line between them
-                // can be grabbed.
+                // S1: the session card and the History row, then the files.
                 SessionSidebar()
-                    .zIndex(1)
                 if let chat = model.filesChat {
                     FilesView(chat: chat)
                         .id(chat)
@@ -250,7 +247,7 @@ struct MainToolbar: View {
                 } else {
                     BrandMark(brand: model.brand)
                     Text(model.brand.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -333,7 +330,7 @@ struct PanelToggle: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: side == .leading ? "sidebar.left" : "sidebar.right")
-                .font(.system(size: 15, weight: .regular))
+                .font(Theme.iconFont(15, weight: .regular))
                 .foregroundStyle(shown ? Theme.text2 : Theme.text)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())

@@ -456,9 +456,10 @@ frames to an app that lists the same in its own `hello`; v0.11:
 sessions…; v0.11: `queue.v1` when it queues a send made during a turn for
 an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 `[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
-offers Refresh on a space). Always followed by `chat.list`, so the app has the
-sidebar before anything else arrives, and then (v0.4) `services.status`
-and (v0.11) any kept `chat.commands`.
+offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
+see [Models](#models-v015)). Always followed by `chat.list`, so the app has the
+sidebar before anything else arrives, and then (v0.4) `services.status`,
+(v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
@@ -973,6 +974,72 @@ holds for the agent, after every change. Not stamped and not in the ring:
 each one replaces the list the app had. `returned?: [{id, text,
 attachments}]`, oldest first: messages a `turn.stop` took out of the
 queue, for the composer (absent otherwise).
+
+## Models *(v0.15)*
+
+The model in the status strip is a menu that switches the model the way
+`/model` does in a terminal. When the gateway's `hello` and the app's both
+list `models.v1`:
+
+- **The list is the engine's own.** When an engine starts, the Claude Code
+  CLI behind the Agent SDK answers its initialize request with `models`:
+  the same list `/model` shows (on a hosted provider, built from the deployment's
+  own settings). The gateway passes each entry's `value`, `displayName`,
+  `description` and `resolvedModel` on as `{value, display_name,
+  description, resolved_model?}`; no Portico config chooses them. The last
+  list is kept in the gateway's `index.json`, so an app hears it before any
+  engine of this launch starts.
+- **Read at gateway start** (amended 11-02). When the gateway starts
+  serving it asks the CLI for the list once, in the background: it
+  connects with the same options an engine uses (in the deployment's
+  `default_folder`, else the home folder), reads the server info and
+  disconnects, sending no message, with the deployment's hooks off
+  (`disableAllHooks`, so no `SessionStart`/`SessionEnd` hook fires for a
+  session nobody opened; engines keep their hooks). A new list is kept and each live
+  session hears `models`. A failure, or no answer within 30 s, is logged
+  and the kept list stands; `hello` never waits for it.
+- **The choice persists.** `model.set` switches the running engine at once
+  (the SDK's `set_model`) and is kept in the index: every later engine
+  starts on it, whether the session's engine restarts, a new session
+  begins, or the gateway restarts. `"default"` or `null` goes back to the
+  deployment's default. A choice made before the engine has started is
+  the engine's starting model. A `chat.notice` records each switch:
+  "Model: Sonnet", the choice's `display_name` ("Model: Default
+  (recommended)" for the default).
+- **Not while a reply runs.** `model.set` during a turn or a log step is
+  refused with `error code=chat.busy` and the message "Change the model
+  after this reply": switching mid-turn would leave it unclear which model
+  answered. A `value` not in the kept list is `error code=model.unknown`,
+  "That model isn't offered here." (With no list kept yet any value is
+  taken and the next start checks it.) An ended session is
+  `session.ended`.
+- **A model the deployment no longer offers** (a stored choice missing from
+  a newly read list) is dropped when the engine starts: the engine goes
+  to the default, the choice is cleared, and a notice says "Model: Default
+  (Opus is no longer offered here)", naming the model as the earlier list
+  did (its `value` when that never had it).
+
+Without `models.v1` on both sides the gateway sends no `models` frame, and
+the strip stays plain text (`context.usage`'s `model_name`).
+
+### `model.set` — `ModelSet` *(app → gateway)*
+`chat`, `value: string | null` (a `models` choice's `value`; `"default"`
+or `null`: the deployment's default), `id`. Answered with `models`
+carrying the `id` and the new `current`, or with `error` as above.
+
+### `models` — `Models`
+`chat`, `current?: string` (the model this session runs on (see below);
+absent: the default), `choices: [{value, display_name, description,
+resolved_model?}]`, in the engine's order. `resolved_model` (11-02,
+additive: an older app ignores it) is the model id the entry runs, so the
+app can name the model Default resolves to. Sent after `hello` for each live session (when a list is
+kept), after the start-up read, after each engine start, after a renewal for the session that
+follows, and after a switch. Not stamped and not in the ring: each one
+replaces what the app had. The choice is the gateway's, but `current` is
+the model that session runs on: its running engine's, else the stored
+choice it will start on. A switch never changes another session's running
+engine, so with several sessions open their `current` can differ until
+that engine restarts.
 
 ## Subagents and workflows *(v0.10)*
 

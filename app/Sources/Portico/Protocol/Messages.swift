@@ -311,7 +311,10 @@ struct HelloClient: Codable, Equatable, Sendable {
 
     /// Everything this app names in `capabilities` (v0.11: `queue.v1`,
     /// messages typed while the agent works).
-    static let appCapabilities = [AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability, MarkStore.capability]
+    static let appCapabilities = [
+        AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
+        MarkStore.capability, Models.capability,
+    ]
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
@@ -454,6 +457,18 @@ struct SessionMode: Codable, Equatable, Sendable {
     static let messageType = "session.mode"
     var chat: Int
     var mode: PermissionMode
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Switch the model for this session and the ones after it (v0.15,
+/// `models.v1`): a `models` choice's `value`; `"default"` or absent is the
+/// deployment's default. Answered with `models` carrying the `id` and the
+/// new `current`, or with `error` (`chat.busy`, `model.unknown`).
+struct ModelSet: Codable, Equatable, Sendable {
+    static let messageType = "model.set"
+    var chat: Int
+    var value: String?
     var id: String? = nil
     var ts: String = ProtocolClock.now()
 }
@@ -1111,6 +1126,42 @@ struct ChatCommands: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+/// One model the session can switch to (v0.15): the engine's own `/model`
+/// list, as the gateway passes it on. `resolvedModel` (11-02, optional) is
+/// the model id the entry runs, so Default can be named by its model.
+struct ModelChoice: Codable, Equatable, Sendable, Identifiable {
+    var value: String
+    var displayName: String
+    var description: String
+    var resolvedModel: String? = nil
+
+    var id: String { value }
+
+    enum CodingKeys: String, CodingKey {
+        case value, description
+        case displayName = "display_name"
+        case resolvedModel = "resolved_model"
+    }
+}
+
+/// The models a session can switch to and the one it runs on (v0.15,
+/// `models.v1`). `current` absent: the deployment's default. Not stamped:
+/// each one replaces what the app had for the chat.
+struct Models: Codable, Equatable, Sendable {
+    static let messageType = "models"
+    static let capability = "models.v1"
+    /// The `value` of the choice that means the deployment's default.
+    static let defaultValue = "default"
+    var chat: Int
+    var current: String? = nil
+    var choices: [ModelChoice]
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
 /// The answer to `files.search`.
 struct FilesResults: Codable, Equatable, Sendable {
     static let messageType = "files.results"
@@ -1422,6 +1473,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case spaceRefresh(SpaceRefresh)
     case spaceRename(SpaceRename)
     case spaceRemove(SpaceRemove)
+    case modelSet(ModelSet)
 
     var type: String {
         switch self {
@@ -1450,6 +1502,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .spaceRefresh: SpaceRefresh.messageType
         case .spaceRename: SpaceRename.messageType
         case .spaceRemove: SpaceRemove.messageType
+        case .modelSet: ModelSet.messageType
         }
     }
 
@@ -1481,6 +1534,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SpaceRefresh.messageType: self = .spaceRefresh(try SpaceRefresh(from: decoder))
         case SpaceRename.messageType: self = .spaceRename(try SpaceRename(from: decoder))
         case SpaceRemove.messageType: self = .spaceRemove(try SpaceRemove(from: decoder))
+        case ModelSet.messageType: self = .modelSet(try ModelSet(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1514,6 +1568,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .spaceRefresh(let m): try m.encode(to: encoder)
         case .spaceRename(let m): try m.encode(to: encoder)
         case .spaceRemove(let m): try m.encode(to: encoder)
+        case .modelSet(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1559,6 +1614,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case chatCommands(ChatCommands)
     case viewerAct(ViewerAct)
     case spacesList(SpacesList)
+    case models(Models)
 
     var type: String {
         switch self {
@@ -1600,6 +1656,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCommands: ChatCommands.messageType
         case .viewerAct: ViewerAct.messageType
         case .spacesList: SpacesList.messageType
+        case .models: Models.messageType
         }
     }
 
@@ -1643,6 +1700,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCommands(let m): m.envelope
         case .viewerAct(let m): m.envelope
         case .spacesList(let m): m.envelope
+        case .models(let m): m.envelope
         }
     }
 
@@ -1687,6 +1745,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ChatCommands.messageType: self = .chatCommands(try ChatCommands(from: decoder))
         case ViewerAct.messageType: self = .viewerAct(try ViewerAct(from: decoder))
         case SpacesList.messageType: self = .spacesList(try SpacesList(from: decoder))
+        case Models.messageType: self = .models(try Models(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1733,6 +1792,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCommands(let m): try m.encode(to: encoder)
         case .viewerAct(let m): try m.encode(to: encoder)
         case .spacesList(let m): try m.encode(to: encoder)
+        case .models(let m): try m.encode(to: encoder)
         }
     }
 }

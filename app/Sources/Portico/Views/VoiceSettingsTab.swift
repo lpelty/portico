@@ -22,7 +22,7 @@ struct VoiceSettingsTab: View {
                 }
                 .disabled(!settings.voiceInputEnabled)
                 Text("Press the mic in the message box and speak; press it again, or Esc, to stop. Your words appear as you speak and are turned into text on this Mac. The first time, macOS asks to allow the microphone and speech recognition.")
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             // Hidden behind a flag for now (Settings.readAloudAvailable).
@@ -57,11 +57,11 @@ struct VoiceSettingsTab: View {
                     }
                     if !VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage) {
                         Text("For a natural voice, download a Premium one: System Settings › Accessibility › Spoken Content › System voice › Manage Voices… (for example Ava or Zoe, Premium). It appears here once installed.")
-                            .font(.caption)
+                            .scaledFont(10)
                             .foregroundStyle(.secondary)
                     }
                     Text("Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading.")
-                        .font(.caption)
+                        .scaledFont(10)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -92,7 +92,7 @@ struct VoiceSettingsTab: View {
             }
         case .denied:
             Text("Personal Voice is off for this app (System Settings › Privacy & Security › Personal Voice).")
-                .font(.caption)
+                .scaledFont(10)
                 .foregroundStyle(.secondary)
         case .allowed, .unsupported:
             EmptyView()

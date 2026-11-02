@@ -102,7 +102,7 @@ struct PermissionCard: View {
             header
             if !shown.summary.isEmpty {
                 Text(shown.summary)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(3)
                     .truncationMode(.middle)
@@ -127,24 +127,24 @@ struct PermissionCard: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "hand.raised")
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.wait)
                 .frame(width: 26, height: 26)
                 .background(Theme.waitSoft, in: Circle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(shown.question)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .textSelection(.enabled)
                 if let line = PermissionPresentation.whereLine(folder: folder) {
                     Text(line)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text2)
                 }
             }
             Spacer(minLength: 8)
             Text(shown.tool)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text2)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -160,10 +160,10 @@ struct PermissionCard: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Theme.iconFont(9, weight: .semibold))
                         .rotationEffect(.degrees(showInput ? 90 : 0))
                     Text("Show the full input")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                 }
                 .foregroundStyle(accent)
                 .contentShape(Rectangle())
@@ -173,7 +173,7 @@ struct PermissionCard: View {
             if showInput {
                 ScrollView {
                     Text(shown.prettyInput)
-                        .font(.system(size: 11, design: .monospaced))
+                        .scaledFont(11, design: .monospaced)
                         .foregroundStyle(Theme.text)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -203,7 +203,7 @@ struct PermissionCard: View {
                     .help("Allow this one step")
             }
             Text(shown.scopeNote)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
         }
     }
@@ -212,7 +212,7 @@ struct PermissionCard: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Tell the agent why, or what to do instead", text: $note)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(Theme.window, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -220,7 +220,7 @@ struct PermissionCard: View {
                 .focused($noteFocused)
                 .onSubmit { answer(.deny) }
             Text(PermissionPresentation.noteHint(agentName: agentName))
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
             HStack {
                 Button("Back") { denying = false }

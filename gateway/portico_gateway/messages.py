@@ -271,6 +271,20 @@ class SessionMode(Envelope):
     mode: PermissionMode
 
 
+class ModelSet(Envelope):
+    """v0.15: switch the model for this session and the ones after it (``models.v1``).
+
+    ``value`` is a ``ModelChoice.value`` from ``models``; ``"default"`` or
+    ``null`` is the deployment's default. Answered by ``models`` carrying the
+    request's ``id`` and the new ``current``, or by ``error``: ``chat.busy``
+    while a reply runs, ``model.unknown`` for a value the list lacks.
+    """
+
+    type: Literal["model.set"] = "model.set"
+    chat: int
+    value: str | None = None
+
+
 class TurnStop(Envelope):
     type: Literal["turn.stop"] = "turn.stop"
     chat: int
@@ -726,6 +740,40 @@ class ChatCommands(Envelope):
     commands: list[AgentCommand] = []
 
 
+class ModelChoice(Strict):
+    """v0.15: one entry of the engine's model list, the CLI's ``/model`` list.
+
+    ``value`` is what ``model.set`` sends back (``opus``, ``sonnet``,
+    ``claude-fable-5-1[1m]``, ``default``); ``display_name`` and
+    ``description`` are the engine's own words. ``resolved_model`` (11-02)
+    is the model id the entry runs (the engine's ``resolvedModel``), so the
+    app can name what Default resolves to; absent when the engine did not
+    say, and an older app ignores it.
+    """
+
+    value: str
+    display_name: str
+    description: str = ""
+    resolved_model: str | None = None
+
+
+class Models(Envelope):
+    """v0.15: the models the session can switch to and the one it runs on (``models.v1``).
+
+    Sent after ``hello`` for each live session (from the list the gateway
+    kept), after each engine start, and after a switch (with the
+    ``model.set`` request's ``id``). ``current`` is the model this session
+    runs on: its running engine's, else the stored choice it will start on;
+    absent (``null``) is the deployment's default. A reading, not history:
+    no ``seq``.
+    """
+
+    type: Literal["models"] = "models"
+    chat: int
+    current: str | None = None
+    choices: list[ModelChoice] = []
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -914,6 +962,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SpaceRefresh,
     SpaceRename,
     SpaceRemove,
+    ModelSet,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -954,6 +1003,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatCommands,
     ViewerAct,
     SpacesList,
+    Models,
     Error,
 )
 
@@ -1047,7 +1097,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.12.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1"]),
+        HelloClient(ts=_TS, app_version="0.12.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1"]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1075,6 +1125,7 @@ def example_messages() -> dict[str, BaseModel]:
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),
         FilesSearch(ts=_TS, id="req-5", root="projects", query="synthesis"),
         SessionMode(ts=_TS, chat=14, mode="auto"),
+        ModelSet(ts=_TS, chat=14, id="req-11", value="sonnet"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1297,6 +1348,25 @@ def example_messages() -> dict[str, BaseModel]:
                     media="html",
                     updated="2026-10-31T07:30:00.000000Z",
                 ),
+            ],
+        ),
+        Models(
+            ts=_TS,
+            chat=14,
+            id="req-11",
+            current="sonnet",
+            choices=[
+                ModelChoice(
+                    value="default",
+                    display_name="Default (recommended)",
+                    description="Opus for complex work",
+                    resolved_model="claude-opus-5",
+                ),
+                ModelChoice(
+                    value="opus", display_name="Opus", description="Opus for the hardest work", resolved_model="claude-opus-5"
+                ),
+                ModelChoice(value="sonnet", display_name="Sonnet", description="Efficient for routine tasks"),
+                ModelChoice(value="haiku", display_name="Haiku", description="Fastest for quick answers"),
             ],
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),

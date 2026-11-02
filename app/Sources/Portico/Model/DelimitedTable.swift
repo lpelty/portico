@@ -243,9 +243,11 @@ struct DelimitedTable: Equatable, Sendable {
     /// `widthSampleRows` rows, plus padding, kept between the minimum and
     /// maximum. Fixed widths let rows draw lazily and still line up; a cell
     /// wider than its column truncates.
-    static func columnWidths(header: [String], rows: [[String]], sample: Int = widthSampleRows) -> [CGFloat] {
-        let cellAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: fontSize)]
-        let headerAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold)]
+    /// At a text scale the cells' text, and so the widths, grow with it
+    /// (v0.15 §3); the limits hold.
+    static func columnWidths(header: [String], rows: [[String]], sample: Int = widthSampleRows, scale: CGFloat = 1) -> [CGFloat] {
+        let cellAttributes: [NSAttributedString.Key: Any] = [.font: Theme.nsFont(fontSize, scale: scale)]
+        let headerAttributes: [NSAttributedString.Key: Any] = [.font: Theme.nsFont(fontSize, scale: scale, weight: .semibold)]
         return header.indices.map { column in
             var widest = (header[column] as NSString).size(withAttributes: headerAttributes).width
             for row in rows.prefix(sample) where column < row.count {
@@ -275,12 +277,12 @@ enum TableLoad: Sendable {
     /// short. A cancelled load gives `unreadable`, which nobody sees.
     static func load(
         _ file: URL, separator: Character, rowLimit: Int = DelimitedTable.defaultRowLimit,
-        byteLimit: Int = TextFileRead.tableLimit
+        byteLimit: Int = TextFileRead.tableLimit, scale: CGFloat = 1
     ) -> TableLoad {
         if let read = TextFileRead.read(file, limit: byteLimit, wholeLines: true),
            let table = DelimitedTable.parse(read.text, separator: separator, rowLimit: rowLimit, partial: read.truncated) {
             let drawn = Array(table.header.prefix(DelimitedTable.maxDrawnColumns))
-            let widths = DelimitedTable.columnWidths(header: drawn, rows: table.rows)
+            let widths = DelimitedTable.columnWidths(header: drawn, rows: table.rows, scale: scale)
             return .table(table, widths: widths, note: note(table: table, read: read, byteLimit: byteLimit))
         }
         if Task.isCancelled { return .unreadable }

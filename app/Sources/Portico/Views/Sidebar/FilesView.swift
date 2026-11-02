@@ -101,7 +101,7 @@ struct FilesView: View {
                 .help("Clear the filter")
             }
         }
-        .font(.system(size: 12))
+        .scaledFont(12)
         .foregroundStyle(Theme.text2)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
@@ -153,6 +153,7 @@ struct FilesView: View {
                     }
                 } header: {
                     Text("Changed this session")
+                        .scaledFont(FileTree.headerSize, weight: .semibold)
                 }
             }
             ForEach(nodes) { node in
@@ -195,6 +196,13 @@ struct FileTree: View {
         var id: String { node.id }
     }
 
+    /// The sizes a `.sidebar` list draws by default, set explicitly because
+    /// the list's default font ignores the text scale (v0.15 §3.3, amended
+    /// 11-02): rows 13 pt, section headers 11 pt semibold. At 100% they draw
+    /// exactly as the defaults did (checked pixel for pixel, light and dark).
+    static let rowSize: CGFloat = 13
+    static let headerSize: CGFloat = 11
+
     /// Full steps for the first four levels, then small ones, so a file
     /// eight folders down still has room for its name.
     static func indent(depth: Int) -> CGFloat {
@@ -212,8 +220,15 @@ struct FileTree: View {
                         row(line)
                     }
                 } header: {
-                    Label(root.name, systemImage: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
-                        .help(root.path)
+                    Label {
+                        Text(root.name)
+                            .scaledFont(Self.headerSize, weight: .semibold)
+                    } icon: {
+                        // Icons keep their size (§3.4); this is the size the header drew it at before.
+                        Image(systemName: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
+                            .font(Theme.iconFont(Self.headerSize, weight: .semibold))
+                    }
+                    .help(root.path)
                 }
             }
         }
@@ -244,7 +259,7 @@ struct FileTree: View {
                         allChanged.toggle()
                     } label: {
                         Text(allChanged ? "Show fewer" : "\(changed.count - shown) more")
-                            .font(.caption)
+                            .scaledFont(10)
                             .foregroundStyle(.secondary)
                             .padding(.leading, FileRow.disclosureWidth + 2)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -254,6 +269,7 @@ struct FileTree: View {
                 }
             } header: {
                 Text("Changed this session")
+                    .scaledFont(Self.headerSize, weight: .semibold)
             }
         }
     }
@@ -309,7 +325,7 @@ struct FileTree: View {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
                 Text(refusal)
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -322,7 +338,7 @@ struct FileTree: View {
                 ProgressView()
                     .controlSize(.mini)
                 Text(model.connection == .connected ? "Listing…" : "Not connected")
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.secondary)
             }
             .onAppear { model.listFiles(chat: chat, root: node.root, path: node.path) }
@@ -369,7 +385,7 @@ struct FileRow: View {
         ) {
             if !node.dir, let size = node.size {
                 Text(Self.sizeText(size))
-                    .font(.caption)
+                    .scaledFont(10)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
@@ -398,7 +414,7 @@ struct FileRow: View {
                 Divider()
             }
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
-            if !node.dir {
+            if !node.dir, Obsidian.opens(path: path) {
                 Button("Open in Obsidian") { Obsidian.open(path: path) }
                     .disabled(!Obsidian.isInstalled)
             }
@@ -438,7 +454,7 @@ struct FileLine<Trailing: View>: View {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: FileTree.indent(depth: disclosure.depth), height: 1)
                     Image(systemName: disclosure.expanded == true ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Theme.iconFont(9, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                         .opacity(disclosure.expanded == nil ? 0 : 1)
                         .frame(width: FileRow.disclosureWidth)
@@ -450,11 +466,12 @@ struct FileLine<Trailing: View>: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name)
+                    .scaledFont(FileTree.rowSize)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
+                        .scaledFont(10)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -520,8 +537,10 @@ struct ChangedFileRow: View {
                 .help("Attach to the next message")
             Divider()
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
-            Button("Open in Obsidian") { Obsidian.open(path: path) }
-                .disabled(!Obsidian.isInstalled)
+            if Obsidian.opens(path: path) {
+                Button("Open in Obsidian") { Obsidian.open(path: path) }
+                    .disabled(!Obsidian.isInstalled)
+            }
             Button("Open externally") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
         }
@@ -555,7 +574,7 @@ struct HeaderIcon: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.text2)
                 .frame(width: 20, height: 18)
                 .contentShape(Rectangle())
@@ -619,10 +638,10 @@ struct BookmarksView: View {
     private var empty: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(Self.emptyTitle)
-                .font(.system(size: 12.5))
+                .scaledFont(12.5)
                 .foregroundStyle(Theme.text2)
             Text(Self.emptyHint)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(Theme.text3)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -656,11 +675,11 @@ struct BookmarkRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isDirectory ? "folder" : FileIcon.systemName(for: name))
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.text2)
                 .frame(width: 16)
             Text(name)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -687,8 +706,10 @@ struct BookmarkRow: View {
             if !isDirectory {
                 Button("Open in viewer") { model.reveal(file: path, in: chat) }
                 Button("Add to chat") { model.attach([path], to: chat) }
-                Button("Open in Obsidian") { Obsidian.open(path: path) }
-                    .disabled(!Obsidian.isInstalled)
+                if Obsidian.opens(path: path) {
+                    Button("Open in Obsidian") { Obsidian.open(path: path) }
+                        .disabled(!Obsidian.isInstalled)
+                }
                 Divider()
             }
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
@@ -739,7 +760,7 @@ struct FilesTabSwitch: View {
         let on = selection == tab
         return Button { selection = tab } label: {
             Text(title)
-                .font(.system(size: 11, weight: on ? .semibold : .regular))
+                .scaledFont(11, weight: on ? .semibold : .regular)
                 .foregroundStyle(on ? Theme.text : Theme.text2)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 3)

@@ -13,11 +13,11 @@ struct GatewayConfirmDialog: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(confirmation.title)
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Text(confirmation.body)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .lineSpacing(4)
                 .foregroundStyle(Theme.text2)
                 .fixedSize(horizontal: false, vertical: true)

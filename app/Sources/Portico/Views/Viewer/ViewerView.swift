@@ -220,7 +220,7 @@ struct ViewerView: View {
                 model.setViewer(visible: false, for: chat)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.iconFont(13, weight: .medium))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
@@ -246,13 +246,9 @@ struct ViewerView: View {
                 noteText(outside).headerMeasure { measured.note = $0 }
             }
             if chipShown {
-                let accent = model.brand.accent ?? Theme.accent
-                MarksChipLabel(text: marks.chipText(chat: chat, form: .full), accent: accent)
-                    .headerMeasure { measured.chipFull = $0 }
-                MarksChipLabel(text: marks.chipText(chat: chat, form: .short), accent: accent)
-                    .headerMeasure { measured.chipShort = $0 }
-                MarksChipLabel(text: marks.chipText(chat: chat, form: .count), accent: accent)
-                    .headerMeasure { measured.chipCount = $0 }
+                MarksChipMeasures(chat: chat, marks: marks, accent: model.brand.accent ?? Theme.accent) { form, width in
+                    measured.setChip(form, width)
+                }
             }
             HStack(spacing: 8) { openButtons(labelled: true) }
                 .headerMeasure { measured.buttonsLabelled = $0 }
@@ -272,7 +268,7 @@ struct ViewerView: View {
             }
         } else if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
             let shown = ArtifactPresentation(artifact: current)
-            if vault != nil, let path = shown.fileURL?.path {
+            if vault != nil, let path = shown.fileURL?.path, Obsidian.opens(path: path) {
                 let installed = Obsidian.isInstalled
                 headerButton("Open in Obsidian", systemImage: "diamond", labelled: labelled,
                              help: installed ? "Open this note in Obsidian" : Obsidian.notInstalledHelp) {
@@ -297,13 +293,12 @@ struct ViewerView: View {
 
     /// AL4: whether the agent may use the outside site, as the act rule has it.
     private func outsideNote(_ url: URL) -> String {
-        ViewerAgent.canAct(url: url, actHosts: model.hello?.viewerDefaults?.actHosts ?? [])
-            ? "outside site" : "outside site · look and scroll only"
+        ViewerPageAddress.note(for: url, actHosts: model.hello?.viewerDefaults?.actHosts ?? [])
     }
 
     private func noteText(_ outside: URL) -> some View {
         Text(outsideNote(outside))
-            .font(.system(size: 12))
+            .scaledFont(12)
             .foregroundStyle(Theme.text3)
             .lineLimit(1)
     }
@@ -323,6 +318,7 @@ struct ViewerView: View {
         .help(model.current[chat].map { "\(ArtifactPresentation(artifact: $0).kindLabel) · \($0.location)" } ?? model.madeHereLabel)
         .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
             ArtifactMenu(chat: chat, artifacts: made, onPick: { menuOpen = false })
+                .popoverSurface()
         }
     }
 
@@ -330,10 +326,10 @@ struct ViewerView: View {
         HStack(spacing: 7) {
             if let outside = page.outside {
                 Image(systemName: "globe")
-                    .font(.system(size: 13))
+                    .font(Theme.iconFont(13))
                     .foregroundStyle(Theme.text2)
                 Text(ViewerPageAddress.display(outside))
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -344,27 +340,27 @@ struct ViewerView: View {
             } else if let current = model.current[chat] {
                 let shown = ArtifactPresentation(artifact: current)
                 Image(systemName: shown.systemImage)
-                    .font(.system(size: 13))
+                    .font(Theme.iconFont(13))
                     .foregroundStyle(Theme.text2)
                 Text(shown.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else {
                 Text(made.isEmpty ? "Viewer" : model.madeHereLabel)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text2)
             }
             if !made.isEmpty {
                 Text("\(made.count)")
-                    .font(.system(size: 11).monospacedDigit())
+                    .scaledFont(11, monospacedDigit: true)
                     .foregroundStyle(Theme.text2)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Theme.surface, in: Capsule())
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(Theme.iconFont(9, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
         }
@@ -402,10 +398,10 @@ struct ViewerHeaderButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(Theme.iconFont(10, weight: .semibold))
                 if labelled {
                     Text(title)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                 }
             }
             .foregroundStyle(Theme.text2)
@@ -434,7 +430,7 @@ struct ViewerFocusButton: View {
             model.toggleFocus(chat: chat)
         } label: {
             Image(systemName: on ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(on ? accent : Theme.text2)
                 .frame(width: 24, height: 24)
                 .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -489,6 +485,8 @@ struct SpaceViewer: View {
     @EnvironmentObject private var model: AppModel
     @State private var headerWidth: CGFloat?
     @State private var measured = HeaderFit.Widths.zero
+    /// Where the space's page has gone when a link left it (v0.15 §5.2).
+    @StateObject private var page = ViewerPageAddress()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -504,6 +502,7 @@ struct SpaceViewer: View {
                     .environment(\.webPaneRevision, ArtifactPresentation(artifact: artifact).contentIdentity + "|" + (model.openSpaceContentKey ?? ""))
                     .environment(\.viewerAgent, model.viewerAgent)
                     .environment(\.viewerSlot, .space)
+                    .environment(\.viewerPageAddress, page)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if let chat {
@@ -515,6 +514,9 @@ struct SpaceViewer: View {
             }
         }
         .background(Theme.panel)
+        // Another space (or the space's file replaced) starts at its own name.
+        .onChange(of: model.openSpace) { page.outside = nil }
+        .onChange(of: model.openSpaceArtifact?.id) { page.outside = nil }
     }
 
     /// The chat whose marks the chip counts; none without a chat.
@@ -535,29 +537,83 @@ struct SpaceViewer: View {
             chipFull: chip ? spaced(measured.chipFull) : 0,
             chipShort: chip ? spaced(measured.chipShort) : 0,
             chipCount: chip ? spaced(measured.chipCount) : 0,
-            buttonsLabelled: model.spacesCanRefresh ? spaced(measured.buttonsLabelled) : 0,
-            buttonsIcons: model.spacesCanRefresh ? spaced(measured.buttonsIcons) : 0,
+            buttonsLabelled: action != nil ? spaced(measured.buttonsLabelled) : 0,
+            buttonsIcons: action != nil ? spaced(measured.buttonsIcons) : 0,
             fixed: 32 + 8 + 8 + (8 + 20) + (chat != nil ? 8 + 24 : 0))
     }
 
+    /// The space's title, or, when a link left the space, the outside
+    /// site's address in its place, as the Work viewer shows it (v0.15 §5.2).
+    @ViewBuilder
     private func spaceTitle(_ space: SpaceInfo) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: space.icon)
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.text2)
-            Text(space.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        if let outside = page.outside {
+            HStack(spacing: 8) {
+                Image(systemName: "globe")
+                    .font(Theme.iconFont(13))
+                    .foregroundStyle(Theme.text2)
+                Text(ViewerPageAddress.display(outside))
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .help(ViewerPageAddress.display(outside))
+        } else {
+            spaceName(space)
         }
     }
 
+    private func spaceName(_ space: SpaceInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: space.icon)
+                .font(Theme.iconFont(13))
+                .foregroundStyle(Theme.text2)
+            Text(space.title)
+                .scaledFont(13, weight: .semibold)
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    /// "Updated <time>", or the outside note while the page is on another
+    /// site (the note slot gives way the same either way).
     private func updatedText(_ space: SpaceInfo) -> some View {
-        Text(SpacesPresentation.updatedText(space.updatedDate))
-            .font(.system(size: 12))
+        Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) }
+             ?? SpacesPresentation.updatedText(space.updatedDate))
+            .scaledFont(12)
             .foregroundStyle(Theme.text3)
             .lineLimit(1)
+    }
+
+    /// The header's one button: Open externally while the page is on an
+    /// outside site (as the Work viewer has it), else Refresh when the
+    /// gateway can; none otherwise (v0.15 §5.2).
+    enum HeaderAction: Equatable {
+        case openExternally(URL)
+        case refresh
+    }
+
+    static func headerAction(outside: URL?, canRefresh: Bool) -> HeaderAction? {
+        if let outside { return .openExternally(outside) }
+        return canRefresh ? .refresh : nil
+    }
+
+    private var action: HeaderAction? {
+        Self.headerAction(outside: page.outside, canRefresh: model.spacesCanRefresh)
+    }
+
+    @ViewBuilder
+    private func actionButton(_ action: HeaderAction, _ space: SpaceInfo, labelled: Bool) -> some View {
+        switch action {
+        case .openExternally(let url):
+            ViewerHeaderButton(title: "Open externally", systemImage: "arrow.up.right", labelled: labelled,
+                               help: "Open \(ViewerPageAddress.display(url)) in your browser") {
+                NSWorkspace.shared.open(url)
+            }
+        case .refresh:
+            refreshButton(space, labelled: labelled)
+        }
     }
 
     private func refreshButton(_ space: SpaceInfo, labelled: Bool) -> some View {
@@ -578,15 +634,15 @@ struct SpaceViewer: View {
             if let chipChat {
                 MarksChip(chat: chipChat, store: marks, agent: model.viewerAgent, form: fit.chipForm, accent: accent)
             }
-            if model.spacesCanRefresh {
-                refreshButton(space, labelled: fit.labelled)
+            if let action {
+                actionButton(action, space, labelled: fit.labelled)
             }
             if let chat { ViewerFocusButton(chat: chat) }
             Button {
                 model.setOpenSpace(nil)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.iconFont(13, weight: .medium))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
@@ -602,15 +658,14 @@ struct SpaceViewer: View {
                 spaceTitle(space).headerMeasure { measured.title = $0 }
                 updatedText(space).headerMeasure { measured.note = $0 }
                 if let chipChat {
-                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .full), accent: accent)
-                        .headerMeasure { measured.chipFull = $0 }
-                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .short), accent: accent)
-                        .headerMeasure { measured.chipShort = $0 }
-                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .count), accent: accent)
-                        .headerMeasure { measured.chipCount = $0 }
+                    MarksChipMeasures(chat: chipChat, marks: marks, accent: accent) { form, width in
+                        measured.setChip(form, width)
+                    }
                 }
-                refreshButton(space, labelled: true).headerMeasure { measured.buttonsLabelled = $0 }
-                refreshButton(space, labelled: false).headerMeasure { measured.buttonsIcons = $0 }
+                if let action {
+                    actionButton(action, space, labelled: true).headerMeasure { measured.buttonsLabelled = $0 }
+                    actionButton(action, space, labelled: false).headerMeasure { measured.buttonsIcons = $0 }
+                }
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
@@ -630,6 +685,14 @@ enum HeaderFit {
 
         static let zero = Widths(title: 0, note: 0, chipFull: 0, chipShort: 0, chipCount: 0,
                                  buttonsLabelled: 0, buttonsIcons: 0, fixed: 0)
+
+        mutating func setChip(_ form: MarkStore.ChipForm, _ width: CGFloat) {
+            switch form {
+            case .full: chipFull = width
+            case .short: chipShort = width
+            case .count: chipCount = width
+            }
+        }
     }
 
     enum Step: Int, Comparable {
@@ -693,8 +756,8 @@ struct ArtifactMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(model.madeHereLabel.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Theme.text3)
+                .scaledFont(10, weight: .semibold)
+                .foregroundStyle(Theme.text2)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
             ScrollView {
@@ -719,23 +782,23 @@ struct ArtifactMenu: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: shown.systemImage)
-                    .font(.system(size: 12))
+                    .font(Theme.iconFont(12))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(shown.title)
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(shown.kindLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.text3)
+                        .scaledFont(11)
+                        .foregroundStyle(Theme.text2)
                 }
                 Spacer(minLength: 8)
                 if isCurrent {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(model.brand.accent ?? Theme.accent)
                 }
             }
@@ -885,7 +948,9 @@ struct TextBody: View {
     var file: URL? = nil
     @Environment(\.viewerAgent) private var agent
     @Environment(\.viewerSlot) private var slot
+    @Environment(\.textScale) private var textScale
     @State private var attributed: NSAttributedString?
+    @State private var shownText: String?
     @State private var broke = false
 
     var body: some View {
@@ -920,7 +985,12 @@ struct TextBody: View {
             let shown = await offMain { TextFileRead.hardBreak(text) }
             guard !Task.isCancelled else { return }
             broke = shown.broke
-            attributed = MarkdownAttributed.code(shown.text)
+            shownText = shown.text
+            attributed = MarkdownAttributed.code(shown.text, scale: textScale)
+        }
+        // The text the viewer draws follows the text scale (v0.15 §3).
+        .onChange(of: textScale) { _, scale in
+            if let shownText { attributed = MarkdownAttributed.code(shownText, scale: scale) }
         }
     }
 
@@ -953,7 +1023,7 @@ struct ViewerFootnote: View {
         VStack(spacing: 0) {
             Rectangle().fill(Theme.border).frame(height: 1)
             Text(text)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 10)
@@ -970,7 +1040,7 @@ struct LoadingPane: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Loading…")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
         }
         .padding(.vertical, 12)
@@ -987,18 +1057,18 @@ struct MissingPane: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "doc.questionmark")
-                .font(.system(size: 36))
+                .font(Theme.iconFont(36))
                 .foregroundStyle(Theme.text3)
             Text("\(shown.title) isn't on disk")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text("The agent's write may have been declined, or the file was moved or deleted after it was made.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Text(shown.displayPath)
-                .font(.system(size: 11, design: .monospaced))
+                .scaledFont(11, design: .monospaced)
                 .foregroundStyle(Theme.text3)
                 .textSelection(.enabled)
                 .multilineTextAlignment(.center)
@@ -1019,13 +1089,13 @@ struct OtherPane: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: "doc")
-                .font(.system(size: 36))
+                .font(Theme.iconFont(36))
                 .foregroundStyle(Theme.text3)
             Text(shown.title)
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text(message ?? "Portico can't show \(shown.kindPhrase) here. Open it in the app that can.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
@@ -1034,9 +1104,9 @@ struct OtherPane: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Theme.iconFont(10, weight: .semibold))
                     Text(shown.openLabel)
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                 }
                 .foregroundStyle(Theme.text)
                 .padding(.vertical, 6)

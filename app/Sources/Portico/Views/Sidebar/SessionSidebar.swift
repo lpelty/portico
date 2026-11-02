@@ -2,17 +2,10 @@ import SwiftUI
 
 /// The single-session sidebar's upper part, frames "S1 · Session card +
 /// earlier" and "S2 · The nudge": THIS SESSION (the live session's card,
-/// which turns into the amber nudge when the session is long), then
-/// EARLIER (ended sessions, newest first, searchable by title, in a list
-/// whose height is dragged at the line under it and remembered).
+/// which turns into the amber nudge when the session is long), then the
+/// History row (v0.15, AN2), which opens the ended sessions in a popover.
 struct SessionSidebar: View {
     @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var settings: Settings
-    @State private var searching = false
-    @State private var query = ""
-    /// The list's height when its divider drag began.
-    @State private var dragStart: CGFloat?
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SidebarSectionLabel("This session")
@@ -24,7 +17,7 @@ struct SessionSidebar: View {
                     .padding(.horizontal, 8)
             } else {
                 Text("No session yet. Say something to start one.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 16)
             }
@@ -32,71 +25,15 @@ struct SessionSidebar: View {
         }
     }
 
-    // MARK: EARLIER
+    // MARK: HISTORY
 
     @ViewBuilder
     private var earlier: some View {
-        let all = model.earlierSessions(matching: searching ? query : "")
-        if !model.earlierSessions.isEmpty {
-            HStack(spacing: 8) {
-                SidebarSectionLabel("Earlier")
-                Spacer(minLength: 0)
-                Button {
-                    searching.toggle()
-                    if !searching { query = "" }
-                } label: {
-                    Image(systemName: searching ? "xmark" : "magnifyingglass")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.text2)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.hover)
-                .help(searching ? "Stop searching" : "Search earlier sessions by title")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 18)
-            .padding(.bottom, 6)
-            if searching {
-                TextField("Search titles", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 4)
-            }
-            let height = ColumnWidths.earlierHeight(dragged: settings.earlierHeight, sessions: all.count)
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(all, id: \.chat) { summary in
-                        EarlierRow(summary: summary, selected: model.selected == summary.chat) {
-                            model.open(chat: summary.chat)
-                        }
-                    }
-                }
+        let history = HistoryPresentation(sessions: model.earlierSessions, query: "")
+        if history.showsRow {
+            HistoryRow(count: history.rowCount)
                 .padding(.horizontal, 8)
-            }
-            .frame(height: all.isEmpty ? 0 : height)
-            if searching && all.isEmpty {
-                Text("No session titled “\(query)”")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.text3)
-                    .padding(.horizontal, 16)
-            }
-            // Drag to show more or fewer earlier sessions; the files take the rest.
-            ColumnDivider(
-                axis: .horizontal,
-                onDrag: { dy in
-                    let start = dragStart ?? height
-                    dragStart = start
-                    settings.earlierHeight = ColumnWidths.clampEarlier(start + dy)
-                },
-                onEnd: { dragStart = nil },
-                onReset: { settings.earlierHeight = nil })
-                .padding(.top, 6)
+                .padding(.top, 14)
         }
     }
 }
@@ -113,7 +50,8 @@ struct EarlierRow: View {
 
     /// The title's colour and weight: brighter and medium when selected.
     static func titleStyle(selected: Bool, untitled: Bool) -> (color: Color, weight: Font.Weight) {
-        if untitled { return (Theme.text3, selected ? .medium : .regular) }
+        // Drawn only in the History popover: its faint text is `text2` (v0.15 §5.7).
+        if untitled { return (Theme.text2, selected ? .medium : .regular) }
         return selected ? (Theme.text, .medium) : (Theme.text2, .regular)
     }
 
@@ -123,11 +61,11 @@ struct EarlierRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Text("\(summary.chat)")
-                    .font(.system(size: 13).monospacedDigit())
-                    .foregroundStyle(Theme.text3)
+                    .scaledFont(13, monospacedDigit: true)
+                    .foregroundStyle(Theme.text2)
                     .frame(minWidth: 18, alignment: .leading)
                 Text(shown.title ?? "Untitled")
-                    .font(.system(size: 13, weight: title.weight))
+                    .scaledFont(13, weight: title.weight)
                     .foregroundStyle(title.color)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -152,7 +90,7 @@ struct EarlierRow: View {
         switch summary.logged {
         case true?:
             Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .semibold))
+                .font(Theme.iconFont(10, weight: .semibold))
                 .foregroundStyle(Theme.text3)
         case false?:
             Circle().fill(Theme.wait).frame(width: 6, height: 6)
@@ -233,28 +171,28 @@ struct SessionCard: View {
             HStack(spacing: 8) {
                 Circle().fill(stateColor).frame(width: 7, height: 7)
                 Text(shown.number)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(Theme.text)
                 Spacer(minLength: 0)
                 if let start = SessionTime.parse(summary.created) {
                     // Re-reads the clock each minute so the age moves.
                     TimelineView(.everyMinute) { context in
                         Text(SessionTime.age(since: start, now: context.date))
-                            .font(.system(size: 12).monospacedDigit())
+                            .scaledFont(12, monospacedDigit: true)
                             .foregroundStyle(Theme.text3)
                     }
                 }
             }
             if nudging {
                 Text(nudgeSentence)
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 // Re-read each minute so "Started 12 min ago" moves (v0.7 decision 1).
                 TimelineView(.everyMinute) { context in
                     Text(shown.startedLine(now: context.date))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -268,11 +206,11 @@ struct SessionCard: View {
                 .onTapGesture {}
             if goesBack && !nudging {
                 Text("Click to go back to it")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
             } else if !nudging && model.canRenew(chat: chat) {
                 Text(hint)
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -314,11 +252,11 @@ struct SessionCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(compactions > 0 ? "Context · summarized \(compactions)×" : "Context")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                     Spacer(minLength: 0)
                     Text("\(Int(percent.rounded()))%")
-                        .font(.system(size: 12, weight: nudging ? .semibold : .regular).monospacedDigit())
+                        .scaledFont(12, weight: nudging ? .semibold : .regular, monospacedDigit: true)
                         .foregroundStyle(nudging ? Theme.wait : Theme.text2)
                 }
                 ContextMeter(percent: percent, color: nudging ? Theme.wait : Theme.meterFill)
@@ -335,7 +273,7 @@ struct SessionCard: View {
                         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
                     Button("Not now") { model.dismissNudge(chat: chat) }
                         .buttonStyle(.hoverText)
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(Theme.text2)
                 }
                 .disabled(pending || model.connection != .connected)
@@ -431,12 +369,13 @@ struct ContextMeter: View {
 /// minute so "12 min ago" moves, with the full date and time as its tooltip.
 struct CompactTime: View {
     let date: Date
+    @Environment(\.inPopover) private var inPopover
 
     var body: some View {
         TimelineView(.everyMinute) { context in
             Text(SessionTime.compact(date, now: context.date))
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(Theme.text3)
+                .scaledFont(11, monospacedDigit: true)
+                .foregroundStyle(Theme.faintText(inPopover: inPopover))
                 .lineLimit(1)
                 .fixedSize()
                 .help(SessionTime.tooltip(date))

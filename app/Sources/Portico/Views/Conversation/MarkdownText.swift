@@ -522,7 +522,7 @@ struct CopyButton: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 Text(copied ? "Copied" : "Copy")
             }
-            .font(.system(size: 11))
+            .scaledFont(11)
             .foregroundStyle(Theme.text3)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
@@ -539,6 +539,7 @@ struct MarkdownBlocksView: View {
     var spacing: CGFloat = 10
     /// A quote's contents: the secondary text colour.
     var secondary = false
+    @Environment(\.textScale) private var textScale
 
     /// Plain prose is gathered into runs, each one selectable text view
     /// (`SelectableText`); code, quotes, tables and rules draw as blocks.
@@ -547,7 +548,7 @@ struct MarkdownBlocksView: View {
             ForEach(Array(MarkdownRun.split(blocks).enumerated()), id: \.offset) { entry in
                 switch entry.element {
                 case .prose(let run, let first):
-                    SelectableText(text: MarkdownAttributed.prose(run, first: first, spacing: spacing, secondary: secondary))
+                    SelectableText(text: MarkdownAttributed.prose(run, first: first, spacing: spacing, secondary: secondary, scale: textScale))
                 case .block(let block, let first):
                     MarkdownBlockView(block: block, first: first, secondary: secondary)
                 }
@@ -562,11 +563,12 @@ struct MarkdownBlockView: View {
     var secondary = false
 
     private static let bodySize = MarkdownText.bodySize
+    @Environment(\.textScale) private var textScale
 
     var body: some View {
         switch block {
         case .paragraph, .heading:
-            SelectableText(text: MarkdownAttributed.prose([block], first: first, secondary: secondary))
+            SelectableText(text: MarkdownAttributed.prose([block], first: first, secondary: secondary, scale: textScale))
         case .list(let items):
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(items.enumerated()), id: \.offset) { entry in
@@ -596,17 +598,17 @@ struct MarkdownBlockView: View {
             Group {
                 if let number = item.number {
                     Text(number)
-                        .font(.system(size: Self.bodySize).monospacedDigit())
+                        .scaledFont(Self.bodySize, monospacedDigit: true)
                 } else {
                     Text(item.level == 0 ? "•" : "◦")
-                        .font(.system(size: Self.bodySize))
+                        .scaledFont(Self.bodySize)
                 }
             }
             // v0.11 (73): full-size, in the text colour, not faint.
             .foregroundStyle(secondary ? Theme.text2 : Theme.text)
             .frame(minWidth: 10, alignment: .trailing)
             VStack(alignment: .leading, spacing: 8) {
-                SelectableText(text: MarkdownAttributed.prose([.paragraph(item.text)], secondary: secondary))
+                SelectableText(text: MarkdownAttributed.prose([.paragraph(item.text)], secondary: secondary, scale: textScale))
                 if !item.blocks.isEmpty {
                     MarkdownBlocksView(blocks: item.blocks, spacing: 8, secondary: secondary)
                 }
@@ -622,7 +624,7 @@ struct MarkdownBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(language ?? "")
-                    .font(.system(size: 11, design: .monospaced))
+                    .scaledFont(11, design: .monospaced)
                     .foregroundStyle(Theme.text3)
                 Spacer(minLength: 0)
                 CopyButton(help: "Copy the code") { MarkdownCopy.code(text) }
@@ -631,7 +633,7 @@ struct MarkdownBlockView: View {
             .padding(.trailing, 6)
             .padding(.top, 4)
             ScrollView(.horizontal) {
-                SelectableText(text: MarkdownAttributed.code(text), wraps: false)
+                SelectableText(text: MarkdownAttributed.code(text, scale: textScale), wraps: false)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.top, 2)
@@ -676,7 +678,7 @@ struct MarkdownBlockView: View {
 
     private func tableCell(_ text: String, weight: Font.Weight = .regular) -> some View {
         Text(MarkdownParser.inline(text, codeBackground: Theme.border))
-            .font(.system(size: 12, weight: weight))
+            .scaledFont(12, weight: weight)
             .fixedSize()
     }
 }

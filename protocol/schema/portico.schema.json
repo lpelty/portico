@@ -2080,6 +2080,9 @@
         },
         {
           "$ref": "#/$defs/SpaceRemove"
+        },
+        {
+          "$ref": "#/$defs/ModelSet"
         }
       ]
     },
@@ -3046,6 +3049,175 @@
       "title": "MessageSend",
       "type": "object"
     },
+    "ModelChoice": {
+      "additionalProperties": false,
+      "description": "v0.15: one entry of the engine's model list, the CLI's ``/model`` list.\n\n``value`` is what ``model.set`` sends back (``opus``, ``sonnet``,\n``claude-fable-5-1[1m]``, ``default``); ``display_name`` and\n``description`` are the engine's own words. ``resolved_model`` (11-02)\nis the model id the entry runs (the engine's ``resolvedModel``), so the\napp can name what Default resolves to; absent when the engine did not\nsay, and an older app ignores it.",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "resolved_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved Model"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "display_name"
+      ],
+      "title": "ModelChoice",
+      "type": "object"
+    },
+    "ModelSet": {
+      "additionalProperties": false,
+      "description": "v0.15: switch the model for this session and the ones after it (``models.v1``).\n\n``value`` is a ``ModelChoice.value`` from ``models``; ``\"default\"`` or\n``null`` is the deployment's default. Answered by ``models`` carrying the\nrequest's ``id`` and the new ``current``, or by ``error``: ``chat.busy``\nwhile a reply runs, ``model.unknown`` for a value the list lacks.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "model.set",
+          "default": "model.set",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "ModelSet",
+      "type": "object"
+    },
+    "Models": {
+      "additionalProperties": false,
+      "description": "v0.15: the models the session can switch to and the one it runs on (``models.v1``).\n\nSent after ``hello`` for each live session (from the list the gateway\nkept), after each engine start, and after a switch (with the\n``model.set`` request's ``id``). ``current`` is the model this session\nruns on: its running engine's, else the stored choice it will start on;\nabsent (``null``) is the deployment's default. A reading, not history:\nno ``seq``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "choices": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "models",
+          "default": "models",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "Models",
+      "type": "object"
+    },
     "Option": {
       "additionalProperties": false,
       "properties": {
@@ -3282,6 +3454,9 @@
         },
         {
           "$ref": "#/$defs/SpacesList"
+        },
+        {
+          "$ref": "#/$defs/Models"
         },
         {
           "$ref": "#/$defs/Error"

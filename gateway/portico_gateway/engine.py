@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
 import re
 import shlex
@@ -64,6 +65,7 @@ from .agents import AgentTracker
 from .viewer import VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
+    ModelChoice,
     AgentFinished,
     AgentProgress,
     AgentStarted,
@@ -194,6 +196,9 @@ class Engine(Protocol):
     permission_mode: PermissionMode
     # The deployment's system prompt, set before ``start`` (v0.10 decision 7).
     system_prompt: Any
+    # v0.15: the model to start on (a ``ModelChoice.value``; ``None``: the
+    # deployment's default), set before ``start``; ``set_model`` changes it.
+    model: str | None
 
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str: ...
 
@@ -219,6 +224,14 @@ class Engine(Protocol):
 
     def command_list(self) -> list[AgentCommand] | None:
         """The running engine's commands and skills with descriptions (v0.11 item 66); ``None`` when it cannot say."""
+        ...
+
+    def models(self) -> list[ModelChoice] | None:
+        """The models the running engine offers, its ``/model`` list (v0.15); ``None`` when it cannot say."""
+        ...
+
+    async def set_model(self, value: str | None) -> None:
+        """Switch the model now (when running) and for a later ``start``; ``None`` is the default (v0.15)."""
         ...
 
     async def close(self) -> None: ...
@@ -689,6 +702,7 @@ def build_options(
     callbacks: EngineCallbacks,
     permission_mode: PermissionMode = "default",
     system_prompt: Any = None,
+    model: str | None = None,
 ) -> ClaudeAgentOptions:
     """The SDK options for one chat. Never sets ``verbatim_prompts``.
 
@@ -706,6 +720,9 @@ def build_options(
 
     ``PORTICO_ATTENDED=1`` is always in the engine's environment: a person
     drives this chat (v0.11).
+
+    ``model`` (v0.15) is the stored ``model.set`` choice, passed only when
+    set; without it the engine starts on the deployment's default.
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
     post_tool_use: list[Any] = []
@@ -735,6 +752,8 @@ def build_options(
             "allowed_tools": allowed,
             "system_prompt": with_viewer_prompt(system_prompt, spaces_folder),
         }
+    if model is not None:
+        extra["model"] = model
     return ClaudeAgentOptions(
         cwd=str(folder),
         add_dirs=add_dirs,
@@ -787,6 +806,49 @@ def friendly_model_name(model: str | None, environ: Mapping[str, str]) -> str | 
     return None
 
 
+def without_price(description: str) -> str:
+    """``description`` without its price parts (Larry 11-02: no pricing shown).
+
+    API-key logins append `` · $4/$20 per Mtok`` (sometimes with a long-prompt
+    rate); it is wrong for Bedrock and not for display. Any `` · `` part
+    holding a ``$`` amount or "per Mtok" goes; the others stay in order.
+    """
+    parts = [p for p in description.split(" · ") if not re.search(r"\$\d|per Mtok", p)]
+    return " · ".join(parts).strip()
+
+
+def model_choices(raw: Any) -> list[ModelChoice] | None:
+    """The engine's ``models`` (``get_server_info()``) as ``ModelChoice``s (v0.15); ``None`` when not a list.
+
+    Each entry is ``{value, displayName, description, resolvedModel, ...}``;
+    an entry without a usable ``value`` is skipped, a missing
+    ``displayName`` falls back to the value, and ``resolvedModel`` is kept
+    as ``resolved_model`` when it is a non-empty string. Order is kept.
+    Prices are dropped from descriptions (``without_price``).
+    """
+    if not isinstance(raw, list):
+        return None
+    out: list[ModelChoice] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        value = entry.get("value")
+        if not isinstance(value, str) or not value.strip():
+            continue
+        name = entry.get("displayName")
+        text = entry.get("description")
+        resolved = entry.get("resolvedModel")
+        out.append(
+            ModelChoice(
+                value=value,
+                display_name=name if isinstance(name, str) and name.strip() else value,
+                description=without_price(text) if isinstance(text, str) else "",
+                resolved_model=resolved if isinstance(resolved, str) and resolved.strip() else None,
+            )
+        )
+    return out
+
+
 def agent_commands(raw: Any) -> list[AgentCommand]:
     """The engine's ``commands`` (``get_server_info()``) as the composer's list (v0.11 item 66).
 
@@ -832,6 +894,45 @@ def agent_commands(raw: Any) -> list[AgentCommand]:
 # --- the SDK adapter -------------------------------------------------------------
 
 
+def with_hooks_disabled(settings: str | None) -> str:
+    """``settings`` (the SDK's JSON string, or none) with ``disableAllHooks`` on, for the model probe only.
+
+    The SDK's ``settings`` is a JSON string or a settings file path; either
+    is read and merged, so the setting is added rather than replacing them.
+    """
+    merged: dict[str, Any] = {}
+    if settings:
+        try:
+            loaded = json.loads(settings)
+        except ValueError:
+            try:
+                loaded = json.loads(Path(settings).expanduser().read_text())
+            except (OSError, ValueError):
+                loaded = {}
+        if isinstance(loaded, dict):
+            merged.update(loaded)
+    merged["disableAllHooks"] = True
+    return json.dumps(merged)
+
+
+class _ProbeCallbacks:
+    """The owner of a model probe: it sends no message, so nothing reaches here; anything that did is refused."""
+
+    async def on_event(self, event: ServerMessage) -> None:
+        return None
+
+    async def on_permission(
+        self, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
+    ) -> PermissionDecision:
+        return "deny"
+
+    async def on_question(self, questions: list[dict[str, Any]]) -> dict[str, str | list[str]]:
+        raise QuestionDeclined("no session")
+
+    async def on_compacted(self, trigger: str) -> None:
+        return None
+
+
 class SDKEngine:
     """``Engine`` on ``ClaudeSDKClient``.
 
@@ -863,6 +964,8 @@ class SDKEngine:
         self.permission_mode: PermissionMode = "default"
         # The deployment's system prompt (``deployment_system_prompt``); ``None`` is empty.
         self.system_prompt: Any = None
+        # v0.15: the model to start on (``None``: the deployment's default).
+        self.model: str | None = None
         self.init_timeout = init_timeout
         self._client: ClaudeSDKClient | None = None
         self._callbacks: EngineCallbacks | None = None
@@ -877,6 +980,8 @@ class SDKEngine:
         # v0.11 (item 66): the same commands with descriptions, from the
         # initialize answer only (``init`` carries names alone).
         self._command_list: list[AgentCommand] | None = None
+        # v0.15: the ``/model`` list from the initialize answer.
+        self._models: list[ModelChoice] | None = None
         # v0.10: this engine's subagents and workflows.
         self.agents = AgentTracker()
 
@@ -886,10 +991,14 @@ class SDKEngine:
         self._callbacks = callbacks
         self.session_id = resume
         self._client = ClaudeSDKClient(
-            build_options(folder, resume, setting_sources, callbacks, self.permission_mode, self.system_prompt)
+            build_options(
+                folder, resume, setting_sources, callbacks, self.permission_mode, self.system_prompt, model=self.model
+            )
         )
         await self._client.connect()
-        self._note_commands_from_server_info(await self._client.get_server_info())
+        info = await self._client.get_server_info()
+        self._note_commands_from_server_info(info)
+        self._note_models_from_server_info(info)
         self._pump = asyncio.create_task(self._run_pump(), name=f"portico-engine-{self.chat}")
         try:
             await asyncio.wait_for(self._init_seen.wait(), self.init_timeout)
@@ -951,6 +1060,46 @@ class SDKEngine:
         if isinstance(commands, list):
             self._add_commands(c.get("name") if isinstance(c, Mapping) else c for c in commands)
             self._command_list = agent_commands(commands)
+
+    def _note_models_from_server_info(self, info: Any) -> None:
+        models = model_choices(info.get("models") if isinstance(info, Mapping) else None)
+        if models is not None:
+            self._models = models
+
+    def models(self) -> list[ModelChoice] | None:
+        return list(self._models) if self._models is not None else None
+
+    @staticmethod
+    async def probe_models(folder: Path, setting_sources: list[str]) -> list[ModelChoice] | None:
+        """The ``/model`` list without a session (v0.15 amendment 11-02): connect, read the server info, disconnect.
+
+        Built with the same ``build_options`` an engine uses, so the CLI reads
+        the same settings and provider environment; no message is sent. The
+        owner bounds the time; a failure raises, after disconnecting.
+
+        Unlike an engine, the probe runs with ``disableAllHooks`` (merged into
+        any ``settings``): connecting and disconnecting would otherwise fire
+        the deployment's ``SessionStart`` and ``SessionEnd`` hooks for a
+        session nobody opened (verified 11-02; the list still comes back).
+        """
+        options = build_options(folder, None, setting_sources, _ProbeCallbacks())
+        options.settings = with_hooks_disabled(options.settings)
+        client = ClaudeSDKClient(options)
+        try:
+            await client.connect()
+            info = await client.get_server_info()
+        finally:
+            try:
+                await client.disconnect()
+            except Exception as e:
+                log.debug("model probe: disconnect failed: %s", e)
+        return model_choices(info.get("models") if isinstance(info, Mapping) else None)
+
+    async def set_model(self, value: str | None) -> None:
+        """The SDK's ``set_model`` while connected; remembered for a later ``start`` either way."""
+        if self._client is not None:
+            await self._client.set_model(value)
+        self.model = value
 
     def _add_commands(self, names: Iterable[Any]) -> None:
         found = {n.strip().lstrip("/") for n in names if isinstance(n, str) and n.strip()}

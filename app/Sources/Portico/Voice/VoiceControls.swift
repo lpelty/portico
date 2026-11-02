@@ -33,7 +33,7 @@ struct MicButton: View {
                             .background(model.brand.accent ?? Theme.accent, in: RoundedRectangle(cornerRadius: corner ?? side * 0.27, style: .continuous))
                     } else {
                         Image(systemName: "mic")
-                            .font(.system(size: 14))
+                            .font(Theme.iconFont(14))
                             .foregroundStyle(Theme.text2)
                     }
                 }
@@ -115,7 +115,7 @@ struct ReadAloudButton: View {
                 Image(systemName: reading ? "stop.fill" : "speaker.wave.2")
                 Text(reading ? "Stop reading" : "Read aloud")
             }
-            .font(.system(size: 11))
+            .scaledFont(11)
             .foregroundStyle(Theme.text3)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)

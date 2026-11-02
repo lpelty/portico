@@ -353,9 +353,20 @@ enum Obsidian {
     }
 
     /// Whether anything handles `obsidian://` on this Mac.
-    @MainActor static var isInstalled: Bool {
+    /// Checked once per app run, not on every render.
+    @MainActor static let isInstalled: Bool = {
         guard let probe = URL(string: "obsidian://open") else { return false }
         return NSWorkspace.shared.urlForApplication(toOpen: probe) != nil
+    }()
+
+    /// File types Obsidian opens itself; anything else (html, csv, ...)
+    /// would only bounce, so the offer is left out.
+    static let openableExtensions: Set<String> = [
+        "md", "markdown", "canvas", "pdf", "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif",
+    ]
+
+    static func opens(path: String) -> Bool {
+        openableExtensions.contains(URL(fileURLWithPath: path).pathExtension.lowercased())
     }
 
     /// The vault a file lives in: the nearest folder above it that holds

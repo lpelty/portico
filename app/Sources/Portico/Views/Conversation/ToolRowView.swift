@@ -122,6 +122,8 @@ struct ToolRowView: View {
     var waiting: Bool = false
     @State private var expanded = false
     @State private var hovering = false
+    /// In an agent's steps popover its faint text is brighter (v0.15 §5.7).
+    @Environment(\.inPopover) private var inPopover
 
     private var shown: ToolRowPresentation { ToolRowPresentation(row: row) }
 
@@ -131,9 +133,9 @@ struct ToolRowView: View {
             if let note = shown.noteLine {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 10))
+                        .font(Theme.iconFont(10))
                     Text(note)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .textSelection(.enabled)
                 }
                 .foregroundStyle(Theme.text2)
@@ -146,7 +148,7 @@ struct ToolRowView: View {
         switch shown.outcomeTone(waiting: waiting) {
         case .wait: Theme.wait
         case .deny: Theme.deny
-        case .quiet: Theme.text3
+        case .quiet: Theme.faintText(inPopover: inPopover)
         }
     }
 
@@ -159,20 +161,20 @@ struct ToolRowView: View {
                     stateIcon
                         .frame(width: 14, height: 14)
                     Text(shown.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
                         .help(row.tool)
                     if let summary = shown.summaryText {
                         Text(Self.display(summary, in: folder))
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.text3)
+                            .scaledFont(13)
+                            .foregroundStyle(Theme.faintText(inPopover: inPopover))
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                     if let failure = shown.failureDetail {
                         Text(failure)
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(Theme.deny)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -180,14 +182,14 @@ struct ToolRowView: View {
                     Spacer(minLength: 8)
                     if let outcome = shown.outcomeText(waiting: waiting) {
                         Text(outcome)
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(outcomeColor)
                             .lineLimit(1)
                             .fixedSize()
                             .help(row.unanswered ?? outcome)
                     }
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -198,7 +200,7 @@ struct ToolRowView: View {
             .pointerStyle(.link)
             if expanded {
                 Text(shown.prettyInput)
-                    .font(.system(size: 11, design: .monospaced))
+                    .scaledFont(11, design: .monospaced)
                     .foregroundStyle(Theme.text)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -206,7 +208,7 @@ struct ToolRowView: View {
                     .background(Theme.window, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 if row.finished {
                     Text(shown.stateText)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(row.ok == false ? Theme.deny : Theme.text2)
                         .textSelection(.enabled)
                 }
@@ -224,26 +226,26 @@ struct ToolRowView: View {
     private var stateIcon: some View {
         if waiting {
             Image(systemName: "hourglass")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(Theme.wait)
         } else if row.permission == .blocked {
             Image(systemName: "xmark.shield")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(Theme.deny)
         } else if row.permission == .declined {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(Theme.deny)
         } else if !row.finished {
             ProgressView()
                 .controlSize(.mini)
         } else if row.ok == false {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(Theme.deny)
         } else {
             Image(systemName: "checkmark")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(Theme.working)
         }
     }

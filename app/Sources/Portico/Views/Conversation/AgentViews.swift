@@ -87,19 +87,19 @@ struct AgentTray: View {
             HStack(spacing: 8) {
                 AgentBatchIcon(working: working, warning: statuses.contains { $0 == .failed || $0 == .stopped })
                 Text(counts)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .fixedSize()
                 if let busiest = activity.busiest(of: agents) {
                     Text(AgentPresentation.busyLine(description: busiest.description, step: busiest.step))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.iconFont(11, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
             .padding(.horizontal, 12)
@@ -117,14 +117,14 @@ struct AgentTray: View {
                 HStack(spacing: 8) {
                     AgentBatchIcon(working: working, warning: statuses.contains { $0 == .failed || $0 == .stopped })
                     Text(counts)
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(Theme.text)
                     Spacer(minLength: 8)
                     Text(AgentPresentation.duration(activity.elapsed(of: agents, now: now)))
-                        .font(.system(size: 12).monospacedDigit())
+                        .scaledFont(12, monospacedDigit: true)
                         .foregroundStyle(Theme.text3)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                 }
                 .padding(.horizontal, 12)
@@ -165,11 +165,11 @@ struct AgentBatchIcon: View {
                 ProgressView().controlSize(.mini)
             } else if warning {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                     .foregroundStyle(Theme.wait)
             } else {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.iconFont(11, weight: .semibold))
                     .foregroundStyle(Theme.working)
             }
         }
@@ -189,11 +189,11 @@ struct AgentStatusIcon: View {
                 ProgressView().controlSize(.mini)
             case .done:
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.iconFont(11, weight: .semibold))
                     .foregroundStyle(Theme.working)
             case .failed, .stopped:
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                     .foregroundStyle(Theme.wait)
             case .queued:
                 Circle().fill(Theme.idle).frame(width: 7, height: 7)
@@ -231,13 +231,13 @@ struct AgentRowView: View {
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(agent.description)
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     if let line = AgentPresentation.stepLine(status: status, step: agent.step, summary: agent.summary) {
                         Text(ToolRowView.display(line, in: folder))
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(Theme.text3)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -245,7 +245,7 @@ struct AgentRowView: View {
                 }
                 Spacer(minLength: 8)
                 Text(AgentPresentation.stepsLabel(steps: agent.steps, elapsed: elapsed, finished: status.isFinished))
-                    .font(.system(size: 11).monospacedDigit())
+                    .scaledFont(11, monospacedDigit: true)
                     .foregroundStyle(Theme.text3)
                     .fixedSize()
                     .padding(.top, 1)
@@ -259,6 +259,7 @@ struct AgentRowView: View {
         .help("Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
+                .popoverSurface()
         }
     }
 }
@@ -277,7 +278,7 @@ struct AgentStepsView: View {
             HStack(spacing: 8) {
                 AgentStatusIcon(status: status)
                 Text(agent.description)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(Theme.text)
                     .lineLimit(2)
                 Spacer(minLength: 0)
@@ -294,12 +295,12 @@ struct AgentStepsView: View {
                         }
                     } else {
                         Text("No steps yet.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.text3)
+                            .scaledFont(12)
+                            .foregroundStyle(Theme.text2)
                     }
                     if let summary = agent.summary, !summary.isEmpty, status.isFinished {
                         Text(summary)
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(Theme.text2)
                             .textSelection(.enabled)
                             .padding(.top, 4)
@@ -318,14 +319,15 @@ struct AgentStepsView: View {
 /// One record line (AF1): `⎿ Read transcripts/p11.md`.
 struct StepLine: View {
     let text: String
+    @Environment(\.inPopover) private var inPopover
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(AgentPresentation.stepMark)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.text3)
+                .scaledFont(12)
+                .foregroundStyle(Theme.faintText(inPopover: inPopover))
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -407,18 +409,18 @@ struct WorkflowBox: View {
     private func header(now: Date) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "flowchart")
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(model.brand.accent ?? Theme.accent)
                 .frame(width: 14, height: 14)
             Text(workflow.name)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .fixedSize()
             Text(AgentPresentation.workflowHeader(
                 currentPhase: workflow.currentPhase, phaseCount: workflow.phases.count,
                 agents: agents.count, elapsed: activity.elapsed(of: workflow, now: now)))
-                .font(.system(size: 12).monospacedDigit())
+                .scaledFont(12, monospacedDigit: true)
                 .foregroundStyle(Theme.text3)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -434,7 +436,7 @@ struct WorkflowBox: View {
             }
             Button { model.setBoxCollapsed(!collapsed, chat: chat) } label: {
                 Image(systemName: collapsed ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Theme.iconFont(11, weight: .semibold))
                     .foregroundStyle(Theme.text3)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
@@ -471,7 +473,7 @@ struct WorkflowBox: View {
                 }
                 if agents.isEmpty {
                     Text("No agents yet.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
@@ -512,12 +514,12 @@ struct WorkflowBox: View {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(line.agent.description)
-                            .font(.system(size: 12, weight: .medium))
+                            .scaledFont(12, weight: .medium)
                             .foregroundStyle(Theme.text2)
                             .lineLimit(1)
                             .frame(width: 160, alignment: .leading)
                         Text(ToolRowView.display(line.text, in: folder))
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(Theme.text)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -526,7 +528,7 @@ struct WorkflowBox: View {
                 }
                 if lines.isEmpty {
                     Text("No steps yet.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                 }
             }
@@ -561,7 +563,7 @@ struct PhaseColumn: View {
             HStack(spacing: 6) {
                 PhaseStatusIcon(state: state, warning: agents.contains { activity.status(of: $0) == .failed })
                 Text(AgentPresentation.phaseTitle(index: index, name: name))
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(state == .pending ? Theme.text3 : Theme.text)
                     .lineLimit(1)
             }
@@ -572,7 +574,7 @@ struct PhaseColumn: View {
             }
             if more > 0 {
                 Text(AgentPresentation.moreLabel(more))
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 8)
                     .padding(.top, 2)
@@ -613,12 +615,12 @@ struct PhaseAgentRow: View {
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(agent.description)
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(status == .queued ? Theme.text2 : Theme.text)
                         .lineLimit(1)
                     if status != .queued, let line = AgentPresentation.stepLine(status: status, step: agent.step, summary: nil) {
                         Text(ToolRowView.display(line, in: folder))
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(Theme.text3)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -626,7 +628,7 @@ struct PhaseAgentRow: View {
                 }
                 Spacer(minLength: 4)
                 Text(AgentPresentation.result(status: status, summary: agent.summary, elapsed: elapsed))
-                    .font(.system(size: 11).monospacedDigit())
+                    .scaledFont(11, monospacedDigit: true)
                     .foregroundStyle(Theme.text3)
                     .lineLimit(1)
                     .fixedSize()
@@ -641,6 +643,7 @@ struct PhaseAgentRow: View {
         .help("Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
+                .popoverSurface()
         }
     }
 }
@@ -672,14 +675,14 @@ struct AgentGroupView: View {
     private var startedRow: some View {
         HStack(spacing: 8) {
             Image(systemName: workflow == nil ? "person.2" : "flowchart")
-                .font(.system(size: 11))
+                .font(Theme.iconFont(11))
                 .foregroundStyle(Theme.text2)
                 .frame(width: 14, height: 14)
             Text(workflow.map { AgentPresentation.workflowStartedLabel($0.name) } ?? AgentPresentation.startedLabel(group.agentIds.count))
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(Theme.text)
             Text(workflow == nil ? AgentPresentation.startedDetail : AgentPresentation.workflowDetail)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text3)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -717,7 +720,7 @@ struct TagChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .scaledFont(10, weight: .medium)
             .foregroundStyle(Theme.text2)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -746,7 +749,7 @@ struct AgentRecordBlock: View {
             }
             if let summary = agent.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
                 Text(summary)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .textSelection(.enabled)
                     .padding(.top, 2)
@@ -774,15 +777,15 @@ struct PhaseRecordBlock: View {
             ForEach(agents) { agent in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(AgentPresentation.stepMark)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                     AgentStatusIcon(status: activity.status(of: agent))
                     Text(agent.description)
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Text(AgentPresentation.result(status: activity.status(of: agent), summary: agent.summary, elapsed: agent.elapsed))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                         .lineLimit(1)
                 }
@@ -807,22 +810,22 @@ struct RecordBlock<Detail: View>: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: status == .done ? "checkmark" : "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(status == .done ? Theme.working : Theme.wait)
                         .frame(width: 14, height: 14)
                     TagChip(text: tag)
                     Text(title)
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
                     Text(trailing)
-                        .font(.system(size: 12).monospacedDigit())
+                        .scaledFont(12, monospacedDigit: true)
                         .foregroundStyle(Theme.text3)
                         .fixedSize()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.iconFont(11, weight: .semibold))
                         .foregroundStyle(Theme.text3)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }

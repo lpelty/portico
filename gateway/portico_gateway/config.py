@@ -33,8 +33,12 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 # app that lists the same capability in its ``hello``.
 # v0.11: ``queue.v1`` — a send during a turn is queued, not refused, for an
 # app that lists it too (``messages.QUEUE_CAPABILITY``).
+# v0.15: ``models.v1`` — the engine's model list (``models``) and ``model.set``;
+# ``models`` goes only to an app that lists it too.
+MODELS_CAPABILITY = "models.v1"
 CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
+    MODELS_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once

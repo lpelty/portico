@@ -86,10 +86,10 @@ struct ChatListView: View {
         let waiting = row.summary.state == .waitingOnYou
         HStack(spacing: 8) {
             Text(row.number)
-                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .scaledFont(13, weight: .semibold, monospacedDigit: true)
                 .foregroundStyle(Theme.text)
             Text(row.alias ?? "")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -99,7 +99,7 @@ struct ChatListView: View {
                     .fill(stateColor(row.summary.state))
                     .frame(width: 7, height: 7)
                 Text(row.stateWord)
-                    .font(.system(size: 11, weight: waiting ? .semibold : .regular))
+                    .scaledFont(11, weight: waiting ? .semibold : .regular)
                     .foregroundStyle(waiting ? Theme.wait : Theme.text2)
             }
         }
@@ -139,8 +139,8 @@ struct ChatListView: View {
             Spacer(minLength: 0)
             Button(action: newChat) {
                 HStack(spacing: 4) {
-                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
-                    Text("New Chat").font(.system(size: 12, weight: .medium))
+                    Image(systemName: "plus").font(Theme.iconFont(10, weight: .semibold))
+                    Text("New Chat").scaledFont(12, weight: .medium)
                 }
                 .foregroundStyle(Theme.text)
                 .padding(.vertical, 3)
@@ -174,7 +174,7 @@ struct SidebarSectionLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .semibold))
+            .scaledFont(11, weight: .semibold)
             .tracking(0.4)
             .foregroundStyle(Theme.text3)
     }

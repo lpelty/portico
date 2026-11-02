@@ -32,6 +32,8 @@ NOT_AVAILABLE = "The viewer isn't available right now (Portico isn't open)."
 SETTING_OFF = "The person has turned off the agent's view of the viewer in Settings."
 NEEDS_UPDATE = "This Portico can't show marks yet; it needs updating."
 MARK_COUNT = "Mark 1 to 9 things at a time."
+MARK_ITEM = "Each mark needs a target, and a note of at most 60 characters."
+MARK_NOTE_LIMIT = 60
 NO_ANSWER = "The viewer didn't answer in 10 s."
 
 # Tool names as the agent sees them (the tool server is ``portico``, beside ``show_in_viewer``).
@@ -260,6 +262,15 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
         marks = args.get("marks")
         if not isinstance(marks, list) or not 1 <= len(marks) <= 9:
             return _error(MARK_COUNT)  # the schema is advisory
+        for item in marks:
+            note = item.get("note") if isinstance(item, dict) else None
+            target = item.get("target") if isinstance(item, dict) else None
+            if (
+                not isinstance(target, str)
+                or not target.strip()
+                or (note is not None and (not isinstance(note, str) or len(note) > MARK_NOTE_LIMIT))
+            ):
+                return _error(MARK_ITEM)
         wire: dict[str, Any] = {"marks": marks, "replace": args.get("replace") is True}
         tool_use_id = bridge.take_mark_use(chat, args)
         if tool_use_id is not None:

@@ -76,6 +76,8 @@ struct PorticoApp: App {
                 .environmentObject(reader)
                 .environmentObject(dictation)
                 .preferredColorScheme(settings.appearance.colorScheme)
+                // One text scale for everything the window draws (v0.15 §3).
+                .environment(\.textScale, CGFloat(settings.textScale))
                 // Brand from hello (spec section 8): the accent on every
                 // control (nil keeps the system accent), the icon in the Dock only
                 // for a build without one of its own (v0.5).
@@ -84,6 +86,8 @@ struct PorticoApp: App {
                     model.brand.applyApplicationIcon()
                 }
                 .task {
+                    // ⌘= is Bigger Text too (v0.15 §3): the menu shows ⌘+.
+                    delegate.biggerText = { [settings] in settings.biggerText() }
                     // Quit honours the setting (spec §5.5, D19): keep the
                     // agent running (detach only) or stop everything.
                     delegate.quitHandler = { [model, settings, dictation] in
@@ -119,6 +123,17 @@ struct PorticoApp: App {
                 Button(model.documentMode ? "Back to Conversation" : "Document View") { model.toggleDocumentView() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
                     .disabled(model.filesChat == nil)
+                Divider()
+                // One text scale (v0.15 §3). Actual Size has no key: ⌘0 is
+                // Work and ⌘1–⌘9 the spaces (v0.12).
+                Button("Bigger Text") { settings.biggerText() }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(!settings.canMakeTextBigger)
+                Button("Smaller Text") { settings.smallerText() }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(!settings.canMakeTextSmaller)
+                Button("Actual Size") { settings.actualSize() }
+                    .disabled(settings.textScale == 1.0)
             }
             CommandGroup(after: .toolbar) {
                 Divider()
@@ -151,6 +166,7 @@ struct PorticoApp: App {
                 .environmentObject(supervisor)
                 .environmentObject(reader)
                 .preferredColorScheme(settings.appearance.colorScheme)
+                .environment(\.textScale, CGFloat(settings.textScale))
                 .tint(model.brand.accent)
         }
     }
@@ -163,6 +179,9 @@ struct PorticoApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var quitHandler: (() async -> Void)?
+    /// Bigger Text, for ⌘= (the menu item shows ⌘+).
+    var biggerText: (() -> Void)?
+    private var textKeyMonitor: Any?
 
     /// A bare executable (`swift run`, no app bundle) is a background-only
     /// process to AppKit: no Dock tile, no menu bar, and its window never
@@ -174,6 +193,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             app.setActivationPolicy(.regular)
         }
         app.activate()
+        textKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard TextScaleKeys.isBiggerAlternate(characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
+                  let biggerText = self?.biggerText
+            else { return event }
+            biggerText()
+            return nil
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -183,5 +209,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+}
+
+/// ⌘= as well as ⌘+ makes text bigger (v0.15 §3), as in Safari and Mail:
+/// on most layouts + is a shifted =, so ⌘= is the key people press. Pure,
+/// so the test reads it without an event.
+enum TextScaleKeys {
+    static func isBiggerAlternate(characters: String?, modifiers: NSEvent.ModifierFlags) -> Bool {
+        // Caps Lock, the numeric pad and Fn ride along in the flags; only the
+        // four chord modifiers decide whether this is a plain ⌘=.
+        characters == "=" && modifiers.intersection([.command, .shift, .option, .control]) == .command
     }
 }

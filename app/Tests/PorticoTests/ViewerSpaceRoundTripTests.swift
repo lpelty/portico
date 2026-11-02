@@ -190,4 +190,35 @@ final class ViewerSpaceRoundTripTests: XCTestCase {
         let back = perform(act(.look), on: rig.model)
         XCTAssertTrue(back.text.contains("Start Run"), "Work's page again: \(back.text)")
     }
+    /// v0.15 §5.2: a link followed from inside a space to another site
+    /// shows that site in the space's header, from the space's own address
+    /// (not Work's); the space's page again is its name again.
+    func testASpacePageThatLeavesForAnotherSiteSetsTheSpacesAddress() throws {
+        let rig = try rig()
+        let work = try XCTUnwrap(Self.webView(showing: "run.html", in: rig.host))
+        rig.model.openSpaceAt(1)
+        spin()
+        let space = try XCTUnwrap(Self.webViews(in: rig.host).first { $0 !== work }, "the space is drawn")
+        let until = Date().addingTimeInterval(10)
+        while space.isLoading || space.url?.scheme != RenderedPageHandler.scheme, Date() < until { spin(0.05) }
+        let spacePage = try XCTUnwrap(space.url)
+        let spaceAddress = try XCTUnwrap((space.navigationDelegate as? WebPane.Coordinator)?.address,
+                                         "the space's pane has an address to report to")
+        let workAddress = (work.navigationDelegate as? WebPane.Coordinator)?.address
+        XCTAssertFalse(spaceAddress === workAddress, "the space has its own address, not Work's")
+        XCTAssertNil(spaceAddress.outside)
+
+        space.loadHTMLString("<!doctype html><h1>Elsewhere</h1>", baseURL: URL(string: "https://example.com/trails/42")!)
+        let away = Date().addingTimeInterval(10)
+        while space.isLoading || space.url?.host != "example.com", Date() < away { spin(0.05) }
+        XCTAssertEqual(spaceAddress.outside.map(ViewerPageAddress.display), "example.com/trails/42")
+        XCTAssertNil(workAddress?.outside, "Work's header is untouched")
+
+        // Back to the space's page (WebKit's own Back list is its business:
+        // what is checked here is that the address follows the page home).
+        space.load(URLRequest(url: spacePage))
+        let back = Date().addingTimeInterval(10)
+        while spaceAddress.outside != nil, Date() < back { spin(0.05) }
+        XCTAssertNil(spaceAddress.outside, "the space's own page again: its name")
+    }
 }

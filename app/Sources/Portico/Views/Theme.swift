@@ -38,6 +38,9 @@ enum Theme {
     static let defaultWindowSize = CGSize(width: 1440, height: 900)
     static let minimumWindowSize = CGSize(width: 960, height: 600)
     static let toolbarHeight: CGFloat = 52
+    /// The sidebar's top band, under the traffic lights (the conversation
+    /// toolbar beside it stays `toolbarHeight`).
+    static let sidebarBandHeight: CGFloat = 36
     static let statusStripHeight: CGFloat = 30
     /// Room for the traffic lights when the sidebar (which normally holds
     /// them in its own top band) is collapsed.
@@ -71,5 +74,94 @@ extension NSColor {
             green: CGFloat((value >> 16) & 0xFF) / 255,
             blue: CGFloat((value >> 8) & 0xFF) / 255,
             alpha: CGFloat(value & 0xFF) / 255)
+    }
+}
+
+// MARK: - text scale (v0.15 §3)
+
+extension EnvironmentValues {
+    /// The person's text scale (Settings › Appearance › Text size, ⌘+ and
+    /// ⌘−), set at the window's root. 1 is 100%.
+    @Entry var textScale: CGFloat = 1
+}
+
+extension Theme {
+    /// An AppKit system font at `size` points times `scale`: AppKit-backed
+    /// text does not read SwiftUI's environment, so it is given the scale.
+    static func nsFont(_ size: CGFloat, scale: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.systemFont(ofSize: size * scale, weight: weight)
+    }
+
+    /// A symbol's font: the size it is drawn at, never scaled (spec §3.4:
+    /// icons keep their size when the text grows).
+    static func iconFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight)
+    }
+}
+
+/// A system font whose size follows the environment's text scale.
+private struct ScaledFont: ViewModifier {
+    let size: CGFloat
+    let weight: Font.Weight
+    let design: Font.Design
+    let monospacedDigit: Bool
+    @Environment(\.textScale) private var scale
+
+    func body(content: Content) -> some View {
+        let font = Font.system(size: size * scale, weight: weight, design: design)
+        content.font(monospacedDigit ? font.monospacedDigit() : font)
+    }
+}
+
+extension View {
+    /// `.font(.system(size:weight:design:))` at the person's text scale:
+    /// every piece of text the app draws goes through this (v0.15 §3).
+    /// Icons do not: they keep their size.
+    func scaledFont(
+        _ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default,
+        monospacedDigit: Bool = false
+    ) -> some View {
+        modifier(ScaledFont(size: size, weight: weight, design: design, monospacedDigit: monospacedDigit))
+    }
+}
+
+// MARK: - popovers (v0.15 §5.7, 11-02)
+
+extension EnvironmentValues {
+    /// The view is drawn inside a Portico popover (set by `popoverSurface()`),
+    /// so views shared with the window draw their faint text brighter.
+    @Entry var inPopover: Bool = false
+}
+
+extension Theme {
+    /// How opaque the window-background tint behind a popover's content is:
+    /// enough that text no longer sits on the bare glass, little enough that
+    /// the glass still shows (Larry, 11-02).
+    static let popoverTintOpacity: Double = 0.6
+
+    /// The faint secondary colour: `text3` in the window, `text2` inside a
+    /// popover, where the glass behind would wash `text3` out.
+    static func faintText(inPopover: Bool) -> Color {
+        inPopover ? text2 : text3
+    }
+}
+
+/// A tint of the window's background behind a popover's whole content, edge
+/// to edge, over the system glass (which stays).
+private struct PopoverSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background {
+                Theme.window.opacity(Theme.popoverTintOpacity)
+                    .ignoresSafeArea()
+            }
+            .environment(\.inPopover, true)
+    }
+}
+
+extension View {
+    /// Every `.popover` content gets this (guarded by `PopoverSurfaceTests`).
+    func popoverSurface() -> some View {
+        modifier(PopoverSurface())
     }
 }

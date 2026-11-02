@@ -30,10 +30,10 @@ struct QueuedMessages: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "clock")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                     .foregroundStyle(Theme.text3)
                 Text(model.queuedLine(chat: chat))
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                 Spacer(minLength: 8)
@@ -43,13 +43,13 @@ struct QueuedMessages: View {
                     .help("Don't send it")
             }
             Text(item.text)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text)
                 .lineLimit(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if !item.attachments.isEmpty {
                 Text(item.attachments.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: " · "))
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .lineLimit(1)
             }
@@ -73,9 +73,9 @@ private struct SmallButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: symbol)
-                    .font(.system(size: 10))
+                    .font(Theme.iconFont(10))
                 Text(title)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
             }
             .foregroundStyle(Theme.text)
             .padding(.vertical, 3)

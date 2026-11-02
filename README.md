@@ -270,6 +270,13 @@ After every turn the gateway reports how full the agent's context is
 (`context.usage`); when the agent summarizes earlier conversation to make
 room, the app is told (`chat.compacted`) and the record counts it.
 
+**Model and text size** (v0.15). The model in the status strip is a menu
+of the same list `/model` shows in a terminal; the choice applies at once
+and carries to new sessions (not while a reply runs). Settings →
+Appearance has Text size, which scales the conversation, sidebar, menus
+and the viewer's Markdown together (⌘+ or ⌘= bigger, ⌘- smaller). The
+sidebar's History lists earlier sessions, with one title filter.
+
 **Slash commands** (v0.11). Typing `/` at the start of the composer opens
 a list above it: Portico's own (`/log`, `/new`) first, then the agent's
 commands and skills, each with a one-line description, filtered as you

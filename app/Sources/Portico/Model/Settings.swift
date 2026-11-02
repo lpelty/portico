@@ -30,7 +30,7 @@ final class Settings: ObservableObject {
 
         var label: String {
             switch self {
-            case .system: "Follow system"
+            case .system: "Match the system"
             case .light: "Light"
             case .dark: "Dark"
             }
@@ -92,6 +92,7 @@ final class Settings: ObservableObject {
         static let autoOpenKinds = "autoOpenKinds"
         static let quitBehaviour = "quitBehaviour"
         static let appearance = "appearance"
+        static let textScale = "textScale"
         static let gatewayURL = "gatewayURL"
         static let tokenFile = "tokenFile"
         static let lastFolder = "lastFolder"
@@ -100,7 +101,6 @@ final class Settings: ObservableObject {
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
         static let spaceWidth = "viewerWidth.space"
-        static let earlierHeight = "earlierHeight"
         static let viewerAtQuit = "viewerAtQuit"
         static let voiceInputEnabled = "voice.inputEnabled"
         static let sendWhenStopTalking = "voice.sendWhenStopTalking"
@@ -127,6 +127,51 @@ final class Settings: ObservableObject {
     }
     @Published var appearance: Appearance {
         didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) }
+    }
+
+    // MARK: text size (v0.15 §3, AN3)
+
+    /// The text scale's steps: 85, 100, 115, 130 and 150%.
+    static let textScaleSteps: [Double] = [0.85, 1.0, 1.15, 1.3, 1.5]
+
+    /// One scale for every piece of text the app draws (v0.15 §3); always
+    /// one of `textScaleSteps`, a value between them taken to the nearest.
+    @Published var textScale: Double {
+        didSet {
+            // Assigning inside its own didSet does not call didSet again.
+            let step = Self.nearestTextScale(textScale)
+            if step != textScale { textScale = step }
+            defaults.set(textScale, forKey: Key.textScale)
+        }
+    }
+
+    /// The View menu's Bigger Text (⌘+): the next step up; the last stays.
+    func biggerText() {
+        let index = Self.textScaleSteps.firstIndex(of: textScale) ?? 1
+        textScale = Self.textScaleSteps[min(index + 1, Self.textScaleSteps.count - 1)]
+    }
+
+    /// Smaller Text (⌘−): the next step down; the first stays.
+    func smallerText() {
+        let index = Self.textScaleSteps.firstIndex(of: textScale) ?? 1
+        textScale = Self.textScaleSteps[max(index - 1, 0)]
+    }
+
+    /// Actual Size: back to 100%.
+    func actualSize() { textScale = 1.0 }
+
+    var canMakeTextBigger: Bool { textScale < Self.textScaleSteps[Self.textScaleSteps.count - 1] }
+    var canMakeTextSmaller: Bool { textScale > Self.textScaleSteps[0] }
+
+    /// The step nearest `value` (a value stored by hand, or out of range).
+    static func nearestTextScale(_ value: Double) -> Double {
+        guard value.isFinite else { return 1.0 }
+        return textScaleSteps.min { abs($0 - value) < abs($1 - value) } ?? 1.0
+    }
+
+    /// The stepper's reading: "115%".
+    static func percentLabel(_ scale: Double) -> String {
+        "\(Int((scale * 100).rounded()))%"
     }
     /// A gateway address to use instead of discovering one (`ws://127.0.0.1:<port>`); `nil` means discover.
     @Published var gatewayURL: String? {
@@ -161,15 +206,6 @@ final class Settings: ObservableObject {
     }
     @Published var canvasWidth: CGFloat {
         didSet { defaults.set(Double(canvasWidth), forKey: Key.canvasWidth) }
-    }
-
-    /// The single-session sidebar's EARLIER list height as last dragged;
-    /// `nil` until the person drags it (the list then fits its sessions).
-    @Published var earlierHeight: CGFloat? {
-        didSet {
-            if let earlierHeight { defaults.set(Double(earlierHeight), forKey: Key.earlierHeight) }
-            else { defaults.removeObject(forKey: Key.earlierHeight) }
-        }
     }
 
     // MARK: voice (v0.9 decisions 1, 2; AE2 Voice pane)
@@ -281,6 +317,7 @@ final class Settings: ObservableObject {
         }
         quitBehaviour = defaults.string(forKey: Key.quitBehaviour).flatMap(QuitBehaviour.init(rawValue:)) ?? .keepRunning
         appearance = defaults.string(forKey: Key.appearance).flatMap(Appearance.init(rawValue:)) ?? .system
+        textScale = Self.nearestTextScale(defaults.object(forKey: Key.textScale) as? Double ?? 1.0)
         gatewayURL = Self.read(Key.gatewayURL, in: defaults)
         tokenFile = Self.read(Key.tokenFile, in: defaults)
         lastFolder = Self.read(Key.lastFolder, in: defaults)
@@ -289,7 +326,6 @@ final class Settings: ObservableObject {
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
         spaceWidth = Self.width(Key.spaceWidth, in: defaults) ?? ColumnWidths.spaceDefault
-        earlierHeight = Self.width(Key.earlierHeight, in: defaults)
         voiceInputEnabled = defaults.object(forKey: Key.voiceInputEnabled) as? Bool ?? true
         sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
         holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none

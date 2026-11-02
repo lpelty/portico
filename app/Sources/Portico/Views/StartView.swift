@@ -19,6 +19,7 @@ import UniformTypeIdentifiers
 /// the commands the gateway kept for the folder, before any engine runs.
 struct StartView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.textScale) private var textScale
     @EnvironmentObject private var dictation: Dictation
     @FocusState private var focused: Bool
     @State private var slash = SlashListState()
@@ -54,7 +55,7 @@ struct StartView: View {
                 composer
                 if let error = model.startError {
                     Text(error)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(.red)
                         .padding(.horizontal, 4)
                 }
@@ -69,7 +70,7 @@ struct StartView: View {
             }
         }
         // v0.11 (58): the conversation's reading column.
-        .frame(maxWidth: ConversationColumn.maxWidth)
+        .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale))
         .padding(EdgeInsets(top: 32, leading: 48, bottom: 120, trailing: 48))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { focused = true }
@@ -108,7 +109,7 @@ struct StartView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(model.brand.accent ?? Theme.accent)
                 Image(systemName: "sparkle")
-                    .font(.system(size: Self.sparkleSize, weight: .semibold))
+                    .font(Theme.iconFont(Self.sparkleSize, weight: .semibold))
                     .foregroundStyle(.white)
             }
             .frame(width: Self.markSize, height: Self.markSize)
@@ -120,7 +121,7 @@ struct StartView: View {
         HStack(spacing: 16) {
             greetingMark
             Text(Self.greeting())
-                .font(.system(size: 40, design: .serif))
+                .scaledFont(40, design: .serif)
                 .tracking(-0.6)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
@@ -147,13 +148,13 @@ struct StartView: View {
             ZStack(alignment: .topLeading) {
                 if model.startDraft.isEmpty {
                     Text(placeholder)
-                        .font(.system(size: 16))
+                        .scaledFont(16)
                         .foregroundStyle(Theme.text3)
                         .padding(.horizontal, 5)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $model.startDraft)
-                    .font(.system(size: 16))
+                    .scaledFont(16)
                     .foregroundStyle(Theme.text)
                     .scrollContentBackground(.hidden)
                     .scrollIndicators(.never)
@@ -178,7 +179,7 @@ struct StartView: View {
             HStack(spacing: 8) {
                 Button(action: pickAttachments) {
                     Image(systemName: "plus")
-                        .font(.system(size: 14))
+                        .font(Theme.iconFont(14))
                         .foregroundStyle(Theme.text2)
                         .frame(width: 30, height: 30)
                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Theme.border, lineWidth: 1))
@@ -203,7 +204,7 @@ struct StartView: View {
                 Spacer(minLength: 0)
                 if let line = DictationLine.text(dictation, composer: voiceComposer.id) {
                     Text(line)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                         .lineLimit(1)
                         .layoutPriority(-1)
@@ -211,7 +212,7 @@ struct StartView: View {
                 MicButton(composer: voiceComposer, side: 30, bordered: true)
                 Button(action: send) {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(Theme.iconFont(15, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 32, height: 32)
                         .background(model.brand.accent ?? Theme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -292,11 +293,11 @@ struct StartView: View {
         VStack(spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                 // Re-read each minute so "last reply … ago" moves.
                 TimelineView(.everyMinute) { context in
                     Text(SessionPresentation(summary: live).continuingLine(now: context.date))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -318,9 +319,9 @@ struct StartView: View {
     private var folderLine: some View {
         HStack(spacing: 6) {
             Image(systemName: "folder")
-                .font(.system(size: 11))
+                .font(Theme.iconFont(11))
             Text(model.workingFolderLine)
-                .font(.system(size: 12))
+                .scaledFont(12)
         }
         .foregroundStyle(Theme.text3)
         .help(model.startFolder?.path ?? "Settings › General › Folder")
@@ -339,7 +340,7 @@ struct StartView: View {
                         .buttonStyle(.hover)
                         .foregroundStyle(Theme.text3)
                     }
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -364,10 +365,10 @@ struct StartView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 11))
+                            .font(Theme.iconFont(11))
                             .foregroundStyle(Theme.text2)
                         Text(action.label)
-                            .font(.system(size: 13))
+                            .scaledFont(13)
                             .foregroundStyle(Theme.text)
                     }
                     .padding(.vertical, 6)
@@ -443,7 +444,7 @@ struct SmallBorderedButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .padding(.vertical, 6)

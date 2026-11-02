@@ -333,10 +333,11 @@ async def test_restart_refusals_over_the_socket(services_server: GatewayServer, 
         gate.write_text("")
         await recv_until(conn, ServicesStatus)  # the first check's answer
         await conn.send(dump(ServiceRestart(ts=TS, id="req-u", service="nope")))
-        err = await recv(conn)
+        # The two services publish separately, so a second status can still be on its way.
+        err = (await recv_until(conn, Error))[-1]
         assert isinstance(err, Error) and err.code == "service.unknown" and err.id == "req-u"
         await conn.send(dump(ServiceRestart(ts=TS, id="req-n", service="files")))
-        err = await recv(conn)
+        err = (await recv_until(conn, Error))[-1]
         assert isinstance(err, Error) and err.code == "service.no_restart" and err.id == "req-n"
     finally:
         await conn.close()

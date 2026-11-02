@@ -12,8 +12,16 @@ struct ConversationView: View {
     @State private var topItem: String?
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
+    /// Whether the person is scrolling the transcript (v0.15 task 2b fix
+    /// round 1): only its readings move the scroll memory.
+    @State private var personScrolling = false
+    /// The person's scroll keys, plain wheels and VoiceOver page scrolls,
+    /// which may report no scroll phase (v0.15 task 2b fix round 2).
+    @State private var personInput = TranscriptPersonInput()
     /// The transcript's width, for the reading column's (v0.11, item 58).
     @State private var transcriptWidth: CGFloat?
+    /// The column grows with the text (v0.15 §3).
+    @Environment(\.textScale) private var textScale
 
     private var items: [TranscriptItem] { model.transcripts[chat] ?? [] }
 
@@ -43,7 +51,7 @@ struct ConversationView: View {
             }
             if let status = model.status[chat], !status.isEmpty {
                 Text(status)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(2)
                     .textSelection(.enabled)
@@ -109,6 +117,7 @@ struct ConversationView: View {
                         TranscriptEntryView(entry: entry, folder: folder, chat: chat)
                             .padding(.top, gap)
                             .id(entry.id)
+                            .modifier(MarksVoiceOverFocus(input: personInput))
                     }
                     if working {
                         WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
@@ -122,18 +131,19 @@ struct ConversationView: View {
                 .scrollTargetLayout()
                 // v0.11 (58): the reading column, centred; its items size
                 // themselves from its width (`conversationColumn`).
-                .frame(maxWidth: ConversationColumn.maxWidth, alignment: .leading)
+                .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
                 .padding(.horizontal, Self.sideInset)
                 .padding(.top, 24)
                 .padding(.bottom, 16)
                 .frame(maxWidth: .infinity)
+                .background(TranscriptScrollViewProbe(input: personInput))
             }
             // Fix I-1: the scroller keeps clear of the viewer divider's grip.
             .clearOfViewerGrip()
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
             .environment(
                 \.conversationColumn,
-                transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset) })
+                transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset, scale: textScale) })
             .scrollPosition(id: $topItem, anchor: .top)
             // v0.11 (67): opening the viewer (or a space) narrows the column
             // and every line wraps again; the bottom stays the bottom. Scrolled
@@ -141,11 +151,18 @@ struct ConversationView: View {
             .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
                 TranscriptGeometry(
                     width: geometry.containerSize.width,
+                    content: geometry.contentSize.height,
+                    offset: geometry.contentOffset.y,
                     atBottom: ConversationScrollMemory.isAtBottom(
                         offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
                         content: geometry.contentSize.height))
             } action: { _, now in
-                if scrollMemory.observe(width: now.width, atBottom: now.atBottom) == .bottom {
+                // The marked input's direction decides which readings are
+                // the person's (fix round 4; no longer spent by the first).
+                let target = scrollMemory.observe(
+                    width: now.width, atBottom: now.atBottom, byPerson: personScrolling,
+                    marked: personInput.recent, offset: now.offset)
+                if target == .bottom {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -155,14 +172,45 @@ struct ConversationView: View {
             // the view near the top). Anchor at the bottom, and scroll again
             // once the new rows are laid out.
             .defaultScrollAnchor(.bottom)
-            .onChange(of: scrollKey) { _, _ in
+            .onScrollPhaseChange { _, phase in
+                // `.animating` too (fix round 2): the app's own scrolls are not animated.
+                personScrolling = phase != .idle
+            }
+            // v0.15 task 2b fix round 1: the newest message is followed only
+            // at the bottom (scrolled up, a streaming reply no longer pulls
+            // the person back down), and once per change: the geometry
+            // reading above catches the rows laid out after it. The person's
+            // own message always goes to the bottom.
+            .onChange(of: followKey) { old, new in
+                if new.sent != old.sent {
+                    scrollToBottom(proxy)
+                } else if scrollMemory.atBottom && !byPerson {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            // VoiceOver's page scroll is the person's (fix round 2).
+            .accessibilityScrollAction { edge in personInput.page(toward: edge) }
+            .onAppear {
+                personInput.install()
                 scrollToBottom(proxy)
             }
-            .onAppear { scrollToBottom(proxy) }
+            .onDisappear { personInput.remove() }
         }
     }
 
+    /// Whether the readings now are the person's (v0.15 task 2b fix round 2):
+    /// a scroll phase, or a recent scroll key, wheel or VoiceOver move. (Fix
+    /// round 3: no longer every reading while VoiceOver is on; that took the
+    /// layout's settling for the person's again.)
+    private var byPerson: Bool {
+        personScrolling || personInput.isRecent
+    }
+
+    /// To the bottom, and twice: once now, once after the rows are laid out.
+    /// Recorded as at the bottom (v0.15 fix round 1): the jump's own
+    /// reading is the layout's, so the memory would not see it.
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        scrollMemory.followed()
         proxy.scrollTo("bottom", anchor: .bottom)
         Task { @MainActor in
             await Task.yield()
@@ -189,6 +237,18 @@ struct ConversationView: View {
         .frame(maxHeight: 320)
     }
 
+    /// What the transcript follows (v0.15 fix round 1): any change, and
+    /// apart from it the person's newest message (the gateway's echo of a send).
+    private var followKey: FollowKey {
+        let sent = items.last { if case .userText = $0 { true } else { false } }?.id
+        return FollowKey(scroll: scrollKey, sent: sent)
+    }
+
+    private struct FollowKey: Equatable {
+        var scroll: String
+        var sent: String?
+    }
+
     /// Changes whenever an item is added or the streaming tail grows.
     private var scrollKey: String {
         let working = model.showsWorkingLine(chat: chat) ? ":w" : ""
@@ -204,19 +264,24 @@ struct ConversationView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(model.isSinglePresentation ? "Session \(chat)" : "Chat #\(chat)")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
             Text(model.isLive(chat: chat) ? "Nothing yet. Say something below." : "Loading the transcript…")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(Theme.text2)
         }
     }
 }
 
 /// The transcript's width and whether it is at its end, as its scroll
-/// geometry changes (v0.11, item 67).
+/// geometry changes (v0.11, item 67). v0.15 fix: and the content's height
+/// and offset, so the layout moving the end (the rows resolving at a new
+/// width, a streamed line) is a reading of its own: the end moved while
+/// `atBottom` read false throughout, and nothing followed it.
 private struct TranscriptGeometry: Equatable {
     var width: CGFloat
+    var content: CGFloat
+    var offset: CGFloat
     var atBottom: Bool
 }
 
@@ -303,7 +368,7 @@ struct UserBubble: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: MarkdownText.bodySize))
+            .scaledFont(MarkdownText.bodySize)
             .lineSpacing(MarkdownText.lineSpacing)
             .foregroundStyle(Theme.text)
             .textSelection(.enabled)
@@ -340,9 +405,9 @@ struct TurnMarkerView: View {
         if let label = Self.label(marker.outcome) {
             HStack(spacing: 6) {
                 Image(systemName: marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle")
-                    .font(.system(size: 11))
+                    .font(Theme.iconFont(11))
                 Text(label)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
             }
             .foregroundStyle(marker.outcome == .error ? Theme.deny : Theme.text3)
             .accessibilityElement(children: .combine)
@@ -371,17 +436,17 @@ struct SessionDivider: View {
                 HStack(spacing: 6) {
                     if parent.summary.logged == true {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(Theme.iconFont(10, weight: .semibold))
                     }
                     Text(parent.parentLine(now: now))
                 }
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
                 .fixedSize()
                 Rectangle().fill(Theme.border).frame(height: 1)
             }
             Text(current.startedSecondLine(now: now))
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(Theme.text3)
         }
         .frame(maxWidth: .infinity)
@@ -397,10 +462,10 @@ struct CompactedLine: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "rectangle.compress.vertical")
-                .font(.system(size: 11))
+                .font(Theme.iconFont(11))
                 .foregroundStyle(Theme.text3)
             Text(Self.text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(Theme.text2)
             Spacer(minLength: 0)
         }
@@ -418,9 +483,9 @@ struct NoticeLine: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
+                .font(Theme.iconFont(11))
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
@@ -439,11 +504,11 @@ struct EndedSessionBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 12))
+                .font(Theme.iconFont(12))
                 .foregroundStyle(Theme.text3)
             TimelineView(.everyMinute) { context in
                 Text(line(now: context.date))
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -496,7 +561,18 @@ extension View {
     /// the reading column plus those insets, centred: the composer, the
     /// queued cards, the dock and the status line line up with the replies.
     func inConversationColumn(sideInset: CGFloat = ConversationView.sideInset) -> some View {
-        frame(maxWidth: ConversationColumn.outerWidth(sideInset: sideInset))
+        modifier(InConversationColumn(sideInset: sideInset))
+    }
+}
+
+/// `inConversationColumn`, at the text scale the column grows with.
+private struct InConversationColumn: ViewModifier {
+    let sideInset: CGFloat
+    @Environment(\.textScale) private var textScale
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: ConversationColumn.outerWidth(sideInset: sideInset, scale: textScale))
             .frame(maxWidth: .infinity)
     }
 }

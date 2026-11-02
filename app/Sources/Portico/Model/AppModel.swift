@@ -189,6 +189,12 @@ final class AppModel: ObservableObject {
     /// display name when the deployment gives one): the deployment's model
     /// does not change when a session is renewed.
     @Published private(set) var latestModel: String?
+    /// Per chat, the models it can switch to and the one it runs on (v0.15,
+    /// `models.v1`): the latest `models` frame, each replacing the last.
+    @Published private(set) var models: [Int: Models] = [:]
+    /// Per chat, the name of a model just chosen (v0.15): the strip shows it
+    /// at once, until the next `context.usage` names the model itself.
+    @Published private(set) var chosenModelName: [Int: String] = [:]
     /// The agent's commands and skills per folder, from `chat.commands`
     /// (v0.11 item 66), for the composer's slash list.
     @Published private(set) var commandsByFolder: [String: [AgentCommand]] = [:]
@@ -681,6 +687,10 @@ final class AppModel: ObservableObject {
             restartingAll = nil
             lastRestartAllId = nil
             restartAllError = nil
+            // The models too (v0.15): the gateway sends its kept list for
+            // each live session after hello, so nothing older outlives it.
+            models = [:]
+            chosenModelName = [:]
             servicesFallback?.cancel()
             servicesFallback = nil
             // A log or renewal sent on the old connection was never
@@ -799,8 +809,17 @@ final class AppModel: ObservableObject {
 
         case .contextUsage(let usage):
             contextUsage[usage.chat] = usage
+            chosenModelName[usage.chat] = nil
             if let name = usage.displayModel { latestModel = name }
             noteSeq(of: message)
+
+        case .models(let list):
+            // A switch (the current choice changed): the strip names the
+            // choice now rather than the old model until the next reply.
+            if let before = models[list.chat], before.current != list.current {
+                chosenModelName[list.chat] = ModelMenuPresentation.label(for: list.current, in: list.choices)
+            }
+            models[list.chat] = list
 
         case .chatCommands(let commands):
             let folder = Self.commandsKey(commands.folder)
@@ -1224,7 +1243,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models:
             break
         }
     }
@@ -1365,6 +1384,31 @@ final class AppModel: ObservableObject {
     func setMode(_ mode: PermissionMode, for chat: Int) {
         guard mode != self.mode(of: chat) else { return }
         send(.sessionMode(SessionMode(chat: chat, mode: mode, id: Self.requestId())))
+    }
+
+    /// Switch the session's model (v0.15): `model.set`, answered with a
+    /// `models` carrying the new `current` (and a `chat.notice` "Model: …"),
+    /// or an error, which the chat's status line shows like any other
+    /// refusal. Choosing the model it already runs on sends nothing.
+    func setModel(_ value: String?, chat: Int) {
+        if let known = models[chat],
+            (known.current ?? Models.defaultValue) == (value ?? Models.defaultValue)
+        {
+            return
+        }
+        send(.modelSet(ModelSet(chat: chat, value: value, id: Self.requestId())))
+    }
+
+    /// The strip's model menu for `chat`: the gateway's list, dimmed
+    /// while a reply runs or a send waits, plain text for an ended
+    /// session or a gateway without `models.v1`.
+    func modelMenu(for chat: Int) -> ModelMenuPresentation {
+        let list = models[chat]
+        return ModelMenuPresentation(
+            choices: list?.choices ?? [], current: list?.current,
+            busy: isBusy(chat: chat) || isSending(chat: chat),
+            live: !isEnded(chat: chat), hasCapability: offers(Models.capability),
+            connected: connection == .connected)
     }
 
     // MARK: - working line (V2)

@@ -184,7 +184,7 @@ struct BrandHeader: View {
             HStack(spacing: 8) {
                 BrandIcon(icon: icon, side: 20)
                 Text(brand.name)
-                    .font(.headline)
+                    .scaledFont(13, weight: .semibold)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
