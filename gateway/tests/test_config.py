@@ -186,7 +186,7 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     # v0.11: single presentation (the default) also offers ``sessions.clear``.
     assert hello.capabilities == [
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-        "sessions.clear",
+        "models.v1", "sessions.clear",
     ]
     assert hello.presentation == "single"
     assert hello.can_log is False

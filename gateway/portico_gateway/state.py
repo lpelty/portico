@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .messages import AgentCommand, Artifact, ChatStateWord, PermissionMode, PermissionOutcome
+from .messages import AgentCommand, Artifact, ChatStateWord, ModelChoice, PermissionMode, PermissionOutcome
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
@@ -107,6 +107,12 @@ class Index(BaseModel):
     # a change can be told from a folder the person chose (``None`` in an
     # older index).
     default_folder: str | None = None
+    # v0.15: the model chosen with ``model.set`` (a ``ModelChoice.value``;
+    # ``None``: the deployment's default), which every engine starts on, and
+    # the engine's model list as last read, for an app before any engine
+    # starts. Defaults so an older index loads unchanged.
+    model: str | None = None
+    models: list[ModelChoice] = []
 
 
 class CommandLists(BaseModel):

@@ -20,7 +20,7 @@ from claude_agent_sdk import ResultMessage
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
 from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
-from portico_gateway.messages import Action, AgentCommand, Brand, Root, ServerMessage, TurnFinished, TurnStarted
+from portico_gateway.messages import Action, AgentCommand, Brand, ModelChoice, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.state import StateDir
 
 # --- script items -------------------------------------------------------------
@@ -152,6 +152,13 @@ class FakeEngine:
         self.command_error: Exception | None = None
         # Every ``set_permission_mode`` call, in order (not in ``calls``).
         self.mode_changes: list[str] = []
+        # v0.15: the model to start on, as the owner set it; what ``models``
+        # answers (``None``: it cannot say); every ``set_model`` call, in order
+        # (not in ``calls``); the model ``start`` was called with.
+        self.model: str | None = None
+        self.model_entries: list[ModelChoice] | None = None
+        self.model_switches: list[str | None] = []
+        self.started_model: str | None = None
         self._session_id = session_id
         # Like the real engine: ``start`` names no session; the id arrives
         # with the first turn's messages.
@@ -194,9 +201,17 @@ class FakeEngine:
         self.mode_changes.append(mode)
         self.permission_mode = mode
 
+    def models(self) -> list[ModelChoice] | None:
+        return list(self.model_entries) if self.model_entries is not None else None
+
+    async def set_model(self, value: str | None) -> None:
+        self.model_switches.append(value)
+        self.model = value
+
     async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
         self.calls.append(("start", (folder, resume, list(setting_sources))))
         self.started_mode = self.permission_mode
+        self.started_model = self.model
         self.callbacks = callbacks
         self.started = True
         self.session_id = resume or (None if self.late_session else self._session_id)

@@ -1,0 +1,29 @@
+{
+  "chat": 14,
+  "choices": [
+    {
+      "description": "Opus for complex work",
+      "display_name": "Default (recommended)",
+      "value": "default"
+    },
+    {
+      "description": "Opus for the hardest work",
+      "display_name": "Opus",
+      "value": "opus"
+    },
+    {
+      "description": "Efficient for routine tasks",
+      "display_name": "Sonnet",
+      "value": "sonnet"
+    },
+    {
+      "description": "Fastest for quick answers",
+      "display_name": "Haiku",
+      "value": "haiku"
+    }
+  ],
+  "current": "sonnet",
+  "id": "req-11",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "models"
+}

@@ -166,7 +166,7 @@ from .agents import AgentTracker
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import SPACES_CAPABILITY, Config, hello_for, with_default_spaces
+from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
     Engine,
@@ -218,6 +218,9 @@ from .messages import (
     GatewayStop,
     HelloClient,
     MessageSend,
+    ModelChoice,
+    Models,
+    ModelSet,
     Outcome,
     ProtocolError,
     QueuedMessage,
@@ -461,9 +464,12 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     holding a type it does not know). The ring keeps everything; ``seq``
     gaps are harmless, the app only skips what it has already seen.
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
+    ``models`` goes only to an app with ``models.v1`` (v0.15).
     """
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
+    if isinstance(msg, Models) and MODELS_CAPABILITY not in capabilities:
+        return None  # v0.15: an app that did not declare models.v1 cannot decode models
     if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
         return None  # v0.11: an app that cannot show a queue never had one
     if AGENTS_CAPABILITY in capabilities:
@@ -895,6 +901,7 @@ class GatewayServer:
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
         self.register("session.mode", self.on_session_mode)
+        self.register("model.set", self.on_model_set)
         self.register("session.log", self.on_session_log)
         self.register("service.restart", self.on_service_restart)
         self.register("services.restart_all", self.on_services_restart_all)
@@ -1219,6 +1226,11 @@ class GatewayServer:
         # v0.11 (item 66): the agent's commands as last seen, for the composer.
         for commands in self._commands_on_connect():
             await self._send(conn, commands)
+        # v0.15: the model list as last read, for each live session's menu before its engine starts.
+        if self.registry.models:
+            for chat in self.registry.chats():
+                if chat.ended is None:
+                    await self._send(conn, self._models_frame(chat))
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while
         # the worker is inside a slow handler (a hung ``before_first_chat``).
@@ -1437,6 +1449,8 @@ class GatewayServer:
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
         engine.system_prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
+        # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
+        engine.model = self.registry.model
         session = await engine.start(
             chat.folder, chat.session_id, list(self.config.setting_sources), ChatCallbacks(self, chat)
         )
@@ -1445,6 +1459,7 @@ class GatewayServer:
             chat.session_id = session
         self.registry.persist()
         await self._report_commands(chat, engine)
+        await self._report_models(chat, engine)
         return engine
 
     async def _report_commands(self, chat: Chat, engine: Engine) -> None:
@@ -1469,6 +1484,76 @@ class GatewayServer:
             except OSError as e:
                 log.warning("could not keep the commands for %s: %s", folder, e)
         await self.broadcast(ChatCommands(ts=_now(), chat=chat.number, folder=folder, commands=commands))
+
+    # --- models (v0.15) -------------------------------------------------------------
+
+    def _models_frame(self, chat: Chat, id: str | None = None) -> Models:
+        return Models(ts=_now(), chat=chat.number, id=id, current=self.registry.model, choices=self.registry.models)
+
+    @staticmethod
+    def _display_name(choices: list[ModelChoice], value: str | None) -> str:
+        """``value``'s display name in ``choices``; ``None`` is the ``default`` entry's (or "Default"); else the raw value."""
+        wanted = "default" if value is None else value
+        for choice in choices:
+            if choice.value == wanted:
+                return choice.display_name
+        return "Default" if value is None else value
+
+    async def _report_models(self, chat: Chat, engine: Engine) -> None:
+        """After an engine starts: its model list as ``models``, kept in the index.
+
+        A stored choice the new list lacks is dropped: the engine goes to the
+        default, the choice is cleared, and a notice says so, naming the
+        model from the list kept before (its value when that never had it).
+        Never breaks a start: an engine that cannot say (``None``) sends
+        nothing, and one that fails is logged at WARNING and skipped.
+        """
+        try:
+            choices = engine.models()
+        except Exception as e:
+            log.warning("chat %d: could not read the models: %s", chat.number, e)
+            return
+        if choices is None:
+            return
+        kept = self.registry.models
+        if choices != kept:
+            self.registry.record_models(choices)
+        stored = self.registry.model
+        if stored is not None and all(c.value != stored for c in choices):
+            name = self._display_name(kept, stored)
+            try:
+                await engine.set_model(None)
+            except Exception as e:
+                log.warning("chat %d: could not switch to the default model: %s", chat.number, e)
+            self.registry.record_model(None)
+            log.info("chat %d: model %s is no longer offered; back to the default", chat.number, stored)
+            await self.notice(chat, f"Model: Default ({name} is no longer offered here)")
+        await self.broadcast(self._models_frame(chat))
+
+    async def on_model_set(self, msg: ModelSet, conn: ServerConnection) -> None:
+        """Switch the model: the running engine at once, every later engine from the index (v0.15).
+
+        ``"default"`` or ``null`` is the deployment's default. Refused while
+        a reply runs (which model answered would be unclear) and for a value
+        the kept list lacks; with no list yet, any value is kept and the
+        next start checks it. Answered with ``models`` carrying the request's
+        ``id``; a notice in the conversation records the switch.
+        """
+        chat = self.registry.get(msg.chat)
+        if chat.ended is not None:
+            raise ProtocolError("session.ended", f"session {chat.number} has ended")
+        if self._busy(chat):
+            raise ProtocolError("chat.busy", "Change the model after this reply")
+        value = None if msg.value in (None, "default") else msg.value
+        choices = self.registry.models
+        if value is not None and choices and all(c.value != value for c in choices):
+            raise ProtocolError("model.unknown", "That model isn't offered here.")
+        if chat.engine is not None:
+            await chat.engine.set_model(value)
+        self.registry.record_model(value)
+        log.info("chat %d: model %s", chat.number, value or "default")
+        await self.notice(chat, f"Model: {self._display_name(choices, value)}")
+        await self._send(conn, self._models_frame(chat, id=msg.id))
 
     def _commands_on_connect(self) -> list[ChatCommands]:
         """The kept lists an app hears on connect (v0.11 item 66): the default folder's and each live session's."""
@@ -2296,6 +2381,9 @@ class GatewayServer:
         await self.notice(chat, f"Session ended · continues in Session {following.number}")
         await self.set_state(following, "idle")
         await self.notice(following, f"Continues Session {chat.number}")
+        if self.registry.models:
+            # v0.15: the next session's menu, before its engine starts.
+            await self.broadcast(self._models_frame(following))
         log.info("chat %d: session ended (logged=%s); session %d follows", chat.number, logged, following.number)
         await self.broadcast(SessionRenewed(ts=_now(), id=id, ended=chat.summary(), next=following.summary()))
         await self.send_chat_list()

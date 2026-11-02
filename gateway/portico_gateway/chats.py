@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, get_args
 
-from .messages import AgentProgress, Artifact, ChatState, ChatStateWord, ChatSummary, PermissionMode, ServerMessage
+from .messages import AgentProgress, Artifact, ChatState, ChatStateWord, ChatSummary, ModelChoice, PermissionMode, ServerMessage
 from .state import ChatRecord, Index, StateDir, ToolPermission
 
 if TYPE_CHECKING:
@@ -387,6 +387,26 @@ class ChatRegistry:
     def record_default_folder(self, folder: str | None) -> None:
         """Remember the ``default_folder`` this gateway runs with; saved to the index at once."""
         self._index.default_folder = folder
+        self.persist()
+
+    @property
+    def model(self) -> str | None:
+        """The stored model choice (v0.15); ``None`` is the deployment's default."""
+        return self._index.model
+
+    def record_model(self, value: str | None) -> None:
+        """Keep the model choice; saved to the index at once."""
+        self._index.model = value
+        self.persist()
+
+    @property
+    def models(self) -> list[ModelChoice]:
+        """The engine's model list as last read (v0.15); empty before any engine has said."""
+        return list(self._index.models)
+
+    def record_models(self, choices: list[ModelChoice]) -> None:
+        """Keep the engine's model list; saved to the index at once."""
+        self._index.models = list(choices)
         self.persist()
 
     @property
