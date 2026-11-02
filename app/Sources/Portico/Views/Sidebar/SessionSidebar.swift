@@ -383,8 +383,8 @@ struct SessionCard: View {
         .disabled(pending || model.connection != .connected)
     }
 
-    /// The thread's `thread.close` is out.
-    private var closing: Bool { model.closingThreads[chat] != nil }
+    /// The thread is being closed (its `thread.close`, or a Close and start).
+    private var closing: Bool { model.isClosing(chat: chat) }
 
     /// "Close writes a summary to History"; after a refused close, why, and
     /// "Close without logging" when the log step could not start.

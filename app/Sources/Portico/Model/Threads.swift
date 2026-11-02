@@ -355,10 +355,17 @@ extension AppModel {
     /// Not now is out for this proposal: its card waits for the answer.
     var dismissingProposals: Set<String> { Set(dismissing.keys) }
 
+    /// The thread is being closed: its own `thread.close` is out, or a
+    /// Close and start is closing it. Close thread waits either way (the
+    /// gateway would refuse a second close as `thread.not_open`).
+    func isClosing(chat: Int) -> Bool {
+        closingThreads[chat] != nil || startingClose == chat
+    }
+
     /// Close thread: a thread mid-turn asks "Thread N is still working.
     /// Close it anyway?" first (`closingThread`); otherwise it closes now.
     func requestCloseThread(chat: Int) {
-        guard thread(of: chat) != nil, !isEnded(chat: chat), closingThreads[chat] == nil else { return }
+        guard thread(of: chat) != nil, !isEnded(chat: chat), !isClosing(chat: chat) else { return }
         if isBusy(chat: chat) {
             closingThread = chat
         } else {

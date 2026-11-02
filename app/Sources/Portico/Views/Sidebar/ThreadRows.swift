@@ -68,7 +68,7 @@ private struct ThreadRow: View {
         .contextMenu {
             if isThread {
                 Button("Close thread") { model.requestCloseThread(chat: row.chat) }
-                    .disabled(model.closingThreads[row.chat] != nil || model.connection != .connected)
+                    .disabled(model.isClosing(chat: row.chat) || model.connection != .connected)
             }
         }
     }

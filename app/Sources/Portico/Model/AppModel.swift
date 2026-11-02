@@ -241,7 +241,7 @@ final class AppModel: ObservableObject {
     /// That `thread.start`'s request id.
     private(set) var startingRequest: String?
     /// The thread that `thread.start` closes first (Close and start).
-    private(set) var startingClose: Int?
+    @Published private(set) var startingClose: Int?
     /// The working thread whose close is asking "Close it anyway?".
     @Published var closingThread: Int?
     /// Per thread, the id of a `thread.close` the gateway has not answered.
@@ -2251,7 +2251,7 @@ extension AppModel {
     /// `thread.close` for an open thread, with or without its log step;
     /// one close at a time per thread.
     func closeThread(chat: Int, log: Bool) {
-        guard thread(of: chat) != nil, !isEnded(chat: chat), closingThreads[chat] == nil else { return }
+        guard thread(of: chat) != nil, !isEnded(chat: chat), !isClosing(chat: chat) else { return }
         let id = Self.requestId()
         closingThreads[chat] = id
         closeFailures[chat] = nil
@@ -2278,7 +2278,8 @@ extension AppModel {
     }
 
     /// An `error` answering a request: a refused start un-dims its card
-    /// (Review Focus 2); a refused close keeps the thread open and says why.
+    /// (Review Focus 2) and Main's status line says why; a refused close
+    /// keeps the thread open.
     func noteThreadRefusal(id: String, code: String, message: String) {
         if id == startingRequest {
             startingProposal = nil
@@ -2292,9 +2293,13 @@ extension AppModel {
         if let proposal = dismissing.first(where: { $0.value == id })?.key {
             dismissing[proposal] = nil
         }
+        // A refused close: only a log step that could not start goes on the
+        // red line (with Close without logging); any other refusal is said
+        // on the thread's status line, as every error with a chat is.
         if let closing = closingThreads.first(where: { $0.value == id })?.key {
             closingThreads[closing] = nil
-            closeFailures[closing] = CloseFailure(code: code, message: message)
+            let failure = CloseFailure(code: code, message: message)
+            if failure.offersCloseWithoutLogging { closeFailures[closing] = failure }
         }
     }
 }

@@ -324,7 +324,7 @@ struct CloseFailureLine: View {
             if failure.offersCloseWithoutLogging {
                 Button("Close without logging") { model.closeThreadWithoutLogging(chat: chat) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
-                    .disabled(model.closingThreads[chat] != nil || model.connection != .connected)
+                    .disabled(model.isClosing(chat: chat) || model.connection != .connected)
                     .accessibilityLabel(label.map { "Close \($0) without logging" } ?? "Close without logging")
             }
         }

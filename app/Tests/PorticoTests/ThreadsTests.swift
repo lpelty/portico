@@ -408,13 +408,64 @@ final class ThreadsTests: XCTestCase {
         model.requestCloseThread(chat: 5)
         guard case .threadClose(let busy)? = sent.frames.last else { return XCTFail("expected thread.close") }
         model.apply(.error(ErrorMessage(code: "chat.busy", message: "a log step is running in chat 5", chat: 5, id: busy.id)))
-        XCTAssertEqual(model.closeFailures[5]?.code, "chat.busy")
-        XCTAssertEqual(model.closeFailures[5]?.offersCloseWithoutLogging, false)
+        XCTAssertNil(model.closeFailures[5], "a refusal Close without logging cannot help draws no red line")
+        XCTAssertNil(model.closingThreads[5], "the close is no longer in flight")
+        XCTAssertEqual(model.status[5], "a log step is running in chat 5", "the status line says why, as any refusal")
 
         model.requestCloseThread(chat: 6)
         guard case .threadClose(let start)? = sent.frames.last else { return XCTFail("expected thread.close") }
         model.apply(.error(ErrorMessage(code: "engine.start_failed", message: "the engine could not start", chat: 6, id: start.id)))
         XCTAssertEqual(model.closeFailures[6]?.offersCloseWithoutLogging, true)
+    }
+
+    /// Close thread on the thread a Close and start is closing: the gateway
+    /// would refuse it (`thread.not_open`), so it is not offered until the
+    /// start is answered.
+    func testCloseThreadWaitsWhileACloseAndStartIsClosingThatThread() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
+        model.startThread(Self.proposal(), closing: 5)
+        guard case .threadStart(let start)? = sent.frames.last else { return XCTFail("expected thread.start") }
+        XCTAssertTrue(model.isClosing(chat: 5), "the Close and start is closing it")
+        XCTAssertFalse(model.isClosing(chat: 6))
+        let count = sent.frames.count
+        model.requestCloseThread(chat: 5)
+        model.closeThreadWithoutLogging(chat: 5)
+        XCTAssertEqual(sent.frames.count, count, "no thread.close for a thread already being closed")
+        model.requestCloseThread(chat: 6)
+        XCTAssertEqual(sent.frames.count, count + 1, "the other thread still closes")
+
+        // Refused (not the log step): the thread is open again and Close thread is offered.
+        model.apply(.error(ErrorMessage(code: "thread.limit", message: "two threads are open", chat: 3, id: start.id)))
+        XCTAssertFalse(model.isClosing(chat: 5))
+        XCTAssertNil(model.closeFailures[5])
+    }
+
+    func testARaceRefusedCloseDrawsNoRedLine() {
+        let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.requestCloseThread(chat: 5)
+        guard case .threadClose(let close)? = sent.frames.last else { return XCTFail("expected thread.close") }
+        model.apply(.error(ErrorMessage(code: "thread.not_open", message: "chat 5 is not an open thread", chat: 5, id: close.id)))
+        XCTAssertNil(model.closeFailures[5], "only a log step that could not start goes on the red line")
+        XCTAssertNil(model.closingThreads[5])
+    }
+
+    /// A refused `thread.start` that is not a log-step failure still tells
+    /// the person: the card is usable again and Main's status line says why.
+    func testARefusedStartSaysWhyOnMainsStatusLine() {
+        for (code, message) in [
+            ("thread.limit", "At most 2 threads can be open. Close one to start another."),
+            ("thread.not_open", "chat 5 is not an open thread"),
+            ("gateway.error", "thread.start failed: boom"),
+        ] {
+            let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1), Self.thread(6, slot: 2)])
+            model.open(chat: 3)
+            model.startThread(Self.proposal(), closing: 5)
+            guard case .threadStart(let start)? = sent.frames.last else { return XCTFail("expected thread.start") }
+            model.apply(.error(ErrorMessage(code: code, message: message, chat: 3, id: start.id)))
+            XCTAssertNil(model.startingProposal, code)
+            XCTAssertEqual(model.status[3], message, "\(code): the person sees why under Main's conversation")
+            XCTAssertNil(model.closeFailures[5], code)
+        }
     }
 
     // MARK: - the limit the gateway sets
