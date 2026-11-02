@@ -22,8 +22,9 @@ enum MarkdownPage {
 
     /// The page for `source`, titled `title`. Front matter at the top is
     /// taken out and drawn as the Properties block (v0.11, item 68); only
-    /// the body reaches the renderer.
-    static func html(source: String, title: String, hiding: Set<String> = []) throws -> String {
+    /// the body reaches the renderer. At a text scale other than 100% the
+    /// body's 15px (viewer.css) is multiplied by it (v0.15 §3).
+    static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
@@ -35,9 +36,22 @@ enum MarkdownPage {
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
-            .replacingOccurrences(of: "{{CSS}}", with: css)
+            .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(split.body))
+    }
+
+    /// The rule that scales the page's text, after the stylesheet so it
+    /// wins; nothing at 100%.
+    static func scaleRule(_ scale: CGFloat) -> String {
+        guard scale != 1 else { return "" }
+        return "\nbody { font-size: calc(15px * \(Self.scaleText(scale))); }\n"
+    }
+
+    /// `1.15`, not `1.1499999999999999`.
+    private static func scaleText(_ scale: CGFloat) -> String {
+        let rounded = (Double(scale) * 100).rounded() / 100
+        return String(format: "%g", rounded)
     }
 
     /// The markdown as a JavaScript string literal. JSON encoding handles
@@ -271,19 +285,31 @@ struct WebPane: NSViewRepresentable {
 
     let load: Load
 
+    /// The page the pane renders for `load` at a text scale: a Markdown
+    /// file's page, scaled (v0.15 §3). An HTML file and a site are shown
+    /// as they are, at their true size (`nil`: nothing is rendered).
+    static func renderedPage(for load: Load, scale: CGFloat) -> String? {
+        guard case .markdown(let file, let hiding) = load,
+              let source = try? String(contentsOf: file, encoding: .utf8)
+        else { return nil }
+        return try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
         context.coordinator.agent = context.environment.viewerAgent
         context.coordinator.slot = context.environment.viewerSlot
         context.coordinator.address = context.environment.viewerPageAddress
+        context.coordinator.scale = context.environment.textScale
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
+        context.coordinator.apply(
+            load, revision: context.environment.webPaneRevision, scale: context.environment.textScale, to: view)
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
@@ -309,6 +335,8 @@ struct WebPane: NSViewRepresentable {
         private(set) var failed: Load?
         /// What the open space's pane was last drawn for (`nil` elsewhere).
         private var revision: String?
+        /// The text scale a Markdown page is rendered at (v0.15 §3).
+        var scale: CGFloat = 1
         let handler = RenderedPageHandler()
 
         /// The link on the failure page that asks for the load again. It
@@ -356,8 +384,16 @@ struct WebPane: NSViewRepresentable {
         /// and failed to): a SwiftUI redraw is not a request to try again.
         /// A new `revision` for the same load (an open space whose file
         /// changed) reads it again, keeping where the reader had scrolled.
-        func apply(_ load: Load, revision: String? = nil, to view: WKWebView) {
-            let reread = load == loaded && revision != nil && revision != self.revision && failed == nil
+        /// A new text `scale` re-renders a Markdown page the same way, in
+        /// place; an HTML file or a site is not touched.
+        func apply(_ load: Load, revision: String? = nil, scale: CGFloat? = nil, to view: WKWebView) {
+            var rescaled = false
+            if let scale, scale != self.scale {
+                self.scale = scale
+                if case .markdown = load { rescaled = true }
+            }
+            let reread = load == loaded && failed == nil
+                && ((revision != nil && revision != self.revision) || rescaled)
             self.revision = revision
             if reread { return rereadKeepingScroll(load, in: view) }
             guard load != loaded else { return }
@@ -433,7 +469,7 @@ struct WebPane: NSViewRepresentable {
             case .markdown(let file, let hiding):
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
+                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
                     let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
                     view.load(URLRequest(url: url))
                 } catch {
@@ -463,7 +499,7 @@ struct WebPane: NSViewRepresentable {
                 return handler.register(file: file)
             case "md", "markdown":
                 guard let source = try? String(contentsOf: file, encoding: .utf8),
-                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding)
+                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
                 else { return nil }
                 return handler.register(page: page, root: file.deletingLastPathComponent(), source: file)
             default:

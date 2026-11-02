@@ -885,7 +885,9 @@ struct TextBody: View {
     var file: URL? = nil
     @Environment(\.viewerAgent) private var agent
     @Environment(\.viewerSlot) private var slot
+    @Environment(\.textScale) private var textScale
     @State private var attributed: NSAttributedString?
+    @State private var shownText: String?
     @State private var broke = false
 
     var body: some View {
@@ -920,7 +922,12 @@ struct TextBody: View {
             let shown = await offMain { TextFileRead.hardBreak(text) }
             guard !Task.isCancelled else { return }
             broke = shown.broke
-            attributed = MarkdownAttributed.code(shown.text)
+            shownText = shown.text
+            attributed = MarkdownAttributed.code(shown.text, scale: textScale)
+        }
+        // The text the viewer draws follows the text scale (v0.15 §3).
+        .onChange(of: textScale) { _, scale in
+            if let shownText { attributed = MarkdownAttributed.code(shownText, scale: scale) }
         }
     }
 

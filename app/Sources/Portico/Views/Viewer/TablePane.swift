@@ -7,7 +7,14 @@ struct TablePane: View {
     let file: URL
     let separator: Character
     let shown: ArtifactPresentation
+    @Environment(\.textScale) private var textScale
     @State private var load: TableLoad?
+
+    /// A new file, or a new text scale (its widths are measured at it).
+    private struct LoadKey: Equatable {
+        let file: URL
+        let scale: CGFloat
+    }
 
     var body: some View {
         Group {
@@ -22,10 +29,11 @@ struct TablePane: View {
                 OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
             }
         }
-        .task(id: file) {
+        .task(id: LoadKey(file: file, scale: textScale)) {
             let file = file
             let separator = separator
-            let result = await offMain { TableLoad.load(file, separator: separator) }
+            let scale = textScale
+            let result = await offMain { TableLoad.load(file, separator: separator, scale: scale) }
             guard !Task.isCancelled else { return }
             load = result
         }
@@ -63,8 +71,10 @@ struct TableBody: View {
     /// The file shown, for the agent (v0.12); `nil` draws the table alone.
     var file: URL? = nil
     @Environment(\.viewerAgent) private var agent
+    @Environment(\.textScale) private var textScale
     @State private var seen = TableRowsSeen()
 
+    /// At 100%; a row grows with its text.
     static let rowHeight: CGFloat = 30
 
     private var tableWidth: CGFloat { widths.reduce(0, +) }
@@ -113,7 +123,7 @@ struct TableBody: View {
         HStack(spacing: 0) {
             ForEach(0..<widths.count, id: \.self) { column in
                 Text(column < cells.count ? cells[column] : "")
-                    .font(.system(size: DelimitedTable.fontSize, weight: header ? .semibold : .regular))
+                    .scaledFont(DelimitedTable.fontSize, weight: header ? .semibold : .regular)
                     .foregroundStyle(header ? Theme.text2 : Theme.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -121,7 +131,7 @@ struct TableBody: View {
                     .frame(width: widths[column], alignment: table.numeric[column] ? .trailing : .leading)
             }
         }
-        .frame(height: Self.rowHeight)
+        .frame(height: (Self.rowHeight * textScale).rounded())
         .frame(maxWidth: .infinity, alignment: .leading)
         // The pinned header is opaque so rows scrolling under it don't show.
         .background(header ? Theme.surface : .clear)

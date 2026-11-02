@@ -148,19 +148,118 @@ struct GeneralSettingsTab: View {
     }
 }
 
+/// What Settings → Appearance says (v0.15 §3, AN3).
+enum AppearanceSettingsPresentation {
+    static let appearanceLabel = "Appearance"
+    static let textSizeLabel = "Text size"
+    static let textSizeNote = "Conversation, sidebar and documents. Web pages in the viewer keep their own size."
+    static let shortcutNote = "⌘+ and ⌘− change it anywhere in Portico."
+}
+
+/// AN3: one grouped panel of two rows, no heading above it. Appearance is
+/// a pop-up menu (Match the system / Light / Dark, the radio rows before
+/// v0.15); Text size is a − / percent / + stepper. Under the panel, the
+/// keys that do the same anywhere.
 struct AppearanceSettingsTab: View {
     @EnvironmentObject private var settings: Settings
 
     var body: some View {
-        Form {
-            Picker("Appearance", selection: $settings.appearance) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(spacing: 0) {
+                    appearanceRow
+                    Rectangle().fill(Theme.border).frame(height: 1)
+                    textSizeRow
+                }
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Theme.border, lineWidth: 1))
+                Text(AppearanceSettingsPresentation.shortcutNote)
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.text3)
+                    .padding(.leading, 2)
+            }
+            .padding(20)
+        }
+    }
+
+    private var appearanceRow: some View {
+        HStack {
+            Text(AppearanceSettingsPresentation.appearanceLabel)
+                .scaledFont(13)
+                .foregroundStyle(Theme.text)
+            Spacer(minLength: 12)
+            Picker(AppearanceSettingsPresentation.appearanceLabel, selection: $settings.appearance) {
                 ForEach(Settings.Appearance.allCases, id: \.self) { appearance in
                     Text(appearance.label).tag(appearance)
                 }
             }
-            .pickerStyle(.radioGroup)
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
         }
-        .formStyle(.grouped)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var textSizeRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(AppearanceSettingsPresentation.textSizeLabel)
+                    .scaledFont(13)
+                    .foregroundStyle(Theme.text)
+                Text(AppearanceSettingsPresentation.textSizeNote)
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            TextScaleStepper()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+}
+
+/// "−" | "115%" | "+": a bordered segmented stepper (AN3, corner 6). The
+/// ends dim at the smallest and largest steps.
+struct TextScaleStepper: View {
+    @EnvironmentObject private var settings: Settings
+
+    var body: some View {
+        HStack(spacing: 0) {
+            segment("−", help: "Smaller Text", enabled: settings.canMakeTextSmaller) { settings.smallerText() }
+            divider
+            Text(Settings.percentLabel(settings.textScale))
+                .scaledFont(12)
+                .monospacedDigit()
+                .foregroundStyle(Theme.text)
+                .frame(minWidth: 48)
+                .accessibilityLabel("Text size \(Settings.percentLabel(settings.textScale))")
+            divider
+            segment("+", help: "Bigger Text", enabled: settings.canMakeTextBigger) { settings.biggerText() }
+        }
+        .fixedSize()
+        .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.borderStrong, lineWidth: 1))
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Theme.borderStrong).frame(width: 1)
+    }
+
+    private func segment(_ label: String, help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(enabled ? Theme.text : Theme.text3)
+                .frame(width: 28)
+                .frame(minHeight: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

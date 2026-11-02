@@ -89,14 +89,18 @@ struct StatusStripPresentation: Equatable, Sendable {
         var symbol: (Symbol) -> CGFloat
 
         /// AppKit's measure of the real fonts and symbols.
-        static var system: Metrics {
-            Metrics(text: textWidth, symbol: symbolWidth)
+        static var system: Metrics { scaled(1) }
+
+        /// The same at a text scale (v0.15 §3): the words grow, the icons
+        /// keep their size.
+        static func scaled(_ scale: CGFloat) -> Metrics {
+            Metrics(text: { textWidth($0, scale: scale) }, symbol: symbolWidth)
         }
     }
 
-    /// The text's width in the strip's font.
-    static func textWidth(_ text: String) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: Measure.fontSize)
+    /// The text's width in the strip's font, at a text scale.
+    static func textWidth(_ text: String, scale: CGFloat = 1) -> CGFloat {
+        let font = Theme.nsFont(Measure.fontSize, scale: scale)
         return ceil((text as NSString).size(withAttributes: [.font: font]).width)
     }
 
@@ -245,10 +249,12 @@ struct StatusStrip: View {
     @State private var width: CGFloat?
     @State private var servicesShown = false
     @State private var modelMenuShown = false
+    @Environment(\.textScale) private var textScale
 
     var body: some View {
         let strip = model.statusStrip(gateway: supervisor.status)
-        let layout = strip.layout(width: width, restart: model.configStale, update: model.offeredUpdate)
+        let layout = strip.layout(
+            width: width, restart: model.configStale, update: model.offeredUpdate, metrics: .scaled(textScale))
         let fit = layout.fit
         HStack(spacing: StatusStripPresentation.Measure.spacing) {
             if let modelText = strip.model(at: fit) {

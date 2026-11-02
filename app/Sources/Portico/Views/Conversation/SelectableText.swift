@@ -55,20 +55,29 @@ enum MarkdownAttributed {
     /// `**bold**` (v0.11, 73, AG1's 600): a step that shows against the regular body.
     static let boldWeight: NSFont.Weight = .semibold
 
-    static func prose(_ blocks: [MarkdownBlock], first: Bool = true, spacing: CGFloat = 10, secondary: Bool = false) -> NSAttributedString {
+    static func prose(
+        _ blocks: [MarkdownBlock], first: Bool = true, spacing: CGFloat = 10, secondary: Bool = false, scale: CGFloat = 1
+    ) -> NSAttributedString {
         let color = NSColor(secondary ? Theme.text2 : Theme.text)
+        // The text scale (v0.15 §3): sizes grow with it; line spacing and indents
+        // grow too so a paragraph keeps its shape.
+        let bodySize = Self.bodySize * scale
+        let lineSpacing = Self.lineSpacing * scale
+        let listIndent = Self.listIndent * scale
+        let nestedIndent = Self.nestedIndent * scale
+        let markerWidth = Self.markerWidth * scale
         let out = NSMutableAttributedString()
         for (index, block) in blocks.enumerated() {
             let last = index == blocks.count - 1
             let after: CGFloat = last ? 0 : spacing
             switch block {
             case .paragraph(let text):
-                appendParagraph(inline(text, color: color), to: out, style: style(after: after), last: last)
+                appendParagraph(inline(text, font: .systemFont(ofSize: bodySize), color: color), to: out, style: style(after: after, lineSpacing: lineSpacing), last: last)
             case .heading(let level, let text):
-                let size = bodySize + (level == 1 ? 3 : level == 2 ? 2 : 1)
+                let size = (Self.bodySize + (level == 1 ? 3 : level == 2 ? 2 : 1)) * scale
                 let head = inline(text, font: .systemFont(ofSize: size, weight: .semibold), color: color)
                 let before: CGFloat = (index == 0 && first) ? 0 : 4
-                appendParagraph(head, to: out, style: style(before: before, after: after), last: last)
+                appendParagraph(head, to: out, style: style(before: before, after: after, lineSpacing: lineSpacing), last: last)
             case .list(let items):
                 for (itemIndex, item) in items.enumerated() {
                     let lastItem = itemIndex == items.count - 1
@@ -79,8 +88,8 @@ enum MarkdownAttributed {
                         string: marker + "\t",
                         attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: bodySize, weight: .regular),
                                      .foregroundColor: color])
-                    line.append(inline(item.text, color: color))
-                    let paragraph = style(after: lastItem ? after : 6)
+                    line.append(inline(item.text, font: .systemFont(ofSize: bodySize), color: color))
+                    let paragraph = style(after: lastItem ? after : 6, lineSpacing: lineSpacing)
                     paragraph.firstLineHeadIndent = start - markerWidth
                     paragraph.headIndent = start
                     paragraph.tabStops = [NSTextTab(textAlignment: .left, location: start)]
@@ -134,18 +143,19 @@ enum MarkdownAttributed {
         return (traits?[.weight] as? CGFloat).map { NSFont.Weight($0) } ?? .regular
     }
 
-    /// A code block's text: monospaced 14 (v0.11, beside 15 pt prose), 3 of line spacing, as fenced.
-    static func code(_ text: String) -> NSAttributedString {
+    /// A code block's text: monospaced 14 (v0.11, beside 15 pt prose), 3 of
+    /// line spacing, as fenced; both times the text scale (v0.15 §3).
+    static func code(_ text: String, scale: CGFloat = 1) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
-        style.lineSpacing = 3
+        style.lineSpacing = 3 * scale
         return NSAttributedString(string: text.isEmpty ? " " : text, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
+            .font: NSFont.monospacedSystemFont(ofSize: 14 * scale, weight: .regular),
             .foregroundColor: NSColor(Theme.text),
             .paragraphStyle: style,
         ])
     }
 
-    private static func style(before: CGFloat = 0, after: CGFloat) -> NSMutableParagraphStyle {
+    private static func style(before: CGFloat = 0, after: CGFloat, lineSpacing: CGFloat = MarkdownAttributed.lineSpacing) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = lineSpacing
         style.paragraphSpacingBefore = before

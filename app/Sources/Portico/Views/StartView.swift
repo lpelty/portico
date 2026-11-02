@@ -19,6 +19,7 @@ import UniformTypeIdentifiers
 /// the commands the gateway kept for the folder, before any engine runs.
 struct StartView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.textScale) private var textScale
     @EnvironmentObject private var dictation: Dictation
     @FocusState private var focused: Bool
     @State private var slash = SlashListState()
@@ -69,7 +70,7 @@ struct StartView: View {
             }
         }
         // v0.11 (58): the conversation's reading column.
-        .frame(maxWidth: ConversationColumn.maxWidth)
+        .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale))
         .padding(EdgeInsets(top: 32, leading: 48, bottom: 120, trailing: 48))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { focused = true }

@@ -73,3 +73,40 @@ extension NSColor {
             alpha: CGFloat(value & 0xFF) / 255)
     }
 }
+
+// MARK: - text scale (v0.15 §3)
+
+extension EnvironmentValues {
+    /// The person's text scale (Settings › Appearance › Text size, ⌘+ and
+    /// ⌘−), set at the window's root. 1 is 100%.
+    @Entry var textScale: CGFloat = 1
+}
+
+extension Theme {
+    /// An AppKit system font at `size` points times `scale`: AppKit-backed
+    /// text does not read SwiftUI's environment, so it is given the scale.
+    static func nsFont(_ size: CGFloat, scale: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.systemFont(ofSize: size * scale, weight: weight)
+    }
+}
+
+/// A system font whose size follows the environment's text scale.
+private struct ScaledFont: ViewModifier {
+    let size: CGFloat
+    let weight: Font.Weight
+    let design: Font.Design
+    @Environment(\.textScale) private var scale
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size * scale, weight: weight, design: design))
+    }
+}
+
+extension View {
+    /// `.font(.system(size:weight:design:))` at the person's text scale:
+    /// every piece of text the app draws goes through this (v0.15 §3).
+    /// Icons do not: they keep their size.
+    func scaledFont(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        modifier(ScaledFont(size: size, weight: weight, design: design))
+    }
+}

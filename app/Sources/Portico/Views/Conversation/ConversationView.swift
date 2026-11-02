@@ -20,6 +20,8 @@ struct ConversationView: View {
     @State private var personInput = TranscriptPersonInput()
     /// The transcript's width, for the reading column's (v0.11, item 58).
     @State private var transcriptWidth: CGFloat?
+    /// The column grows with the text (v0.15 §3).
+    @Environment(\.textScale) private var textScale
 
     private var items: [TranscriptItem] { model.transcripts[chat] ?? [] }
 
@@ -129,7 +131,7 @@ struct ConversationView: View {
                 .scrollTargetLayout()
                 // v0.11 (58): the reading column, centred; its items size
                 // themselves from its width (`conversationColumn`).
-                .frame(maxWidth: ConversationColumn.maxWidth, alignment: .leading)
+                .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
                 .padding(.horizontal, Self.sideInset)
                 .padding(.top, 24)
                 .padding(.bottom, 16)
@@ -141,7 +143,7 @@ struct ConversationView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
             .environment(
                 \.conversationColumn,
-                transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset) })
+                transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset, scale: textScale) })
             .scrollPosition(id: $topItem, anchor: .top)
             // v0.11 (67): opening the viewer (or a space) narrows the column
             // and every line wraps again; the bottom stays the bottom. Scrolled
@@ -559,7 +561,18 @@ extension View {
     /// the reading column plus those insets, centred: the composer, the
     /// queued cards, the dock and the status line line up with the replies.
     func inConversationColumn(sideInset: CGFloat = ConversationView.sideInset) -> some View {
-        frame(maxWidth: ConversationColumn.outerWidth(sideInset: sideInset))
+        modifier(InConversationColumn(sideInset: sideInset))
+    }
+}
+
+/// `inConversationColumn`, at the text scale the column grows with.
+private struct InConversationColumn: ViewModifier {
+    let sideInset: CGFloat
+    @Environment(\.textScale) private var textScale
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: ConversationColumn.outerWidth(sideInset: sideInset, scale: textScale))
             .frame(maxWidth: .infinity)
     }
 }

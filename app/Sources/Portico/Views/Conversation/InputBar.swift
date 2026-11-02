@@ -24,6 +24,7 @@ struct InputBar: View {
     var about: String? = nil
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var dictation: Dictation
+    @Environment(\.textScale) private var textScale
     @FocusState private var editorFocused: Bool
     @State private var slash = SlashListState()
 
@@ -179,17 +180,19 @@ struct InputBar: View {
         ZStack(alignment: .topLeading) {
             if draft.wrappedValue.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 15))
+                    .scaledFont(15)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 5)
                     .allowsHitTesting(false)
             }
+            // The composer's text follows the text scale (v0.15 §3); the
+            // NSTextView under TextEditor takes SwiftUI's font.
             TextEditor(text: draft)
-                .font(.system(size: 15))
+                .scaledFont(15)
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
                 .scrollIndicators(.never)
-                .frame(minHeight: 20, maxHeight: 160)
+                .frame(minHeight: 20 * textScale, maxHeight: 160 * textScale)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
                 .disabled(renewing && !queues)
