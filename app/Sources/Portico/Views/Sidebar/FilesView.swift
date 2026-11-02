@@ -398,7 +398,7 @@ struct FileRow: View {
                 Divider()
             }
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
-            if !node.dir {
+            if !node.dir, Obsidian.opens(path: path) {
                 Button("Open in Obsidian") { Obsidian.open(path: path) }
                     .disabled(!Obsidian.isInstalled)
             }
@@ -520,8 +520,10 @@ struct ChangedFileRow: View {
                 .help("Attach to the next message")
             Divider()
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
-            Button("Open in Obsidian") { Obsidian.open(path: path) }
-                .disabled(!Obsidian.isInstalled)
+            if Obsidian.opens(path: path) {
+                Button("Open in Obsidian") { Obsidian.open(path: path) }
+                    .disabled(!Obsidian.isInstalled)
+            }
             Button("Open externally") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
         }
@@ -687,8 +689,10 @@ struct BookmarkRow: View {
             if !isDirectory {
                 Button("Open in viewer") { model.reveal(file: path, in: chat) }
                 Button("Add to chat") { model.attach([path], to: chat) }
-                Button("Open in Obsidian") { Obsidian.open(path: path) }
-                    .disabled(!Obsidian.isInstalled)
+                if Obsidian.opens(path: path) {
+                    Button("Open in Obsidian") { Obsidian.open(path: path) }
+                        .disabled(!Obsidian.isInstalled)
+                }
                 Divider()
             }
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }

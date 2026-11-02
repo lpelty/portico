@@ -246,13 +246,9 @@ struct ViewerView: View {
                 noteText(outside).headerMeasure { measured.note = $0 }
             }
             if chipShown {
-                let accent = model.brand.accent ?? Theme.accent
-                MarksChipLabel(text: marks.chipText(chat: chat, form: .full), accent: accent)
-                    .headerMeasure { measured.chipFull = $0 }
-                MarksChipLabel(text: marks.chipText(chat: chat, form: .short), accent: accent)
-                    .headerMeasure { measured.chipShort = $0 }
-                MarksChipLabel(text: marks.chipText(chat: chat, form: .count), accent: accent)
-                    .headerMeasure { measured.chipCount = $0 }
+                MarksChipMeasures(chat: chat, marks: marks, accent: model.brand.accent ?? Theme.accent) { form, width in
+                    measured.setChip(form, width)
+                }
             }
             HStack(spacing: 8) { openButtons(labelled: true) }
                 .headerMeasure { measured.buttonsLabelled = $0 }
@@ -272,7 +268,7 @@ struct ViewerView: View {
             }
         } else if let current = model.current[chat], !ArtifactPresentation(artifact: current).isMissing {
             let shown = ArtifactPresentation(artifact: current)
-            if vault != nil, let path = shown.fileURL?.path {
+            if vault != nil, let path = shown.fileURL?.path, Obsidian.opens(path: path) {
                 let installed = Obsidian.isInstalled
                 headerButton("Open in Obsidian", systemImage: "diamond", labelled: labelled,
                              help: installed ? "Open this note in Obsidian" : Obsidian.notInstalledHelp) {
@@ -575,7 +571,7 @@ struct SpaceViewer: View {
                 .scaledFont(13, weight: .semibold)
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
-                .truncationMode(.tail)
+                .truncationMode(.middle)
         }
     }
 
@@ -661,12 +657,9 @@ struct SpaceViewer: View {
                 spaceTitle(space).headerMeasure { measured.title = $0 }
                 updatedText(space).headerMeasure { measured.note = $0 }
                 if let chipChat {
-                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .full), accent: accent)
-                        .headerMeasure { measured.chipFull = $0 }
-                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .short), accent: accent)
-                        .headerMeasure { measured.chipShort = $0 }
-                    MarksChipLabel(text: marks.chipText(chat: chipChat, form: .count), accent: accent)
-                        .headerMeasure { measured.chipCount = $0 }
+                    MarksChipMeasures(chat: chipChat, marks: marks, accent: accent) { form, width in
+                        measured.setChip(form, width)
+                    }
                 }
                 if let action {
                     actionButton(action, space, labelled: true).headerMeasure { measured.buttonsLabelled = $0 }
@@ -691,6 +684,14 @@ enum HeaderFit {
 
         static let zero = Widths(title: 0, note: 0, chipFull: 0, chipShort: 0, chipCount: 0,
                                  buttonsLabelled: 0, buttonsIcons: 0, fixed: 0)
+
+        mutating func setChip(_ form: MarkStore.ChipForm, _ width: CGFloat) {
+            switch form {
+            case .full: chipFull = width
+            case .short: chipShort = width
+            case .count: chipCount = width
+            }
+        }
     }
 
     enum Step: Int, Comparable {

@@ -909,6 +909,7 @@ final class ViewerAgent: ObservableObject {
             // returns.
             view.load(URLRequest(url: url))
         } else {
+            model.appendNotice(Self.markPageGaveUp, to: chat)
             return
         }
         while ContinuousClock.now < due {
@@ -918,7 +919,10 @@ final class ViewerAgent: ObservableObject {
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": mark.number], in: view, quiet: true)
             return
         }
+        model.appendNotice(Self.markPageGaveUp, to: chat)
     }
+
+    static let markPageGaveUp = "That page didn't load; the marks are kept for when it does."
 
     /// What to load for a page key: a file path served by the pane, or the
     /// page's own address.

@@ -180,3 +180,19 @@ struct MarksList: View {
         .accessibilityLabel(Self.spokenLabel(for: mark))
     }
 }
+
+/// The chip measured hidden in each of its three forms, for `HeaderFit`;
+/// the file header and the space header share it.
+struct MarksChipMeasures: View {
+    let chat: Int
+    let marks: MarkStore
+    let accent: Color
+    let report: (MarkStore.ChipForm, CGFloat) -> Void
+
+    var body: some View {
+        ForEach([MarkStore.ChipForm.full, .short, .count], id: \.self) { form in
+            MarksChipLabel(text: marks.chipText(chat: chat, form: form), accent: accent)
+                .headerMeasure { report(form, $0) }
+        }
+    }
+}

@@ -132,7 +132,9 @@ struct QuickOpenView: View {
     private var footer: some View {
         HStack(spacing: 18) {
             hint("↵", "open in viewer")
-            hint("⌘↵", "open in Obsidian")
+            if let path = selectedPath, Obsidian.opens(path: path) {
+                hint("⌘↵", "open in Obsidian")
+            }
             if model.offers("files.search") {
                 hint("⌘⇧F", "search text")
             }
@@ -156,6 +158,11 @@ struct QuickOpenView: View {
         .foregroundStyle(Theme.text2)
     }
 
+    private var selectedPath: String? {
+        let items = self.items
+        return items.indices.contains(index) ? items[index].path : nil
+    }
+
     private func move(_ step: Int) {
         let count = items.count
         guard count > 0 else { return }
@@ -167,6 +174,8 @@ struct QuickOpenView: View {
         guard items.indices.contains(index) else { return }
         let path = items[index].path
         if inObsidian {
+            // A file Obsidian can't open: ⌘↵ does nothing.
+            guard Obsidian.opens(path: path) else { return }
             Obsidian.open(path: path)
         } else {
             model.reveal(file: path, in: chat)

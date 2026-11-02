@@ -595,6 +595,35 @@ async def test_mark_rejects_zero_and_ten(marks: list[dict[str, str]]) -> None:
     assert app.acts == []
 
 
+@pytest.mark.parametrize(
+    "marks",
+    [
+        [{"note": "no target"}],
+        [{"target": ""}],
+        [{"target": 3}],
+        [{"target": "e1", "note": "x" * 61}],
+        [{"target": "e1", "note": 7}],
+        ["e1"],
+        [{"target": "e1"}, {"target": "e2", "note": "y" * 61}],
+    ],
+)
+async def test_mark_rejects_bad_items_without_asking_the_app(marks: list[Any]) -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    out = await marks_tools(bridge)["viewer_mark"].handler({"marks": marks})
+    text = "Each mark needs a target, and a note of at most 60 characters."
+    assert out == {"content": [{"type": "text", "text": text}], "is_error": True}
+    assert app.acts == []
+
+
+async def test_mark_accepts_a_note_of_exactly_sixty() -> None:
+    bridge, app = make_bridge(ok())
+    bridge.set_target(object(), True, True)
+    items = [{"target": "e1", "note": "x" * 60}, {"target": "e2"}]
+    await marks_tools(bridge)["viewer_mark"].handler({"marks": items})
+    assert [a.action for a in app.acts] == ["mark"]
+
+
 async def test_mark_without_marks_capability_says_update() -> None:
     bridge, app = make_bridge(ok(), marks_capable=False)
     bridge.set_target(object(), True, True)

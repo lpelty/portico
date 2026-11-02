@@ -230,14 +230,16 @@ struct DocumentHeader: View {
             }
             .buttonStyle(.hover)
             .help(bookmarked ? "Remove bookmark" : "Bookmark")
-            Button {
-                Obsidian.open(path: path)
-            } label: {
-                Label("Open in Obsidian", systemImage: "arrow.up.right")
+            if Obsidian.opens(path: path) {
+                Button {
+                    Obsidian.open(path: path)
+                } label: {
+                    Label("Open in Obsidian", systemImage: "arrow.up.right")
+                }
+                .buttonStyle(PillButtonStyle(kind: .quiet))
+                .disabled(!obsidian)
+                .help(obsidian ? "Open this note in Obsidian" : Obsidian.notInstalledHelp)
             }
-            .buttonStyle(PillButtonStyle(kind: .quiet))
-            .disabled(!obsidian)
-            .help(obsidian ? "Open this note in Obsidian" : Obsidian.notInstalledHelp)
         }
         .padding(.horizontal, 20)
         .frame(height: 60)
