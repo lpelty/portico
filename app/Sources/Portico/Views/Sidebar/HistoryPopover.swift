@@ -32,6 +32,8 @@ struct HistoryPresentation: Equatable {
 /// chevron. It opens `HistoryPopover` to its right.
 struct HistoryRow: View {
     let count: String
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.textScale) private var textScale
     @State private var open = false
 
     var body: some View {
@@ -61,6 +63,8 @@ struct HistoryRow: View {
         .help("Earlier sessions")
         .popover(isPresented: $open, arrowEdge: .trailing) {
             HistoryPopover { open = false }
+                .environmentObject(model)
+                .environment(\.textScale, textScale)
         }
     }
 }

@@ -138,11 +138,8 @@ struct SidebarColumn: View {
                 .contentShape(Rectangle())
                 .gesture(WindowDragGesture())
             if model.isSinglePresentation {
-                // S1: the session card and Earlier, then the files. Earlier
-                // is drawn above the files so all of the line between them
-                // can be grabbed.
+                // S1: the session card and the History row, then the files.
                 SessionSidebar()
-                    .zIndex(1)
                 if let chat = model.filesChat {
                     FilesView(chat: chat)
                         .id(chat)

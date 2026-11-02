@@ -67,12 +67,7 @@ extension AppModel {
 
     /// Earlier sessions whose title (or alias, or number) contains `query`.
     func earlierSessions(matching query: String) -> [ChatSummary] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return earlierSessions }
-        return earlierSessions.filter { summary in
-            [summary.title, summary.alias, String(summary.chat)].compactMap { $0 }
-                .contains { $0.lowercased().contains(needle) }
-        }
+        HistoryPresentation(sessions: earlierSessions, query: query).shown
     }
 
     func summary(of chat: Int) -> ChatSummary? {
