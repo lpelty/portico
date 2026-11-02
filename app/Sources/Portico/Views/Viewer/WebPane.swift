@@ -266,14 +266,20 @@ final class ViewerPageAddress: ObservableObject {
     }
 
     /// The address as the header shows it: host and path, no scheme or
-    /// "www.", and the fragment when there is one, so a hash change shows
-    /// (v0.15 §5.1).
+    /// "www.", and the fragment when it reads as a route ("#/settings",
+    /// "#!/inbox"), so an app's in-page navigation shows (v0.15 §5.1). A
+    /// fragment carrying values (an OAuth `#access_token=…`) never shows.
     static func display(_ url: URL) -> String {
         var host = url.host(percentEncoded: false) ?? url.absoluteString
         if host.hasPrefix("www.") { host.removeFirst(4) }
         let path = url.path(percentEncoded: false)
-        let fragment = url.fragment(percentEncoded: false).map { "#" + $0 } ?? ""
-        return (path.isEmpty || path == "/" ? host : host + path) + fragment
+        let base = path.isEmpty || path == "/" ? host : host + path
+        guard let fragment = url.fragment(percentEncoded: false), isRoute(fragment) else { return base }
+        return base + "#" + fragment
+    }
+
+    private static func isRoute(_ fragment: String) -> Bool {
+        (fragment.hasPrefix("/") || fragment.hasPrefix("!")) && !fragment.contains("=") && !fragment.contains("&")
     }
 
     /// AL4: the note beside an outside site's address, as the act rule
@@ -332,6 +338,7 @@ struct WebPane: NSViewRepresentable {
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.agent?.detach(view)
+        coordinator.detachAddress()
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -393,6 +400,14 @@ struct WebPane: NSViewRepresentable {
         /// Watches the view's URL: a hash change or `history.pushState`
         /// moves it without a commit or a finish (v0.15 §5.1).
         private var urlObservation: NSKeyValueObservation?
+
+        /// A dismantled pane stops watching and lets go of the header's
+        /// address, so it cannot write into a viewer it no longer shows in.
+        func detachAddress() {
+            urlObservation?.invalidate()
+            urlObservation = nil
+            address = nil
+        }
 
         /// Wire a view made from `configuration()` to this coordinator.
         @discardableResult

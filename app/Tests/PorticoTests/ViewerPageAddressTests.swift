@@ -51,9 +51,25 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         super.tearDown()
     }
 
-    func test_display_keeps_the_fragment() {
-        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/next#b")!), "example.com/next#b")
-        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/#top")!), "example.com#top")
+    func test_display_keeps_a_route_fragment_only() {
+        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/app#/settings")!), "example.com/app#/settings")
+        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/#!/inbox")!), "example.com#!/inbox")
+        // Not a route: an in-page anchor, or values (an OAuth redirect's token).
+        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/next#b")!), "example.com/next")
+        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/cb#access_token=abc&state=x")!), "example.com/cb")
+        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/cb#/done?code=1")!), "example.com/cb")
+        XCTAssertEqual(ViewerPageAddress.display(URL(string: "https://example.com/cb#/a&b")!), "example.com/cb")
+    }
+
+    /// The space header's button: Open externally (the full URL) while
+    /// outside, Refresh otherwise when the gateway can (v0.15 §5.2).
+    func test_the_space_header_offers_open_externally_when_outside() {
+        let token = URL(string: "https://example.com/cb#access_token=abc")!
+        XCTAssertEqual(SpaceViewer.headerAction(outside: token, canRefresh: true), .openExternally(token),
+                       "Open externally, not Refresh, and with the whole URL")
+        XCTAssertEqual(SpaceViewer.headerAction(outside: token, canRefresh: false), .openExternally(token))
+        XCTAssertEqual(SpaceViewer.headerAction(outside: nil, canRefresh: true), .refresh)
+        XCTAssertNil(SpaceViewer.headerAction(outside: nil, canRefresh: false))
     }
 
     func test_the_note_follows_the_act_rule() {
@@ -122,8 +138,11 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         _ = try await rig.view.evaluateJavaScript("history.pushState({}, '', '/next'); true")
         try await poll("pushState moves the address (now \(shown(rig) ?? "nil"))") { self.shown(rig) == "example.com/next" }
 
-        _ = try await rig.view.evaluateJavaScript("location.hash = '#b'; true")
-        try await poll("a hash change moves the address (now \(shown(rig) ?? "nil"))") { self.shown(rig) == "example.com/next#b" }
+        _ = try await rig.view.evaluateJavaScript("location.hash = '#/b'; true")
+        try await poll("a hash route moves the address (now \(shown(rig) ?? "nil"))") { self.shown(rig) == "example.com/next#/b" }
+        _ = try await rig.view.evaluateJavaScript("location.hash = '#access_token=abc'; true")
+        try await poll("the token hash is followed") { rig.address.outside?.fragment == "access_token=abc" }
+        XCTAssertEqual(shown(rig), "example.com/next", "a token in the hash never shows")
 
         _ = try await rig.view.evaluateJavaScript("history.replaceState({}, '', '/start'); true")
         try await poll("replaceState moves it too (now \(shown(rig) ?? "nil"))") { self.shown(rig) == "example.com/start" }
@@ -149,5 +168,17 @@ final class ViewerPageAddressNavigationTests: XCTestCase {
         try await poll("back at the file's anchor, not outside") {
             rig.view.url?.lastPathComponent == "trail-detail.html" && rig.address.outside == nil
         }
+    }
+
+    /// A dismantled pane lets go of the address: a later URL change in the
+    /// old view writes nothing into the viewer's long-lived address.
+    func test_a_dismantled_pane_no_longer_writes_the_address() async throws {
+        let rig = try rig()
+        try await poll("the file loads") { !rig.view.isLoading && rig.view.url?.lastPathComponent == "trail-detail.html" }
+        WebPane.dismantleNSView(rig.view, coordinator: rig.coordinator)
+        XCTAssertNil(rig.coordinator.address)
+        rig.view.loadHTMLString("<!doctype html><p>Away</p>", baseURL: URL(string: "https://example.com/away")!)
+        try await poll("the old view went on") { !rig.view.isLoading && rig.view.url?.host == "example.com" }
+        XCTAssertNil(rig.address.outside, "nothing written after dismantling")
     }
 }

@@ -540,8 +540,8 @@ struct SpaceViewer: View {
             chipFull: chip ? spaced(measured.chipFull) : 0,
             chipShort: chip ? spaced(measured.chipShort) : 0,
             chipCount: chip ? spaced(measured.chipCount) : 0,
-            buttonsLabelled: model.spacesCanRefresh ? spaced(measured.buttonsLabelled) : 0,
-            buttonsIcons: model.spacesCanRefresh ? spaced(measured.buttonsIcons) : 0,
+            buttonsLabelled: action != nil ? spaced(measured.buttonsLabelled) : 0,
+            buttonsIcons: action != nil ? spaced(measured.buttonsIcons) : 0,
             fixed: 32 + 8 + 8 + (8 + 20) + (chat != nil ? 8 + 24 : 0))
     }
 
@@ -560,7 +560,7 @@ struct SpaceViewer: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .help(outside.absoluteString)
+            .help(ViewerPageAddress.display(outside))
         } else {
             spaceName(space)
         }
@@ -589,6 +589,36 @@ struct SpaceViewer: View {
             .lineLimit(1)
     }
 
+    /// The header's one button: Open externally while the page is on an
+    /// outside site (as the Work viewer has it), else Refresh when the
+    /// gateway can; none otherwise (v0.15 §5.2).
+    enum HeaderAction: Equatable {
+        case openExternally(URL)
+        case refresh
+    }
+
+    static func headerAction(outside: URL?, canRefresh: Bool) -> HeaderAction? {
+        if let outside { return .openExternally(outside) }
+        return canRefresh ? .refresh : nil
+    }
+
+    private var action: HeaderAction? {
+        Self.headerAction(outside: page.outside, canRefresh: model.spacesCanRefresh)
+    }
+
+    @ViewBuilder
+    private func actionButton(_ action: HeaderAction, _ space: SpaceInfo, labelled: Bool) -> some View {
+        switch action {
+        case .openExternally(let url):
+            ViewerHeaderButton(title: "Open externally", systemImage: "arrow.up.right", labelled: labelled,
+                               help: "Open \(ViewerPageAddress.display(url)) in your browser") {
+                NSWorkspace.shared.open(url)
+            }
+        case .refresh:
+            refreshButton(space, labelled: labelled)
+        }
+    }
+
     private func refreshButton(_ space: SpaceInfo, labelled: Bool) -> some View {
         ViewerHeaderButton(title: "Refresh", systemImage: "arrow.clockwise", labelled: labelled, help: "Ask the agent to update this now") {
             model.refreshSpace(space.id)
@@ -607,8 +637,8 @@ struct SpaceViewer: View {
             if let chipChat {
                 MarksChip(chat: chipChat, store: marks, agent: model.viewerAgent, form: fit.chipForm, accent: accent)
             }
-            if model.spacesCanRefresh {
-                refreshButton(space, labelled: fit.labelled)
+            if let action {
+                actionButton(action, space, labelled: fit.labelled)
             }
             if let chat { ViewerFocusButton(chat: chat) }
             Button {
@@ -638,8 +668,10 @@ struct SpaceViewer: View {
                     MarksChipLabel(text: marks.chipText(chat: chipChat, form: .count), accent: accent)
                         .headerMeasure { measured.chipCount = $0 }
                 }
-                refreshButton(space, labelled: true).headerMeasure { measured.buttonsLabelled = $0 }
-                refreshButton(space, labelled: false).headerMeasure { measured.buttonsIcons = $0 }
+                if let action {
+                    actionButton(action, space, labelled: true).headerMeasure { measured.buttonsLabelled = $0 }
+                    actionButton(action, space, labelled: false).headerMeasure { measured.buttonsIcons = $0 }
+                }
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
