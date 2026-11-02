@@ -25,7 +25,7 @@ final class NewSpaceSheetTests: XCTestCase {
         return summary
     }
 
-    private func model(chats: [ChatSummary]) -> (AppModel, Sent) {
+    private func model(chats: [ChatSummary], queue: Bool = false) -> (AppModel, Sent) {
         let name = "portico.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         addTeardownBlock { defaults.removePersistentDomain(forName: name) }
@@ -36,7 +36,7 @@ final class NewSpaceSheetTests: XCTestCase {
         model.apply(.hello(HelloServer(
             protocol: protocolVersion, gatewayVersion: "0.16.0", epoch: "e",
             brand: Brand(name: "Portico", agentName: "Acme"), actions: [], roots: [], commands: ["log"],
-            capabilities: ["sessions", "threads.v1", SpacesList.capability], presentation: "single", canLog: true)))
+            capabilities: ["sessions", "threads.v1", SpacesList.capability] + (queue ? [ChatQueue.capability] : []), presentation: "single", canLog: true)))
         model.apply(.chatList(ChatList(chats: chats)))
         return (model, sent)
     }
@@ -116,5 +116,59 @@ final class NewSpaceSheetTests: XCTestCase {
         model.createSpace(NewSpaceDraft(name: "Acme", prompt: "  "))
         XCTAssertTrue(model.newSpaceShown)
         XCTAssertEqual(sent.frames.count, before)
+    }
+
+    // MARK: - blocked states (fix round 1)
+
+    func test_no_folder_and_no_main_is_blocked() {
+        let (model, sent) = model(chats: [])
+        XCTAssertEqual(model.newSpaceBlockedReason(), "Pick a folder on the start screen first.")
+        model.beginNewSpace()
+        model.createSpace(NewSpaceDraft(name: "Acme", prompt: "Track it"))
+        XCTAssertTrue(model.newSpaceShown, "the sheet keeps its words")
+        XCTAssertTrue(sent.frames.isEmpty)
+        model.chosenStartFolder = URL(fileURLWithPath: "/tmp")
+        XCTAssertNil(model.newSpaceBlockedReason())
+    }
+
+    func test_a_start_in_flight_is_blocked() {
+        let (model, _) = model(chats: [])
+        model.chosenStartFolder = URL(fileURLWithPath: "/tmp")
+        model.startChat(text: "hello")
+        XCTAssertEqual(model.newSpaceBlockedReason(), "Starting your first session…")
+    }
+
+    func test_a_send_in_flight_on_main_is_blocked() {
+        let (model, _) = model(chats: [Self.main(3)])
+        XCTAssertNil(model.newSpaceBlockedReason())
+        model.sendMessage(chat: 3, text: "hello")
+        XCTAssertTrue(model.isSending(chat: 3))
+        XCTAssertEqual(model.newSpaceBlockedReason(), "Main is still sending your last message.")
+    }
+
+    func test_a_session_step_running_on_main_is_blocked() {
+        let (model, _) = model(chats: [Self.main(3)])
+        model.logSession(chat: 3)
+        XCTAssertTrue(model.isSessionCommandPending(chat: 3))
+        XCTAssertEqual(model.newSpaceBlockedReason(), "Main is finishing a session step.")
+    }
+
+    func test_main_busy_without_queue_is_blocked_but_with_queue_sends() {
+        let (old, _) = model(chats: [Self.main(3, state: .working)])
+        XCTAssertEqual(old.newSpaceBlockedReason(), "Main is busy; try again when it finishes.")
+
+        let (model, sent) = model(chats: [Self.main(3, state: .working)], queue: true)
+        XCTAssertNil(model.newSpaceBlockedReason())
+        model.createSpace(NewSpaceDraft(name: "Acme", prompt: "Track it"))
+        guard case .messageSend(let message)? = sent.frames.last else { return XCTFail("expected message.send") }
+        XCTAssertEqual(message.text, "New space: Acme\n\nTrack it")
+    }
+
+    func test_create_is_disabled_while_blocked() {
+        let (model, _) = model(chats: [Self.main(3, state: .working)])
+        let draft = NewSpaceDraft(name: "Acme", prompt: "Track it")
+        XCTAssertFalse(NewSpaceSheet.createEnabled(draft, blockedReason: model.newSpaceBlockedReason()))
+        XCTAssertTrue(NewSpaceSheet.createEnabled(draft, blockedReason: nil))
+        XCTAssertFalse(NewSpaceSheet.createEnabled(NewSpaceDraft(), blockedReason: nil))
     }
 }

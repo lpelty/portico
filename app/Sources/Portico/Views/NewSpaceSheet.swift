@@ -24,10 +24,14 @@ struct NewSpaceSheet: View {
 
     enum Field { case name, prompt }
 
+    static func createEnabled(_ draft: NewSpaceDraft, blockedReason: String?) -> Bool { draft.canCreate && blockedReason == nil }
+
     static let width: CGFloat = 480
     static let title = "New space"
     static let helper = "Main's agent makes it. It shows up in the space switcher when it's ready."
     static let footnote = "Sends to Main as a message."
+
+    private var blockedReason: String? { model.newSpaceBlockedReason() }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -67,6 +71,13 @@ struct NewSpaceSheet: View {
                 .padding(.top, 6)
                 .accessibilityLabel("What do you want?")
 
+            if let reason = blockedReason {
+                Text(reason)
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+            }
             HStack(spacing: 8) {
                 Text(Self.footnote)
                     .scaledFont(11)
@@ -85,9 +96,9 @@ struct NewSpaceSheet: View {
                 }
                 .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!draft.canCreate)
+                .disabled(!Self.createEnabled(draft, blockedReason: blockedReason))
             }
-            .padding(.top, 16)
+            .padding(.top, blockedReason == nil ? 16 : 8)
         }
         .padding(20)
         .frame(width: Self.width)

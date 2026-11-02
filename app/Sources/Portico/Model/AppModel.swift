@@ -615,6 +615,21 @@ final class AppModel: ObservableObject {
         newSpaceShown = true
     }
 
+    /// Why Create cannot send right now, in a line for the dialog; nil when
+    /// it can. The dialog dims Create and shows this, so Create never looks
+    /// live and then does nothing.
+    func newSpaceBlockedReason() -> String? {
+        if let main = liveSession?.chat {
+            if isSending(chat: main) { return "Main is still sending your last message." }
+            if isSessionCommandPending(chat: main) { return "Main is finishing a session step." }
+            if !queuesWhileWorking, isBusy(chat: main) { return "Main is busy; try again when it finishes." }
+            return nil
+        }
+        if isStarting { return "Starting your first session…" }
+        if startFolder == nil { return "Pick a folder on the start screen first." }
+        return nil
+    }
+
     /// The dialog's Create: one ordinary message to Main, shown as sent
     /// (Main's draft untouched; queued if Main is working). The window
     /// leaves the document view and goes to Main when it is on a thread,
@@ -623,7 +638,7 @@ final class AppModel: ObservableObject {
     /// (another is still in flight, or there is no folder to start in)
     /// leaves the dialog open with its words.
     func createSpace(_ draft: NewSpaceDraft) {
-        guard draft.canCreate else { return }
+        guard draft.canCreate, newSpaceBlockedReason() == nil else { return }
         let message = draft.message
         if let main = liveSession?.chat {
             guard !isSending(chat: main) else { return }
