@@ -64,6 +64,7 @@ struct QuestionDraft: Equatable {
     mutating func focus(_ index: Int) {
         guard ordered(page).indices.contains(index) else { return }
         focused = index
+        hovered = nil
     }
 
     /// A multi-select's button: "Submit" when this is the last question
@@ -95,11 +96,12 @@ struct QuestionDraft: Equatable {
         (question(index)?.options ?? []).contains { !($0.preview ?? "").isEmpty }
     }
 
-    /// The focused option's preview, `nil` when the question has none.
+    /// The highlighted option's preview (the pointer's, else the focus;
+    /// v0.17 R-c7), `nil` when the question has none.
     func preview(_ index: Int) -> String? {
         guard hasPreviews(index) else { return nil }
         let options = ordered(index)
-        let at = index == page ? focused : 0
+        let at = index == page ? highlighted : 0
         return options.indices.contains(at) ? options[at].preview : nil
     }
 

@@ -433,6 +433,23 @@ final class DockedQuestionCardTests: XCTestCase {
         XCTAssertEqual(draft.highlighted, draft.focused)
     }
 
+    /// R-c7: the preview shows the highlighted option, so the pointer moves
+    /// it; whichever input came last wins, and Return stays on the focus.
+    func testThePreviewFollowsTheHighlightedOption() {
+        var draft = QuestionDraft(card: Self.card([Self.question(labels: ["Plain", "Explained", "Terse"],
+                                                                previews: ["# Plain", "# Explained", "# Terse"])]))
+        XCTAssertEqual(draft.preview(0), "# Plain")
+        draft.hover(1)
+        XCTAssertEqual(draft.preview(0), "# Explained", "the pointer moves the preview")
+        XCTAssertEqual(draft.focused, 0)
+        draft.focus(2)
+        XCTAssertNil(draft.hovered, "a digit or click takes the highlight back from the pointer")
+        XCTAssertEqual(draft.preview(0), "# Terse")
+        draft.hover(0)
+        draft.move(by: -1)
+        XCTAssertEqual(draft.preview(0), "# Explained", "an arrow takes it back again")
+    }
+
     func testOneAnsweredQuestionIsOneBubbleWithItsHeader() {
         let input = Self.input([(Self.tone, ["Plain", "Explained"])])
         XCTAssertEqual(
