@@ -262,10 +262,22 @@ struct FrontMatter: Equatable, Sendable {
 
     // MARK: the block's HTML
 
-    /// The Properties block for the viewer page: a `<details>`, open, whose
-    /// summary line shows the folded words only while it is closed
-    /// (viewer.css). Every value is escaped.
-    func html(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+    /// The block's `ontoggle`: post only a change from what was last drawn
+    /// or posted; nothing where no handler is registered.
+    static let toggleScript =
+        "if (String(this.open) !== this.dataset.open) { this.dataset.open = String(this.open); "
+        + "var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.porticoProperties; "
+        + "if (h) h.postMessage({open: this.open}); }"
+
+    /// The Properties block for the viewer page: a `<details>`, open only
+    /// when `open`, whose summary line shows the folded words only while it
+    /// is closed (viewer.css). Every value is escaped.
+    ///
+    /// A toggle by the person posts `{open}` to the app's
+    /// `porticoProperties` handler, which remembers it (v0.17 §3.7).
+    /// `data-open` holds the state last drawn or posted, so the `toggle`
+    /// event WebKit fires for a block parsed open is not taken for a choice.
+    func html(open: Bool, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         let e = MarkdownPage.escapeHTML
         var rows = ""
         for property in properties {
@@ -281,7 +293,7 @@ struct FrontMatter: Equatable, Sendable {
             rows += "<div class=\"fm-row\"><span class=\"fm-key\">\(e(property.key))</span>"
                 + "<span class=\"fm-value\">\(value)</span></div>"
         }
-        return "<details class=\"fm\" open><summary>"
+        return "<details class=\"fm\"\(open ? " open" : "") data-open=\"\(open)\" ontoggle=\"\(Self.toggleScript)\"><summary>"
             + "<span class=\"fm-chevron\"></span><span class=\"fm-label\">Properties</span>"
             + "<span class=\"fm-summary\">· \(e(summary(now: now, calendar: calendar, locale: locale)))</span>"
             + "</summary><div class=\"fm-rows\">\(rows)</div></details>"

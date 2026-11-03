@@ -516,6 +516,11 @@ final class AppModel: ObservableObject {
     /// "Agent checks HTML it creates": as above, and always off while the agent cannot see.
     var agentChecksHTML: Bool { agentCanSee && (settings.viewerAgentChecksHTML ?? hello?.viewerDefaults?.agentChecksHTML ?? true) }
 
+    /// Whether a Properties block opens unfolded (v0.17 §3.7): the
+    /// person's last choice, else the deployment's `[viewer] properties`,
+    /// else folded.
+    var propertiesOpen: Bool { settings.propertiesOpen ?? (hello?.viewerDefaults?.properties == "open") }
+
     /// Tell the gateway how the two switches stand. Only to a gateway that
     /// sent `viewer_defaults` (v0.12 on): an older one has no such message.
     func sendViewerSettings() {
@@ -1729,9 +1734,9 @@ final class AppModel: ObservableObject {
         sidebarVisible = focus.sidebarWasVisible
     }
 
-    /// The artifacts menu's heading: `Made in this session` (or chat).
+    /// The session list's heading (v0.17 §3.6): `This session` (or chat).
     var madeHereLabel: String {
-        isSinglePresentation ? "Made in this session" : "Made in this chat"
+        isSinglePresentation ? "This session" : "This chat"
     }
 
     // MARK: - sidebar actions
@@ -2511,12 +2516,11 @@ extension AppModel {
         let artifact = Artifact(
             id: id, kind: .file, location: path, media: Media.of(path: path),
             title: URL(fileURLWithPath: path).lastPathComponent, source: .text, open: true)
+        // Opened again, it moves to the end: the list is newest first, each
+        // file at its newest showing (v0.17 ruling 7).
         var list = artifacts[chat] ?? []
-        if let index = list.firstIndex(where: { $0.id == id }) {
-            list[index] = artifact
-        } else {
-            list.append(artifact)
-        }
+        list.removeAll { $0.id == id }
+        list.append(artifact)
         artifacts[chat] = list
         supersedeRemembered(in: chat)
         leaveSpaceForFile()

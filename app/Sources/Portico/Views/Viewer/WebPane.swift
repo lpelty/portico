@@ -23,8 +23,9 @@ enum MarkdownPage {
     /// The page for `source`, titled `title`. Front matter at the top is
     /// taken out and drawn as the Properties block (v0.11, item 68); only
     /// the body reaches the renderer. At a text scale other than 100% the
-    /// body's 15px (viewer.css) is multiplied by it (v0.15 §3).
-    static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1) throws -> String {
+    /// body's 15px (viewer.css) is multiplied by it (v0.15 §3). The
+    /// Properties block opens unfolded only when `propertiesOpen` (v0.17 §3.7).
+    static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1, propertiesOpen: Bool = false) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
@@ -32,7 +33,7 @@ enum MarkdownPage {
         // The block goes in first, its braces as entities, so a value that
         // reads `{{SOURCE}}` is not taken for the next placeholder.
         let shownProperties = split.frontMatter?.hiding(hiding)
-        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html() : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html(open: propertiesOpen) : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
@@ -236,6 +237,11 @@ extension EnvironmentValues {
     @Entry var webPaneRevision: String? = nil
     /// Where the file viewer's page has gone, for its header (v0.13).
     @Entry var viewerPageAddress: ViewerPageAddress? = nil
+    /// Whether a Properties block is drawn unfolded (v0.17 §3.7): what the
+    /// next page drawn uses; a change does not draw the shown page again.
+    @Entry var propertiesOpen: Bool = false
+    /// Remembers the person's toggle of a Properties block.
+    @Entry var setPropertiesOpen: ((Bool) -> Void)? = nil
 }
 
 /// A `WKWebView` for the three web-rendered kinds: a markdown file (the
@@ -328,12 +334,16 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.slot = context.environment.viewerSlot
         context.coordinator.address = context.environment.viewerPageAddress
         context.coordinator.scale = context.environment.textScale
+        context.coordinator.propertiesOpen = context.environment.propertiesOpen
+        context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.propertiesOpen = context.environment.propertiesOpen
+        context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         context.coordinator.apply(
             load, revision: context.environment.webPaneRevision, scale: context.environment.textScale, to: view)
     }
@@ -377,6 +387,11 @@ struct WebPane: NSViewRepresentable {
         private var revision: String?
         /// The text scale a Markdown page is rendered at (v0.15 §3).
         var scale: CGFloat = 1
+        /// Whether a Markdown page draws its Properties block unfolded
+        /// (v0.17 §3.7): used for the next page drawn, never a redraw.
+        var propertiesOpen = false
+        /// Told the person's toggle of a Properties block on the page.
+        var onPropertiesToggle: ((Bool) -> Void)?
         let handler = RenderedPageHandler()
 
         /// The link on the failure page that asks for the load again. It
@@ -395,6 +410,7 @@ struct WebPane: NSViewRepresentable {
             if agent != nil, let script = ViewerAgentScript.userScript() {
                 configuration.userContentController.addUserScript(script)
             }
+            configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
             return configuration
         }
 
@@ -619,7 +635,7 @@ struct WebPane: NSViewRepresentable {
             case .markdown(let file, let hiding):
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
                     let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
                     view.load(URLRequest(url: url))
                 } catch {
@@ -649,7 +665,7 @@ struct WebPane: NSViewRepresentable {
                 return handler.register(file: file)
             case "md", "markdown":
                 guard let source = try? String(contentsOf: file, encoding: .utf8),
-                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
                 else { return nil }
                 return handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
             default:
@@ -694,6 +710,13 @@ struct WebPane: NSViewRepresentable {
             decisionHandler(.allow)
         }
 
+        /// The person folded or unfolded a Properties block (`{open}`).
+        func propertiesToggled(_ body: Any) {
+            guard let open = (body as? [String: Any])?["open"] as? Bool else { return }
+            propertiesOpen = open
+            onPropertiesToggle?(open)
+        }
+
         static func errorPage(_ message: String) -> String {
             """
                 <!doctype html><html><head><meta charset="utf-8"><style>
@@ -703,5 +726,20 @@ struct WebPane: NSViewRepresentable {
                 <p><a href="\(retryURL.absoluteString)">Try again</a></p></body></html>
                 """
         }
+    }
+}
+
+/// The page's `porticoProperties` handler (v0.17 §3.7). Holds its pane
+/// weakly: the web view's content controller keeps its handlers.
+private final class PropertiesToggle: NSObject, WKScriptMessageHandler {
+    static let name = "porticoProperties"
+    weak var coordinator: WebPane.Coordinator?
+
+    init(_ coordinator: WebPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated { coordinator?.propertiesToggled(message.body) }
     }
 }

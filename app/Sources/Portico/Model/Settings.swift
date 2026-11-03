@@ -111,6 +111,7 @@ final class Settings: ObservableObject {
         static let speechRate = "voice.speechRate"
         static let viewerAgentCanSee = "viewer.agentCanSee"
         static let viewerAgentChecksHTML = "viewer.agentChecksHTML"
+        static let propertiesOpen = "viewer.propertiesOpen"
         static let spacesNotify = "spaces.notify"
         static let spacesLastOpened = "spaces.lastOpened"
         static let spacesFirstSeen = "spaces.firstSeen"
@@ -248,6 +249,13 @@ final class Settings: ObservableObject {
         didSet { Self.store(viewerAgentCanSee, forKey: Key.viewerAgentCanSee, in: defaults) }
     }
     /// The person's choice for "Agent checks HTML it creates"; `nil` as above.
+    /// Whether a front-matter Properties block opens unfolded: the
+    /// person's last toggle of one (v0.17 §3.7); `nil` until the first, so
+    /// the deployment's `[viewer] properties` applies.
+    @Published var propertiesOpen: Bool? {
+        didSet { Self.store(propertiesOpen, forKey: Key.propertiesOpen, in: defaults) }
+    }
+
     @Published var viewerAgentChecksHTML: Bool? {
         didSet { Self.store(viewerAgentChecksHTML, forKey: Key.viewerAgentChecksHTML, in: defaults) }
     }
@@ -335,6 +343,7 @@ final class Settings: ObservableObject {
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
         viewerAgentCanSee = defaults.object(forKey: Key.viewerAgentCanSee) as? Bool
         viewerAgentChecksHTML = defaults.object(forKey: Key.viewerAgentChecksHTML) as? Bool
+        propertiesOpen = defaults.object(forKey: Key.propertiesOpen) as? Bool
         spacesNotify = defaults.object(forKey: Key.spacesNotify) as? Bool ?? true
         let opened = defaults.dictionary(forKey: Key.spacesLastOpened) as? [String: Double] ?? [:]
         spacesLastOpened = opened.mapValues { Date(timeIntervalSince1970: $0) }

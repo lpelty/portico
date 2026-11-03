@@ -60,7 +60,7 @@ final class PopoverSurfaceTests: XCTestCase {
             ("Views/StatusStrip.swift", "struct ModelMenu: View {"),
             ("Views/StatusStrip.swift", "struct ModelChoiceRow: View {"),
             ("Views/StatusStrip.swift", "struct ServicesMenu: View {"),
-            ("Views/Viewer/ViewerView.swift", "struct ArtifactMenu: View {"),
+            ("Views/Viewer/SessionFileList.swift", "struct ArtifactMenu: View {"),
             ("Views/Conversation/AgentViews.swift", "struct AgentStepsView: View {"),
             ("Views/Conversation/ModeChip.swift", "private var menu: some View {"),
         ]

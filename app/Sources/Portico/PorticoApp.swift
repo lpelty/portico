@@ -78,6 +78,9 @@ struct PorticoApp: App {
                 .preferredColorScheme(settings.appearance.colorScheme)
                 // One text scale for everything the window draws (v0.15 §3).
                 .environment(\.textScale, CGFloat(settings.textScale))
+                // The Properties block's fold, remembered (v0.17 §3.7).
+                .environment(\.propertiesOpen, model.propertiesOpen)
+                .environment(\.setPropertiesOpen) { [settings] open in settings.propertiesOpen = open }
                 // Brand from hello (spec section 8): the accent on every
                 // control (nil keeps the system accent), the icon in the Dock only
                 // for a build without one of its own (v0.5).
