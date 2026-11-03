@@ -83,8 +83,11 @@ if [ -n "$home_arg" ]; then
   bake=1
 elif [ -n "$env_home" ]; then
   home="$env_home"
-  # A checkout installed with --home keeps a folder in the app; the app's updater exports
-  # PORTICO_HOME (the app's folder) when it runs bin/update, and that is the one to keep.
+  # The app's updater exports PORTICO_HOME with PORTICO_HOME_SOURCE=Info.plist: the app's own
+  # folder, a choice to keep even when this checkout has no .portico-home (a re-clone, git clean).
+  # A checkout installed with --home keeps its folder in the app as well. A plain shell export
+  # with no such hint is used for this install and not baked in.
+  case "${PORTICO_HOME_SOURCE:-}" in "Info.plist"|".portico-home") bake=1 ;; esac
   if [ -n "$home_file_folder" ]; then
     bake=1
     if [ "$home" != "$home_file_folder" ]; then
@@ -94,6 +97,11 @@ elif [ -n "$env_home" ]; then
 elif [ -n "$home_file_folder" ]; then
   home="$home_file_folder"
   bake=1
+fi
+# A remembered folder that has gone is not made again here (the gateway would make it, empty).
+if [ -n "$bake" ] && [ -z "$home_arg" ] && [ ! -d "$home" ]; then
+  echo "install: Portico's folder $home is missing; reinstall with --home $home" >&2
+  exit 1
 fi
 state_args=() home_args=()
 [ -z "$home" ] || state_args=(--state "$home")
@@ -152,7 +160,9 @@ app="$("$packaging/make-app.sh" \
   ${icon_args[@]+"${icon_args[@]}"} \
   ${home_args[@]+"${home_args[@]}"} | tail -n 1)"
 
-if [ -n "$home_arg" ]; then
+# Keep .portico-home in step with what the app now carries, so a later terminal bin/update
+# does not flip back to an older folder.
+if [ -n "$bake" ] && [ "$home" != "$home_file_folder" ]; then
   printf '%s\n' "$home" >"$home_file"
 fi
 

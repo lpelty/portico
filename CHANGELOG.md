@@ -104,7 +104,12 @@ only on screen is listed at the end, under "Owed".
   back) counts as not chosen, so `.portico-home` still wins over it. An
   update started from the app (or `bin/update`) keeps `PorticoHome`. When
   `PORTICO_HOME` and `.portico-home` differ, the install warns and keeps
-  `PORTICO_HOME`.
+  `PORTICO_HOME`. An update the app starts (`PORTICO_HOME_SOURCE=Info.plist`)
+  bakes the folder even when the checkout has no `.portico-home` (a
+  re-clone), and the install writes `.portico-home` back so a later
+  terminal `bin/update` keeps it. A remembered folder that has gone stops
+  the install: "Portico's folder <path> is missing; reinstall with --home
+  <path>".
 - The app starts the gateway with `run --port 0 --state <folder>`, and the
   gateway exports `PORTICO_HOME` (and `PORTICO_HOME_SOURCE`) to its plug-ins
   and service checks. `bin/doctor` lists "home" second, naming the folder
@@ -123,8 +128,9 @@ only on screen is listed at the end, under "Owed".
   `$PORTICO_HOME`.
 - **Not changed:** `.portico-home` is machine-local and git-ignored; moving a
   checkout means running `bin/install` (with `--home`, if it had one) again.
-- **Doctor started from the app** before this release reported its folder
-  as "from PORTICO_HOME"; it now reads the app's own source.
+- **Downgrading:** `index.json` written by v0.17 keeps paths inside Portico's
+  folder as `@state/...`; an older gateway can't read them, so don't downgrade
+  the gateway in place.
 
 ### Owed: verified only on screen
 
@@ -143,6 +149,7 @@ a look in the running app:
   on body text, X and the toolbar, header icons, "This session", the
   Properties fold across pages, no Continues notice, and a stuck service's
   Restart.
+- The file picker still opens after an alert sheet is dismissed.
 - An install with `--home` end to end on the real machine (it was run once
   into a scratch folder and scratch Applications folder during the build).
 - Two cases from the v0.16 scroll rework remain unproven on screen (a
