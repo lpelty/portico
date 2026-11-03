@@ -92,7 +92,8 @@ workflows): without it the gateway sends none of those frames; v0.11:
 `spaces.v1` (it shows `spaces.list`); v0.14: `viewer.marks.v1` (it
 can draw the agent's marks; see The viewer and spaces); v0.17:
 `viewer.show.v1` (it answers `viewer.act` `show` once the page has
-loaded; see The viewer and spaces). Absent
+loaded; see The viewer and spaces); v0.18: `apps.v1` (it shows
+`app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a

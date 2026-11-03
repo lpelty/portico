@@ -240,7 +240,7 @@ final class ProtocolExamplesTests: XCTestCase {
 
     // MARK: - v0.18 MCP Apps
 
-    func testTheAppDeclaresApps() {
+    func testTheAppNamesAppsInItsHello() {
         XCTAssertTrue(HelloClient.appCapabilities.contains("apps.v1"))
     }
 

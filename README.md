@@ -210,6 +210,13 @@ act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and
 properties = "folded"               # v0.17: "folded" or "open", how a Markdown page's front-matter Properties start;
                                     # the person's own fold, once made, is remembered and wins
 
+[apps]                              # optional (v0.18): MCP Apps, a tool's page shown in the chat
+enabled = true                      # the default; false keeps every tool a plain tool row
+
+[mcp]                               # optional (v0.18): MCP servers
+core = ["acme-tracker"]             # servers in the folder's .mcp.json that are part of the deployment itself;
+                                    # Settings lists them as "Built into <brand>", not as shipped servers a person may turn off
+
 [spaces]                            # optional (v0.12): files the agent keeps current, in the app's switcher
 folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
 refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
@@ -465,6 +472,47 @@ folder's agent instructions. A suggested instruction:
 > you did or found, as you would say it aloud, wrapped in `[TTS]` and
 > `[/TTS]`. Write those sentences for the ear: no Markdown, no code, no
 > file paths or links. Short conversational replies need no tags.
+
+## MCP servers, plugins and apps
+
+**The person's own servers and plugins reach Portico (v0.18).** The MCP
+servers a person has set up in Claude Code at user scope (all projects) or
+local scope (this folder), and the plugins enabled there, are now passed to
+Portico's agent, so it can use what they use in a terminal. The gateway
+passes them in; `setting_sources` is unchanged. A server the folder's
+`.mcp.json` ships still loads from that file, and a server turned off stays
+off.
+
+**Settings → MCP servers.** Lists the servers in groups: All your projects,
+"<brand> only" (including "Ships with <brand>"), Built into <brand>, and
+From your Claude account. Each row can be turned off, reconnected, signed in
+or out, and removed (after a confirmation); Add server… takes a web address
+or a program on the Mac. Each tool reads "Runs without asking" or "Asks
+first", and the person can change it. A change applies to new chats; an open
+chat picks it up when it reconnects. The tab is `/mcp`.
+
+**Settings → Plugins.** Installed plugins (turn on and off, update,
+configure, uninstall after a confirmation), Browse, and marketplaces. A
+plugin that installs by running a command is refused; install it in Claude
+Code, where the command can be read first. The tab is `/plugin`.
+
+Both tabs run the Claude Code CLI bundled with the Agent SDK against the
+same files Claude Code uses, so a change shows in both.
+
+**MCP Apps.** A tool that offers a page (an MCP App, stable spec
+2026-01-26) is shown as a card in the conversation, in a sandbox of its own
+per card with no access to Portico's other pages. The three newest cards
+are live; older ones freeze to a picture with Reload. Open in viewer shows a
+fresh copy beside the conversation. A call the page makes asks first, like
+the agent's own, unless the tool only reads; a page can also send a message
+or update what the agent knows. `[apps] enabled = false` keeps every tool a
+plain tool row. Apps rely on private control requests of the Claude Code
+CLI, behind one seam in the gateway, so the Agent SDK is pinned
+(`claude-agent-sdk==0.2.174`).
+
+**The pointer and tooltips.** In the viewer, the agent's pointer glides to
+a click or a field before it acts. Portico's own tooltips are centred
+under their control.
 
 ## The viewer's vision and spaces
 
