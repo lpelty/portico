@@ -465,8 +465,8 @@ struct ViewerFocusButton: View {
         }
         .buttonStyle(.hover)
         .keyboardShortcut(.return, modifiers: [.command, .shift])
-        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Focus on this: hide the sidebar and widen the viewer (⌘⇧↩)")
-        .accessibilityLabel(on ? "Leave focus" : "Focus")
+        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Widen the viewer (⌘⇧↩)")
+        .accessibilityLabel(on ? "Back to the usual layout" : "Widen the viewer")
     }
 }
 
