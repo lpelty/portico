@@ -722,7 +722,7 @@ async def test_renew_records_the_end_in_both_sessions(
             "New — logging, then ending this session",
             f"Session ended · continues in Session {nxt}",
         ]
-        assert notices(got, nxt) == [f"Continues Session {number}"]
+        assert notices(got, nxt) == []
         assert before_turn(got, "New — logging, then ending this session")
         assert isinstance(await recv(conn), ChatList)
 
@@ -730,7 +730,7 @@ async def test_renew_records_the_end_in_both_sessions(
         await conn.send(dump(SessionRenew(ts=TS, id="req-2", chat=nxt, log=False)))
         got = await recv_until(conn, SessionRenewed)
         assert notices(got, nxt) == ["New — ending this session", f"Session ended · continues in Session {nxt + 1}"]
-        assert notices(got, nxt + 1) == [f"Continues Session {nxt}"]
+        assert notices(got, nxt + 1) == []
         assert not [m for m in got if isinstance(m, TurnStarted)]
     finally:
         await conn.close()
@@ -777,7 +777,7 @@ async def test_session_notices_replay_from_the_beginning(
         await again.send(dump(ChatOpen(ts=TS, chat=number + 1)))
         history = await recv(again)
         assert isinstance(history, ChatHistory)
-        assert notices(history.events, number + 1) == [f"Continues Session {number}"]
+        assert notices(history.events, number + 1) == []
     finally:
         await again.close()
 

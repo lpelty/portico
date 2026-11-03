@@ -14,6 +14,8 @@ struct PorticoApp: App {
     @StateObject private var dictation: Dictation
 
     init() {
+        // v0.17: tooltips after 0.8 s, in this app's own defaults only.
+        TooltipDelay.register()
         // The model reads the auto-open settings (spec §5.3), so it holds the
         // same `Settings` object the settings scene edits.
         let settings = Settings()

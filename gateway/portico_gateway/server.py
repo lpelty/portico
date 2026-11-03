@@ -2643,7 +2643,6 @@ class GatewayServer:
             await self.broadcast(self._queue_frame(chat))
         await self.notice(chat, f"Session ended · continues in Session {following.number}")
         await self.set_state(following, "idle")
-        await self.notice(following, f"Continues Session {chat.number}")
         if self.registry.models:
             # v0.15: the next session's menu, before its engine starts.
             await self.broadcast(self._models_frame(following))
