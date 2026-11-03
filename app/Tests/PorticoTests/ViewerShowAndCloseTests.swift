@@ -450,44 +450,22 @@ final class ViewerShowAndCloseTests: XCTestCase {
         XCTAssertEqual(model.history(for: 1).first?.id, "a-2", "the row is the file's newest showing")
     }
 
-    func test_x_closes_the_file_and_shows_the_next() {
+    func test_x_clears_the_viewer_and_closes_it() {
         let model = model()
         for name in ["a", "b", "c"] { model.apply(created(1, file("\(name)-1", "/tmp/acme/\(name).md"))) }
         XCTAssertEqual(model.current[1]?.id, "c-1")
 
         model.closeFile(in: 1)
-        XCTAssertEqual(model.current[1]?.id, "b-1")
-        XCTAssertTrue(model.isViewerShown(for: 1))
-        XCTAssertEqual(model.history(for: 1).count, 3, "a closed file stays in the list")
-        XCTAssertTrue(model.isClosed(location: "/tmp/acme/c.md", in: 1))
-
-        model.closeFile(in: 1)
-        XCTAssertEqual(model.current[1]?.id, "a-1")
-
-        model.closeFile(in: 1)
-        XCTAssertNil(model.current[1])
+        XCTAssertNil(model.current[1], "no older file comes forward")
         XCTAssertFalse(model.isViewerShown(for: 1))
-        XCTAssertEqual(model.history(for: 1).count, 3)
-    }
+        XCTAssertEqual(model.history(for: 1).count, 3, "every file stays in the list")
 
-    /// With nothing in front (files listed, none opened, the column opened
-    /// by hand), X only hides the viewer.
-    func test_x_with_nothing_in_front_only_hides() {
-        let model = model()
-        model.apply(created(1, file("a-1", "/tmp/acme/a.md", open: false)))
-        model.apply(created(1, file("b-1", "/tmp/acme/b.md", open: false)))
         model.setViewer(visible: true, for: 1)
-        XCTAssertNil(model.current[1])
-        model.closeFile(in: 1)
-        XCTAssertNil(model.current[1], "nothing brought forward")
-        XCTAssertFalse(model.isViewerShown(for: 1))
-        XCTAssertFalse(model.isClosed(location: "/tmp/acme/a.md", in: 1))
-        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+        XCTAssertTrue(model.isViewerShown(for: 1))
+        XCTAssertNil(model.current[1], "opened from the toolbar, the viewer is empty")
     }
 
-    /// The file X brings forward is shown as a pick from the list is:
-    /// `artifact.opened` goes to the gateway.
-    func test_x_tells_the_gateway_what_it_brought_forward() {
+    func test_x_sends_nothing_to_the_gateway() {
         let model = model()
         var sent: [ClientMessage] = []
         model.outbound = { sent.append($0) }
@@ -495,38 +473,28 @@ final class ViewerShowAndCloseTests: XCTestCase {
         model.apply(created(1, file("b-1", "/tmp/acme/b.md")))
         sent = []
         model.closeFile(in: 1)
-        guard case .artifactOpened(let opened)? = sent.last else { return XCTFail("expected artifact.opened, got \(sent)") }
-        XCTAssertEqual(opened.artifactId, "a-1")
-        XCTAssertEqual(opened.chat, 1)
+        XCTAssertTrue(sent.isEmpty, "X brings nothing forward, got \(sent)")
     }
 
-    func test_a_closed_file_shown_again_comes_back() throws {
+    func test_after_x_any_file_opens_again() throws {
         let model = model()
-        for name in ["a", "b", "c"] { model.apply(created(1, file("\(name)-1", "/tmp/acme/\(name).md"))) }
-        model.closeFile(in: 1)
-        XCTAssertTrue(model.isClosed(location: "/tmp/acme/c.md", in: 1))
+        for name in ["a", "b"] { model.apply(created(1, file("\(name)-1", "/tmp/acme/\(name).md"))) }
 
-        // The agent shows it again.
-        model.apply(created(1, file("c-2", "/tmp/acme/c.md")))
-        XCTAssertEqual(model.current[1]?.id, "c-2")
-        XCTAssertFalse(model.isClosed(location: "/tmp/acme/c.md", in: 1))
-        XCTAssertEqual(model.history(for: 1).first?.id, "c-2", "back in the list's lead")
+        // The agent shows one again.
+        model.closeFile(in: 1)
+        model.apply(created(1, file("b-2", "/tmp/acme/b.md")))
+        XCTAssertEqual(model.current[1]?.id, "b-2")
+        XCTAssertTrue(model.isViewerShown(for: 1))
 
-        // Picking a closed row brings it back too.
+        // A pick from the list.
         model.closeFile(in: 1)
-        model.closeFile(in: 1)
-        XCTAssertEqual(model.current[1]?.id, "a-1")
-        XCTAssertTrue(model.isClosed(location: "/tmp/acme/b.md", in: 1))
-        let row = try XCTUnwrap(model.history(for: 1).first { $0.location == "/tmp/acme/b.md" })
+        let row = try XCTUnwrap(model.history(for: 1).first { $0.location == "/tmp/acme/a.md" })
         model.show(row, in: 1)
-        XCTAssertEqual(model.current[1]?.id, "b-1")
-        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+        XCTAssertEqual(model.current[1]?.id, "a-1")
 
-        // And a file the person opens from the Files pane.
+        // A file the person opens from the Files pane.
         model.closeFile(in: 1)
-        XCTAssertTrue(model.isClosed(location: "/tmp/acme/b.md", in: 1))
         model.openArtifact(file: "/tmp/acme/b.md", in: 1)
-        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
         XCTAssertEqual(model.current[1]?.location, "/tmp/acme/b.md")
     }
 
@@ -540,7 +508,6 @@ final class ViewerShowAndCloseTests: XCTestCase {
         model.setViewer(visible: true, for: 1)
         XCTAssertTrue(model.isViewerShown(for: 1))
         XCTAssertEqual(model.current[1]?.id, "b-1", "whatever was showing is still there")
-        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
     }
 }
 

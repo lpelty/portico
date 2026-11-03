@@ -19,10 +19,10 @@ only on screen is listed at the end, under "Owed".
   tools, `show_in_viewer`, and a caught `open`) run one at a time, in the
   order sent. Stop drops the ones still waiting; they answer "Stopped." and
   never act afterwards (controller ruling R-c2).
-- **X closes the file.** The X in the viewer header closes the file in front
-  and shows the next one that is still open; with none left the viewer
-  hides. The toolbar's panel button only hides the viewer. A file you close
-  stays in the session list and comes back when you open it again.
+- **X closes the viewer and clears it.** The viewer holds one file; X closes
+  it, and opened again from the toolbar it is empty. The toolbar's panel
+  button only hides and shows the viewer, keeping what was there. Every file
+  stays in the session list, which is how you open it again.
 - **"This session".** The viewer's list is one row per file, newest first,
   headed "This session" in single presentation ("This chat" in multiple).
   The file-type glyph leads the row; a small trailing mark says who put it

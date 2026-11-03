@@ -139,9 +139,6 @@ final class AppModel: ObservableObject {
     /// Per chat, the artifact the viewer shows: the last one that
     /// auto-opened or that the person picked from the history.
     @Published private(set) var current: [Int: Artifact] = [:]
-    /// Per chat, the locations X closed (v0.17 §3.4), in memory only. A
-    /// file shown again, by the agent or the person, leaves the set.
-    private var closedFiles: [Int: Set<String>] = [:]
     /// Per chat, whether the person collapsed or opened the viewer column
     /// by hand. Unset, the column follows the chat: shown when something is
     /// set to show, hidden otherwise (`isViewerShown`). An auto-open
@@ -1591,7 +1588,6 @@ final class AppModel: ObservableObject {
     func show(_ artifact: Artifact, in chat: Int) {
         if !replayingFromBeginning { supersedeRemembered(in: chat) }
         leaveSpaceForFile()
-        closedFiles[chat]?.remove(artifact.location)
         current[chat] = artifact
         viewerVisible[chat] = true
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
@@ -1669,27 +1665,13 @@ final class AppModel: ObservableObject {
         return (artifacts[chat] ?? []).reversed().filter { seen.insert($0.location).inserted }
     }
 
-    /// X (v0.17 §3.4): the file in front closes and the newest file in
-    /// the list not closed comes forward; none left, the viewer closes,
-    /// empty. Every file stays in the list.
-    /// With nothing in front, X only hides the viewer. The file brought
-    /// forward is shown as a pick from the list is (`show(_:in:)`).
+    /// X (v0.17 §3.4, Larry's hand check 11-02): the viewer holds one file,
+    /// so X clears it and closes the viewer. Opened again with the toolbar
+    /// button, it is empty; every file stays in the list.
     func closeFile(in chat: Int) {
-        if let shown = current[chat] {
-            closedFiles[chat, default: []].insert(shown.location)
-            if let next = history(for: chat).first(where: { !isClosed(location: $0.location, in: chat) }) {
-                return show(next, in: chat)
-            }
-        }
         current[chat] = nil
         viewerVisible[chat] = false
         if viewerFocus?.chat == chat { endFocus() }
-    }
-
-    /// Whether X closed the file at `location` in `chat`, and nothing has
-    /// shown it since.
-    func isClosed(location: String, in chat: Int) -> Bool {
-        closedFiles[chat]?.contains(location) ?? false
     }
 
     /// The viewer column is there when the person opened it, or when an
@@ -2168,7 +2150,6 @@ final class AppModel: ObservableObject {
         openCards[chat] = nil
         artifacts[chat] = nil
         current[chat] = nil
-        closedFiles[chat] = nil
         viewerVisible[chat] = nil
         restoreCurrent[chat] = nil
         launchViewer[chat] = nil
@@ -2524,7 +2505,6 @@ extension AppModel {
         artifacts[chat] = list
         supersedeRemembered(in: chat)
         leaveSpaceForFile()
-        closedFiles[chat]?.remove(path)
         current[chat] = artifact
         viewerVisible[chat] = true
     }

@@ -216,7 +216,7 @@ struct ViewerView: View {
             }
             openButtons(labelled: fit.labelled)
             focusButton
-            ViewerCloseButton(help: "Close this file", label: "Close this file") {
+            ViewerCloseButton(help: "Close the viewer", label: "Close the viewer") {
                 model.closeFile(in: chat)
             }
         }
