@@ -145,8 +145,8 @@ struct PluginRowPresentation: Equatable, Identifiable {
         subtitle = PluginsPresentation.subtitle(description: row.description, marketplace: row.marketplace)
         isOn = row.enabled
         updateLabel = row.updateTo.map { "Update to \(PluginsPresentation.shortVersion($0))" }
-        let configurable = !(state.options[row.id] ?? []).isEmpty
-        menuItems = MenuItem.allCases.filter { $0 != .configure || configurable }
+        // R-c29: Configure… is always offered; the sheet says when there's nothing to set.
+        menuItems = MenuItem.allCases
         busy = state.busy.contains(row.id)
         error = state.rowErrors[row.id]
         self.connected = connected
@@ -241,6 +241,7 @@ enum PluginSheetsPresentation {
     static let saveLabel = "Save"
     static let savingLabel = "Saving…"
     static let doneLabel = "Done"
+    static let noSettings = "This plugin has no settings."
     static let configureNote = "Only the values you change are saved. A saved key stays as it is unless you type a new one."
 }
 
@@ -272,12 +273,7 @@ struct PluginsTab: View {
             segmentShown(segment)
         }
         .onDisappear { model.pluginsTabDisappeared() }
-        .onChange(of: model.pluginsAvailable) { _, available in
-            if available {
-                model.pluginsTabAppeared()
-                segmentShown(segment)
-            }
-        }
+        // A hello asks again while the tab is shown (the model's resumeSettingsLists).
         .onChange(of: segment) { _, shown in segmentShown(shown) }
         .onChange(of: model.plugins.marketplaceAddFinished) { addingMarketplace = false }
         .sheet(isPresented: $addingMarketplace, onDismiss: { model.pluginMarketplaceAddDismissed() }) {
@@ -700,7 +696,11 @@ struct PluginConfigureSheetView: View {
             Text(sheet?.title ?? "")
                 .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
-            if let options = sheet?.options {
+            if let options = sheet?.options, options.isEmpty {
+                Text(PluginSheetsPresentation.noSettings)
+                    .scaledFont(12.5)
+                    .foregroundStyle(Theme.text2)
+            } else if let options = sheet?.options {
                 ForEach(options.map(PluginOptionField.init)) { field in
                     fieldView(field)
                 }
@@ -717,6 +717,15 @@ struct PluginConfigureSheetView: View {
                     .foregroundStyle(Theme.deny)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if sheet?.options?.isEmpty == true {
+                HStack {
+                    Spacer()
+                    Button(PluginSheetsPresentation.doneLabel) { model.pluginConfigureClosed() }
+                        .buttonStyle(SettingsButtonStyle(kind: .accent))
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(.top, 4)
+            } else {
             HStack(spacing: 8) {
                 Spacer()
                 if saving { ProgressView().controlSize(.small) }
@@ -733,6 +742,7 @@ struct PluginConfigureSheetView: View {
                 .disabled(saving || !model.settingsConnected || !canSave)
             }
             .padding(.top, 4)
+            }
         }
         .padding(EdgeInsets(top: 20, leading: 20, bottom: 18, trailing: 20))
         .frame(width: 460)

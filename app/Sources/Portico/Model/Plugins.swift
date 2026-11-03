@@ -25,7 +25,7 @@ struct PluginsState: Equatable, Sendable {
     var marketplaces: [PluginMarketplace] = []
     /// Whether a list has arrived since this gateway's hello.
     var loaded: Bool = false
-    /// Each installed plugin's options as last read (empty: nothing to configure).
+    /// Options read by Configure…, per plugin, for this connection (empty: no settings, R-c29).
     var options: [String: [PluginOption]] = [:]
     /// Plugin ids with a change out.
     var busy: Set<String> = []
@@ -49,6 +49,9 @@ struct PluginsState: Equatable, Sendable {
     var marketplaceAddError: String? = nil
     /// Counts marketplace adds answered: the sheet closes on a change.
     var marketplaceAddFinished: Int = 0
+
+    /// What a request that can't go (or won't be answered) says.
+    static let notConnected = "Not connected"
 
     /// Cancel is off while an add is out (R-c25): a reply would land on nothing.
     var canCancelMarketplaceAdd: Bool { addingMarketplace == nil }
@@ -216,6 +219,10 @@ extension AppModel {
     func confirmPluginUninstall() {
         guard let ask = plugins.uninstalling else { return }
         plugins.uninstalling = nil
+        guard settingsConnected else {
+            plugins.lastError = PluginsState.notConnected
+            return
+        }
         pluginChange(ask.plugin) { .pluginsUninstall(PluginsUninstall(plugin: ask.plugin, id: $0)) }
     }
 
@@ -251,11 +258,15 @@ extension AppModel {
         plugins.details = nil
     }
 
-    /// Configure…: the sheet opens and reads the options afresh.
+    /// Configure… (R-c29): always offered. The sheet asks for that one
+    /// plugin's options the first time on this connection, then uses the
+    /// answer kept; a save refreshes it.
     func pluginConfigure(_ plugin: String) {
         guard canSendPlugins, let row = pluginRow(plugin) else { return }
         plugins.configuring = PluginConfigureSheet(
-            plugin: plugin, title: "Configure \(PluginsPresentation.displayName(row.name))")
+            plugin: plugin, title: "Configure \(PluginsPresentation.displayName(row.name))",
+            options: plugins.options[plugin])
+        guard plugins.options[plugin] == nil, !plugins.pending.values.contains(.options(plugin)) else { return }
         pluginsRequest(.options(plugin)) { .pluginsOptions(PluginsOptionsRequest(plugin: plugin, id: $0)) }
     }
 
@@ -291,17 +302,6 @@ extension AppModel {
                 plugins.marketplaceAddFinished += 1
             case .list, .details, .options, .configure: break
             }
-        }
-        askForMissingPluginOptions()
-    }
-
-    /// Configure… shows only where options are listed (ruling 17): each
-    /// installed plugin's are read once, when it first appears.
-    private func askForMissingPluginOptions() {
-        for row in plugins.installed where plugins.options[row.id] == nil {
-            guard !plugins.pending.values.contains(.options(row.id)) else { continue }
-            guard canSendPlugins else { return }
-            pluginsRequest(.options(row.id)) { .pluginsOptions(PluginsOptionsRequest(plugin: row.id, id: $0)) }
         }
     }
 
@@ -350,8 +350,7 @@ extension AppModel {
             if plugins.details?.plugin == plugin { plugins.details?.error = error.message }
             return
         case .options(let plugin):
-            // A read: nothing changed. Known as "nothing to configure", so it isn't asked again.
-            if plugins.options[plugin] == nil { plugins.options[plugin] = [] }
+            // A read: nothing changed, nothing to re-list. Not cached, so the next open asks again.
             if plugins.configuring?.plugin == plugin, plugins.configuring?.options == nil {
                 plugins.configuring?.error = error.message
             }
@@ -372,6 +371,13 @@ extension AppModel {
         plugins.pending = [:]
         plugins.addingMarketplace = nil
         plugins.configuring?.saving = nil
+        // An open sheet still waiting would spin for ever (no reply is coming).
+        if let sheet = plugins.details, sheet.text == nil, sheet.error == nil {
+            plugins.details?.error = PluginsState.notConnected
+        }
+        if let sheet = plugins.configuring, sheet.options == nil, sheet.error == nil {
+            plugins.configuring?.error = PluginsState.notConnected
+        }
     }
 
     /// A new hello: the lists are asked for afresh.

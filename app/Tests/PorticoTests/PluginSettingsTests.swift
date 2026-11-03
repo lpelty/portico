@@ -12,8 +12,6 @@ final class PluginSettingsTests: XCTestCase {
     private final class Sent {
         var frames: [ClientMessage] = []
         func types() -> [String] { frames.map(\.type) }
-        /// What the person's actions sent: the options each new row is asked for are left out.
-        func actions() -> [ClientMessage] { frames.filter { $0.type != PluginsOptionsRequest.messageType } }
     }
 
     private static func hello(_ epoch: String = "e", capabilities: [String] = ["sessions", "plugins.v1"]) -> ServerMessage {
@@ -74,8 +72,7 @@ final class PluginSettingsTests: XCTestCase {
         PluginOption(key: "team", title: "Team", description: "", sensitive: false, set: false),
     ]
 
-    /// The tab shown and its list answered; each row's options answered too
-    /// (design-review has some, the others none).
+    /// The tab shown and its list answered.
     private func loaded() -> (AppModel, Sent) {
         let (model, sent) = model()
         model.pluginsTabAppeared()
@@ -85,11 +82,6 @@ final class PluginSettingsTests: XCTestCase {
         }
         model.apply(.pluginsState(PluginsStateMessage(
             installed: Self.installed, marketplaces: Self.marketplaces, id: list.id)))
-        for frame in sent.frames {
-            guard case .pluginsOptions(let ask) = frame else { continue }
-            let options = ask.plugin == "design-review@acme" ? Self.options : []
-            model.apply(.pluginsOptions(PluginsOptions(plugin: ask.plugin, options: options, id: ask.id)))
-        }
         sent.frames = []
         return (model, sent)
     }
@@ -153,7 +145,7 @@ final class PluginSettingsTests: XCTestCase {
         XCTAssertTrue(toggle.enabled)
     }
 
-    func testListAsksForEachRowsOptionsOnce() {
+    func testAListAsksForNoOptionsAndConfigureAsksOnce() throws {
         let (model, sent) = model()
         model.pluginsTabAppeared()
         XCTAssertEqual(sent.types(), ["plugins.list"])
@@ -161,26 +153,60 @@ final class PluginSettingsTests: XCTestCase {
         XCTAssertFalse(list.available, "Installed asks only for the installed list")
         model.apply(.pluginsState(PluginsStateMessage(installed: Self.installed, marketplaces: [], id: list.id)))
         XCTAssertTrue(model.plugins.loaded)
-        let asked = sent.frames.compactMap { frame -> String? in
-            if case .pluginsOptions(let ask) = frame { return ask.plugin }
-            return nil
-        }
-        XCTAssertEqual(asked, Self.installed.map(\.id))
-        // Another list asks for none again.
+        XCTAssertEqual(sent.types(), ["plugins.list"], "no options request is ever sent from a list (R-c29)")
+
+        // Configure… asks for that one plugin's options, when chosen.
         sent.frames = []
+        model.pluginConfigure("design-review@acme")
+        XCTAssertEqual(sent.types(), ["plugins.options"])
+        guard case .pluginsOptions(let ask) = sent.frames[0] else { return XCTFail("plugins.options") }
+        XCTAssertEqual(ask.plugin, "design-review@acme")
+        model.apply(.pluginsOptions(PluginsOptions(plugin: ask.plugin, options: Self.options, id: ask.id)))
+        XCTAssertEqual(model.plugins.configuring?.options, Self.options)
+        model.pluginConfigureClosed()
+        XCTAssertNil(model.plugins.configuring)
+
+        // A second open on this connection uses the answer kept.
+        model.pluginConfigure("design-review@acme")
+        XCTAssertEqual(sent.frames.count, 1)
+        XCTAssertEqual(model.plugins.configuring?.options, Self.options)
+        model.pluginConfigureClosed()
+
+        // A new connection's hello forgets it.
+        model.apply(Self.hello("e2"))
         model.pluginsTabAppeared()
-        guard case .pluginsList(let again) = sent.frames.last else { return XCTFail("plugins.list") }
-        model.apply(.pluginsState(PluginsStateMessage(installed: Self.installed, marketplaces: [], id: again.id)))
-        XCTAssertEqual(sent.types(), ["plugins.list"])
+        guard case .pluginsList(let fresh) = sent.frames.last else { return XCTFail("plugins.list") }
+        model.apply(.pluginsState(PluginsStateMessage(installed: Self.installed, marketplaces: [], id: fresh.id)))
+        sent.frames = []
+        model.pluginConfigure("design-review@acme")
+        XCTAssertEqual(sent.types(), ["plugins.options"])
+    }
+
+    func testConfigureWithNoSettings() throws {
+        let (model, sent) = loaded()
+        model.pluginConfigure("meeting-notes@claude-plugins-official")
+        guard case .pluginsOptions(let ask) = sent.frames.last else { return XCTFail("plugins.options") }
+        model.apply(.pluginsOptions(PluginsOptions(plugin: ask.plugin, options: [], id: ask.id)))
+        XCTAssertEqual(model.plugins.configuring?.options, [])
+        XCTAssertEqual(PluginSheetsPresentation.noSettings, "This plugin has no settings.")
+        XCTAssertEqual(PluginSheetsPresentation.doneLabel, "Done")
+        model.pluginConfigureClosed()
+        XCTAssertNil(model.plugins.configuring)
+        // Kept: the next open shows it at once and asks nothing.
+        model.pluginConfigure("meeting-notes@claude-plugins-official")
+        XCTAssertEqual(model.plugins.configuring?.options, [])
+        XCTAssertEqual(sent.frames.count, 1)
     }
 
     func testMenuItems() throws {
         let (model, _) = loaded()
-        let configurable = try XCTUnwrap(row(model, "design-review@acme"))
-        XCTAssertEqual(configurable.menuItems, [.details, .configure, .checkForUpdate, .uninstall])
-        XCTAssertEqual(configurable.menuItems.map(\.label), ["Details", "Configure…", "Check for update", "Uninstall…"])
+        // R-c29: Configure… is in every row's menu; the sheet says when there's nothing to set.
+        for plugin in Self.installed {
+            let item = try XCTUnwrap(row(model, plugin.id))
+            XCTAssertEqual(item.menuItems, [.details, .configure, .checkForUpdate, .uninstall])
+            XCTAssertEqual(item.menuItems.map(\.label), ["Details", "Configure…", "Check for update", "Uninstall…"])
+        }
         let plain = try XCTUnwrap(row(model, "meeting-notes@claude-plugins-official"))
-        XCTAssertEqual(plain.menuItems.map(\.label), ["Details", "Check for update", "Uninstall…"])
         XCTAssertEqual(plain.moreHelp, "More for Meeting notes")
     }
 
@@ -236,7 +262,7 @@ final class PluginSettingsTests: XCTestCase {
         model.apply(.pluginsState(PluginsStateMessage(
             installed: Self.installed, available: Self.available, marketplaces: Self.marketplaces, id: browse.id)))
         model.pluginsBrowseShown()
-        XCTAssertEqual(sent.actions().count, 1)
+        XCTAssertEqual(sent.frames.count, 1)
         XCTAssertEqual(PluginsPresentation.filterPrompt, "Filter plugins")
 
         let all = PluginsPresentation.browse(model.plugins, filter: "", connected: true)
@@ -337,11 +363,11 @@ final class PluginSettingsTests: XCTestCase {
         XCTAssertNil(model.plugins.configuring)
         XCTAssertEqual(model.plugins.configureFinished, finished + 1)
 
-        // Nothing changed: nothing is sent.
-        model.pluginConfigure("design-review@acme")
-        guard case .pluginsOptions(let reopen) = sent.frames.last else { return XCTFail("plugins.options") }
-        model.apply(.pluginsOptions(PluginsOptions(plugin: reopen.plugin, options: Self.options, id: reopen.id)))
+        // Reopened: the save's fresh options are used, nothing asked; nothing changed, nothing sent.
         let count = sent.frames.count
+        model.pluginConfigure("design-review@acme")
+        XCTAssertEqual(model.plugins.configuring?.options, Self.options)
+        XCTAssertEqual(sent.frames.count, count)
         model.pluginSaveConfiguration([:])
         XCTAssertEqual(sent.frames.count, count)
     }
@@ -441,6 +467,43 @@ final class PluginSettingsTests: XCTestCase {
         model.pluginUpdate("design-review@acme")
         model.setConnection(.failed("gone"))
         XCTAssertTrue(model.plugins.busy.isEmpty)
+
+        // Sheets waiting on a reply say so rather than spin for ever.
+        model.setConnection(.connected)
+        model.pluginShowDetails("design-review@acme")
+        model.setConnection(.disconnected)
+        XCTAssertEqual(model.plugins.details?.error, "Not connected")
+        model.pluginDetailsClosed()
+        model.setConnection(.connected)
+        model.pluginConfigure("release-helper@acme")
+        model.setConnection(.disconnected)
+        XCTAssertEqual(model.plugins.configuring?.error, "Not connected")
+        model.pluginConfigureClosed()
+
+        // Uninstall confirmed while disconnected says so, and sends nothing.
+        model.setConnection(.connected)
+        model.askToUninstallPlugin("release-helper@acme")
+        model.setConnection(.disconnected)
+        sent.frames = []
+        model.confirmPluginUninstall()
+        XCTAssertEqual(sent.frames, [])
+        XCTAssertNil(model.plugins.uninstalling)
+        XCTAssertEqual(model.plugins.lastError, "Not connected")
+    }
+
+    func testTheFirstHelloWithTheTabShownAsksOnce() {
+        // The tab came on screen before any gateway said hello.
+        let name = "portico.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        let model = AppModel(settings: Settings(defaults: defaults))
+        let sent = Sent()
+        model.outbound = { sent.frames.append($0) }
+        model.pluginsTabAppeared()
+        XCTAssertEqual(sent.frames, [])
+        model.setConnection(.connected)
+        model.apply(Self.hello())
+        XCTAssertEqual(sent.types().filter { $0 == "plugins.list" }.count, 1)
     }
 
     func testAHelloWhileTheTabIsShownAsksAgain() {
