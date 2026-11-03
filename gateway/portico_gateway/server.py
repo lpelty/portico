@@ -2101,7 +2101,8 @@ class GatewayServer:
         report it again. v0.17: an ``http(s)`` address is shown as a URL
         artifact (no folder checks); the call holds the chat's viewer queue
         and waits for the app to say the last one has loaded, answering
-        ``Shown(STILL_LOADING_TEXT)`` when it does not in time. A show that
+        ``Shown(STILL_LOADING_TEXT)`` when it does not in time, and the
+        app's words (``Shown("Not loaded: …")``) when it failed. A show that
         waited in the queue through a stop of its turn answers ``STOPPED``.
         """
         async with self.viewer.queued(chat.number) as live:
@@ -2132,8 +2133,13 @@ class GatewayServer:
                     run.collector.note_shown(item)
             self.registry.persist()
             # The last one is the one in front: wait for it to load.
-            if await self.viewer.show(chat.number, artifacts[-1]) is False:
+            loaded = await self.viewer.show(chat.number, artifacts[-1])
+            if loaded is False:
                 return Shown(STILL_LOADING_TEXT)
+            if isinstance(loaded, str):
+                # Shown, but the page did not load: the app says why. Not a
+                # refusal, so a caught ``open`` is still not run.
+                return Shown(loaded)
             return None
 
     def _turn_live(self, number: int) -> Callable[[], bool]:

@@ -365,6 +365,9 @@ struct WebPane: NSViewRepresentable {
         /// another load starts. The header names it and Retry asks for it
         /// (v0.16, candidate 18).
         private var failedURL: URL?
+        /// Why the last load failed (the error's short description), while
+        /// the failure page is up (v0.17: a show answers "Not loaded: …").
+        private(set) var failure: String?
         /// The revision and text scale the shown file was last drawn at: a
         /// visit to an outside site holds re-reads back, and coming back to
         /// a file drawn for older ones reads it once (v0.16).
@@ -553,10 +556,24 @@ struct WebPane: NSViewRepresentable {
             rereadKeepingScroll(load, in: view, scaleOnly: !revised)
         }
 
+        /// The pane is off what it was asked to show: on its failure page,
+        /// or on a site a link went to (v0.17).
+        func isAway(in view: WKWebView) -> Bool {
+            failure != nil || ViewerPageAddress.outside(current: view.url, loaded: loaded) != nil
+        }
+
+        /// Load what the pane was asked to show again: the agent showed it
+        /// again while the pane was away from it (v0.17).
+        func showAgain(in view: WKWebView) {
+            guard let loaded else { return }
+            start(loaded, in: view)
+        }
+
         /// Ask for the current load again: the failure page's link.
         func retry(in view: WKWebView) {
             if let link = failedURL {
                 failed = nil
+                failure = nil
                 pendingScroll = nil
                 view.load(URLRequest(url: link))
                 return
@@ -569,6 +586,7 @@ struct WebPane: NSViewRepresentable {
             loaded = load
             failed = nil
             failedURL = nil
+            failure = nil
             readRevision = revision
             readScale = scale
             pendingScroll = scroll
@@ -625,6 +643,7 @@ struct WebPane: NSViewRepresentable {
         private func showFailure(_ message: String, in view: WKWebView, link: URL? = nil) {
             failed = link == nil ? loaded : nil
             failedURL = link
+            failure = message
             pendingScroll = nil
             if let link, address?.outside != link { address?.outside = link }
             view.loadHTMLString(Self.errorPage(message), baseURL: nil)

@@ -162,11 +162,14 @@ class ViewerBridge:
         async with self.queue(chat):
             yield live()
 
-    async def show(self, chat: int, artifact: Artifact) -> bool | None:
+    async def show(self, chat: int, artifact: Artifact) -> bool | str | None:
         """Ask the app to say when ``artifact`` (just announced) has loaded.
 
-        ``True`` loaded; ``False`` not within ``SHOW_TIMEOUT``, the app
-        answered not ok, the send failed or the app left mid-show; ``None``
+        ``True`` loaded; a ``str`` the app's words when it answered not ok
+        for another reason (a page that failed: "Not loaded: …"); ``False``
+        not within ``SHOW_TIMEOUT`` (the gateway's or the app's own timeout
+        answer, or a not-ok answer with no words), the send failed or the
+        app left mid-show; ``None``
         when no round trip is possible (no target, an app without
         ``viewer.show.v1``), which the caller treats as today's immediate
         "shown". The person's
@@ -181,7 +184,12 @@ class ViewerBridge:
             result = await self._round_trip(conn, chat, "show", args, SHOW_TIMEOUT)
         except asyncio.TimeoutError:
             return False
-        return result is not None and result.ok
+        if result is None:
+            return False
+        if result.ok:
+            return True
+        why = (result.error or result.text or "").strip()
+        return why if why and why != NO_ANSWER else False
 
     def note_mark_use(self, chat: int, tool_use_id: str, tool_input: dict[str, Any]) -> None:
         """The hook saw a ``viewer_mark`` call: remember its id so the handler can pass it to the app."""

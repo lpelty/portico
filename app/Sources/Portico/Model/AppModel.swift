@@ -1667,16 +1667,18 @@ final class AppModel: ObservableObject {
     /// X (v0.17 §3.4): the file in front closes and the newest file in
     /// the list not closed comes forward; none left, the viewer closes,
     /// empty. Every file stays in the list.
+    /// With nothing in front, X only hides the viewer. The file brought
+    /// forward is shown as a pick from the list is (`show(_:in:)`).
     func closeFile(in chat: Int) {
-        if let shown = current[chat] { closedFiles[chat, default: []].insert(shown.location) }
-        if let next = history(for: chat).first(where: { !isClosed(location: $0.location, in: chat) }) {
-            current[chat] = next
-            viewerVisible[chat] = true
-        } else {
-            current[chat] = nil
-            viewerVisible[chat] = false
-            if viewerFocus?.chat == chat { endFocus() }
+        if let shown = current[chat] {
+            closedFiles[chat, default: []].insert(shown.location)
+            if let next = history(for: chat).first(where: { !isClosed(location: $0.location, in: chat) }) {
+                return show(next, in: chat)
+            }
         }
+        current[chat] = nil
+        viewerVisible[chat] = false
+        if viewerFocus?.chat == chat { endFocus() }
     }
 
     /// Whether X closed the file at `location` in `chat`, and nothing has

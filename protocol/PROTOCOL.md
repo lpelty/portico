@@ -1397,11 +1397,15 @@ only to an app that declared `viewer.show.v1`, whatever the person's
 "agent can see" switch (it reports only that a page loaded, never what is
 on it), and it draws no acting glow. The app answers `viewer.result`
 `ok: true` once that page has loaded; at once when it will not put the
-artifact in front (auto-open off for that kind, or another chat on screen
-in multiple presentation); and, for a pane that is not a web page, once
-it is in front. The gateway waits 10 s: no answer, `ok: false`, or the
-app leaving (or the send failing) mid-show, and the agent reads "Shown;
-still loading."; loaded, "Shown in the viewer.".
+artifact in front (auto-open off for that kind, the gateway did not mark
+it to open, or another chat is on screen); and, for a pane that is not a
+web page, once it is in front. A page that failed to load answers `ok:
+false` with "Not loaded: <why>", which the agent reads as it is. A show of
+the file already in front loads it again when the pane is on a failure
+page or on a site a link went to. The gateway waits 10 s: no answer, the
+app's own timeout answer (or `ok: false` with no text), or the app
+leaving (or the send failing) mid-show, and the agent reads "Shown; still
+loading."; loaded, "Shown in the viewer.".
 An app without `viewer.show.v1` (or no app) is sent nothing and the agent
 reads "Shown in the viewer." at once, as before v0.17.
 

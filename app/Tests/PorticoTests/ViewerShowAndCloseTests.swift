@@ -38,6 +38,16 @@ final class ViewerShowAndCloseTests: XCTestCase {
         return model
     }
 
+    /// The gateway's hello: `presentation`, and the hosts the agent may act on.
+    private func hello(_ model: AppModel, presentation: String = "multiple", actHosts: [String] = []) {
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.17.0", epoch: "e",
+            brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [],
+            commands: [], capabilities: ["viewer.v1"], presentation: presentation,
+            viewerDefaults: ViewerDefaults(actHosts: actHosts))))
+        model.selected = 1
+    }
+
     private func tempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-show-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -163,6 +173,98 @@ final class ViewerShowAndCloseTests: XCTestCase {
         XCTAssertEqual(result.text, "The viewer didn't answer in 10 s.")
     }
 
+    /// Auto-open runs as `artifact.created` arrives: a file not in front
+    /// when the show comes never will be, so there is nothing to wait for.
+    func test_show_of_a_file_the_gateway_did_not_open_answers_at_once() async throws {
+        let model = model()
+        let rig = rig(model)
+        let artifact = file("art-1", "/tmp/acme/pricing.html", media: .html, open: false)
+        model.apply(created(1, artifact))
+        XCTAssertNil(model.current[1])
+        let started = ContinuousClock.now
+        let result = await rig.agent.perform(show(artifact))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(200))
+    }
+
+    /// Single presentation showing session 1: a show in chat 2 (a thread,
+    /// say) is not where the person looks, so it answers at once.
+    func test_show_for_another_chat_in_single_presentation() async throws {
+        let model = model()
+        hello(model, presentation: "single")
+        XCTAssertTrue(model.isSinglePresentation)
+        let rig = rig(model)
+        model.apply(created(1, file("a-1", "/tmp/acme/notes.md")))
+        let artifact = file("art-2", "/tmp/acme/pricing.html", media: .html)
+        model.apply(created(2, artifact))
+        let started = ContinuousClock.now
+        let result = await rig.agent.perform(show(artifact, chat: 2))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(200))
+        XCTAssertNil(rig.agent.actingChat)
+    }
+
+    /// A page that fails to load says so; shown again once its server is
+    /// up, the pane tries again rather than answering from its error page.
+    func test_a_page_that_failed_says_why_and_a_reshow_tries_again() async throws {
+        let port = try await freeLoopbackPort()
+        let address = "http://127.0.0.1:\(port)/pricing"
+        let url = try XCTUnwrap(URL(string: address))
+        let model = model()
+        let rig = rig(model)
+        let first = Artifact(id: "art-1", kind: .url, location: address, media: .url, title: "Pricing", source: .tool, open: true)
+        model.apply(created(1, first))
+        rig.coordinator.apply(.url(url), to: rig.view)
+        let failed = await rig.agent.perform(show(first))
+        XCTAssertFalse(failed.ok, failed.text)
+        XCTAssertTrue(failed.text.hasPrefix("Not loaded: "), failed.text)
+        XCTAssertGreaterThan(failed.text.count, "Not loaded: ".count, "names why")
+
+        let server = FakeHealthServer(body: "<h1>Pricing</h1>", port: UInt16(port))
+        try await server.start()
+        addTeardownBlock { server.stop() }
+        let again = Artifact(id: "art-2", kind: .url, location: address, media: .url, title: "Pricing", source: .tool, open: true)
+        model.apply(created(1, again))
+        // SwiftUI draws the pane again with the same load: not a request to retry.
+        rig.coordinator.apply(.url(url), to: rig.view)
+        let shown = await rig.agent.perform(show(again))
+        XCTAssertTrue(shown.ok, shown.text)
+        XCTAssertEqual(shown.text, "Shown in the viewer.")
+        XCTAssertGreaterThanOrEqual(server.requests, 1, "the page was asked for again")
+    }
+
+    /// The person followed a link off the file: the agent showing that file
+    /// again brings it back, and the answer waits for it to load.
+    func test_a_reshow_brings_the_file_back_from_a_site_a_link_went_to() async throws {
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("pricing.html")
+        try page("<h1 id=\"title\">Pricing</h1>").write(to: path, atomically: true, encoding: .utf8)
+        let model = model()
+        let rig = rig(model)
+        let first = file("art-1", path.path, media: .html)
+        model.apply(created(1, first))
+        rig.coordinator.apply(.html(path), to: rig.view)
+        let shown = await rig.agent.perform(show(first))
+        XCTAssertTrue(shown.ok, shown.text)
+
+        // A link took the pane to another site.
+        rig.view.loadHTMLString(page("<h1 id=\"title\">Elsewhere</h1>"), baseURL: URL(string: "https://elsewhere.example/")!)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(rig.view.url?.host(), "elsewhere.example")
+
+        let again = file("art-2", path.path, media: .html)
+        model.apply(created(1, again))
+        rig.coordinator.apply(.html(path), to: rig.view)
+        let back = await rig.agent.perform(show(again))
+        XCTAssertTrue(back.ok, back.text)
+        XCTAssertEqual(rig.view.url?.scheme, RenderedPageHandler.scheme, "the file is back in the pane")
+        XCTAssertFalse(rig.view.isLoading)
+        let title = try await rig.view.evaluateJavaScript("document.getElementById('title').textContent") as? String
+        XCTAssertEqual(title, "Pricing")
+    }
+
     func test_show_with_auto_open_off_answers_at_once() async throws {
         let model = model()
         model.settings.autoOpen = false
@@ -228,12 +330,7 @@ final class ViewerShowAndCloseTests: XCTestCase {
     func test_a_shown_web_address_is_usable_only_inside_act_hosts() async throws {
         func showRig(_ address: String) async throws -> (Rig, ViewerResult) {
             let model = model()
-            model.apply(.hello(HelloServer(
-                protocol: protocolVersion, gatewayVersion: "0.17.0", epoch: "e",
-                brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [],
-                commands: [], capabilities: ["viewer.v1"], presentation: "multiple",
-                viewerDefaults: ViewerDefaults(actHosts: ["acme.example"]))))
-            model.selected = 1
+            hello(model, actHosts: ["acme.example"])
             let rig = rig(model)
             let url = try XCTUnwrap(URL(string: address))
             let artifact = Artifact(id: "art-1", kind: .url, location: address, media: .url, title: address, source: .tool, open: true)
@@ -299,6 +396,36 @@ final class ViewerShowAndCloseTests: XCTestCase {
         XCTAssertNil(model.current[1])
         XCTAssertFalse(model.isViewerShown(for: 1))
         XCTAssertEqual(model.history(for: 1).count, 3)
+    }
+
+    /// With nothing in front (files listed, none opened, the column opened
+    /// by hand), X only hides the viewer.
+    func test_x_with_nothing_in_front_only_hides() {
+        let model = model()
+        model.apply(created(1, file("a-1", "/tmp/acme/a.md", open: false)))
+        model.apply(created(1, file("b-1", "/tmp/acme/b.md", open: false)))
+        model.setViewer(visible: true, for: 1)
+        XCTAssertNil(model.current[1])
+        model.closeFile(in: 1)
+        XCTAssertNil(model.current[1], "nothing brought forward")
+        XCTAssertFalse(model.isViewerShown(for: 1))
+        XCTAssertFalse(model.isClosed(location: "/tmp/acme/a.md", in: 1))
+        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+    }
+
+    /// The file X brings forward is shown as a pick from the list is:
+    /// `artifact.opened` goes to the gateway.
+    func test_x_tells_the_gateway_what_it_brought_forward() {
+        let model = model()
+        var sent: [ClientMessage] = []
+        model.outbound = { sent.append($0) }
+        model.apply(created(1, file("a-1", "/tmp/acme/a.md")))
+        model.apply(created(1, file("b-1", "/tmp/acme/b.md")))
+        sent = []
+        model.closeFile(in: 1)
+        guard case .artifactOpened(let opened)? = sent.last else { return XCTFail("expected artifact.opened, got \(sent)") }
+        XCTAssertEqual(opened.artifactId, "a-1")
+        XCTAssertEqual(opened.chat, 1)
     }
 
     func test_a_closed_file_shown_again_comes_back() throws {

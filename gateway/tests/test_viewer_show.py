@@ -504,6 +504,30 @@ async def test_server_show_answers_after_the_page_loads(
         await conn.close()
 
 
+async def test_server_show_that_did_not_load_says_why(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_viewer_app(server, ["viewer.v1", "viewer.show.v1"])
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        task = asyncio.create_task(server.show_files(chat, ["https://acme.example/down"]))
+        act = await next_of(conn, "viewer.act")
+        await conn.send(dump(ViewerResult(ts=TS, id=act.id, ok=False, text="Not loaded: Could not connect to the server.")))
+        assert await asyncio.wait_for(task, 2) == Shown("Not loaded: Could not connect to the server.")
+    finally:
+        await conn.close()
+
+
+async def test_the_tool_relays_a_page_that_did_not_load() -> None:
+    class NotLoaded(RecordingCallbacks):
+        async def on_show(self, paths: list[str]) -> Any:
+            return Shown("Not loaded: Could not connect to the server.")
+
+    out = await build_show_tool(NotLoaded()).handler({"path": "https://acme.example/down"})
+    assert out == {"content": [{"type": "text", "text": "Not loaded: Could not connect to the server."}]}
+    hooked = await build_open_hook(NotLoaded())(bash("open login.html"), "t1", {"signal": None})
+    assert hooked["hookSpecificOutput"]["permissionDecision"] == "deny", "the real open never runs"
+
+
 async def test_server_show_to_an_app_without_the_round_trip_answers_at_once(
     server: GatewayServer, folder: Path
 ) -> None:

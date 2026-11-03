@@ -273,11 +273,23 @@ async def test_show_round_trip_waits_for_the_app() -> None:
     assert bridge._pending == {}
 
 
-async def test_show_answered_not_ok_is_false() -> None:
-    bridge, app = make_bridge(ViewerResult(ts=TS, id="x", ok=False, text="Shown; still loading."))
+async def test_show_answered_with_the_apps_own_timeout_is_false() -> None:
+    bridge, app = make_bridge(ViewerResult(ts=TS, id="x", ok=False, text=NO_ANSWER))
     bridge.set_target(object(), True, True)
     assert await bridge.show(1, web_page()) is False
     assert len(app.acts) == 1
+
+
+async def test_show_answered_not_ok_without_words_is_false() -> None:
+    bridge, _ = make_bridge(ViewerResult(ts=TS, id="x", ok=False, text=""))
+    bridge.set_target(object(), True, True)
+    assert await bridge.show(1, web_page()) is False
+
+
+async def test_show_answered_not_loaded_relays_the_apps_words() -> None:
+    bridge, _ = make_bridge(ViewerResult(ts=TS, id="x", ok=False, text="Not loaded: Could not connect to the server."))
+    bridge.set_target(object(), True, True)
+    assert await bridge.show(1, web_page()) == "Not loaded: Could not connect to the server."
 
 
 async def test_show_when_the_app_leaves_mid_show_is_false() -> None:
