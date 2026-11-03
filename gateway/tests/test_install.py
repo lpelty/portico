@@ -590,6 +590,63 @@ def test_an_update_from_the_app_keeps_the_home_folder(stub_checkout: dict[str, P
     assert all(call.endswith(f"--state {other}") for call in calls(c, "portico-gateway"))
 
 
+def test_the_default_folder_is_not_a_choice(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    """The app exports PORTICO_HOME even when it fell back to the default; the source says so, and .portico-home wins."""
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    folder = tmp_path / "acme-root" / "app"
+    (c["repo"] / ".portico-home").write_text(f"{folder}\n")
+    done = run([install], install_env(c, PORTICO_HOME=str(tmp_path / "dot-default"), PORTICO_HOME_SOURCE="the default"))
+    assert done.returncode == 0, done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {folder}" in make
+    assert "differs" not in done.stderr
+    assert all(call.endswith(f"--state {folder}") for call in calls(c, "portico-gateway"))
+
+    # With no .portico-home, "the default" bakes nothing and passes no --state.
+    c["log"].unlink()
+    (c["repo"] / ".portico-home").unlink()
+    done = run([install], install_env(c, PORTICO_HOME=str(tmp_path / "dot-default"), PORTICO_HOME_SOURCE="the default"))
+    assert done.returncode == 0, done.stderr
+    assert "--home" not in calls(c, "make-app.sh")[0]
+    assert all("--state" not in call for call in calls(c, "portico-gateway"))
+
+
+def test_the_folder_is_normalised_before_it_is_compared_or_baked(
+    stub_checkout: dict[str, Path], tmp_path: Path
+) -> None:
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    folder = tmp_path / "acme-root" / "app"
+    (c["repo"] / ".portico-home").write_text(f"{folder}/\n")  # a trailing slash in the file
+
+    # The same folder, spelled with a trailing slash: equal, so no warning; baked once, clean.
+    done = run([install], install_env(c, PORTICO_HOME=f"{folder}//"))
+    assert done.returncode == 0, done.stderr
+    assert "differs" not in done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert make.split("--home ", 1)[1].split(" ")[0] == str(folder)
+
+    # ~ expands and a relative path is made absolute: PORTICO_HOME alone (used, not baked), then the file (baked).
+    c["log"].unlink()
+    (c["repo"] / ".portico-home").unlink()
+    env = install_env(c, PORTICO_HOME="~/acme-portico/")
+    home = Path(env.get("HOME", Path.home()))
+    done = run([install], env)
+    assert done.returncode == 0, done.stderr
+    assert all(call.endswith(f"--state {home}/acme-portico") for call in calls(c, "portico-gateway"))
+
+    c["log"].unlink()
+    done = run([install], install_env(c, PORTICO_HOME="rel/folder"), cwd=tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert all(call.endswith(f"--state {tmp_path.resolve()}/rel/folder") for call in calls(c, "portico-gateway"))
+    (c["repo"] / ".portico-home").write_text("~/from-file/\n")
+    c["log"].unlink()
+    done = run([install], install_env(c))
+    assert done.returncode == 0, done.stderr
+    assert calls(c, "make-app.sh")[0].split("--home ", 1)[1].split(" ")[0] == f"{home}/from-file"
+
+
 def test_install_refuses_a_home_that_is_a_file(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
     c = stub_checkout
     a_file = tmp_path / "not-a-folder"

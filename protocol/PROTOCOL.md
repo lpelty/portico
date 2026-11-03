@@ -1457,7 +1457,20 @@ last look, "The person used the page since your last look; look again.",
 or, for a ref from a page that has reloaded or been replaced since that
 look, "The page reloaded since your last look; look again." — an image or PDF
 pane "can be looked at, not used", a page whose host is not allowed) is
-the app's. For outside sites the app checks the page's *current* host at
+the app's. v0.17, for `mark` (a mark target is a ref, a listed name or any
+visible text on the page, the innermost element that holds it): a target
+that is none of these is refused one sentence per target, a repeated
+sentence said once. A ref gets "The page reloaded since your last look;
+look again." when the page has reloaded or been replaced, else "The person
+used the page since your last look; look again.", else "No element e12 on
+this page; look again."; text gets "No visible text matches '<text>'"
+(no period when it is the whole answer). When every target is refused the
+answer is `ok: false`; when some are marked it is `ok: true`, "Marked 1 ·
+Save, 2 · Cancel." followed by the refusal sentences. The show answers
+the agent reads, `viewer.show.v1`: "Shown in the viewer." (loaded, or the
+app will not put the file in front), "Not loaded: <why>" (the page failed),
+"Shown; still loading." (10 s without a loaded answer) and "Stopped."
+(the person pressed Stop while the call waited). For outside sites the app checks the page's *current* host at
 every click and type against `viewer_defaults.act_hosts` (a redirect or a
 link to another site is checked again), and always allows `file://`,
 `localhost`, `127.0.0.1` and `::1`. Look and scroll work on any page.

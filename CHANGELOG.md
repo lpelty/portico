@@ -1,5 +1,155 @@
 # Changelog
 
+## v0.17.0 (unreleased)
+
+A field-fix release. What is verified by tests is said so; what is verified
+only on screen is listed at the end, under "Owed".
+
+### What a person gets (app)
+
+- **The viewer takes web addresses, and the agent waits for the page.**
+  `show_in_viewer` accepts an `http://` or `https://` address as well as a
+  file. The app answers once the page has loaded, so the agent's next look
+  or click acts on that page. A page that does not load says so: the viewer
+  shows the failure (with its address), and the agent reads "Not loaded:
+  <why>". After 10 s it reads "Shown; still loading." A failed load is tried
+  again by the next show; showing a file again while a linked page is in
+  front reloads the file.
+- **Viewer calls run in order.** A conversation's viewer calls (the seven
+  tools, `show_in_viewer`, and a caught `open`) run one at a time, in the
+  order sent. Stop drops the ones still waiting; they answer "Stopped." and
+  never act afterwards (controller ruling R-c2).
+- **X closes the file.** The X in the viewer header closes the file in front
+  and shows the next one that is still open; with none left the viewer
+  hides. The toolbar's panel button only hides the viewer. A file you close
+  stays in the session list and comes back when you open it again.
+- **"This session".** The viewer's list is one row per file, newest first,
+  headed "This session" in single presentation ("This chat" in multiple).
+  The file-type glyph leads the row; a small trailing mark says who put it
+  there: sparkles for made by the agent, an eye for opened by you (R-c4). A
+  filter field shows past 12 files. The row of the file in front is
+  highlighted even when a newer version of that file exists. A file you open
+  again moves to the top.
+- **Properties remember their fold.** A Markdown page's front-matter
+  Properties stay open or folded the way you last left them, for every page.
+  Until you first toggle one, the deployment's `[viewer] properties` decides
+  (default folded).
+- **Header icons are one size.** The viewer header's buttons, the Focus
+  button and both X buttons draw at one size and weight. The Obsidian
+  button wears Obsidian's own icon when an app handles `obsidian://`; with
+  none installed it keeps its plain symbol and stays dimmed.
+- **Marks on any visible text.** `viewer_mark` finds a ref, a listed name,
+  or any text the person can see on the page, taking the innermost element
+  that holds it. Badges of marks whose boxes touch no longer cover each
+  other. A target that is not there is refused in words (see Protocol).
+- **A stuck service says so, and offers Restart.** A service whose check
+  exits 75 shows "stuck" with the check's first line, in its own colour, and
+  floats above the healthy ones (down first, then stuck). The row has a
+  visible Restart button (and the context-menu one) when the service has a
+  `restart`.
+- **No "Continues Session N" notice.** The gateway no longer puts that line
+  in the transcript when a session continues.
+- **Tooltips appear after 0.8 s** (the system default is longer). The app
+  registers the delay as a default, so a value you have set yourself wins.
+- **File pickers are sheets.** Choosing a folder or file in the input bar,
+  Settings and the start screen opens a sheet on its window instead of a
+  separate dialog. No second sheet opens while one is showing. One
+  icon-only control found by the sweep (the start screen's remove-file x)
+  now has a tooltip.
+- **Portico's folder is chosen at install.** `bin/install --home DIR` (see
+  Protocol and gateway).
+- **Three v0.16 leftovers.** A thread whose turn you stopped is not marked
+  "done" (no done card, no new-reply dot). An answered question reads
+  "Your answer: <option>" to VoiceOver. The question card's preview pane
+  follows the highlighted row, hover or keys, whichever you used last
+  (R-c7); a hover alone never arms an answer: Return and digits act on the
+  keyboard-focused option, and a digit or click takes the highlight back
+  from the pointer.
+
+### Protocol and gateway
+
+- Capability `viewer.show.v1`. `viewer.act` gains `show`
+  (`{artifact, location}`; for several files, the last). The app answers
+  `viewer.result` `ok: true` once the page has loaded, at once when it will
+  not put the file in front, and `ok: false` "Not loaded: <why>" on a
+  failure. The gateway waits 10 s. The agent reads "Shown in the viewer.",
+  "Not loaded: <why>", "Shown; still loading." or "Stopped.". A show draws no
+  glow and ignores the "agent can see" switch (it reports only that a page
+  loaded). An older app is sent nothing and the agent reads "Shown in the
+  viewer." at once.
+- Viewer calls are queued per conversation (above); argument refusals such
+  as "Mark 1 to 9 things at a time." answer outside the queue (R-c1). The
+  seven tool descriptions say calls run one at a time.
+- Mark refusals, in the app's words (R-c5): a ref gets "The page reloaded
+  since your last look; look again." when the page reloaded, else "The
+  person used the page since your last look; look again.", else "No element
+  e12 on this page; look again."; text gets "No visible text matches
+  '<text>'". One sentence per target; all refused is `ok: false`.
+- `services.stuck.v1`. `ServiceState` gains `stuck`; a check that exits 75
+  (`EX_TEMPFAIL`, not 2; R-c6) is stuck, its `detail` the check's first
+  non-empty line. A `status` command row may carry `"state": "up" | "down" |
+  "stuck"` (`state` wins over `up`). A stuck service neither starts nor
+  ends an outage. An app without the capability is sent "down".
+- `[viewer] properties = "folded" | "open"` (default folded), sent as
+  `viewer_defaults.properties`.
+- `bin/install --home DIR` writes `PorticoHome` into the app's `Info.plist`
+  and, once the install succeeds, `DIR` into the checkout's git-ignored
+  `.portico-home`. One folder order everywhere (app, scripts, CLI, gateway):
+  `PorticoHome` in `Info.plist`; `$PORTICO_HOME`; the folder `.portico-home`
+  names (read only from a real checkout); `~/.portico`. A plain install bakes
+  nothing; `$PORTICO_HOME` alone is used for the install but not baked.
+  The folder is normalised (`~/` expanded, relative made absolute, trailing
+  slash dropped) before it is compared or baked. `PORTICO_HOME_SOURCE`
+  saying "the default" (what the app and gateway export when they fell
+  back) counts as not chosen, so `.portico-home` still wins over it. An
+  update started from the app (or `bin/update`) keeps `PorticoHome`. When
+  `PORTICO_HOME` and `.portico-home` differ, the install warns and keeps
+  `PORTICO_HOME`.
+- The app starts the gateway with `run --port 0 --state <folder>`, and the
+  gateway exports `PORTICO_HOME` (and `PORTICO_HOME_SOURCE`) to its plug-ins
+  and service checks. `bin/doctor` lists "home" second, naming the folder
+  and where it came from. The index stores paths inside the folder as
+  `@state/...` (old absolute paths still load), so moving the folder does
+  not strand its spaces.
+- A `PorticoHome` folder that has been deleted is not recreated: the Gateway
+  row reads "stopped · Portico's folder <path> is missing; reinstall".
+- Gateway version 0.17.0 to match the app.
+
+### Small items
+
+- **Deployments:** a service whose check should read as stuck must exit 75;
+  exit 2 is down as before. A deployment that wants Portico's folder
+  somewhere else installs with `--home`; a plug-in or check reads
+  `$PORTICO_HOME`.
+- **Not changed:** `.portico-home` is machine-local and git-ignored; moving a
+  checkout means running `bin/install` (with `--home`, if it had one) again.
+- **Doctor started from the app** before this release reported its folder
+  as "from PORTICO_HOME"; it now reads the app's own source.
+
+### Owed: verified only on screen
+
+These have tests for their logic, not for what the person sees. They need
+a look in the running app:
+
+- The live tooltip delay (0.8 s), and that a person's own tooltip-delay
+  default wins over the registered one.
+- The file pickers as sheets (the sheet attaches to the right window; no
+  second one opens). Only the absence of a modal `runModal` call is tested.
+- The missing-folder message on the Gateway row ("stopped · Portico's folder
+  ... is missing; reinstall") after deleting the folder an app was
+  installed with. The throw and the status are tested; the row is not
+  looked at.
+- An `https://` page in the viewer, a batch of viewer calls in order, marks
+  on body text, X and the toolbar, header icons, "This session", the
+  Properties fold across pages, no Continues notice, and a stuck service's
+  Restart.
+- An install with `--home` end to end on the real machine (it was run once
+  into a scratch folder and scratch Applications folder during the build).
+- Two cases from the v0.16 scroll rework remain unproven on screen (a
+  restored offset during a trackpad gesture; a long streamed reply when the
+  column narrows). Hosted scroll tests that need an unlocked display fail
+  on a locked screen and pass on an unlocked one.
+
 ## v0.16.0 (2026-11-02)
 
 ### What a person gets (app)

@@ -138,6 +138,7 @@ final class UpdateRunner: ObservableObject {
     init(
         resolve: (() throws -> URL)? = nil, arguments: [String] = ["update"],
         environment: [String: String]? = nil,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary,
         waitFor: pid_t? = Updater.waitPid(), waitSeconds: Double = Updater.waitSeconds
     ) {
         self.waitFor = waitFor
@@ -151,7 +152,7 @@ final class UpdateRunner: ObservableObject {
         let env = environment ?? ProcessInfo.processInfo.environment
         // The app's own folder (Info.plist, then PORTICO_HOME, then ~/.portico), so the
         // update stops and restarts the gateway this app runs, and bin/install keeps it.
-        self.environment = GatewaySupervisor.childEnvironment(home: GatewaySupervisor.resolveHome(environment: env), base: env)
+        self.environment = GatewaySupervisor.childEnvironment(home: GatewaySupervisor.resolveHome(environment: env, infoDictionary: infoDictionary), base: env)
     }
 
     /// Run the command to its end; stdout and stderr arrive in `lines` as

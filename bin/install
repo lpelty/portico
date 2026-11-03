@@ -11,7 +11,7 @@
 # The folder, in order: --home; $PORTICO_HOME; the folder .portico-home names; the CLI's
 # default (~/.portico). It is written into the app only for --home, or when .portico-home
 # exists (a checkout installed with --home; then $PORTICO_HOME, which the app's updater
-# exports, is written if set). A generic install bakes nothing.
+# exports, is written if set, unless PORTICO_HOME_SOURCE says it is only the default). A generic install bakes nothing.
 #
 # Environment:
 #   PORTICO_APP_DIR   where the .app goes (default: ~/Applications)
@@ -22,6 +22,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(dirname "$here")"
 packaging="$repo/app/Packaging"
 home_file="$repo/.portico-home"
+
+# One spelling of a folder: ~/ expanded, a relative path made absolute, trailing slashes dropped.
+normalize_folder() {
+  local p="$1"
+  case "$p" in "~/"*) p="$HOME/${p#\~/}" ;; "~") p="$HOME" ;; esac
+  case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
+  while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  printf '%s\n' "$p"
+}
 
 usage() {
   echo "usage: bin/install [--home DIR]   (DIR: Portico's folder; missing folders are made with mode 0700)" >&2
@@ -37,8 +46,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 if [ -n "$home_arg" ]; then
-  case "$home_arg" in "~/"*) home_arg="$HOME/${home_arg#\~/}" ;; esac
-  case "$home_arg" in /*) ;; *) home_arg="$PWD/$home_arg" ;; esac
+  home_arg="$(normalize_folder "$home_arg")"
   if [ -e "$home_arg" ] && [ ! -d "$home_arg" ]; then
     echo "install: --home $home_arg is a file, not a folder" >&2
     exit 2
@@ -59,8 +67,13 @@ home="" bake=""
 home_file_folder=""
 if [ -f "$home_file" ]; then
   home_file_folder="$(head -n 1 "$home_file" | tr -d '\r')"
-  case "$home_file_folder" in "~/"*) home_file_folder="$HOME/${home_file_folder#\~/}" ;; esac
+  [ -z "$home_file_folder" ] || home_file_folder="$(normalize_folder "$home_file_folder")"
 fi
+# The app and the gateway export PORTICO_HOME even when they fell back to the default folder
+# (PORTICO_HOME_SOURCE says "the default"): that is not a choice, so .portico-home still counts.
+env_home="${PORTICO_HOME:-}"
+[ "${PORTICO_HOME_SOURCE:-}" != "the default" ] || env_home=""
+[ -z "$env_home" ] || env_home="$(normalize_folder "$env_home")"
 if [ -n "$home_arg" ]; then
   if [ ! -d "$home_arg" ]; then
     (umask 077 && mkdir -p "$home_arg")
@@ -68,8 +81,8 @@ if [ -n "$home_arg" ]; then
   fi
   home="$(CDPATH='' cd "$home_arg" && pwd)"
   bake=1
-elif [ -n "${PORTICO_HOME:-}" ]; then
-  home="$PORTICO_HOME"
+elif [ -n "$env_home" ]; then
+  home="$env_home"
   # A checkout installed with --home keeps a folder in the app; the app's updater exports
   # PORTICO_HOME (the app's folder) when it runs bin/update, and that is the one to keep.
   if [ -n "$home_file_folder" ]; then
