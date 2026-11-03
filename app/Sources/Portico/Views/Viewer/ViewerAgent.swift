@@ -448,7 +448,7 @@ final class ViewerAgent: ObservableObject {
         guard !target.isEmpty else { return fail(act, "Say what to click: a ref from the last look, or a button's or link's words.") }
         let page = lookedPage ?? ""
         switch await outline(target, page: page, field: false, in: view) {
-        case .shown: break
+        case .shown(let box): await point(at: box, in: view, kind: .click)
         case .missing: return await notFound(act, [target], in: view)
         case .heading: return fail(act, Message.heading)
         }
@@ -468,7 +468,10 @@ final class ViewerAgent: ObservableObject {
         let text = act.args["text"]?.stringValue ?? ""
         let submit = act.args["submit"] == .bool(true)
         let page = lookedPage ?? ""
-        guard await outline(target, page: page, field: true, in: view) == .shown else { return await notFound(act, [target], in: view) }
+        guard case .shown(let box) = await outline(target, page: page, field: true, in: view) else {
+            return await notFound(act, [target], in: view)
+        }
+        await point(at: box, in: view, kind: .type)
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.type(target, text, submit, page, place)",
@@ -523,9 +526,10 @@ final class ViewerAgent: ObservableObject {
         return ViewerResult(id: act.id, ok: ok, text: text)
     }
 
-    /// What `outline` did: drew the ring (or would have), found nothing,
-    /// or found a heading with nothing clickable around it.
-    private enum Outlined { case shown, missing, heading }
+    /// What `outline` did: drew the ring (or would have) around the box,
+    /// in the web view's coordinates; found nothing; or found a heading
+    /// with nothing clickable around it.
+    private enum Outlined { case shown(CGRect), missing, heading }
 
     /// Outline the target in the accent colour for `highlightDuration`
     /// (scrolling it into view first).
@@ -535,13 +539,14 @@ final class ViewerAgent: ObservableObject {
             ["target": target, "page": page, "field": field], in: view) as? [String: Any]
         else { return .missing }
         if box["heading"] as? Bool == true { return .heading }
-        guard highlightDuration > .zero else { return .shown }
         let number = { (key: String) in CGFloat((box[key] as? NSNumber)?.doubleValue ?? 0) }
         let zoom = view.pageZoom * view.magnification
         let size = CGSize(width: number("w") * zoom, height: number("h") * zoom)
         let top = number("y") * zoom
         let origin = CGPoint(x: number("x") * zoom, y: view.isFlipped ? top : view.bounds.height - top - size.height)
-        let ring = NSView(frame: CGRect(origin: origin, size: size).insetBy(dx: -3, dy: -3))
+        let frame = CGRect(origin: origin, size: size)
+        guard highlightDuration > .zero else { return .shown(frame) }
+        let ring = NSView(frame: frame.insetBy(dx: -3, dy: -3))
         ring.wantsLayer = true
         let accent = NSColor(model?.brand.accent ?? Theme.accent)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -553,7 +558,19 @@ final class ViewerAgent: ObservableObject {
         view.addSubview(ring)
         try? await Task.sleep(until: min(ContinuousClock.now + highlightDuration, deadline))
         ring.removeFromSuperview()
-        return .shown
+        return .shown(frame)
+    }
+
+    /// Whether Reduce Motion is on, for the agent's pointer (injectable for tests).
+    var pointerReduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    /// The agent's pointer glides to `box` and, for a click, pulses
+    /// (v0.18 §4.1, ruling 38); the click or typing runs once it has
+    /// arrived. One pointer per web view, kept on it between steps.
+    private func point(at box: CGRect, in view: WKWebView, kind: AgentPointer.Kind) async {
+        let pointer = view.subviews.lazy.compactMap { $0 as? AgentPointer }.first ?? AgentPointer(reduceMotion: pointerReduceMotion)
+        pointer.accent = NSColor(model?.brand.accent ?? Theme.accent)
+        await pointer.move(to: box, in: view, kind: kind)
     }
 
     /// " Now showing <title> — <location>." when the action navigated.
