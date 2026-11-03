@@ -18,8 +18,9 @@ under "Owed".
   only" (with "Ships with <brand>"), Built into <brand>, From your Claude
   account. Turn off, reconnect, sign in and out, add (a web address or a
   program on the Mac) and remove, with a confirmation. Each tool shows "Runs
-  without asking" or "Asks first" and the menu changes it. A change applies
-  to new chats; an open chat picks it up when it reconnects.
+  without asking" or "Asks first" and the menu changes it. A server change
+  applies to new chats; an open chat picks it up when it reconnects. A tool's
+  setting applies at once.
 - **Settings → Plugins.** Installed, Browse and marketplaces: turn on and
   off, install, update, configure, uninstall with a confirmation. A plugin
   that installs by running a command is refused ("Install it in Claude Code,

@@ -488,8 +488,9 @@ off.
 From your Claude account. Each row can be turned off, reconnected, signed in
 or out, and removed (after a confirmation); Add server… takes a web address
 or a program on the Mac. Each tool reads "Runs without asking" or "Asks
-first", and the person can change it. A change applies to new chats; an open
-chat picks it up when it reconnects. The tab is `/mcp`.
+first", and the person can change it. A server change applies to new chats;
+an open chat picks it up when it reconnects. A tool's setting applies at
+once. The tab is `/mcp`.
 
 **Settings → Plugins.** Installed plugins (turn on and off, update,
 configure, uninstall after a confirmation), Browse, and marketplaces. A
