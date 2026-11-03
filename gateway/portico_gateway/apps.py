@@ -104,8 +104,6 @@ APPS_OFF = "MCP Apps are off for this chat"
 CALL_FAILED = "The call failed"
 REASON_CHARS = 240
 
-# ``</app-context`` in any case, in a page's text (finding 2).
-_CLOSE_TAG = re.compile(r"</(?=app-context)", re.IGNORECASE)
 
 # A ``tool_use_id`` or session id used in a path: nothing that could leave the folder.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
@@ -751,6 +749,10 @@ class AppHost:
             return self._call_failed(chat, msg, NOT_FOR_APPS), "not offered to apps"
         if not await self._consent(chat, record, ui, msg.arguments):
             return self._call_failed(chat, msg, DENIED), "denied"
+        # A consent card can stay open a long time: a Reconnect (or a new engine) meanwhile may have
+        # changed what the name runs. Checked again with no wait between it and the call.
+        if not self._still_the_same(chat, engine, record, full, ui):
+            return self._call_failed(chat, msg, OTHER_SERVER), "changed during consent"
         try:
             result = await engine.mcp_app_call(full, dict(msg.arguments))
         except Exception as e:
@@ -770,6 +772,16 @@ class AppHost:
             is_error=result.get("isError") is True,
         )
         return reply, "ran"
+
+    def _still_the_same(self, chat: Any, engine: Any, record: AppRecord, full: str, ui: ToolUi) -> bool:
+        apps = self._apps_for(chat)
+        if apps is None or apps.engine is not engine or apps.map is None:
+            return False
+        ui_map = apps.map
+        if full in ui_map.ambiguous_full or normalise_server(record.server) in ui_map.ambiguous_servers:
+            return False
+        now = ui_map.full(full)
+        return now is not None and now.server == record.server == ui.server and "app" in now.visibility
 
     async def _consent(self, chat: Any, record: AppRecord, ui: ToolUi, arguments: dict[str, Any]) -> bool:
         """§2.4: read-only runs unless the policy says ask; else the session's allows, else the permission card."""
@@ -853,10 +865,11 @@ class AppHost:
 
     @staticmethod
     def render(blocks: dict[str, tuple[str, str]]) -> str:
-        """The blocks as the engine reads them. The page's text can't close the block (and so speak
-        as the person): ``</app-context`` in it loses its ``<``; the server name is escaped."""
+        """The blocks as the engine reads them. R-c19: the page's text can't close the block (and so
+        speak as the person) in any spelling: every ``&``, ``<`` and ``>`` in it is escaped (the engine
+        is a model, not an XML parser); the server name is escaped too."""
         return "".join(
-            f'<app-context server="{html.escape(server, quote=True)}">\n{_CLOSE_TAG.sub("&lt;/", text)}\n</app-context>\n\n'
+            f'<app-context server="{html.escape(server, quote=True)}">\n{_escape_text(text)}\n</app-context>\n\n'
             for server, text in blocks.values()
         )
 
@@ -895,6 +908,10 @@ class AppHost:
         await self.server._send(conn, self._open_frame(chat.number, msg.tool_use_id, record, page.html, id=msg.id))
         if record.finished():
             await self.server._send(conn, self._result_frame(chat.number, msg.tool_use_id, record).model_copy(update={"id": msg.id}))
+
+
+def _escape_text(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _now() -> str:
