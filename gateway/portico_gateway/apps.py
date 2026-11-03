@@ -46,6 +46,7 @@ import dataclasses
 import json
 import logging
 import os
+import html
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -100,7 +101,11 @@ CONTEXT_NOTICE = "{} updated the context"
 CONSENT = "The {} app wants to run {}"
 FROM_CARD = " · from the card above"
 APPS_OFF = "MCP Apps are off for this chat"
+CALL_FAILED = "The call failed"
 REASON_CHARS = 240
+
+# ``</app-context`` in any case, in a page's text (finding 2).
+_CLOSE_TAG = re.compile(r"</(?=app-context)", re.IGNORECASE)
 
 # A ``tool_use_id`` or session id used in a path: nothing that could leave the folder.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
@@ -124,10 +129,20 @@ class ToolUi:
 
 @dataclasses.dataclass
 class UiMap:
-    tools: dict[str, ToolUi] = dataclasses.field(default_factory=dict)
+    # Keyed by (configured server, bare tool): two servers never share an entry.
+    tools: dict[tuple[str, str], ToolUi] = dataclasses.field(default_factory=dict)
+    # The full names Claude Code gives the tools, for the ones only one tool has.
+    by_full: dict[str, ToolUi] = dataclasses.field(default_factory=dict)
+    # Full names (and normalised server names) more than one server produces: no app
+    # opens on them and no page may call them, since which server is meant is unknown.
+    ambiguous_full: set[str] = dataclasses.field(default_factory=set)
+    ambiguous_servers: set[str] = dataclasses.field(default_factory=set)
     titles: dict[str, str] = dataclasses.field(default_factory=dict)
     # False while a server was still connecting: its tools are not known yet.
     complete: bool = True
+
+    def full(self, name: str) -> ToolUi | None:
+        return self.by_full.get(name)
 
 
 def server_title(status: dict[str, Any]) -> str:
@@ -160,6 +175,7 @@ def _visibility(tool: dict[str, Any]) -> tuple[str, ...]:
 def build_ui_map(status: list[dict[str, Any]]) -> UiMap:
     """The UI map from ``mcp_status()``: every tool of every server Portico doesn't run itself."""
     out = UiMap()
+    normalised: dict[str, str] = {}
     for server in status:
         name = server.get("name")
         if not isinstance(name, str) or not name or name == SHOW_SERVER:
@@ -167,6 +183,9 @@ def build_ui_map(status: list[dict[str, Any]]) -> UiMap:
         config = server.get("config")
         if isinstance(config, dict) and config.get("type") == "sdk":
             continue  # in-process servers never use apps (§2.2.6)
+        short = normalise_server(name)
+        if normalised.setdefault(short, name) != name:
+            out.ambiguous_servers.add(short)
         out.titles[name] = server_title(server)
         if server.get("status") == "pending":
             out.complete = False
@@ -175,10 +194,10 @@ def build_ui_map(status: list[dict[str, Any]]) -> UiMap:
             if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
                 continue
             bare = tool["name"]
-            full = f"mcp__{normalise_server(name)}__{bare}"
+            full = f"mcp__{short}__{bare}"
             annotations = tool.get("annotations")
             description = tool.get("description") if isinstance(tool.get("description"), str) else ""
-            out.tools[full] = ToolUi(
+            out.tools[(name, bare)] = ToolUi(
                 server=name,
                 tool=bare,
                 full=full,
@@ -187,6 +206,16 @@ def build_ui_map(status: list[dict[str, Any]]) -> UiMap:
                 read_only=isinstance(annotations, dict) and annotations.get("readOnly") is True,
                 description=description,
             )
+    for ui in out.tools.values():
+        if ui.full in out.by_full and out.by_full[ui.full].server != ui.server:
+            out.ambiguous_full.add(ui.full)
+        out.by_full.setdefault(ui.full, ui)
+    for full in out.ambiguous_full:
+        del out.by_full[full]
+    for short in out.ambiguous_servers:
+        for full in [f for f in out.by_full if f.startswith(f"mcp__{short}__")]:
+            out.ambiguous_full.add(full)
+            del out.by_full[full]
     return out
 
 
@@ -342,6 +371,8 @@ class _Gate:
     task: asyncio.Task[None] | None = None
     # Handing the held events on: never cancelled then (it may be mid-way through one).
     releasing: bool = False
+    # Set by a stop: give up on the page and hand the held events on now (R-c16).
+    abort: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
 
 
 class AppHost:
@@ -358,6 +389,7 @@ class AppHost:
         # Per chat: tool_use_id -> (server, text), the latest context per card; and who was noticed.
         self._context: dict[int, dict[str, tuple[str, str]]] = {}
         self._noticed: dict[int, set[str]] = {}
+        self._ambiguous_logged: set[tuple[int, str]] = set()
 
     # --- engines ----------------------------------------------------------------
 
@@ -371,11 +403,19 @@ class AppHost:
         self._engines[chat.number] = apps
         self._read_map(chat.number, apps)
 
-    def engine_closed(self, chat: Any) -> None:
+    async def engine_closed(self, chat: Any) -> None:
+        """The engine went: a page being read and the events held behind it go too, and every
+        card whose call never finished is cancelled (saved so, so a replay doesn't show it running)."""
         self._drop_gate(chat.number)
         apps = self._engines.pop(chat.number, None)
         if apps is not None and apps.map_task is not None and not apps.map_task.done():
             apps.map_task.cancel()
+        for tool_use_id, record in list(self._live.get(chat.number, {}).items()):
+            if record.finished():
+                continue
+            record.cancelled = True
+            self._save(chat, tool_use_id, record)
+            await self.server.broadcast(self._result_frame(chat.number, tool_use_id, record))
 
     def engine_reconnected(self, engine: Any) -> None:
         """Ruling 22: after a Reconnect, read that engine's UI map again."""
@@ -411,16 +451,14 @@ class AppHost:
             except Exception:
                 pass
         ui_map = apps.map
-        if ui_map is not None and full in ui_map.tools:
-            return ui_map.tools[full]
-        if ui_map is not None and ui_map.complete:
-            return None
+        if ui_map is not None and (full in ui_map.by_full or full in ui_map.ambiguous_full or ui_map.complete):
+            return ui_map.full(full)
         self._read_map(chat, apps)
         try:
             await asyncio.shield(apps.map_task)  # type: ignore[arg-type]
         except Exception:
             pass
-        return apps.map.tools.get(full) if apps.map is not None else None
+        return apps.map.full(full) if apps.map is not None else None
 
     # --- the gate: engine events wait while a page is read ------------------------------
 
@@ -449,10 +487,10 @@ class AppHost:
             return False
         ui_map = apps.map
         if ui_map is not None and (apps.map_task is None or apps.map_task.done()):
-            ui = ui_map.tools.get(event.tool)
+            ui = ui_map.full(event.tool)
             if ui is not None:
                 return ui.resource_uri is not None
-            if ui_map.complete:
+            if ui_map.complete or event.tool in ui_map.ambiguous_full:
                 return False
         return True  # not known yet: the open task decides
 
@@ -465,13 +503,42 @@ class AppHost:
         self._gates[chat.number] = gate
         gate.task = self.server._spawn(self._open_then_release(chat, event, gate), name=f"portico-app-open-{chat.number}")
 
+    def abort_open(self, chat: int) -> None:
+        """R-c16: a stop gives up on a page being read; the held events go on at once (a plain tool row)."""
+        gate = self._gates.get(chat)
+        if gate is not None and not gate.releasing:
+            gate.abort.set()
+
     async def _open_then_release(self, chat: Any, event: ToolStarted, gate: _Gate) -> None:
+        # R-c16: one deadline over the lookup and the read; a stop ends it at once.
+        resolve = asyncio.ensure_future(self._resolve(chat, event))
+        abort = asyncio.ensure_future(gate.abort.wait())
+        found: tuple[_EngineApps, ToolUi, Page] | None = None
         try:
-            await self._open(chat, event)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("chat %d: opening the app for %s failed", chat.number, event.tool)
+            done, _ = await asyncio.wait({resolve, abort}, timeout=READ_RETRY_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+            if resolve in done:
+                try:
+                    found = resolve.result()
+                except Exception:
+                    log.exception("chat %d: opening the app for %s failed", chat.number, event.tool)
+            elif abort in done:
+                log.info("chat %d: stopped while reading the page for %s; a plain tool row", chat.number, event.tool)
+            else:
+                apps = self._apps_for(chat)
+                if apps is not None and not apps.off:
+                    apps.off = True
+                    log.warning(
+                        "MCP Apps are off for chat %d: the page for %s took over %.0f s", chat.number, event.tool, READ_RETRY_SECONDS
+                    )
+        finally:
+            for task in (resolve, abort):
+                if not task.done():
+                    task.cancel()
+        if found is not None:
+            try:
+                await self._show(chat, event, *found)
+            except Exception:
+                log.exception("chat %d: showing the app for %s failed", chat.number, event.tool)
         gate.releasing = True
         while self._gates.get(chat.number) is gate:
             if not gate.backlog:
@@ -483,20 +550,25 @@ class AppHost:
             except Exception:
                 log.exception("chat %d: a held engine event failed", chat.number)
 
-    async def _open(self, chat: Any, event: ToolStarted) -> None:
+    async def _resolve(self, chat: Any, event: ToolStarted) -> tuple[_EngineApps, ToolUi, Page] | None:
+        """The tool's UI and its page, or ``None`` (not an app, or the read failed: apps off for the engine)."""
         apps = self._apps_for(chat)
         if apps is None or apps.off:
-            return
+            return None
         ui = await self._lookup(chat.number, apps, event.tool)
         if ui is None or ui.resource_uri is None:
-            return
+            return None
         try:
             page = await self._page(apps, ui.server, ui.resource_uri)
         except Exception as e:
             if not apps.off:
                 apps.off = True
                 log.warning("MCP Apps are off for chat %d: %s", chat.number, _reason(e))
-            return
+            return None
+        return apps, ui, page
+
+    async def _show(self, chat: Any, event: ToolStarted, apps: _EngineApps, ui: ToolUi, page: Page) -> None:
+        assert ui.resource_uri is not None
         title = apps.map.titles.get(ui.server, ui.server) if apps.map is not None else ui.server
         record = AppRecord(
             server=ui.server,
@@ -622,7 +694,10 @@ class AppHost:
         for e in events:
             out.append(e)
             if isinstance(e, ToolStarted) and e.tool_use_id in records and e.tool_use_id not in finished:
-                out.append(self._open_frame(chat.number, e.tool_use_id, records[e.tool_use_id], None))
+                record = records[e.tool_use_id]
+                out.append(self._open_frame(chat.number, e.tool_use_id, record, None))
+                if record.finished():  # its engine went before the call finished: cancelled
+                    out.append(self._result_frame(chat.number, e.tool_use_id, record))
             elif isinstance(e, ToolFinished) and e.tool_use_id in records:
                 record = records[e.tool_use_id]
                 out.append(self._open_frame(chat.number, e.tool_use_id, record, None))
@@ -659,7 +734,19 @@ class AppHost:
         except ProtocolError as e:
             return self._call_failed(chat, msg, e.message), "no engine"
         apps = self._apps_for(chat)
+        ui_map = apps.map if apps is not None else None
         ui = await self._lookup(chat.number, apps, full) if apps is not None else None
+        ui_map = apps.map if apps is not None else ui_map
+        short = normalise_server(record.server)
+        if ui_map is not None and (full in ui_map.ambiguous_full or short in ui_map.ambiguous_servers):
+            # Two servers give this name: which one would run is not certain.
+            if (chat.number, full) not in self._ambiguous_logged:
+                self._ambiguous_logged.add((chat.number, full))
+                log.warning("chat %d: refused app calls to %s: more than one server has that name", chat.number, full)
+            return self._call_failed(chat, msg, OTHER_SERVER), "ambiguous server"
+        if ui is not None and ui.server != record.server:
+            # ``mcp__acme__evil__wipe`` starts like acme's, but is server ``acme__evil``'s.
+            return self._call_failed(chat, msg, OTHER_SERVER), "another server"
         if ui is None or "app" not in ui.visibility:
             return self._call_failed(chat, msg, NOT_FOR_APPS), "not offered to apps"
         if not await self._consent(chat, record, ui, msg.arguments):
@@ -667,7 +754,8 @@ class AppHost:
         try:
             result = await engine.mcp_app_call(full, dict(msg.arguments))
         except Exception as e:
-            return self._call_failed(chat, msg, _reason(e)), f"failed ({type(e).__name__})"
+            # R-c17: the page hears only that it failed; the detail stays in the log.
+            return self._call_failed(chat, msg, CALL_FAILED), f"failed ({type(e).__name__}: {_reason(e)})"
         result = result if isinstance(result, dict) else {}
         content = result.get("content")
         structured = result.get("structuredContent")
@@ -686,7 +774,7 @@ class AppHost:
     async def _consent(self, chat: Any, record: AppRecord, ui: ToolUi, arguments: dict[str, Any]) -> bool:
         """§2.4: read-only runs unless the policy says ask; else the session's allows, else the permission card."""
         server = self.server
-        if server.tool_policy.effective(record.server, ui.tool, ui.read_only) == "allow":
+        if server.tool_policy.effective(ui.server, ui.tool, ui.read_only) == "allow":
             return True
         if server.cards.allowed(chat, ui.full, arguments):
             return True
@@ -743,16 +831,34 @@ class AppHost:
         if record is None:
             raise ProtocolError("app.unknown", UNKNOWN_APP)
         self._context.setdefault(chat.number, {})[msg.tool_use_id] = (record.server, msg.text[:CONTEXT_CAP])
+        # Once per app (its server) between two messages.
         noticed = self._noticed.setdefault(chat.number, set())
-        if msg.tool_use_id not in noticed:
-            noticed.add(msg.tool_use_id)
+        if record.server not in noticed:
+            noticed.add(record.server)
             await self.server.notice(chat, CONTEXT_NOTICE.format(record.server_title))
 
-    def take_context(self, chat: Any) -> str:
-        """The kept context blocks, to put first in the person's next message; cleared."""
+    def take_context(self, chat: Any) -> dict[str, tuple[str, str]]:
+        """The kept context blocks for the person's next message (``render`` them); cleared."""
         blocks = self._context.pop(chat.number, {})
         self._noticed.pop(chat.number, None)
-        return "".join(f'<app-context server="{server}">\n{text}\n</app-context>\n\n' for server, text in blocks.values())
+        return blocks
+
+    def put_back(self, chat: Any, blocks: dict[str, tuple[str, str]]) -> None:
+        """R-c17: the message they were taken for never went; a newer update from the same card wins."""
+        if not blocks:
+            return
+        kept = self._context.setdefault(chat.number, {})
+        for tool_use_id, block in blocks.items():
+            kept.setdefault(tool_use_id, block)
+
+    @staticmethod
+    def render(blocks: dict[str, tuple[str, str]]) -> str:
+        """The blocks as the engine reads them. The page's text can't close the block (and so speak
+        as the person): ``</app-context`` in it loses its ``<``; the server name is escaped."""
+        return "".join(
+            f'<app-context server="{html.escape(server, quote=True)}">\n{_CLOSE_TAG.sub("&lt;/", text)}\n</app-context>\n\n'
+            for server, text in blocks.values()
+        )
 
     # --- reload (ruling 26) ----------------------------------------------------------------
 

@@ -1916,7 +1916,7 @@ class GatewayServer:
         """
         engine, chat.engine = chat.engine, None
         # v0.18: a page being read, and the events held behind it, go with the engine.
-        self.apps.engine_closed(chat)
+        await self.apps.engine_closed(chat)
         run = self._runs.pop(chat.number, None)
         if run is not None:
             run.stop_requested = True
@@ -2421,17 +2421,28 @@ class GatewayServer:
     # A page's call and Reload run as tasks replying by id: a call may wait on a
     # person's consent, a Reload may start the engine.
 
+    def _check_apps(self, conn: ServerConnection) -> None:
+        """An ``app.*`` frame is refused when apps are off here, or from an app that didn't declare ``apps.v1``."""
+        if not self.config.apps.enabled:
+            raise ProtocolError("app.off", "MCP Apps are off in this gateway")
+        if APPS_CAPABILITY not in _capabilities(conn):
+            raise ProtocolError("protocol.capability", "app frames need apps.v1 in hello")
+
     async def on_app_call_tool(self, msg: AppCallTool, conn: ServerConnection) -> None:
+        self._check_apps(conn)
         chat = self.registry.get(msg.chat)
         self._spawn(self.apps.call_tool(chat, msg, conn), name=f"portico-app-call-{chat.number}")
 
     async def on_app_message(self, msg: AppMessage, conn: ServerConnection) -> None:
+        self._check_apps(conn)
         await self.apps.message(self.registry.get(msg.chat), msg, conn)
 
     async def on_app_context(self, msg: AppContext, conn: ServerConnection) -> None:
+        self._check_apps(conn)
         await self.apps.context(self.registry.get(msg.chat), msg)
 
     async def on_app_reload(self, msg: AppReload, conn: ServerConnection) -> None:
+        self._check_apps(conn)
         chat = self.registry.get(msg.chat)
         self._spawn(self.apps.reload(chat, msg, conn), name=f"portico-app-reload-{chat.number}")
 
@@ -3376,33 +3387,51 @@ class GatewayServer:
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
             run.first_line_title = title
-        engine_text = self._with_app_context(chat, text)
+        engine_text, context = self._with_app_context(chat, text)
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
-        self._spawn(self._send_task(chat, run, engine_text, title, msg, conn), name=f"portico-send-{chat.number}")
+        self._spawn(
+            self._send_task(chat, run, engine_text, title, msg, conn, context), name=f"portico-send-{chat.number}"
+        )
 
-    def _with_app_context(self, chat: Chat, text: str) -> str:
-        """``text`` as the engine gets it: MCP apps' kept context first, unless it is a command (v0.18)."""
+    def _with_app_context(self, chat: Chat, text: str) -> tuple[str, dict[str, tuple[str, str]]]:
+        """``text`` as the engine gets it, MCP apps' kept context first unless it is a command (v0.18),
+        and the blocks taken for it (``AppHost.put_back`` them if it never goes, R-c17)."""
         if command := slash_command(text):
             log.debug("chat %d: /%s goes without the apps' context; it waits", chat.number, command)
-            return text
-        return self.apps.take_context(chat) + text
+            return text, {}
+        blocks = self.apps.take_context(chat)
+        return self.apps.render(blocks) + text, blocks
 
     async def _send_task(
-        self, chat: Chat, run: TurnRun, text: str, title: str | None, msg: MessageSend, conn: ServerConnection | None
+        self,
+        chat: Chat,
+        run: TurnRun,
+        text: str,
+        title: str | None,
+        msg: MessageSend,
+        conn: ServerConnection | None,
+        context: dict[str, tuple[str, str]] | None = None,
     ) -> None:
-        """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``."""
+        """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``.
+
+        v0.18 (R-c17): when the text never reached the engine, the apps' context taken for it is kept.
+        """
         try:
             await self._begin_turn(chat, run, text)
         except ProtocolError as e:
+            self.apps.put_back(chat, context or {})
             await self._reply(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
             return
         except Exception as e:
+            self.apps.put_back(chat, context or {})
             log.exception("chat %d: message.send failed", chat.number)
             if self._runs.get(chat.number) is run:
                 await self._fail_turn(chat, run)
             await self._reply(conn, self.error("gateway.error", f"message.send failed: {e}", chat=chat.number, id=msg.id))
             return
+        if not run.sent:
+            self.apps.put_back(chat, context or {})
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
@@ -3491,9 +3520,11 @@ class GatewayServer:
         while held and slash_command(held[0].text) is None:
             item = held[0]
             text = with_attachments(item.text, item.attachments)
+            engine_text, context = self._with_app_context(chat, text)
             try:
-                await engine.inject(self._with_app_context(chat, text))
+                await engine.inject(engine_text)
             except Exception:
+                self.apps.put_back(chat, context)
                 log.exception("chat %d: writing a queued message into turn %d failed; it waits", chat.number, run.turn)
                 break
             held.pop(0)
@@ -3685,6 +3716,8 @@ class GatewayServer:
         if run is None:
             return  # nothing running: a stop is harmless
         run.stop_requested = True
+        # v0.18 (R-c16): a page being read is given up; what waited behind it goes on now.
+        self.apps.abort_open(chat.number)
         if chat.engine is None:
             return  # the engine is still starting: ``_begin_turn`` ends the turn stopped instead of sending
         # An open card would keep the engine's permission call waiting past the interrupt.
