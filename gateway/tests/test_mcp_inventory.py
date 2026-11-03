@@ -124,6 +124,38 @@ def test_unreadable_claude_json_is_empty_and_untouched(tmp_path: Path) -> None:
     assert path.read_bytes() == garbage
 
 
+def test_unreadable_claude_json_logs_once_per_mtime(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    import os
+
+    folder, env = setup(tmp_path)
+    path = Path(env["CLAUDE_CONFIG_DIR"]) / ".claude.json"
+    path.write_bytes(b"{not json")
+    caplog.set_level("WARNING", logger=mcp_inventory.__name__)
+
+    def lines() -> int:
+        return sum("does not parse" in r.getMessage() for r in caplog.records)
+
+    read_servers(folder, [], env)
+    servers_for_engine(folder, ["project"], [], env)
+    assert lines() == 1
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    read_servers(folder, [], env)
+    assert lines() == 2
+    assert all("{not json" not in r.getMessage() for r in caplog.records)
+
+
+async def test_plugin_cache_keys_on_the_resolved_folder(tmp_path: Path) -> None:
+    folder = tmp_path / "agent"
+    folder.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(folder)
+    runner = ListRunner(stdout=plugin_list(folder, tmp_path / "elsewhere"))
+    await plugin_paths_for_engine(runner, folder, ["project"])
+    await plugin_paths_for_engine(runner, link, ["project"])
+    assert len(runner.calls) == 1
+
+
 def test_missing_files_are_empty(tmp_path: Path) -> None:
     folder = tmp_path / "bare"
     folder.mkdir()
@@ -148,6 +180,7 @@ class ListRunner:
 @pytest.fixture(autouse=True)
 def _fresh_cache() -> None:
     invalidate_plugin_cache()
+    mcp_inventory._logged_unusable.clear()
 
 
 def plugin_list(folder: Path, elsewhere: Path) -> str:
@@ -157,6 +190,8 @@ def plugin_list(folder: Path, elsewhere: Path) -> str:
             {"id": "b@m", "scope": "user", "enabled": False, "installPath": "/p/b"},
             {"id": "c@m", "scope": "local", "enabled": True, "projectPath": str(folder), "installPath": "/p/c"},
             {"id": "d@m", "scope": "local", "enabled": True, "projectPath": str(elsewhere), "installPath": "/p/d"},
+            {"id": "e@m", "scope": "project", "enabled": True, "projectPath": str(folder), "installPath": "/p/e"},
+            {"id": "f@m", "scope": "synced", "enabled": True, "installPath": "/p/f"},
         ]
     )
 
@@ -165,6 +200,7 @@ async def test_plugin_paths_for_engine(tmp_path: Path, monkeypatch: pytest.Monke
     folder = tmp_path / "agent"
     folder.mkdir()
     runner = ListRunner(stdout=plugin_list(folder, tmp_path / "elsewhere"))
+    # Neither the project-scope entry (the "project" source loads it) nor the synced one is passed.
     assert await plugin_paths_for_engine(runner, folder, ["project"]) == ["/p/a", "/p/c"]
     assert runner.calls[0][0] == ["plugin", "list", "--json"]
     assert runner.calls[0][1] == folder

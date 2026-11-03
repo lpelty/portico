@@ -58,19 +58,36 @@ class ServerEntry:
     disabled: bool
 
 
+# (path, mtime_ns) of each unusable file already logged: a broken file is
+# logged once per version of it (controller ruling R-c3), not on every read.
+_logged_unusable: set[tuple[str, int]] = set()
+
+
+def _log_unusable(path: Path, message: str, kind: str) -> None:
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        mtime = -1
+    key = (str(path), mtime)
+    if key in _logged_unusable:
+        return
+    _logged_unusable.add(key)
+    log.warning(message, path, kind)
+
+
 def _read_json(path: Path) -> dict[str, Any]:
-    """The file's top-level object; ``{}`` when missing or unusable (logged, never with content)."""
+    """The file's top-level object; ``{}`` when missing or unusable (logged once per mtime, never with content)."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
         return {}
     except OSError as e:
-        log.warning("could not read %s (%s); treating it as empty", path, type(e).__name__)
+        _log_unusable(path, "could not read %s (%s); treating it as empty", type(e).__name__)
         return {}
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
-        log.warning("%s does not parse (%s); treating it as empty", path, type(e).__name__)
+        _log_unusable(path, "%s does not parse (%s); treating it as empty", type(e).__name__)
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -246,7 +263,10 @@ def invalidate_plugin_cache() -> None:
 
 async def _plugin_list(runner: CliRunner, folder: Path) -> list[dict[str, Any]]:
     global _plugin_failure_logged
-    key = str(folder)
+    try:
+        key = str(folder.resolve())
+    except OSError:
+        key = str(folder)
     cached = _plugin_cache.get(key)
     now = time.monotonic()
     if cached is not None and now - cached[0] < PLUGIN_CACHE_SECONDS:
@@ -294,10 +314,12 @@ async def plugin_paths_for_engine(runner: CliRunner, folder: Path, setting_sourc
     """The ``installPath`` of each plugin to pass an engine in ``folder`` (ruling 3).
 
     From ``claude plugin list --json`` (cached 30 s per folder): every entry
-    with ``enabled: true`` whose scope is ``user``, or ``local``/``project``
-    with ``projectPath`` equal to the folder. User entries are skipped when
+    with ``enabled: true`` whose scope is ``user``, or ``local`` with
+    ``projectPath`` equal to the folder. User entries are skipped when
     ``setting_sources`` has ``user``, local ones when it has ``local``
-    (Claude Code loads those itself). A failed list is ``[]``, logged once.
+    (Claude Code loads those itself). ``project`` entries are never passed:
+    the ``project`` source already loads them (R-c1); nor are ``synced`` ones
+    (R-c2). A failed list is ``[]``, logged once.
     """
     folder = Path(folder)
     want_user = "user" not in setting_sources
@@ -314,7 +336,7 @@ async def plugin_paths_for_engine(runner: CliRunner, folder: Path, setting_sourc
         scope = entry.get("scope")
         if scope == "user" and want_user:
             pass
-        elif scope in ("local", "project") and want_local and _same_folder(entry.get("projectPath"), folder):
+        elif scope == "local" and want_local and _same_folder(entry.get("projectPath"), folder):
             pass
         else:
             continue

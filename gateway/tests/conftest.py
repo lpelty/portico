@@ -419,12 +419,12 @@ class FakeCli:
 def _no_real_claude_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """v0.18: no test reads the person's ``~/.claude.json`` or runs the real ``claude`` CLI.
 
-    ``CLAUDE_CONFIG_DIR`` points at an empty throwaway folder (live runs,
-    ``PORTICO_LIVE=1``, keep the real one: their engine needs it), the
-    server's default CLI runner is ``FakeCli``, and the plugin cache starts empty.
+    ``CLAUDE_CONFIG_DIR`` points at an empty throwaway folder, always (with
+    ``PORTICO_LIVE=1`` too: the live checks run the gateway as a subprocess
+    and set their own), the server's default CLI runner is ``FakeCli``, and
+    the plugin cache starts empty.
     """
-    if os.environ.get("PORTICO_LIVE") != "1":
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-config")))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-config")))
     monkeypatch.setattr(server_mod, "SubprocessCli", FakeCli)
     invalidate_plugin_cache()
 

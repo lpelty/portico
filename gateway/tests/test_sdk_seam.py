@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from portico_gateway.config import ConfigError, load_config
-from portico_gateway.engine import SHOW_SERVER, SDKEngine, build_options
+from portico_gateway.engine import APPS_CAPABILITY, SHOW_SERVER, SDKEngine, apps_capable, build_options
 
 from tests.conftest import RecordingCallbacks
 
@@ -131,6 +131,15 @@ async def test_seam_before_start_raises() -> None:
         await engine.mcp_status()
     with pytest.raises(RuntimeError):
         await engine.mcp_app_read("acme-tracker", "ui://t/a.html")
+
+
+def test_apps_capable_from_server_info() -> None:
+    assert APPS_CAPABILITY == "mcp_call_result_not_for_model_v1"
+    assert apps_capable({"capabilities": ["ui_surface_v1", APPS_CAPABILITY]}) is True
+    assert apps_capable({"capabilities": ["ui_surface_v1"]}) is False
+    assert apps_capable({}) is False
+    assert apps_capable({"capabilities": APPS_CAPABILITY}) is False  # not a list
+    assert apps_capable(None) is False
 
 
 def test_config_mcp_core(tmp_path: Path) -> None:
