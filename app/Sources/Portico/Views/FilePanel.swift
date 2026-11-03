@@ -17,10 +17,12 @@ enum TooltipDelay {
 enum FilePanel {
     /// Shows `panel` as a sheet on `window`; `done` gets the chosen URLs on
     /// OK and is not called on Cancel. With no window it falls back to a
-    /// modal panel.
+    /// modal panel. While a sheet is already on the window (a second click
+    /// on +), nothing more opens: the first picker is still the one to use.
     @MainActor
     static func present(_ panel: NSOpenPanel, from window: NSWindow?, done: @escaping ([URL]) -> Void) {
         if let window {
+            guard window.attachedSheet == nil else { return }
             panel.beginSheetModal(for: window) { response in
                 if response == .OK { done(panel.urls) }
             }

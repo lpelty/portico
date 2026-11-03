@@ -337,8 +337,8 @@ v0.7: the renewal is recorded in both conversations as `chat.notice`
 lines. In the ending session, at once (before any log turn): "New —
 logging, then ending this session" when the log step runs, else "New —
 ending this session"; once it has ended, "Session ended · continues in
-Session M". In the next session, its first event: "Continues Session N".
-All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
+Session M". (v0.17: the next session no longer gets a "Continues Session N"
+line; the divider already says it.) All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
 renew is running), `session.ended` (already ended), `thread.renew` (v0.16:
 `chat` is a thread, which closes instead). v0.16: open threads stay open,
 and the ending session's pending thread proposals become `dismissed`. While a renew runs,
