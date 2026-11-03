@@ -1,7 +1,9 @@
 """The gateway's state directory: token, ledger, index, lock.
 
-Everything the gateway keeps between launches lives in one directory,
-``$PORTICO_HOME`` or ``~/.portico``:
+Everything the gateway keeps between launches lives in one directory: the
+``--state`` given, else ``$PORTICO_HOME``, else the folder named in the
+checkout's git-ignored ``.portico-home`` (written by ``bin/install --home``),
+else ``~/.portico``:
 
 - ``token``        per-launch secret the app presents at connect (mode 0600)
 - ``ledger.json``  host, port, pid, epoch of the running gateway — a hint the
@@ -17,12 +19,15 @@ Everything the gateway keeps between launches lives in one directory,
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import secrets
 import tempfile
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+from . import REPO_ROOT
 
 from .messages import (
     AgentCommand,
@@ -37,6 +42,12 @@ from .messages import (
 
 ENV_HOME = "PORTICO_HOME"
 DEFAULT_DIRNAME = ".portico"
+# v0.17: the checkout's record of the folder ``bin/install --home`` chose (one
+# line, an absolute path); git-ignored, so ``bin/update`` still sees a clean checkout.
+HOME_FILE = ".portico-home"
+# v0.17: how ``index.json`` writes a path inside the state folder, so moving the
+# folder (re-install with a new ``--home``) leaves no stale absolute path behind.
+STATE_PREFIX = "@state"
 # v0.11 (item 66): how many folders' command lists ``commands.json`` keeps,
 # newest last; older folders are dropped when it is written.
 COMMAND_FOLDERS_KEPT = 20
@@ -170,10 +181,30 @@ class StateDir:
     """The state directory. Creating one makes the directory (mode 0700)."""
 
     @staticmethod
+    def _home_file_folder() -> Path | None:
+        """The folder the checkout's ``.portico-home`` names, or ``None`` (no checkout, no file, or empty)."""
+        if not (REPO_ROOT / "bin" / "portico-gateway").is_file():
+            return None  # not running from a checkout: there is no file to read
+        try:
+            line = (REPO_ROOT / HOME_FILE).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        return Path(line).expanduser() if line else None
+
+    @staticmethod
     def default_path() -> Path:
-        """``$PORTICO_HOME`` when set, else ``~/.portico``. Creates nothing."""
+        """``$PORTICO_HOME``, else the checkout's ``.portico-home``, else ``~/.portico``. Creates nothing."""
         env = os.environ.get(ENV_HOME)
-        return Path(env).expanduser() if env else Path.home() / DEFAULT_DIRNAME
+        if env:
+            return Path(env).expanduser()
+        return StateDir._home_file_folder() or Path.home() / DEFAULT_DIRNAME
+
+    @staticmethod
+    def default_source() -> str:
+        """Where ``default_path`` found the folder: ``PORTICO_HOME``, ``.portico-home`` or ``the default``."""
+        if os.environ.get(ENV_HOME):
+            return ENV_HOME
+        return HOME_FILE if StateDir._home_file_folder() is not None else "the default"
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = Path(path) if path is not None else self.default_path()
@@ -259,7 +290,13 @@ class StateDir:
         except FileNotFoundError:
             return Index()
         try:
-            return Index.model_validate_json(raw)
+            data = json.loads(raw)
+        except ValueError:
+            data = None  # not JSON: pydantic below says so in its own words
+        try:
+            if data is None:
+                return Index.model_validate_json(raw)
+            return Index.model_validate_json(json.dumps(self._expand_state_paths(data)))
         except ValidationError as e:
             raise StateError(
                 f"{self.index_path} is not a usable index.json; refusing to start and "
@@ -267,8 +304,40 @@ class StateDir:
             ) from e
 
     def save_index(self, index: Index) -> None:
-        """Write the whole index through a temp file and rename, so a crash never leaves half a file."""
-        self._atomic_write(self.index_path, index.model_dump_json(indent=2) + "\n")
+        """Write the whole index through a temp file and rename, so a crash never leaves half a file.
+
+        v0.17: a path inside the state folder is written ``@state/<relative>``
+        (``load_index`` expands it), so the index survives moving the folder.
+        """
+        data = self._state_relative_paths(index.model_dump(mode="json"))
+        self._atomic_write(self.index_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+    def _state_relative_paths(self, value: object) -> object:
+        """``value`` with every string that is the state folder or inside it (as given or resolved) as ``@state/…``."""
+        if isinstance(value, dict):
+            return {k: self._state_relative_paths(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._state_relative_paths(v) for v in value]
+        if isinstance(value, str):
+            for root in dict.fromkeys((str(self.path), str(self.path.resolve()))):
+                if value == root:
+                    return STATE_PREFIX
+                if value.startswith(root.rstrip("/") + "/"):
+                    return f"{STATE_PREFIX}/{value[len(root.rstrip('/')) + 1:]}"
+        return value
+
+    def _expand_state_paths(self, value: object) -> object:
+        """``value`` with every ``@state/…`` string as an absolute path in this (resolved) state folder."""
+        if isinstance(value, dict):
+            return {k: self._expand_state_paths(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._expand_state_paths(v) for v in value]
+        if isinstance(value, str):
+            if value == STATE_PREFIX:
+                return str(self.path.resolve())
+            if value.startswith(STATE_PREFIX + "/"):
+                return str(self.path.resolve() / value[len(STATE_PREFIX) + 1 :])
+        return value
 
     # --- commands (v0.11 item 66) ------------------------------------------------
 

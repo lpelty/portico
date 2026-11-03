@@ -149,9 +149,9 @@ final class UpdateRunner: ObservableObject {
         }
         self.arguments = arguments
         var env = environment ?? ProcessInfo.processInfo.environment
-        if env[GatewaySupervisor.homeEnvironmentVariable] == nil {
-            env[GatewaySupervisor.homeEnvironmentVariable] = GatewaySupervisor.defaultStateDir(environment: env).path
-        }
+        // The app's own folder (Info.plist, then PORTICO_HOME, then ~/.portico), so the
+        // update stops and restarts the gateway this app runs.
+        env[GatewaySupervisor.homeEnvironmentVariable] = GatewaySupervisor.resolveHome(environment: env).url.path
         self.environment = env
     }
 

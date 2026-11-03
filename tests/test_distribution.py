@@ -44,3 +44,23 @@ def test_version_and_changelog_agree():
     version = (REPO / "VERSION").read_text().strip()
     assert version == "0.16.0"
     assert f"## v{version} (" in (REPO / "CHANGELOG.md").read_text()
+
+
+def test_scripts_assume_no_checkout_or_home_path():
+    """v0.17 §5: the shipped scripts work from any checkout and any home folder."""
+    import re
+
+    scripts = sorted((REPO / "bin").iterdir()) + sorted((REPO / "app" / "Packaging").glob("*.sh"))
+    assert len(scripts) >= 7
+    state_literal = re.compile(r"(?<!\w)\.portico(?![\w-])")  # a folder, not dev.portico.<slug> or .portico-home
+    hits: list[str] = []
+    for f in scripts:
+        for number, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            where = f"{f.relative_to(REPO)}:{number}"
+            if "dev-projects" in line:
+                hits.append(f"{where}: dev-projects")
+            if "/Users/" in line:
+                hits.append(f"{where}: /Users/")
+            if not line.lstrip().startswith("#") and state_literal.search(line):
+                hits.append(f"{where}: a .portico path")
+    assert not hits, "scripts assume a place:\n" + "\n".join(hits)

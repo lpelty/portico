@@ -638,14 +638,24 @@ def check_checkout(repo: Path = REPO_ROOT) -> Check:
     return Check("checkout", True, f"{where}, no local changes")
 
 
+def check_home(state: StateDir, given: bool) -> Check:
+    """v0.17: the state folder in use and where it came from (``--state``, ``PORTICO_HOME``, ``.portico-home``, the default)."""
+    source = "--state" if given else StateDir.default_source()
+    return Check("home", True, f"{state.path} (from {source})")
+
+
 # --- the whole run ------------------------------------------------------------
 
 
-def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[Check]:
-    """Every check, in the order a person reads them. Never raises for a bad machine; it reports."""
+def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT, *, state_given: bool = False) -> list[Check]:
+    """Every check, in the order a person reads them. Never raises for a bad machine; it reports.
+
+    ``state_given``: the folder came from ``--state`` (the ``home`` line says so).
+    """
     config_path = Path(config_path)
     return [
         check_checkout(repo),
+        check_home(state, state_given),
         check_python(),
         check_sdk(),
         check_sdk_lock(Path(repo) / "gateway" / "uv.lock"),

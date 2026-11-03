@@ -5,19 +5,21 @@
 #
 #   app/Packaging/make-app.sh --products DIR --dest DIR --name NAME --icon PNG \
 #       --version X.Y.Z --gateway-bin PATH [--min-macos 15.0] \
-#       [--icon-assets Assets.car --icon-name NAME]
+#       [--icon-assets Assets.car --icon-name NAME] [--home PATH]
 #
 # The icon PNG is put on the macOS icon grid first (shape-app-icon.swift: a full-bleed square
 # becomes a rounded body with a shadow; one with transparent corners is used as given).
 # --icon-assets/--icon-name add a precompiled asset catalog (Icon Composer, actool) and its
 # icon's name as CFBundleIconName, which macOS 26 and later prefer; the .icns stays the
-# fallback (CFBundleIconFile). PORTICO_SWIFT names the swift executable (default: swift).
+# fallback (CFBundleIconFile). --home writes Portico's folder (an absolute path, from
+# bin/install --home) as PorticoHome, which the app reads before $PORTICO_HOME.
+# PORTICO_SWIFT names the swift executable (default: swift).
 #
 # The bundle is built in a temporary directory beside the destination and moved
 # into place, replacing an existing <name>.app. Prints the installed path last.
 set -euo pipefail
 
-products="" dest="" name="" icon="" version="" gateway_bin="" min_macos="15.0" icon_assets="" icon_name=""
+products="" dest="" name="" icon="" version="" gateway_bin="" min_macos="15.0" icon_assets="" icon_name="" home=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --products) products="$2"; shift 2 ;;
@@ -29,6 +31,7 @@ while [ $# -gt 0 ]; do
     --min-macos) min_macos="$2"; shift 2 ;;
     --icon-assets) icon_assets="$2"; shift 2 ;;
     --icon-name) icon_name="$2"; shift 2 ;;
+    --home) home="$2"; shift 2 ;;
     *) echo "make-app: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -130,6 +133,7 @@ set_string LSMinimumSystemVersion "$min_macos"
 set_string NSPrincipalClass NSApplication
 plutil -insert NSHighResolutionCapable -bool YES "$plist"
 set_string PorticoGatewayBin "$gateway_bin"
+[ -z "$home" ] || set_string PorticoHome "$home"
 # Voice input (v0.9): the system shows these when it first asks for the
 # microphone and speech recognition; without them the app may not ask.
 set_string NSMicrophoneUsageDescription "$name listens only while you hold or press the mic, and turns speech into text on this Mac."
