@@ -531,6 +531,9 @@ struct WebPane: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // A page other than the failure page (Back to the file, a
+            // retry) leaves no failure behind.
+            if let url = webView.url, url.absoluteString != "about:blank" { failure = nil }
             noteAddress(of: webView)
             // Marks are drawn again on every load. WebKit calls this on
             // Back too, from its back-forward cache or not (v0.14).
@@ -556,10 +559,27 @@ struct WebPane: NSViewRepresentable {
             rereadKeepingScroll(load, in: view, scaleOnly: !revised)
         }
 
-        /// The pane is off what it was asked to show: on its failure page,
-        /// or on a site a link went to (v0.17).
+        /// The pane is off what it was asked to show (v0.17): on its failure
+        /// page, on a site a link went to, or on another local page a link
+        /// went to (fragments aside).
         func isAway(in view: WKWebView) -> Bool {
             failure != nil || ViewerPageAddress.outside(current: view.url, loaded: loaded) != nil
+                || isOnAnotherLocalPage(view.url)
+        }
+
+        /// `url` is a page this pane serves that is not the file it was asked
+        /// to show. Compared by the file the URL stands for, not the URL
+        /// itself, so a re-render of the same file (a new text size) is home.
+        private func isOnAnotherLocalPage(_ url: URL?) -> Bool {
+            guard let url, url.scheme == RenderedPageHandler.scheme, let loaded else { return false }
+            switch loaded {
+            case .markdown(let file, _):
+                return handler.source(for: url) != file.standardizedFileURL.resolvingSymlinksInPath()
+            case .html(let file):
+                return handler.file(for: url) != file.standardizedFileURL.resolvingSymlinksInPath()
+            case .url:
+                return true
+            }
         }
 
         /// Load what the pane was asked to show again: the agent showed it

@@ -265,6 +265,78 @@ final class ViewerShowAndCloseTests: XCTestCase {
         XCTAssertEqual(title, "Pricing")
     }
 
+    /// A link between local pages took the pane from a.md to b.md: the
+    /// agent showing a.md again brings a.md back, answering once it loads.
+    func test_a_reshow_brings_the_file_back_from_a_linked_local_page() async throws {
+        let dir = try tempDir()
+        let a = dir.appendingPathComponent("a.md")
+        let b = dir.appendingPathComponent("b.md")
+        try "# Alpha\n\nSee [Beta](b.md).\n".write(to: a, atomically: true, encoding: .utf8)
+        try "# Beta\n".write(to: b, atomically: true, encoding: .utf8)
+        let model = model()
+        let rig = rig(model)
+        let first = file("art-1", a.path)
+        model.apply(created(1, first))
+        rig.coordinator.apply(.markdown(a), to: rig.view)
+        let shown = await rig.agent.perform(show(first))
+        XCTAssertTrue(shown.ok, shown.text)
+        let home = try XCTUnwrap(rig.view.url)
+
+        // The person follows the link: same scheme and host, another path.
+        _ = try await rig.view.evaluateJavaScript("location.href = 'b.md'; true")
+        for _ in 0..<80 where rig.view.url?.path != "/b.md" { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(rig.view.url?.path, "/b.md")
+        XCTAssertEqual(rig.view.url?.host(), home.host())
+
+        let again = file("art-2", a.path)
+        model.apply(created(1, again))
+        rig.coordinator.apply(.markdown(a), to: rig.view)
+        let back = await rig.agent.perform(show(again))
+        XCTAssertTrue(back.ok, back.text)
+        XCTAssertFalse(rig.view.isLoading, "answered once a.md had loaded")
+        let url = try XCTUnwrap(rig.view.url)
+        XCTAssertEqual(rig.coordinator.handler.source(for: url), a.standardizedFileURL.resolvingSymlinksInPath(), "a.md is back")
+        let heading = try await rig.view.evaluateJavaScript("(document.querySelector('h1') || {}).textContent || ''") as? String
+        XCTAssertEqual(heading, "Alpha")
+    }
+
+    /// Showing the file already on its own page (a fragment added by an
+    /// in-page link) is not away: nothing is loaded again.
+    func test_a_reshow_of_the_file_on_its_own_page_does_not_reload() async throws {
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("pricing.html")
+        try page("<h1 id=\"plans\">Plans</h1><script>window.loads = (window.loads || 0) + 1</script>").write(to: path, atomically: true, encoding: .utf8)
+        let model = model()
+        let rig = rig(model)
+        let first = file("art-1", path.path, media: .html)
+        model.apply(created(1, first))
+        rig.coordinator.apply(.html(path), to: rig.view)
+        _ = await rig.agent.perform(show(first))
+        _ = try await rig.view.evaluateJavaScript("window.marker = 'kept'; location.hash = 'plans'; true")
+        let again = file("art-2", path.path, media: .html)
+        model.apply(created(1, again))
+        let result = await rig.agent.perform(show(again))
+        XCTAssertTrue(result.ok, result.text)
+        let marker = try await rig.view.evaluateJavaScript("window.marker || ''") as? String
+        XCTAssertEqual(marker, "kept", "the page was not loaded again")
+    }
+
+    /// A page that loads after a failure (Back to the file, a retry) leaves
+    /// no failure behind.
+    func test_a_finished_page_clears_the_last_failure() async throws {
+        let port = try await freeLoopbackPort()
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/pricing"))
+        let model = model()
+        let rig = rig(model)
+        rig.coordinator.apply(.url(url), to: rig.view)
+        for _ in 0..<200 where rig.coordinator.failure == nil { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertNotNil(rig.coordinator.failure)
+        rig.view.loadHTMLString(page("<h1>Pricing</h1>"), baseURL: url)
+        for _ in 0..<80 where rig.view.url?.host() != "127.0.0.1" || rig.view.isLoading { try await Task.sleep(for: .milliseconds(25)) }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(rig.coordinator.failure)
+    }
+
     func test_show_with_auto_open_off_answers_at_once() async throws {
         let model = model()
         model.settings.autoOpen = false
