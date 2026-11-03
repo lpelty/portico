@@ -532,7 +532,8 @@
   }
 
   /// Any listed element may be marked: by ref on its page, or by name
-  /// (exactly, then partly) — no field/non-field filter as for clicks.
+  /// (exactly, then partly) — no field/non-field filter as for clicks;
+  /// failing those, any visible text (v0.17 §3.3).
   function markTarget(target, page) {
     target = squash(target);
     if (!target) return null;
@@ -541,6 +542,36 @@
     var named = listed().map(function (item) { return { el: item.el, name: name(item.el).toLowerCase() }; });
     for (var i = 0; i < named.length; i++) if (named[i].name === want) return named[i].el;
     for (var j = 0; j < named.length; j++) if (named[j].name && named[j].name.indexOf(want) >= 0) return named[j].el;
+    return visibleTextTarget(want);
+  }
+
+  var NO_TEXT = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1 };
+
+  /// The innermost visible element under `body` whose text (spaces
+  /// collapsed, lower case) contains `want`: of those that do, the first
+  /// in document order with no element child that also does. Never
+  /// `html`, `body` or the marks overlay, so text only the whole page
+  /// holds (across two paragraphs) is no match.
+  function visibleTextTarget(want) {
+    if (!want || !document.body) return null;
+    var kept = [];
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: function (el) {
+        if (NO_TEXT[el.tagName] || el.nodeName.toLowerCase() === MARKS_HOST) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    for (var el = walker.nextNode(); el; el = walker.nextNode()) {
+      if (!visible(el)) continue;
+      if (squash(el.innerText).toLowerCase().indexOf(want) >= 0) kept.push(el);
+    }
+    for (var i = 0; i < kept.length; i++) {
+      var inner = true;
+      for (var c = kept[i].firstElementChild; c && inner; c = c.nextElementSibling) {
+        if (kept.indexOf(c) >= 0) inner = false;
+      }
+      if (inner) return kept[i];
+    }
     return null;
   }
 
@@ -610,10 +641,41 @@
     return false;
   }
 
+  // A badge's square and where `.badge` puts it: 11 px out from the box's
+  // padding edge, inside its 2 px border. A badge meeting an earlier one
+  // moves right by BADGE_STEP until clear (Ruling 12).
+  var BADGE_SIZE = 18;
+  var BADGE_OUT = 11;
+  var BOX_BORDER = 2;
+  var BADGE_STEP = 22;
+
+  /// Page coordinates of each badge's top-left for `boxes` ([{left, top,
+  /// width, height}], in mark-number order), in the order given: each at
+  /// its box's corner, moved right past any earlier badge it would meet.
+  agent.badgeSpots = function (boxes) {
+    var spots = [];
+    for (var i = 0; i < boxes.length; i++) {
+      var spot = { x: boxes[i].left + BOX_BORDER - BADGE_OUT, y: boxes[i].top + BOX_BORDER - BADGE_OUT };
+      var bumped = true;
+      while (bumped) {
+        bumped = false;
+        for (var j = 0; j < spots.length; j++) {
+          if (Math.abs(spot.x - spots[j].x) < BADGE_SIZE && Math.abs(spot.y - spots[j].y) < BADGE_SIZE) {
+            spot.x += BADGE_STEP;
+            bumped = true;
+          }
+        }
+      }
+      spots.push(spot);
+    }
+    return spots;
+  };
+
   function placeMarks() {
     if (!marks.host) return;
     var origin = marks.host.getBoundingClientRect();
     var width = document.documentElement.clientWidth;
+    var shown = [];
     for (var i = 0; i < marks.items.length; i++) {
       var item = marks.items[i];
       var r = item.el.getBoundingClientRect();
@@ -622,12 +684,22 @@
         item.box.style.display = "none";
         continue;
       }
+      var left = r.left - origin.left;
+      var top = r.top - origin.top;
       item.box.style.display = "";
-      item.box.style.left = (r.left - origin.left) + "px";
-      item.box.style.top = (r.top - origin.top) + "px";
+      item.box.style.left = left + "px";
+      item.box.style.top = top + "px";
       item.box.style.width = r.width + "px";
       item.box.style.height = r.height + "px";
       if (item.note) placeNote(item.note, r, width);
+      shown.push({ item: item, box: { left: left, top: top, width: r.width, height: r.height } });
+    }
+    shown.sort(function (a, b) { return Number(a.item.n) - Number(b.item.n); });
+    var spots = agent.badgeSpots(shown.map(function (s) { return s.box; }));
+    for (var k = 0; k < shown.length; k++) {
+      // Relative to the box's padding edge, as `.badge`'s own left and top are.
+      shown[k].item.badge.style.left = (spots[k].x - shown[k].box.left - BOX_BORDER) + "px";
+      shown[k].item.badge.style.top = (spots[k].y - shown[k].box.top - BOX_BORDER) + "px";
     }
   }
 
@@ -707,7 +779,7 @@
       box.appendChild(note);
     }
     marks.root.appendChild(box);
-    var item = { n: mark.n, el: el, box: box, note: note };
+    var item = { n: mark.n, el: el, box: box, badge: badge, note: note };
     marks.items.push(item);
     if (marks.observer) marks.observer.observe(el);
     return item;

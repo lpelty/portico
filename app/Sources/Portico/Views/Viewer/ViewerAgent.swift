@@ -54,6 +54,11 @@ final class ViewerAgent: ObservableObject {
 
         static let markCount = "Mark 1 to 9 things at a time."
 
+        /// A mark target that is no ref, no listed name and no visible text on the page (v0.17 §3.3).
+        static func noVisibleText(_ target: String) -> String {
+            "No visible text matches '\(target)'"
+        }
+
         static func cleared(_ count: Int) -> String {
             "Cleared \(count) mark\(count == 1 ? "" : "s")."
         }
@@ -732,7 +737,7 @@ final class ViewerAgent: ObservableObject {
                 missing.append(item.target)
             }
         }
-        guard !located.isEmpty else { return await notFound(act, missing, in: view) }
+        guard !located.isEmpty else { return fail(act, await missedText(missing, in: view, endsWithPeriod: false)) }
         let store = model.markStore
         let added = store.add(
             chat: runChat, page: page, items: located, call: act.id,
@@ -742,16 +747,27 @@ final class ViewerAgent: ObservableObject {
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": first.number], in: view)
         }
         var text = "Marked " + added.map { "\($0.number) · \($0.label)" }.joined(separator: ", ") + "."
-        if !missing.isEmpty {
-            let why: String
-            switch await notFoundText(missing, in: view) {
-            case Message.pageReloaded: why = " — the page reloaded since your last look; look again."
-            case Message.personUsed: why = " — the person used the page since your last look; look again."
-            default: why = " — look again."
-            }
-            text += " Not found: " + missing.map { "\"\($0)\"" }.joined(separator: ", ") + why
-        }
+        if !missing.isEmpty { text += " " + (await missedText(missing, in: view, endsWithPeriod: true)) }
         return ViewerResult(id: act.id, ok: true, text: text)
+    }
+
+    /// What the agent is told about mark targets not found (Ruling 11): a
+    /// ref from a page that has since reloaded keeps "The page reloaded…"
+    /// (said once); every other target gets "No visible text matches
+    /// '<target>'", one sentence each. Sentences end with a period except,
+    /// when `endsWithPeriod` is false, a last no-match sentence (the refusal reads
+    /// as `noVisibleText` alone, as "Not found — look again" did).
+    private func missedText(_ missing: [String], in view: WKWebView, endsWithPeriod: Bool) async -> String {
+        let stale = await reloaded(missing, in: view)
+        var sentences: [String] = []
+        for target in missing {
+            let sentence = stale && Self.isRef(target) ? Message.pageReloaded : Message.noVisibleText(target)
+            if !sentences.contains(sentence) { sentences.append(sentence) }
+        }
+        return sentences.enumerated().map { index, sentence in
+            let last = index == sentences.count - 1
+            return sentence.hasSuffix(".") || (last && !endsWithPeriod) ? sentence : sentence + "."
+        }.joined(separator: " ")
     }
 
     /// The page `view` shows, as marks know it: a file path for the app's
