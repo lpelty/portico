@@ -217,7 +217,7 @@ struct ViewerView: View {
             openButtons(labelled: fit.labelled)
             focusButton
             Button {
-                model.setViewer(visible: false, for: chat)
+                model.closeFile(in: chat)
             } label: {
                 Image(systemName: "xmark")
                     .font(Theme.iconFont(13, weight: .medium))
@@ -226,7 +226,8 @@ struct ViewerView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.hover)
-            .help("Collapse the viewer")
+            .help("Close this file")
+            .accessibilityLabel("Close this file")
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.toolbarHeight)

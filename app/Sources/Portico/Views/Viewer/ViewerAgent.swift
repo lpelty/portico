@@ -29,6 +29,8 @@ final class ViewerAgent: ObservableObject {
         /// A click by a heading's words with nothing clickable around it (v0.14 §6b.5).
         static let heading = "That's a heading, not something to click; use its ref."
         static let timedOut = "The viewer didn't answer in 10 s."
+        /// A show answered: the file or page is in front and has loaded (v0.17).
+        static let shown = "Shown in the viewer."
 
         /// "This is a PDF; it can be looked at, not used."
         static func notUsed(kind: String) -> String {
@@ -229,6 +231,9 @@ final class ViewerAgent: ObservableObject {
     }
 
     private func performNow(_ act: ViewerAct, due: ContinuousClock.Instant) async -> ViewerResult {
+        // A show only reports that a page loaded, never what is on it: it
+        // ignores the "agent can see" switch and draws no glow (v0.17).
+        if act.action == .show { return await performShow(act, due: due) }
         // The store keeps at most nine a call; more is refused, not cut.
         if act.action == .mark, !(1...MarkStore.perCall).contains(Self.markItems(act).count) {
             return fail(act, Message.markCount)
@@ -265,6 +270,54 @@ final class ViewerAgent: ObservableObject {
             return await performWeb(act, shown: shown, load: load)
         }
         return await performNative(act, shown: shown)
+    }
+
+    /// How long a show waits for its file to come to the front before it
+    /// answers anyway: the `artifact.created` that put it there arrives
+    /// first on the same connection, so this is only a margin.
+    var showFrontWait: Duration = .seconds(1)
+
+    /// The agent showed `{artifact, location}` (v0.17 §3.2): answer once it
+    /// is in front and, for a web page, has loaded. Answered ok at once
+    /// when it will not come to the front here (another chat in multiple
+    /// presentation, auto-open off for its kind, or not in front within
+    /// `showFrontWait`), and for a pane that isn't a web page. A page
+    /// still loading at the deadline answers `timedOut`, which the
+    /// gateway reads as "Shown; still loading.".
+    private func performShow(_ act: ViewerAct, due: ContinuousClock.Instant) async -> ViewerResult {
+        let answered = ViewerResult(id: act.id, ok: true, text: Message.shown)
+        guard let model else { return answered }
+        let chat: Int
+        if model.isSinglePresentation {
+            chat = model.shownChat ?? act.chat
+        } else {
+            guard model.shownChat == act.chat else { return answered }
+            chat = act.chat
+        }
+        let location = act.args["location"]?.stringValue ?? ""
+        let inFront = { model.shownArtifact(for: chat)?.location == location }
+        if !inFront() {
+            let id = act.args["artifact"]?.stringValue
+            let web = ["http", "https"].contains(URL(string: location)?.scheme?.lowercased() ?? "")
+            let media = model.artifacts[chat]?.last(where: { $0.id == id })?.media
+                ?? (web ? .url : Media.of(path: location))
+            guard model.settings.shouldAutoOpen(media: media.rawValue) else { return answered }
+            let wait = min(due, ContinuousClock.now + showFrontWait)
+            while !inFront() {
+                if ContinuousClock.now >= wait { return answered }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+        }
+        guard let artifact = model.shownArtifact(for: chat) else { return answered }
+        // In front: the viewer is where the person looks, as `show(_:in:)` leaves it.
+        model.closeDocumentView()
+        let shown = ArtifactPresentation(artifact: artifact)
+        guard !shown.isMissing, let load = WebPane.Load(shown) else { return answered }
+        deadline = due
+        expired = false
+        guard let view = await webView(showing: load) else { return fail(act, Message.timedOut) }
+        await settle(view)
+        return expired || ContinuousClock.now >= deadline ? fail(act, Message.timedOut) : answered
     }
 
     private func fail(_ act: ViewerAct, _ text: String) -> ViewerResult {
@@ -358,6 +411,9 @@ final class ViewerAgent: ObservableObject {
             let count = model?.markStore.clear(chat: runChat) ?? 0
             await draw([], chat: runChat, page: nil, in: view, quiet: false)
             return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+        case .show:
+            assertionFailure("a show is answered by performShow")
+            return ViewerResult(id: act.id, ok: true, text: Message.shown)
         case .back:
             guard view.canGoBack else { return fail(act, "There's nothing to go back to in the viewer.") }
             view.goBack()
@@ -991,6 +1047,9 @@ final class ViewerAgent: ObservableObject {
         case .clearMarks:
             let count = model?.markStore.clear(chat: runChat) ?? 0
             return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+        case .show:
+            assertionFailure("a show is answered by performShow")
+            return ViewerResult(id: act.id, ok: true, text: Message.shown)
         }
     }
 

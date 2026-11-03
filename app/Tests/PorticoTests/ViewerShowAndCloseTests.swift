@@ -1,0 +1,426 @@
+import AppKit
+import Foundation
+import Network
+import WebKit
+import XCTest
+
+@testable import Portico
+
+/// v0.17 §3.2 and §3.4: the agent's show answers once the page has loaded
+/// (`viewer.act "show"`, `viewer.show.v1`); X closes the file in front and
+/// shows the next; the list holds one row per file; the toolbar's viewer
+/// button only hides and shows.
+@MainActor
+final class ViewerShowAndCloseTests: XCTestCase {
+
+    private var keepAlive: [AnyObject] = []
+
+    override func tearDown() {
+        for case let window as NSWindow in keepAlive { window.close() }
+        keepAlive = []
+        super.tearDown()
+    }
+
+    // MARK: - fixtures
+
+    private func isolatedSettings() -> Portico.Settings {
+        let name = "portico.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+        return Portico.Settings(defaults: defaults)
+    }
+
+    /// A model showing chat 1 (multiple presentation), what it sends dropped.
+    private func model() -> AppModel {
+        let model = AppModel(settings: isolatedSettings())
+        model.outbound = { _ in }
+        model.selected = 1
+        return model
+    }
+
+    private func tempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-show-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir
+    }
+
+    private func created(_ chat: Int, _ artifact: Artifact) -> ServerMessage {
+        .artifactCreated(ArtifactCreated(chat: chat, artifact: artifact))
+    }
+
+    private func file(_ id: String, _ location: String, media: Media = .markdown, open: Bool = true) -> Artifact {
+        Artifact(
+            id: id, kind: .file, location: location, media: media,
+            title: URL(fileURLWithPath: location).lastPathComponent, source: .tool, open: open)
+    }
+
+    private func show(_ artifact: Artifact, chat: Int = 1) -> ViewerAct {
+        ViewerAct(
+            id: "act-\(UUID().uuidString.prefix(6))", chat: chat, action: .show,
+            args: ["artifact": .string(artifact.id), "location": .string(artifact.location)])
+    }
+
+    private struct Rig {
+        let model: AppModel
+        let agent: ViewerAgent
+        let view: WKWebView
+        let coordinator: WebPane.Coordinator
+    }
+
+    /// A hosted web pane wired to the agent the way `WebPane` wires it,
+    /// loading nothing until the test says what the viewer draws.
+    private func rig(_ model: AppModel) -> Rig {
+        let agent = ViewerAgent(model: model)
+        agent.highlightDuration = .milliseconds(20)
+        let coordinator = WebPane.Coordinator()
+        coordinator.agent = agent
+        let view = coordinator.makeWebView()
+        let size = NSSize(width: 800, height: 600)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        view.frame = NSRect(origin: .zero, size: size)
+        window.contentView = view
+        keepAlive = [view, coordinator, agent, model, window]
+        return Rig(model: model, agent: agent, view: view, coordinator: coordinator)
+    }
+
+    private func page(_ body: String) -> String {
+        "<!doctype html><html><head><meta charset=utf-8><title>Pricing</title></head><body>\(body)</body></html>"
+    }
+
+    private func readyState(_ view: WKWebView) async throws -> String? {
+        try await view.evaluateJavaScript("document.readyState") as? String
+    }
+
+    // MARK: - the show answers on load
+
+    func test_show_answers_once_the_page_has_loaded() async throws {
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("pricing.html")
+        try page("<h1>Pricing</h1><p>Acme plans.</p>").write(to: path, atomically: true, encoding: .utf8)
+        let model = model()
+        let rig = rig(model)
+        let artifact = file("art-1", path.path, media: .html)
+        model.apply(created(1, artifact))
+        XCTAssertEqual(model.current[1]?.id, "art-1")
+
+        // The pane comes a moment after the show arrives, as SwiftUI draws it.
+        let coordinator = rig.coordinator, view = rig.view
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            coordinator.apply(.html(path), to: view)
+        }
+        let result = await rig.agent.perform(show(artifact))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertFalse(view.isLoading, "answered only once the page has loaded")
+        let state = try await readyState(view)
+        XCTAssertEqual(state, "complete")
+    }
+
+    func test_show_waits_for_a_page_that_loads_slowly() async throws {
+        let server = SlowServer(delay: 1)
+        try await server.start()
+        addTeardownBlock { server.stop() }
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("pricing.html")
+        try page("<h1>Pricing</h1><img id=\"chart\" src=\"http://127.0.0.1:\(server.port)/chart.svg\">")
+            .write(to: path, atomically: true, encoding: .utf8)
+        let model = model()
+        let rig = rig(model)
+        let artifact = file("art-1", path.path, media: .html)
+        model.apply(created(1, artifact))
+        let started = ContinuousClock.now
+        rig.coordinator.apply(.html(path), to: rig.view)
+        let result = await rig.agent.perform(show(artifact))
+        let took = ContinuousClock.now - started
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertGreaterThanOrEqual(took, .milliseconds(950), "the answer came before the slow image did")
+        XCTAssertEqual(server.requests, 1)
+        let width = try await rig.view.evaluateJavaScript("document.getElementById('chart').naturalWidth") as? Int
+        XCTAssertEqual(width, 4, "the image had loaded when the show answered")
+    }
+
+    /// Still loading at the act's deadline: the app's timeout answer, which
+    /// the gateway reads as "Shown; still loading.".
+    func test_show_of_a_page_still_loading_at_the_deadline_times_out() async throws {
+        let server = SlowServer(delay: 3)
+        try await server.start()
+        addTeardownBlock { server.stop() }
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("pricing.html")
+        try page("<img src=\"http://127.0.0.1:\(server.port)/chart.svg\">").write(to: path, atomically: true, encoding: .utf8)
+        let model = model()
+        let rig = rig(model)
+        rig.agent.actWait = .milliseconds(600)
+        let artifact = file("art-1", path.path, media: .html)
+        model.apply(created(1, artifact))
+        rig.coordinator.apply(.html(path), to: rig.view)
+        let result = await rig.agent.perform(show(artifact))
+        XCTAssertFalse(result.ok)
+        XCTAssertEqual(result.text, "The viewer didn't answer in 10 s.")
+    }
+
+    func test_show_with_auto_open_off_answers_at_once() async throws {
+        let model = model()
+        model.settings.autoOpen = false
+        let rig = rig(model)
+        let artifact = file("art-1", "/tmp/acme/pricing.html", media: .html)
+        model.apply(created(1, artifact))
+        let started = ContinuousClock.now
+        let result = await rig.agent.perform(show(artifact))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(500))
+        XCTAssertNil(model.current[1], "nothing came to the front")
+    }
+
+    func test_show_answers_with_the_agent_view_off() async throws {
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("pricing.html")
+        try page("<h1>Pricing</h1>").write(to: path, atomically: true, encoding: .utf8)
+        let model = model()
+        model.settings.viewerAgentCanSee = false
+        XCTAssertFalse(model.agentCanSee)
+        let rig = rig(model)
+        let artifact = file("art-1", path.path, media: .html)
+        model.apply(created(1, artifact))
+        rig.coordinator.apply(.html(path), to: rig.view)
+        let result = await rig.agent.perform(show(artifact))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertNil(rig.agent.actingChat, "a show draws no acting glow")
+    }
+
+    func test_show_for_another_chat_in_multiple_presentation() async throws {
+        let model = model()
+        let rig = rig(model)
+        let artifact = file("art-2", "/tmp/acme/pricing.html", media: .html)
+        model.apply(created(2, artifact))
+        let started = ContinuousClock.now
+        let result = await rig.agent.perform(show(artifact, chat: 2))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(500))
+        XCTAssertNil(rig.agent.actingChat)
+    }
+
+    func test_show_of_a_file_that_is_not_a_web_page_answers_once_in_front() async throws {
+        let dir = try tempDir()
+        let path = dir.appendingPathComponent("chart.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: path)
+        let model = model()
+        let rig = rig(model)
+        let artifact = file("art-1", path.path, media: .image)
+        model.apply(created(1, artifact))
+        let result = await rig.agent.perform(show(artifact))
+        XCTAssertTrue(result.ok, result.text)
+        XCTAssertEqual(result.text, "Shown in the viewer.")
+    }
+
+    // MARK: - act_hosts on a web address the agent showed (spec §3.1)
+
+    /// The act gate keys off the page's own host now: an address shown by
+    /// the agent outside `act_hosts` can be looked at, not clicked or typed
+    /// on; one inside can.
+    func test_a_shown_web_address_is_usable_only_inside_act_hosts() async throws {
+        func showRig(_ address: String) async throws -> (Rig, ViewerResult) {
+            let model = model()
+            model.apply(.hello(HelloServer(
+                protocol: protocolVersion, gatewayVersion: "0.17.0", epoch: "e",
+                brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [],
+                commands: [], capabilities: ["viewer.v1"], presentation: "multiple",
+                viewerDefaults: ViewerDefaults(actHosts: ["acme.example"]))))
+            model.selected = 1
+            let rig = rig(model)
+            let url = try XCTUnwrap(URL(string: address))
+            let artifact = Artifact(id: "art-1", kind: .url, location: address, media: .url, title: address, source: .tool, open: true)
+            model.apply(created(1, artifact))
+            XCTAssertEqual(model.current[1]?.location, address)
+            // No network in tests: the page is loaded as if from the address.
+            rig.agent.attach(rig.view, showing: .url(url))
+            rig.view.loadHTMLString(
+                page("<script>window.clicks = []</script><button onclick=\"clicks.push(1)\">Start trial</button><input aria-label=\"Email\">"),
+                baseURL: url)
+            return (rig, await rig.agent.perform(show(artifact)))
+        }
+        func act(_ action: ViewerAct.Action, _ args: [String: JSONValue]) -> ViewerAct {
+            ViewerAct(id: "act-\(UUID().uuidString.prefix(6))", chat: 1, action: action, args: args)
+        }
+
+        let (outside, shownOutside) = try await showRig("https://pricing.example.com/plans")
+        XCTAssertTrue(shownOutside.ok, shownOutside.text)
+        let outsideText = "This page (pricing.example.com) can be looked at and scrolled, not used. The deployment's allow list sets which sites the agent can click and type on."
+        let click = await outside.agent.perform(act(.click, ["target": .string("Start trial")]))
+        XCTAssertFalse(click.ok)
+        XCTAssertEqual(click.text, outsideText)
+        let typed = await outside.agent.perform(act(.type, ["target": .string("Email"), "text": .string("sam@acme.example")]))
+        XCTAssertFalse(typed.ok)
+        XCTAssertEqual(typed.text, outsideText)
+        let clicks = try await outside.view.evaluateJavaScript("clicks.length") as? Int
+        XCTAssertEqual(clicks, 0)
+
+        let (inside, shownInside) = try await showRig("https://app.acme.example/plans")
+        XCTAssertTrue(shownInside.ok, shownInside.text)
+        let allowed = await inside.agent.perform(act(.click, ["target": .string("Start trial")]))
+        XCTAssertTrue(allowed.ok, allowed.text)
+        let typedInside = await inside.agent.perform(act(.type, ["target": .string("Email"), "text": .string("sam@acme.example")]))
+        XCTAssertTrue(typedInside.ok, typedInside.text)
+    }
+
+    // MARK: - the list and X (§3.4, §3.6)
+
+    func test_history_is_one_row_per_location_newest_first() {
+        let model = model()
+        model.apply(created(1, file("a-1", "/tmp/acme/a.md")))
+        model.apply(created(1, file("b-1", "/tmp/acme/b.md")))
+        model.apply(created(1, file("a-2", "/tmp/acme/a.md")))
+        XCTAssertEqual(model.history(for: 1).map(\.location), ["/tmp/acme/a.md", "/tmp/acme/b.md"])
+        XCTAssertEqual(model.history(for: 1).first?.id, "a-2", "the row is the file's newest showing")
+    }
+
+    func test_x_closes_the_file_and_shows_the_next() {
+        let model = model()
+        for name in ["a", "b", "c"] { model.apply(created(1, file("\(name)-1", "/tmp/acme/\(name).md"))) }
+        XCTAssertEqual(model.current[1]?.id, "c-1")
+
+        model.closeFile(in: 1)
+        XCTAssertEqual(model.current[1]?.id, "b-1")
+        XCTAssertTrue(model.isViewerShown(for: 1))
+        XCTAssertEqual(model.history(for: 1).count, 3, "a closed file stays in the list")
+        XCTAssertTrue(model.isClosed(location: "/tmp/acme/c.md", in: 1))
+
+        model.closeFile(in: 1)
+        XCTAssertEqual(model.current[1]?.id, "a-1")
+
+        model.closeFile(in: 1)
+        XCTAssertNil(model.current[1])
+        XCTAssertFalse(model.isViewerShown(for: 1))
+        XCTAssertEqual(model.history(for: 1).count, 3)
+    }
+
+    func test_a_closed_file_shown_again_comes_back() throws {
+        let model = model()
+        for name in ["a", "b", "c"] { model.apply(created(1, file("\(name)-1", "/tmp/acme/\(name).md"))) }
+        model.closeFile(in: 1)
+        XCTAssertTrue(model.isClosed(location: "/tmp/acme/c.md", in: 1))
+
+        // The agent shows it again.
+        model.apply(created(1, file("c-2", "/tmp/acme/c.md")))
+        XCTAssertEqual(model.current[1]?.id, "c-2")
+        XCTAssertFalse(model.isClosed(location: "/tmp/acme/c.md", in: 1))
+        XCTAssertEqual(model.history(for: 1).first?.id, "c-2", "back in the list's lead")
+
+        // Picking a closed row brings it back too.
+        model.closeFile(in: 1)
+        model.closeFile(in: 1)
+        XCTAssertEqual(model.current[1]?.id, "a-1")
+        XCTAssertTrue(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+        let row = try XCTUnwrap(model.history(for: 1).first { $0.location == "/tmp/acme/b.md" })
+        model.show(row, in: 1)
+        XCTAssertEqual(model.current[1]?.id, "b-1")
+        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+
+        // And a file the person opens from the Files pane.
+        model.closeFile(in: 1)
+        XCTAssertTrue(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+        model.openArtifact(file: "/tmp/acme/b.md", in: 1)
+        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+        XCTAssertEqual(model.current[1]?.location, "/tmp/acme/b.md")
+    }
+
+    func test_the_toolbar_button_only_hides() {
+        let model = model()
+        model.apply(created(1, file("a-1", "/tmp/acme/a.md")))
+        model.apply(created(1, file("b-1", "/tmp/acme/b.md")))
+        model.setViewer(visible: false, for: 1)
+        XCTAssertFalse(model.isViewerShown(for: 1))
+        XCTAssertEqual(model.current[1]?.id, "b-1")
+        model.setViewer(visible: true, for: 1)
+        XCTAssertTrue(model.isViewerShown(for: 1))
+        XCTAssertEqual(model.current[1]?.id, "b-1", "whatever was showing is still there")
+        XCTAssertFalse(model.isClosed(location: "/tmp/acme/b.md", in: 1))
+    }
+}
+
+/// A plain-HTTP loopback server that answers every request, after
+/// `delay`, with a 4 × 4 SVG: a page's image that loads slowly.
+private final class SlowServer: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "slow-server")
+    private let lock = NSLock()
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private var _port: UInt16 = 0
+    private var _requests = 0
+    /// Seconds before each answer.
+    let delay: Double
+
+    init(delay: Double) {
+        self.delay = delay
+    }
+
+    var port: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return Int(_port)
+    }
+
+    var requests: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _requests
+    }
+
+    func start() async throws {
+        let params = NWParameters.tcp
+        params.requiredInterfaceType = .loopback
+        let listener = try NWListener(using: params, on: .any)
+        self.listener = listener
+        listener.newConnectionHandler = { [weak self] conn in
+            guard let self else { return }
+            self.connections.append(conn)
+            conn.start(queue: self.queue)
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] _, _, _, _ in
+                guard let self else { return }
+                self.lock.lock()
+                self._requests += 1
+                self.lock.unlock()
+                let body = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>"#.utf8)
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                self.queue.asyncAfter(deadline: .now() + self.delay) {
+                    conn.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in conn.cancel() })
+                }
+            }
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            let resumed = Resumed()
+            listener.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready:
+                    if let port = listener.port, let self {
+                        self.lock.lock()
+                        self._port = port.rawValue
+                        self.lock.unlock()
+                    }
+                    if resumed.take() { cont.resume() }
+                case .failed(let error):
+                    if resumed.take() { cont.resume(throwing: error) }
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            connections.forEach { $0.cancel() }
+            connections = []
+            listener?.cancel()
+            listener = nil
+        }
+    }
+}

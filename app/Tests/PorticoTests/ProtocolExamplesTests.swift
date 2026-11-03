@@ -206,6 +206,38 @@ final class ProtocolExamplesTests: XCTestCase {
         XCTAssertNil(plain.answers)
     }
 
+    // MARK: - v0.17 fields no example carries
+
+    func testAShowActDecodes() throws {
+        let json = #"{"type":"viewer.act","id":"a","chat":1,"action":"show","args":{"artifact":"art-1","location":"https://acme.example"}}"#
+        guard case .viewerAct(let act) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else {
+            return XCTFail("viewer.act")
+        }
+        XCTAssertEqual(act.action, .show)
+        XCTAssertEqual(act.args["artifact"], .string("art-1"))
+        XCTAssertEqual(act.args["location"], .string("https://acme.example"))
+    }
+
+    func testTheAppSaysItAnswersTheShow() {
+        XCTAssertTrue(HelloClient.appCapabilities.contains("viewer.show.v1"))
+        XCTAssertEqual(ViewerAct.showCapability, "viewer.show.v1")
+    }
+
+    func testViewerDefaultsPropertiesIsOptional() throws {
+        func defaults(_ viewer: String) throws -> ViewerDefaults? {
+            let json = #"{"type":"hello","protocol":1,"gateway_version":"0.17.0","epoch":"e","brand":{"name":"Portico","agent_name":"Agent"},"actions":[],"roots":[],"commands":[],"capabilities":[],"ts":"2026-11-02T12:00:00Z","viewer_defaults":"# + viewer + "}"
+            guard case .hello(let hello) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else {
+                XCTFail("hello")
+                return nil
+            }
+            return hello.viewerDefaults
+        }
+        XCTAssertEqual(try defaults(#"{"act_hosts":[],"properties":"open"}"#)?.properties, "open")
+        let without = try XCTUnwrap(try defaults(#"{"act_hosts":["acme.example"]}"#))
+        XCTAssertNil(without.properties)
+        XCTAssertEqual(without.actHosts, ["acme.example"])
+    }
+
     func testUnknownServerTypeFailsToDecode() {
         let data = Data(#"{"type":"nope","ts":"2026-10-27T12:00:00Z"}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ServerMessage.self, from: data))
