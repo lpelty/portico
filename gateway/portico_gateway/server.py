@@ -163,7 +163,7 @@ from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
 from .agents import AgentTracker
-from .apps import AppHost
+from .apps import AppHost, build_ui_map
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
@@ -183,7 +183,7 @@ from .engine import (
 )
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
-from .mcp_settings import McpSettings, ToolPolicy
+from .mcp_settings import McpSettings, ToolPolicy, strip_url_queries
 from .plugin_settings import PluginSettings
 from .messages import (
     AGENT_FRAME_TYPES,
@@ -364,6 +364,10 @@ SETTINGS_COMMANDS: frozenset[str] = frozenset({"mcp", "plugin"})
 SETTINGS_NOTICE = "Open Settings to manage MCP servers and plugins."
 # v0.18 (ruling 10): why an MCP tool ran with no card.
 POLICY_ALLOW_NOTE = "Set to run without asking in Settings"
+# R-c33: why a read-only MCP tool ran with no card, by its default.
+READ_ONLY_ALLOW_NOTE = "Only reads; runs without asking"
+# R-c33: how long a permission waits on the engine's MCP status to learn a tool is read-only.
+READ_ONLY_LOOKUP_TIMEOUT = 5.0
 PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log", *SETTINGS_COMMANDS})
 
 # The ``chat.notice`` a log step that did not finish cleanly leaves (v0.7).
@@ -2360,7 +2364,9 @@ class GatewayServer:
                 await self._send(conn, self.error(e.code, e.message, id=msg.id))
             except Exception as e:
                 log.exception("%s failed", msg.type)
-                await self._send(conn, self.error("gateway.error", f"{msg.type} failed: {e}", id=msg.id))
+                # The CLI's text can carry a web address's userinfo or query: stripped first.
+                text = strip_url_queries(f"{msg.type} failed: {e}")
+                await self._send(conn, self.error("gateway.error", text, id=msg.id))
             else:
                 await self._send(conn, reply)
 
@@ -2448,19 +2454,55 @@ class GatewayServer:
 
     # --- cards ------------------------------------------------------------------
 
+    async def _mcp_tool_ui(self, chat: Chat, full: str) -> Any:
+        """The MCP tool ``full`` as the chat's engine reports it now (R-c33), or ``None`` when unknown.
+
+        The apps host's UI map when it keeps one for this engine; else the
+        engine's ``mcp_status()``, read once with a short wait. Any failure is
+        ``None``: the tool asks.
+        """
+        try:
+            return await asyncio.wait_for(self.apps.tool_ui(chat, full), READ_ONLY_LOOKUP_TIMEOUT)
+        except LookupError:
+            pass
+        except Exception as e:
+            log.warning("chat %d: could not read the apps map for %s: %s", chat.number, full, type(e).__name__)
+            return None
+        engine = chat.engine
+        if engine is None:
+            return None
+        try:
+            status = await asyncio.wait_for(engine.mcp_status(), READ_ONLY_LOOKUP_TIMEOUT)
+        except Exception as e:
+            log.warning("chat %d: could not read the MCP status for %s: %s", chat.number, full, type(e).__name__)
+            return None
+        return build_ui_map([s for s in status if isinstance(s, dict)]).full(full)
+
     async def ask_permission(
         self, chat: Chat, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision:
-        """A permission card, unless a person already allowed the tool for this chat. Never allow by default.
+        """A permission card, unless a person already allowed the tool (for this chat, or in Settings) or it only reads.
 
-        v0.18 (ruling 10): an MCP tool the person set to "Runs without asking"
-        in Settings runs without a card. The agent's own calls otherwise ask,
-        read-only or not.
+        v0.18 (ruling 10, R-c33): an MCP tool follows the rule Settings shows —
+        the person's choice, else a read-only tool runs without a card and the
+        rest ask. Read-only comes from the engine's live MCP status; a tool it
+        doesn't name (or names twice) is not read-only.
         """
-        if self.tool_policy.allows(tool):
-            # Matched on the full name exactly as Claude Code gives it (R-c8); on the record like a session allow.
-            chat.note_permission(tool_use_id, "session", POLICY_ALLOW_NOTE)
-            return "allow"
+        if tool.startswith("mcp__"):
+            ui = await self._mcp_tool_ui(chat, tool)
+            if ui is not None:
+                server, bare, read_only = ui.server, ui.tool, ui.read_only
+            else:
+                # Matched on the full name exactly as Claude Code gives it (R-c8).
+                server, bare, read_only = None, tool, False
+            explicit = self.tool_policy.allows(tool)
+            allowed = explicit or (
+                server is not None and self.tool_policy.effective(server, bare, read_only) == "allow"
+            )
+            if allowed:
+                # On the record like a session allow.
+                chat.note_permission(tool_use_id, "session", POLICY_ALLOW_NOTE if explicit else READ_ONLY_ALLOW_NOTE)
+                return "allow"
         if self.cards.allowed(chat, tool, input):
             chat.note_permission(tool_use_id, "session")
             return "allow"

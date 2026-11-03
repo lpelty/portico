@@ -222,6 +222,36 @@ async def test_plugin_list_failure_is_empty(tmp_path: Path) -> None:
     assert await plugin_paths_for_engine(ListRunner(stdout="not json"), folder, ["project"]) == []
 
 
+async def test_engine_start_plugin_list_waits_10_seconds(tmp_path: Path) -> None:
+    """R-c34: a hung ``plugin list`` holds an engine start 10 s at most (Settings' own list keeps 60 s)."""
+    folder = tmp_path / "agent"
+    folder.mkdir()
+    runner = ListRunner(stdout=plugin_list(folder, tmp_path / "elsewhere"))
+    await plugin_paths_for_engine(runner, folder, ["project"])
+    assert runner.calls[0][2] == 10.0
+
+
+async def test_plugin_list_failure_log_is_stripped(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("WARNING", logger=mcp_inventory.__name__)
+    folder = tmp_path / "agent"
+    folder.mkdir()
+    mcp_inventory._plugin_failure_logged = False
+    stderr = "x\nsee https://person:secret@market.example/p?key=abc\n"
+    assert await plugin_paths_for_engine(ListRunner(code=1, stderr=stderr), folder, ["project"]) == []
+
+    class Raising(ListRunner):
+        async def run(self, args: list[str], *, cwd: Path, timeout: float, stdin_text: str | None = None) -> CliResult:
+            raise OSError("no route to https://person:secret@market.example/p?key=abc")
+
+    invalidate_plugin_cache()
+    mcp_inventory._plugin_failure_logged = False
+    assert await plugin_paths_for_engine(Raising(), folder, ["project"]) == []
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "secret" not in text and "key=abc" not in text
+    assert "exit 1: see https://market.example/p" in text
+    assert "OSError: no route to https://market.example/p" in text
+
+
 async def test_invalidate_plugin_cache_reruns(tmp_path: Path) -> None:
     folder = tmp_path / "agent"
     folder.mkdir()

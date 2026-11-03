@@ -564,6 +564,98 @@ async def test_tool_policy_round_trip(server: GatewayServer, folder: Path, state
         await conn.close()
 
 
+async def _asks(server: GatewayServer, chat: Any, tool: str, tool_use_id: str) -> bool:
+    """Whether ``ask_permission`` shows a card for ``tool`` (the card is cancelled after) or allows with none."""
+    task = asyncio.create_task(server.ask_permission(chat, tool, {"id": 1}, [], tool_use_id))
+    for _ in range(200):
+        if task.done():
+            assert task.result() == "allow"
+            return False
+        if any(isinstance(m, CardAsk) and m.tool_use_id == tool_use_id for m in chat.ring):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return True
+        await asyncio.sleep(0.01)
+    raise AssertionError("neither a card nor an allow")
+
+
+async def test_agent_calls_follow_the_settings_rule(server: GatewayServer, folder: Path, state_dir: StateDir) -> None:
+    """R-c33: the agent's own MCP calls decide as Settings shows (``effective``), read-only from the live status."""
+    seed(folder)
+    conn = await attach(server)
+    try:
+        await live_engine(server, conn, folder, STATUS)
+        chat = next(c for c in server.registry.chats() if c.engine is not None)
+
+        # A read-only tool by default: no card, on the record as only reading.
+        assert not await _asks(server, chat, "mcp__acme-tracker__list_tasks", "toolu_r1")
+        assert chat.permissions["toolu_r1"].outcome == "session"
+        assert chat.permissions["toolu_r1"].note == "Only reads; runs without asking"
+
+        # A tool that changes things, by default: a card.
+        assert await _asks(server, chat, "mcp__acme-tracker__update_task", "toolu_w1")
+
+        # A read-only tool set to "Asks first": a card.
+        await ask(conn, McpToolPolicy(ts=TS, id="p-1", server="acme-tracker", tool="list_tasks", policy="ask"))
+        assert json.loads((state_dir.path / "mcp_tools.json").read_text()) == {"mcp__acme-tracker__list_tasks": "ask"}
+        assert await _asks(server, chat, "mcp__acme-tracker__list_tasks", "toolu_r2")
+
+        # An explicit allow: no card, the Settings note.
+        await ask(conn, McpToolPolicy(ts=TS, id="p-2", server="acme-tracker", tool="update_task", policy="allow"))
+        assert not await _asks(server, chat, "mcp__acme-tracker__update_task", "toolu_w2")
+        assert chat.permissions["toolu_w2"].note == "Set to run without asking in Settings"
+
+        # A tool the engine doesn't report: not read-only, so a card.
+        assert await _asks(server, chat, "mcp__acme-tracker__unheard_of", "toolu_u1")
+    finally:
+        await conn.close()
+
+
+async def test_agent_calls_ask_when_the_status_cannot_be_read(server: GatewayServer, folder: Path) -> None:
+    """R-c33: a status read that fails leaves read-only unknown, so even a read-only tool asks."""
+    seed(folder)
+    conn = await attach(server)
+    try:
+        engine = await live_engine(server, conn, folder, STATUS)
+        chat = next(c for c in server.registry.chats() if c.engine is not None)
+
+        async def broken() -> list[dict[str, Any]]:
+            raise RuntimeError("status unavailable")
+
+        engine.mcp_status = broken  # type: ignore[method-assign]
+        assert await _asks(server, chat, "mcp__acme-tracker__list_tasks", "toolu_x1")
+    finally:
+        await conn.close()
+
+
+def test_strip_url_queries_lives_in_inventory_too() -> None:
+    from portico_gateway import mcp_inventory, mcp_settings
+
+    assert mcp_settings.strip_url_queries is mcp_inventory.strip_url_queries
+    assert mcp_inventory.strip_url_queries("see https://u:p@h.example/x?code=1 now") == "see https://h.example/x now"
+
+
+async def test_an_unexpected_failure_reaches_the_app_stripped(
+    server: GatewayServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Settings task's unexpected error text loses any web address's userinfo and query first."""
+
+    async def boom(name: str, id: str | None = None) -> McpServers:
+        raise RuntimeError("fetch https://person:secret@mcp.acme.example/a?token=abc failed")
+
+    monkeypatch.setattr(server.mcp_settings, "remove", boom)
+    conn = await attach(server)
+    try:
+        reply = await ask(conn, McpRemove(ts=TS, id="r-9", name="docs"))
+        assert isinstance(reply, Error)
+        assert reply.message == "mcp.remove failed: fetch https://mcp.acme.example/a failed"
+    finally:
+        await conn.close()
+
+
 def test_tool_policy_effective_defaults(state_dir: StateDir) -> None:
     policy = ToolPolicy.load(state_dir)
     assert policy.effective("s", "read", True) == "allow"

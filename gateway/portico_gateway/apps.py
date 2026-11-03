@@ -440,6 +440,18 @@ class AppHost:
             return None
         return apps
 
+    async def tool_ui(self, chat: Any, full: str) -> ToolUi | None:
+        """The tool named ``full`` in the chat's engine's UI map (R-c33); ``None`` when unknown or ambiguous.
+
+        Raises ``LookupError`` when this host keeps no map for the chat's
+        engine (apps off, or an engine that can't run apps): the caller asks
+        the engine itself.
+        """
+        apps = self._apps_for(chat)
+        if apps is None:
+            raise LookupError(full)
+        return await self._lookup(chat.number, apps, full)
+
     async def _lookup(self, chat: int, apps: _EngineApps, full: str) -> ToolUi | None:
         """The tool in the engine's UI map; an incomplete map is read again on a miss."""
         task = apps.map_task

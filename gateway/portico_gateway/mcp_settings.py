@@ -37,7 +37,15 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from .mcp_inventory import PORTICO_SERVER, CliRunner, ServerEntry, claude_json_path, disabled_servers, read_servers
+from .mcp_inventory import (  # noqa: F401 — strip_url_queries is used here and imported from here
+    PORTICO_SERVER,
+    CliRunner,
+    ServerEntry,
+    claude_json_path,
+    disabled_servers,
+    read_servers,
+    strip_url_queries,
+)
 from .messages import Error, McpServerRow, McpServers, McpToolRow, ProtocolError
 from .state import StateDir
 
@@ -79,17 +87,6 @@ UNREADABLE = "Couldn't read Claude Code's settings file, so nothing was changed"
 
 def _tools_word(n: int) -> str:
     return f"{n} tool" if n == 1 else f"{n} tools"
-
-
-# A web address's query string (``?code=…&state=…``) can carry a sign-in code or a key,
-# and so can its userinfo (``https://user:pass@host``, R-c13).
-_URL_QUERY = re.compile(r"(https?://[^\s?#]*)\?[^\s#]*")
-_URL_USERINFO = re.compile(r"(https?://)[^\s/?#@]*@")
-
-
-def strip_url_queries(text: str) -> str:
-    """``text`` with every web address's userinfo and query string taken out, before it reaches the app."""
-    return _URL_QUERY.sub(r"\1", _URL_USERINFO.sub(r"\1", text))
 
 
 def _cli_message(stderr: str, args: list[str], code: int) -> str:
@@ -520,6 +517,7 @@ class McpSettings:
                 # Not under the config lock (R-c9): a sign-in can take 300 s while the
                 # person finishes in the browser, and it writes only the OAuth
                 # credentials, never the server list the other writers change.
+                # R-c9a: login stays outside the lock: a 300 s browser login would freeze every Settings change.
                 await self._run(["mcp", "login", name], timeout=LOGIN_TIMEOUT, lock=False)
             except ProtocolError as e:
                 failure = e.message

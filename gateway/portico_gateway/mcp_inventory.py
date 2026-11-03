@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from collections.abc import Mapping
@@ -40,6 +41,17 @@ log = logging.getLogger(__name__)
 PORTICO_SERVER = "portico"
 
 Scope = Literal["user", "local", "shipped", "core"]
+
+# A web address's query string (``?code=…&state=…``) can carry a sign-in code or a key,
+# and so can its userinfo (``https://user:pass@host``, R-c13). Here (not in ``mcp_settings``,
+# which imports this module) so the plugin list's log lines are stripped too.
+_URL_QUERY = re.compile(r"(https?://[^\s?#]*)\?[^\s#]*")
+_URL_USERINFO = re.compile(r"(https?://)[^\s/?#@]*@")
+
+
+def strip_url_queries(text: str) -> str:
+    """``text`` with every web address's userinfo and query string taken out, before it reaches the app."""
+    return _URL_QUERY.sub(r"\1", _URL_USERINFO.sub(r"\1", text))
 
 
 def claude_json_path(env: Mapping[str, str] = os.environ) -> Path:
@@ -252,7 +264,9 @@ class SubprocessCli:
 # --- plugins (ruling 3) --------------------------------------------------------------
 
 PLUGIN_CACHE_SECONDS = 30.0
-PLUGIN_LIST_TIMEOUT = 60.0
+# R-c34: on the engine-start path a hung list holds the chat's first turn, so it gets 10 s
+# (Settings' own plugin list, in ``plugin_settings``, keeps the CLI's 60 s).
+PLUGIN_LIST_TIMEOUT = 10.0
 PLUGIN_LIST_ARGS = ["plugin", "list", "--json"]
 
 # Per folder (the list runs there, and ``enabled`` is the CLI's answer for it):
@@ -281,11 +295,11 @@ async def _plugin_list(runner: CliRunner, folder: Path) -> list[dict[str, Any]]:
     try:
         result = await runner.run(list(PLUGIN_LIST_ARGS), cwd=folder, timeout=PLUGIN_LIST_TIMEOUT)
     except Exception as e:  # a CLI that cannot run never breaks an engine start
-        reason = f"{type(e).__name__}: {e}"
+        reason = f"{type(e).__name__}: {strip_url_queries(str(e))}"
     else:
         if result.code != 0:
             lines = [ln.strip() for ln in result.stderr.splitlines() if ln.strip()]
-            reason = f"exit {result.code}" + (f": {lines[-1][:240]}" if lines else "")
+            reason = f"exit {result.code}" + (f": {strip_url_queries(lines[-1])[:240]}" if lines else "")
         else:
             try:
                 data = json.loads(result.stdout)

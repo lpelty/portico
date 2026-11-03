@@ -55,8 +55,9 @@ under "Owed".
   one seam in the gateway; `claude-agent-sdk` is pinned to `==0.2.174` and a
   test fails if the request is gone.
 - Management runs the bundled CLI (`claude mcp`, `claude plugin`) with
-  stdin closed; the person's `~/.claude.json` is never rewritten by the
-  gateway directly.
+  stdin closed; the person's `~/.claude.json` is written only through
+  Claude Code's own commands, except the one `disabledMcpServers` key (the
+  on/off switch), which the gateway rewrites in place, keeping every other key.
 - Gateway version 0.18.0 to match the app.
 
 ### Small items

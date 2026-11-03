@@ -533,6 +533,36 @@ async def test_read_only_runs_without_asking_unless_policy_says_ask(server: Gate
         await conn.close()
 
 
+async def test_the_agents_own_read_only_call_uses_the_apps_map(server: GatewayServer, folder: Path) -> None:
+    """R-c33: with an apps map for the engine, the agent's own read-only call runs with no card, as Settings shows."""
+    conn, _ = await attach_app(server)
+    try:
+        number, engine, _ = await opened_chat(server, conn, folder)
+        chat = server.registry.get(number)
+        reads = []
+
+        async def no_status() -> list[dict[str, Any]]:
+            reads.append(1)
+            raise AssertionError("the apps map answers; the status is not read again")
+
+        engine.mcp_status = no_status  # type: ignore[method-assign]
+        decision = await asyncio.wait_for(server.ask_permission(chat, "mcp__acme-tracker__list_tasks", {}, [], "toolu_9"), 2)
+        assert decision == "allow" and reads == []
+        assert chat.permissions["toolu_9"].note == "Only reads; runs without asking"
+
+        server.tool_policy.set(TRACKER, "list_tasks", "ask", read_only=True)
+        task = asyncio.create_task(server.ask_permission(chat, "mcp__acme-tracker__list_tasks", {}, [], "toolu_10"))
+        card = await next_card(conn)
+        assert card.permission is not None and card.permission.tool == "mcp__acme-tracker__list_tasks"
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    finally:
+        await conn.close()
+
+
 # --- messages and context ---------------------------------------------------------------------
 
 
