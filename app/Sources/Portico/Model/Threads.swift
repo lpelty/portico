@@ -509,9 +509,10 @@ extension AppModel {
 
     /// A live turn ended in `chat`: a thread you are not in gets its New
     /// reply dot and Main's done card (again, if an earlier one was
-    /// dismissed). Main, other chats and the thread on screen get nothing.
-    func noteThreadTurnFinished(chat: Int) {
-        guard threadsOn, let summary = summary(of: chat), summary.thread != nil, summary.ended == nil,
+    /// dismissed). Main, other chats, the thread on screen and a turn the
+    /// person stopped get nothing (v0.17 Ruling 28).
+    func noteThreadTurnFinished(chat: Int, outcome: Outcome) {
+        guard outcome != .stopped, threadsOn, let summary = summary(of: chat), summary.thread != nil, summary.ended == nil,
             shownChat != chat
         else { return }
         newThreadReplies.insert(chat)

@@ -152,6 +152,9 @@ struct AnswerBubble: View {
     /// The bubble's widest (`ConversationColumn.bubbleMaxWidth`).
     var maxWidth: CGFloat = UserBubble.fallbackMaxWidth
 
+    /// What VoiceOver reads for one answer; the question is its hint.
+    static func spokenLabel(_ pair: AnswerPair) -> String { "Your answer: \(pair.answer)" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
@@ -169,7 +172,9 @@ struct AnswerBubble: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(AnswerBubble.spokenLabel(pair))
+                .accessibilityHint(pair.question)
             }
         }
         .padding(.horizontal, 16)

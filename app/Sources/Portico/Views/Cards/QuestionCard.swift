@@ -15,6 +15,8 @@ struct QuestionDraft: Equatable {
     private(set) var page = 0
     /// The focused option on this page, an index into `ordered(page)`.
     private(set) var focused = 0
+    /// The row under the pointer: highlighted, never armed (v0.17 Ruling 27).
+    private(set) var hovered: Int?
     private var selected: [Int: [String]] = [:]
     private var other: [Int: String] = [:]
     /// Questions answered or skipped: done with, whatever the page shows.
@@ -37,16 +39,28 @@ struct QuestionDraft: Equatable {
     mutating func goTo(_ page: Int) {
         self.page = min(max(page, 0), max(questions.count - 1, 0))
         focused = 0
+        hovered = nil
     }
 
     /// Move the focus within this page's options (↑/↓), stopping at the ends.
+    /// An arrow takes the highlight back from the pointer: the last input wins.
     mutating func move(by step: Int) {
+        hovered = nil
         let count = ordered(page).count
         guard count > 0 else { return }
         focused = min(max(focused + step, 0), count - 1)
     }
 
-    /// Put the focus on one of this page's options (the pointer on it, a digit key).
+    /// The pointer entered a row (or left them all, `nil`): it highlights,
+    /// but arms neither Return nor the digits.
+    mutating func hover(_ index: Int?) {
+        hovered = index.flatMap { ordered(page).indices.contains($0) ? $0 : nil }
+    }
+
+    /// The row that shows as selected: the pointer's, else the focus.
+    var highlighted: Int { hovered ?? focused }
+
+    /// Put the focus on one of this page's options (a click, a digit key).
     mutating func focus(_ index: Int) {
         guard ordered(page).indices.contains(index) else { return }
         focused = index
@@ -348,7 +362,7 @@ struct QuestionCard: View {
 
     private func optionRow(_ option: Option, at index: Int) -> some View {
         let recommended = draft.isRecommended(option)
-        let focusedRow = draft.focused == index
+        let focusedRow = draft.highlighted == index
         let ticked = draft.isSelected(option.label, for: page)
         return Button {
             draft.focus(index)
@@ -378,8 +392,14 @@ struct QuestionCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        // The pointer moves the focus (and the preview with it).
-        .onHover { inside in if inside { draft.focus(index) } }
+        // The pointer highlights; it does not arm Return or the digits.
+        .onHover { inside in
+            if inside {
+                draft.hover(index)
+            } else if draft.hovered == index {
+                draft.hover(nil)
+            }
+        }
         .pointerStyle(.link)
         .help(multi ? (ticked ? "Untick \(option.label)" : "Tick \(option.label)") : "Answer \(option.label)")
         .accessibilityLabel(multi ? "\(option.label), \(ticked ? "ticked" : "not ticked")" : "\(index + 1). \(option.label)")

@@ -1035,7 +1035,7 @@ final class AppModel: ObservableObject {
                 finished.outcome != .error || turnHadAgentOutput(chat: chat, turn: finished.turn)
             {
                 noteLastReply(chat: chat, at: finished.ts)
-                noteThreadTurnFinished(chat: chat)
+                noteThreadTurnFinished(chat: chat, outcome: finished.outcome)
             }
             if FolderRelist.triggers(message, tool: { toolName(chat: chat, toolUseId: $0) }) {
                 scheduleRelist(chat: chat)
