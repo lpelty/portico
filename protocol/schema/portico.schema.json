@@ -280,6 +280,621 @@
       "title": "AgentStarted",
       "type": "object"
     },
+    "AppCallResult": {
+      "additionalProperties": false,
+      "description": "v0.18: the answer to ``app.call_tool`` (its ``id``). ``ok`` false carries ``error``; the result is never the model's.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "content": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Content",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "structured_content": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structured Content"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.call_result",
+          "default": "app.call_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "tool_use_id",
+        "ok"
+      ],
+      "title": "AppCallResult",
+      "type": "object"
+    },
+    "AppCallTool": {
+      "additionalProperties": false,
+      "description": "v0.18: the page asks to run ``tool`` on its own server (a bare name means that server's).",
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Arguments",
+          "type": "object"
+        },
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.call_tool",
+          "default": "app.call_tool",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id",
+        "tool"
+      ],
+      "title": "AppCallTool",
+      "type": "object"
+    },
+    "AppCancelled": {
+      "additionalProperties": false,
+      "description": "v0.18: the call ended with no result (stopped, or an error before one).",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.cancelled",
+          "default": "app.cancelled",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id"
+      ],
+      "title": "AppCancelled",
+      "type": "object"
+    },
+    "AppContext": {
+      "additionalProperties": false,
+      "description": "v0.18: the page's ``ui/update-model-context``: kept (latest only) and put before the person's next message.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.context",
+          "default": "app.context",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id",
+        "text"
+      ],
+      "title": "AppContext",
+      "type": "object"
+    },
+    "AppMessage": {
+      "additionalProperties": false,
+      "description": "v0.18: the page's ``ui/message``: sent as the person's message, labelled ``via`` the app.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.message",
+          "default": "app.message",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id",
+        "text"
+      ],
+      "title": "AppMessage",
+      "type": "object"
+    },
+    "AppOpen": {
+      "additionalProperties": false,
+      "description": "v0.18: show the app card for the agent's call ``tool_use_id``.\n\n``server`` is the configured name, ``server_title`` what to call it\n(``serverInfo.title``, else the name); ``tool`` is the bare tool name.\n``html`` is the page (absent in a replay: the card comes back frozen).\n``csp``, ``permissions`` and ``prefers_border`` are the resource's\n``_meta.ui`` members, as the server gave them.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "csp": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Csp"
+        },
+        "html": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Html"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "input": {
+          "additionalProperties": true,
+          "default": {},
+          "title": "Input",
+          "type": "object"
+        },
+        "permissions": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permissions"
+        },
+        "prefers_border": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prefers Border"
+        },
+        "resource_uri": {
+          "title": "Resource Uri",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "server": {
+          "title": "Server",
+          "type": "string"
+        },
+        "server_title": {
+          "title": "Server Title",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.open",
+          "default": "app.open",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id",
+        "server",
+        "server_title",
+        "tool",
+        "resource_uri"
+      ],
+      "title": "AppOpen",
+      "type": "object"
+    },
+    "AppReload": {
+      "additionalProperties": false,
+      "description": "v0.18: read the page again (starting the chat's engine if needed); answered ``app.open`` then ``app.result``.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.reload",
+          "default": "app.reload",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id"
+      ],
+      "title": "AppReload",
+      "type": "object"
+    },
+    "AppResult": {
+      "additionalProperties": false,
+      "description": "v0.18: the call's result for the page (``structured_content`` absent when it was over the cap).",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "content": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Content",
+          "type": "array"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "is_error": {
+          "default": false,
+          "title": "Is Error",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "structured_content": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structured Content"
+        },
+        "tool_use_id": {
+          "title": "Tool Use Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "app.result",
+          "default": "app.result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "tool_use_id"
+      ],
+      "title": "AppResult",
+      "type": "object"
+    },
     "Artifact": {
       "additionalProperties": false,
       "properties": {
@@ -1107,6 +1722,9 @@
                 "agent.finished": "#/$defs/AgentFinished",
                 "agent.progress": "#/$defs/AgentProgress",
                 "agent.started": "#/$defs/AgentStarted",
+                "app.cancelled": "#/$defs/AppCancelled",
+                "app.open": "#/$defs/AppOpen",
+                "app.result": "#/$defs/AppResult",
                 "artifact.created": "#/$defs/ArtifactCreated",
                 "card.answered": "#/$defs/CardAnswered",
                 "card.ask": "#/$defs/CardAsk",
@@ -1188,6 +1806,15 @@
               },
               {
                 "$ref": "#/$defs/WorkflowFinished"
+              },
+              {
+                "$ref": "#/$defs/AppOpen"
+              },
+              {
+                "$ref": "#/$defs/AppResult"
+              },
+              {
+                "$ref": "#/$defs/AppCancelled"
               },
               {
                 "$ref": "#/$defs/Error"
@@ -2204,6 +2831,18 @@
         },
         {
           "$ref": "#/$defs/PluginsConfigure"
+        },
+        {
+          "$ref": "#/$defs/AppCallTool"
+        },
+        {
+          "$ref": "#/$defs/AppMessage"
+        },
+        {
+          "$ref": "#/$defs/AppContext"
+        },
+        {
+          "$ref": "#/$defs/AppReload"
         }
       ]
     },
@@ -5391,6 +6030,18 @@
           "$ref": "#/$defs/PluginsOptions"
         },
         {
+          "$ref": "#/$defs/AppOpen"
+        },
+        {
+          "$ref": "#/$defs/AppResult"
+        },
+        {
+          "$ref": "#/$defs/AppCancelled"
+        },
+        {
+          "$ref": "#/$defs/AppCallResult"
+        },
+        {
           "$ref": "#/$defs/Error"
         }
       ]
@@ -7202,6 +7853,18 @@
           "default": "user.text",
           "title": "Type",
           "type": "string"
+        },
+        "via": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Via"
         }
       },
       "required": [

@@ -290,6 +290,7 @@ class McpSettings:
         spawn: Callable[[Coroutine[Any, Any, None], str], Any],
         env: Mapping[str, str] = os.environ,
         config_lock: asyncio.Lock | None = None,
+        reconnected: Callable[[Any], None] | None = None,
     ) -> None:
         self._folder = folder
         self._core = core
@@ -303,6 +304,8 @@ class McpSettings:
         # (this toggle's write, the mcp CLI runs, the plugin CLI runs).
         self._config_lock = config_lock if config_lock is not None else asyncio.Lock()
         self.signing_in: set[str] = set()
+        # v0.18 (ruling 22): told of each engine after a reconnect, so MCP Apps rebuild its UI map.
+        self._reconnected = reconnected
 
     # --- reading --------------------------------------------------------------
 
@@ -441,6 +444,9 @@ class McpSettings:
                 await engine.mcp_reconnect(name)
             except Exception as e:
                 log.warning("could not reconnect MCP server %s: %s", name, type(e).__name__)
+                continue
+            if self._reconnected is not None:
+                self._reconnected(engine)
 
     async def remove(self, name: str, id: str | None = None) -> McpServers:
         group, _, _ = await self._find(name)

@@ -477,8 +477,9 @@ an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
 see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
 `[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
-always, see [MCP servers](#mcp-servers-v018), and `plugins.v1` always, see
-[Plugins](#plugins-v018)). Always followed by `chat.list`, so the app has the
+always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
+[Plugins](#plugins-v018), and `apps.v1` when `[apps] enabled` (the
+default), see [MCP Apps](#mcp-apps-v018)). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -640,7 +641,10 @@ the one `user.text` per turn as the bubble and does not add a second from
 the `message.send` it sent. v0.11: a queued message written into a
 running turn is a further `user.text` in that turn, at the point it went
 (see Messages while the agent works); a transcript replay shows it as the
-start of a turn of its own.
+start of a turn of its own. v0.18: `via?: string` — the message came from an
+MCP app's page (`app.message`); it is the app's server title, and the app
+shows "via <title>" under the bubble. Absent for what the person typed, and
+in a transcript replay. An older app ignores it.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
@@ -1321,6 +1325,123 @@ servers and projected token cost), `id`.
 (the option's title, else its key), description, sensitive, set, value?}`.
 A sensitive option's `value` is always absent; `set` says whether it has
 one.
+
+## MCP Apps *(v0.18)*
+
+An MCP server's tool can name a page (`_meta.ui.resourceUri`, a `ui://`
+address; the MCP Apps extension, stable spec 2026-01-26). When the agent
+calls such a tool, an app that declared `apps.v1` shows the page in a card
+in place of the tool row, gives it the call's input and then its result,
+and relays what the page asks for. Every other app keeps the plain tool row.
+
+- **Capabilities.** The gateway lists `apps.v1` in `hello` when `[apps]
+  enabled` (the default); it then starts every engine with
+  `CLAUDE_CODE_MCP_APPS_HOST=1`, so the CLI tells MCP servers it can show
+  their pages. The app lists `apps.v1` too; only then is it sent `app.*`
+  frames, live or in a `chat.history`.
+- **When apps are on.** For an engine whose CLI reports
+  `mcp_call_result_not_for_model_v1`. The first page read that fails on an
+  engine (after up to 10 s of retries while the server is still connecting)
+  turns apps off for that engine, logged once: "MCP Apps are off for chat
+  N: <error>". Its app tools stay plain tool rows.
+- **Which tools.** After each engine start and each Reconnect, the gateway
+  reads the engine's MCP status: per tool, its `_meta.ui.resourceUri` (or
+  the deprecated `_meta["ui/resourceUri"]`), `_meta.ui.visibility`
+  (default `["model", "app"]`) and `annotations.readOnly`. Servers Portico
+  runs itself never have apps.
+- **Order on the wire.** `tool.started` → `app.open` (once the page is read)
+  → `tool.finished` → `app.result`, or `app.cancelled` when the call ended
+  with no result. While a page is read the chat's later events wait, in
+  order, so `app.open` is never after its `tool.finished`. An `app.open`
+  that fails sends nothing more. `app.*` frames carry no `seq` and are not
+  kept in the ring.
+- **Saved cards.** The gateway keeps each card's record (the server, tool,
+  page address, input, result, `csp`, `permissions`, `prefers_border`,
+  server title; never the HTML) under `<state>/apps/<session>/<tool_use_id>.json`,
+  readable only by the person. A result over 4 MiB of JSON keeps `content`
+  and drops `structured_content`. `chat.history`, from the ring or a
+  transcript, brings each card back right after its `tool.finished` as
+  `app.open` with no `html` (the card is frozen; **Reload** shows it
+  again), then `app.result` (or `app.cancelled`).
+- **The page's sandbox is the app's** (spec §2.3.5): one web view per card
+  with a non-persistent data store and nothing shared with Portico's other
+  web views; its own origin, `mcpapp-<server>://app/index.html`; the CSP
+  from `csp` sent as a response header, else the strict default (no
+  network: `default-src 'none'; script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'
+  data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri
+  'self'`); no navigation of its own (links go through `ui/open-link` to the
+  viewer); camera and microphone refused. The host side of the page's
+  JSON-RPC is the app's own code. The page's HTML is third-party content:
+  it is never rendered anywhere else.
+
+### `app.open` — `AppOpen`
+`chat`, `tool_use_id` (the agent's call), `server` (the configured name),
+`server_title` (its `serverInfo.title`, else the name), `tool` (the bare
+tool name), `resource_uri`, `html?` (absent in a replay), `csp?`,
+`permissions?`, `prefers_border?` (the resource's `_meta.ui` members, as
+the server gave them), `input` (the call's input). `id` when it answers
+`app.reload`.
+
+### `app.result` — `AppResult`
+`chat`, `tool_use_id`, `content` (the result's content blocks),
+`structured_content?` (absent when the server sent none or it was over the
+cap), `is_error`. `id` when it answers `app.reload`.
+
+### `app.cancelled` — `AppCancelled`
+`chat`, `tool_use_id`. The call ended (stopped, or an error) with no result.
+
+### `app.call_tool` — `AppCallTool` *(app → gateway)*
+`chat`, `tool_use_id` (the card), `tool`, `arguments`, `id`. The page's
+`tools/call`. A bare `tool` means the card's own server
+(`mcp__<server>__<tool>`). The gateway checks, in this order, and never
+takes the page's word for any of it (the CLI's call skips its own
+permission checks):
+
+1. the card exists — else "Unknown app";
+2. the tool is on the card's server — else "That tool is on another server";
+3. its visibility includes `"app"` — else "That tool isn't offered to apps";
+4. consent. A tool marked read-only runs without asking unless the person
+   set it to "Asks first" in Settings; any other asks with the agent's own
+   permission card (`card.ask kind=permission`, `permission.tool` the full
+   tool name, title and `permission.summary` "The <server_title> app wants
+   to run <tool>", `scope_note` "<the tool's description> · from the card
+   above"), unless the person set it to "Runs without asking" or allowed
+   it for this session. Allow for this session is the same allow as the
+   agent's own calls to that tool. Deny (or a card cancelled) is "Denied".
+
+Then the tool runs with its result kept from the model. Every call from a
+page is logged.
+
+### `app.call_result` — `AppCallResult`
+`tool_use_id`, `ok`, `content`, `structured_content?`, `is_error`, `error?`;
+the request's `id`. `ok: false` carries `error` (one of the refusals above,
+or why the call failed).
+
+### `app.message` — `AppMessage` *(app → gateway)*
+`chat`, `tool_use_id`, `text`, `id`. The page's `ui/message`: sent exactly
+as a typed `message.send` (queued during a turn for an app with
+`queue.v1`), its `user.text` carrying `via: "<server_title>"`. Text whose
+first non-space character is `/` is refused with `error
+code=app.refused` "Apps can't run commands" (the CLI would run it as a
+command); an unknown card is `error code=app.unknown` "Unknown app".
+
+### `app.context` — `AppContext` *(app → gateway)*
+`chat`, `tool_use_id`, `text`. The page's `ui/update-model-context`. The
+latest per card is kept (cut to 16 000 characters). Before the person's
+next message (one that is not a slash command), each kept block goes first
+in what the engine receives, as `<app-context
+server="<server>">\n<text>\n</app-context>\n\n`, and is cleared; the
+`user.text` shows only the message. The first update from each card
+between two messages adds the `chat.notice` "<server_title> updated the
+context". Not answered.
+
+### `app.reload` — `AppReload` *(app → gateway)*
+`chat`, `tool_use_id`, `id`. Reads the page again (starting the chat's
+engine first when none is running, as a send would) and answers `app.open`
+with the `html`, then `app.result` from the record, both with the `id`. A
+failure is `error code=app.reload_failed` "Couldn't reload: <reason>" with
+the `id`.
 
 ## Threads *(v0.16)*
 

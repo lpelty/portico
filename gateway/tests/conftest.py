@@ -202,6 +202,8 @@ class FakeEngine:
         # records ``mcp_app_call`` and ``app_call_result`` is its answer (an
         # exception value is raised). ``apps_capable`` is set by the test.
         self.apps_capable = False
+        # Set by the owner from ``[apps] enabled`` before ``start``.
+        self.apps_host = False
         self.mcp_status_value: list[dict[str, Any]] = []
         self.toggles: list[tuple[str, bool]] = []
         self.reconnects: list[str] = []

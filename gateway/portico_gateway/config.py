@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -334,6 +334,19 @@ class McpConfig(BaseModel):
     core: list[str] = []
 
 
+class AppsConfig(BaseModel):
+    """``[apps]`` (v0.18 §2): MCP Apps, a tool's ``ui://`` page shown in the chat.
+
+    ``enabled`` (default true) starts every engine as an MCP Apps host
+    (``CLAUDE_CODE_MCP_APPS_HOST=1``) and offers ``apps.v1``; false keeps
+    every tool a plain tool row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+
+
 def with_default_spaces(config: Config, state_path: Path) -> Config:
     """v0.14: with no ``[spaces] folder``, the spaces folder is ``<state dir>/spaces``, created if missing.
 
@@ -429,6 +442,8 @@ class Config(BaseModel):
     threads: ThreadsConfig = ThreadsConfig()
     # v0.18: MCP servers (``[mcp] core``).
     mcp: McpConfig = McpConfig()
+    # v0.18: MCP Apps (``[apps] enabled``).
+    apps: AppsConfig = AppsConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -568,7 +583,8 @@ def hello_for(
     ``capabilities`` (v0.8) adds ``services.restart_all`` when the
     deployment can restart all its services, (v0.11) ``sessions.clear``
     in single presentation, and (v0.16) ``threads.v1`` in single
-    presentation with ``[threads] max`` above 0, with ``threads_max`` set to it.
+    presentation with ``[threads] max`` above 0, with ``threads_max`` set to it,
+    and (v0.18) ``apps.v1`` when ``[apps] enabled``.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
@@ -578,6 +594,8 @@ def hello_for(
         capabilities.append(CLEAR_SESSIONS_CAPABILITY)
         if config.threads.max > 0:
             capabilities.append(THREADS_CAPABILITY)
+    if config.apps.enabled:
+        capabilities.append(APPS_CAPABILITY)
     if config.spaces.folder:
         capabilities.append(SPACES_CAPABILITY)
         if config.spaces.refresh:

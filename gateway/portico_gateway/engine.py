@@ -92,6 +92,9 @@ SHOW_TOOL = "show_in_viewer"
 # titles). The SDK marks its engines ``CLAUDE_CODE_ENTRYPOINT=sdk-py``, which a
 # deployment's start-up checks may read as nobody present; this says someone is.
 ATTENDED_ENV = "PORTICO_ATTENDED"
+# v0.18 (ruling 20): set to ``1`` in an engine's environment when ``[apps] enabled``;
+# the CLI then tells MCP servers it can show their ``ui://`` pages.
+APPS_HOST_ENV = "CLAUDE_CODE_MCP_APPS_HOST"
 # The SDK reads the CLI's stdout as JSON lines, 1 MiB at most by default; a look's base64 image is one line.
 CLI_MAX_BUFFER_BYTES = 32 * 2**20
 SHOW_TOOL_NAME = f"mcp__{SHOW_SERVER}__{SHOW_TOOL}"
@@ -238,6 +241,9 @@ class Engine(Protocol):
     # v0.18: whether this engine can show MCP Apps (its CLI reported
     # ``mcp_call_result_not_for_model_v1``), set by ``start``.
     apps_capable: bool
+    # v0.18 (ruling 20): whether to start as an MCP Apps host (``[apps] enabled``),
+    # set by the owner before ``start``.
+    apps_host: bool
 
     async def start(
         self,
@@ -426,19 +432,22 @@ def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = 
     elif isinstance(msg, UserMessage):
         if msg.parent_tool_use_id is not None or isinstance(msg.content, str):
             return out
-        for block in msg.content:
-            if isinstance(block, ToolResultBlock):
-                out.append(
-                    ToolFinished(
-                        ts=ts,
-                        chat=chat,
-                        turn=turn,
-                        tool_use_id=block.tool_use_id,
-                        ok=not bool(block.is_error),
-                        summary=result_summary(block.content),
-                        permission="blocked" if blocked_by_auto_mode(block.is_error, block.content) else None,
-                    )
-                )
+        results = [block for block in msg.content if isinstance(block, ToolResultBlock)]
+        # v0.18 (§2.6.1): the message's ``tool_use_result`` (``{content, structuredContent}``) is
+        # one call's; it rides on that call's row, privately, when the message carries one result.
+        raw = msg.tool_use_result if len(results) == 1 and isinstance(msg.tool_use_result, dict) else None
+        for block in results:
+            out.append(
+                ToolFinished(
+                    ts=ts,
+                    chat=chat,
+                    turn=turn,
+                    tool_use_id=block.tool_use_id,
+                    ok=not bool(block.is_error),
+                    summary=result_summary(block.content),
+                    permission="blocked" if blocked_by_auto_mode(block.is_error, block.content) else None,
+                ).with_raw_result(raw)
+            )
     elif isinstance(msg, ResultMessage):
         out.append(TurnFinished(ts=ts, chat=chat, turn=turn, outcome="error" if msg.is_error else "done"))
     # SystemMessage, RateLimitEvent, ConversationResetMessage and the rest carry nothing for the app.
@@ -836,6 +845,7 @@ def build_options(
     model: str | None = None,
     extra_servers: Mapping[str, dict] | None = None,
     plugin_paths: list[str] | None = None,
+    apps_host: bool = False,
 ) -> ClaudeAgentOptions:
     """The SDK options for one chat. Never sets ``verbatim_prompts``.
 
@@ -857,7 +867,8 @@ def build_options(
     owner's prompt line (``MAIN_PROMPT``) is already in ``system_prompt``.
 
     ``PORTICO_ATTENDED=1`` is always in the engine's environment: a person
-    drives this chat (v0.11).
+    drives this chat (v0.11). ``CLAUDE_CODE_MCP_APPS_HOST=1`` is too when
+    ``apps_host`` (v0.18, ``[apps] enabled``).
 
     ``model`` (v0.15) is the stored ``model.set`` choice, passed only when
     set; without it the engine starts on the deployment's default.
@@ -922,7 +933,7 @@ def build_options(
         can_use_tool=build_can_use_tool(callbacks),
         include_partial_messages=True,
         max_buffer_size=CLI_MAX_BUFFER_BYTES,
-        env={ATTENDED_ENV: "1"},
+        env={ATTENDED_ENV: "1", **({APPS_HOST_ENV: "1"} if apps_host else {})},
         hooks={
             "PreToolUse": pre_tool_use,
             "PreCompact": [HookMatcher(matcher=None, hooks=[build_compact_hook(callbacks)])],
@@ -1155,6 +1166,8 @@ class SDKEngine:
         self.agents = AgentTracker()
         # v0.18: set by ``start`` from the CLI's capabilities.
         self.apps_capable = False
+        # v0.18: the owner sets it from ``[apps] enabled`` before ``start``.
+        self.apps_host = False
 
     async def start(
         self,
@@ -1181,6 +1194,7 @@ class SDKEngine:
                 model=self.model,
                 extra_servers=extra_servers,
                 plugin_paths=plugin_paths,
+                apps_host=self.apps_host,
             )
         )
         await self._client.connect()

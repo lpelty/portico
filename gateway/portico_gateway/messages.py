@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, ValidationError
 from pydantic.json_schema import models_json_schema
 
 PROTOCOL_VERSION = 1
@@ -57,6 +57,11 @@ QUEUE_CAPABILITY = "queue.v1"
 # presentation with ``[threads] max`` above 0; only an app that lists it too
 # is sent ``thread.proposal``.
 THREADS_CAPABILITY = "threads.v1"
+
+# v0.18 (ruling 20): the capability, on both sides, for MCP Apps. A gateway
+# lists it when ``[apps] enabled``; only an app that lists it too is sent the
+# ``app.*`` frames (any other app keeps the plain tool rows).
+APPS_CAPABILITY = "apps.v1"
 
 # v0.17: the capability an app lists when it can show a service as ``stuck``.
 # Any other app is sent a stuck service as ``down`` (its decoder would refuse
@@ -508,6 +513,50 @@ class PluginsConfigure(Envelope):
     values: dict[str, str]
 
 
+# --- MCP Apps (v0.18 §2, ``apps.v1``) ------------------------------------------
+#
+# From the page of an app card, sent by the app on its behalf. ``tool_use_id``
+# names the card (the agent's call that opened it). ``app.call_tool`` is
+# answered with ``app.call_result`` carrying its ``id``; ``app.message`` and
+# ``app.reload`` with an ``error`` carrying the ``id`` when refused.
+
+
+class AppCallTool(Envelope):
+    """v0.18: the page asks to run ``tool`` on its own server (a bare name means that server's)."""
+
+    type: Literal["app.call_tool"] = "app.call_tool"
+    chat: int
+    tool_use_id: str
+    tool: str
+    arguments: dict[str, Any] = {}
+
+
+class AppMessage(Envelope):
+    """v0.18: the page's ``ui/message``: sent as the person's message, labelled ``via`` the app."""
+
+    type: Literal["app.message"] = "app.message"
+    chat: int
+    tool_use_id: str
+    text: str
+
+
+class AppContext(Envelope):
+    """v0.18: the page's ``ui/update-model-context``: kept (latest only) and put before the person's next message."""
+
+    type: Literal["app.context"] = "app.context"
+    chat: int
+    tool_use_id: str
+    text: str
+
+
+class AppReload(Envelope):
+    """v0.18: read the page again (starting the chat's engine if needed); answered ``app.open`` then ``app.result``."""
+
+    type: Literal["app.reload"] = "app.reload"
+    chat: int
+    tool_use_id: str
+
+
 class TurnStop(Envelope):
     type: Literal["turn.stop"] = "turn.stop"
     chat: int
@@ -745,6 +794,9 @@ class UserText(Envelope):
     chat: int
     turn: int
     text: str
+    # v0.18 (ruling 27): a message an MCP app sent (``app.message``) carries the
+    # app's server title; the transcript shows "via <title>". Absent otherwise.
+    via: str | None = None
 
 
 class TextDelta(Envelope):
@@ -781,6 +833,18 @@ class ToolFinished(Envelope):
     # v0.16: on an answered ``AskUserQuestion`` row, what the person chose
     # ({<question text>: <label> | [labels]}); absent on a decline.
     answers: dict[str, str | list[str]] | None = None
+    # v0.18 (§2.6.1): the engine's ``tool_use_result`` for this call, live only.
+    # Private: never on the wire, never in the schema; MCP Apps read it.
+    _raw_result: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @property
+    def raw_result(self) -> dict[str, Any] | None:
+        return self._raw_result
+
+    def with_raw_result(self, raw: dict[str, Any] | None) -> ToolFinished:
+        """``self`` carrying ``raw`` (set in place; returned for chaining)."""
+        self._raw_result = raw
+        return self
 
 
 class TurnFinished(Envelope):
@@ -1146,6 +1210,73 @@ class PluginsOptions(Envelope):
     options: list[PluginOption] = []
 
 
+# --- MCP Apps (v0.18 §2) --------------------------------------------------------------
+#
+# Sent only to an app that declared ``apps.v1``. Live: ``tool.started`` →
+# ``app.open`` → ``tool.finished`` → ``app.result`` (or ``app.cancelled``).
+# Not stamped (no ``seq``) and not kept in the ring: ``chat.history`` brings
+# each card back from its saved record, ``html`` null (frozen).
+
+
+class AppOpen(Envelope):
+    """v0.18: show the app card for the agent's call ``tool_use_id``.
+
+    ``server`` is the configured name, ``server_title`` what to call it
+    (``serverInfo.title``, else the name); ``tool`` is the bare tool name.
+    ``html`` is the page (absent in a replay: the card comes back frozen).
+    ``csp``, ``permissions`` and ``prefers_border`` are the resource's
+    ``_meta.ui`` members, as the server gave them.
+    """
+
+    type: Literal["app.open"] = "app.open"
+    chat: int
+    tool_use_id: str
+    server: str
+    server_title: str
+    tool: str
+    resource_uri: str
+    html: str | None = None
+    csp: dict[str, Any] | None = None
+    permissions: dict[str, Any] | None = None
+    prefers_border: bool | None = None
+    input: dict[str, Any] = {}
+
+
+class AppResult(Envelope):
+    """v0.18: the call's result for the page (``structured_content`` absent when it was over the cap)."""
+
+    type: Literal["app.result"] = "app.result"
+    chat: int
+    tool_use_id: str
+    content: list[dict[str, Any]] = []
+    structured_content: dict[str, Any] | None = None
+    is_error: bool = False
+
+
+class AppCancelled(Envelope):
+    """v0.18: the call ended with no result (stopped, or an error before one)."""
+
+    type: Literal["app.cancelled"] = "app.cancelled"
+    chat: int
+    tool_use_id: str
+
+
+class AppCallResult(Envelope):
+    """v0.18: the answer to ``app.call_tool`` (its ``id``). ``ok`` false carries ``error``; the result is never the model's."""
+
+    type: Literal["app.call_result"] = "app.call_result"
+    tool_use_id: str
+    ok: bool
+    content: list[dict[str, Any]] = []
+    structured_content: dict[str, Any] | None = None
+    is_error: bool = False
+    error: str | None = None
+
+
+# The v0.18 frame types only an app that declared ``apps.v1`` is sent.
+APP_FRAME_TYPES: frozenset[str] = frozenset({"app.open", "app.result", "app.cancelled", "app.call_result"})
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -1264,6 +1395,9 @@ HistoryEvent = Annotated[
         WorkflowStarted,
         WorkflowPhase,
         WorkflowFinished,
+        AppOpen,
+        AppResult,
+        AppCancelled,
         Error,
     ],
     Field(discriminator="type"),
@@ -1360,6 +1494,10 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     PluginsDetailsRequest,
     PluginsOptionsRequest,
     PluginsConfigure,
+    AppCallTool,
+    AppMessage,
+    AppContext,
+    AppReload,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1406,6 +1544,10 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     PluginsState,
     PluginsDetails,
     PluginsOptions,
+    AppOpen,
+    AppResult,
+    AppCancelled,
+    AppCallResult,
     Error,
 )
 
@@ -1550,6 +1692,13 @@ def example_messages() -> dict[str, BaseModel]:
         PluginsDetailsRequest(ts=_TS, id="req-37", plugin="design-review@acme"),
         PluginsOptionsRequest(ts=_TS, id="req-38", plugin="design-review@acme"),
         PluginsConfigure(ts=_TS, id="req-39", plugin="design-review@acme", values={"region": "eu"}),
+        AppCallTool(
+            ts=_TS, id="req-40", chat=1, tool_use_id="toolu_01", tool="update_task",
+            arguments={"task": "Launch email", "status": "done"},
+        ),
+        AppMessage(ts=_TS, id="req-41", chat=1, tool_use_id="toolu_01", text="Mark Launch email done"),
+        AppContext(ts=_TS, chat=1, tool_use_id="toolu_01", text="Project: Acme launch. 3 of 4 tasks done."),
+        AppReload(ts=_TS, id="req-42", chat=1, tool_use_id="toolu_01"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1878,6 +2027,35 @@ def example_messages() -> dict[str, BaseModel]:
                 PluginOption(key="region", title="Region", description="Where your reviews are kept", set=True, value="us"),
                 PluginOption(key="api_key", title="API key", description="Your Acme key", sensitive=True, set=True),
             ],
+        ),
+        AppOpen(
+            ts=_TS,
+            chat=1,
+            tool_use_id="toolu_01",
+            server="acme-tracker",
+            server_title="Acme Tracker",
+            tool="show_project",
+            resource_uri="ui://tracker/project.html",
+            html="<!doctype html><title>Acme launch</title><main id=\"tasks\"></main>",
+            csp={"connectDomains": ["https://api.acme.example"]},
+            prefers_border=True,
+            input={"project": "Acme launch"},
+        ),
+        AppResult(
+            ts=_TS,
+            chat=1,
+            tool_use_id="toolu_01",
+            content=[{"type": "text", "text": "Acme launch: 3 of 4 tasks done."}],
+            structured_content={"project": "Acme launch", "tasks": [{"title": "Launch email", "owner": "Sam", "status": "todo"}]},
+        ),
+        AppCancelled(ts=_TS, chat=1, tool_use_id="toolu_02"),
+        AppCallResult(
+            ts=_TS,
+            id="req-40",
+            tool_use_id="toolu_01",
+            ok=True,
+            content=[{"type": "text", "text": "Launch email is done."}],
+            structured_content={"task": "Launch email", "status": "done"},
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

@@ -1,0 +1,23 @@
+{
+  "chat": 1,
+  "content": [
+    {
+      "text": "Acme launch: 3 of 4 tasks done.",
+      "type": "text"
+    }
+  ],
+  "is_error": false,
+  "structured_content": {
+    "project": "Acme launch",
+    "tasks": [
+      {
+        "owner": "Sam",
+        "status": "todo",
+        "title": "Launch email"
+      }
+    ]
+  },
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "app.result"
+}

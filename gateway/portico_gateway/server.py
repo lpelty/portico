@@ -163,6 +163,7 @@ from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
 from .agents import AgentTracker
+from .apps import AppHost
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
@@ -187,6 +188,12 @@ from .plugin_settings import PluginSettings
 from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
+    APP_FRAME_TYPES,
+    APPS_CAPABILITY,
+    AppCallTool,
+    AppContext,
+    AppMessage,
+    AppReload,
     PROTOCOL_VERSION,
     QUEUE_CAPABILITY,
     SERVICES_STUCK_CAPABILITY,
@@ -530,6 +537,7 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     ``models`` goes only to an app with ``models.v1`` (v0.15).
     ``thread.proposal`` goes only to an app with ``threads.v1`` (v0.16).
+    ``app.*`` goes only to an app with ``apps.v1`` (v0.18), live or in a ``chat.history``.
     A ``stuck`` service reaches an app without ``services.stuck.v1`` as ``down`` (v0.17).
     """
     if isinstance(msg, ServicesStatus) and SERVICES_STUCK_CAPABILITY not in capabilities:
@@ -545,6 +553,12 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
         return None  # v0.11: an app that cannot show a queue never had one
     if isinstance(msg, ThreadProposal) and THREADS_CAPABILITY not in capabilities:
         return None  # v0.16: an app without threads.v1 shows no thread UI
+    if APPS_CAPABILITY not in capabilities:
+        # v0.18 (ruling 20): an app without apps.v1 keeps the plain tool rows.
+        if getattr(msg, "type", None) in APP_FRAME_TYPES:
+            return None
+        if isinstance(msg, ChatHistory) and any(e.type in APP_FRAME_TYPES for e in msg.events):
+            msg = msg.model_copy(update={"events": [e for e in msg.events if e.type not in APP_FRAME_TYPES]})
     if AGENTS_CAPABILITY in capabilities:
         return msg
     if _is_agent_frame(msg):
@@ -934,6 +948,8 @@ class GatewayServer:
         # v0.11: per chat, the messages sent during a turn and not yet given
         # to the agent, oldest first. In memory only: a gateway stop drops them.
         self._queues: dict[int, list[QueuedMessage]] = {}
+        # v0.18: which held messages an MCP app sent, by (chat, queued id): their ``via``.
+        self._queued_via: dict[tuple[int, str], str] = {}
         # v0.11 (item 66): the agent's commands, last list per folder (newest
         # last), kept in ``commands.json`` so an app hears one before any
         # engine of this launch has started.
@@ -1049,6 +1065,8 @@ class GatewayServer:
         # write of ``~/.claude.json``, the ``mcp`` and ``plugin`` CLI runs that change
         # things), so two changes never interleave. Reads don't take it.
         self.claude_config_lock = asyncio.Lock()
+        # v0.18 §2: MCP Apps (``apps.v1``): the UI map, pages, records, calls from a page.
+        self.apps = AppHost(self, state.path, config.apps.enabled)
         self.mcp_settings = McpSettings(
             folder=self._probe_folder,
             core=lambda: list(self.config.mcp.core),
@@ -1058,6 +1076,7 @@ class GatewayServer:
             push=self.broadcast,
             spawn=self._spawn,
             config_lock=self.claude_config_lock,
+            reconnected=self.apps.engine_reconnected,
         )
         # v0.18 §3: plugins in Settings (``plugins.v1``).
         self.plugin_settings = PluginSettings(folder=self._probe_folder, cli=self.cli, lock=self.claude_config_lock)
@@ -1080,6 +1099,10 @@ class GatewayServer:
             ("plugins.details", self.on_plugins_details),
             ("plugins.options", self.on_plugins_options),
             ("plugins.configure", self.on_plugins_configure),
+            ("app.call_tool", self.on_app_call_tool),
+            ("app.message", self.on_app_message),
+            ("app.context", self.on_app_context),
+            ("app.reload", self.on_app_reload),
         ):
             self.register(type_name, handler)
 
@@ -1667,12 +1690,15 @@ class GatewayServer:
         engine.system_prompt = prompt
         # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
         engine.model = self.registry.model
+        # v0.18 (ruling 20): an MCP Apps host only when ``[apps] enabled``.
+        engine.apps_host = self.config.apps.enabled
         sources = list(self.config.setting_sources)
         extra_servers, plugin_paths = await self._person_mcp(chat, sources)
         session = await engine.start(
             chat.folder, chat.session_id, sources, callbacks, extra_servers=extra_servers, plugin_paths=plugin_paths
         )
         chat.engine = engine
+        self.apps.engine_started(chat, engine)
         self._engine_seq += 1
         self._engine_started[chat.number] = self._engine_seq
         if session:
@@ -1889,6 +1915,8 @@ class GatewayServer:
         ``close_all``), so nothing is left working on the app's screen.
         """
         engine, chat.engine = chat.engine, None
+        # v0.18: a page being read, and the events held behind it, go with the engine.
+        self.apps.engine_closed(chat)
         run = self._runs.pop(chat.number, None)
         if run is not None:
             run.stop_requested = True
@@ -1939,7 +1967,18 @@ class GatewayServer:
         """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn.
 
         The engine's own ``turn.started`` is a turn nobody sent (``_unsent_turn``).
+        v0.18 (ruling 23): while an MCP app's page is being read, the chat's
+        later events wait behind it, in order (``AppHost``), so ``app.open``
+        goes out before the call's ``tool.finished``; the engine's pump never waits.
         """
+        self._sync_session(chat)
+        if self.apps.holding(chat.number):
+            self.apps.hold(chat.number, event)
+            return
+        await self.engine_event_now(chat, event)
+
+    async def engine_event_now(self, chat: Chat, event: ServerMessage) -> None:
+        """``engine_event`` with nothing held before it (``AppHost`` releases its held events here)."""
         self._sync_session(chat)
         if isinstance(event, TurnStarted):
             await self._unsent_turn(chat, event)
@@ -1970,7 +2009,10 @@ class GatewayServer:
                 # No turn to collect it: reported when the write is done.
                 self._loose_writes[(chat.number, event.tool_use_id)] = (event.tool, dict(event.input))
             await self.emit(chat, event)
+            if isinstance(event, ToolStarted):
+                self.apps.tool_started(chat, event)
             if isinstance(event, ToolFinished):
+                await self.apps.tool_finished(chat, event)
                 write = self._loose_writes.pop((chat.number, event.tool_use_id), None)
                 if write is not None and event.ok:
                     await self._report_write(chat, *write)
@@ -2374,6 +2416,25 @@ class GatewayServer:
     async def on_plugins_configure(self, msg: PluginsConfigure, conn: ServerConnection) -> None:
         self._spawn_mcp(msg, conn, self.plugin_settings.configure(msg.plugin, msg.values, msg.id))
 
+    # --- MCP Apps (v0.18 §2) -------------------------------------------------------
+    #
+    # A page's call and Reload run as tasks replying by id: a call may wait on a
+    # person's consent, a Reload may start the engine.
+
+    async def on_app_call_tool(self, msg: AppCallTool, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        self._spawn(self.apps.call_tool(chat, msg, conn), name=f"portico-app-call-{chat.number}")
+
+    async def on_app_message(self, msg: AppMessage, conn: ServerConnection) -> None:
+        await self.apps.message(self.registry.get(msg.chat), msg, conn)
+
+    async def on_app_context(self, msg: AppContext, conn: ServerConnection) -> None:
+        await self.apps.context(self.registry.get(msg.chat), msg)
+
+    async def on_app_reload(self, msg: AppReload, conn: ServerConnection) -> None:
+        chat = self.registry.get(msg.chat)
+        self._spawn(self.apps.reload(chat, msg, conn), name=f"portico-app-reload-{chat.number}")
+
     # --- cards ------------------------------------------------------------------
 
     async def ask_permission(
@@ -2603,6 +2664,8 @@ class GatewayServer:
     async def on_chat_open(self, msg: ChatOpen, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
         events, truncated, artifacts = await self._history(chat, msg.since)
+        # v0.18 (ruling 25): each saved app card after its tool.finished, frozen (no html).
+        events = self.apps.replay(chat, events)
         await self._send(conn, ChatHistory(ts=_now(), chat=chat.number, id=msg.id, events=events, truncated=truncated))
         # Artifacts the index remembers from before this launch: listed, never opened.
         for artifact in artifacts:
@@ -3267,14 +3330,24 @@ class GatewayServer:
     # --- handlers: turns --------------------------------------------------------
 
     async def on_message_send(self, msg: MessageSend, conn: ServerConnection) -> None:
-        chat = self.registry.get(msg.chat)
-        if self._busy(chat) and chat.ended is None and QUEUE_CAPABILITY in _capabilities(conn):
-            await self._enqueue(chat, msg, conn)
-            return
-        await self._send_message(chat, msg, conn)
+        await self.send_or_queue(self.registry.get(msg.chat), msg, conn)
 
-    async def _send_message(self, chat: Chat, msg: MessageSend, conn: ServerConnection | None) -> None:
-        """A ``message.send`` as a turn of its own; ``conn`` hears a refusal (``None``: whichever app is attached)."""
+    async def send_or_queue(self, chat: Chat, msg: MessageSend, conn: ServerConnection, via: str | None = None) -> None:
+        """A typed message (v0.18: or an MCP app's, ``via`` its title): queued during a turn, else a turn of its own."""
+        if self._busy(chat) and chat.ended is None and QUEUE_CAPABILITY in _capabilities(conn):
+            await self._enqueue(chat, msg, conn, via)
+            return
+        await self._send_message(chat, msg, conn, via)
+
+    async def _send_message(
+        self, chat: Chat, msg: MessageSend, conn: ServerConnection | None, via: str | None = None
+    ) -> None:
+        """A ``message.send`` as a turn of its own; ``conn`` hears a refusal (``None``: whichever app is attached).
+
+        v0.18 (ruling 27): ``via`` labels an MCP app's message on its ``user.text``;
+        the apps' kept context goes first in what the engine receives (never
+        before a slash command, which must stay first to run).
+        """
         self._check_can_send(chat)
         attachments = check_attachments(msg.attachments)
         # The session's title: the first line of the first thing the person
@@ -3297,15 +3370,23 @@ class GatewayServer:
         if first:
             title = title_from(msg.text)
         text = with_attachments(msg.text, attachments)
-        run = await self._echo_turn(chat, text)
+        run = await self._echo_turn(chat, text, via)
         chat.sent_turn = True
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
             run.first_line_title = title
+        engine_text = self._with_app_context(chat, text)
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
-        self._spawn(self._send_task(chat, run, text, title, msg, conn), name=f"portico-send-{chat.number}")
+        self._spawn(self._send_task(chat, run, engine_text, title, msg, conn), name=f"portico-send-{chat.number}")
+
+    def _with_app_context(self, chat: Chat, text: str) -> str:
+        """``text`` as the engine gets it: MCP apps' kept context first, unless it is a command (v0.18)."""
+        if command := slash_command(text):
+            log.debug("chat %d: /%s goes without the apps' context; it waits", chat.number, command)
+            return text
+        return self.apps.take_context(chat) + text
 
     async def _send_task(
         self, chat: Chat, run: TurnRun, text: str, title: str | None, msg: MessageSend, conn: ServerConnection | None
@@ -3351,7 +3432,7 @@ class GatewayServer:
     def _queue_frame(self, chat: Chat) -> ChatQueue:
         return ChatQueue(ts=_now(), chat=chat.number, items=self.queued(chat.number))
 
-    async def _enqueue(self, chat: Chat, msg: MessageSend, conn: ServerConnection) -> None:
+    async def _enqueue(self, chat: Chat, msg: MessageSend, conn: ServerConnection, via: str | None = None) -> None:
         """Hold a send made during a turn: ``chat.queued`` to the sender, then ``chat.queue`` to the app.
 
         Its attachments are checked now, as a send's are: a missing file is
@@ -3359,6 +3440,8 @@ class GatewayServer:
         """
         check_attachments(msg.attachments)
         item = QueuedMessage(id=msg.id or str(uuid.uuid4()), text=msg.text, attachments=list(msg.attachments))
+        if via is not None:
+            self._queued_via[(chat.number, item.id)] = via
         self._queues.setdefault(chat.number, []).append(item)
         log.info("chat %d: a message was queued during a turn (%d waiting)", chat.number, len(self._queues[chat.number]))
         await self._send(conn, ChatQueued(ts=_now(), chat=chat.number, id=item.id))
@@ -3409,7 +3492,7 @@ class GatewayServer:
             item = held[0]
             text = with_attachments(item.text, item.attachments)
             try:
-                await engine.inject(text)
+                await engine.inject(self._with_app_context(chat, text))
             except Exception:
                 log.exception("chat %d: writing a queued message into turn %d failed; it waits", chat.number, run.turn)
                 break
@@ -3418,7 +3501,8 @@ class GatewayServer:
             if not held:
                 self._queues.pop(chat.number, None)
             await self.broadcast(self._queue_frame(chat))
-            await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=run.turn, text=text))
+            via = self._queued_via.pop((chat.number, item.id), None)
+            await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=run.turn, text=text, via=via))
 
     async def _send_queued(self, chat: Chat) -> None:
         """No turn running and something held: the oldest goes as the next turn.
@@ -3437,11 +3521,14 @@ class GatewayServer:
             self._queues.pop(chat.number, None)
         await self.broadcast(self._queue_frame(chat))
         send = MessageSend(ts=_now(), chat=chat.number, id=item.id, text=item.text, attachments=item.attachments)
+        via = self._queued_via.pop((chat.number, item.id), None)
         try:
-            await self._send_message(chat, send, None)
+            await self._send_message(chat, send, None, via)
         except ProtocolError as e:
             if e.code == "chat.busy":
                 # Another send started the turn first: this one waits for it.
+                if via is not None:
+                    self._queued_via[(chat.number, item.id)] = via
                 self._queues.setdefault(chat.number, []).insert(0, item)
                 await self.broadcast(self._queue_frame(chat))
                 return
@@ -3533,7 +3620,7 @@ class GatewayServer:
         await self._begin_turn(chat, run, text)
         return run
 
-    async def _echo_turn(self, chat: Chat, text: str) -> TurnRun:
+    async def _echo_turn(self, chat: Chat, text: str, via: str | None = None) -> TurnRun:
         """Register the next turn and send its echo: ``turn.started``, ``user.text``, ``chat.state working``."""
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
@@ -3542,7 +3629,7 @@ class GatewayServer:
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
         # The person's words go in the ring too, as the engine receives them,
         # so a replay from this launch reads as a conversation, not a monologue.
-        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text))
+        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text, via=via))
         await self.set_state(chat, "working")
         return run
 

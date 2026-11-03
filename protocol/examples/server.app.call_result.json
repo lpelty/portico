@@ -1,0 +1,18 @@
+{
+  "content": [
+    {
+      "text": "Launch email is done.",
+      "type": "text"
+    }
+  ],
+  "id": "req-40",
+  "is_error": false,
+  "ok": true,
+  "structured_content": {
+    "status": "done",
+    "task": "Launch email"
+  },
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "app.call_result"
+}
