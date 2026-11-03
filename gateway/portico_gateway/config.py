@@ -35,10 +35,12 @@ EMPTY_SETTING_SOURCES_MESSAGE = (
 # app that lists it too (``messages.QUEUE_CAPABILITY``).
 # v0.15: ``models.v1`` — the engine's model list (``models``) and ``model.set``;
 # ``models`` goes only to an app that lists it too.
+# v0.18: ``mcp.v1`` — the ``mcp.*`` requests (MCP servers in Settings) are answered.
 MODELS_CAPABILITY = "models.v1"
+MCP_CAPABILITY = "mcp.v1"
 CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-    MODELS_CAPABILITY,
+    MODELS_CAPABILITY, MCP_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once

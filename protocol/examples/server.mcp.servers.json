@@ -1,0 +1,71 @@
+{
+  "id": "req-20",
+  "live": true,
+  "servers": [
+    {
+      "can_remove": false,
+      "can_sign_out": false,
+      "can_toggle": false,
+      "detail": "Connected · the viewer, files and screen · 9 tools",
+      "group": "core",
+      "name": "portico",
+      "status": "connected",
+      "title": "portico",
+      "tool_count": 9,
+      "tools": [],
+      "transport": "sdk"
+    },
+    {
+      "can_remove": true,
+      "can_sign_out": true,
+      "can_toggle": true,
+      "detail": "Connected · 2 tools",
+      "group": "user",
+      "name": "acme-tracker",
+      "status": "connected",
+      "title": "Acme Tracker",
+      "tool_count": 2,
+      "tools": [
+        {
+          "description": "Lists tasks, with filters",
+          "name": "list_tasks",
+          "policy": "allow",
+          "read_only": true
+        },
+        {
+          "description": "Changes a task's status or owner",
+          "name": "update_task",
+          "policy": "ask",
+          "read_only": false
+        }
+      ],
+      "transport": "http"
+    },
+    {
+      "can_remove": true,
+      "can_sign_out": false,
+      "can_toggle": true,
+      "detail": "Needs you to sign in",
+      "group": "user",
+      "name": "acme-calendar",
+      "status": "needs_auth",
+      "title": "acme-calendar",
+      "tools": [],
+      "transport": "http"
+    },
+    {
+      "can_remove": false,
+      "can_sign_out": false,
+      "can_toggle": true,
+      "detail": "Off for you · it stays off through updates",
+      "group": "shipped",
+      "name": "design-files",
+      "status": "off",
+      "title": "design-files",
+      "tools": [],
+      "transport": "stdio"
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "mcp.servers"
+}

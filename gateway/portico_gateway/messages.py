@@ -356,6 +356,77 @@ class ThreadClose(Envelope):
     log: bool = True
 
 
+# --- MCP servers in Settings (v0.18 §3.1, ``mcp.v1``) ---------------------------
+#
+# Requests from the app (an older app never sends them), each answered with
+# ``mcp.servers`` carrying the request's ``id``, or ``error`` with the ``id``.
+
+
+class McpList(Envelope):
+    """v0.18: the servers as Settings shows them."""
+
+    type: Literal["mcp.list"] = "mcp.list"
+
+
+class McpToggle(Envelope):
+    """v0.18: turn a server off (``enabled`` false) or on again, for Settings' folder; from the next engine start."""
+
+    type: Literal["mcp.toggle"] = "mcp.toggle"
+    name: str
+    enabled: bool
+
+
+class McpReconnect(Envelope):
+    """v0.18: reconnect a server in every live engine on Settings' folder."""
+
+    type: Literal["mcp.reconnect"] = "mcp.reconnect"
+    name: str
+
+
+class McpRemove(Envelope):
+    """v0.18: remove a user or local server (``claude mcp remove``); the app asks first."""
+
+    type: Literal["mcp.remove"] = "mcp.remove"
+    name: str
+
+
+class McpAdd(Envelope):
+    """v0.18: add a server (``claude mcp add``): by a web address (``url``) or a program on this Mac (``command``).
+
+    ``where`` is ``user`` (All your projects) or ``local`` (this agent only).
+    """
+
+    type: Literal["mcp.add"] = "mcp.add"
+    name: str
+    transport: Literal["http", "stdio"]
+    url: str | None = None
+    command: str | None = None
+    where: Literal["user", "local"]
+
+
+class McpSignIn(Envelope):
+    """v0.18: sign in to a server (``claude mcp login``): answered at once, then a fresh ``mcp.servers`` (no id) when done."""
+
+    type: Literal["mcp.sign_in"] = "mcp.sign_in"
+    name: str
+
+
+class McpSignOut(Envelope):
+    """v0.18: sign out of a server (``claude mcp logout``)."""
+
+    type: Literal["mcp.sign_out"] = "mcp.sign_out"
+    name: str
+
+
+class McpToolPolicy(Envelope):
+    """v0.18: whether one tool runs without asking (``allow``) or asks first (``ask``); ``null`` is back to the default."""
+
+    type: Literal["mcp.tool_policy"] = "mcp.tool_policy"
+    server: str
+    tool: str
+    policy: Literal["allow", "ask"] | None = None
+
+
 class TurnStop(Envelope):
     type: Literal["turn.stop"] = "turn.stop"
     chat: int
@@ -873,6 +944,47 @@ class Models(Envelope):
     choices: list[ModelChoice] = []
 
 
+# --- MCP servers in Settings (v0.18 §3.1) -------------------------------------------
+
+
+class McpToolRow(Strict):
+    """One tool of a server: ``policy`` is the effective one (the person's choice, else the default)."""
+
+    name: str
+    description: str = ""
+    read_only: bool = False
+    policy: Literal["allow", "ask"]
+
+
+class McpServerRow(Strict):
+    """One server as Settings shows it. ``detail`` is the status line; group titles and brand words are the app's."""
+
+    name: str
+    title: str
+    group: Literal["user", "local", "shipped", "core", "account"]
+    transport: Literal["stdio", "http", "sse", "sdk", "other"]
+    status: Literal["connected", "needs_auth", "failed", "pending", "off", "signing_in", "unknown"]
+    detail: str
+    tool_count: int | None = None
+    tools: list[McpToolRow] = []
+    account: str | None = None
+    can_toggle: bool
+    can_remove: bool
+    can_sign_out: bool
+
+
+class McpServers(Envelope):
+    """v0.18: the answer to every ``mcp.*`` request (with its ``id``), and after a sign-in finishes (no ``id``).
+
+    ``live`` is whether status came from a running engine on Settings' folder;
+    without one, rows carry no tools. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["mcp.servers"] = "mcp.servers"
+    servers: list[McpServerRow] = []
+    live: bool = False
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -1069,6 +1181,14 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ThreadStart,
     ThreadDismiss,
     ThreadClose,
+    McpList,
+    McpToggle,
+    McpReconnect,
+    McpRemove,
+    McpAdd,
+    McpSignIn,
+    McpSignOut,
+    McpToolPolicy,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1111,6 +1231,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     SpacesList,
     Models,
     ThreadProposal,
+    McpServers,
     Error,
 )
 
@@ -1237,6 +1358,14 @@ def example_messages() -> dict[str, BaseModel]:
         ThreadStart(ts=_TS, chat=14, id="req-12", proposal="p-7c21", close=15),
         ThreadDismiss(ts=_TS, chat=14, id="req-13", proposal="p-7c21"),
         ThreadClose(ts=_TS, chat=15, id="req-14"),
+        McpList(ts=_TS, id="req-20"),
+        McpToggle(ts=_TS, id="req-21", name="acme-crm", enabled=False),
+        McpReconnect(ts=_TS, id="req-22", name="docs"),
+        McpRemove(ts=_TS, id="req-23", name="acme-tracker"),
+        McpAdd(ts=_TS, id="req-24", name="acme-tracker", transport="http", url="https://mcp.acme.example/", where="user"),
+        McpSignIn(ts=_TS, id="req-25", name="acme-calendar"),
+        McpSignOut(ts=_TS, id="req-26", name="acme-tracker"),
+        McpToolPolicy(ts=_TS, id="req-27", server="acme-tracker", tool="update_task", policy="allow"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1498,6 +1627,35 @@ def example_messages() -> dict[str, BaseModel]:
             files=[f"{_FOLDER}/pricing.html"],
             state="started",
             thread=15,
+        ),
+        McpServers(
+            ts=_TS,
+            id="req-20",
+            live=True,
+            servers=[
+                McpServerRow(
+                    name="portico", title="portico", group="core", transport="sdk", status="connected",
+                    detail="Connected · the viewer, files and screen · 9 tools", tool_count=9,
+                    can_toggle=False, can_remove=False, can_sign_out=False,
+                ),
+                McpServerRow(
+                    name="acme-tracker", title="Acme Tracker", group="user", transport="http", status="connected",
+                    detail="Connected · 2 tools", tool_count=2,
+                    tools=[
+                        McpToolRow(name="list_tasks", description="Lists tasks, with filters", read_only=True, policy="allow"),
+                        McpToolRow(name="update_task", description="Changes a task's status or owner", policy="ask"),
+                    ],
+                    can_toggle=True, can_remove=True, can_sign_out=True,
+                ),
+                McpServerRow(
+                    name="acme-calendar", title="acme-calendar", group="user", transport="http", status="needs_auth",
+                    detail="Needs you to sign in", can_toggle=True, can_remove=True, can_sign_out=False,
+                ),
+                McpServerRow(
+                    name="design-files", title="design-files", group="shipped", transport="stdio", status="off",
+                    detail="Off for you · it stays off through updates", can_toggle=True, can_remove=False, can_sign_out=False,
+                ),
+            ],
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

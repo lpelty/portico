@@ -476,7 +476,8 @@ an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 `[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
 see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
-`[threads] max` above 0, see [Threads](#threads-v016)). Always followed by `chat.list`, so the app has the
+`[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
+always, see [MCP servers](#mcp-servers-v018)). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -1099,6 +1100,113 @@ the model that session runs on: its running engine's, else the stored
 choice it will start on. A switch never changes another session's running
 engine, so with several sessions open their `current` can differ until
 that engine restarts.
+
+## MCP servers *(v0.18)*
+
+Settings' MCP servers tab lists every server the agent could have and lets
+the person manage them, with the same reach as Claude Code. When `hello`
+lists `mcp.v1` the app may send the `mcp.*` requests below (an older app
+never sends them). Each is answered with `mcp.servers` carrying the
+request's `id`, or with `error` carrying the `id`.
+
+- **Settings' folder** is the deployment's `default_folder`, else the home
+  folder. Settings lists, turns off and adds local servers for it.
+- **Where rows come from.** Four sources, as Claude Code reads them:
+  `group: "user"` (top-level `mcpServers` in `~/.claude.json`, or
+  `$CLAUDE_CONFIG_DIR/.claude.json`), `"local"` (that file's
+  `projects["<folder>"].mcpServers`), `"shipped"` (the folder's
+  `.mcp.json`), and `"core"` (the gateway's own `portico` server, plus the
+  `.mcp.json` servers `[mcp] core` names). Any server a live engine reports
+  that no source has (claude.ai connectors) is `"account"`. Rows come in
+  that group order: core, user, local, shipped, account. Group titles and
+  brand words are the app's; rows carry data only.
+- **Status** comes from the most recently started live engine on Settings'
+  folder (`live: true`). With none, every row but `portico` reads "Starts
+  with your next chat" and has no tools (`tool_count` absent).
+- **A change applies to new chats.** Turning off and on, adding, removing,
+  and signing in and out are written at once and take effect at the next
+  engine start; the gateway never restarts an engine for them. Only
+  `mcp.reconnect` (and a finished sign-in) reconnects the server in the live
+  engines on Settings' folder.
+- **Turning off** writes `projects["<folder>"].disabledMcpServers` in
+  `~/.claude.json` (the key Claude Code's own toggle writes), keeping every
+  other key, their order and the file's mode. A file that doesn't parse is
+  never rewritten: the change is refused. Built-in servers can't be turned
+  off.
+- **Add, remove, sign in, sign out** run the bundled Claude Code CLI
+  (`claude mcp add|remove|login|logout`) in Settings' folder. A failure is
+  `error code=mcp.failed` whose message is the command's last stderr line.
+  Only user and local servers can be removed.
+- **Tool policy.** Each tool's `policy` is the person's choice, else
+  `allow` for a tool annotated `readOnly` and `ask` for the rest. Choices
+  are kept in `<state>/mcp_tools.json` (`{"<server>/<tool>": "allow" |
+  "ask"}`, only where they differ from the default). A tool set to `allow`
+  runs without a permission card when the agent calls it.
+- `/mcp` and `/plugin` are the app's: it opens Settings. An older app that
+  sends them as `message.send` gets an empty turn with the `chat.notice`
+  "Open Settings to manage MCP servers and plugins."; nothing reaches the
+  agent.
+
+### `mcp.list` — `McpList` *(app → gateway)*
+`id`. The servers as they stand.
+
+### `mcp.toggle` — `McpToggle` *(app → gateway)*
+`name`, `enabled: bool`, `id`. Refused for a built-in server: "Built-in
+servers can't be turned off".
+
+### `mcp.reconnect` — `McpReconnect` *(app → gateway)*
+`name`, `id`. Reconnects the server in every live engine on Settings'
+folder.
+
+### `mcp.remove` — `McpRemove` *(app → gateway)*
+`name`, `id`. `claude mcp remove <name> --scope user|local`. Refused for
+shipped, built-in and account servers. The app asks first.
+
+### `mcp.add` — `McpAdd` *(app → gateway)*
+`name` (letters, numbers, `-` and `_`; otherwise "Use letters, numbers, -
+and _ only"), `transport: "http" | "stdio"`, `url?` (http), `command?`
+(stdio: the whole command line, split shell-style), `where: "user" |
+"local"`, `id`. A name any group already has is refused with "There's
+already a server called <name>". After an http add, when a live engine
+on Settings' folder reports the server `needs-auth` once reconnected, the
+gateway starts its sign-in (the browser opens) and the row reads
+`signing_in`.
+
+### `mcp.sign_in` — `McpSignIn` *(app → gateway)*
+`name`, `id`. Answered at once, the row reading `signing_in` ("Signing in…
+finish in your browser"); `claude mcp login` runs in the background (up to
+300 s). When it ends the gateway reconnects the server in the live engines
+on Settings' folder (on success) and sends a fresh `mcp.servers` with no
+`id`; a failure also sends `error code=mcp.failed` with no `id`.
+
+### `mcp.sign_out` — `McpSignOut` *(app → gateway)*
+`name`, `id`. `claude mcp logout <name>`.
+
+### `mcp.tool_policy` — `McpToolPolicy` *(app → gateway)*
+`server`, `tool`, `policy: "allow" | "ask" | null` (`null`: back to the
+default), `id`.
+
+### `mcp.servers` — `McpServers`
+`servers: [McpServerRow]`, `live: bool`; `id` when it answers a request.
+Not stamped and not in the ring. `McpServerRow` is `{name, title (the
+server's own `serverInfo.title`, else `name`), group, transport: "stdio" |
+"http" | "sse" | "sdk" | "other", status: "connected" | "needs_auth" |
+"failed" | "pending" | "off" | "signing_in" | "unknown", detail,
+tool_count?, tools: [{name, description, read_only, policy}], account?,
+can_toggle, can_remove, can_sign_out}`. `detail` is the status line:
+
+| status | `detail` |
+|---|---|
+| `connected` | "Connected · N tools" (`portico`: "Connected · the viewer, files and screen · N tools") |
+| `needs_auth` | "Needs you to sign in" |
+| `failed` | "Couldn't start: <error, cut to 120>" or "Couldn't start: it stopped as soon as it opened" |
+| `pending` | "Connecting…" |
+| `off` | "Off"; a shipped server: "Off for you · it stays off through updates" |
+| `signing_in` | "Signing in… finish in your browser" |
+| `unknown` | "Starts with your next chat" |
+
+`account` is set only when the status carries one; it is never invented.
+`can_sign_out` is true when it is set, or for a connected http/sse server.
 
 ## Threads *(v0.16)*
 

@@ -1,0 +1,6 @@
+{
+  "id": "req-25",
+  "name": "acme-calendar",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "mcp.sign_in"
+}

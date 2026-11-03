@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "id": "req-21",
+  "name": "acme-crm",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "mcp.toggle"
+}

@@ -182,6 +182,7 @@ from .engine import (
 )
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
+from .mcp_settings import McpSettings, ToolPolicy
 from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
@@ -227,6 +228,14 @@ from .messages import (
     MessageSend,
     ModelChoice,
     Models,
+    McpAdd,
+    McpList,
+    McpReconnect,
+    McpRemove,
+    McpSignIn,
+    McpSignOut,
+    McpToggle,
+    McpToolPolicy,
     ModelSet,
     Outcome,
     ProtocolError,
@@ -330,10 +339,22 @@ SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
 
 # Portico's own commands, which the app acts on (``/new`` renews the
 # session, ``/log`` logs it without ending it: v0.4).
-PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log"})
+# v0.18 (ruling 15): ``/mcp`` and ``/plugin`` open Settings in the app; an
+# older app that sends them hears ``SETTINGS_NOTICE`` and nothing reaches the agent.
+SETTINGS_COMMANDS: frozenset[str] = frozenset({"mcp", "plugin"})
+SETTINGS_NOTICE = "Open Settings to manage MCP servers and plugins."
+PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log", *SETTINGS_COMMANDS})
 
 # The ``chat.notice`` a log step that did not finish cleanly leaves (v0.7).
 LOG_STEP_UNFINISHED = "The log step didn't finish; the session isn't logged"
+
+
+def _mcp_tool(tool: str) -> tuple[str, str] | None:
+    """``("acme-tracker", "update_task")`` for ``mcp__acme-tracker__update_task``; ``None`` for any other tool."""
+    if not tool.startswith("mcp__"):
+        return None
+    server, sep, name = tool[len("mcp__"):].partition("__")
+    return (server, name) if sep and server and name else None
 
 
 def slash_command(text: str) -> str | None:
@@ -1013,6 +1034,31 @@ class GatewayServer:
         self.register("thread.start", self.on_thread_start)
         self.register("thread.dismiss", self.on_thread_dismiss)
         self.register("thread.close", self.on_thread_close)
+        # v0.18 §3.1: MCP servers in Settings (``mcp.v1``). ``tool_policy`` is the person's
+        # per-tool choice (ruling 10), read by ``ask_permission`` and by MCP Apps' calls.
+        self.tool_policy = ToolPolicy.load(state)
+        self._engine_seq = 0
+        self._engine_started: dict[int, int] = {}
+        self.mcp_settings = McpSettings(
+            folder=self._probe_folder,
+            core=lambda: list(self.config.mcp.core),
+            cli=self.cli,
+            engines=self._live_engines,
+            policy=self.tool_policy,
+            push=self.broadcast,
+            spawn=self._spawn,
+        )
+        for type_name, handler in (
+            ("mcp.list", self.on_mcp_list),
+            ("mcp.toggle", self.on_mcp_toggle),
+            ("mcp.reconnect", self.on_mcp_reconnect),
+            ("mcp.remove", self.on_mcp_remove),
+            ("mcp.add", self.on_mcp_add),
+            ("mcp.sign_in", self.on_mcp_sign_in),
+            ("mcp.sign_out", self.on_mcp_sign_out),
+            ("mcp.tool_policy", self.on_mcp_tool_policy),
+        ):
+            self.register(type_name, handler)
 
     @property
     def attached(self) -> bool:
@@ -1604,6 +1650,8 @@ class GatewayServer:
             chat.folder, chat.session_id, sources, callbacks, extra_servers=extra_servers, plugin_paths=plugin_paths
         )
         chat.engine = engine
+        self._engine_seq += 1
+        self._engine_started[chat.number] = self._engine_seq
         if session:
             chat.session_id = session
         self.registry.persist()
@@ -2216,12 +2264,55 @@ class GatewayServer:
         """Telemetry from the app; nothing to do and nothing to answer."""
         log.debug("chat %d: app opened artifact %s", msg.chat, msg.artifact_id)
 
+    # --- MCP servers in Settings (v0.18 §3.1) -------------------------------------
+
+    def _live_engines(self) -> list[tuple[Path, Engine]]:
+        """Each live session's ``(folder, engine)``, most recently started first."""
+        live = [c for c in self.registry.chats() if c.engine is not None and c.ended is None]
+        live.sort(key=lambda c: self._engine_started.get(c.number, 0), reverse=True)
+        return [(c.folder, c.engine) for c in live]  # type: ignore[misc]
+
+    async def on_mcp_list(self, msg: McpList, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.servers(msg.id))
+
+    async def on_mcp_toggle(self, msg: McpToggle, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.toggle(msg.name, msg.enabled, msg.id))
+
+    async def on_mcp_reconnect(self, msg: McpReconnect, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.reconnect(msg.name, msg.id))
+
+    async def on_mcp_remove(self, msg: McpRemove, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.remove(msg.name, msg.id))
+
+    async def on_mcp_add(self, msg: McpAdd, conn: ServerConnection) -> None:
+        reply = await self.mcp_settings.add(
+            msg.name, msg.transport, msg.where, url=msg.url, command=msg.command, id=msg.id
+        )
+        await self._send(conn, reply)
+
+    async def on_mcp_sign_in(self, msg: McpSignIn, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.sign_in(msg.name, msg.id))
+
+    async def on_mcp_sign_out(self, msg: McpSignOut, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.sign_out(msg.name, msg.id))
+
+    async def on_mcp_tool_policy(self, msg: McpToolPolicy, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.tool_policy(msg.server, msg.tool, msg.policy, msg.id))
+
     # --- cards ------------------------------------------------------------------
 
     async def ask_permission(
         self, chat: Chat, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision:
-        """A permission card, unless a person already allowed the tool for this chat. Never allow by default."""
+        """A permission card, unless a person already allowed the tool for this chat. Never allow by default.
+
+        v0.18 (ruling 10): an MCP tool the person set to "Runs without asking"
+        in Settings runs without a card. The agent's own calls otherwise ask,
+        read-only or not.
+        """
+        mcp_tool = _mcp_tool(tool)
+        if mcp_tool is not None and self.tool_policy.stored(*mcp_tool) == "allow":
+            return "allow"
         if self.cards.allowed(chat, tool, input):
             chat.note_permission(tool_use_id, "session")
             return "allow"
@@ -3117,6 +3208,9 @@ class GatewayServer:
         # app has the same first line in ``user.text``, and the next
         # ``chat.list`` (renew, new, alias, reattach) carries the title.
         command = slash_command(msg.text)
+        if command in SETTINGS_COMMANDS:
+            await self._unknown_command(chat, command, with_attachments(msg.text, attachments), notice=SETTINGS_NOTICE)
+            return
         if command is not None and not await self._knows_command(chat, command):
             await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
             return
@@ -3303,14 +3397,17 @@ class GatewayServer:
         known = engine.slash_commands()
         return known is None or command in known
 
-    async def _unknown_command(self, chat: Chat, command: str, text: str) -> None:
-        """An empty turn: what was typed, one ``chat.notice``, done. Nothing reaches the agent."""
-        log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
+    async def _unknown_command(self, chat: Chat, command: str, text: str, notice: str | None = None) -> None:
+        """An empty turn: what was typed, one ``chat.notice`` (``notice``, else "No command /x here"), done. Nothing reaches the agent."""
+        if notice is None:
+            log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
+        else:
+            log.info("chat %d: /%s is the app's; not sent to the agent", chat.number, command)
         chat.turn += 1
         turn = chat.turn
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=turn))
         await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=turn, text=text))
-        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=f"No command /{command} here"))
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=notice or f"No command /{command} here"))
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=turn, outcome="done"))
         await self.set_state(chat, "idle")
 

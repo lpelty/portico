@@ -90,6 +90,16 @@ EXPECTED_KEYS = {
     "client.thread.start",
     "client.thread.dismiss",
     "client.thread.close",
+    # v0.18: MCP servers in Settings
+    "client.mcp.list",
+    "client.mcp.toggle",
+    "client.mcp.reconnect",
+    "client.mcp.remove",
+    "client.mcp.add",
+    "client.mcp.sign_in",
+    "client.mcp.sign_out",
+    "client.mcp.tool_policy",
+    "server.mcp.servers",
 }
 
 
@@ -106,7 +116,9 @@ def test_every_type_has_schema_def_and_example():
     # v0.12's viewer.act, viewer.settings, viewer.result, spaces.list, space.refresh, space.rename, space.remove
     # v0.15's models, model.set
     # v0.16's thread.proposal, thread.start, thread.dismiss, thread.close
-    assert len(ex) == 69
+    # v0.18's mcp.list, mcp.toggle, mcp.reconnect, mcp.remove, mcp.add, mcp.sign_in, mcp.sign_out,
+    # mcp.tool_policy, mcp.servers
+    assert len(ex) == 78
     assert set(ex) == EXPECTED_KEYS
 
 

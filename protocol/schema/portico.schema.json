@@ -2103,6 +2103,30 @@
         },
         {
           "$ref": "#/$defs/ThreadClose"
+        },
+        {
+          "$ref": "#/$defs/McpList"
+        },
+        {
+          "$ref": "#/$defs/McpToggle"
+        },
+        {
+          "$ref": "#/$defs/McpReconnect"
+        },
+        {
+          "$ref": "#/$defs/McpRemove"
+        },
+        {
+          "$ref": "#/$defs/McpAdd"
+        },
+        {
+          "$ref": "#/$defs/McpSignIn"
+        },
+        {
+          "$ref": "#/$defs/McpSignOut"
+        },
+        {
+          "$ref": "#/$defs/McpToolPolicy"
         }
       ]
     },
@@ -3019,6 +3043,779 @@
       "title": "Hit",
       "type": "object"
     },
+    "McpAdd": {
+      "additionalProperties": false,
+      "description": "v0.18: add a server (``claude mcp add``): by a web address (``url``) or a program on this Mac (``command``).\n\n``where`` is ``user`` (All your projects) or ``local`` (this agent only).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "transport": {
+          "enum": [
+            "http",
+            "stdio"
+          ],
+          "title": "Transport",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.add",
+          "default": "mcp.add",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "where": {
+          "enum": [
+            "user",
+            "local"
+          ],
+          "title": "Where",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name",
+        "transport",
+        "where"
+      ],
+      "title": "McpAdd",
+      "type": "object"
+    },
+    "McpList": {
+      "additionalProperties": false,
+      "description": "v0.18: the servers as Settings shows them.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.list",
+          "default": "mcp.list",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "McpList",
+      "type": "object"
+    },
+    "McpReconnect": {
+      "additionalProperties": false,
+      "description": "v0.18: reconnect a server in every live engine on Settings' folder.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.reconnect",
+          "default": "mcp.reconnect",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name"
+      ],
+      "title": "McpReconnect",
+      "type": "object"
+    },
+    "McpRemove": {
+      "additionalProperties": false,
+      "description": "v0.18: remove a user or local server (``claude mcp remove``); the app asks first.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.remove",
+          "default": "mcp.remove",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name"
+      ],
+      "title": "McpRemove",
+      "type": "object"
+    },
+    "McpServerRow": {
+      "additionalProperties": false,
+      "description": "One server as Settings shows it. ``detail`` is the status line; group titles and brand words are the app's.",
+      "properties": {
+        "account": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Account"
+        },
+        "can_remove": {
+          "title": "Can Remove",
+          "type": "boolean"
+        },
+        "can_sign_out": {
+          "title": "Can Sign Out",
+          "type": "boolean"
+        },
+        "can_toggle": {
+          "title": "Can Toggle",
+          "type": "boolean"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "group": {
+          "enum": [
+            "user",
+            "local",
+            "shipped",
+            "core",
+            "account"
+          ],
+          "title": "Group",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "connected",
+            "needs_auth",
+            "failed",
+            "pending",
+            "off",
+            "signing_in",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "tool_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Count"
+        },
+        "tools": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/McpToolRow"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "http",
+            "sse",
+            "sdk",
+            "other"
+          ],
+          "title": "Transport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "group",
+        "transport",
+        "status",
+        "detail",
+        "can_toggle",
+        "can_remove",
+        "can_sign_out"
+      ],
+      "title": "McpServerRow",
+      "type": "object"
+    },
+    "McpServers": {
+      "additionalProperties": false,
+      "description": "v0.18: the answer to every ``mcp.*`` request (with its ``id``), and after a sign-in finishes (no ``id``).\n\n``live`` is whether status came from a running engine on Settings' folder;\nwithout one, rows carry no tools. A reading, not history: no ``seq``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "live": {
+          "default": false,
+          "title": "Live",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "servers": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/McpServerRow"
+          },
+          "title": "Servers",
+          "type": "array"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.servers",
+          "default": "mcp.servers",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "McpServers",
+      "type": "object"
+    },
+    "McpSignIn": {
+      "additionalProperties": false,
+      "description": "v0.18: sign in to a server (``claude mcp login``): answered at once, then a fresh ``mcp.servers`` (no id) when done.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.sign_in",
+          "default": "mcp.sign_in",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name"
+      ],
+      "title": "McpSignIn",
+      "type": "object"
+    },
+    "McpSignOut": {
+      "additionalProperties": false,
+      "description": "v0.18: sign out of a server (``claude mcp logout``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.sign_out",
+          "default": "mcp.sign_out",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name"
+      ],
+      "title": "McpSignOut",
+      "type": "object"
+    },
+    "McpToggle": {
+      "additionalProperties": false,
+      "description": "v0.18: turn a server off (``enabled`` false) or on again, for Settings' folder; from the next engine start.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.toggle",
+          "default": "mcp.toggle",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name",
+        "enabled"
+      ],
+      "title": "McpToggle",
+      "type": "object"
+    },
+    "McpToolPolicy": {
+      "additionalProperties": false,
+      "description": "v0.18: whether one tool runs without asking (``allow``) or asks first (``ask``); ``null`` is back to the default.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "enum": [
+                "allow",
+                "ask"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "server": {
+          "title": "Server",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp.tool_policy",
+          "default": "mcp.tool_policy",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "server",
+        "tool"
+      ],
+      "title": "McpToolPolicy",
+      "type": "object"
+    },
+    "McpToolRow": {
+      "additionalProperties": false,
+      "description": "One tool of a server: ``policy`` is the effective one (the person's choice, else the default).",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "policy": {
+          "enum": [
+            "allow",
+            "ask"
+          ],
+          "title": "Policy",
+          "type": "string"
+        },
+        "read_only": {
+          "default": false,
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "policy"
+      ],
+      "title": "McpToolRow",
+      "type": "object"
+    },
     "MessageSend": {
       "additionalProperties": false,
       "properties": {
@@ -3504,6 +4301,9 @@
         },
         {
           "$ref": "#/$defs/ThreadProposal"
+        },
+        {
+          "$ref": "#/$defs/McpServers"
         },
         {
           "$ref": "#/$defs/Error"
