@@ -1116,8 +1116,10 @@ request's `id`, or with `error` carrying the `id`.
   `$CLAUDE_CONFIG_DIR/.claude.json`), `"local"` (that file's
   `projects["<folder>"].mcpServers`), `"shipped"` (the folder's
   `.mcp.json`), and `"core"` (the gateway's own `portico` server, plus the
-  `.mcp.json` servers `[mcp] core` names). Any server a live engine reports
-  that no source has (claude.ai connectors) is `"account"`. Rows come in
+  `.mcp.json` servers `[mcp] core` names). A claude.ai connector a live
+  engine reports (scope `claudeai` or config type `claudeai-proxy`) that no
+  source has is `"account"`; servers a plugin provides (`plugin:…`) are
+  not listed: they belong to the plugins. Rows come in
   that group order: core, user, local, shipped, account. Group titles and
   brand words are the app's; rows carry data only.
 - **Status** comes from the most recently started live engine on Settings'
@@ -1134,14 +1136,21 @@ request's `id`, or with `error` carrying the `id`.
   never rewritten: the change is refused. Built-in servers can't be turned
   off.
 - **Add, remove, sign in, sign out** run the bundled Claude Code CLI
-  (`claude mcp add|remove|login|logout`) in Settings' folder. A failure is
-  `error code=mcp.failed` whose message is the command's last stderr line.
+  (`claude mcp add|remove|login|logout`) in Settings' folder, in the
+  background: other requests are answered meanwhile, and the reply comes
+  when the command ends. A failure is `error code=mcp.failed` whose message
+  is the command's last stderr line. Web addresses in any message or
+  status line reach the app without their query strings.
   Only user and local servers can be removed.
 - **Tool policy.** Each tool's `policy` is the person's choice, else
   `allow` for a tool annotated `readOnly` and `ask` for the rest. Choices
-  are kept in `<state>/mcp_tools.json` (`{"<server>/<tool>": "allow" |
-  "ask"}`, only where they differ from the default). A tool set to `allow`
-  runs without a permission card when the agent calls it.
+  are kept in `<state>/mcp_tools.json`, keyed on the tool's full name as
+  Claude Code names it (`{"mcp__<server>__<tool>": "allow" | "ask"}`, the
+  server name with every character outside `[A-Za-z0-9_-]` turned into `_`,
+  as the CLI does), only where they differ from the default. A tool set to
+  `allow` runs without a permission card when the agent calls it by that
+  exact name. Removing a server forgets its tools' choices. Built-in
+  servers' tools can't be changed.
 - `/mcp` and `/plugin` are the app's: it opens Settings. An older app that
   sends them as `message.send` gets an empty turn with the `chat.notice`
   "Open Settings to manage MCP servers and plugins."; nothing reaches the

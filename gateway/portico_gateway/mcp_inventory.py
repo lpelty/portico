@@ -133,6 +133,11 @@ def _sources(folder: Path, env: Mapping[str, str]) -> _Sources:
     )
 
 
+def disabled_servers(folder: Path, env: Mapping[str, str] = os.environ) -> frozenset[str]:
+    """The folder's ``disabledMcpServers`` (any name, in a source or not: claude.ai connectors too)."""
+    return _sources(Path(folder), env).disabled
+
+
 def read_servers(folder: Path, core: list[str], env: Mapping[str, str] = os.environ) -> list[ServerEntry]:
     """Every server the folder's agent could have, grouped (Settings' list; ruling 1).
 

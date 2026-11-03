@@ -107,7 +107,10 @@ STATUS: list[dict[str, Any]] = [
     {"name": "docs", "status": "failed", "config": {"type": "stdio", "command": "docs-mcp"}},
     {"name": "acme-crm", "status": "connected", "config": {"type": "stdio", "command": "crm"}, "tools": tools("c", 12)},
     {"name": "design-files", "status": "disabled", "config": {"type": "stdio", "command": "df"}},
-    {"name": "claude.ai Acme Drive", "status": "connected", "config": {"type": "claudeai-proxy", "url": "https://x", "id": "d1"}, "tools": tools("d", 2)},
+    {"name": "claude.ai Acme Drive", "status": "connected", "scope": "claudeai", "config": {"type": "claudeai-proxy", "url": "https://x", "id": "d1"}, "tools": tools("d", 2)},
+    # R-c4: never listed — a plugin's server, and one from no known source.
+    {"name": "plugin:acme:notes", "status": "connected", "scope": "dynamic", "config": {"type": "stdio", "command": "n"}, "tools": tools("n", 1)},
+    {"name": "stray", "status": "connected", "scope": "dynamic", "config": {"type": "stdio", "command": "s"}},
 ]
 
 
@@ -442,7 +445,8 @@ async def test_add_http_then_sign_in_when_needed(server: GatewayServer, folder: 
         plain_reconnect = engine.mcp_reconnect
 
         async def reconnect(name: str) -> None:
-            # The new server shows up once reconnected, and it wants a sign-in.
+            # The CLI wrote it (the fake does not), and once reconnected it wants a sign-in.
+            write_claude_json({"mcpServers": {name: {"type": "http", "url": "https://mcp.acme.example/"}}})
             await plain_reconnect(name)
             engine.mcp_status_value = [
                 {"name": name, "status": "needs-auth", "config": {"type": "http", "url": "https://mcp.acme.example/"}}
@@ -537,7 +541,7 @@ async def test_tool_policy_round_trip(server: GatewayServer, folder: Path, state
         assert isinstance(reply, McpServers)
         assert next(t for t in row(reply, "acme-tracker").tools if t.name == "update_task").policy == "allow"
         policy_file = state_dir.path / "mcp_tools.json"
-        assert json.loads(policy_file.read_text()) == {"acme-tracker/update_task": "allow"}
+        assert json.loads(policy_file.read_text()) == {"mcp__acme-tracker__update_task": "allow"}
         assert stat.S_IMODE(policy_file.stat().st_mode) == 0o600
 
         chat = next(c for c in server.registry.chats() if c.engine is not None)
@@ -546,10 +550,12 @@ async def test_tool_policy_round_trip(server: GatewayServer, folder: Path, state
         )
         assert decision == "allow"
         assert not any(isinstance(m, CardAsk) for m in chat.ring)
+        assert chat.permissions["toolu_9"].outcome == "session"
+        assert chat.permissions["toolu_9"].note == "Set to run without asking in Settings"
 
         # A read-only tool set to its own default stores nothing.
         reply = await ask(conn, McpToolPolicy(ts=TS, id="p-2", server="acme-tracker", tool="list_tasks", policy="allow"))
-        assert json.loads(policy_file.read_text()) == {"acme-tracker/update_task": "allow"}
+        assert json.loads(policy_file.read_text()) == {"mcp__acme-tracker__update_task": "allow"}
         reply = await ask(conn, McpToolPolicy(ts=TS, id="p-3", server="acme-tracker", tool="update_task", policy=None))
         assert isinstance(reply, McpServers)
         assert json.loads(policy_file.read_text()) == {}
@@ -578,5 +584,187 @@ async def test_slash_mcp_from_an_older_app(server: GatewayServer, factory: Engin
             notices = [m.text for m in frames if isinstance(m, ChatNotice)]
             assert notices == ["Open Settings to manage MCP servers and plugins."]
         assert all(c[0] != "send" for e in factory.engines for c in e.calls)
+    finally:
+        await conn.close()
+
+
+# --- fix round 1 ------------------------------------------------------------------
+
+
+async def test_plugin_and_unknown_servers_are_left_out(server: GatewayServer, folder: Path) -> None:
+    """R-c4: only claude.ai connectors make the account group; plugin servers are not listed, nor managed."""
+    seed(folder)
+    conn = await attach(server)
+    try:
+        await live_engine(server, conn, folder, STATUS)
+        reply = await ask(conn, McpList(ts=TS, id="l-1"))
+        assert isinstance(reply, McpServers)
+        names = [r.name for r in reply.servers]
+        assert "plugin:acme:notes" not in names and "stray" not in names
+        assert [r.name for r in reply.servers if r.group == "account"] == ["claude.ai Acme Drive"]
+        for i, frame in enumerate(
+            (
+                McpToggle(ts=TS, id="x-1", name="plugin:acme:notes", enabled=False),
+                McpSignIn(ts=TS, id="x-2", name="plugin:acme:notes"),
+                McpToolPolicy(ts=TS, id="x-3", server="plugin:acme:notes", tool="n_0", policy="allow"),
+            )
+        ):
+            got = await ask(conn, frame)
+            assert isinstance(got, Error) and got.message == "There's no server called plugin:acme:notes", got
+        assert "plugin:acme:notes" not in json.dumps(read_claude_json())
+    finally:
+        await conn.close()
+
+
+async def test_account_rows_show_off(server: GatewayServer, folder: Path) -> None:
+    seed(folder, disabled=["claude.ai Acme Drive"])
+    conn = await attach(server)
+    try:
+        await live_engine(server, conn, folder, STATUS)
+        reply = await ask(conn, McpList(ts=TS, id="l-1"))
+        assert isinstance(reply, McpServers)
+        drive = row(reply, "claude.ai Acme Drive")
+        assert (drive.status, drive.detail, drive.can_toggle) == ("off", "Off", True)
+        reply = await ask(conn, McpToggle(ts=TS, id="t-1", name="claude.ai Acme Drive", enabled=True))
+        assert isinstance(reply, McpServers) and row(reply, "claude.ai Acme Drive").status == "connected"
+    finally:
+        await conn.close()
+
+
+async def test_remove_drops_the_servers_policies(server: GatewayServer, folder: Path, state_dir: StateDir) -> None:
+    seed(folder)
+    conn = await attach(server)
+    try:
+        await live_engine(server, conn, folder, STATUS)
+        await ask(conn, McpToolPolicy(ts=TS, id="p-1", server="acme-tracker", tool="update_task", policy="allow"))
+        await ask(conn, McpToolPolicy(ts=TS, id="p-2", server="docs", tool="find", policy="allow"))
+        reply = await ask(conn, McpRemove(ts=TS, id="r-1", name="acme-tracker"))
+        assert isinstance(reply, McpServers)
+        assert json.loads((state_dir.path / "mcp_tools.json").read_text()) == {"mcp__docs__find": "allow"}
+    finally:
+        await conn.close()
+
+
+async def test_a_failed_remove_keeps_the_policies(server: GatewayServer, folder: Path, cli: ScriptedCli, state_dir: StateDir) -> None:
+    seed(folder)
+    cli.results[("mcp", "remove")] = CliResult(1, "", "Server not found")
+    conn = await attach(server)
+    try:
+        await live_engine(server, conn, folder, STATUS)
+        await ask(conn, McpToolPolicy(ts=TS, id="p-1", server="acme-tracker", tool="update_task", policy="allow"))
+        assert isinstance(await ask(conn, McpRemove(ts=TS, id="r-1", name="acme-tracker")), Error)
+        assert json.loads((state_dir.path / "mcp_tools.json").read_text()) == {"mcp__acme-tracker__update_task": "allow"}
+    finally:
+        await conn.close()
+
+
+async def test_tool_policy_refuses_built_in_servers(server: GatewayServer, folder: Path) -> None:
+    seed(folder)
+    conn = await attach(server)
+    try:
+        for name in ("portico", "team-knowledge"):
+            got = await ask(conn, McpToolPolicy(ts=TS, id=f"p-{name}", server=name, tool="t", policy="allow"))
+            assert isinstance(got, Error) and got.message == "Built-in servers' tools can't be changed"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize(
+    ("server_name", "tool", "full"),
+    [
+        ("claude.ai Acme", "search", "mcp__claude_ai_Acme__search"),
+        ("claude.ai  Acme Drive!", "find", "mcp__claude_ai_Acme_Drive__find"),
+        ("docs.v2 search", "find", "mcp__docs_v2_search__find"),
+        ("acme__tracker", "update", "mcp__acme__tracker__update"),
+    ],
+)
+def test_tool_names_follow_the_cli(state_dir: StateDir, server_name: str, tool: str, full: str) -> None:
+    """R-c8: the key is the full tool name as the CLI builds it (server normalised, tool as given)."""
+    policy = ToolPolicy.load(state_dir)
+    assert ToolPolicy.key(server_name, tool) == full
+    policy.set(server_name, tool, "allow")
+    assert json.loads(policy.path.read_text()) == {full: "allow"}
+    assert ToolPolicy.load(state_dir).allows(full)
+    assert not policy.allows(full + "x") and not policy.allows(full.replace("mcp__", "mcp_", 1))
+
+
+async def test_ask_permission_matches_the_full_name_exactly(server: GatewayServer, folder: Path) -> None:
+    """A server with ``__`` and a claude.ai connector with a space: allowed by their exact names only."""
+    write_claude_json({"mcpServers": {"acme__tracker": {"type": "http", "url": "https://mcp.acme.example/"}}})
+    status = [
+        {"name": "acme__tracker", "status": "connected", "config": {"type": "http", "url": "https://mcp.acme.example/"},
+         "tools": [{"name": "update"}]},
+        {"name": "claude.ai Acme", "status": "connected", "scope": "claudeai", "config": {"type": "claudeai-proxy", "url": "https://x", "id": "a"},
+         "tools": [{"name": "search"}]},
+    ]
+    conn = await attach(server)
+    try:
+        await live_engine(server, conn, folder, status)
+        for srv_name, tool in (("acme__tracker", "update"), ("claude.ai Acme", "search")):
+            got = await ask(conn, McpToolPolicy(ts=TS, id=f"p-{tool}", server=srv_name, tool=tool, policy="allow"))
+            assert isinstance(got, McpServers), got
+        chat = next(c for c in server.registry.chats() if c.engine is not None)
+        for i, name in enumerate(("mcp__acme__tracker__update", "mcp__claude_ai_Acme__search")):
+            assert await asyncio.wait_for(server.ask_permission(chat, name, {}, [], f"toolu_{i}"), 2) == "allow"
+        # Close but not the same: these ask (a card goes out; the test stops it).
+        task = asyncio.create_task(server.ask_permission(chat, "mcp__acme__tracker_update", {}, [], "toolu_x"))
+        card = (await recv_until(conn, CardAsk))[-1]
+        assert isinstance(card, CardAsk)
+        task.cancel()
+    finally:
+        await conn.close()
+
+
+async def test_toggle_follows_a_symlinked_claude_json(server: GatewayServer, folder: Path, tmp_path: Path) -> None:
+    real = tmp_path / "dotfiles" / "claude.json"
+    real.parent.mkdir()
+    real.write_text(json.dumps({"mcpServers": {"docs": {"command": "d"}}}), encoding="utf-8")
+    os.chmod(real, 0o600)
+    link = claude_json_path()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(real)
+    conn = await attach(server)
+    try:
+        reply = await ask(conn, McpToggle(ts=TS, id="t-1", name="docs", enabled=False))
+        assert isinstance(reply, McpServers)
+        assert link.is_symlink() and link.resolve() == real.resolve()
+        assert json.loads(real.read_text())["projects"][str(folder)]["disabledMcpServers"] == ["docs"]
+        assert stat.S_IMODE(real.stat().st_mode) == 0o600
+    finally:
+        await conn.close()
+
+
+async def test_url_queries_never_reach_the_app(server: GatewayServer, folder: Path, cli: ScriptedCli) -> None:
+    seed(folder)
+    cli.results[("mcp", "remove")] = CliResult(1, "", "Callback failed at https://auth.acme.example/cb?code=s3cret&state=x for docs\n")
+    conn = await attach(server)
+    try:
+        status = [dict(s) for s in STATUS]
+        next(s for s in status if s["name"] == "docs")["error"] = "401 from https://mcp.acme.example/?token=abc"
+        await live_engine(server, conn, folder, status)
+        reply = await ask(conn, McpList(ts=TS, id="l-1"))
+        assert isinstance(reply, McpServers)
+        assert row(reply, "docs").detail == "Couldn't start: 401 from https://mcp.acme.example/"
+        got = await ask(conn, McpRemove(ts=TS, id="r-1", name="docs"))
+        assert isinstance(got, Error) and got.message == "Callback failed at https://auth.acme.example/cb for docs"
+    finally:
+        await conn.close()
+
+
+async def test_a_slow_remove_does_not_hold_other_frames(server: GatewayServer, folder: Path, cli: ScriptedCli) -> None:
+    """R-c6: the CLI runs in a task; ``mcp.list`` sent after a blocked remove answers first."""
+    seed(folder)
+    gate = asyncio.Event()
+    cli.gates[("mcp", "remove")] = gate
+    conn = await attach(server)
+    try:
+        await conn.send(dump(McpRemove(ts=TS, id="r-1", name="docs")))
+        await asyncio.wait_for(cli.reached.setdefault(("mcp", "remove"), asyncio.Event()).wait(), 5)
+        await conn.send(dump(McpList(ts=TS, id="l-1")))
+        first = await recv(conn)
+        assert isinstance(first, McpServers) and first.id == "l-1"
+        gate.set()
+        second = await recv(conn)
+        assert isinstance(second, McpServers) and second.id == "r-1"
     finally:
         await conn.close()

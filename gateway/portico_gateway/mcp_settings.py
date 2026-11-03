@@ -37,7 +37,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from .mcp_inventory import PORTICO_SERVER, CliRunner, ServerEntry, claude_json_path, read_servers
+from .mcp_inventory import PORTICO_SERVER, CliRunner, ServerEntry, claude_json_path, disabled_servers, read_servers
 from .messages import Error, McpServerRow, McpServers, McpToolRow, ProtocolError
 from .state import StateDir
 
@@ -73,6 +73,7 @@ CORE_TOGGLE = "Built-in servers can't be turned off"
 CORE_REMOVE = "Built-in servers can't be removed"
 SHIPPED_REMOVE = "A server that ships with the agent can be turned off, not removed"
 ACCOUNT_REMOVE = "Servers from your Claude account can be turned off, not removed"
+CORE_POLICY = "Built-in servers' tools can't be changed"
 UNREADABLE = "Couldn't read Claude Code's settings file, so nothing was changed"
 
 
@@ -80,11 +81,20 @@ def _tools_word(n: int) -> str:
     return f"{n} tool" if n == 1 else f"{n} tools"
 
 
+# A web address's query string (``?code=…&state=…``) can carry a sign-in code or a key.
+_URL_QUERY = re.compile(r"(https?://[^\s?#]*)\?[^\s#]*")
+
+
+def strip_url_queries(text: str) -> str:
+    """``text`` with every web address's query string taken out, before it reaches the app."""
+    return _URL_QUERY.sub(r"\1", text)
+
+
 def _cli_message(stderr: str, args: list[str], code: int) -> str:
-    """The command's last non-empty stderr line, cut to 240 characters (ruling 6)."""
+    """The command's last non-empty stderr line, query strings stripped, cut to 240 characters (ruling 6)."""
     lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
     if lines:
-        return lines[-1][:CLI_MESSAGE_CHARS]
+        return strip_url_queries(lines[-1])[:CLI_MESSAGE_CHARS]
     return f"claude {' '.join(args[:2])} failed (exit {code})"
 
 
@@ -96,6 +106,28 @@ def _same_folder(a: Path, b: Path) -> bool:
 
 
 # --- the per-tool policy (ruling 10) -------------------------------------------------
+
+_NOT_NAME_CHAR = re.compile(r"[^A-Za-z0-9_-]")
+CLAUDE_AI_PREFIX = "claude.ai "
+
+
+def normalise_server(server: str) -> str:
+    """A server name as Claude Code puts it in tool names.
+
+    Copied from the bundled CLI 2.1.310 (its ``vn``): every character
+    outside ``[A-Za-z0-9_-]`` becomes ``_``; for a name starting
+    "claude.ai " runs of ``_`` then collapse to one and a leading or
+    trailing ``_`` is dropped.
+    """
+    out = _NOT_NAME_CHAR.sub("_", server)
+    if server.startswith(CLAUDE_AI_PREFIX):
+        out = re.sub(r"_+", "_", out).strip("_")
+    return out
+
+
+def tool_name(server: str, tool: str) -> str:
+    """``mcp__<server normalised>__<tool>``: the CLI normalises the server only (its ``g5``), the tool stays as given."""
+    return f"mcp__{normalise_server(server)}__{tool}"
 
 
 class ToolPolicy:
@@ -124,7 +156,20 @@ class ToolPolicy:
 
     @staticmethod
     def key(server: str, tool: str) -> str:
-        return f"{server}/{tool}"
+        """The tool's full name as Claude Code names it (R-c8): ``mcp__<server normalised>__<tool>``."""
+        return tool_name(server, tool)
+
+    def allows(self, full_name: str) -> bool:
+        """Whether the person set the tool named exactly ``full_name`` to run without asking."""
+        return self._choices.get(full_name) == "allow"
+
+    def drop_server(self, server: str) -> None:
+        """Forget every choice for ``server``'s tools (after it is removed)."""
+        prefix = f"mcp__{normalise_server(server)}__"
+        kept = {k: v for k, v in self._choices.items() if not k.startswith(prefix)}
+        if kept != self._choices:
+            self._choices = kept
+            _atomic_replace(self.path, json.dumps(self._choices, indent=2) + "\n", 0o600)
 
     @staticmethod
     def default(read_only: bool) -> Policy:
@@ -178,6 +223,9 @@ def set_disabled(folder: Path, name: str, disabled: bool, env: Mapping[str, str]
     change is refused. A missing project entry is created holding only the list.
     """
     path = claude_json_path(env)
+    if path.is_symlink():
+        # Replace the file the link points at, never the link itself.
+        path = path.resolve()
     mode = 0o600
     try:
         raw = path.read_bytes()
@@ -283,10 +331,10 @@ class McpSettings:
         by_name = {s["name"]: s for s in status}
         known = {e.name for e in entries}
         rows = [self._row(e.name, e.scope, e.config, e.disabled, live, by_name.get(e.name)) for e in entries]
-        for s in status:
-            if s["name"] not in known:
-                config = s.get("config") if isinstance(s.get("config"), dict) else {}
-                rows.append(self._row(s["name"], "account", config, False, live, s))
+        disabled = disabled_servers(self.folder(), self._env)
+        for s in _account_entries(status, known):
+            config = s.get("config") if isinstance(s.get("config"), dict) else {}
+            rows.append(self._row(s["name"], "account", config, s["name"] in disabled, live, s))
         rows.sort(key=lambda r: GROUP_ORDER.index(r.group))  # stable: each group keeps its order
         return rows
 
@@ -310,7 +358,7 @@ class McpSettings:
         raw = status.get("status") if live and status is not None else None
         if name in self.signing_in:
             word, detail = "signing_in", SIGNING_IN
-        elif (disabled and group != "core") or (raw == "disabled" and group == "account"):
+        elif disabled and group != "core":
             word, detail = "off", OFF_SHIPPED if group == "shipped" else OFF
         elif raw == "connected":
             word = "connected"
@@ -321,7 +369,7 @@ class McpSettings:
             word, detail = "needs_auth", NEEDS_AUTH
         elif raw == "failed":
             error = status.get("error") if status is not None else None
-            reason = error.strip()[:ERROR_CHARS] if isinstance(error, str) and error.strip() else FAILED_DEFAULT
+            reason = strip_url_queries(error.strip())[:ERROR_CHARS] if isinstance(error, str) and error.strip() else FAILED_DEFAULT
             word, detail = "failed", f"Couldn't start: {reason}"
         elif raw == "pending":
             word, detail = "pending", CONNECTING
@@ -361,7 +409,7 @@ class McpSettings:
             if e.name == name:
                 return e.scope, entries, []
         _, status = await self._status()
-        if any(s["name"] == name for s in status):
+        if any(s["name"] == name for s in _account_entries(status, {e.name for e in entries})):
             return "account", entries, status
         return None, entries, status
 
@@ -396,6 +444,7 @@ class McpSettings:
             raise ProtocolError("mcp.refused", refusal)
         await self._run(["mcp", "remove", name, "--scope", group])
         log.info("MCP server %s removed (%s scope)", name, group)
+        self.policy.drop_server(name)
         return await self.servers(id)
 
     async def add(
@@ -481,6 +530,11 @@ class McpSettings:
         return await self.servers(id)
 
     async def tool_policy(self, server: str, tool: str, policy: Policy | None, id: str | None = None) -> McpServers:
+        group, _, _ = await self._find(server)
+        if group == "core":
+            raise ProtocolError("mcp.refused", CORE_POLICY)
+        if group is None:
+            raise ProtocolError("mcp.unknown", f"There's no server called {server}")
         _, status = await self._status()
         read_only: bool | None = None
         for s in status:
@@ -498,6 +552,22 @@ class McpSettings:
             raise ProtocolError("mcp.failed", f"Couldn't run Claude Code: {type(e).__name__}") from e
         if result.code != 0:
             raise ProtocolError("mcp.failed", _cli_message(result.stderr, args, result.code))
+
+
+def _account_entries(status: list[dict[str, Any]], known: set[str]) -> list[dict[str, Any]]:
+    """Status entries for claude.ai connectors (R-c4): in no source, scope ``claudeai`` or config ``claudeai-proxy``.
+
+    Plugin-provided servers (``plugin:…``) and anything else are not listed.
+    """
+    out = []
+    for s in status:
+        name = s["name"]
+        if name in known or name.startswith("plugin:"):
+            continue
+        config = s.get("config") if isinstance(s.get("config"), dict) else {}
+        if s.get("scope") == "claudeai" or config.get("type") == "claudeai-proxy":
+            out.append(s)
+    return out
 
 
 def _read_only(tool: dict[str, Any]) -> bool:

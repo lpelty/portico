@@ -230,6 +230,7 @@ from .messages import (
     Models,
     McpAdd,
     McpList,
+    McpServers,
     McpReconnect,
     McpRemove,
     McpSignIn,
@@ -343,18 +344,12 @@ SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
 # older app that sends them hears ``SETTINGS_NOTICE`` and nothing reaches the agent.
 SETTINGS_COMMANDS: frozenset[str] = frozenset({"mcp", "plugin"})
 SETTINGS_NOTICE = "Open Settings to manage MCP servers and plugins."
+# v0.18 (ruling 10): why an MCP tool ran with no card.
+POLICY_ALLOW_NOTE = "Set to run without asking in Settings"
 PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log", *SETTINGS_COMMANDS})
 
 # The ``chat.notice`` a log step that did not finish cleanly leaves (v0.7).
 LOG_STEP_UNFINISHED = "The log step didn't finish; the session isn't logged"
-
-
-def _mcp_tool(tool: str) -> tuple[str, str] | None:
-    """``("acme-tracker", "update_task")`` for ``mcp__acme-tracker__update_task``; ``None`` for any other tool."""
-    if not tool.startswith("mcp__"):
-        return None
-    server, sep, name = tool[len("mcp__"):].partition("__")
-    return (server, name) if sep and server and name else None
 
 
 def slash_command(text: str) -> str | None:
@@ -2281,20 +2276,37 @@ class GatewayServer:
     async def on_mcp_reconnect(self, msg: McpReconnect, conn: ServerConnection) -> None:
         await self._send(conn, await self.mcp_settings.reconnect(msg.name, msg.id))
 
+    def _spawn_mcp(self, msg: Envelope, conn: ServerConnection, work: Coroutine[Any, Any, McpServers]) -> None:
+        """Run a request that runs the CLI as a task (R-c6), so the app's other frames keep moving.
+
+        The reply, or its ``error``, carries the request's ``id``.
+        """
+
+        async def task() -> None:
+            try:
+                reply = await work
+            except ProtocolError as e:
+                await self._send(conn, self.error(e.code, e.message, id=msg.id))
+            except Exception as e:
+                log.exception("%s failed", msg.type)
+                await self._send(conn, self.error("gateway.error", f"{msg.type} failed: {e}", id=msg.id))
+            else:
+                await self._send(conn, reply)
+
+        self._spawn(task(), name=f"portico-{msg.type}")
+
     async def on_mcp_remove(self, msg: McpRemove, conn: ServerConnection) -> None:
-        await self._send(conn, await self.mcp_settings.remove(msg.name, msg.id))
+        self._spawn_mcp(msg, conn, self.mcp_settings.remove(msg.name, msg.id))
 
     async def on_mcp_add(self, msg: McpAdd, conn: ServerConnection) -> None:
-        reply = await self.mcp_settings.add(
-            msg.name, msg.transport, msg.where, url=msg.url, command=msg.command, id=msg.id
-        )
-        await self._send(conn, reply)
+        work = self.mcp_settings.add(msg.name, msg.transport, msg.where, url=msg.url, command=msg.command, id=msg.id)
+        self._spawn_mcp(msg, conn, work)
 
     async def on_mcp_sign_in(self, msg: McpSignIn, conn: ServerConnection) -> None:
         await self._send(conn, await self.mcp_settings.sign_in(msg.name, msg.id))
 
     async def on_mcp_sign_out(self, msg: McpSignOut, conn: ServerConnection) -> None:
-        await self._send(conn, await self.mcp_settings.sign_out(msg.name, msg.id))
+        self._spawn_mcp(msg, conn, self.mcp_settings.sign_out(msg.name, msg.id))
 
     async def on_mcp_tool_policy(self, msg: McpToolPolicy, conn: ServerConnection) -> None:
         await self._send(conn, await self.mcp_settings.tool_policy(msg.server, msg.tool, msg.policy, msg.id))
@@ -2310,8 +2322,9 @@ class GatewayServer:
         in Settings runs without a card. The agent's own calls otherwise ask,
         read-only or not.
         """
-        mcp_tool = _mcp_tool(tool)
-        if mcp_tool is not None and self.tool_policy.stored(*mcp_tool) == "allow":
+        if self.tool_policy.allows(tool):
+            # Matched on the full name exactly as Claude Code gives it (R-c8); on the record like a session allow.
+            chat.note_permission(tool_use_id, "session", POLICY_ALLOW_NOTE)
             return "allow"
         if self.cards.allowed(chat, tool, input):
             chat.note_permission(tool_use_id, "session")
