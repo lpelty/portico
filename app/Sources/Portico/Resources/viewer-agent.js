@@ -546,31 +546,52 @@
   }
 
   var NO_TEXT = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1 };
+  // A text candidate whose box covers more than this share of the
+  // viewport is a page wrapper, not the thing meant.
+  var MAX_TEXT_SHARE = 0.8;
+
+  function textOf(el) {
+    return squash(el.innerText).toLowerCase();
+  }
+
+  /// Whether `el` may be the element some text is marked by: visible,
+  /// with a size, and not a wrapper around most of the view.
+  function textCandidate(el) {
+    if (!visible(el)) return false;
+    var box = el.getBoundingClientRect();
+    if (!box.width || !box.height) return false;
+    var area = Math.min(box.width, innerWidth) * Math.min(box.height, innerHeight);
+    return area <= MAX_TEXT_SHARE * innerWidth * innerHeight;
+  }
 
   /// The innermost visible element under `body` whose text (spaces
   /// collapsed, lower case) contains `want`: of those that do, the first
   /// in document order with no element child that also does. Never
-  /// `html`, `body` or the marks overlay, so text only the whole page
-  /// holds (across two paragraphs) is no match.
+  /// `html`, `body`, the marks overlay, an element with no size or a
+  /// wrapper around most of the view, so text only the whole page holds
+  /// (across two paragraphs) is no match. An element whose text lacks
+  /// `want` is passed over with everything inside it.
   function visibleTextTarget(want) {
     if (!want || !document.body) return null;
-    var kept = [];
+    var kept = new Set();
+    var order = [];
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
       acceptNode: function (el) {
         if (NO_TEXT[el.tagName] || el.nodeName.toLowerCase() === MARKS_HOST) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
+        if (textOf(el).indexOf(want) < 0) return NodeFilter.FILTER_REJECT;
+        return textCandidate(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
       }
     });
     for (var el = walker.nextNode(); el; el = walker.nextNode()) {
-      if (!visible(el)) continue;
-      if (squash(el.innerText).toLowerCase().indexOf(want) >= 0) kept.push(el);
+      kept.add(el);
+      order.push(el);
     }
-    for (var i = 0; i < kept.length; i++) {
+    for (var i = 0; i < order.length; i++) {
       var inner = true;
-      for (var c = kept[i].firstElementChild; c && inner; c = c.nextElementSibling) {
-        if (kept.indexOf(c) >= 0) inner = false;
+      for (var c = order[i].firstElementChild; c && inner; c = c.nextElementSibling) {
+        if (kept.has(c)) inner = false;
       }
-      if (inner) return kept[i];
+      if (inner) return order[i];
     }
     return null;
   }

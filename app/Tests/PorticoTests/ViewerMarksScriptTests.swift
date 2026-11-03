@@ -488,8 +488,43 @@ final class ViewerMarksScriptTests: XCTestCase {
         _ = try await show(list(try await locateTrail(in: view)), in: view)
         let badge = try await locate("1", in: view)
         XCTAssertEqual(badge["notFound"] as? Bool, true, "never the overlay: \(badge)")
+        // The overlay's own badges live in a shadow root under `html`, out of
+        // reach anyway; an overlay host with light-DOM text in `body` is
+        // still never a match.
+        _ = try await js("""
+            var host = document.createElement('portico-marks');
+            host.textContent = 'Overlay words';
+            document.body.appendChild(host);
+            return 0;
+            """, in: view)
+        let overlay = try await locate("Overlay words", in: view)
+        XCTAssertEqual(overlay["notFound"] as? Bool, true, "never an overlay host's text: \(overlay)")
         let hidden = try await locate("Closed in winter", in: view)
         XCTAssertEqual(hidden["notFound"] as? Bool, true, "never hidden text: \(hidden)")
+    }
+
+    /// A page wrapper (a box over 80% of the viewport) is no match: text
+    /// only it holds, across its h2 and p, is not found.
+    func testAWrapperAroundTheViewIsNotAMatch() async throws {
+        let view = try webView()
+        try await load("""
+            <style>body{margin:0}</style>
+            <main style="min-height:100vh"><h2>Elevation</h2><p>Gains 420 m over the first two miles.</p></main>
+            """, in: view)
+        let inside = try await locate("Gains 420", in: view)
+        XCTAssertEqual(locatedTag(inside), "p", "\(inside)")
+        let across = try await locate("Elevation Gains", in: view)
+        XCTAssertEqual(across["notFound"] as? Bool, true, "never the page's wrapper: \(across)")
+    }
+
+    /// An element with no width or height is never the one marked.
+    func testAZeroSizeElementIsNotAMatch() async throws {
+        let view = try webView()
+        try await load("""
+            <section><p>Trail notes</p><div style="height:0">Closed in winter</div></section>
+            """, in: view)
+        let found = try await locate("winter", in: view)
+        XCTAssertEqual(locatedTag(found), "section", "the zero-height div is skipped: \(found)")
     }
 
     func testTouchingMarksBadgesDoNotOverlap() async throws {

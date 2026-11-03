@@ -1585,6 +1585,9 @@ final class ViewerAgentTests: XCTestCase {
         // A mark's miss says what it is: no such text (v0.17 Ruling 11).
         let mark = await rig.agent.perform(act(.mark, markArgs([("Nowhere", nil)])))
         XCTAssertEqual(mark.text, "No visible text matches 'Nowhere'")
+        // A missing ref is about the page, so the person's input is named.
+        let markRef = await rig.agent.perform(act(.mark, markArgs([("e999", nil)])))
+        XCTAssertEqual(markRef.text, Self.personUsed, "a mark by a ref that isn't there")
         let stale = await rig.agent.perform(act(.click, ["target": .string("e999")]))
         XCTAssertEqual(stale.text, Self.personUsed, "a ref that isn't there either")
 
@@ -1628,6 +1631,10 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(ViewerAgent.Message.noVisibleText("Gains 420 m"), "No visible text matches 'Gains 420 m'")
     }
 
+    func test_no_element_wording() {
+        XCTAssertEqual(ViewerAgent.Message.noElement("e12"), "No element e12 on this page; look again.")
+    }
+
     func test_mark_no_match_says_no_visible_text() async throws {
         let rig = try rig(Self.inputPage)
         let look = await rig.agent.perform(act(.look))
@@ -1640,6 +1647,13 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertTrue(partly.ok, partly.text)
         let label = rig.model.markStore.marks[1]?.first?.label ?? "?"
         XCTAssertEqual(partly.text, "Marked 1 · \(label). No visible text matches 'Nowhere'.")
+
+        // A ref that isn't on the page (no reload, no input) says so as a ref.
+        let noRef = await rig.agent.perform(act(.mark, markArgs([("e999", nil)])))
+        XCTAssertFalse(noRef.ok)
+        XCTAssertEqual(noRef.text, "No element e999 on this page; look again.")
+        let both = await rig.agent.perform(act(.mark, markArgs([("e999", nil), ("Nowhere", nil)])))
+        XCTAssertEqual(both.text, "No element e999 on this page; look again. No visible text matches 'Nowhere'")
 
         // A stale ref on a reloaded page keeps its own sentence.
         let save = ref(for: "Save trail", in: look.text)

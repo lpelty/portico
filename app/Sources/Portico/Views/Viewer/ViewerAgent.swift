@@ -59,6 +59,11 @@ final class ViewerAgent: ObservableObject {
             "No visible text matches '\(target)'"
         }
 
+        /// A mark by a ref that is on no element of the page, with no reload or input to explain it.
+        static func noElement(_ ref: String) -> String {
+            "No element \(ref) on this page; look again."
+        }
+
         static func cleared(_ count: Int) -> String {
             "Cleared \(count) mark\(count == 1 ? "" : "s")."
         }
@@ -751,17 +756,23 @@ final class ViewerAgent: ObservableObject {
         return ViewerResult(id: act.id, ok: true, text: text)
     }
 
-    /// What the agent is told about mark targets not found (Ruling 11): a
-    /// ref from a page that has since reloaded keeps "The page reloaded…"
-    /// (said once); every other target gets "No visible text matches
-    /// '<target>'", one sentence each. Sentences end with a period except,
-    /// when `endsWithPeriod` is false, a last no-match sentence (the refusal reads
-    /// as `noVisibleText` alone, as "Not found — look again" did).
+    /// What the agent is told about mark targets not found (Ruling 11, as
+    /// refined in review): a ref says why it isn't there — "The page
+    /// reloaded…", else "The person used the page…", else "No element eN on
+    /// this page; look again." — and text says "No visible text matches
+    /// '<target>'"; one sentence per target, a repeated one said once.
+    /// Sentences end with a period except, when `endsWithPeriod` is false,
+    /// a last no-match sentence (the refusal reads as `noVisibleText` alone).
     private func missedText(_ missing: [String], in view: WKWebView, endsWithPeriod: Bool) async -> String {
-        let stale = await reloaded(missing, in: view)
+        let refs = missing.filter(Self.isRef)
+        let refWhy: String? = refs.isEmpty ? nil
+            : await reloaded(refs, in: view) ? Message.pageReloaded
+            : await personUsed(in: view) ? Message.personUsed
+            : nil
         var sentences: [String] = []
         for target in missing {
-            let sentence = stale && Self.isRef(target) ? Message.pageReloaded : Message.noVisibleText(target)
+            let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sentence = Self.isRef(target) ? (refWhy ?? Message.noElement(trimmed)) : Message.noVisibleText(target)
             if !sentences.contains(sentence) { sentences.append(sentence) }
         }
         return sentences.enumerated().map { index, sentence in
