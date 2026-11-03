@@ -88,7 +88,7 @@ final class SessionListTests: XCTestCase {
         let markLines = row[mark.upperBound...].prefix(400)
         XCTAssertTrue(markLines.contains("Theme.text2"), String(markLines))
         XCTAssertTrue(markLines.contains("origin.accessibilityLabel"), String(markLines))
-        XCTAssertTrue(markLines.contains(".help(origin.accessibilityLabel)"), String(markLines))
+        XCTAssertTrue(markLines.contains(".tip(origin.accessibilityLabel)"), String(markLines))
     }
 
     // MARK: - the filter

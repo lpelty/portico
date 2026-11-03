@@ -1,0 +1,7 @@
+{
+  "id": "req-37",
+  "plugin": "design-review@acme",
+  "text": "design-review@acme 1.4.0\nSkills (2): critique, compare-to-system\nCommands (1): /review-screen\n",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "plugins.details"
+}

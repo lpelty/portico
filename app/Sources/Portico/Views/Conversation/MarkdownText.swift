@@ -528,7 +528,7 @@ struct CopyButton: View {
             .padding(.vertical, 3)
         }
         .buttonStyle(.hover)
-        .help(help)
+        .tip(help)
     }
 }
 

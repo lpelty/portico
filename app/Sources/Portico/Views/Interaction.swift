@@ -124,7 +124,7 @@ struct RowActionButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(title)
     }
 }

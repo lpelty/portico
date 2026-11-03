@@ -106,7 +106,7 @@ struct ChatListView: View {
         .padding(.vertical, 7)
         .padding(.horizontal, 10)
         .contentShape(Rectangle())
-        .help(row.folderName)
+        .tip(row.folderName)
     }
 
     private func stateColor(_ state: ChatStateWord) -> Color {
@@ -150,7 +150,7 @@ struct ChatListView: View {
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Theme.border, lineWidth: 1))
             }
             .buttonStyle(.hover)
-            .help("Start a new chat")
+            .tip("Start a new chat")
         }
         .padding(.top, 8)
         .padding(.bottom, 6)

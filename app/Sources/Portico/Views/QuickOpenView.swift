@@ -126,7 +126,7 @@ struct QuickOpenView: View {
         .frame(height: 36)
         .background(selected ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .contentShape(Rectangle())
-        .help(item.path)
+        .tip(item.path)
     }
 
     private var footer: some View {

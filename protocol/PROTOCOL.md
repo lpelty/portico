@@ -92,7 +92,8 @@ workflows): without it the gateway sends none of those frames; v0.11:
 `spaces.v1` (it shows `spaces.list`); v0.14: `viewer.marks.v1` (it
 can draw the agent's marks; see The viewer and spaces); v0.17:
 `viewer.show.v1` (it answers `viewer.act` `show` once the page has
-loaded; see The viewer and spaces). Absent
+loaded; see The viewer and spaces); v0.18: `apps.v1` (it shows
+`app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -476,7 +477,10 @@ an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 `[spaces] folder` the folder is `<state dir>/spaces`), and `spaces.refresh` as well when `[spaces] refresh` is, so the app
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
 see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
-`[threads] max` above 0, see [Threads](#threads-v016)). Always followed by `chat.list`, so the app has the
+`[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
+always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
+[Plugins](#plugins-v018), and `apps.v1` when `[apps] enabled` (the
+default), see [MCP Apps](#mcp-apps-v018)). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -638,7 +642,10 @@ the one `user.text` per turn as the bubble and does not add a second from
 the `message.send` it sent. v0.11: a queued message written into a
 running turn is a further `user.text` in that turn, at the point it went
 (see Messages while the agent works); a transcript replay shows it as the
-start of a turn of its own.
+start of a turn of its own. v0.18: `via?: string` — the message came from an
+MCP app's page (`app.message`); it is the app's server title, and the app
+shows "via <title>" under the bubble. Absent for what the person typed, and
+in a transcript replay. An older app ignores it.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
@@ -1099,6 +1106,343 @@ the model that session runs on: its running engine's, else the stored
 choice it will start on. A switch never changes another session's running
 engine, so with several sessions open their `current` can differ until
 that engine restarts.
+
+## MCP servers *(v0.18)*
+
+Settings' MCP servers tab lists every server the agent could have and lets
+the person manage them, with the same reach as Claude Code. When `hello`
+lists `mcp.v1` the app may send the `mcp.*` requests below (an older app
+never sends them). Each is answered with `mcp.servers` carrying the
+request's `id`, or with `error` carrying the `id`.
+
+- **Settings' folder** is the deployment's `default_folder`, else the home
+  folder. Settings lists, turns off and adds local servers for it.
+- **Where rows come from.** Four sources, as Claude Code reads them:
+  `group: "user"` (top-level `mcpServers` in `~/.claude.json`, or
+  `$CLAUDE_CONFIG_DIR/.claude.json`), `"local"` (that file's
+  `projects["<folder>"].mcpServers`), `"shipped"` (the folder's
+  `.mcp.json`), and `"core"` (the gateway's own `portico` server, plus the
+  `.mcp.json` servers `[mcp] core` names). A claude.ai connector a live
+  engine reports (scope `claudeai` or config type `claudeai-proxy`) that no
+  source has is `"account"`; servers a plugin provides (`plugin:…`) are
+  not listed: they belong to the plugins. Rows come in
+  that group order: core, user, local, shipped, account. Group titles and
+  brand words are the app's; rows carry data only.
+- **Status** comes from the most recently started live engine on Settings'
+  folder (`live: true`). With none, every row but `portico` reads "Starts
+  with your next chat" and has no tools (`tool_count` absent).
+- **A change applies to new chats.** Turning off and on, adding, removing,
+  and signing in and out are written at once and take effect at the next
+  engine start; the gateway never restarts an engine for them. Only
+  `mcp.reconnect` (and a finished sign-in) reconnects the server in the live
+  engines on Settings' folder.
+- **Turning off** writes `projects["<folder>"].disabledMcpServers` in
+  `~/.claude.json` (the key Claude Code's own toggle writes), keeping every
+  other key, their order and the file's mode. A file that doesn't parse is
+  never rewritten: the change is refused. Built-in servers can't be turned
+  off.
+- **Add, remove, sign in, sign out** run the bundled Claude Code CLI
+  (`claude mcp add|remove|login|logout`) in Settings' folder, in the
+  background: other requests are answered meanwhile, and the reply comes
+  when the command ends. A failure is `error code=mcp.failed` whose message
+  is the command's last stderr line. Web addresses in any message or
+  status line reach the app without their query strings.
+  Only user and local servers can be removed.
+- **Tool policy.** Each tool's `policy` is the person's choice, else
+  `allow` for a tool annotated `readOnly` and `ask` for the rest. Choices
+  are kept in `<state>/mcp_tools.json`, keyed on the tool's full name as
+  Claude Code names it (`{"mcp__<server>__<tool>": "allow" | "ask"}`, the
+  server name with every character outside `[A-Za-z0-9_-]` turned into `_`,
+  as the CLI does), only where they differ from the default. A tool set to
+  `allow` runs without a permission card when the agent calls it by that
+  exact name. Removing a server forgets its tools' choices. Built-in
+  servers' tools can't be changed.
+- `/mcp` and `/plugin` are the app's: it opens Settings. An older app that
+  sends them as `message.send` gets an empty turn with the `chat.notice`
+  "Open Settings to manage MCP servers and plugins."; nothing reaches the
+  agent.
+
+### `mcp.list` — `McpList` *(app → gateway)*
+`id`. The servers as they stand.
+
+### `mcp.toggle` — `McpToggle` *(app → gateway)*
+`name`, `enabled: bool`, `id`. Refused for a built-in server: "Built-in
+servers can't be turned off".
+
+### `mcp.reconnect` — `McpReconnect` *(app → gateway)*
+`name`, `id`. Reconnects the server in every live engine on Settings'
+folder.
+
+### `mcp.remove` — `McpRemove` *(app → gateway)*
+`name`, `id`. `claude mcp remove <name> --scope user|local`. Refused for
+shipped, built-in and account servers. The app asks first.
+
+### `mcp.add` — `McpAdd` *(app → gateway)*
+`name` (letters, numbers, `-` and `_`; otherwise "Use letters, numbers, -
+and _ only"), `transport: "http" | "stdio"`, `url?` (http), `command?`
+(stdio: the whole command line, split shell-style), `where: "user" |
+"local"`, `id`. A name any group already has is refused with "There's
+already a server called <name>". After an http add, when a live engine
+on Settings' folder reports the server `needs-auth` once reconnected, the
+gateway starts its sign-in (the browser opens) and the row reads
+`signing_in`.
+
+### `mcp.sign_in` — `McpSignIn` *(app → gateway)*
+`name`, `id`. Answered at once, the row reading `signing_in` ("Signing in…
+finish in your browser"); `claude mcp login` runs in the background (up to
+300 s). When it ends the gateway reconnects the server in the live engines
+on Settings' folder (on success) and sends a fresh `mcp.servers` with no
+`id`; a failure also sends `error code=mcp.failed` with no `id`.
+
+### `mcp.sign_out` — `McpSignOut` *(app → gateway)*
+`name`, `id`. `claude mcp logout <name>`.
+
+### `mcp.tool_policy` — `McpToolPolicy` *(app → gateway)*
+`server`, `tool`, `policy: "allow" | "ask" | null` (`null`: back to the
+default), `id`.
+
+### `mcp.servers` — `McpServers`
+`servers: [McpServerRow]`, `live: bool`; `id` when it answers a request.
+Not stamped and not in the ring. `McpServerRow` is `{name, title (the
+server's own `serverInfo.title`, else `name`), group, transport: "stdio" |
+"http" | "sse" | "sdk" | "other", status: "connected" | "needs_auth" |
+"failed" | "pending" | "off" | "signing_in" | "unknown", detail,
+tool_count?, tools: [{name, description, read_only, policy}], account?,
+can_toggle, can_remove, can_sign_out}`. `detail` is the status line:
+
+| status | `detail` |
+|---|---|
+| `connected` | "Connected · N tools" (`portico`: "Connected · the viewer, files and screen · N tools") |
+| `needs_auth` | "Needs you to sign in" |
+| `failed` | "Couldn't start: <error, cut to 120>" or "Couldn't start: it stopped as soon as it opened" |
+| `pending` | "Connecting…" |
+| `off` | "Off"; a shipped server: "Off for you · it stays off through updates" |
+| `signing_in` | "Signing in… finish in your browser" |
+| `unknown` | "Starts with your next chat" |
+
+`account` is set only when the status carries one; it is never invented.
+`can_sign_out` is true when it is set, or for a connected http/sse server.
+
+## Plugins *(v0.18)*
+
+Settings' Plugins tab lists the plugins installed for the agent and what
+the marketplaces offer, and manages them with the same reach as Claude
+Code. When `hello` lists `plugins.v1` the app may send the `plugins.*`
+requests below (an older app never sends them). `plugin` is the plugin's
+id as Claude Code prints it (`name@marketplace`); `id` stays the request's
+id. The list and every change are answered with `plugins.state` carrying
+the request's `id`; `plugins.details` and `plugins.options` have their own
+replies; a refusal or failure is `error` carrying the `id`
+(`plugins.invalid`, `plugins.unknown`, `plugins.refused`, `plugins.failed`).
+
+- **Every request runs the bundled Claude Code CLI** (`claude plugin …`)
+  in Settings' folder (as for [MCP servers](#mcp-servers-v018)), in the
+  background: other requests are answered meanwhile. A failure's message
+  is the command's last stderr line, cut to 240 characters, web addresses
+  without their query strings.
+- **Installed** is `claude plugin list --json`, one row per id. An entry
+  scoped `local` or `project` to another folder is left out; of several
+  entries for one id, the one that governs Settings' folder is shown
+  (local, then project, then user, then any other).
+- **What the marketplaces offer** is `claude plugin list --json
+  --available`, read once and kept 5 minutes (adding or updating a
+  marketplace drops it). An installed row's `description`, `marketplace`
+  and `update_to` come from its entry there, joined by id.
+- **Changes** (turn on and off, install, uninstall, update, add or update a
+  marketplace, configure) take effect at the next engine start; the
+  gateway never restarts an engine for them. They are serialised with
+  every other change to Claude Code's settings (the MCP servers' too): one
+  runs at a time, and a request waits for the one before it.
+- **A plugin that installs by running a command** (its `--json` result
+  carries `shownCommand`) is refused: "This plugin runs a command to
+  install. Install it in Claude Code, where you can read the command
+  first." The gateway never accepts such a command for the person.
+- **A sensitive option's value never reaches the app.**
+
+### `plugins.list` — `PluginsList` *(app → gateway)*
+`available: bool` (default false), `id`. With `available: true` the reply
+carries `available` (Browse); otherwise it is absent.
+
+### `plugins.set_enabled` — `PluginsSetEnabled` *(app → gateway)*
+`plugin`, `enabled: bool`, `id`. `claude plugin enable|disable <id> --scope
+<the row's scope>`. Refused for a plugin whose scope is not user, project
+or local (one from the person's Claude account).
+
+### `plugins.install` — `PluginsInstall` *(app → gateway)*
+`plugin`, `id`. `claude plugin install <id> --json`.
+
+### `plugins.uninstall` — `PluginsUninstall` *(app → gateway)*
+`plugin`, `id`. `claude plugin uninstall <id> --scope <the row's scope>`.
+The app asks first.
+
+### `plugins.update` — `PluginsUpdate` *(app → gateway)*
+`plugin`, `id`. `claude plugin update <id> --scope <the row's scope>
+--json` (refused like an install when it would run a command).
+
+### `plugins.marketplace_add` — `PluginsMarketplaceAdd` *(app → gateway)*
+`source` (a GitHub `owner/repo`, a git address or a folder), `id`.
+`claude plugin marketplace add <source>`.
+
+### `plugins.marketplace_update` — `PluginsMarketplaceUpdate` *(app → gateway)*
+`name`, `id`. `claude plugin marketplace update <name>` (Check for updates).
+
+### `plugins.details` — `PluginsDetailsRequest` *(app → gateway)*
+`plugin`, `id`. Answered with `plugins.details`.
+
+### `plugins.options` — `PluginsOptionsRequest` *(app → gateway)*
+`plugin`, `id`. `claude plugin configure <id> --json`; answered with
+`plugins.options` (empty `options`: nothing to configure, so the app
+offers no Configure…).
+
+### `plugins.configure` — `PluginsConfigure` *(app → gateway)*
+`plugin`, `values: {key: string}` (only the changed ones, each on one
+line), `id`. Piped as JSON to `claude plugin configure <id>
+--values-stdin`; options left out keep their values. Answered with a fresh
+`plugins.options`.
+
+### `plugins.state` — `PluginsState`
+`installed: [PluginRow]` (sorted by name), `available: [AvailablePlugin]`
+(only for `plugins.list` with `available: true`), `marketplaces:
+[PluginMarketplace]`; `id`. Not stamped and not in the ring.
+
+- `PluginRow` is `{id, name, version, scope, enabled, description,
+  marketplace, update_to?}`. `update_to` is the marketplace's version when
+  it differs from the installed `version` (the app's **Update to <v>**).
+- `AvailablePlugin` is `{id, name, description, marketplace, version?,
+  installed}`.
+- `PluginMarketplace` is `{name, source_label?, plugin_count, checked}`.
+  `source_label` is `github.com/<repo>` for a GitHub marketplace, else its
+  address or folder, and absent for the official `claude-plugins-official`.
+  `plugin_count` counts its plugins in the available list. `checked` is
+  "today", "yesterday" or a date like "Oct 24": the newest change in its
+  checkout, in the gateway's local time ("" when unknown).
+
+### `plugins.details` — `PluginsDetails`
+`plugin`, `text` (`claude plugin details <id>`: its skills, commands,
+servers and projected token cost), `id`.
+
+### `plugins.options` — `PluginsOptions`
+`plugin`, `options: [PluginOption]`, `id`. `PluginOption` is `{key, title
+(the option's title, else its key), description, sensitive, set, value?}`.
+A sensitive option's `value` is always absent; `set` says whether it has
+one.
+
+## MCP Apps *(v0.18)*
+
+An MCP server's tool can name a page (`_meta.ui.resourceUri`, a `ui://`
+address; the MCP Apps extension, stable spec 2026-01-26). When the agent
+calls such a tool, an app that declared `apps.v1` shows the page in a card
+in place of the tool row, gives it the call's input and then its result,
+and relays what the page asks for. Every other app keeps the plain tool row.
+
+- **Capabilities.** The gateway lists `apps.v1` in `hello` when `[apps]
+  enabled` (the default); it then starts every engine with
+  `CLAUDE_CODE_MCP_APPS_HOST=1`, so the CLI tells MCP servers it can show
+  their pages. The app lists `apps.v1` too; only then is it sent `app.*`
+  frames, live or in a `chat.history`.
+- **When apps are on.** For an engine whose CLI reports
+  `mcp_call_result_not_for_model_v1`. The first page read that fails on an
+  engine (after up to 10 s of retries while the server is still connecting)
+  turns apps off for that engine, logged once: "MCP Apps are off for chat
+  N: <error>". Its app tools stay plain tool rows.
+- **Which tools.** After each engine start and each Reconnect, the gateway
+  reads the engine's MCP status: per tool, its `_meta.ui.resourceUri` (or
+  the deprecated `_meta["ui/resourceUri"]`), `_meta.ui.visibility`
+  (default `["model", "app"]`) and `annotations.readOnly`. Servers Portico
+  runs itself never have apps.
+- **Order on the wire.** `tool.started` → `app.open` (once the page is read)
+  → `tool.finished` → `app.result`, or `app.cancelled` when the call ended
+  with no result. While a page is read the chat's later events wait, in
+  order, so `app.open` is never after its `tool.finished`. An `app.open`
+  that fails sends nothing more. `app.*` frames carry no `seq` and are not
+  kept in the ring.
+- **Saved cards.** The gateway keeps each card's record (the server, tool,
+  page address, input, result, `csp`, `permissions`, `prefers_border`,
+  server title; never the HTML) under `<state>/apps/<session>/<tool_use_id>.json`,
+  readable only by the person. A result over 4 MiB of JSON keeps `content`
+  and drops `structured_content`. `chat.history`, from the ring or a
+  transcript, brings each card back right after its `tool.finished` as
+  `app.open` with no `html` (the card is frozen; **Reload** shows it
+  again), then `app.result` (or `app.cancelled`).
+- **The page's sandbox is the app's** (spec §2.3.5): one web view per card
+  with a non-persistent data store and nothing shared with Portico's other
+  web views; its own origin, `mcpapp-<server>://app/index.html`; the CSP
+  from `csp` sent as a response header, else the strict default (no
+  network: `default-src 'none'; script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'
+  data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri
+  'self'`); no navigation of its own (links go through `ui/open-link` to the
+  viewer); camera and microphone refused. The host side of the page's
+  JSON-RPC is the app's own code. The page's HTML is third-party content:
+  it is never rendered anywhere else.
+
+### `app.open` — `AppOpen`
+`chat`, `tool_use_id` (the agent's call), `server` (the configured name),
+`server_title` (its `serverInfo.title`, else the name), `tool` (the bare
+tool name), `resource_uri`, `html?` (absent in a replay), `csp?`,
+`permissions?`, `prefers_border?` (the resource's `_meta.ui` members, as
+the server gave them), `input` (the call's input). `id` when it answers
+`app.reload`.
+
+### `app.result` — `AppResult`
+`chat`, `tool_use_id`, `content` (the result's content blocks),
+`structured_content?` (absent when the server sent none or it was over the
+cap), `is_error`. `id` when it answers `app.reload`.
+
+### `app.cancelled` — `AppCancelled`
+`chat`, `tool_use_id`. The call ended (stopped, or an error) with no result.
+
+### `app.call_tool` — `AppCallTool` *(app → gateway)*
+`chat`, `tool_use_id` (the card), `tool`, `arguments`, `id`. The page's
+`tools/call`. A bare `tool` means the card's own server
+(`mcp__<server>__<tool>`). The gateway checks, in this order, and never
+takes the page's word for any of it (the CLI's call skips its own
+permission checks):
+
+1. the card exists — else "Unknown app";
+2. the tool is on the card's server — else "That tool is on another server";
+3. its visibility includes `"app"` — else "That tool isn't offered to apps";
+4. consent. A tool marked read-only runs without asking unless the person
+   set it to "Asks first" in Settings; any other asks with the agent's own
+   permission card (`card.ask kind=permission`, `permission.tool` the full
+   tool name, title and `permission.summary` "The <server_title> app wants
+   to run <tool>", `scope_note` "<the tool's description> · from the card
+   above"), unless the person set it to "Runs without asking" or allowed
+   it for this session. Allow for this session is the same allow as the
+   agent's own calls to that tool. Deny (or a card cancelled) is "Denied".
+
+Then the tool runs with its result kept from the model. Every call from a
+page is logged.
+
+### `app.call_result` — `AppCallResult`
+`tool_use_id`, `ok`, `content`, `structured_content?`, `is_error`, `error?`;
+the request's `id`. `ok: false` carries `error` (one of the refusals above,
+or why the call failed).
+
+### `app.message` — `AppMessage` *(app → gateway)*
+`chat`, `tool_use_id`, `text`, `id`. The page's `ui/message`: sent exactly
+as a typed `message.send` (queued during a turn for an app with
+`queue.v1`), its `user.text` carrying `via: "<server_title>"`. Text whose
+first non-space character is `/` is refused with `error
+code=app.refused` "Apps can't run commands" (the CLI would run it as a
+command); an unknown card is `error code=app.unknown` "Unknown app".
+
+### `app.context` — `AppContext` *(app → gateway)*
+`chat`, `tool_use_id`, `text`. The page's `ui/update-model-context`. The
+latest per card is kept (cut to 16 000 characters). Before the person's
+next message (one that is not a slash command), each kept block goes first
+in what the engine receives, as `<app-context
+server="<server>">\n<text>\n</app-context>\n\n`, and is cleared; the
+`user.text` shows only the message. The first update from each card
+between two messages adds the `chat.notice` "<server_title> updated the
+context". Not answered.
+
+### `app.reload` — `AppReload` *(app → gateway)*
+`chat`, `tool_use_id`, `id`. Reads the page again (starting the chat's
+engine first when none is running, as a send would) and answers `app.open`
+with the `html`, then `app.result` from the record, both with the `id`. A
+failure is `error code=app.reload_failed` "Couldn't reload: <reason>" with
+the `id`.
 
 ## Threads *(v0.16)*
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, ValidationError
 from pydantic.json_schema import models_json_schema
 
 PROTOCOL_VERSION = 1
@@ -57,6 +57,11 @@ QUEUE_CAPABILITY = "queue.v1"
 # presentation with ``[threads] max`` above 0; only an app that lists it too
 # is sent ``thread.proposal``.
 THREADS_CAPABILITY = "threads.v1"
+
+# v0.18 (ruling 20): the capability, on both sides, for MCP Apps. A gateway
+# lists it when ``[apps] enabled``; only an app that lists it too is sent the
+# ``app.*`` frames (any other app keeps the plain tool rows).
+APPS_CAPABILITY = "apps.v1"
 
 # v0.17: the capability an app lists when it can show a service as ``stuck``.
 # Any other app is sent a stuck service as ``down`` (its decoder would refuse
@@ -356,6 +361,202 @@ class ThreadClose(Envelope):
     log: bool = True
 
 
+# --- MCP servers in Settings (v0.18 §3.1, ``mcp.v1``) ---------------------------
+#
+# Requests from the app (an older app never sends them), each answered with
+# ``mcp.servers`` carrying the request's ``id``, or ``error`` with the ``id``.
+
+
+class McpList(Envelope):
+    """v0.18: the servers as Settings shows them."""
+
+    type: Literal["mcp.list"] = "mcp.list"
+
+
+class McpToggle(Envelope):
+    """v0.18: turn a server off (``enabled`` false) or on again, for Settings' folder; from the next engine start."""
+
+    type: Literal["mcp.toggle"] = "mcp.toggle"
+    name: str
+    enabled: bool
+
+
+class McpReconnect(Envelope):
+    """v0.18: reconnect a server in every live engine on Settings' folder."""
+
+    type: Literal["mcp.reconnect"] = "mcp.reconnect"
+    name: str
+
+
+class McpRemove(Envelope):
+    """v0.18: remove a user or local server (``claude mcp remove``); the app asks first."""
+
+    type: Literal["mcp.remove"] = "mcp.remove"
+    name: str
+
+
+class McpAdd(Envelope):
+    """v0.18: add a server (``claude mcp add``): by a web address (``url``) or a program on this Mac (``command``).
+
+    ``where`` is ``user`` (All your projects) or ``local`` (this agent only).
+    """
+
+    type: Literal["mcp.add"] = "mcp.add"
+    name: str
+    transport: Literal["http", "stdio"]
+    url: str | None = None
+    command: str | None = None
+    where: Literal["user", "local"]
+
+
+class McpSignIn(Envelope):
+    """v0.18: sign in to a server (``claude mcp login``): answered at once, then a fresh ``mcp.servers`` (no id) when done."""
+
+    type: Literal["mcp.sign_in"] = "mcp.sign_in"
+    name: str
+
+
+class McpSignOut(Envelope):
+    """v0.18: sign out of a server (``claude mcp logout``)."""
+
+    type: Literal["mcp.sign_out"] = "mcp.sign_out"
+    name: str
+
+
+class McpToolPolicy(Envelope):
+    """v0.18: whether one tool runs without asking (``allow``) or asks first (``ask``); ``null`` is back to the default."""
+
+    type: Literal["mcp.tool_policy"] = "mcp.tool_policy"
+    server: str
+    tool: str
+    policy: Literal["allow", "ask"] | None = None
+
+
+# --- plugins in Settings (v0.18 §3, ``plugins.v1``) -----------------------------
+#
+# Requests from the app (an older app never sends them). ``plugin`` is the
+# plugin's id as the CLI prints it (``name@marketplace``); ``id`` stays the
+# request's id. The list and every change are answered with ``plugins.state``;
+# details and options with their own frame; a refusal or failure with
+# ``error`` carrying the id.
+
+
+class PluginsList(Envelope):
+    """v0.18: the installed plugins and the marketplaces; ``available`` true adds what the marketplaces offer."""
+
+    type: Literal["plugins.list"] = "plugins.list"
+    available: bool = False
+
+
+class PluginsSetEnabled(Envelope):
+    """v0.18: turn a plugin on or off (``claude plugin enable|disable <id> --scope <its scope>``)."""
+
+    type: Literal["plugins.set_enabled"] = "plugins.set_enabled"
+    plugin: str
+    enabled: bool
+
+
+class PluginsInstall(Envelope):
+    """v0.18: install a plugin (``claude plugin install <id> --json``); one that installs by running a command is refused."""
+
+    type: Literal["plugins.install"] = "plugins.install"
+    plugin: str
+
+
+class PluginsUninstall(Envelope):
+    """v0.18: uninstall a plugin (``claude plugin uninstall <id> --scope <its scope>``); the app asks first."""
+
+    type: Literal["plugins.uninstall"] = "plugins.uninstall"
+    plugin: str
+
+
+class PluginsUpdate(Envelope):
+    """v0.18: update a plugin to its marketplace's version (``claude plugin update <id>``)."""
+
+    type: Literal["plugins.update"] = "plugins.update"
+    plugin: str
+
+
+class PluginsMarketplaceAdd(Envelope):
+    """v0.18: add a marketplace (``claude plugin marketplace add <source>``): owner/repo, a git address or a path."""
+
+    type: Literal["plugins.marketplace_add"] = "plugins.marketplace_add"
+    source: str
+
+
+class PluginsMarketplaceUpdate(Envelope):
+    """v0.18: check a marketplace for updates (``claude plugin marketplace update <name>``)."""
+
+    type: Literal["plugins.marketplace_update"] = "plugins.marketplace_update"
+    name: str
+
+
+class PluginsDetailsRequest(Envelope):
+    """v0.18: a plugin's inventory as text (``claude plugin details <id>``)."""
+
+    type: Literal["plugins.details"] = "plugins.details"
+    plugin: str
+
+
+class PluginsOptionsRequest(Envelope):
+    """v0.18: a plugin's options (``claude plugin configure <id> --json``)."""
+
+    type: Literal["plugins.options"] = "plugins.options"
+    plugin: str
+
+
+class PluginsConfigure(Envelope):
+    """v0.18: save option values (only the changed ones), piped to ``claude plugin configure <id> --values-stdin``."""
+
+    type: Literal["plugins.configure"] = "plugins.configure"
+    plugin: str
+    values: dict[str, str]
+
+
+# --- MCP Apps (v0.18 §2, ``apps.v1``) ------------------------------------------
+#
+# From the page of an app card, sent by the app on its behalf. ``tool_use_id``
+# names the card (the agent's call that opened it). ``app.call_tool`` is
+# answered with ``app.call_result`` carrying its ``id``; ``app.message`` and
+# ``app.reload`` with an ``error`` carrying the ``id`` when refused.
+
+
+class AppCallTool(Envelope):
+    """v0.18: the page asks to run ``tool`` on its own server (a bare name means that server's)."""
+
+    type: Literal["app.call_tool"] = "app.call_tool"
+    chat: int
+    tool_use_id: str
+    tool: str
+    arguments: dict[str, Any] = {}
+
+
+class AppMessage(Envelope):
+    """v0.18: the page's ``ui/message``: sent as the person's message, labelled ``via`` the app."""
+
+    type: Literal["app.message"] = "app.message"
+    chat: int
+    tool_use_id: str
+    text: str
+
+
+class AppContext(Envelope):
+    """v0.18: the page's ``ui/update-model-context``: kept (latest only) and put before the person's next message."""
+
+    type: Literal["app.context"] = "app.context"
+    chat: int
+    tool_use_id: str
+    text: str
+
+
+class AppReload(Envelope):
+    """v0.18: read the page again (starting the chat's engine if needed); answered ``app.open`` then ``app.result``."""
+
+    type: Literal["app.reload"] = "app.reload"
+    chat: int
+    tool_use_id: str
+
+
 class TurnStop(Envelope):
     type: Literal["turn.stop"] = "turn.stop"
     chat: int
@@ -593,6 +794,9 @@ class UserText(Envelope):
     chat: int
     turn: int
     text: str
+    # v0.18 (ruling 27): a message an MCP app sent (``app.message``) carries the
+    # app's server title; the transcript shows "via <title>". Absent otherwise.
+    via: str | None = None
 
 
 class TextDelta(Envelope):
@@ -629,6 +833,18 @@ class ToolFinished(Envelope):
     # v0.16: on an answered ``AskUserQuestion`` row, what the person chose
     # ({<question text>: <label> | [labels]}); absent on a decline.
     answers: dict[str, str | list[str]] | None = None
+    # v0.18 (§2.6.1): the engine's ``tool_use_result`` for this call, live only.
+    # Private: never on the wire, never in the schema; MCP Apps read it.
+    _raw_result: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @property
+    def raw_result(self) -> dict[str, Any] | None:
+        return self._raw_result
+
+    def with_raw_result(self, raw: dict[str, Any] | None) -> ToolFinished:
+        """``self`` carrying ``raw`` (set in place; returned for chaining)."""
+        self._raw_result = raw
+        return self
 
 
 class TurnFinished(Envelope):
@@ -873,6 +1089,194 @@ class Models(Envelope):
     choices: list[ModelChoice] = []
 
 
+# --- MCP servers in Settings (v0.18 §3.1) -------------------------------------------
+
+
+class McpToolRow(Strict):
+    """One tool of a server: ``policy`` is the effective one (the person's choice, else the default)."""
+
+    name: str
+    description: str = ""
+    read_only: bool = False
+    policy: Literal["allow", "ask"]
+
+
+class McpServerRow(Strict):
+    """One server as Settings shows it. ``detail`` is the status line; group titles and brand words are the app's."""
+
+    name: str
+    title: str
+    group: Literal["user", "local", "shipped", "core", "account"]
+    transport: Literal["stdio", "http", "sse", "sdk", "other"]
+    status: Literal["connected", "needs_auth", "failed", "pending", "off", "signing_in", "unknown"]
+    detail: str
+    tool_count: int | None = None
+    tools: list[McpToolRow] = []
+    account: str | None = None
+    can_toggle: bool
+    can_remove: bool
+    can_sign_out: bool
+
+
+class McpServers(Envelope):
+    """v0.18: the answer to every ``mcp.*`` request (with its ``id``), and after a sign-in finishes (no ``id``).
+
+    ``live`` is whether status came from a running engine on Settings' folder;
+    without one, rows carry no tools. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["mcp.servers"] = "mcp.servers"
+    servers: list[McpServerRow] = []
+    live: bool = False
+
+
+# --- plugins in Settings (v0.18 §3) -------------------------------------------------
+
+
+class PluginRow(Strict):
+    """One installed plugin. ``description`` and ``marketplace`` come from its marketplace entry, joined by id.
+
+    ``update_to`` is the marketplace's version when it differs from the installed one.
+    """
+
+    id: str
+    name: str
+    version: str
+    scope: str
+    enabled: bool
+    description: str = ""
+    marketplace: str
+    update_to: str | None = None
+
+
+class AvailablePlugin(Strict):
+    """One plugin a marketplace offers (Browse)."""
+
+    id: str
+    name: str
+    description: str = ""
+    marketplace: str
+    version: str | None = None
+    installed: bool = False
+
+
+class PluginMarketplace(Strict):
+    """One marketplace. ``source_label`` is its repo or path (``None`` for the official one); ``checked`` is
+    "today", "yesterday" or a date like "Oct 24" (the newest change in its checkout), or "" when unknown."""
+
+    name: str
+    source_label: str | None = None
+    plugin_count: int = 0
+    checked: str = ""
+
+
+class PluginOption(Strict):
+    """One option of a plugin. A sensitive option's value is never sent: ``value`` is null and ``set`` says whether it has one."""
+
+    key: str
+    title: str
+    description: str = ""
+    sensitive: bool = False
+    set: bool = False
+    value: str | None = None
+
+
+class PluginsState(Envelope):
+    """v0.18: the answer to ``plugins.list`` and to every plugin change (with the request's ``id``).
+
+    ``available`` is present only when the request was a ``plugins.list`` with
+    ``available: true``. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["plugins.state"] = "plugins.state"
+    installed: list[PluginRow] = []
+    available: list[AvailablePlugin] | None = None
+    marketplaces: list[PluginMarketplace] = []
+
+
+class PluginsDetails(Envelope):
+    """v0.18: a plugin's ``claude plugin details`` text."""
+
+    type: Literal["plugins.details"] = "plugins.details"
+    plugin: str
+    text: str
+
+
+class PluginsOptions(Envelope):
+    """v0.18: a plugin's options (empty: nothing to configure)."""
+
+    type: Literal["plugins.options"] = "plugins.options"
+    plugin: str
+    options: list[PluginOption] = []
+
+
+# --- MCP Apps (v0.18 §2) --------------------------------------------------------------
+#
+# Sent only to an app that declared ``apps.v1``. Live: ``tool.started`` →
+# ``app.open`` → ``tool.finished`` → ``app.result`` (or ``app.cancelled``).
+# Not stamped (no ``seq``) and not kept in the ring: ``chat.history`` brings
+# each card back from its saved record, ``html`` null (frozen).
+
+
+class AppOpen(Envelope):
+    """v0.18: show the app card for the agent's call ``tool_use_id``.
+
+    ``server`` is the configured name, ``server_title`` what to call it
+    (``serverInfo.title``, else the name); ``tool`` is the bare tool name.
+    ``html`` is the page (absent in a replay: the card comes back frozen).
+    ``csp``, ``permissions`` and ``prefers_border`` are the resource's
+    ``_meta.ui`` members, as the server gave them.
+    """
+
+    type: Literal["app.open"] = "app.open"
+    chat: int
+    tool_use_id: str
+    server: str
+    server_title: str
+    tool: str
+    resource_uri: str
+    html: str | None = None
+    csp: dict[str, Any] | None = None
+    permissions: dict[str, Any] | None = None
+    prefers_border: bool | None = None
+    input: dict[str, Any] = {}
+
+
+class AppResult(Envelope):
+    """v0.18: the call's result for the page (``structured_content`` absent when it was over the cap)."""
+
+    type: Literal["app.result"] = "app.result"
+    chat: int
+    tool_use_id: str
+    content: list[dict[str, Any]] = []
+    structured_content: dict[str, Any] | None = None
+    is_error: bool = False
+
+
+class AppCancelled(Envelope):
+    """v0.18: the call ended with no result (stopped, or an error before one)."""
+
+    type: Literal["app.cancelled"] = "app.cancelled"
+    chat: int
+    tool_use_id: str
+
+
+class AppCallResult(Envelope):
+    """v0.18: the answer to ``app.call_tool`` (its ``id``). ``ok`` false carries ``error``; the result is never the model's."""
+
+    type: Literal["app.call_result"] = "app.call_result"
+    tool_use_id: str
+    ok: bool
+    content: list[dict[str, Any]] = []
+    structured_content: dict[str, Any] | None = None
+    is_error: bool = False
+    error: str | None = None
+
+
+# The v0.18 frame types only an app that declared ``apps.v1`` is sent.
+APP_FRAME_TYPES: frozenset[str] = frozenset({"app.open", "app.result", "app.cancelled", "app.call_result"})
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -991,6 +1395,9 @@ HistoryEvent = Annotated[
         WorkflowStarted,
         WorkflowPhase,
         WorkflowFinished,
+        AppOpen,
+        AppResult,
+        AppCancelled,
         Error,
     ],
     Field(discriminator="type"),
@@ -1069,6 +1476,28 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ThreadStart,
     ThreadDismiss,
     ThreadClose,
+    McpList,
+    McpToggle,
+    McpReconnect,
+    McpRemove,
+    McpAdd,
+    McpSignIn,
+    McpSignOut,
+    McpToolPolicy,
+    PluginsList,
+    PluginsSetEnabled,
+    PluginsInstall,
+    PluginsUninstall,
+    PluginsUpdate,
+    PluginsMarketplaceAdd,
+    PluginsMarketplaceUpdate,
+    PluginsDetailsRequest,
+    PluginsOptionsRequest,
+    PluginsConfigure,
+    AppCallTool,
+    AppMessage,
+    AppContext,
+    AppReload,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1111,6 +1540,14 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     SpacesList,
     Models,
     ThreadProposal,
+    McpServers,
+    PluginsState,
+    PluginsDetails,
+    PluginsOptions,
+    AppOpen,
+    AppResult,
+    AppCancelled,
+    AppCallResult,
     Error,
 )
 
@@ -1204,7 +1641,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.17.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.18.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1237,6 +1674,31 @@ def example_messages() -> dict[str, BaseModel]:
         ThreadStart(ts=_TS, chat=14, id="req-12", proposal="p-7c21", close=15),
         ThreadDismiss(ts=_TS, chat=14, id="req-13", proposal="p-7c21"),
         ThreadClose(ts=_TS, chat=15, id="req-14"),
+        McpList(ts=_TS, id="req-20"),
+        McpToggle(ts=_TS, id="req-21", name="acme-crm", enabled=False),
+        McpReconnect(ts=_TS, id="req-22", name="docs"),
+        McpRemove(ts=_TS, id="req-23", name="acme-tracker"),
+        McpAdd(ts=_TS, id="req-24", name="acme-tracker", transport="http", url="https://mcp.acme.example/", where="user"),
+        McpSignIn(ts=_TS, id="req-25", name="acme-calendar"),
+        McpSignOut(ts=_TS, id="req-26", name="acme-tracker"),
+        McpToolPolicy(ts=_TS, id="req-27", server="acme-tracker", tool="update_task", policy="allow"),
+        PluginsList(ts=_TS, id="req-30", available=True),
+        PluginsSetEnabled(ts=_TS, id="req-31", plugin="design-review@acme", enabled=False),
+        PluginsInstall(ts=_TS, id="req-32", plugin="meeting-notes@claude-plugins-official"),
+        PluginsUninstall(ts=_TS, id="req-33", plugin="release-helper@acme"),
+        PluginsUpdate(ts=_TS, id="req-34", plugin="design-review@acme"),
+        PluginsMarketplaceAdd(ts=_TS, id="req-35", source="acme/plugins"),
+        PluginsMarketplaceUpdate(ts=_TS, id="req-36", name="acme"),
+        PluginsDetailsRequest(ts=_TS, id="req-37", plugin="design-review@acme"),
+        PluginsOptionsRequest(ts=_TS, id="req-38", plugin="design-review@acme"),
+        PluginsConfigure(ts=_TS, id="req-39", plugin="design-review@acme", values={"region": "eu"}),
+        AppCallTool(
+            ts=_TS, id="req-40", chat=1, tool_use_id="toolu_01", tool="update_task",
+            arguments={"task": "Launch email", "status": "done"},
+        ),
+        AppMessage(ts=_TS, id="req-41", chat=1, tool_use_id="toolu_01", text="Mark Launch email done"),
+        AppContext(ts=_TS, chat=1, tool_use_id="toolu_01", text="Project: Acme launch. 3 of 4 tasks done."),
+        AppReload(ts=_TS, id="req-42", chat=1, tool_use_id="toolu_01"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1498,6 +1960,102 @@ def example_messages() -> dict[str, BaseModel]:
             files=[f"{_FOLDER}/pricing.html"],
             state="started",
             thread=15,
+        ),
+        McpServers(
+            ts=_TS,
+            id="req-20",
+            live=True,
+            servers=[
+                McpServerRow(
+                    name="portico", title="portico", group="core", transport="sdk", status="connected",
+                    detail="Connected · the viewer, files and screen · 9 tools", tool_count=9,
+                    can_toggle=False, can_remove=False, can_sign_out=False,
+                ),
+                McpServerRow(
+                    name="acme-tracker", title="Acme Tracker", group="user", transport="http", status="connected",
+                    detail="Connected · 2 tools", tool_count=2,
+                    tools=[
+                        McpToolRow(name="list_tasks", description="Lists tasks, with filters", read_only=True, policy="allow"),
+                        McpToolRow(name="update_task", description="Changes a task's status or owner", policy="ask"),
+                    ],
+                    can_toggle=True, can_remove=True, can_sign_out=True,
+                ),
+                McpServerRow(
+                    name="acme-calendar", title="acme-calendar", group="user", transport="http", status="needs_auth",
+                    detail="Needs you to sign in", can_toggle=True, can_remove=True, can_sign_out=False,
+                ),
+                McpServerRow(
+                    name="design-files", title="design-files", group="shipped", transport="stdio", status="off",
+                    detail="Off for you · it stays off through updates", can_toggle=True, can_remove=False, can_sign_out=False,
+                ),
+            ],
+        ),
+        PluginsState(
+            ts=_TS,
+            id="req-30",
+            installed=[
+                PluginRow(
+                    id="design-review@acme", name="design-review", version="1.4.0", scope="local", enabled=True,
+                    description="Critiques a screen against your design system", marketplace="acme", update_to="1.5.0",
+                ),
+                PluginRow(
+                    id="meeting-notes@claude-plugins-official", name="meeting-notes", version="2.1.0", scope="user", enabled=True,
+                    description="Turns a recording into notes and follow-ups", marketplace="claude-plugins-official",
+                ),
+            ],
+            available=[
+                AvailablePlugin(
+                    id="design-review@acme", name="design-review", description="Critiques a screen against your design system",
+                    marketplace="acme", version="1.5.0", installed=True,
+                ),
+                AvailablePlugin(id="budget-watch@claude-plugins-official", name="budget-watch", marketplace="claude-plugins-official"),
+            ],
+            marketplaces=[
+                PluginMarketplace(name="claude-plugins-official", plugin_count=42, checked="today"),
+                PluginMarketplace(name="acme", source_label="github.com/acme/plugins", plugin_count=6, checked="Oct 24"),
+            ],
+        ),
+        PluginsDetails(
+            ts=_TS, id="req-37", plugin="design-review@acme",
+            text="design-review@acme 1.4.0\nSkills (2): critique, compare-to-system\nCommands (1): /review-screen\n",
+        ),
+        PluginsOptions(
+            ts=_TS,
+            id="req-38",
+            plugin="design-review@acme",
+            options=[
+                PluginOption(key="region", title="Region", description="Where your reviews are kept", set=True, value="us"),
+                PluginOption(key="api_key", title="API key", description="Your Acme key", sensitive=True, set=True),
+            ],
+        ),
+        AppOpen(
+            ts=_TS,
+            chat=1,
+            tool_use_id="toolu_01",
+            server="acme-tracker",
+            server_title="Acme Tracker",
+            tool="show_project",
+            resource_uri="ui://tracker/project.html",
+            html="<!doctype html><title>Acme launch</title><main id=\"tasks\"></main>",
+            csp={"connectDomains": ["https://api.acme.example"]},
+            prefers_border=True,
+            input={"project": "Acme launch"},
+        ),
+        AppResult(
+            ts=_TS,
+            chat=1,
+            tool_use_id="toolu_01",
+            content=[{"type": "text", "text": "Acme launch: 3 of 4 tasks done."}],
+            structured_content={"project": "Acme launch", "tasks": [{"title": "Launch email", "owner": "Sam", "status": "todo"}]},
+        ),
+        AppCancelled(ts=_TS, chat=1, tool_use_id="toolu_02"),
+        AppCallResult(
+            ts=_TS,
+            id="req-40",
+            tool_use_id="toolu_01",
+            ok=True,
+            content=[{"type": "text", "text": "Launch email is done."}],
+            structured_content={"task": "Launch email", "status": "done"},
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

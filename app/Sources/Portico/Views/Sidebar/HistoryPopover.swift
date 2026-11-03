@@ -61,7 +61,7 @@ struct HistoryRow: View {
         .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
         .background(open ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .focusEffectDisabled()
-        .help("Earlier sessions")
+        .tip("Earlier sessions")
         .popover(isPresented: $open, arrowEdge: .trailing) {
             HistoryPopover { open = false }
                 .environmentObject(model)

@@ -348,7 +348,7 @@ struct HelloClient: Codable, Equatable, Sendable {
     static let appCapabilities = [
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
-        Service.stuckCapability,
+        Service.stuckCapability, AppOpen.capability,
     ]
 }
 
@@ -956,6 +956,9 @@ struct UserText: Codable, Equatable, Sendable {
     var chat: Int
     var turn: Int
     var text: String
+    /// v0.18: a message an MCP app sent (`app.message`) carries the app's
+    /// server title; the transcript shows "via <title>" under the bubble.
+    var via: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -1606,6 +1609,504 @@ struct ErrorMessage: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+// MARK: - MCP Apps (v0.18, `apps.v1`)
+
+/// Show the app card for the agent's call `toolUseId` (gateway -> app).
+/// `html` is absent in a `chat.history` replay: the card comes back frozen.
+/// `csp`, `permissions` and `prefersBorder` are the resource's `_meta.ui`
+/// members as the server gave them. Carries `id` when it answers `app.reload`.
+struct AppOpen: Codable, Equatable, Sendable {
+    static let messageType = "app.open"
+    /// What the app names in hello's `capabilities` to be sent `app.*` frames.
+    static let capability = "apps.v1"
+    var chat: Int
+    var toolUseId: String
+    var server: String
+    var serverTitle: String
+    var tool: String
+    var resourceUri: String
+    var html: String? = nil
+    var csp: [String: JSONValue]? = nil
+    var permissions: [String: JSONValue]? = nil
+    var prefersBorder: Bool? = nil
+    var input: [String: JSONValue] = [:]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, server, tool, html, csp, permissions, input, id, ts
+        case toolUseId = "tool_use_id"
+        case serverTitle = "server_title"
+        case resourceUri = "resource_uri"
+        case prefersBorder = "prefers_border"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
+/// The call's result for the page (`structuredContent` absent when the
+/// server sent none or it was over the gateway's cap).
+struct AppResult: Codable, Equatable, Sendable {
+    static let messageType = "app.result"
+    var chat: Int
+    var toolUseId: String
+    var content: [JSONValue] = []
+    var structuredContent: [String: JSONValue]? = nil
+    var isError: Bool = false
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, content, id, ts
+        case toolUseId = "tool_use_id"
+        case structuredContent = "structured_content"
+        case isError = "is_error"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
+/// The call ended (stopped, or an error) with no result.
+struct AppCancelled: Codable, Equatable, Sendable {
+    static let messageType = "app.cancelled"
+    var chat: Int
+    var toolUseId: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, id, ts
+        case toolUseId = "tool_use_id"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
+/// The answer to `app.call_tool` (its `id`). `ok` false carries `error`.
+struct AppCallResult: Codable, Equatable, Sendable {
+    static let messageType = "app.call_result"
+    var toolUseId: String
+    var ok: Bool
+    var content: [JSONValue] = []
+    var structuredContent: [String: JSONValue]? = nil
+    var isError: Bool = false
+    var error: String? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case ok, content, error, id, ts
+        case toolUseId = "tool_use_id"
+        case structuredContent = "structured_content"
+        case isError = "is_error"
+    }
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// The page's `tools/call` (app -> gateway): a bare `tool` is the card's own server's.
+struct AppCallTool: Codable, Equatable, Sendable {
+    static let messageType = "app.call_tool"
+    var chat: Int
+    var toolUseId: String
+    var tool: String
+    var arguments: [String: JSONValue] = [:]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, tool, arguments, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+/// The page's `ui/message`: sent as the person's message, labelled via the app.
+struct AppMessage: Codable, Equatable, Sendable {
+    static let messageType = "app.message"
+    var chat: Int
+    var toolUseId: String
+    var text: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, text, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+/// The page's `ui/update-model-context`: the latest is put before the person's next message.
+struct AppContext: Codable, Equatable, Sendable {
+    static let messageType = "app.context"
+    var chat: Int
+    var toolUseId: String
+    var text: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, text, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+/// Read the card's page again; answered `app.open` (with `html`) then `app.result`.
+struct AppReload: Codable, Equatable, Sendable {
+    static let messageType = "app.reload"
+    var chat: Int
+    var toolUseId: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+// MARK: - MCP servers in Settings (v0.18 §3.1, `mcp.v1`)
+
+/// The capability a gateway names in hello when Settings may send `mcp.*`.
+enum McpCapability {
+    static let name = "mcp.v1"
+}
+
+/// One tool of a server; `policy` is the effective one (the person's choice, else the default).
+struct McpToolRow: Codable, Equatable, Sendable, Identifiable {
+    enum Policy: String, Codable, Equatable, Sendable, CaseIterable {
+        case allow, ask
+    }
+
+    var name: String
+    var description: String = ""
+    var readOnly: Bool = false
+    var policy: Policy
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, policy
+        case readOnly = "read_only"
+    }
+}
+
+/// One server as Settings shows it. `detail` is the gateway's status line;
+/// group titles and brand words are the app's.
+struct McpServerRow: Codable, Equatable, Sendable, Identifiable {
+    enum Group: String, Codable, Equatable, Sendable {
+        case user, local, shipped, core, account
+    }
+
+    enum Transport: String, Codable, Equatable, Sendable {
+        case stdio, http, sse, sdk, other
+    }
+
+    enum Status: String, Codable, Equatable, Sendable {
+        case connected
+        case needsAuth = "needs_auth"
+        case failed, pending, off
+        case signingIn = "signing_in"
+        case unknown
+    }
+
+    var name: String
+    var title: String
+    var group: Group
+    var transport: Transport
+    var status: Status
+    var detail: String
+    var toolCount: Int? = nil
+    var tools: [McpToolRow] = []
+    var account: String? = nil
+    var canToggle: Bool
+    var canRemove: Bool
+    var canSignOut: Bool
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, title, group, transport, status, detail, tools, account
+        case toolCount = "tool_count"
+        case canToggle = "can_toggle"
+        case canRemove = "can_remove"
+        case canSignOut = "can_sign_out"
+    }
+}
+
+/// The answer to every `mcp.*` request (with its `id`), and after a sign-in
+/// finishes (no `id`). Not sequenced.
+struct McpServers: Codable, Equatable, Sendable {
+    static let messageType = "mcp.servers"
+    var servers: [McpServerRow] = []
+    var live: Bool = false
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// The servers as they stand.
+struct McpList: Codable, Equatable, Sendable {
+    static let messageType = "mcp.list"
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Turn a server off (`enabled` false) or on again, for Settings' folder.
+struct McpToggle: Codable, Equatable, Sendable {
+    static let messageType = "mcp.toggle"
+    var name: String
+    var enabled: Bool
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Reconnect a server in every live engine on Settings' folder.
+struct McpReconnect: Codable, Equatable, Sendable {
+    static let messageType = "mcp.reconnect"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Remove a user or local server; the app asks first.
+struct McpRemove: Codable, Equatable, Sendable {
+    static let messageType = "mcp.remove"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Add a server by a web address (`url`) or a program on this Mac (`command`).
+struct McpAdd: Codable, Equatable, Sendable {
+    static let messageType = "mcp.add"
+
+    enum Transport: String, Codable, Equatable, Sendable { case http, stdio }
+    /// `user`: All your projects; `local`: this deployment only.
+    enum Where: String, Codable, Equatable, Sendable { case user, local }
+
+    var name: String
+    var transport: Transport
+    var url: String? = nil
+    var command: String? = nil
+    var `where`: Where
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Sign in to a server: answered at once, a fresh `mcp.servers` (no id) when done.
+struct McpSignIn: Codable, Equatable, Sendable {
+    static let messageType = "mcp.sign_in"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Sign out of a server.
+struct McpSignOut: Codable, Equatable, Sendable {
+    static let messageType = "mcp.sign_out"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Whether one tool runs without asking (`allow`) or asks first (`ask`);
+/// `nil` is back to the default.
+struct McpToolPolicy: Codable, Equatable, Sendable {
+    static let messageType = "mcp.tool_policy"
+    var server: String
+    var tool: String
+    var policy: McpToolRow.Policy? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+// MARK: - Plugins in Settings (v0.18 §3, `plugins.v1`)
+//
+// `plugin` is the plugin's id as Claude Code prints it (`name@marketplace`);
+// `id` stays the request's own (R-c10). The list and every change are
+// answered with `plugins.state` carrying the id; details and options have
+// their own replies; a refusal or failure is an `error` with the id.
+
+/// The capability a gateway names in hello when Settings may send `plugins.*`.
+enum PluginsCapability {
+    static let name = "plugins.v1"
+}
+
+/// One installed plugin. `description` and `marketplace` come from its
+/// marketplace entry; `update_to` is the marketplace's version when it differs.
+struct PluginRow: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var name: String
+    var version: String
+    var scope: String
+    var enabled: Bool
+    var description: String = ""
+    var marketplace: String
+    var updateTo: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, version, scope, enabled, description, marketplace
+        case updateTo = "update_to"
+    }
+}
+
+/// One plugin a marketplace offers (Browse).
+struct AvailablePlugin: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var name: String
+    var description: String = ""
+    var marketplace: String
+    var version: String? = nil
+    var installed: Bool = false
+}
+
+/// One marketplace. `source_label` is absent for the official one; `checked`
+/// is "today", "yesterday", a date like "Oct 24", or "" when unknown.
+struct PluginMarketplace: Codable, Equatable, Sendable, Identifiable {
+    var name: String
+    var sourceLabel: String? = nil
+    var pluginCount: Int = 0
+    var checked: String = ""
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, checked
+        case sourceLabel = "source_label"
+        case pluginCount = "plugin_count"
+    }
+}
+
+/// One option of a plugin. A sensitive option's `value` never arrives; `set` says whether it has one.
+struct PluginOption: Codable, Equatable, Sendable, Identifiable {
+    var key: String
+    var title: String
+    var description: String = ""
+    var sensitive: Bool = false
+    var set: Bool = false
+    var value: String? = nil
+
+    var id: String { key }
+}
+
+/// The answer to `plugins.list` and to every change. `available` only for a
+/// `plugins.list` with `available: true`. Not sequenced.
+struct PluginsStateMessage: Codable, Equatable, Sendable {
+    static let messageType = "plugins.state"
+    var installed: [PluginRow] = []
+    var available: [AvailablePlugin]? = nil
+    var marketplaces: [PluginMarketplace] = []
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// A plugin's `claude plugin details` text.
+struct PluginsDetails: Codable, Equatable, Sendable {
+    static let messageType = "plugins.details"
+    var plugin: String
+    var text: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// A plugin's options (empty: nothing to configure).
+struct PluginsOptions: Codable, Equatable, Sendable {
+    static let messageType = "plugins.options"
+    var plugin: String
+    var options: [PluginOption] = []
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// The installed plugins and the marketplaces; `available` adds Browse's list.
+struct PluginsList: Codable, Equatable, Sendable {
+    static let messageType = "plugins.list"
+    var available: Bool = false
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Turn a plugin on or off.
+struct PluginsSetEnabled: Codable, Equatable, Sendable {
+    static let messageType = "plugins.set_enabled"
+    var plugin: String
+    var enabled: Bool
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Install a plugin; one that installs by running a command is refused.
+struct PluginsInstall: Codable, Equatable, Sendable {
+    static let messageType = "plugins.install"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Uninstall a plugin; the app asks first.
+struct PluginsUninstall: Codable, Equatable, Sendable {
+    static let messageType = "plugins.uninstall"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Update a plugin (Update to …, Check for update).
+struct PluginsUpdate: Codable, Equatable, Sendable {
+    static let messageType = "plugins.update"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Add a marketplace: a GitHub `owner/repo`, a git address or a folder.
+struct PluginsMarketplaceAdd: Codable, Equatable, Sendable {
+    static let messageType = "plugins.marketplace_add"
+    var source: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Check a marketplace for updates.
+struct PluginsMarketplaceUpdate: Codable, Equatable, Sendable {
+    static let messageType = "plugins.marketplace_update"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Ask for a plugin's details text (answered with `plugins.details`).
+struct PluginsDetailsRequest: Codable, Equatable, Sendable {
+    static let messageType = "plugins.details"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Ask for a plugin's options (answered with `plugins.options`).
+struct PluginsOptionsRequest: Codable, Equatable, Sendable {
+    static let messageType = "plugins.options"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Save option values: only the changed ones (answered with `plugins.options`).
+struct PluginsConfigure: Codable, Equatable, Sendable {
+    static let messageType = "plugins.configure"
+    var plugin: String
+    var values: [String: String]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 // MARK: - The discriminated unions
 
 private enum TypeKey: String, CodingKey {
@@ -1651,6 +2152,28 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case threadStart(ThreadStart)
     case threadDismiss(ThreadDismiss)
     case threadClose(ThreadClose)
+    case appCallTool(AppCallTool)
+    case appMessage(AppMessage)
+    case appContext(AppContext)
+    case appReload(AppReload)
+    case mcpList(McpList)
+    case mcpToggle(McpToggle)
+    case mcpReconnect(McpReconnect)
+    case mcpRemove(McpRemove)
+    case mcpAdd(McpAdd)
+    case mcpSignIn(McpSignIn)
+    case mcpSignOut(McpSignOut)
+    case mcpToolPolicy(McpToolPolicy)
+    case pluginsList(PluginsList)
+    case pluginsSetEnabled(PluginsSetEnabled)
+    case pluginsInstall(PluginsInstall)
+    case pluginsUninstall(PluginsUninstall)
+    case pluginsUpdate(PluginsUpdate)
+    case pluginsMarketplaceAdd(PluginsMarketplaceAdd)
+    case pluginsMarketplaceUpdate(PluginsMarketplaceUpdate)
+    case pluginsDetails(PluginsDetailsRequest)
+    case pluginsOptions(PluginsOptionsRequest)
+    case pluginsConfigure(PluginsConfigure)
 
     var type: String {
         switch self {
@@ -1683,6 +2206,28 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .threadStart: ThreadStart.messageType
         case .threadDismiss: ThreadDismiss.messageType
         case .threadClose: ThreadClose.messageType
+        case .appCallTool: AppCallTool.messageType
+        case .appMessage: AppMessage.messageType
+        case .appContext: AppContext.messageType
+        case .appReload: AppReload.messageType
+        case .mcpList: McpList.messageType
+        case .mcpToggle: McpToggle.messageType
+        case .mcpReconnect: McpReconnect.messageType
+        case .mcpRemove: McpRemove.messageType
+        case .mcpAdd: McpAdd.messageType
+        case .mcpSignIn: McpSignIn.messageType
+        case .mcpSignOut: McpSignOut.messageType
+        case .mcpToolPolicy: McpToolPolicy.messageType
+        case .pluginsList: PluginsList.messageType
+        case .pluginsSetEnabled: PluginsSetEnabled.messageType
+        case .pluginsInstall: PluginsInstall.messageType
+        case .pluginsUninstall: PluginsUninstall.messageType
+        case .pluginsUpdate: PluginsUpdate.messageType
+        case .pluginsMarketplaceAdd: PluginsMarketplaceAdd.messageType
+        case .pluginsMarketplaceUpdate: PluginsMarketplaceUpdate.messageType
+        case .pluginsDetails: PluginsDetailsRequest.messageType
+        case .pluginsOptions: PluginsOptionsRequest.messageType
+        case .pluginsConfigure: PluginsConfigure.messageType
         }
     }
 
@@ -1718,6 +2263,28 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case ThreadStart.messageType: self = .threadStart(try ThreadStart(from: decoder))
         case ThreadDismiss.messageType: self = .threadDismiss(try ThreadDismiss(from: decoder))
         case ThreadClose.messageType: self = .threadClose(try ThreadClose(from: decoder))
+        case AppCallTool.messageType: self = .appCallTool(try AppCallTool(from: decoder))
+        case AppMessage.messageType: self = .appMessage(try AppMessage(from: decoder))
+        case AppContext.messageType: self = .appContext(try AppContext(from: decoder))
+        case AppReload.messageType: self = .appReload(try AppReload(from: decoder))
+        case McpList.messageType: self = .mcpList(try McpList(from: decoder))
+        case McpToggle.messageType: self = .mcpToggle(try McpToggle(from: decoder))
+        case McpReconnect.messageType: self = .mcpReconnect(try McpReconnect(from: decoder))
+        case McpRemove.messageType: self = .mcpRemove(try McpRemove(from: decoder))
+        case McpAdd.messageType: self = .mcpAdd(try McpAdd(from: decoder))
+        case McpSignIn.messageType: self = .mcpSignIn(try McpSignIn(from: decoder))
+        case McpSignOut.messageType: self = .mcpSignOut(try McpSignOut(from: decoder))
+        case McpToolPolicy.messageType: self = .mcpToolPolicy(try McpToolPolicy(from: decoder))
+        case PluginsList.messageType: self = .pluginsList(try PluginsList(from: decoder))
+        case PluginsSetEnabled.messageType: self = .pluginsSetEnabled(try PluginsSetEnabled(from: decoder))
+        case PluginsInstall.messageType: self = .pluginsInstall(try PluginsInstall(from: decoder))
+        case PluginsUninstall.messageType: self = .pluginsUninstall(try PluginsUninstall(from: decoder))
+        case PluginsUpdate.messageType: self = .pluginsUpdate(try PluginsUpdate(from: decoder))
+        case PluginsMarketplaceAdd.messageType: self = .pluginsMarketplaceAdd(try PluginsMarketplaceAdd(from: decoder))
+        case PluginsMarketplaceUpdate.messageType: self = .pluginsMarketplaceUpdate(try PluginsMarketplaceUpdate(from: decoder))
+        case PluginsDetailsRequest.messageType: self = .pluginsDetails(try PluginsDetailsRequest(from: decoder))
+        case PluginsOptionsRequest.messageType: self = .pluginsOptions(try PluginsOptionsRequest(from: decoder))
+        case PluginsConfigure.messageType: self = .pluginsConfigure(try PluginsConfigure(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1755,6 +2322,28 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .threadStart(let m): try m.encode(to: encoder)
         case .threadDismiss(let m): try m.encode(to: encoder)
         case .threadClose(let m): try m.encode(to: encoder)
+        case .appCallTool(let m): try m.encode(to: encoder)
+        case .appMessage(let m): try m.encode(to: encoder)
+        case .appContext(let m): try m.encode(to: encoder)
+        case .appReload(let m): try m.encode(to: encoder)
+        case .mcpList(let m): try m.encode(to: encoder)
+        case .mcpToggle(let m): try m.encode(to: encoder)
+        case .mcpReconnect(let m): try m.encode(to: encoder)
+        case .mcpRemove(let m): try m.encode(to: encoder)
+        case .mcpAdd(let m): try m.encode(to: encoder)
+        case .mcpSignIn(let m): try m.encode(to: encoder)
+        case .mcpSignOut(let m): try m.encode(to: encoder)
+        case .mcpToolPolicy(let m): try m.encode(to: encoder)
+        case .pluginsList(let m): try m.encode(to: encoder)
+        case .pluginsSetEnabled(let m): try m.encode(to: encoder)
+        case .pluginsInstall(let m): try m.encode(to: encoder)
+        case .pluginsUninstall(let m): try m.encode(to: encoder)
+        case .pluginsUpdate(let m): try m.encode(to: encoder)
+        case .pluginsMarketplaceAdd(let m): try m.encode(to: encoder)
+        case .pluginsMarketplaceUpdate(let m): try m.encode(to: encoder)
+        case .pluginsDetails(let m): try m.encode(to: encoder)
+        case .pluginsOptions(let m): try m.encode(to: encoder)
+        case .pluginsConfigure(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1802,6 +2391,14 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case spacesList(SpacesList)
     case models(Models)
     case threadProposal(ThreadProposal)
+    case appOpen(AppOpen)
+    case appResult(AppResult)
+    case appCancelled(AppCancelled)
+    case appCallResult(AppCallResult)
+    case mcpServers(McpServers)
+    case pluginsState(PluginsStateMessage)
+    case pluginsDetails(PluginsDetails)
+    case pluginsOptions(PluginsOptions)
 
     var type: String {
         switch self {
@@ -1845,6 +2442,14 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .spacesList: SpacesList.messageType
         case .models: Models.messageType
         case .threadProposal: ThreadProposal.messageType
+        case .appOpen: AppOpen.messageType
+        case .appResult: AppResult.messageType
+        case .appCancelled: AppCancelled.messageType
+        case .appCallResult: AppCallResult.messageType
+        case .mcpServers: McpServers.messageType
+        case .pluginsState: PluginsStateMessage.messageType
+        case .pluginsDetails: PluginsDetails.messageType
+        case .pluginsOptions: PluginsOptions.messageType
         }
     }
 
@@ -1890,6 +2495,14 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .spacesList(let m): m.envelope
         case .models(let m): m.envelope
         case .threadProposal(let m): m.envelope
+        case .appOpen(let m): m.envelope
+        case .appResult(let m): m.envelope
+        case .appCancelled(let m): m.envelope
+        case .appCallResult(let m): m.envelope
+        case .mcpServers(let m): m.envelope
+        case .pluginsState(let m): m.envelope
+        case .pluginsDetails(let m): m.envelope
+        case .pluginsOptions(let m): m.envelope
         }
     }
 
@@ -1936,6 +2549,14 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case SpacesList.messageType: self = .spacesList(try SpacesList(from: decoder))
         case Models.messageType: self = .models(try Models(from: decoder))
         case ThreadProposal.messageType: self = .threadProposal(try ThreadProposal(from: decoder))
+        case AppOpen.messageType: self = .appOpen(try AppOpen(from: decoder))
+        case AppResult.messageType: self = .appResult(try AppResult(from: decoder))
+        case AppCancelled.messageType: self = .appCancelled(try AppCancelled(from: decoder))
+        case AppCallResult.messageType: self = .appCallResult(try AppCallResult(from: decoder))
+        case McpServers.messageType: self = .mcpServers(try McpServers(from: decoder))
+        case PluginsStateMessage.messageType: self = .pluginsState(try PluginsStateMessage(from: decoder))
+        case PluginsDetails.messageType: self = .pluginsDetails(try PluginsDetails(from: decoder))
+        case PluginsOptions.messageType: self = .pluginsOptions(try PluginsOptions(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1984,6 +2605,14 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .spacesList(let m): try m.encode(to: encoder)
         case .models(let m): try m.encode(to: encoder)
         case .threadProposal(let m): try m.encode(to: encoder)
+        case .appOpen(let m): try m.encode(to: encoder)
+        case .appResult(let m): try m.encode(to: encoder)
+        case .appCancelled(let m): try m.encode(to: encoder)
+        case .appCallResult(let m): try m.encode(to: encoder)
+        case .mcpServers(let m): try m.encode(to: encoder)
+        case .pluginsState(let m): try m.encode(to: encoder)
+        case .pluginsDetails(let m): try m.encode(to: encoder)
+        case .pluginsOptions(let m): try m.encode(to: encoder)
         }
     }
 }

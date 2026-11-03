@@ -31,20 +31,33 @@ enum GatewayConnectionPresentation {
     static let caption = "Leave these empty: the app finds the gateway and reads its token itself. A change is used the next time it connects."
 }
 
+/// The tabs in `SettingsTab` order; the selection is the model's, so
+/// `/mcp` and `/plugin` can open Settings at their tab (v0.18 ruling 15).
 struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
+
     var body: some View {
-        TabView {
-            GeneralSettingsTab()
-                .tabItem { Label("General", systemImage: "gearshape") }
-            GatewaySettingsTab()
-                .tabItem { Label("Gateway", systemImage: "server.rack") }
-            VoiceSettingsTab()
-                .tabItem { Label("Voice", systemImage: "waveform") }
-            AppearanceSettingsTab()
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+        TabView(selection: $model.settingsTab) {
+            ForEach(SettingsTab.allCases, id: \.self) { tab in
+                content(tab)
+                    .tabItem { Label(tab.title, systemImage: tab.systemImage) }
+                    .tag(tab)
+            }
         }
         .padding(20)
         .frame(width: SettingsWindow.width, height: SettingsWindow.height)
+    }
+
+    @ViewBuilder
+    private func content(_ tab: SettingsTab) -> some View {
+        switch tab {
+        case .general: GeneralSettingsTab()
+        case .gateway: GatewaySettingsTab()
+        case .mcpServers: McpServersTab()
+        case .plugins: PluginsTab()
+        case .voice: VoiceSettingsTab()
+        case .appearance: AppearanceSettingsTab()
+        }
     }
 }
 
@@ -74,7 +87,7 @@ struct GeneralSettingsTab: View {
                 LabeledContent("Works in") {
                     HStack {
                         Text(model.startFolder?.lastPathComponent ?? "None chosen")
-                            .help(model.startFolder?.path ?? "")
+                            .tip(model.startFolder?.path ?? "")
                         Button("Choose…", action: chooseFolder)
                     }
                 }
@@ -259,7 +272,7 @@ struct TextScaleStepper: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(help)
     }
 }

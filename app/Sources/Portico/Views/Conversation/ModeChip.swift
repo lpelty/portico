@@ -71,7 +71,7 @@ struct ModeChip: View {
         }
         .buttonStyle(.hoverCapsule)
         .disabled(!enabled)
-        .help("When the agent wants to act: \(shown.label)")
+        .tip("When the agent wants to act: \(shown.label)")
         .accessibilityLabel("Permission mode: \(shown.label)")
         .popover(isPresented: $open, arrowEdge: .top) {
             menu

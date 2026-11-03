@@ -121,7 +121,7 @@ struct QuestionRecordView: View {
                 .overlay(Capsule().stroke(Theme.wait.opacity(0.6), lineWidth: 1))
         }
         .accessibilityElement(children: .combine)
-        .help("Answer in the card above the composer, or reply directly")
+        .tip("Answer in the card above the composer, or reply directly")
     }
 
     private var record: some View {
@@ -138,7 +138,7 @@ struct QuestionRecordView: View {
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
-        .help(QuestionRecord.line(for: row))
+        .tip(QuestionRecord.line(for: row))
     }
 }
 
@@ -164,7 +164,7 @@ struct AnswerBubble: View {
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .help(pair.question)
+                        .tip(pair.question)
                     Text(pair.answer)
                         .scaledFont(MarkdownText.bodySize)
                         .lineSpacing(MarkdownText.lineSpacing)

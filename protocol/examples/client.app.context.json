@@ -1,0 +1,7 @@
+{
+  "chat": 1,
+  "text": "Project: Acme launch. 3 of 4 tasks done.",
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "app.context"
+}

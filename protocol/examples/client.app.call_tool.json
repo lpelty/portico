@@ -1,0 +1,12 @@
+{
+  "arguments": {
+    "status": "done",
+    "task": "Launch email"
+  },
+  "chat": 1,
+  "id": "req-40",
+  "tool": "update_task",
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "app.call_tool"
+}

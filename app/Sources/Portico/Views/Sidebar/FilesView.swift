@@ -98,7 +98,7 @@ struct FilesView: View {
                 }
                 .buttonStyle(.hover)
                 .foregroundStyle(.secondary)
-                .help("Clear the filter")
+                .tip("Clear the filter")
             }
         }
         .scaledFont(12)
@@ -228,7 +228,7 @@ struct FileTree: View {
                         Image(systemName: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
                             .font(Theme.iconFont(Self.headerSize, weight: .semibold))
                     }
-                    .help(root.path)
+                    .tip(root.path)
                 }
             }
         }
@@ -331,7 +331,7 @@ struct FileTree: View {
             }
             .contentShape(Rectangle())
             .hoverHighlight()
-            .help("Click to ask again")
+            .tip("Click to ask again")
             .onTapGesture { model.listFiles(chat: chat, root: node.root, path: node.path) }
         } else {
             HStack(spacing: 6) {
@@ -390,7 +390,7 @@ struct FileRow: View {
                     .monospacedDigit()
             }
         }
-        .help(absolutePath ?? node.name)
+        .tip(absolutePath ?? node.name)
         .onTapGesture {
             if node.dir { toggle?(); return }
             guard let path = absolutePath else { return }
@@ -410,7 +410,7 @@ struct FileRow: View {
             if !node.dir {
                 Button("Open in viewer") { model.openArtifact(file: path, in: node.chat) }
                 Button("Add to chat") { model.attach([path], to: node.chat) }
-                    .help("Attach to the next message")
+                    .tip("Attach to the next message", in: .menu)
                 Divider()
             }
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
@@ -529,12 +529,12 @@ struct ChangedFileRow: View {
         ) {
             if let at { CompactTime(date: at) }
         }
-        .help(path)
+        .tip(path)
         .onTapGesture { model.reveal(file: path, in: chat) }
         .contextMenu {
             Button("Open in viewer") { model.reveal(file: path, in: chat) }
             Button("Add to chat") { model.attach([path], to: chat) }
-                .help("Attach to the next message")
+                .tip("Attach to the next message", in: .menu)
             Divider()
             Button(model.isBookmarked(path) ? "Remove bookmark" : "Bookmark") { model.toggleBookmark(path) }
             if Obsidian.opens(path: path) {
@@ -580,7 +580,7 @@ struct HeaderIcon: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(help)
     }
 }
@@ -694,7 +694,7 @@ struct BookmarkRow: View {
         .contentShape(Rectangle())
         .hoverHighlight(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .padding(.horizontal, 8)
-        .help(path)
+        .tip(path)
         .onTapGesture {
             if isDirectory {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])

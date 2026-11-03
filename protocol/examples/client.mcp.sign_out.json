@@ -1,0 +1,6 @@
+{
+  "id": "req-26",
+  "name": "acme-tracker",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "mcp.sign_out"
+}

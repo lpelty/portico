@@ -90,6 +90,37 @@ EXPECTED_KEYS = {
     "client.thread.start",
     "client.thread.dismiss",
     "client.thread.close",
+    # v0.18: MCP servers in Settings
+    "client.mcp.list",
+    "client.mcp.toggle",
+    "client.mcp.reconnect",
+    "client.mcp.remove",
+    "client.mcp.add",
+    "client.mcp.sign_in",
+    "client.mcp.sign_out",
+    "client.mcp.tool_policy",
+    "server.mcp.servers",
+    "client.plugins.list",
+    "client.plugins.set_enabled",
+    "client.plugins.install",
+    "client.plugins.uninstall",
+    "client.plugins.update",
+    "client.plugins.marketplace_add",
+    "client.plugins.marketplace_update",
+    "client.plugins.details",
+    "client.plugins.options",
+    "client.plugins.configure",
+    "server.plugins.state",
+    "client.app.call_tool",
+    "client.app.message",
+    "client.app.context",
+    "client.app.reload",
+    "server.app.open",
+    "server.app.result",
+    "server.app.cancelled",
+    "server.app.call_result",
+    "server.plugins.details",
+    "server.plugins.options",
 }
 
 
@@ -106,7 +137,12 @@ def test_every_type_has_schema_def_and_example():
     # v0.12's viewer.act, viewer.settings, viewer.result, spaces.list, space.refresh, space.rename, space.remove
     # v0.15's models, model.set
     # v0.16's thread.proposal, thread.start, thread.dismiss, thread.close
-    assert len(ex) == 69
+    # v0.18's mcp.list, mcp.toggle, mcp.reconnect, mcp.remove, mcp.add, mcp.sign_in, mcp.sign_out,
+    # mcp.tool_policy, mcp.servers; plugins.list, plugins.set_enabled, plugins.install, plugins.uninstall,
+    # plugins.update, plugins.marketplace_add, plugins.marketplace_update, plugins.details (both ways),
+    # plugins.options (both ways), plugins.configure, plugins.state;
+    # app.call_tool, app.message, app.context, app.reload, app.open, app.result, app.cancelled, app.call_result
+    assert len(ex) == 99
     assert set(ex) == EXPECTED_KEYS
 
 

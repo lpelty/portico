@@ -107,7 +107,7 @@ private struct MarkRowBody: View {
         .padding(.horizontal, 10)
         .background(hovering ? Theme.panel : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { hovering = $0 }
-        .help(shown.stateText)
+        .tip(shown.stateText)
         .accessibilityElement(children: .contain)
     }
 }

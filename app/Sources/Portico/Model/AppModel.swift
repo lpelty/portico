@@ -170,7 +170,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var live: Set<Int> = []
     /// The socket's state, for the status strip.
     @Published private(set) var connection: ConnectionState = .disconnected {
-        didSet { if gaveUpConnecting { gaveUpBeforeList = true } }
+        didSet {
+            if gaveUpConnecting { gaveUpBeforeList = true }
+            // Settings' requests in flight end with the connection (v0.18 R-c25).
+            switch connection {
+            case .disconnected, .failed:
+                endMcpRequests()
+                endPluginRequests()
+            case .connecting, .connected: break
+            }
+        }
     }
     /// The connection gave up before the first `chat.list`: the welcome
     /// keeps saying "Not connected" through each retry's `connecting`,
@@ -343,6 +352,53 @@ final class AppModel: ObservableObject {
         case connected
         case failed(String)
     }
+
+    // Settings (v0.18 §3.1; MCP servers acted on in McpServers.swift).
+
+    /// The Settings tab shown; `/mcp` and `/plugin` choose one.
+    @Published var settingsTab: SettingsTab = .general
+    /// Asks to bring Settings forward: the main window calls SwiftUI's
+    /// `openSettings` each time this changes.
+    @Published var settingsOpenRequests = 0
+    /// Settings → MCP servers: the gateway's list and what is in flight.
+    @Published var mcpServers = McpServersState()
+    /// Remove… asked first (ruling 11); `nil` when nothing is being asked.
+    @Published var mcpRemoving: McpRemoveConfirmation?
+    /// The Add sheet's request out, by id; `nil` when none.
+    @Published var mcpAdding: String?
+    /// Why the last Add was refused, shown in the sheet.
+    @Published var mcpAddError: String?
+    /// Counts Adds answered with the list: the sheet closes on a change.
+    @Published var mcpAddFinished = 0
+    /// Settings → Plugins (AR4; acted on in Plugins.swift).
+    @Published var plugins = PluginsState()
+    /// The Settings tabs on screen: a hello asks their lists again.
+    var settingsTabsShowing: Set<SettingsTab> = []
+    /// Plugins' Browse segment is on screen.
+    var pluginsBrowseShowing = false
+
+    // MCP Apps (v0.18 §2.3; read and acted on in MCPApps.swift).
+
+    /// The app cards by the agent's call (`tool_use_id`), every chat's.
+    @Published var apps: [String: AppState] = [:]
+    /// Per chat, its live cards' ids (at most three; the newest last).
+    @Published var liveApps: [Int: [String]] = [:]
+    /// Frozen cards' last looks, in memory only (a restart shows the placeholder).
+    @Published var appSnapshots: [String: NSImage] = [:]
+    /// Per chat, the card whose page the viewer shows in place of the file view.
+    @Published var viewerApp: [Int: String] = [:]
+    /// The pages drawn (a card's, a viewer copy's) and their bridges.
+    var appPages: [AppPageKey: MCPAppPage] = [:]
+    var appBridges: [AppPageKey: MCPAppBridge] = [:]
+    /// A page's `tools/call` out as `app.call_tool`, by request id.
+    var pendingAppCalls: [String: (AppCallResult) -> Void] = [:]
+    /// A page's `ui/message` out as `app.message`, oldest first.
+    var pendingAppMessages: [PendingAppMessage] = []
+    /// Per card, its `tools/call`s out, and when its last link opened.
+    var appCallsInFlight: [String: Int] = [:]
+    var appLinkTimes: [String: Date] = [:]
+    /// The clock the link limit reads (a test sets it).
+    var appClock: () -> Date = Date.init
 
     /// The last `seq` seen per chat, the watermark a reconnect asks for events since.
     private(set) var lastSeq: [Int: Int] = [:]
@@ -775,6 +831,9 @@ final class AppModel: ObservableObject {
             restartingAll = nil
             lastRestartAllId = nil
             restartAllError = nil
+            // Settings' MCP servers are asked for afresh (v0.18).
+            resetMcpServers()
+            resetPlugins()
             // The models too (v0.15): the gateway sends its kept list for
             // each live session after hello, so nothing older outlives it.
             models = [:]
@@ -800,6 +859,7 @@ final class AppModel: ObservableObject {
                 openSpace = nil
                 pendingOpenSpace = nil
             }
+            failPendingAppRequests()
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -808,6 +868,7 @@ final class AppModel: ObservableObject {
                 send(frame)
             }
             sendViewerSettings()
+            resumeSettingsLists()
 
         case .viewerAct(let act):
             if let viewerActHandler { viewerActHandler(act) } else { answerViewerAct(act) }
@@ -868,6 +929,7 @@ final class AppModel: ObservableObject {
             applyHistory(history)
 
         case .chatQueued(let accepted):
+            noteAppMessageTaken(chat: accepted.chat, id: accepted.id, echo: false)
             // Held for the agent's next step (v0.11): the send is answered;
             // the card comes with the `chat.queue` that follows.
             if let id = accepted.id, pendingSends[accepted.chat]?.id == id {
@@ -960,6 +1022,9 @@ final class AppModel: ObservableObject {
 
         case .error(let error):
             lastError = error
+            applyAppRefusal(error)
+            applyMcpError(error)
+            applyPluginsError(error)
             if error.code == Self.replacedCode { replacedElsewhere = true }
             // A refused renew: the card is no longer busy; the status line
             // (below) carries the gateway's reason like any other error.
@@ -1013,6 +1078,26 @@ final class AppModel: ObservableObject {
             if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileListErrors[key] = error.message
             }
+
+        case .appCallResult(let result):
+            applyAppCallResult(result)
+
+        case .mcpServers(let list):
+            applyMcpServers(list)
+
+        case .pluginsState(let state):
+            applyPluginsState(state)
+
+        case .pluginsDetails(let details):
+            applyPluginsDetails(details)
+
+        case .pluginsOptions(let options):
+            applyPluginsOptions(options)
+
+        case .appOpen, .appResult, .appCancelled:
+            // Not sequenced (no seq): applied as they come, live or replayed.
+            guard let chat = message.envelope.chat else { return }
+            applyEvent(message, to: chat)
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
             .chatCompacted, .chatNotice, .agentStarted, .agentProgress, .agentFinished, .workflowStarted, .workflowPhase,
@@ -1173,6 +1258,7 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = user.turn
             items.append(.userText(user))
             pendingSends[chat] = nil
+            if user.via != nil, !replayingHistory { noteAppMessageTaken(chat: chat, id: user.id, echo: true) }
             // The gateway records a session's title from its first message but
             // only says so in the next chat.list; take it from the echo now.
             if let index = chats.firstIndex(where: { $0.chat == chat }), chats[index].title == nil {
@@ -1315,6 +1401,9 @@ final class AppModel: ObservableObject {
             if restoreCurrent[chat] == artifact.id { restoreCurrent[chat] = nil }
             if launchViewer[chat] == artifact.id { launchViewer[chat] = nil }
 
+        case .appOpen, .appResult, .appCancelled:
+            applyApp(event, chat: chat, items: items)
+
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
 
@@ -1363,7 +1452,8 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
+            .pluginsState, .pluginsDetails, .pluginsOptions:
             break
         }
     }
@@ -1588,6 +1678,7 @@ final class AppModel: ObservableObject {
     func show(_ artifact: Artifact, in chat: Int) {
         if !replayingFromBeginning { supersedeRemembered(in: chat) }
         leaveSpaceForFile()
+        closeAppInViewer(chat: chat)
         current[chat] = artifact
         viewerVisible[chat] = true
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
@@ -1632,7 +1723,11 @@ final class AppModel: ObservableObject {
             // A file opened from the Files pane: the gateway never lists
             // it, so it is opened again here, if it is still there.
             let path = String(id.dropFirst(Self.localArtifactPrefix.count))
-            if FileManager.default.fileExists(atPath: path) { openArtifact(file: path, in: chat) }
+            if path.hasPrefix("https://") || path.hasPrefix("http://") {
+                openLink(path, chat: chat)
+            } else if FileManager.default.fileExists(atPath: path) {
+                openArtifact(file: path, in: chat)
+            }
         } else if let listed = artifacts[chat]?.first(where: { $0.id == id }) {
             current[chat] = listed
             viewerVisible[chat] = true
@@ -1669,6 +1764,7 @@ final class AppModel: ObservableObject {
     /// so X clears it and closes the viewer. Opened again with the toolbar
     /// button, it is empty; every file stays in the list.
     func closeFile(in chat: Int) {
+        closeAppInViewer(chat: chat)
         current[chat] = nil
         viewerVisible[chat] = false
         if viewerFocus?.chat == chat { endFocus() }
@@ -1906,6 +2002,11 @@ final class AppModel: ObservableObject {
     /// it cannot in a notice. `about` is the document
     /// view's open file, attached to the message along with the chips.
     func sendMessage(chat: Int, text: String, about: String? = nil) {
+        // `/mcp` and `/plugin` open Settings; nothing is sent (v0.18 ruling 15).
+        if runSettingsCommand(text) {
+            drafts[chat] = nil
+            return
+        }
         let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if command == Self.renewCommand, canRenew(chat: chat) {
             guard !isSessionCommandPending(chat: chat) else { return }
@@ -2141,6 +2242,7 @@ final class AppModel: ObservableObject {
 
     private func forget(chat: Int) {
         noteClosed(chat: chat)
+        forgetApps(chat: chat)
         draftAttachments[chat] = nil
         drafts[chat] = nil
         pendingSends[chat] = nil
@@ -2503,8 +2605,52 @@ extension AppModel {
         list.removeAll { $0.id == id }
         list.append(artifact)
         artifacts[chat] = list
+        showLocal(artifact, in: chat)
+    }
+
+    /// The viewer column shows `chat`'s viewer (an app's copy): out of an open space, as a file would.
+    func showViewerForApp(chat: Int) {
+        leaveSpaceForFile()
+        viewerVisible[chat] = true
+    }
+
+    /// The app's copy closed with no file under it: the viewer closes too.
+    func hideViewerAfterApp(chat: Int) {
+        viewerVisible[chat] = false
+        if viewerFocus?.chat == chat { endFocus() }
+    }
+
+    /// The page's `ui/open-link` (v0.18, ruling 37): an http(s) address opens in
+    /// the chat's viewer as a web page, the way a `show_in_viewer` of one shows,
+    /// with no round trip (the gateway's look/act rules apply as ever). Any
+    /// other address is refused.
+    @discardableResult
+    func openLink(_ address: String, chat: Int) -> Bool {
+        guard Self.isWebAddress(address), let url = URL(string: address) else { return false }
+        let id = Self.localArtifactPrefix + url.absoluteString
+        let artifact = Artifact(
+            id: id, kind: .url, location: url.absoluteString, media: .other,
+            title: url.host ?? url.absoluteString, source: .tool, open: true)
+        var list = artifacts[chat] ?? []
+        list.removeAll { $0.id == id }
+        list.append(artifact)
+        artifacts[chat] = list
+        showLocal(artifact, in: chat)
+        return true
+    }
+
+    /// An http(s) address with a host.
+    static func isWebAddress(_ address: String) -> Bool {
+        guard let url = URL(string: address), let scheme = url.scheme?.lowercased() else { return false }
+        return (scheme == "https" || scheme == "http") && url.host?.isEmpty == false
+    }
+
+    /// Show an artifact only this app knows (a file from the Files pane, a
+    /// page's link): no gateway round trip; it takes the viewer from an app.
+    func showLocal(_ artifact: Artifact, in chat: Int) {
         supersedeRemembered(in: chat)
         leaveSpaceForFile()
+        closeAppInViewer(chat: chat)
         current[chat] = artifact
         viewerVisible[chat] = true
     }

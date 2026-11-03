@@ -1,0 +1,7 @@
+{
+  "chat": 1,
+  "id": "req-42",
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "app.reload"
+}

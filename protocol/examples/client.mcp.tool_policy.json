@@ -1,0 +1,8 @@
+{
+  "id": "req-27",
+  "policy": "allow",
+  "server": "acme-tracker",
+  "tool": "update_task",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "mcp.tool_policy"
+}

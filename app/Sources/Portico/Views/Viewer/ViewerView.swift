@@ -169,6 +169,21 @@ struct ViewerView: View {
     @StateObject private var page = ViewerPageAddress()
 
     var body: some View {
+        let app = model.viewerApp[chat].flatMap { model.app(forToolUse: $0) }
+        // v0.18 (ruling 36): an app's copy over the file view, which stays
+        // alive under it, so X shows the file again as it was.
+        ZStack {
+            fileView
+                .opacity(app == nil ? 1 : 0)
+                .allowsHitTesting(app == nil)
+                .accessibilityHidden(app != nil)
+            if let app {
+                AppViewerPane(chat: chat, state: app)
+            }
+        }
+    }
+
+    private var fileView: some View {
         VStack(spacing: 0) {
             header
             Rectangle().fill(Theme.border).frame(height: 1)
@@ -308,7 +323,7 @@ struct ViewerView: View {
         .buttonStyle(.hover)
         .layoutPriority(fit < .titleShrinks ? 1 : 0)
         .disabled(made.isEmpty)
-        .help(model.current[chat].map { "\(ArtifactPresentation(artifact: $0).kindLabel) · \($0.location)" } ?? model.madeHereLabel)
+        .tip(model.current[chat].map { "\(ArtifactPresentation(artifact: $0).kindLabel) · \($0.location)" } ?? model.madeHereLabel)
         .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
             ArtifactMenu(chat: chat, artifacts: made, onPick: { menuOpen = false })
                 .popoverSurface()
@@ -421,7 +436,7 @@ struct ViewerHeaderButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(title)
     }
 
@@ -465,7 +480,7 @@ struct ViewerFocusButton: View {
         }
         .buttonStyle(.hover)
         .keyboardShortcut(.return, modifiers: [.command, .shift])
-        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Widen the viewer (⌘⇧↩)")
+        .tip(on ? "Back to the usual layout (⌘⇧↩)" : "Widen the viewer (⌘⇧↩)")
         .accessibilityLabel(on ? "Back to the usual layout" : "Widen the viewer")
     }
 }
@@ -487,7 +502,7 @@ struct ViewerCloseButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(label)
     }
 }
@@ -605,7 +620,7 @@ struct SpaceViewer: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .help(ViewerPageAddress.display(outside))
+            .tip(ViewerPageAddress.display(outside))
         } else {
             spaceName(space)
         }
@@ -1085,7 +1100,7 @@ struct OtherPane: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.hover)
-            .help(shown.subtitle)
+            .tip(shown.subtitle)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

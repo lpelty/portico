@@ -295,7 +295,7 @@ struct StatusStrip: View {
         }
         .foregroundStyle(Theme.text2)
         .fixedSize()
-        .help(help ?? text)
+        .tip(help ?? text)
     }
 
     private func restartButton(compact: Bool) -> some View {
@@ -317,7 +317,7 @@ struct StatusStrip: View {
         }
         .buttonStyle(.hover)
         .disabled(model.restarting)
-        .help("The settings file changed after the gateway started. Restart the gateway to use them.")
+        .tip("The settings file changed after the gateway started. Restart the gateway to use them.")
         .accessibilityLabel(StatusStripPresentation.restartText)
     }
 
@@ -339,7 +339,7 @@ struct StatusStrip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help("\(StatusStripPresentation.updateText(version)). Install it: \(model.brand.name) closes, updates, and opens again")
+        .tip("\(StatusStripPresentation.updateText(version)). Install it: \(model.brand.name) closes, updates, and opens again")
         .accessibilityLabel(StatusStripPresentation.updateText(version))
     }
 }
@@ -470,7 +470,7 @@ struct ModelMenuControl: View {
             .disabled(!menu.enabled)
             .opacity(menu.enabled ? 1 : 0.5)
         }
-        .help(menu.help ?? help)
+        .tip(menu.help ?? help, keepsOwnHint: true)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("Model: \(label)")
@@ -600,7 +600,7 @@ struct ServicesControl: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(services.label)
+        .tip(services.label)
         .accessibilityLabel("Services: \(services.label)")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             // A popover is its own window: hand it what the menu reads.
@@ -703,7 +703,7 @@ struct ServiceRowView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if restarting {
                 ProgressView().controlSize(.small)
-                    .help("Restarting \(row.name)…")
+                    .tip("Restarting \(row.name)…")
             } else if ServicesPresentation.rowActions(row).contains(.restart) {
                 // v0.17: a down or stuck service's Restart is on its row, always visible.
                 RowActionButton(title: "Restart", systemImage: "arrow.clockwise", help: "Restart \(row.name)") {
@@ -823,7 +823,7 @@ struct RestartAllRow: View {
             }
             .buttonStyle(.hover)
             .disabled(busy || (action == .restartAll && model.connection != .connected))
-            .help(action == .restartAll
+            .tip(action == .restartAll
                 ? "Run the deployment's restart command for all its services"
                 : ServiceRowView.help(.restart))
             if let reason = model.restartAllError {

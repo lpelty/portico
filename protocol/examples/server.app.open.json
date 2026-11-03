@@ -1,0 +1,20 @@
+{
+  "chat": 1,
+  "csp": {
+    "connectDomains": [
+      "https://api.acme.example"
+    ]
+  },
+  "html": "<!doctype html><title>Acme launch</title><main id=\"tasks\"></main>",
+  "input": {
+    "project": "Acme launch"
+  },
+  "prefers_border": true,
+  "resource_uri": "ui://tracker/project.html",
+  "server": "acme-tracker",
+  "server_title": "Acme Tracker",
+  "tool": "show_project",
+  "tool_use_id": "toolu_01",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "app.open"
+}

@@ -129,7 +129,7 @@ struct DockedCard<Leading: View, Trailing: View>: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.hoverBox)
-            .help(closeHelp)
+            .tip(closeHelp)
             .accessibilityLabel(closeHelp)
         }
         .padding(.leading, 4)
@@ -145,7 +145,7 @@ struct DockedCard<Leading: View, Trailing: View>: View {
             }
             .buttonStyle(.hoverBox)
             .disabled(pager.page == 0)
-            .help("The question before")
+            .tip("The question before")
             .accessibilityLabel("Previous question")
             Text(pager.text)
                 .scaledFont(12, monospacedDigit: true)
@@ -158,7 +158,7 @@ struct DockedCard<Leading: View, Trailing: View>: View {
             }
             .buttonStyle(.hoverBox)
             .disabled(pager.page >= pager.count - 1)
-            .help("The next question")
+            .tip("The next question")
             .accessibilityLabel("Next question")
         }
         .foregroundStyle(Theme.text2)

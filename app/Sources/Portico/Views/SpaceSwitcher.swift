@@ -201,7 +201,7 @@ struct SpaceSwitcher: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help("Switch between Work and your spaces")
+        .tip("Switch between Work and your spaces")
         .accessibilityLabel("Space: \(current?.title ?? "Work")")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             SpaceMenu(dismiss: { open = false }, askToRemove: { space in
@@ -353,7 +353,7 @@ private struct SpaceMenu: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
-        .help(enabled ? "" : SpacesPresentation.tooOldHelp)
+        .tip(enabled ? "" : SpacesPresentation.tooOldHelp)
         .onHover { if $0 { state.selection = entry } }
     }
 

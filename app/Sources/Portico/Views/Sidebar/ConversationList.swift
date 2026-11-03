@@ -83,7 +83,7 @@ private struct ThreadRow: View {
         .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
         .background(needsYou ? Theme.waitSoft : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .focusEffectDisabled()
-        .help(row.help)
+        .tip(row.help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.spokenLabel)
         .accessibilityAddTraits(.isButton)

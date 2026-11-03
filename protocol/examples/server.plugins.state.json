@@ -1,0 +1,56 @@
+{
+  "available": [
+    {
+      "description": "Critiques a screen against your design system",
+      "id": "design-review@acme",
+      "installed": true,
+      "marketplace": "acme",
+      "name": "design-review",
+      "version": "1.5.0"
+    },
+    {
+      "description": "",
+      "id": "budget-watch@claude-plugins-official",
+      "installed": false,
+      "marketplace": "claude-plugins-official",
+      "name": "budget-watch"
+    }
+  ],
+  "id": "req-30",
+  "installed": [
+    {
+      "description": "Critiques a screen against your design system",
+      "enabled": true,
+      "id": "design-review@acme",
+      "marketplace": "acme",
+      "name": "design-review",
+      "scope": "local",
+      "update_to": "1.5.0",
+      "version": "1.4.0"
+    },
+    {
+      "description": "Turns a recording into notes and follow-ups",
+      "enabled": true,
+      "id": "meeting-notes@claude-plugins-official",
+      "marketplace": "claude-plugins-official",
+      "name": "meeting-notes",
+      "scope": "user",
+      "version": "2.1.0"
+    }
+  ],
+  "marketplaces": [
+    {
+      "checked": "today",
+      "name": "claude-plugins-official",
+      "plugin_count": 42
+    },
+    {
+      "checked": "Oct 24",
+      "name": "acme",
+      "plugin_count": 6,
+      "source_label": "github.com/acme/plugins"
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "plugins.state"
+}

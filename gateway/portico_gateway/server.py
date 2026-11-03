@@ -163,6 +163,7 @@ from websockets.http11 import Request, Response
 from websockets.server import ServerProtocol
 
 from .agents import AgentTracker
+from .apps import AppHost, build_ui_map
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
@@ -181,9 +182,18 @@ from .engine import (
     read_history,
 )
 from .lifecycle import CommandFailed, run_lifecycle_command
+from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
+from .mcp_settings import McpSettings, ToolPolicy, strip_url_queries
+from .plugin_settings import PluginSettings
 from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
+    APP_FRAME_TYPES,
+    APPS_CAPABILITY,
+    AppCallTool,
+    AppContext,
+    AppMessage,
+    AppReload,
     PROTOCOL_VERSION,
     QUEUE_CAPABILITY,
     SERVICES_STUCK_CAPABILITY,
@@ -226,6 +236,25 @@ from .messages import (
     MessageSend,
     ModelChoice,
     Models,
+    McpAdd,
+    McpList,
+    McpServers,
+    McpReconnect,
+    McpRemove,
+    McpSignIn,
+    McpSignOut,
+    McpToggle,
+    McpToolPolicy,
+    PluginsConfigure,
+    PluginsDetailsRequest,
+    PluginsInstall,
+    PluginsList,
+    PluginsMarketplaceAdd,
+    PluginsMarketplaceUpdate,
+    PluginsOptionsRequest,
+    PluginsSetEnabled,
+    PluginsUninstall,
+    PluginsUpdate,
     ModelSet,
     Outcome,
     ProtocolError,
@@ -329,7 +358,17 @@ SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9][\w:.-]*)(?:\s|$)")
 
 # Portico's own commands, which the app acts on (``/new`` renews the
 # session, ``/log`` logs it without ending it: v0.4).
-PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log"})
+# v0.18 (ruling 15): ``/mcp`` and ``/plugin`` open Settings in the app; an
+# older app that sends them hears ``SETTINGS_NOTICE`` and nothing reaches the agent.
+SETTINGS_COMMANDS: frozenset[str] = frozenset({"mcp", "plugin"})
+SETTINGS_NOTICE = "Open Settings to manage MCP servers and plugins."
+# v0.18 (ruling 10): why an MCP tool ran with no card.
+POLICY_ALLOW_NOTE = "Set to run without asking in Settings"
+# R-c33: why a read-only MCP tool ran with no card, by its default.
+READ_ONLY_ALLOW_NOTE = "Only reads; runs without asking"
+# R-c33: how long a permission waits on the engine's MCP status to learn a tool is read-only.
+READ_ONLY_LOOKUP_TIMEOUT = 5.0
+PORTICO_COMMANDS: frozenset[str] = frozenset({"new", "log", *SETTINGS_COMMANDS})
 
 # The ``chat.notice`` a log step that did not finish cleanly leaves (v0.7).
 LOG_STEP_UNFINISHED = "The log step didn't finish; the session isn't logged"
@@ -502,6 +541,7 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     ``models`` goes only to an app with ``models.v1`` (v0.15).
     ``thread.proposal`` goes only to an app with ``threads.v1`` (v0.16).
+    ``app.*`` goes only to an app with ``apps.v1`` (v0.18), live or in a ``chat.history``.
     A ``stuck`` service reaches an app without ``services.stuck.v1`` as ``down`` (v0.17).
     """
     if isinstance(msg, ServicesStatus) and SERVICES_STUCK_CAPABILITY not in capabilities:
@@ -517,6 +557,12 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
         return None  # v0.11: an app that cannot show a queue never had one
     if isinstance(msg, ThreadProposal) and THREADS_CAPABILITY not in capabilities:
         return None  # v0.16: an app without threads.v1 shows no thread UI
+    if APPS_CAPABILITY not in capabilities:
+        # v0.18 (ruling 20): an app without apps.v1 keeps the plain tool rows.
+        if getattr(msg, "type", None) in APP_FRAME_TYPES:
+            return None
+        if isinstance(msg, ChatHistory) and any(e.type in APP_FRAME_TYPES for e in msg.events):
+            msg = msg.model_copy(update={"events": [e for e in msg.events if e.type not in APP_FRAME_TYPES]})
     if AGENTS_CAPABILITY in capabilities:
         return msg
     if _is_agent_frame(msg):
@@ -853,10 +899,14 @@ class GatewayServer:
         plugins: Plugins | None = None,
         config_path: Path | None = None,
         titler: Titler | None = None,
+        cli: CliRunner | None = None,
     ) -> None:
         # v0.14: no [spaces] folder means <state dir>/spaces (created here), treated like a configured one.
         config = with_default_spaces(config, state.path)
         self.config = config
+        # v0.18: runs the bundled ``claude`` CLI for the person's plugins and MCP servers
+        # (``mcp_inventory``); tests pass a fake.
+        self.cli: CliRunner = cli if cli is not None else SubprocessCli()
         # The file the config came from and its modification time at start:
         # a newer file means the running gateway is not using it (v0.3).
         self.config_path = Path(config_path) if config_path is not None else None
@@ -902,6 +952,8 @@ class GatewayServer:
         # v0.11: per chat, the messages sent during a turn and not yet given
         # to the agent, oldest first. In memory only: a gateway stop drops them.
         self._queues: dict[int, list[QueuedMessage]] = {}
+        # v0.18: which held messages an MCP app sent, by (chat, queued id): their ``via``.
+        self._queued_via: dict[tuple[int, str], str] = {}
         # v0.11 (item 66): the agent's commands, last list per folder (newest
         # last), kept in ``commands.json`` so an app hears one before any
         # engine of this launch has started.
@@ -1008,6 +1060,55 @@ class GatewayServer:
         self.register("thread.start", self.on_thread_start)
         self.register("thread.dismiss", self.on_thread_dismiss)
         self.register("thread.close", self.on_thread_close)
+        # v0.18 §3.1: MCP servers in Settings (``mcp.v1``). ``tool_policy`` is the person's
+        # per-tool choice (ruling 10), read by ``ask_permission`` and by MCP Apps' calls.
+        self.tool_policy = ToolPolicy.load(state)
+        self._engine_seq = 0
+        self._engine_started: dict[int, int] = {}
+        # R-c9: one lock for every writer of Claude Code's config (the MCP toggle's
+        # write of ``~/.claude.json``, the ``mcp`` and ``plugin`` CLI runs that change
+        # things), so two changes never interleave. Reads don't take it.
+        self.claude_config_lock = asyncio.Lock()
+        # v0.18 §2: MCP Apps (``apps.v1``): the UI map, pages, records, calls from a page.
+        self.apps = AppHost(self, state.path, config.apps.enabled)
+        self.mcp_settings = McpSettings(
+            folder=self._probe_folder,
+            core=lambda: list(self.config.mcp.core),
+            cli=self.cli,
+            engines=self._live_engines,
+            policy=self.tool_policy,
+            push=self.broadcast,
+            spawn=self._spawn,
+            config_lock=self.claude_config_lock,
+            reconnected=self.apps.engine_reconnected,
+        )
+        # v0.18 §3: plugins in Settings (``plugins.v1``).
+        self.plugin_settings = PluginSettings(folder=self._probe_folder, cli=self.cli, lock=self.claude_config_lock)
+        for type_name, handler in (
+            ("mcp.list", self.on_mcp_list),
+            ("mcp.toggle", self.on_mcp_toggle),
+            ("mcp.reconnect", self.on_mcp_reconnect),
+            ("mcp.remove", self.on_mcp_remove),
+            ("mcp.add", self.on_mcp_add),
+            ("mcp.sign_in", self.on_mcp_sign_in),
+            ("mcp.sign_out", self.on_mcp_sign_out),
+            ("mcp.tool_policy", self.on_mcp_tool_policy),
+            ("plugins.list", self.on_plugins_list),
+            ("plugins.set_enabled", self.on_plugins_set_enabled),
+            ("plugins.install", self.on_plugins_install),
+            ("plugins.uninstall", self.on_plugins_uninstall),
+            ("plugins.update", self.on_plugins_update),
+            ("plugins.marketplace_add", self.on_plugins_marketplace_add),
+            ("plugins.marketplace_update", self.on_plugins_marketplace_update),
+            ("plugins.details", self.on_plugins_details),
+            ("plugins.options", self.on_plugins_options),
+            ("plugins.configure", self.on_plugins_configure),
+            ("app.call_tool", self.on_app_call_tool),
+            ("app.message", self.on_app_message),
+            ("app.context", self.on_app_context),
+            ("app.reload", self.on_app_reload),
+        ):
+            self.register(type_name, handler)
 
     @property
     def attached(self) -> bool:
@@ -1593,14 +1694,43 @@ class GatewayServer:
         engine.system_prompt = prompt
         # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
         engine.model = self.registry.model
-        session = await engine.start(chat.folder, chat.session_id, list(self.config.setting_sources), callbacks)
+        # v0.18 (ruling 20): an MCP Apps host only when ``[apps] enabled``.
+        engine.apps_host = self.config.apps.enabled
+        sources = list(self.config.setting_sources)
+        extra_servers, plugin_paths = await self._person_mcp(chat, sources)
+        session = await engine.start(
+            chat.folder, chat.session_id, sources, callbacks, extra_servers=extra_servers, plugin_paths=plugin_paths
+        )
         chat.engine = engine
+        self.apps.engine_started(chat, engine)
+        self._engine_seq += 1
+        self._engine_started[chat.number] = self._engine_seq
         if session:
             chat.session_id = session
         self.registry.persist()
         await self._report_commands(chat, engine)
         await self._report_models(chat, engine)
         return engine
+
+    async def _person_mcp(self, chat: Chat, sources: list[str]) -> tuple[dict[str, dict], list[str]]:
+        """v0.18 §3.2: the person's MCP servers and plugins for ``chat``'s engine (rulings 2 and 3).
+
+        Never breaks a start: a failure is logged and the engine starts without them.
+        Only server names are ever logged, never their configs.
+        """
+        try:
+            servers = servers_for_engine(chat.folder, sources, list(self.config.mcp.core))
+        except Exception as e:
+            log.warning("chat %d: could not read the person's MCP servers: %s", chat.number, type(e).__name__)
+            servers = {}
+        try:
+            paths = await plugin_paths_for_engine(self.cli, chat.folder, sources)
+        except Exception as e:
+            log.warning("chat %d: could not read the person's plugins: %s", chat.number, type(e).__name__)
+            paths = []
+        if servers or paths:
+            log.info("chat %d: bringing in servers %s and %d plugins", chat.number, sorted(servers), len(paths))
+        return servers, paths
 
     async def _report_commands(self, chat: Chat, engine: Engine) -> None:
         """After an engine starts: its commands as ``chat.commands``, kept for the folder (v0.11 item 66).
@@ -1789,6 +1919,8 @@ class GatewayServer:
         ``close_all``), so nothing is left working on the app's screen.
         """
         engine, chat.engine = chat.engine, None
+        # v0.18: a page being read, and the events held behind it, go with the engine.
+        await self.apps.engine_closed(chat)
         run = self._runs.pop(chat.number, None)
         if run is not None:
             run.stop_requested = True
@@ -1839,7 +1971,18 @@ class GatewayServer:
         """An event from the chat's engine: stamp and send it; ``turn.finished`` ends the turn.
 
         The engine's own ``turn.started`` is a turn nobody sent (``_unsent_turn``).
+        v0.18 (ruling 23): while an MCP app's page is being read, the chat's
+        later events wait behind it, in order (``AppHost``), so ``app.open``
+        goes out before the call's ``tool.finished``; the engine's pump never waits.
         """
+        self._sync_session(chat)
+        if self.apps.holding(chat.number):
+            self.apps.hold(chat.number, event)
+            return
+        await self.engine_event_now(chat, event)
+
+    async def engine_event_now(self, chat: Chat, event: ServerMessage) -> None:
+        """``engine_event`` with nothing held before it (``AppHost`` releases its held events here)."""
         self._sync_session(chat)
         if isinstance(event, TurnStarted):
             await self._unsent_turn(chat, event)
@@ -1870,7 +2013,10 @@ class GatewayServer:
                 # No turn to collect it: reported when the write is done.
                 self._loose_writes[(chat.number, event.tool_use_id)] = (event.tool, dict(event.input))
             await self.emit(chat, event)
+            if isinstance(event, ToolStarted):
+                self.apps.tool_started(chat, event)
             if isinstance(event, ToolFinished):
+                await self.apps.tool_finished(chat, event)
                 write = self._loose_writes.pop((chat.number, event.tool_use_id), None)
                 if write is not None and event.ok:
                     await self._report_write(chat, *write)
@@ -2187,12 +2333,176 @@ class GatewayServer:
         """Telemetry from the app; nothing to do and nothing to answer."""
         log.debug("chat %d: app opened artifact %s", msg.chat, msg.artifact_id)
 
+    # --- MCP servers in Settings (v0.18 §3.1) -------------------------------------
+
+    def _live_engines(self) -> list[tuple[Path, Engine]]:
+        """Each live session's ``(folder, engine)``, most recently started first."""
+        live = [c for c in self.registry.chats() if c.engine is not None and c.ended is None]
+        live.sort(key=lambda c: self._engine_started.get(c.number, 0), reverse=True)
+        return [(c.folder, c.engine) for c in live]  # type: ignore[misc]
+
+    async def on_mcp_list(self, msg: McpList, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.servers(msg.id))
+
+    async def on_mcp_toggle(self, msg: McpToggle, conn: ServerConnection) -> None:
+        # A task (R-c9): the write may wait for the config lock behind a CLI run.
+        self._spawn_mcp(msg, conn, self.mcp_settings.toggle(msg.name, msg.enabled, msg.id))
+
+    async def on_mcp_reconnect(self, msg: McpReconnect, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.reconnect(msg.name, msg.id))
+
+    def _spawn_mcp(self, msg: Envelope, conn: ServerConnection, work: Coroutine[Any, Any, Any]) -> None:
+        """Run a request that runs the CLI as a task (R-c6), so the app's other frames keep moving.
+
+        The reply, or its ``error``, carries the request's ``id``.
+        """
+
+        async def task() -> None:
+            try:
+                reply = await work
+            except ProtocolError as e:
+                await self._send(conn, self.error(e.code, e.message, id=msg.id))
+            except Exception as e:
+                log.exception("%s failed", msg.type)
+                # The CLI's text can carry a web address's userinfo or query: stripped first.
+                text = strip_url_queries(f"{msg.type} failed: {e}")
+                await self._send(conn, self.error("gateway.error", text, id=msg.id))
+            else:
+                await self._send(conn, reply)
+
+        self._spawn(task(), name=f"portico-{msg.type}")
+
+    async def on_mcp_remove(self, msg: McpRemove, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.mcp_settings.remove(msg.name, msg.id))
+
+    async def on_mcp_add(self, msg: McpAdd, conn: ServerConnection) -> None:
+        work = self.mcp_settings.add(msg.name, msg.transport, msg.where, url=msg.url, command=msg.command, id=msg.id)
+        self._spawn_mcp(msg, conn, work)
+
+    async def on_mcp_sign_in(self, msg: McpSignIn, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.sign_in(msg.name, msg.id))
+
+    async def on_mcp_sign_out(self, msg: McpSignOut, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.mcp_settings.sign_out(msg.name, msg.id))
+
+    async def on_mcp_tool_policy(self, msg: McpToolPolicy, conn: ServerConnection) -> None:
+        await self._send(conn, await self.mcp_settings.tool_policy(msg.server, msg.tool, msg.policy, msg.id))
+
+    # --- plugins in Settings (v0.18 §3) -------------------------------------------
+    #
+    # Every plugin request runs the CLI, so each runs as a task replying by id (R-c6).
+
+    async def on_plugins_list(self, msg: PluginsList, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.state(msg.id, available=msg.available))
+
+    async def on_plugins_set_enabled(self, msg: PluginsSetEnabled, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.set_enabled(msg.plugin, msg.enabled, msg.id))
+
+    async def on_plugins_install(self, msg: PluginsInstall, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.install(msg.plugin, msg.id))
+
+    async def on_plugins_uninstall(self, msg: PluginsUninstall, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.uninstall(msg.plugin, msg.id))
+
+    async def on_plugins_update(self, msg: PluginsUpdate, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.update(msg.plugin, msg.id))
+
+    async def on_plugins_marketplace_add(self, msg: PluginsMarketplaceAdd, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.marketplace_add(msg.source, msg.id))
+
+    async def on_plugins_marketplace_update(self, msg: PluginsMarketplaceUpdate, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.marketplace_update(msg.name, msg.id))
+
+    async def on_plugins_details(self, msg: PluginsDetailsRequest, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.details(msg.plugin, msg.id))
+
+    async def on_plugins_options(self, msg: PluginsOptionsRequest, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.options(msg.plugin, msg.id))
+
+    async def on_plugins_configure(self, msg: PluginsConfigure, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.configure(msg.plugin, msg.values, msg.id))
+
+    # --- MCP Apps (v0.18 §2) -------------------------------------------------------
+    #
+    # A page's call and Reload run as tasks replying by id: a call may wait on a
+    # person's consent, a Reload may start the engine.
+
+    def _check_apps(self, conn: ServerConnection) -> None:
+        """An ``app.*`` frame is refused when apps are off here, or from an app that didn't declare ``apps.v1``."""
+        if not self.config.apps.enabled:
+            raise ProtocolError("app.off", "MCP Apps are off in this gateway")
+        if APPS_CAPABILITY not in _capabilities(conn):
+            raise ProtocolError("protocol.capability", "app frames need apps.v1 in hello")
+
+    async def on_app_call_tool(self, msg: AppCallTool, conn: ServerConnection) -> None:
+        self._check_apps(conn)
+        chat = self.registry.get(msg.chat)
+        self._spawn(self.apps.call_tool(chat, msg, conn), name=f"portico-app-call-{chat.number}")
+
+    async def on_app_message(self, msg: AppMessage, conn: ServerConnection) -> None:
+        self._check_apps(conn)
+        await self.apps.message(self.registry.get(msg.chat), msg, conn)
+
+    async def on_app_context(self, msg: AppContext, conn: ServerConnection) -> None:
+        self._check_apps(conn)
+        await self.apps.context(self.registry.get(msg.chat), msg)
+
+    async def on_app_reload(self, msg: AppReload, conn: ServerConnection) -> None:
+        self._check_apps(conn)
+        chat = self.registry.get(msg.chat)
+        self._spawn(self.apps.reload(chat, msg, conn), name=f"portico-app-reload-{chat.number}")
+
     # --- cards ------------------------------------------------------------------
+
+    async def _mcp_tool_ui(self, chat: Chat, full: str) -> Any:
+        """The MCP tool ``full`` as the chat's engine reports it now (R-c33), or ``None`` when unknown.
+
+        The apps host's UI map when it keeps one for this engine; else the
+        engine's ``mcp_status()``, read once with a short wait. Any failure is
+        ``None``: the tool asks.
+        """
+        try:
+            return await asyncio.wait_for(self.apps.tool_ui(chat, full), READ_ONLY_LOOKUP_TIMEOUT)
+        except LookupError:
+            pass
+        except Exception as e:
+            log.warning("chat %d: could not read the apps map for %s: %s", chat.number, full, type(e).__name__)
+            return None
+        engine = chat.engine
+        if engine is None:
+            return None
+        try:
+            status = await asyncio.wait_for(engine.mcp_status(), READ_ONLY_LOOKUP_TIMEOUT)
+        except Exception as e:
+            log.warning("chat %d: could not read the MCP status for %s: %s", chat.number, full, type(e).__name__)
+            return None
+        return build_ui_map([s for s in status if isinstance(s, dict)]).full(full)
 
     async def ask_permission(
         self, chat: Chat, tool: str, input: dict[str, Any], suggestions: list[dict[str, Any]], tool_use_id: str
     ) -> PermissionDecision:
-        """A permission card, unless a person already allowed the tool for this chat. Never allow by default."""
+        """A permission card, unless a person already allowed the tool (for this chat, or in Settings) or it only reads.
+
+        v0.18 (ruling 10, R-c33): an MCP tool follows the rule Settings shows —
+        the person's choice, else a read-only tool runs without a card and the
+        rest ask. Read-only comes from the engine's live MCP status; a tool it
+        doesn't name (or names twice) is not read-only.
+        """
+        if tool.startswith("mcp__"):
+            ui = await self._mcp_tool_ui(chat, tool)
+            if ui is not None:
+                server, bare, read_only = ui.server, ui.tool, ui.read_only
+            else:
+                # Matched on the full name exactly as Claude Code gives it (R-c8).
+                server, bare, read_only = None, tool, False
+            explicit = self.tool_policy.allows(tool)
+            allowed = explicit or (
+                server is not None and self.tool_policy.effective(server, bare, read_only) == "allow"
+            )
+            if allowed:
+                # On the record like a session allow.
+                chat.note_permission(tool_use_id, "session", POLICY_ALLOW_NOTE if explicit else READ_ONLY_ALLOW_NOTE)
+                return "allow"
         if self.cards.allowed(chat, tool, input):
             chat.note_permission(tool_use_id, "session")
             return "allow"
@@ -2407,6 +2717,8 @@ class GatewayServer:
     async def on_chat_open(self, msg: ChatOpen, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
         events, truncated, artifacts = await self._history(chat, msg.since)
+        # v0.18 (ruling 25): each saved app card after its tool.finished, frozen (no html).
+        events = self.apps.replay(chat, events)
         await self._send(conn, ChatHistory(ts=_now(), chat=chat.number, id=msg.id, events=events, truncated=truncated))
         # Artifacts the index remembers from before this launch: listed, never opened.
         for artifact in artifacts:
@@ -3071,14 +3383,24 @@ class GatewayServer:
     # --- handlers: turns --------------------------------------------------------
 
     async def on_message_send(self, msg: MessageSend, conn: ServerConnection) -> None:
-        chat = self.registry.get(msg.chat)
-        if self._busy(chat) and chat.ended is None and QUEUE_CAPABILITY in _capabilities(conn):
-            await self._enqueue(chat, msg, conn)
-            return
-        await self._send_message(chat, msg, conn)
+        await self.send_or_queue(self.registry.get(msg.chat), msg, conn)
 
-    async def _send_message(self, chat: Chat, msg: MessageSend, conn: ServerConnection | None) -> None:
-        """A ``message.send`` as a turn of its own; ``conn`` hears a refusal (``None``: whichever app is attached)."""
+    async def send_or_queue(self, chat: Chat, msg: MessageSend, conn: ServerConnection, via: str | None = None) -> None:
+        """A typed message (v0.18: or an MCP app's, ``via`` its title): queued during a turn, else a turn of its own."""
+        if self._busy(chat) and chat.ended is None and QUEUE_CAPABILITY in _capabilities(conn):
+            await self._enqueue(chat, msg, conn, via)
+            return
+        await self._send_message(chat, msg, conn, via)
+
+    async def _send_message(
+        self, chat: Chat, msg: MessageSend, conn: ServerConnection | None, via: str | None = None
+    ) -> None:
+        """A ``message.send`` as a turn of its own; ``conn`` hears a refusal (``None``: whichever app is attached).
+
+        v0.18 (ruling 27): ``via`` labels an MCP app's message on its ``user.text``;
+        the apps' kept context goes first in what the engine receives (never
+        before a slash command, which must stay first to run).
+        """
         self._check_can_send(chat)
         attachments = check_attachments(msg.attachments)
         # The session's title: the first line of the first thing the person
@@ -3088,6 +3410,9 @@ class GatewayServer:
         # app has the same first line in ``user.text``, and the next
         # ``chat.list`` (renew, new, alias, reattach) carries the title.
         command = slash_command(msg.text)
+        if command in SETTINGS_COMMANDS:
+            await self._unknown_command(chat, command, with_attachments(msg.text, attachments), notice=SETTINGS_NOTICE)
+            return
         if command is not None and not await self._knows_command(chat, command):
             await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
             return
@@ -3098,31 +3423,57 @@ class GatewayServer:
         if first:
             title = title_from(msg.text)
         text = with_attachments(msg.text, attachments)
-        run = await self._echo_turn(chat, text)
+        run = await self._echo_turn(chat, text, via)
         chat.sent_turn = True
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
             run.first_line_title = title
+        engine_text, context = self._with_app_context(chat, text)
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
-        self._spawn(self._send_task(chat, run, text, title, msg, conn), name=f"portico-send-{chat.number}")
+        self._spawn(
+            self._send_task(chat, run, engine_text, title, msg, conn, context), name=f"portico-send-{chat.number}"
+        )
+
+    def _with_app_context(self, chat: Chat, text: str) -> tuple[str, dict[str, tuple[str, str]]]:
+        """``text`` as the engine gets it, MCP apps' kept context first unless it is a command (v0.18),
+        and the blocks taken for it (``AppHost.put_back`` them if it never goes, R-c17)."""
+        if command := slash_command(text):
+            log.debug("chat %d: /%s goes without the apps' context; it waits", chat.number, command)
+            return text, {}
+        blocks = self.apps.take_context(chat)
+        return self.apps.render(blocks) + text, blocks
 
     async def _send_task(
-        self, chat: Chat, run: TurnRun, text: str, title: str | None, msg: MessageSend, conn: ServerConnection | None
+        self,
+        chat: Chat,
+        run: TurnRun,
+        text: str,
+        title: str | None,
+        msg: MessageSend,
+        conn: ServerConnection | None,
+        context: dict[str, tuple[str, str]] | None = None,
     ) -> None:
-        """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``."""
+        """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``.
+
+        v0.18 (R-c17): when the text never reached the engine, the apps' context taken for it is kept.
+        """
         try:
             await self._begin_turn(chat, run, text)
         except ProtocolError as e:
+            self.apps.put_back(chat, context or {})
             await self._reply(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
             return
         except Exception as e:
+            self.apps.put_back(chat, context or {})
             log.exception("chat %d: message.send failed", chat.number)
             if self._runs.get(chat.number) is run:
                 await self._fail_turn(chat, run)
             await self._reply(conn, self.error("gateway.error", f"message.send failed: {e}", chat=chat.number, id=msg.id))
             return
+        if not run.sent:
+            self.apps.put_back(chat, context or {})
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
@@ -3152,7 +3503,7 @@ class GatewayServer:
     def _queue_frame(self, chat: Chat) -> ChatQueue:
         return ChatQueue(ts=_now(), chat=chat.number, items=self.queued(chat.number))
 
-    async def _enqueue(self, chat: Chat, msg: MessageSend, conn: ServerConnection) -> None:
+    async def _enqueue(self, chat: Chat, msg: MessageSend, conn: ServerConnection, via: str | None = None) -> None:
         """Hold a send made during a turn: ``chat.queued`` to the sender, then ``chat.queue`` to the app.
 
         Its attachments are checked now, as a send's are: a missing file is
@@ -3160,6 +3511,8 @@ class GatewayServer:
         """
         check_attachments(msg.attachments)
         item = QueuedMessage(id=msg.id or str(uuid.uuid4()), text=msg.text, attachments=list(msg.attachments))
+        if via is not None:
+            self._queued_via[(chat.number, item.id)] = via
         self._queues.setdefault(chat.number, []).append(item)
         log.info("chat %d: a message was queued during a turn (%d waiting)", chat.number, len(self._queues[chat.number]))
         await self._send(conn, ChatQueued(ts=_now(), chat=chat.number, id=item.id))
@@ -3209,9 +3562,11 @@ class GatewayServer:
         while held and slash_command(held[0].text) is None:
             item = held[0]
             text = with_attachments(item.text, item.attachments)
+            engine_text, context = self._with_app_context(chat, text)
             try:
-                await engine.inject(text)
+                await engine.inject(engine_text)
             except Exception:
+                self.apps.put_back(chat, context)
                 log.exception("chat %d: writing a queued message into turn %d failed; it waits", chat.number, run.turn)
                 break
             held.pop(0)
@@ -3219,7 +3574,8 @@ class GatewayServer:
             if not held:
                 self._queues.pop(chat.number, None)
             await self.broadcast(self._queue_frame(chat))
-            await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=run.turn, text=text))
+            via = self._queued_via.pop((chat.number, item.id), None)
+            await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=run.turn, text=text, via=via))
 
     async def _send_queued(self, chat: Chat) -> None:
         """No turn running and something held: the oldest goes as the next turn.
@@ -3238,11 +3594,14 @@ class GatewayServer:
             self._queues.pop(chat.number, None)
         await self.broadcast(self._queue_frame(chat))
         send = MessageSend(ts=_now(), chat=chat.number, id=item.id, text=item.text, attachments=item.attachments)
+        via = self._queued_via.pop((chat.number, item.id), None)
         try:
-            await self._send_message(chat, send, None)
+            await self._send_message(chat, send, None, via)
         except ProtocolError as e:
             if e.code == "chat.busy":
                 # Another send started the turn first: this one waits for it.
+                if via is not None:
+                    self._queued_via[(chat.number, item.id)] = via
                 self._queues.setdefault(chat.number, []).insert(0, item)
                 await self.broadcast(self._queue_frame(chat))
                 return
@@ -3274,14 +3633,17 @@ class GatewayServer:
         known = engine.slash_commands()
         return known is None or command in known
 
-    async def _unknown_command(self, chat: Chat, command: str, text: str) -> None:
-        """An empty turn: what was typed, one ``chat.notice``, done. Nothing reaches the agent."""
-        log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
+    async def _unknown_command(self, chat: Chat, command: str, text: str, notice: str | None = None) -> None:
+        """An empty turn: what was typed, one ``chat.notice`` (``notice``, else "No command /x here"), done. Nothing reaches the agent."""
+        if notice is None:
+            log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
+        else:
+            log.info("chat %d: /%s is the app's; not sent to the agent", chat.number, command)
         chat.turn += 1
         turn = chat.turn
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=turn))
         await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=turn, text=text))
-        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=f"No command /{command} here"))
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=notice or f"No command /{command} here"))
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=turn, outcome="done"))
         await self.set_state(chat, "idle")
 
@@ -3331,7 +3693,7 @@ class GatewayServer:
         await self._begin_turn(chat, run, text)
         return run
 
-    async def _echo_turn(self, chat: Chat, text: str) -> TurnRun:
+    async def _echo_turn(self, chat: Chat, text: str, via: str | None = None) -> TurnRun:
         """Register the next turn and send its echo: ``turn.started``, ``user.text``, ``chat.state working``."""
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
@@ -3340,7 +3702,7 @@ class GatewayServer:
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
         # The person's words go in the ring too, as the engine receives them,
         # so a replay from this launch reads as a conversation, not a monologue.
-        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text))
+        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text, via=via))
         await self.set_state(chat, "working")
         return run
 
@@ -3396,6 +3758,8 @@ class GatewayServer:
         if run is None:
             return  # nothing running: a stop is harmless
         run.stop_requested = True
+        # v0.18 (R-c16): a page being read is given up; what waited behind it goes on now.
+        self.apps.abort_open(chat.number)
         if chat.engine is None:
             return  # the engine is still starting: ``_begin_turn`` ends the turn stopped instead of sending
         # An open card would keep the engine's permission call waiting past the interrupt.

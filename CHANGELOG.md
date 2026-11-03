@@ -1,5 +1,89 @@
 # Changelog
 
+## v0.18.0 (2026-11-03)
+
+Your own MCP servers and plugins reach Portico; Settings manages them; MCP
+Apps show a tool's page in the chat. What is verified by tests is said so;
+what is verified only on screen or with a real server is listed at the end,
+under "Owed".
+
+### What a person gets (app)
+
+- **Your servers and plugins are Portico's too.** The MCP servers you set up
+  in Claude Code at user scope and local scope, and your enabled plugins, now
+  reach Portico's agent. The gateway passes them in; `setting_sources` is
+  unchanged. A server the folder's `.mcp.json` ships still loads from that
+  file, and one turned off stays off.
+- **Settings → MCP servers.** Servers in groups: All your projects, "<brand>
+  only" (with "Ships with <brand>"), Built into <brand>, From your Claude
+  account. Turn off, reconnect, sign in and out, add (a web address or a
+  program on the Mac) and remove, with a confirmation. Each tool shows "Runs
+  without asking" or "Asks first" and the menu changes it. A server change
+  applies to new chats; an open chat picks it up when it reconnects. A tool's
+  setting applies at once.
+- **Settings → Plugins.** Installed, Browse and marketplaces: turn on and
+  off, install, update, configure, uninstall with a confirmation. A plugin
+  that installs by running a command is refused ("Install it in Claude Code,
+  where you can read the command first").
+- **`/mcp` and `/plugin`** open those Settings tabs.
+- **MCP Apps** (stable spec 2026-01-26). A tool's page is a card in the
+  conversation, sandboxed per card. The three newest cards are live; older
+  ones freeze with Reload. Open in viewer shows a fresh copy beside the
+  chat. A call from a page asks first unless the tool only reads; a page can
+  send a message (`ui/message`) and update what the agent knows
+  (`ui/update-model-context`).
+- **The agent's pointer.** In the viewer it glides to a click or a field
+  before acting, pulses on a click, and fades out. With Reduce Motion it
+  appears without gliding.
+- **Tooltips are Portico's own**, centred under their control, after 0.8 s.
+
+### Protocol and gateway
+
+- Capabilities `mcp.v1` and `plugins.v1` (always) and `apps.v1` (gateway
+  when `[apps] enabled`, and the app names it in its own hello; `app.*` frames go only
+  to an app that did). New frames: `mcp.list`, `mcp.toggle`,
+  `mcp.reconnect`, `mcp.remove`, `mcp.add`, `mcp.sign_in`, `mcp.sign_out`,
+  `mcp.tool_policy`, `mcp.servers`; `plugins.list`, `plugins.set_enabled`,
+  `plugins.install`, `plugins.uninstall`, `plugins.update`,
+  `plugins.marketplace_add`, `plugins.marketplace_update`,
+  `plugins.details`, `plugins.options`, `plugins.configure`,
+  `plugins.state`; `app.open`, `app.result`, `app.cancelled`,
+  `app.call_tool`, `app.call_result`, `app.message`, `app.context`,
+  `app.reload`. `user.text` gains an optional `via`. All additive.
+- New config: `[mcp] core = [...]` (servers in `.mcp.json` that are part of
+  the deployment) and `[apps] enabled` (default true).
+- Apps rely on private control requests of the Claude Code CLI, kept behind
+  one seam in the gateway; `claude-agent-sdk` is pinned to `==0.2.174` and a
+  test fails if the request is gone.
+- Management runs the bundled CLI (`claude mcp`, `claude plugin`) with
+  stdin closed; the person's `~/.claude.json` is written only through
+  Claude Code's own commands, except the one `disabledMcpServers` key (the
+  on/off switch), which the gateway rewrites in place, keeping every other key.
+- Gateway version 0.18.0 to match the app.
+
+### Small items
+
+- **Deployments:** name the servers `.mcp.json` ships that belong to the
+  deployment itself in `[mcp] core`. `[apps] enabled = false` turns MCP Apps
+  off for every chat.
+- **Not in v0.18:** `openai/*` aliases, `_meta.ui.domain`, app-provided
+  tools, `ui/download-file`, `sampling`, and `resources/read` from a page
+  beyond the tool's own `ui://` resource.
+
+### Owed: verified only on screen
+
+These have tests for their logic, not for what the person sees or for a
+real server. They need a look in the running app:
+
+- A real MCP App server added through Settings, its card in a chat, Open in
+  viewer, and a write call asking first.
+- `/mcp` and `/plugin`.
+- Turning a shipped server off, then a new chat.
+- Sign in on an OAuth server.
+- The pointer on a click and on a type.
+- Tooltips at a window edge.
+- VoiceOver on a card and on tooltips.
+
 ## v0.17.0 (2026-11-02)
 
 A field-fix release. What is verified by tests is said so; what is verified

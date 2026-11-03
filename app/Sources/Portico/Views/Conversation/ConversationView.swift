@@ -468,7 +468,7 @@ struct TranscriptItemView: View {
     var body: some View {
         switch item {
         case .userText(let user):
-            UserBubble(text: user.text, maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth)
+            UserBubble(text: user.text, maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth, via: user.via)
         case .assistantText(let id, let text):
             MarkdownText(text: text, id: id)
                 .frame(maxWidth: replyWidth, alignment: .leading)
@@ -483,6 +483,9 @@ struct TranscriptItemView: View {
                 if let proposal = model.proposal(forToolUse: row.toolUseId) {
                     // Main's `open_thread` row is its proposal's card (AM2, AM4).
                     ProposalCard(proposal: proposal)
+                } else if let app = model.app(forToolUse: row.toolUseId), let chat {
+                    // v0.18 §2.3: an MCP app's page takes the row's place.
+                    AppCard(state: app, chat: chat)
                 } else if QuestionRecord.isRecord(row) {
                     // v0.16 §3.1: the pill while asking; a decline's one-line record.
                     QuestionRecordView(row: row)
@@ -537,21 +540,31 @@ struct UserBubble: View {
     let text: String
     /// The bubble's widest (`ConversationColumn.bubbleMaxWidth`).
     var maxWidth: CGFloat = fallbackMaxWidth
+    /// v0.18: the app that sent this message (`user.text`'s `via`), named under the bubble.
+    var via: String? = nil
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
 
     var body: some View {
-        Text(text)
-            .scaledFont(MarkdownText.bodySize)
-            .lineSpacing(MarkdownText.lineSpacing)
-            .foregroundStyle(Theme.text)
-            .textSelection(.enabled)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .frame(maxWidth: maxWidth, alignment: .trailing)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        VStack(alignment: .trailing, spacing: 4) {
+            Text(text)
+                .scaledFont(MarkdownText.bodySize)
+                .lineSpacing(MarkdownText.lineSpacing)
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .frame(maxWidth: maxWidth, alignment: .trailing)
+            if let via {
+                Text("via \(via)")
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.text3)
+                    .padding(.trailing, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 
@@ -699,7 +712,7 @@ struct EndedSessionBar: View {
                     .fixedSize()
                 }
                 .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                .help("Go back to Session \(live)")
+                .tip("Go back to Session \(live)")
             }
         }
         .padding(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 10))
