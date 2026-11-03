@@ -100,6 +100,19 @@ EXPECTED_KEYS = {
     "client.mcp.sign_out",
     "client.mcp.tool_policy",
     "server.mcp.servers",
+    "client.plugins.list",
+    "client.plugins.set_enabled",
+    "client.plugins.install",
+    "client.plugins.uninstall",
+    "client.plugins.update",
+    "client.plugins.marketplace_add",
+    "client.plugins.marketplace_update",
+    "client.plugins.details",
+    "client.plugins.options",
+    "client.plugins.configure",
+    "server.plugins.state",
+    "server.plugins.details",
+    "server.plugins.options",
 }
 
 
@@ -117,8 +130,10 @@ def test_every_type_has_schema_def_and_example():
     # v0.15's models, model.set
     # v0.16's thread.proposal, thread.start, thread.dismiss, thread.close
     # v0.18's mcp.list, mcp.toggle, mcp.reconnect, mcp.remove, mcp.add, mcp.sign_in, mcp.sign_out,
-    # mcp.tool_policy, mcp.servers
-    assert len(ex) == 78
+    # mcp.tool_policy, mcp.servers; plugins.list, plugins.set_enabled, plugins.install, plugins.uninstall,
+    # plugins.update, plugins.marketplace_add, plugins.marketplace_update, plugins.details (both ways),
+    # plugins.options (both ways), plugins.configure, plugins.state
+    assert len(ex) == 91
     assert set(ex) == EXPECTED_KEYS
 
 

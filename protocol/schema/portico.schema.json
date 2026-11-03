@@ -461,6 +461,53 @@
       "title": "ArtifactOpened",
       "type": "object"
     },
+    "AvailablePlugin": {
+      "additionalProperties": false,
+      "description": "One plugin a marketplace offers (Browse).",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "installed": {
+          "default": false,
+          "title": "Installed",
+          "type": "boolean"
+        },
+        "marketplace": {
+          "title": "Marketplace",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "marketplace"
+      ],
+      "title": "AvailablePlugin",
+      "type": "object"
+    },
     "Brand": {
       "additionalProperties": false,
       "properties": {
@@ -2127,6 +2174,36 @@
         },
         {
           "$ref": "#/$defs/McpToolPolicy"
+        },
+        {
+          "$ref": "#/$defs/PluginsList"
+        },
+        {
+          "$ref": "#/$defs/PluginsSetEnabled"
+        },
+        {
+          "$ref": "#/$defs/PluginsInstall"
+        },
+        {
+          "$ref": "#/$defs/PluginsUninstall"
+        },
+        {
+          "$ref": "#/$defs/PluginsUpdate"
+        },
+        {
+          "$ref": "#/$defs/PluginsMarketplaceAdd"
+        },
+        {
+          "$ref": "#/$defs/PluginsMarketplaceUpdate"
+        },
+        {
+          "$ref": "#/$defs/PluginsDetailsRequest"
+        },
+        {
+          "$ref": "#/$defs/PluginsOptionsRequest"
+        },
+        {
+          "$ref": "#/$defs/PluginsConfigure"
         }
       ]
     },
@@ -4103,6 +4180,1005 @@
       "title": "Permission",
       "type": "object"
     },
+    "PluginMarketplace": {
+      "additionalProperties": false,
+      "description": "One marketplace. ``source_label`` is its repo or path (``None`` for the official one); ``checked`` is\n\"today\", \"yesterday\" or a date like \"Oct 24\" (the newest change in its checkout), or \"\" when unknown.",
+      "properties": {
+        "checked": {
+          "default": "",
+          "title": "Checked",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "plugin_count": {
+          "default": 0,
+          "title": "Plugin Count",
+          "type": "integer"
+        },
+        "source_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Label"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PluginMarketplace",
+      "type": "object"
+    },
+    "PluginOption": {
+      "additionalProperties": false,
+      "description": "One option of a plugin. A sensitive option's value is never sent: ``value`` is null and ``set`` says whether it has one.",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "sensitive": {
+          "default": false,
+          "title": "Sensitive",
+          "type": "boolean"
+        },
+        "set": {
+          "default": false,
+          "title": "Set",
+          "type": "boolean"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "key",
+        "title"
+      ],
+      "title": "PluginOption",
+      "type": "object"
+    },
+    "PluginRow": {
+      "additionalProperties": false,
+      "description": "One installed plugin. ``description`` and ``marketplace`` come from its marketplace entry, joined by id.\n\n``update_to`` is the marketplace's version when it differs from the installed one.",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "marketplace": {
+          "title": "Marketplace",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "scope": {
+          "title": "Scope",
+          "type": "string"
+        },
+        "update_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Update To"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "version",
+        "scope",
+        "enabled",
+        "marketplace"
+      ],
+      "title": "PluginRow",
+      "type": "object"
+    },
+    "PluginsConfigure": {
+      "additionalProperties": false,
+      "description": "v0.18: save option values (only the changed ones), piped to ``claude plugin configure <id> --values-stdin``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.configure",
+          "default": "plugins.configure",
+          "title": "Type",
+          "type": "string"
+        },
+        "values": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Values",
+          "type": "object"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin",
+        "values"
+      ],
+      "title": "PluginsConfigure",
+      "type": "object"
+    },
+    "PluginsDetails": {
+      "additionalProperties": false,
+      "description": "v0.18: a plugin's ``claude plugin details`` text.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.details",
+          "default": "plugins.details",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin",
+        "text"
+      ],
+      "title": "PluginsDetails",
+      "type": "object"
+    },
+    "PluginsDetailsRequest": {
+      "additionalProperties": false,
+      "description": "v0.18: a plugin's inventory as text (``claude plugin details <id>``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.details",
+          "default": "plugins.details",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin"
+      ],
+      "title": "PluginsDetailsRequest",
+      "type": "object"
+    },
+    "PluginsInstall": {
+      "additionalProperties": false,
+      "description": "v0.18: install a plugin (``claude plugin install <id> --json``); one that installs by running a command is refused.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.install",
+          "default": "plugins.install",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin"
+      ],
+      "title": "PluginsInstall",
+      "type": "object"
+    },
+    "PluginsList": {
+      "additionalProperties": false,
+      "description": "v0.18: the installed plugins and the marketplaces; ``available`` true adds what the marketplaces offer.",
+      "properties": {
+        "available": {
+          "default": false,
+          "title": "Available",
+          "type": "boolean"
+        },
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.list",
+          "default": "plugins.list",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "PluginsList",
+      "type": "object"
+    },
+    "PluginsMarketplaceAdd": {
+      "additionalProperties": false,
+      "description": "v0.18: add a marketplace (``claude plugin marketplace add <source>``): owner/repo, a git address or a path.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.marketplace_add",
+          "default": "plugins.marketplace_add",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "source"
+      ],
+      "title": "PluginsMarketplaceAdd",
+      "type": "object"
+    },
+    "PluginsMarketplaceUpdate": {
+      "additionalProperties": false,
+      "description": "v0.18: check a marketplace for updates (``claude plugin marketplace update <name>``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.marketplace_update",
+          "default": "plugins.marketplace_update",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "name"
+      ],
+      "title": "PluginsMarketplaceUpdate",
+      "type": "object"
+    },
+    "PluginsOptions": {
+      "additionalProperties": false,
+      "description": "v0.18: a plugin's options (empty: nothing to configure).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "options": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginOption"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.options",
+          "default": "plugins.options",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin"
+      ],
+      "title": "PluginsOptions",
+      "type": "object"
+    },
+    "PluginsOptionsRequest": {
+      "additionalProperties": false,
+      "description": "v0.18: a plugin's options (``claude plugin configure <id> --json``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.options",
+          "default": "plugins.options",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin"
+      ],
+      "title": "PluginsOptionsRequest",
+      "type": "object"
+    },
+    "PluginsSetEnabled": {
+      "additionalProperties": false,
+      "description": "v0.18: turn a plugin on or off (``claude plugin enable|disable <id> --scope <its scope>``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.set_enabled",
+          "default": "plugins.set_enabled",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin",
+        "enabled"
+      ],
+      "title": "PluginsSetEnabled",
+      "type": "object"
+    },
+    "PluginsState": {
+      "additionalProperties": false,
+      "description": "v0.18: the answer to ``plugins.list`` and to every plugin change (with the request's ``id``).\n\n``available`` is present only when the request was a ``plugins.list`` with\n``available: true``. A reading, not history: no ``seq``.",
+      "properties": {
+        "available": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AvailablePlugin"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available"
+        },
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "installed": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginRow"
+          },
+          "title": "Installed",
+          "type": "array"
+        },
+        "marketplaces": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginMarketplace"
+          },
+          "title": "Marketplaces",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.state",
+          "default": "plugins.state",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "PluginsState",
+      "type": "object"
+    },
+    "PluginsUninstall": {
+      "additionalProperties": false,
+      "description": "v0.18: uninstall a plugin (``claude plugin uninstall <id> --scope <its scope>``); the app asks first.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.uninstall",
+          "default": "plugins.uninstall",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin"
+      ],
+      "title": "PluginsUninstall",
+      "type": "object"
+    },
+    "PluginsUpdate": {
+      "additionalProperties": false,
+      "description": "v0.18: update a plugin to its marketplace's version (``claude plugin update <id>``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "plugin": {
+          "title": "Plugin",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "plugins.update",
+          "default": "plugins.update",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "plugin"
+      ],
+      "title": "PluginsUpdate",
+      "type": "object"
+    },
     "Question": {
       "additionalProperties": false,
       "properties": {
@@ -4304,6 +5380,15 @@
         },
         {
           "$ref": "#/$defs/McpServers"
+        },
+        {
+          "$ref": "#/$defs/PluginsState"
+        },
+        {
+          "$ref": "#/$defs/PluginsDetails"
+        },
+        {
+          "$ref": "#/$defs/PluginsOptions"
         },
         {
           "$ref": "#/$defs/Error"

@@ -477,7 +477,8 @@ an app that lists the same; v0.12: `spaces.v1` always (v0.14: with no
 offers Refresh on a space; v0.15: `models.v1` always, for the model menu,
 see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
 `[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
-always, see [MCP servers](#mcp-servers-v018)). Always followed by `chat.list`, so the app has the
+always, see [MCP servers](#mcp-servers-v018), and `plugins.v1` always, see
+[Plugins](#plugins-v018)). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -1216,6 +1217,110 @@ can_toggle, can_remove, can_sign_out}`. `detail` is the status line:
 
 `account` is set only when the status carries one; it is never invented.
 `can_sign_out` is true when it is set, or for a connected http/sse server.
+
+## Plugins *(v0.18)*
+
+Settings' Plugins tab lists the plugins installed for the agent and what
+the marketplaces offer, and manages them with the same reach as Claude
+Code. When `hello` lists `plugins.v1` the app may send the `plugins.*`
+requests below (an older app never sends them). `plugin` is the plugin's
+id as Claude Code prints it (`name@marketplace`); `id` stays the request's
+id. The list and every change are answered with `plugins.state` carrying
+the request's `id`; `plugins.details` and `plugins.options` have their own
+replies; a refusal or failure is `error` carrying the `id`
+(`plugins.invalid`, `plugins.unknown`, `plugins.refused`, `plugins.failed`).
+
+- **Every request runs the bundled Claude Code CLI** (`claude plugin …`)
+  in Settings' folder (as for [MCP servers](#mcp-servers-v018)), in the
+  background: other requests are answered meanwhile. A failure's message
+  is the command's last stderr line, cut to 240 characters, web addresses
+  without their query strings.
+- **Installed** is `claude plugin list --json`, one row per id. An entry
+  scoped `local` or `project` to another folder is left out; of several
+  entries for one id, the one that governs Settings' folder is shown
+  (local, then project, then user, then any other).
+- **What the marketplaces offer** is `claude plugin list --json
+  --available`, read once and kept 5 minutes (adding or updating a
+  marketplace drops it). An installed row's `description`, `marketplace`
+  and `update_to` come from its entry there, joined by id.
+- **Changes** (turn on and off, install, uninstall, update, add or update a
+  marketplace, configure) take effect at the next engine start; the
+  gateway never restarts an engine for them. They are serialised with
+  every other change to Claude Code's settings (the MCP servers' too): one
+  runs at a time, and a request waits for the one before it.
+- **A plugin that installs by running a command** (its `--json` result
+  carries `shownCommand`) is refused: "This plugin runs a command to
+  install. Install it in Claude Code, where you can read the command
+  first." The gateway never accepts such a command for the person.
+- **A sensitive option's value never reaches the app.**
+
+### `plugins.list` — `PluginsList` *(app → gateway)*
+`available: bool` (default false), `id`. With `available: true` the reply
+carries `available` (Browse); otherwise it is absent.
+
+### `plugins.set_enabled` — `PluginsSetEnabled` *(app → gateway)*
+`plugin`, `enabled: bool`, `id`. `claude plugin enable|disable <id> --scope
+<the row's scope>`. Refused for a plugin whose scope is not user, project
+or local (one from the person's Claude account).
+
+### `plugins.install` — `PluginsInstall` *(app → gateway)*
+`plugin`, `id`. `claude plugin install <id> --json`.
+
+### `plugins.uninstall` — `PluginsUninstall` *(app → gateway)*
+`plugin`, `id`. `claude plugin uninstall <id> --scope <the row's scope>`.
+The app asks first.
+
+### `plugins.update` — `PluginsUpdate` *(app → gateway)*
+`plugin`, `id`. `claude plugin update <id> --scope <the row's scope>
+--json` (refused like an install when it would run a command).
+
+### `plugins.marketplace_add` — `PluginsMarketplaceAdd` *(app → gateway)*
+`source` (a GitHub `owner/repo`, a git address or a folder), `id`.
+`claude plugin marketplace add <source>`.
+
+### `plugins.marketplace_update` — `PluginsMarketplaceUpdate` *(app → gateway)*
+`name`, `id`. `claude plugin marketplace update <name>` (Check for updates).
+
+### `plugins.details` — `PluginsDetailsRequest` *(app → gateway)*
+`plugin`, `id`. Answered with `plugins.details`.
+
+### `plugins.options` — `PluginsOptionsRequest` *(app → gateway)*
+`plugin`, `id`. `claude plugin configure <id> --json`; answered with
+`plugins.options` (empty `options`: nothing to configure, so the app
+offers no Configure…).
+
+### `plugins.configure` — `PluginsConfigure` *(app → gateway)*
+`plugin`, `values: {key: string}` (only the changed ones, each on one
+line), `id`. Piped as JSON to `claude plugin configure <id>
+--values-stdin`; options left out keep their values. Answered with a fresh
+`plugins.options`.
+
+### `plugins.state` — `PluginsState`
+`installed: [PluginRow]` (sorted by name), `available: [AvailablePlugin]`
+(only for `plugins.list` with `available: true`), `marketplaces:
+[PluginMarketplace]`; `id`. Not stamped and not in the ring.
+
+- `PluginRow` is `{id, name, version, scope, enabled, description,
+  marketplace, update_to?}`. `update_to` is the marketplace's version when
+  it differs from the installed `version` (the app's **Update to <v>**).
+- `AvailablePlugin` is `{id, name, description, marketplace, version?,
+  installed}`.
+- `PluginMarketplace` is `{name, source_label?, plugin_count, checked}`.
+  `source_label` is `github.com/<repo>` for a GitHub marketplace, else its
+  address or folder, and absent for the official `claude-plugins-official`.
+  `plugin_count` counts its plugins in the available list. `checked` is
+  "today", "yesterday" or a date like "Oct 24": the newest change in its
+  checkout, in the gateway's local time ("" when unknown).
+
+### `plugins.details` — `PluginsDetails`
+`plugin`, `text` (`claude plugin details <id>`: its skills, commands,
+servers and projected token cost), `id`.
+
+### `plugins.options` — `PluginsOptions`
+`plugin`, `options: [PluginOption]`, `id`. `PluginOption` is `{key, title
+(the option's title, else its key), description, sensitive, set, value?}`.
+A sensitive option's `value` is always absent; `set` says whether it has
+one.
 
 ## Threads *(v0.16)*
 

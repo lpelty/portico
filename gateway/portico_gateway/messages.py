@@ -427,6 +427,87 @@ class McpToolPolicy(Envelope):
     policy: Literal["allow", "ask"] | None = None
 
 
+# --- plugins in Settings (v0.18 §3, ``plugins.v1``) -----------------------------
+#
+# Requests from the app (an older app never sends them). ``plugin`` is the
+# plugin's id as the CLI prints it (``name@marketplace``); ``id`` stays the
+# request's id. The list and every change are answered with ``plugins.state``;
+# details and options with their own frame; a refusal or failure with
+# ``error`` carrying the id.
+
+
+class PluginsList(Envelope):
+    """v0.18: the installed plugins and the marketplaces; ``available`` true adds what the marketplaces offer."""
+
+    type: Literal["plugins.list"] = "plugins.list"
+    available: bool = False
+
+
+class PluginsSetEnabled(Envelope):
+    """v0.18: turn a plugin on or off (``claude plugin enable|disable <id> --scope <its scope>``)."""
+
+    type: Literal["plugins.set_enabled"] = "plugins.set_enabled"
+    plugin: str
+    enabled: bool
+
+
+class PluginsInstall(Envelope):
+    """v0.18: install a plugin (``claude plugin install <id> --json``); one that installs by running a command is refused."""
+
+    type: Literal["plugins.install"] = "plugins.install"
+    plugin: str
+
+
+class PluginsUninstall(Envelope):
+    """v0.18: uninstall a plugin (``claude plugin uninstall <id> --scope <its scope>``); the app asks first."""
+
+    type: Literal["plugins.uninstall"] = "plugins.uninstall"
+    plugin: str
+
+
+class PluginsUpdate(Envelope):
+    """v0.18: update a plugin to its marketplace's version (``claude plugin update <id>``)."""
+
+    type: Literal["plugins.update"] = "plugins.update"
+    plugin: str
+
+
+class PluginsMarketplaceAdd(Envelope):
+    """v0.18: add a marketplace (``claude plugin marketplace add <source>``): owner/repo, a git address or a path."""
+
+    type: Literal["plugins.marketplace_add"] = "plugins.marketplace_add"
+    source: str
+
+
+class PluginsMarketplaceUpdate(Envelope):
+    """v0.18: check a marketplace for updates (``claude plugin marketplace update <name>``)."""
+
+    type: Literal["plugins.marketplace_update"] = "plugins.marketplace_update"
+    name: str
+
+
+class PluginsDetailsRequest(Envelope):
+    """v0.18: a plugin's inventory as text (``claude plugin details <id>``)."""
+
+    type: Literal["plugins.details"] = "plugins.details"
+    plugin: str
+
+
+class PluginsOptionsRequest(Envelope):
+    """v0.18: a plugin's options (``claude plugin configure <id> --json``)."""
+
+    type: Literal["plugins.options"] = "plugins.options"
+    plugin: str
+
+
+class PluginsConfigure(Envelope):
+    """v0.18: save option values (only the changed ones), piped to ``claude plugin configure <id> --values-stdin``."""
+
+    type: Literal["plugins.configure"] = "plugins.configure"
+    plugin: str
+    values: dict[str, str]
+
+
 class TurnStop(Envelope):
     type: Literal["turn.stop"] = "turn.stop"
     chat: int
@@ -985,6 +1066,86 @@ class McpServers(Envelope):
     live: bool = False
 
 
+# --- plugins in Settings (v0.18 §3) -------------------------------------------------
+
+
+class PluginRow(Strict):
+    """One installed plugin. ``description`` and ``marketplace`` come from its marketplace entry, joined by id.
+
+    ``update_to`` is the marketplace's version when it differs from the installed one.
+    """
+
+    id: str
+    name: str
+    version: str
+    scope: str
+    enabled: bool
+    description: str = ""
+    marketplace: str
+    update_to: str | None = None
+
+
+class AvailablePlugin(Strict):
+    """One plugin a marketplace offers (Browse)."""
+
+    id: str
+    name: str
+    description: str = ""
+    marketplace: str
+    version: str | None = None
+    installed: bool = False
+
+
+class PluginMarketplace(Strict):
+    """One marketplace. ``source_label`` is its repo or path (``None`` for the official one); ``checked`` is
+    "today", "yesterday" or a date like "Oct 24" (the newest change in its checkout), or "" when unknown."""
+
+    name: str
+    source_label: str | None = None
+    plugin_count: int = 0
+    checked: str = ""
+
+
+class PluginOption(Strict):
+    """One option of a plugin. A sensitive option's value is never sent: ``value`` is null and ``set`` says whether it has one."""
+
+    key: str
+    title: str
+    description: str = ""
+    sensitive: bool = False
+    set: bool = False
+    value: str | None = None
+
+
+class PluginsState(Envelope):
+    """v0.18: the answer to ``plugins.list`` and to every plugin change (with the request's ``id``).
+
+    ``available`` is present only when the request was a ``plugins.list`` with
+    ``available: true``. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["plugins.state"] = "plugins.state"
+    installed: list[PluginRow] = []
+    available: list[AvailablePlugin] | None = None
+    marketplaces: list[PluginMarketplace] = []
+
+
+class PluginsDetails(Envelope):
+    """v0.18: a plugin's ``claude plugin details`` text."""
+
+    type: Literal["plugins.details"] = "plugins.details"
+    plugin: str
+    text: str
+
+
+class PluginsOptions(Envelope):
+    """v0.18: a plugin's options (empty: nothing to configure)."""
+
+    type: Literal["plugins.options"] = "plugins.options"
+    plugin: str
+    options: list[PluginOption] = []
+
+
 class Error(Envelope):
     type: Literal["error"] = "error"
     code: str
@@ -1189,6 +1350,16 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     McpSignIn,
     McpSignOut,
     McpToolPolicy,
+    PluginsList,
+    PluginsSetEnabled,
+    PluginsInstall,
+    PluginsUninstall,
+    PluginsUpdate,
+    PluginsMarketplaceAdd,
+    PluginsMarketplaceUpdate,
+    PluginsDetailsRequest,
+    PluginsOptionsRequest,
+    PluginsConfigure,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1232,6 +1403,9 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     Models,
     ThreadProposal,
     McpServers,
+    PluginsState,
+    PluginsDetails,
+    PluginsOptions,
     Error,
 )
 
@@ -1366,6 +1540,16 @@ def example_messages() -> dict[str, BaseModel]:
         McpSignIn(ts=_TS, id="req-25", name="acme-calendar"),
         McpSignOut(ts=_TS, id="req-26", name="acme-tracker"),
         McpToolPolicy(ts=_TS, id="req-27", server="acme-tracker", tool="update_task", policy="allow"),
+        PluginsList(ts=_TS, id="req-30", available=True),
+        PluginsSetEnabled(ts=_TS, id="req-31", plugin="design-review@acme", enabled=False),
+        PluginsInstall(ts=_TS, id="req-32", plugin="meeting-notes@claude-plugins-official"),
+        PluginsUninstall(ts=_TS, id="req-33", plugin="release-helper@acme"),
+        PluginsUpdate(ts=_TS, id="req-34", plugin="design-review@acme"),
+        PluginsMarketplaceAdd(ts=_TS, id="req-35", source="acme/plugins"),
+        PluginsMarketplaceUpdate(ts=_TS, id="req-36", name="acme"),
+        PluginsDetailsRequest(ts=_TS, id="req-37", plugin="design-review@acme"),
+        PluginsOptionsRequest(ts=_TS, id="req-38", plugin="design-review@acme"),
+        PluginsConfigure(ts=_TS, id="req-39", plugin="design-review@acme", values={"region": "eu"}),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1655,6 +1839,44 @@ def example_messages() -> dict[str, BaseModel]:
                     name="design-files", title="design-files", group="shipped", transport="stdio", status="off",
                     detail="Off for you · it stays off through updates", can_toggle=True, can_remove=False, can_sign_out=False,
                 ),
+            ],
+        ),
+        PluginsState(
+            ts=_TS,
+            id="req-30",
+            installed=[
+                PluginRow(
+                    id="design-review@acme", name="design-review", version="1.4.0", scope="local", enabled=True,
+                    description="Critiques a screen against your design system", marketplace="acme", update_to="1.5.0",
+                ),
+                PluginRow(
+                    id="meeting-notes@claude-plugins-official", name="meeting-notes", version="2.1.0", scope="user", enabled=True,
+                    description="Turns a recording into notes and follow-ups", marketplace="claude-plugins-official",
+                ),
+            ],
+            available=[
+                AvailablePlugin(
+                    id="design-review@acme", name="design-review", description="Critiques a screen against your design system",
+                    marketplace="acme", version="1.5.0", installed=True,
+                ),
+                AvailablePlugin(id="budget-watch@claude-plugins-official", name="budget-watch", marketplace="claude-plugins-official"),
+            ],
+            marketplaces=[
+                PluginMarketplace(name="claude-plugins-official", plugin_count=42, checked="today"),
+                PluginMarketplace(name="acme", source_label="github.com/acme/plugins", plugin_count=6, checked="Oct 24"),
+            ],
+        ),
+        PluginsDetails(
+            ts=_TS, id="req-37", plugin="design-review@acme",
+            text="design-review@acme 1.4.0\nSkills (2): critique, compare-to-system\nCommands (1): /review-screen\n",
+        ),
+        PluginsOptions(
+            ts=_TS,
+            id="req-38",
+            plugin="design-review@acme",
+            options=[
+                PluginOption(key="region", title="Region", description="Where your reviews are kept", set=True, value="us"),
+                PluginOption(key="api_key", title="API key", description="Your Acme key", sensitive=True, set=True),
             ],
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),

@@ -1,0 +1,13 @@
+{
+  "pluginId": "design-review@acme",
+  "displayName": "Design review",
+  "schema": {
+    "region": {"type": "string", "title": "Region", "description": "Where your reviews are kept"},
+    "api_key": {"type": "string", "title": "API key", "description": "Your Acme key", "sensitive": true, "required": true},
+    "strict": {"type": "boolean", "description": "Flag every deviation", "default": false}
+  },
+  "inputs": {"region": "us", "api_key": "acme-key-that-must-never-leave", "strict": "false"},
+  "choices": {"strict": ["true", "false"]},
+  "configured": ["region", "api_key"],
+  "unconfigured": ["strict"]
+}

@@ -1,0 +1,5 @@
+[
+  {"name": "claude-plugins-official", "source": "github", "repo": "anthropics/claude-plugins-official", "installLocation": "{config}/plugins/marketplaces/claude-plugins-official"},
+  {"name": "acme", "source": "github", "repo": "acme/plugins", "installLocation": "{config}/plugins/marketplaces/acme"},
+  {"name": "jordan-local", "source": "directory", "path": "/Users/jordan/plugins", "installLocation": "{config}/plugins/marketplaces/jordan-local"}
+]

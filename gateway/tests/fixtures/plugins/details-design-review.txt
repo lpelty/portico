@@ -1,0 +1,7 @@
+design-review@acme 1.4.0
+Critiques a screen against your design system
+
+Skills (2): critique, compare-to-system
+Commands (1): /review-screen
+MCP servers: none
+Projected token cost: about 1,200 tokens per session

@@ -287,6 +287,7 @@ class McpSettings:
         push: Callable[[Any], Awaitable[None]],
         spawn: Callable[[Coroutine[Any, Any, None], str], Any],
         env: Mapping[str, str] = os.environ,
+        config_lock: asyncio.Lock | None = None,
     ) -> None:
         self._folder = folder
         self._core = core
@@ -296,6 +297,9 @@ class McpSettings:
         self._push = push
         self._spawn = spawn
         self._env = env
+        # R-c9: the gateway-wide lock every writer of Claude Code's config holds
+        # (this toggle's write, the mcp CLI runs, the plugin CLI runs).
+        self._config_lock = config_lock if config_lock is not None else asyncio.Lock()
         self.signing_in: set[str] = set()
 
     # --- reading --------------------------------------------------------------
@@ -421,7 +425,8 @@ class McpSettings:
             raise ProtocolError("mcp.refused", CORE_TOGGLE)
         if group is None:
             raise ProtocolError("mcp.unknown", f"There's no server called {name}")
-        set_disabled(self.folder(), name, not enabled, self._env)
+        async with self._config_lock:
+            set_disabled(self.folder(), name, not enabled, self._env)
         return await self.servers(id)
 
     async def reconnect(self, name: str, id: str | None = None) -> McpServers:
@@ -504,7 +509,10 @@ class McpSettings:
         async def task() -> None:
             failure: str | None = None
             try:
-                await self._run(["mcp", "login", name], timeout=LOGIN_TIMEOUT)
+                # Not under the config lock (R-c9): a sign-in can take 300 s while the
+                # person finishes in the browser, and it writes only the OAuth
+                # credentials, never the server list the other writers change.
+                await self._run(["mcp", "login", name], timeout=LOGIN_TIMEOUT, lock=False)
             except ProtocolError as e:
                 failure = e.message
             except Exception as e:
@@ -545,9 +553,14 @@ class McpSettings:
         self.policy.set(server, tool, policy, read_only)
         return await self.servers(id)
 
-    async def _run(self, args: list[str], timeout: float = CLI_TIMEOUT) -> None:
+    async def _run(self, args: list[str], timeout: float = CLI_TIMEOUT, *, lock: bool = True) -> None:
+        """Run the CLI in Settings' folder; with ``lock`` (every run but sign-in) under the config lock (R-c9)."""
         try:
-            result = await self.cli.run(args, cwd=self.folder(), timeout=timeout)
+            if lock:
+                async with self._config_lock:
+                    result = await self.cli.run(args, cwd=self.folder(), timeout=timeout)
+            else:
+                result = await self.cli.run(args, cwd=self.folder(), timeout=timeout)
         except Exception as e:
             raise ProtocolError("mcp.failed", f"Couldn't run Claude Code: {type(e).__name__}") from e
         if result.code != 0:

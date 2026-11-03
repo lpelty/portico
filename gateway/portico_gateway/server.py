@@ -183,6 +183,7 @@ from .engine import (
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
 from .mcp_settings import McpSettings, ToolPolicy
+from .plugin_settings import PluginSettings
 from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
@@ -237,6 +238,16 @@ from .messages import (
     McpSignOut,
     McpToggle,
     McpToolPolicy,
+    PluginsConfigure,
+    PluginsDetailsRequest,
+    PluginsInstall,
+    PluginsList,
+    PluginsMarketplaceAdd,
+    PluginsMarketplaceUpdate,
+    PluginsOptionsRequest,
+    PluginsSetEnabled,
+    PluginsUninstall,
+    PluginsUpdate,
     ModelSet,
     Outcome,
     ProtocolError,
@@ -1034,6 +1045,10 @@ class GatewayServer:
         self.tool_policy = ToolPolicy.load(state)
         self._engine_seq = 0
         self._engine_started: dict[int, int] = {}
+        # R-c9: one lock for every writer of Claude Code's config (the MCP toggle's
+        # write of ``~/.claude.json``, the ``mcp`` and ``plugin`` CLI runs that change
+        # things), so two changes never interleave. Reads don't take it.
+        self.claude_config_lock = asyncio.Lock()
         self.mcp_settings = McpSettings(
             folder=self._probe_folder,
             core=lambda: list(self.config.mcp.core),
@@ -1042,7 +1057,10 @@ class GatewayServer:
             policy=self.tool_policy,
             push=self.broadcast,
             spawn=self._spawn,
+            config_lock=self.claude_config_lock,
         )
+        # v0.18 §3: plugins in Settings (``plugins.v1``).
+        self.plugin_settings = PluginSettings(folder=self._probe_folder, cli=self.cli, lock=self.claude_config_lock)
         for type_name, handler in (
             ("mcp.list", self.on_mcp_list),
             ("mcp.toggle", self.on_mcp_toggle),
@@ -1052,6 +1070,16 @@ class GatewayServer:
             ("mcp.sign_in", self.on_mcp_sign_in),
             ("mcp.sign_out", self.on_mcp_sign_out),
             ("mcp.tool_policy", self.on_mcp_tool_policy),
+            ("plugins.list", self.on_plugins_list),
+            ("plugins.set_enabled", self.on_plugins_set_enabled),
+            ("plugins.install", self.on_plugins_install),
+            ("plugins.uninstall", self.on_plugins_uninstall),
+            ("plugins.update", self.on_plugins_update),
+            ("plugins.marketplace_add", self.on_plugins_marketplace_add),
+            ("plugins.marketplace_update", self.on_plugins_marketplace_update),
+            ("plugins.details", self.on_plugins_details),
+            ("plugins.options", self.on_plugins_options),
+            ("plugins.configure", self.on_plugins_configure),
         ):
             self.register(type_name, handler)
 
@@ -2271,12 +2299,13 @@ class GatewayServer:
         await self._send(conn, await self.mcp_settings.servers(msg.id))
 
     async def on_mcp_toggle(self, msg: McpToggle, conn: ServerConnection) -> None:
-        await self._send(conn, await self.mcp_settings.toggle(msg.name, msg.enabled, msg.id))
+        # A task (R-c9): the write may wait for the config lock behind a CLI run.
+        self._spawn_mcp(msg, conn, self.mcp_settings.toggle(msg.name, msg.enabled, msg.id))
 
     async def on_mcp_reconnect(self, msg: McpReconnect, conn: ServerConnection) -> None:
         await self._send(conn, await self.mcp_settings.reconnect(msg.name, msg.id))
 
-    def _spawn_mcp(self, msg: Envelope, conn: ServerConnection, work: Coroutine[Any, Any, McpServers]) -> None:
+    def _spawn_mcp(self, msg: Envelope, conn: ServerConnection, work: Coroutine[Any, Any, Any]) -> None:
         """Run a request that runs the CLI as a task (R-c6), so the app's other frames keep moving.
 
         The reply, or its ``error``, carries the request's ``id``.
@@ -2310,6 +2339,40 @@ class GatewayServer:
 
     async def on_mcp_tool_policy(self, msg: McpToolPolicy, conn: ServerConnection) -> None:
         await self._send(conn, await self.mcp_settings.tool_policy(msg.server, msg.tool, msg.policy, msg.id))
+
+    # --- plugins in Settings (v0.18 §3) -------------------------------------------
+    #
+    # Every plugin request runs the CLI, so each runs as a task replying by id (R-c6).
+
+    async def on_plugins_list(self, msg: PluginsList, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.state(msg.id, available=msg.available))
+
+    async def on_plugins_set_enabled(self, msg: PluginsSetEnabled, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.set_enabled(msg.plugin, msg.enabled, msg.id))
+
+    async def on_plugins_install(self, msg: PluginsInstall, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.install(msg.plugin, msg.id))
+
+    async def on_plugins_uninstall(self, msg: PluginsUninstall, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.uninstall(msg.plugin, msg.id))
+
+    async def on_plugins_update(self, msg: PluginsUpdate, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.update(msg.plugin, msg.id))
+
+    async def on_plugins_marketplace_add(self, msg: PluginsMarketplaceAdd, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.marketplace_add(msg.source, msg.id))
+
+    async def on_plugins_marketplace_update(self, msg: PluginsMarketplaceUpdate, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.marketplace_update(msg.name, msg.id))
+
+    async def on_plugins_details(self, msg: PluginsDetailsRequest, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.details(msg.plugin, msg.id))
+
+    async def on_plugins_options(self, msg: PluginsOptionsRequest, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.options(msg.plugin, msg.id))
+
+    async def on_plugins_configure(self, msg: PluginsConfigure, conn: ServerConnection) -> None:
+        self._spawn_mcp(msg, conn, self.plugin_settings.configure(msg.plugin, msg.values, msg.id))
 
     # --- cards ------------------------------------------------------------------
 

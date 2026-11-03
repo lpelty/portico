@@ -1,0 +1,6 @@
+{
+  "id": "req-32",
+  "plugin": "meeting-notes@claude-plugins-official",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "plugins.install"
+}

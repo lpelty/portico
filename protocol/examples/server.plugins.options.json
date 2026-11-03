@@ -1,0 +1,23 @@
+{
+  "id": "req-38",
+  "options": [
+    {
+      "description": "Where your reviews are kept",
+      "key": "region",
+      "sensitive": false,
+      "set": true,
+      "title": "Region",
+      "value": "us"
+    },
+    {
+      "description": "Your Acme key",
+      "key": "api_key",
+      "sensitive": true,
+      "set": true,
+      "title": "API key"
+    }
+  ],
+  "plugin": "design-review@acme",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "plugins.options"
+}

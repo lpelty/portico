@@ -187,7 +187,7 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     # v0.16: and ``threads.v1`` (``[threads] max`` defaults to 2); v0.18: ``mcp.v1`` always.
     assert hello.capabilities == [
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-        "models.v1", "mcp.v1", "sessions.clear", "threads.v1",
+        "models.v1", "mcp.v1", "plugins.v1", "sessions.clear", "threads.v1",
     ]
     assert hello.presentation == "single"
     assert hello.can_log is False
