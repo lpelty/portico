@@ -234,12 +234,23 @@ struct ThreadInfo: Codable, Equatable, Sendable {
 
 /// What a service check last said (v0.4).
 enum ServiceState: String, Codable, Sendable {
-    case up, down, checking
+    case up, down, stuck, checking
+
+    /// v0.17: `stuck` is running but not working. A state this app does
+    /// not know reads as down rather than failing the whole status.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ServiceState(rawValue: raw) ?? .down
+    }
 }
 
 /// One of the deployment's services as the gateway last checked it
 /// (`services.status`, v0.4). Portico draws it; it never knows what it is.
 struct Service: Codable, Equatable, Sendable, Identifiable {
+    /// v0.17: the capability this app lists so the gateway may send it
+    /// `stuck`; to any other app the gateway sends down.
+    static let stuckCapability = "services.stuck.v1"
+
     var id: String
     var name: String
     var state: ServiceState
@@ -337,6 +348,7 @@ struct HelloClient: Codable, Equatable, Sendable {
     static let appCapabilities = [
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
+        Service.stuckCapability,
     ]
 }
 

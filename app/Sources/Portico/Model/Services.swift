@@ -25,8 +25,15 @@ struct ServiceRow: Equatable, Identifiable, Sendable {
         return text
     }
 
-    /// A down row's second line is its error, drawn red.
-    var menuDetailIsError: Bool { state == .down }
+    /// A down or stuck row's second line is its error, drawn red.
+    var menuDetailIsError: Bool { isProblem }
+
+    /// Down or stuck (v0.17).
+    var isProblem: Bool { state == .down || state == .stuck }
+
+    /// Restart is on the row itself, always visible, only when the row is
+    /// a problem and the deployment gave it a restart (v0.17 ruling 16).
+    var showsRestart: Bool { isProblem && canRestart && !isGateway }
 }
 
 /// What the strip's services control and its menu say (spec §2.4): the
@@ -49,15 +56,15 @@ struct ServicesPresentation: Equatable, Sendable {
     init(gateway: ServiceRow, services: [Service]?) {
         let reported = gateway.state == .up ? services : nil
         let others = (reported ?? []).map(Self.row)
-        // The Gateway row leads, unless something else is down: a down
-        // service floats to the top.
-        let downOthers = others.filter { $0.state == .down }
-        if gateway.state == .down || downOthers.isEmpty {
+        // The Gateway row leads, unless something else is down or stuck: a
+        // problem floats to the top, down before stuck.
+        let problemOthers = others.filter(\.isProblem).sorted { ($0.state == .down ? 0 : 1) < ($1.state == .down ? 0 : 1) }
+        if gateway.state == .down || problemOthers.isEmpty {
             rows = [gateway] + others
         } else {
-            rows = downOthers + [gateway] + others.filter { $0.state != .down }
+            rows = problemOthers + [gateway] + others.filter { !$0.isProblem }
         }
-        let down = rows.filter { $0.state == .down }
+        let down = rows.filter(\.isProblem)
         switch down.count {
         case 0:
             if gateway.state != .up || reported == nil || rows.contains(where: { $0.state == .checking }) {
@@ -68,10 +75,10 @@ struct ServicesPresentation: Equatable, Sendable {
                 tone = .up
             }
         case 1:
-            label = "\(Self.shortName(down[0].name)) is down"
+            label = "\(Self.shortName(down[0].name)) is \(down[0].state == .stuck ? "stuck" : "down")"
             tone = .down
         default:
-            label = "\(down.count) services down"
+            label = down.contains { $0.state == .stuck } ? "\(down.count) services down or stuck" : "\(down.count) services down"
             tone = .down
         }
     }
@@ -107,6 +114,7 @@ struct ServicesPresentation: Equatable, Sendable {
         let word: String = switch service.state {
         case .up: "up"
         case .down: "down"
+        case .stuck: "stuck"
         case .checking: "checking"
         }
         let detail: String

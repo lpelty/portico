@@ -186,6 +186,7 @@ from .messages import (
     AGENTS_CAPABILITY,
     PROTOCOL_VERSION,
     QUEUE_CAPABILITY,
+    SERVICES_STUCK_CAPABILITY,
     THREADS_CAPABILITY,
     AgentCommand,
     Artifact,
@@ -501,7 +502,13 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     ``models`` goes only to an app with ``models.v1`` (v0.15).
     ``thread.proposal`` goes only to an app with ``threads.v1`` (v0.16).
+    A ``stuck`` service reaches an app without ``services.stuck.v1`` as ``down`` (v0.17).
     """
+    if isinstance(msg, ServicesStatus) and SERVICES_STUCK_CAPABILITY not in capabilities:
+        if any(s.state == "stuck" for s in msg.services):
+            msg = msg.model_copy(
+                update={"services": [s.model_copy(update={"state": "down"}) if s.state == "stuck" else s for s in msg.services]}
+            )
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
     if isinstance(msg, Models) and MODELS_CAPABILITY not in capabilities:

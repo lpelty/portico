@@ -870,11 +870,11 @@ after its log step (`logged_at`, `unlogged`; `ended` absent). Note that
 `chat.list`.
 
 ### `services.status` — `ServicesStatus` *(v0.4)*
-`services: [Service]`, each `{id, name, state: "up" | "down" |
+`services: [Service]`, each `{id, name, state: "up" | "down" | "stuck" |
 "checking", detail?, since?, can_restart}`: `detail` one line for the
 menu, `since` when the current state began (UTC, ISO 8601),
 `can_restart` whether the service has a `restart` command (default
-`false`). Down services first, then the rest in config order. Sent right
+`false`). Down services first, then stuck ones, then the rest in config order. Sent right
 after `hello` and `chat.list` on every connection (an empty list when the
 deployment lists no services: the app draws its own Gateway row either
 way), and broadcast whenever any service's state or detail changes. Not
@@ -889,9 +889,20 @@ N s` when it printed nothing and was killed. An outage's `since` and
 `H:MM` are when the service was first seen down: a restart that does not
 bring it back keeps them.
 
+v0.17: `stuck` is a service that is running but not working. A check that
+exits 2 is `stuck`; its `detail` is the check's first non-empty output
+line (cut to 240 characters), or none when it printed nothing. A stuck
+service is not an outage: no `not responding since`, and it neither starts
+nor ends one. `stuck` goes only to an app whose `hello` lists
+`services.stuck.v1` in its `capabilities`; any other app is sent that
+service as `down`, detail kept, because its decoder refuses a state it
+does not know. The app offers Restart on a row only when it is `down` or
+`stuck` and `can_restart`.
+
 v0.8: with a deployment status (see Services) the rows are the status's,
 in its order (down first): `up` with the row's `detail`, or `down` with
-`not responding since H:MM` plus ` · <detail>`. A status that cannot be
+`not responding since H:MM` plus ` · <detail>`; v0.17: or `stuck`, with
+the row's `detail` as given. A status that cannot be
 read is one `down` row, id `status`, name `Services status`, detail
 `status command failed · <reason>` (`status plug-in failed · ...` for a
 plug-in's). Rows appear with the first reading; there are no `checking`
@@ -1520,7 +1531,7 @@ services_interval_seconds = 30   # default 30, at least 5
 [[services]]
 id = "memory"                    # required, unique, [a-z0-9-]+
 name = "Memory (recall server)"      # required: what the menu says
-check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up
+check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up, 2 = stuck, other = down
 restart = "launchctl kickstart -k gui/$UID/com.example.memory"  # optional: the menu offers Restart
 up_detail = "recall and capture" # optional: the detail shown while up
 timeout_seconds = 10             # optional, default 10, at least 1: the check's time limit
@@ -1551,6 +1562,10 @@ status = "my-tool status --json"  # optional: prints the services as JSON
 
 `status` prints `{"services": [{"id": "memory", "name": "Memory", "up":
 true, "detail": "recall and capture"}]}` (`detail` optional) on stdout;
+v0.17: a row may carry `"state": "up" | "down" | "stuck"` instead of (or
+as well as) `up`; `state` wins, and `up` may then be left out
+(`{"id": "memory", "name": "Memory", "state": "stuck", "detail": "index
+rebuilding"}`);
 its stderr is kept apart (a warning there never breaks the JSON) and only
 gives the reason when the command fails. When it is
 set, the gateway runs it at start and every `services_interval_seconds`
