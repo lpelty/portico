@@ -148,11 +148,10 @@ final class UpdateRunner: ObservableObject {
             self.resolve = { try GatewaySupervisor().resolveCommand() }
         }
         self.arguments = arguments
-        var env = environment ?? ProcessInfo.processInfo.environment
+        let env = environment ?? ProcessInfo.processInfo.environment
         // The app's own folder (Info.plist, then PORTICO_HOME, then ~/.portico), so the
-        // update stops and restarts the gateway this app runs.
-        env[GatewaySupervisor.homeEnvironmentVariable] = GatewaySupervisor.resolveHome(environment: env).url.path
-        self.environment = env
+        // update stops and restarts the gateway this app runs, and bin/install keeps it.
+        self.environment = GatewaySupervisor.childEnvironment(home: GatewaySupervisor.resolveHome(environment: env), base: env)
     }
 
     /// Run the command to its end; stdout and stderr arrive in `lines` as

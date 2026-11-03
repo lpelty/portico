@@ -133,6 +133,21 @@ final class GatewaySupervisor: ObservableObject {
         URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
     }
 
+    /// The environment for what the app starts with its folder (the gateway, the doctor):
+    /// `PORTICO_HOME` is the folder and `PORTICO_HOME_SOURCE` says where the app found
+    /// it, so a doctor names it and a `portico-gateway` call without `--state` agrees.
+    nonisolated static func childEnvironment(home: Home, base: [String: String]) -> [String: String] {
+        var environment = base
+        environment[homeEnvironmentVariable] = home.url.path
+        environment["PORTICO_HOME_SOURCE"] =
+            switch home.source {
+            case .infoPlist: "Info.plist"
+            case .environment: homeEnvironmentVariable
+            case .standard: "the default"
+            }
+        return environment
+    }
+
     /// What the app starts the gateway with: its folder given explicitly, so
     /// the gateway never looks for it on its own.
     nonisolated static func launchArguments(state: URL) -> [String] {
@@ -262,6 +277,7 @@ final class GatewaySupervisor: ObservableObject {
         do {
             child = try Self.spawnDetached(
                 command: command.path, arguments: Self.launchArguments(state: stateDir),
+                environment: Self.childEnvironment(home: home, base: ProcessInfo.processInfo.environment),
                 stdout: writeEnd, stderrPath: logURL.path)
         } catch {
             close(readEnd)
@@ -411,9 +427,7 @@ final class GatewaySupervisor: ObservableObject {
         let sibling = command.deletingLastPathComponent().appendingPathComponent("doctor")
         let (executable, arguments): (URL, [String]) =
             FileManager.default.isExecutableFile(atPath: sibling.path) ? (sibling, []) : (command, ["doctor"])
-        var environment = ProcessInfo.processInfo.environment
-        environment[Self.homeEnvironmentVariable] = stateDir.path
-        let env = environment
+        let env = Self.childEnvironment(home: home, base: ProcessInfo.processInfo.environment)
         return await Task.detached {
             Self.runCapturing(executable, arguments, environment: env)
         }.value
@@ -463,7 +477,9 @@ final class GatewaySupervisor: ObservableObject {
     /// so a signal to the app's group never reaches it. stdin is `/dev/null`,
     /// stdout is the given descriptor, stderr appends to `stderrPath`, and
     /// every other descriptor is closed (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
-    private static func spawnDetached(command: String, arguments: [String], stdout: Int32, stderrPath: String) throws
+    private static func spawnDetached(
+        command: String, arguments: [String], environment: [String: String], stdout: Int32, stderrPath: String
+    ) throws
         -> pid_t
     {
         var attrs: posix_spawnattr_t? = nil
@@ -481,7 +497,7 @@ final class GatewaySupervisor: ObservableObject {
         let argv: [UnsafeMutablePointer<CChar>?] = ([command] + arguments).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         let envp: [UnsafeMutablePointer<CChar>?] =
-            ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+            environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { envp.forEach { free($0) } }
 
         var child: pid_t = 0

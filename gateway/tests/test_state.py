@@ -332,3 +332,57 @@ async def test_no_absolute_state_paths_survive_a_move(tmp_path: Path, monkeypatc
         assert str((b / "spaces" / "plan.md").resolve()) in locations
     finally:
         await srv_b.shutdown()
+
+
+def test_only_path_fields_are_made_state_relative(tmp_path: Path) -> None:
+    """Fix round 1: a title or brief that mentions the folder is text, kept as written."""
+    from portico_gateway.messages import ThreadInfo
+    from portico_gateway.state import ProposalRecord
+
+    folder = tmp_path / "portico-home"
+    state = StateDir(folder)
+    plan = str(folder / "spaces" / "plan.md")
+    index = Index(
+        default_folder=str(folder / "spaces"),
+        chats=[
+            ChatRecord(
+                chat=1,
+                folder=str(folder / "work"),
+                title=plan,
+                state="idle",
+                created="2026-11-02T12:00:00Z",
+                artifacts=[Artifact(id="a", kind="file", location=plan, media="markdown", title=plan, source="tool", open=True)],
+                thread=ThreadInfo(label="Thread 1", slot=1, parent=1, brief=plan, files=[plan], opened_at="2026-11-02T12:00:00Z"),
+            )
+        ],
+        proposals=[ProposalRecord(id="p", chat=1, tool_use_id=None, brief=plan, files=[plan], created="2026-11-02T12:00:00Z", state="pending")],
+        next_chat=2,
+    )
+    state.save_index(index)
+    on_disk = json.loads(state.index_path.read_text())
+    chat = on_disk["chats"][0]
+    assert on_disk["default_folder"] == "@state/spaces"
+    assert chat["folder"] == "@state/work"
+    assert chat["artifacts"][0]["location"] == "@state/spaces/plan.md"
+    assert chat["thread"]["files"] == ["@state/spaces/plan.md"]
+    assert on_disk["proposals"][0]["files"] == ["@state/spaces/plan.md"]
+    # Text stays text.
+    assert chat["title"] == plan and chat["artifacts"][0]["title"] == plan
+    assert chat["thread"]["brief"] == plan and on_disk["proposals"][0]["brief"] == plan
+    assert state.load_index() == index
+
+
+def test_a_relative_state_folder_is_made_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    state = StateDir(Path("rel-home"))
+    assert state.path == tmp_path / "rel-home"
+    state.save_index(Index(default_folder=str(tmp_path / "rel-home" / "spaces")))
+    assert json.loads(state.index_path.read_text())["default_folder"] == "@state/spaces"
+
+
+def test_a_root_state_folder_rewrites_nothing(tmp_path: Path) -> None:
+    state = StateDir(tmp_path / "home")
+    state.path = Path("/")  # never made on disk: only the rewriting is under test
+    data = {"default_folder": "/Users/someone/x", "chats": [{"folder": "/", "artifacts": []}], "proposals": []}
+    out = state._to_state_relative(data)
+    assert out["default_folder"] == "/Users/someone/x" and out["chats"][0]["folder"] == "/"

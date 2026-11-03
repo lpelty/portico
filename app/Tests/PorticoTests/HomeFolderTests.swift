@@ -98,4 +98,54 @@ final class HomeFolderTests: XCTestCase {
         let written = try String(contentsOf: args, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(written, "run --port 0 --state \(dir.path)")
     }
+
+    // MARK: - fix round 1: what the gateway and the doctor are told
+
+    @MainActor
+    func testTheStartedGatewayHasTheFolderInItsEnvironment() async throws {
+        let dir = try tempDir()
+        let seen = dir.appendingPathComponent("env.txt")
+        try "fresh-token\n".write(to: dir.appendingPathComponent("token"), atomically: true, encoding: .utf8)
+        let script = dir.appendingPathComponent("fake-gateway")
+        try "#!/bin/sh\necho \"$PORTICO_HOME|$PORTICO_HOME_SOURCE\" > \"\(seen.path)\"\necho \"PORTICO_READY port=45681\"\nsleep 30\n"
+            .write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+
+        let supervisor = GatewaySupervisor(
+            home: GatewaySupervisor.Home(url: dir, source: .infoPlist), gatewayCommand: script)
+        addTeardownBlock { @MainActor in supervisor.killForTests() }
+        _ = try await supervisor.start()
+        let written = try String(contentsOf: seen, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(written, "\(dir.path)|Info.plist")
+    }
+
+    @MainActor
+    func testTheDoctorIsToldWhereTheFolderCameFrom() async throws {
+        let dir = try tempDir()
+        let script = dir.appendingPathComponent("fake-gateway")
+        try "#!/bin/sh\necho \"$1 $PORTICO_HOME|$PORTICO_HOME_SOURCE\"\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+
+        let baked = GatewaySupervisor(home: GatewaySupervisor.Home(url: dir, source: .infoPlist), gatewayCommand: script)
+        let bakedLines = await baked.runDoctor()
+        XCTAssertTrue(bakedLines.contains("doctor \(dir.path)|Info.plist"), "\(bakedLines)")
+
+        let standard = GatewaySupervisor(home: GatewaySupervisor.Home(url: dir, source: .standard), gatewayCommand: script)
+        let standardLines = await standard.runDoctor()
+        XCTAssertTrue(standardLines.contains("doctor \(dir.path)|the default"), "\(standardLines)")
+    }
+
+    func testChildEnvironmentNamesEachSource() {
+        let url = URL(fileURLWithPath: "/opt/acme/app", isDirectory: true)
+        let base = ["PATH": "/usr/bin", "PORTICO_HOME": "/elsewhere"]
+        let sources: [(GatewaySupervisor.Home.Source, String)] = [
+            (.infoPlist, "Info.plist"), (.environment, "PORTICO_HOME"), (.standard, "the default"),
+        ]
+        for (source, word) in sources {
+            let env = GatewaySupervisor.childEnvironment(home: .init(url: url, source: source), base: base)
+            XCTAssertEqual(env["PORTICO_HOME"], "/opt/acme/app")
+            XCTAssertEqual(env["PORTICO_HOME_SOURCE"], word)
+            XCTAssertEqual(env["PATH"], "/usr/bin")
+        }
+    }
 }

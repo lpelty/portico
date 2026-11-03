@@ -3,13 +3,15 @@
 # release build (swift, with a macOS SDK that compiles it), and <brand.name>.app in ~/Applications.
 #
 #   bin/install                 Portico's folder (config, token, index, log) as found below
-#   bin/install --home DIR      keep it in DIR (made, mode 0700, if missing): written into the
-#                               app's Info.plist (PorticoHome) and, once the install succeeds,
-#                               into this checkout's git-ignored .portico-home
+#   bin/install --home DIR      keep it in DIR (made if missing, mode 0700, and so is any missing
+#                               folder above it): written into the app's Info.plist (PorticoHome)
+#                               and, once the install succeeds, into this checkout's git-ignored
+#                               .portico-home
 #
 # The folder, in order: --home; $PORTICO_HOME; the folder .portico-home names; the CLI's
-# default (~/.portico). Only --home and .portico-home are written into the app (a generic
-# install bakes nothing); bin/update's reinstall keeps the folder through .portico-home.
+# default (~/.portico). It is written into the app only for --home, or when .portico-home
+# exists (a checkout installed with --home; then $PORTICO_HOME, which the app's updater
+# exports, is written if set). A generic install bakes nothing.
 #
 # Environment:
 #   PORTICO_APP_DIR   where the .app goes (default: ~/Applications)
@@ -22,7 +24,7 @@ packaging="$repo/app/Packaging"
 home_file="$repo/.portico-home"
 
 usage() {
-  echo "usage: bin/install [--home DIR]" >&2
+  echo "usage: bin/install [--home DIR]   (DIR: Portico's folder; missing folders are made with mode 0700)" >&2
 }
 
 home_arg=""
@@ -34,6 +36,14 @@ while [ $# -gt 0 ]; do
     *) usage; exit 2 ;;
   esac
 done
+if [ -n "$home_arg" ]; then
+  case "$home_arg" in "~/"*) home_arg="$HOME/${home_arg#\~/}" ;; esac
+  case "$home_arg" in /*) ;; *) home_arg="$PWD/$home_arg" ;; esac
+  if [ -e "$home_arg" ] && [ ! -d "$home_arg" ]; then
+    echo "install: --home $home_arg is a file, not a folder" >&2
+    exit 2
+  fi
+fi
 
 echo "== prerequisites"
 if ! "$packaging/prereqs.sh" "$repo"; then
@@ -46,9 +56,12 @@ echo "== gateway: uv sync"
 
 # Portico's folder. `bake` is set when it goes into the app's Info.plist.
 home="" bake=""
+home_file_folder=""
+if [ -f "$home_file" ]; then
+  home_file_folder="$(head -n 1 "$home_file" | tr -d '\r')"
+  case "$home_file_folder" in "~/"*) home_file_folder="$HOME/${home_file_folder#\~/}" ;; esac
+fi
 if [ -n "$home_arg" ]; then
-  case "$home_arg" in "~/"*) home_arg="$HOME/${home_arg#\~/}" ;; esac
-  case "$home_arg" in /*) ;; *) home_arg="$PWD/$home_arg" ;; esac
   if [ ! -d "$home_arg" ]; then
     (umask 077 && mkdir -p "$home_arg")
     chmod 700 "$home_arg"
@@ -57,10 +70,17 @@ if [ -n "$home_arg" ]; then
   bake=1
 elif [ -n "${PORTICO_HOME:-}" ]; then
   home="$PORTICO_HOME"
-elif [ -f "$home_file" ]; then
-  home="$(head -n 1 "$home_file" | tr -d '\r')"
-  case "$home" in "~/"*) home="$HOME/${home#\~/}" ;; esac
-  [ -z "$home" ] || bake=1
+  # A checkout installed with --home keeps a folder in the app; the app's updater exports
+  # PORTICO_HOME (the app's folder) when it runs bin/update, and that is the one to keep.
+  if [ -n "$home_file_folder" ]; then
+    bake=1
+    if [ "$home" != "$home_file_folder" ]; then
+      echo "install: PORTICO_HOME ($home) differs from .portico-home ($home_file_folder); the app keeps PORTICO_HOME" >&2
+    fi
+  fi
+elif [ -n "$home_file_folder" ]; then
+  home="$home_file_folder"
+  bake=1
 fi
 state_args=() home_args=()
 [ -z "$home" ] || state_args=(--state "$home")

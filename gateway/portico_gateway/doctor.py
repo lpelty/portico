@@ -25,7 +25,7 @@ from pathlib import Path
 from . import REPO_ROOT
 from .config import EMPTY_SETTING_SOURCES_MESSAGE, ConfigError, load_config
 from .plugins import check_plugin
-from .state import StateDir
+from .state import ENV_HOME, ENV_HOME_SOURCE, StateDir
 
 MIN_PYTHON = (3, 13)
 MIN_SDK = (0, 2, 174)
@@ -640,7 +640,8 @@ def check_checkout(repo: Path = REPO_ROOT) -> Check:
 
 def check_home(state: StateDir, given: bool) -> Check:
     """v0.17: the state folder in use and where it came from (``--state``, ``PORTICO_HOME``, ``.portico-home``, the default)."""
-    source = "--state" if given else StateDir.default_source()
+    hint = os.environ.get(ENV_HOME_SOURCE) if os.environ.get(ENV_HOME) else None
+    source = "--state" if given else (hint or StateDir.default_source())
     return Check("home", True, f"{state.path} (from {source})")
 
 

@@ -504,6 +504,7 @@ def test_doctor_names_the_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     import portico_gateway.state as state_module
     from portico_gateway.doctor import check_home
 
+    monkeypatch.delenv("PORTICO_HOME_SOURCE", raising=False)
     folder = tmp_path / "acme-root" / "app"
     check = check_home(StateDir(folder), given=True)
     assert check.ok and check.name == "home"
@@ -525,3 +526,22 @@ def test_doctor_names_the_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_doctor_lists_home_right_after_the_checkout(state_dir: StateDir, with_credential: None) -> None:
     names = [c.name for c in doctor(state_dir, state_dir.config_path)]
     assert names[:2] == ["checkout", "home"]
+
+
+def test_doctor_prefers_the_apps_source_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix round 1: the app exports PORTICO_HOME for its doctor; the hint says where the app found it."""
+    from portico_gateway.doctor import check_home
+
+    folder = tmp_path / "acme-root" / "app"
+    monkeypatch.setenv("PORTICO_HOME", str(folder))
+    monkeypatch.setenv("PORTICO_HOME_SOURCE", "Info.plist")
+    assert check_home(StateDir(), given=False).line == f"{folder} (from Info.plist)"
+    # --state given wins over any hint.
+    assert check_home(StateDir(folder), given=True).line == f"{folder} (from --state)"
+    # A hint without PORTICO_HOME is not about this folder.
+    monkeypatch.delenv("PORTICO_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    import portico_gateway.state as state_module
+
+    monkeypatch.setattr(state_module, "REPO_ROOT", tmp_path / "no-checkout")
+    assert check_home(StateDir(), given=False).line.endswith("(from the default)")

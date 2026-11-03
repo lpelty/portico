@@ -321,3 +321,26 @@ def test_doctor_is_told_whether_state_was_given(tmp_path: Path, monkeypatch: pyt
         assert main(["doctor", "--state", str(tmp_path / "given")]) == 0
         assert main(["doctor"]) == 0
     assert seen == [True, False]
+
+
+def test_run_exports_its_folder_to_what_it_starts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix round 1: plug-ins, service checks and lifecycle commands that call portico-gateway find the same folder."""
+    folder = tmp_path / "acme-root" / "app"
+    folder.mkdir(parents=True)
+    (folder / "config.toml").write_text("this is [not toml\n")  # stops the run right after the folder is known
+    monkeypatch.setenv("PORTICO_HOME", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("PORTICO_HOME_SOURCE", "")  # unset for the run; restored after the test
+    with contextlib.redirect_stderr(io.StringIO()):
+        assert main(["run", "--state", str(folder)]) == 1
+    assert os.environ["PORTICO_HOME"] == str(folder)
+    assert os.environ["PORTICO_HOME_SOURCE"] == "--state"
+
+
+def test_run_keeps_the_apps_source_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "config.toml").write_text("this is [not toml\n")
+    monkeypatch.setenv("PORTICO_HOME_SOURCE", "Info.plist")
+    with contextlib.redirect_stderr(io.StringIO()):
+        assert main(["run", "--state", str(folder)]) == 1
+    assert os.environ["PORTICO_HOME_SOURCE"] == "Info.plist"

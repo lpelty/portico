@@ -41,6 +41,9 @@ from .messages import (
 )
 
 ENV_HOME = "PORTICO_HOME"
+# v0.17: where whoever set ``PORTICO_HOME`` found the folder (the app: "Info.plist" or
+# "the default"; a running gateway: its own source), so ``doctor`` can name it.
+ENV_HOME_SOURCE = "PORTICO_HOME_SOURCE"
 DEFAULT_DIRNAME = ".portico"
 # v0.17: the checkout's record of the folder ``bin/install --home`` chose (one
 # line, an absolute path); git-ignored, so ``bin/update`` still sees a clean checkout.
@@ -177,6 +180,33 @@ class CommandLists(BaseModel):
     folders: dict[str, list[AgentCommand]] = {}
 
 
+def _map_index_paths(data: dict, fn) -> dict:  # noqa: ANN001 - fn: str -> str, applied in place to a copy
+    """A copy of a dumped index with ``fn`` applied to each path field (see ``StateDir._to_state_relative``)."""
+    data = json.loads(json.dumps(data))
+
+    def each(items: object, key: str) -> None:
+        for item in items if isinstance(items, list) else []:
+            if isinstance(item, dict) and key in item:
+                item[key] = fn(item[key])
+
+    def files(holder: object) -> None:
+        if isinstance(holder, dict) and isinstance(holder.get("files"), list):
+            holder["files"] = [fn(f) for f in holder["files"]]
+
+    if "default_folder" in data:
+        data["default_folder"] = fn(data["default_folder"])
+    for chat in data.get("chats") or []:
+        if not isinstance(chat, dict):
+            continue
+        if "folder" in chat:
+            chat["folder"] = fn(chat["folder"])
+        each(chat.get("artifacts"), "location")
+        files(chat.get("thread"))
+    for proposal in data.get("proposals") or []:
+        files(proposal)
+    return data
+
+
 class StateDir:
     """The state directory. Creating one makes the directory (mode 0700)."""
 
@@ -207,7 +237,8 @@ class StateDir:
         return HOME_FILE if StateDir._home_file_folder() is not None else "the default"
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = Path(path) if path is not None else self.default_path()
+        # Absolute, so a relative --state still matches the index's absolute paths.
+        self.path = (Path(path) if path is not None else self.default_path()).absolute()
         self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._lock_fd: int | None = None
 
@@ -296,7 +327,7 @@ class StateDir:
         try:
             if data is None:
                 return Index.model_validate_json(raw)
-            return Index.model_validate_json(json.dumps(self._expand_state_paths(data)))
+            return Index.model_validate_json(json.dumps(self._from_state_relative(data) if isinstance(data, dict) else data))
         except ValidationError as e:
             raise StateError(
                 f"{self.index_path} is not a usable index.json; refusing to start and "
@@ -309,35 +340,38 @@ class StateDir:
         v0.17: a path inside the state folder is written ``@state/<relative>``
         (``load_index`` expands it), so the index survives moving the folder.
         """
-        data = self._state_relative_paths(index.model_dump(mode="json"))
+        data = self._to_state_relative(index.model_dump(mode="json"))
         self._atomic_write(self.index_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
-    def _state_relative_paths(self, value: object) -> object:
-        """``value`` with every string that is the state folder or inside it (as given or resolved) as ``@state/…``."""
-        if isinstance(value, dict):
-            return {k: self._state_relative_paths(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self._state_relative_paths(v) for v in value]
-        if isinstance(value, str):
-            for root in dict.fromkeys((str(self.path), str(self.path.resolve()))):
-                if value == root:
-                    return STATE_PREFIX
-                if value.startswith(root.rstrip("/") + "/"):
-                    return f"{STATE_PREFIX}/{value[len(root.rstrip('/')) + 1:]}"
-        return value
+    # The index's path fields (v0.17): ``default_folder``; each chat's ``folder``,
+    # ``artifacts[].location`` and ``thread.files``; each proposal's ``files``.
+    # Text (titles, briefs) is never rewritten, even when it mentions the folder.
 
-    def _expand_state_paths(self, value: object) -> object:
-        """``value`` with every ``@state/…`` string as an absolute path in this (resolved) state folder."""
-        if isinstance(value, dict):
-            return {k: self._expand_state_paths(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self._expand_state_paths(v) for v in value]
-        if isinstance(value, str):
+    def _to_state_relative(self, data: dict) -> dict:
+        roots = [r for r in dict.fromkeys((str(self.path), str(self.path.resolve()))) if r != "/"]
+
+        def rel(value: object) -> object:
+            if isinstance(value, str):
+                for root in roots:
+                    if value == root:
+                        return STATE_PREFIX
+                    if value.startswith(root + "/"):
+                        return f"{STATE_PREFIX}/{value[len(root) + 1 :]}"
+            return value
+
+        return _map_index_paths(data, rel)
+
+    def _from_state_relative(self, data: dict) -> dict:
+        root = self.path.resolve()
+
+        def expand(value: object) -> object:
             if value == STATE_PREFIX:
-                return str(self.path.resolve())
-            if value.startswith(STATE_PREFIX + "/"):
-                return str(self.path.resolve() / value[len(STATE_PREFIX) + 1 :])
-        return value
+                return str(root)
+            if isinstance(value, str) and value.startswith(STATE_PREFIX + "/"):
+                return str(root / value[len(STATE_PREFIX) + 1 :])
+            return value
+
+        return _map_index_paths(data, expand)
 
     # --- commands (v0.11 item 66) ------------------------------------------------
 

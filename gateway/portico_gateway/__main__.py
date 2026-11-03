@@ -30,6 +30,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         state = StateDir(Path(args.state).expanduser() if args.state else None)
+        _export_home(state, given=bool(args.state))
         config_path = Path(args.config).expanduser() if args.config else state.config_path
         config = load_config(config_path)
         plugins = load_plugins(config.plugins, config.plugin_paths)
@@ -89,6 +90,21 @@ async def _run_server(config, state, port: int, engine_factory=None, plugins=Non
     finally:
         await server.shutdown()
     return 0
+
+
+def _export_home(state, given: bool) -> None:  # noqa: ANN001 - StateDir lives in state.py
+    """v0.17: what the gateway starts (plug-ins, service checks, ``portico-gateway`` itself) uses its folder.
+
+    ``PORTICO_HOME`` is this folder; ``PORTICO_HOME_SOURCE`` says where it came
+    from, unless the app that started this gateway already said (``Info.plist``).
+    """
+    import os
+
+    from portico_gateway.state import ENV_HOME, ENV_HOME_SOURCE, StateDir
+
+    if not os.environ.get(ENV_HOME_SOURCE):
+        os.environ[ENV_HOME_SOURCE] = "--state" if given else StateDir.default_source()
+    os.environ[ENV_HOME] = str(state.path)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
