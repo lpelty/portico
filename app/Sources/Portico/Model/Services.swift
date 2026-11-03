@@ -270,6 +270,13 @@ extension ServicesPresentation {
         [gateway.state == .up ? .stop : .start, .restart]
     }
 
+    /// What a row offers beyond the Gateway's hover controls (v0.17): Restart,
+    /// on the row and on its context menu, only for a down or stuck service
+    /// with a restart command. A healthy row offers none.
+    static func rowActions(_ row: ServiceRow) -> [RowAction] {
+        row.showsRestart ? [.restart] : []
+    }
+
     /// The buttons a row shows on hover (v0.12, item 1): the Gateway row's
     /// Stop or Start and Restart; other rows keep their context-menu Restart.
     static func hoverControls(_ row: ServiceRow) -> [GatewayControl] {
@@ -303,6 +310,11 @@ extension ServicesPresentation {
     static func restartAllAction(offersRestartAll: Bool) -> GatewayAction {
         offersRestartAll ? .restartAll : .restart
     }
+}
+
+/// A deployment service row's own action (v0.17).
+enum RowAction: Equatable, Sendable {
+    case restart
 }
 
 /// An action that may ask first (v0.8 decisions 3, 4).

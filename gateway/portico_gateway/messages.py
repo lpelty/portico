@@ -30,7 +30,7 @@ PermissionMode = Literal["default", "acceptEdits", "auto"]
 # What happened to one tool use's permission, drawn on its tool row.
 PermissionOutcome = Literal["once", "session", "auto", "declined", "blocked"]
 # A deployment service's state (v0.4): ``checking`` until its first check answers.
-# v0.17: ``stuck`` is up but not working (a check's exit 2, a status row's
+# v0.17: ``stuck`` is up but not working (a check's exit 75, a status row's
 # ``"state": "stuck"``); only an app with ``services.stuck.v1`` is sent it.
 ServiceState = Literal["up", "down", "stuck", "checking"]
 # How a subagent ended (v0.10).

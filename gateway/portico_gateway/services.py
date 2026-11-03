@@ -18,10 +18,15 @@ service's ``timeout_seconds``; a restart is killed after
 ``command_timeout_seconds``). A check that exits 0 is ``up`` with the
 service's ``up_detail``; anything else is ``down`` with
 ``not responding since H:MM`` (local time) plus `` · <last output line>``
-when the check printed one. Exit 2 is ``stuck`` (v0.17): up but not working,
-with the check's first output line as the detail (none if it printed
-nothing); a stuck service is not an outage (no ``not responding since``). The monitor hands the app a ``services.status``
-only when some service's state or detail changed, as each check answers:
+when the check printed one.
+
+v0.17: a check that exits 75 (``EX_TEMPFAIL``) is ``stuck``: up but not
+working, with the check's first output line as the detail (none if it
+printed nothing). A stuck service is not an outage (no ``not responding
+since``). Exit 2 is not used for this: shell syntax errors and usage
+errors return it, and they mean down.
+
+The monitor hands the app a ``services.status`` only when some service's state or detail changed, as each check answers:
 one slow check never holds back what the others found. Portico never
 knows what a service is: it draws what the deployment lists.
 
@@ -81,7 +86,7 @@ class SourceFailed(Exception):
 
 
 # A check that exits with this is stuck (v0.17), not down.
-STUCK_EXIT = 2
+STUCK_EXIT = 75  # EX_TEMPFAIL
 
 ROW_STATES = ("up", "down", "stuck")
 

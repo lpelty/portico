@@ -704,7 +704,7 @@ struct ServiceRowView: View {
             if restarting {
                 ProgressView().controlSize(.small)
                     .help("Restarting \(row.name)…")
-            } else if row.showsRestart {
+            } else if ServicesPresentation.rowActions(row).contains(.restart) {
                 // v0.17: a down or stuck service's Restart is on its row, always visible.
                 RowActionButton(title: "Restart", systemImage: "arrow.clockwise", help: "Restart \(row.name)") {
                     model.restartService(row.id)
@@ -757,7 +757,7 @@ struct ServiceRowView: View {
                 Button("\(control.title) gateway") { press(control) }
                     .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
             }
-        } else if row.showsRestart {
+        } else if ServicesPresentation.rowActions(row).contains(.restart) {
             Button("Restart \(row.name)") { model.restartService(row.id) }
                 .disabled(!model.canRestart(service: row.id))
         }

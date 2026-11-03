@@ -124,12 +124,13 @@ async def test_a_long_last_line_is_cut_and_only_the_last_non_empty_line_counts()
     assert len(tail) == DETAIL_LINE_LIMIT and tail.endswith("…") and tail.startswith("xxx")
 
 
-async def test_check_exit_two_is_stuck() -> None:
+async def test_check_exit_75_is_stuck() -> None:
     mon, rec = monitor(
         [
-            svc("a", "printf 'queue wedged\\nmore\\n'; exit 2"),
-            svc("b", "exit 2"),
+            svc("a", "printf 'queue wedged\\nmore\\n'; exit 75"),
+            svc("b", "exit 75"),
             svc("c", "echo nope; exit 1"),
+            svc("e", "echo usage error; exit 2"),
             svc("d", "true"),
         ]
     )
@@ -139,10 +140,11 @@ async def test_check_exit_two_is_stuck() -> None:
     assert (by_id["b"].state, by_id["b"].detail) == ("stuck", None)
     assert by_id["c"].state == "down" and (by_id["c"].detail or "").endswith(" · nope")
     assert by_id["d"].state == "up"
+    assert by_id["e"].state == "down", "exit 2 is a usage or syntax error, not stuck"
 
 
 async def test_a_stuck_service_sorts_before_an_up_one_and_after_down() -> None:
-    mon, _ = monitor([svc("up", "true"), svc("stuck", "exit 2"), svc("down", "exit 1")])
+    mon, _ = monitor([svc("up", "true"), svc("stuck", "exit 75"), svc("down", "exit 1")])
     await mon.check_all()
     assert [s.id for s in mon.snapshot()] == ["down", "stuck", "up"]
 

@@ -141,7 +141,7 @@ class ServiceConfig(BaseModel):
     """``[[services]]`` (v0.4): one thing the deployment depends on, and how to tell it is up.
 
     ``check`` runs with ``/bin/sh -c``; exit 0 means up. ``restart``, when
-    set, is what the menu's Restart runs. Exit 2 means stuck (v0.17: running
+    set, is what the menu's Restart runs. Exit 75 (EX_TEMPFAIL) means stuck (v0.17: running
     but not working); any other non-zero exit is down. ``up_detail`` is the line shown
     while it is up. ``timeout_seconds`` bounds each check (a restart is
     bounded by ``command_timeout_seconds``). Portico never knows what a

@@ -158,6 +158,15 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
         XCTAssertFalse(row(.down, canRestart: false).showsRestart)
         XCTAssertFalse(row(.down, gateway: true).showsRestart, "the Gateway row has its own controls")
         XCTAssertTrue(row(.stuck).isProblem && row(.down).isProblem && !row(.up).isProblem)
+
+        // The view draws what rowActions says: a healthy row offers no Restart.
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.stuck)), [.restart])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.down)), [.restart])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.up)), [])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.checking)), [])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.down, canRestart: false)), [])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.down, gateway: true)), [])
+        XCTAssertEqual(ServiceColors.row(.stuck), Theme.wait)
     }
 
     /// v0.11 (60): the menu's second line is there only when it says

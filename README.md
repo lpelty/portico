@@ -162,7 +162,7 @@ text = "/review"
 [[services]]                        # what the deployment depends on, shown in the app's services menu
 id = "memory"                       # unique, lowercase letters, digits and dashes
 name = "Memory"
-check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up
+check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up, 75 = stuck, other = down
 restart = "my-tool restart memory"  # optional: the menu offers Restart
 up_detail = "recall and capture"    # optional: shown while it is up
 timeout_seconds = 10                # optional, default 10, at least 1: the check is killed after this

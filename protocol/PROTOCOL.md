@@ -890,7 +890,7 @@ N s` when it printed nothing and was killed. An outage's `since` and
 bring it back keeps them.
 
 v0.17: `stuck` is a service that is running but not working. A check that
-exits 2 is `stuck`; its `detail` is the check's first non-empty output
+exits 75 (`EX_TEMPFAIL`) is `stuck`; its `detail` is the check's first non-empty output
 line (cut to 240 characters), or none when it printed nothing. A stuck
 service is not an outage: no `not responding since`, and it neither starts
 nor ends one. `stuck` goes only to an app whose `hello` lists
@@ -1531,7 +1531,7 @@ services_interval_seconds = 30   # default 30, at least 5
 [[services]]
 id = "memory"                    # required, unique, [a-z0-9-]+
 name = "Memory (recall server)"      # required: what the menu says
-check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up, 2 = stuck, other = down
+check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up, 75 = stuck, other = down
 restart = "launchctl kickstart -k gui/$UID/com.example.memory"  # optional: the menu offers Restart
 up_detail = "recall and capture" # optional: the detail shown while up
 timeout_seconds = 10             # optional, default 10, at least 1: the check's time limit
