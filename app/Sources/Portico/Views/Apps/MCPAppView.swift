@@ -76,11 +76,20 @@ final class MCPAppPage: NSObject {
     /// 0.5 s), then `done`. The page is disposed by the caller.
     func freeze(done: @escaping (NSImage?) -> Void) {
         guard !disposed else { return done(nil) }
-        webView.takeSnapshot(with: nil) { [weak self] image, _ in
-            Task { @MainActor in
-                guard let self else { return done(image) }
-                self.bridge.teardown(reason: "The card was frozen") { done(image) }
-            }
+        var settled = false
+        let settle: @MainActor (NSImage?) -> Void = { [weak self] image in
+            guard !settled else { return }
+            settled = true
+            guard let self else { return done(image) }
+            self.bridge.teardown(reason: "The card was frozen") { done(image) }
+        }
+        webView.takeSnapshot(with: nil) { image, _ in
+            Task { @MainActor in settle(image) }
+        }
+        // A snapshot that never comes: teardown with no image (the card shows the placeholder).
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            settle(nil)
         }
     }
 
@@ -143,6 +152,8 @@ extension MCPAppPage: WKNavigationDelegate, WKUIDelegate {
         return nil
     }
 
+    // Camera and microphone are refused here. Geolocation needs no handler:
+    // the app has no location entitlement, so WebKit denies it outright.
     func webView(
         _ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
         initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType

@@ -169,11 +169,17 @@ struct ViewerView: View {
     @StateObject private var page = ViewerPageAddress()
 
     var body: some View {
-        if let id = model.viewerApp[chat], let app = model.app(forToolUse: id) {
-            // v0.18 (ruling 36): an app's copy in place of the file view.
-            AppViewerPane(chat: chat, state: app)
-        } else {
+        let app = model.viewerApp[chat].flatMap { model.app(forToolUse: $0) }
+        // v0.18 (ruling 36): an app's copy over the file view, which stays
+        // alive under it, so X shows the file again as it was.
+        ZStack {
             fileView
+                .opacity(app == nil ? 1 : 0)
+                .allowsHitTesting(app == nil)
+                .accessibilityHidden(app != nil)
+            if let app {
+                AppViewerPane(chat: chat, state: app)
+            }
         }
     }
 

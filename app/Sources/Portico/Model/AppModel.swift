@@ -361,6 +361,11 @@ final class AppModel: ObservableObject {
     var pendingAppCalls: [String: (AppCallResult) -> Void] = [:]
     /// A page's `ui/message` out as `app.message`, oldest first.
     var pendingAppMessages: [PendingAppMessage] = []
+    /// Per card, its `tools/call`s out, and when its last link opened.
+    var appCallsInFlight: [String: Int] = [:]
+    var appLinkTimes: [String: Date] = [:]
+    /// The clock the link limit reads (a test sets it).
+    var appClock: () -> Date = Date.init
 
     /// The last `seq` seen per chat, the watermark a reconnect asks for events since.
     private(set) var lastSeq: [Int: Int] = [:]
@@ -2564,8 +2569,7 @@ extension AppModel {
     /// other address is refused.
     @discardableResult
     func openLink(_ address: String, chat: Int) -> Bool {
-        guard let url = URL(string: address), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http", url.host?.isEmpty == false else { return false }
+        guard Self.isWebAddress(address), let url = URL(string: address) else { return false }
         let id = Self.localArtifactPrefix + url.absoluteString
         let artifact = Artifact(
             id: id, kind: .url, location: url.absoluteString, media: .other,
@@ -2576,6 +2580,12 @@ extension AppModel {
         artifacts[chat] = list
         showLocal(artifact, in: chat)
         return true
+    }
+
+    /// An http(s) address with a host.
+    static func isWebAddress(_ address: String) -> Bool {
+        guard let url = URL(string: address), let scheme = url.scheme?.lowercased() else { return false }
+        return (scheme == "https" || scheme == "http") && url.host?.isEmpty == false
     }
 
     /// Show an artifact only this app knows (a file from the Files pane, a

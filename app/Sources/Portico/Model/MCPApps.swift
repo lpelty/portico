@@ -142,7 +142,7 @@ extension AppModel {
             state.cancelled = false
             apps[id] = state
             appSnapshots[id] = nil
-            removePage(AppPageKey(toolUseId: id, placement: .card))
+            retirePage(AppPageKey(toolUseId: id, placement: .card))
             markLive(id, chat: open.chat, items: items)
         } else {
             apps[id] = state
@@ -253,6 +253,17 @@ extension AppModel {
         [MCPAppBridge.Placement.card, .viewer].compactMap { appBridges[AppPageKey(toolUseId: id, placement: $0)] }
     }
 
+    /// A page leaves the registry at once (a new one may take its place) and
+    /// goes after its teardown (`ui/resource-teardown`, at most 0.5 s).
+    private func retirePage(_ key: AppPageKey) {
+        let bridge = appBridges.removeValue(forKey: key)
+        guard let page = appPages.removeValue(forKey: key) else {
+            bridge?.detach()
+            return
+        }
+        page.close { page.dispose() }
+    }
+
     private func removePage(_ key: AppPageKey) {
         appPages[key]?.dispose()
         appPages[key] = nil
@@ -264,10 +275,12 @@ extension AppModel {
     func forgetApps(chat: Int) {
         let ids = apps.values.filter { $0.chat == chat }.map(\.toolUseId)
         for id in ids {
-            removePage(AppPageKey(toolUseId: id, placement: .card))
-            removePage(AppPageKey(toolUseId: id, placement: .viewer))
+            retirePage(AppPageKey(toolUseId: id, placement: .card))
+            retirePage(AppPageKey(toolUseId: id, placement: .viewer))
             apps[id] = nil
             appSnapshots[id] = nil
+            appLinkTimes[id] = nil
+            appCallsInFlight[id] = nil
         }
         liveApps[chat] = nil
         viewerApp[chat] = nil
@@ -280,8 +293,16 @@ extension AppModel {
         guard let state = apps[id] else {
             return reply(AppCallResult(toolUseId: id, ok: false, error: "Unknown app"))
         }
+        // At most `maxCallsInFlight` per card: a page can't flood the gateway with consent cards.
+        guard (appCallsInFlight[id] ?? 0) < AppLimits.maxCallsInFlight else {
+            return reply(AppCallResult(toolUseId: id, ok: false, error: "Too many calls at once"))
+        }
+        appCallsInFlight[id, default: 0] += 1
         let request = Self.requestId()
-        pendingAppCalls[request] = reply
+        pendingAppCalls[request] = { [weak self] result in
+            if let count = self?.appCallsInFlight[id] { self?.appCallsInFlight[id] = count > 1 ? count - 1 : nil }
+            reply(result)
+        }
         send(.appCallTool(AppCallTool(chat: state.chat, toolUseId: id, tool: tool, arguments: arguments, id: request)))
     }
 
@@ -302,8 +323,21 @@ extension AppModel {
 
     /// The page's `size-changed`: the card's page is that tall, at most 520.
     func appSizeChanged(_ id: String, height: CGFloat) {
-        guard apps[id] != nil, height.isFinite else { return }
-        apps[id]?.height = min(max(height, 1), AppState.maxHeight)
+        guard let state = apps[id], height.isFinite else { return }
+        let clamped = min(max(height, 1), AppState.maxHeight)
+        guard clamped != state.height else { return }
+        apps[id]?.height = clamped
+    }
+
+    /// The page's `ui/open-link` for card `id`: at most one a second per card,
+    /// then `openLink`. `nil` when it opened, else the reason it didn't.
+    func appOpenLink(_ id: String, address: String) -> String? {
+        guard let state = apps[id] else { return "Unknown app" }
+        guard AppModel.isWebAddress(address) else { return "Only web addresses open in the viewer" }
+        let now = appClock()
+        if let last = appLinkTimes[id], now.timeIntervalSince(last) < AppLimits.linkInterval { return "Slow down" }
+        appLinkTimes[id] = now
+        return openLink(address, chat: state.chat) ? nil : "Only web addresses open in the viewer"
     }
 
     /// The page's `request-display-mode`. From the card, `fullscreen` opens the
@@ -360,6 +394,7 @@ extension AppModel {
     func failPendingAppRequests() {
         let calls = pendingAppCalls
         pendingAppCalls = [:]
+        appCallsInFlight = [:]
         for reply in calls.values { reply(AppCallResult(toolUseId: "", ok: false, error: "The call failed")) }
         let messages = pendingAppMessages
         pendingAppMessages = []
@@ -373,4 +408,19 @@ struct PendingAppMessage {
     var id: String
     var chat: Int
     var reply: (String?) -> Void
+}
+
+/// What a page may ask of the app at once (v0.18 fix round 1). The gateway
+/// closes the socket on a frame over 16 MiB, so nothing a page sends gets near it.
+enum AppLimits {
+    /// One message from the page, as UTF-8 bytes, before it is decoded.
+    static let maxMessageBytes = 1 << 20
+    /// A `ui/message` text, or a `tools/call`'s encoded arguments, as UTF-8 bytes.
+    static let maxPayloadBytes = 256 << 10
+    /// An `app.context` text, in characters (the gateway keeps as much).
+    static let maxContextCharacters = 16_000
+    /// `tools/call`s out at once per card.
+    static let maxCallsInFlight = 4
+    /// Seconds between two `ui/open-link`s from one card.
+    static let linkInterval: TimeInterval = 1
 }

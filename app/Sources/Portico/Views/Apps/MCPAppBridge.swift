@@ -113,19 +113,25 @@ final class MCPAppBridge {
         return directives.joined(separator: "; ")
     }
 
-    /// A source expression that is one origin or host: no spaces, separators,
-    /// quotes (keywords) or a bare `*`.
-    private static func isSafeSource(_ source: String) -> Bool {
-        guard !source.isEmpty, source != "*" else { return false }
-        let banned = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ";,'\"\\"))
-        return source.unicodeScalars.allSatisfy { !banned.contains($0) }
+    /// Only `scheme://host[:port]` for http, https, ws and wss, with an
+    /// optional `*.` before the host. Scheme-only sources (`https:`, `data:`,
+    /// `blob:`), keywords, paths, quotes and control characters are refused.
+    static func isSafeSource(_ source: String) -> Bool {
+        source.wholeMatch(of: safeSource) != nil
     }
+
+    nonisolated(unsafe) private static let safeSource =
+        /(?i)(?:https?|wss?):\/\/(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::[0-9]{1,5})?/
 
     // MARK: - from the page
 
     /// One message the page posted (its JSON text).
     func receive(_ text: String) {
         guard !detached else { return }
+        // Measured before decoding: a page can't make the app send the gateway a frame it closes on.
+        guard text.utf8.count <= AppLimits.maxMessageBytes else {
+            return replyError(id: .null, code: -32600, message: "Too large")
+        }
         guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else {
             return replyError(id: .null, code: -32700, message: "Parse error")
         }
@@ -182,6 +188,9 @@ final class MCPAppBridge {
             }
             var arguments: [String: JSONValue] = [:]
             if case .object(let given)? = params["arguments"] { arguments = given }
+            guard let encoded = try? JSONEncoder().encode(arguments), encoded.count <= AppLimits.maxPayloadBytes else {
+                return replyError(id: id, code: -32602, message: "The arguments are too large")
+            }
             guard let model else { return replyError(id: id, code: -32000, message: "Unknown app") }
             model.appCallTool(toolUseId, tool: name, arguments: arguments) { [weak self] result in
                 guard let self else { return }
@@ -196,6 +205,9 @@ final class MCPAppBridge {
         case MCPAppMethods.message:
             let text = Self.text(of: params["content"])
             guard !text.isEmpty else { return replyError(id: id, code: -32602, message: "Invalid message format") }
+            guard text.utf8.count <= AppLimits.maxPayloadBytes else {
+                return replyError(id: id, code: -32602, message: "The message is too long")
+            }
             guard let model else { return replyError(id: id, code: -32000, message: "Unknown app") }
             model.appMessage(toolUseId, text: text) { [weak self] refusal in
                 guard let self else { return }
@@ -211,11 +223,15 @@ final class MCPAppBridge {
                let data = try? JSONEncoder().encode(structured) {
                 text += (text.isEmpty ? "" : "\n") + String(decoding: data, as: UTF8.self)
             }
-            model?.appContext(toolUseId, text: text)
+            model?.appContext(toolUseId, text: String(text.prefix(AppLimits.maxContextCharacters)))
             reply(id: id, result: .object([:]))
         case MCPAppMethods.openLink:
-            guard let address = params["url"]?.stringValue, model?.openLink(address, chat: chat) == true else {
-                return replyError(id: id, code: -32000, message: "Only web addresses open in the viewer")
+            guard let address = params["url"]?.stringValue else {
+                return replyError(id: id, code: -32602, message: "ui/open-link needs a url")
+            }
+            guard let model else { return replyError(id: id, code: -32000, message: "Unknown app") }
+            if let refusal = model.appOpenLink(toolUseId, address: address) {
+                return replyError(id: id, code: -32000, message: refusal)
             }
             reply(id: id, result: .object([:]))
         case MCPAppMethods.requestDisplayMode:

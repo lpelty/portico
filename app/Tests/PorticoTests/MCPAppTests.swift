@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import WebKit
@@ -276,6 +277,104 @@ final class MCPAppTests: XCTestCase {
         XCTAssertEqual(posted.last()?["id"], .int(2))
         XCTAssertNotNil(posted.last()?["error"])
         XCTAssertEqual(model.current[1]?.location, "https://acme.example/pricing")
+    }
+
+    // MARK: - fix round 1: what a page may send
+
+    func testOversizedMessagesAreRefused() {
+        let sent = Sent()
+        let model = model(sent)
+        card(model, "toolu_01")
+        let before = sent.frames.count
+        let (bridge, posted) = bridge(model, "toolu_01")
+
+        // Over 1 MiB raw: refused before it is decoded.
+        let huge = String(repeating: "a", count: AppLimits.maxMessageBytes)
+        bridge.receive(request(1, "ui/update-model-context", ["content": [["type": "text", "text": huge]]]))
+        XCTAssertEqual(posted.last()?["error"]?["code"], .int(-32600))
+        XCTAssertEqual(posted.last()?["error"]?["message"], .string("Too large"))
+
+        // A message text over 256 KiB.
+        let long = String(repeating: "é", count: AppLimits.maxPayloadBytes / 2 + 1)  // 2 bytes each
+        bridge.receive(request(2, "ui/message", ["role": "user", "content": ["type": "text", "text": long]]))
+        XCTAssertEqual(posted.last()?["id"], .int(2))
+        XCTAssertEqual(posted.last()?["error"]?["code"], .int(-32602))
+
+        // tools/call arguments over 256 KiB once encoded.
+        let blob = String(repeating: "b", count: AppLimits.maxPayloadBytes)
+        bridge.receive(request(3, "tools/call", ["name": "update_task", "arguments": ["note": blob]]))
+        XCTAssertEqual(posted.last()?["id"], .int(3))
+        XCTAssertEqual(posted.last()?["error"]?["code"], .int(-32602))
+        XCTAssertEqual(sent.frames.count, before, "nothing oversized reached the gateway")
+
+        // Context is cut to 16 000 characters before it goes.
+        bridge.receive(request(4, "ui/update-model-context", [
+            "content": [["type": "text", "text": String(repeating: "c", count: 20_000)]],
+        ]))
+        guard case .appContext(let context)? = sent.frames.last else { return XCTFail("no app.context") }
+        XCTAssertEqual(context.text.count, AppLimits.maxContextCharacters)
+    }
+
+    func testCSPSourceAllowlist() {
+        for good in ["https://api.acme.example", "wss://live.acme.example:8443", "https://*.acme.example", "http://localhost:3000", "ws://acme.example"] {
+            XCTAssertTrue(MCPAppBridge.isSafeSource(good), good)
+        }
+        for bad in ["https:", "data:", "blob:", "*", "'unsafe-eval'", "'self'", "https://acme.example/path",
+                    "https://acme.example/'x", "https://a.example; script-src *", "https://a\u{7}.example",
+                    "ftp://acme.example", "https://acme.example:99999x", "acme.example", "https://*", ""] {
+            XCTAssertFalse(MCPAppBridge.isSafeSource(bad), bad)
+        }
+        let policy = MCPAppBridge.contentSecurityPolicy([
+            "connectDomains": .array([.string("https:"), .string("https://api.acme.example")]),
+            "resourceDomains": .array([.string("data:"), .string("blob:")]),
+        ])
+        XCTAssertTrue(policy.contains("connect-src https://api.acme.example;"), policy)
+        XCTAssertFalse(policy.contains("data: data:"), policy)
+        XCTAssertFalse(policy.contains("blob:"), policy)
+    }
+
+    func testCallAndLinkLimitsPerCard() {
+        let sent = Sent()
+        let model = model(sent)
+        card(model, "toolu_01")
+        let (bridge, posted) = bridge(model, "toolu_01")
+        for n in 1...4 { bridge.receive(request(n, "tools/call", ["name": "update_task", "arguments": [:]])) }
+        XCTAssertEqual(sent.frames.filter { if case .appCallTool = $0 { true } else { false } }.count, 4)
+        bridge.receive(request(5, "tools/call", ["name": "update_task", "arguments": [:]]))
+        XCTAssertEqual(posted.last()?["id"], .int(5))
+        XCTAssertEqual(posted.last()?["error"]?["message"], .string("Too many calls at once"))
+        // One answered: there is room again.
+        guard case .appCallTool(let first)? = sent.frames.first(where: { if case .appCallTool = $0 { true } else { false } }) else {
+            return XCTFail("no call")
+        }
+        model.apply(.appCallResult(AppCallResult(toolUseId: "toolu_01", ok: true, id: first.id)))
+        bridge.receive(request(6, "tools/call", ["name": "update_task", "arguments": [:]]))
+        XCTAssertEqual(sent.frames.filter { if case .appCallTool = $0 { true } else { false } }.count, 5)
+
+        var now = Date(timeIntervalSince1970: 1_000)
+        model.appClock = { now }
+        bridge.receive(request(7, "ui/open-link", ["url": "https://acme.example/a"]))
+        XCTAssertNotNil(posted.last()?["result"])
+        now += 0.5
+        bridge.receive(request(8, "ui/open-link", ["url": "https://acme.example/b"]))
+        XCTAssertEqual(posted.last()?["error"]?["message"], .string("Slow down"))
+        XCTAssertEqual(model.current[1]?.location, "https://acme.example/a")
+        now += 1
+        bridge.receive(request(9, "ui/open-link", ["url": "https://acme.example/b"]))
+        XCTAssertNotNil(posted.last()?["result"])
+        XCTAssertEqual(model.current[1]?.location, "https://acme.example/b")
+    }
+
+    func testSizeChangedUnchangedPublishesNothing() {
+        let model = model()
+        card(model, "toolu_01")
+        let (bridge, _) = bridge(model, "toolu_01")
+        bridge.receive(json(["jsonrpc": "2.0", "method": "ui/notifications/size-changed", "params": ["width": 700, "height": 300]]))
+        var changes = 0
+        let watch = model.objectWillChange.sink { changes += 1 }
+        bridge.receive(json(["jsonrpc": "2.0", "method": "ui/notifications/size-changed", "params": ["width": 700, "height": 300]]))
+        XCTAssertEqual(changes, 0)
+        watch.cancel()
     }
 
     // MARK: - three live cards, frozen cards, Reload
