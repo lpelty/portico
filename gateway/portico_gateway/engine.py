@@ -235,7 +235,24 @@ class Engine(Protocol):
     # deployment's default), set before ``start``; ``set_model`` changes it.
     model: str | None
 
-    async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str: ...
+    # v0.18: whether this engine can show MCP Apps (its CLI reported
+    # ``mcp_call_result_not_for_model_v1``), set by ``start``.
+    apps_capable: bool
+
+    async def start(
+        self,
+        folder: Path,
+        resume: str | None,
+        setting_sources: list[str],
+        callbacks: EngineCallbacks,
+        *,
+        extra_servers: dict[str, dict] | None = None,
+        plugin_paths: list[str] | None = None,
+    ) -> str:
+        """Connect in ``folder``. v0.18: ``extra_servers`` (the person's MCP servers,
+        ``mcp_inventory.servers_for_engine``) go in beside ``portico``; ``plugin_paths``
+        are local plugin directories to load."""
+        ...
 
     async def send(self, text: str) -> None: ...
 
@@ -273,6 +290,24 @@ class Engine(Protocol):
 
     async def context_usage(self) -> tuple[float, str | None] | None:
         """How full the context window is, as ``(percent 0-100, model)``; ``None`` when unavailable."""
+        ...
+
+    # v0.18 (ruling 29): the MCP seam. Each raises before ``start``.
+
+    async def mcp_status(self) -> list[dict[str, Any]]:
+        """The live servers, the ``mcpServers`` list of the CLI's MCP status."""
+        ...
+
+    async def mcp_toggle(self, name: str, enabled: bool) -> None: ...
+
+    async def mcp_reconnect(self, name: str) -> None: ...
+
+    async def mcp_app_read(self, server: str, uri: str) -> dict[str, Any]:
+        """``mcp_read_resource``: the reply carries ``contents``."""
+        ...
+
+    async def mcp_app_call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """``mcp_call`` with ``result_not_for_model``: the server's result, kept from the model."""
         ...
 
 
@@ -799,6 +834,8 @@ def build_options(
     permission_mode: PermissionMode = "default",
     system_prompt: Any = None,
     model: str | None = None,
+    extra_servers: Mapping[str, dict] | None = None,
+    plugin_paths: list[str] | None = None,
 ) -> ClaudeAgentOptions:
     """The SDK options for one chat. Never sets ``verbatim_prompts``.
 
@@ -824,6 +861,12 @@ def build_options(
 
     ``model`` (v0.15) is the stored ``model.set`` choice, passed only when
     set; without it the engine starts on the deployment's default.
+
+    v0.18 (§3.2): ``extra_servers`` are the person's own MCP servers, passed
+    in ``mcp_servers`` after ``portico`` (with or without Portico's tools; a
+    ``portico`` key among them is ignored), and ``plugin_paths`` local plugin
+    directories, passed as ``plugins``. ``setting_sources`` is never changed
+    for them.
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
     post_tool_use: list[Any] = []
@@ -863,6 +906,11 @@ def build_options(
             "allowed_tools": allowed,
             **({} if prompt is None else {"system_prompt": prompt}),
         }
+    servers = {name: dict(cfg) for name, cfg in (extra_servers or {}).items() if name != SHOW_SERVER}
+    if servers:
+        extra["mcp_servers"] = {**extra.get("mcp_servers", {}), **servers}
+    if plugin_paths:
+        extra["plugins"] = [{"type": "local", "path": p} for p in plugin_paths]
     if model is not None:
         extra["model"] = model
     return ClaudeAgentOptions(
@@ -1044,6 +1092,16 @@ class _ProbeCallbacks:
         return None
 
 
+# v0.18 (ruling 21): the CLI capability that says MCP Apps can work.
+APPS_CAPABILITY = "mcp_call_result_not_for_model_v1"
+
+
+def apps_capable(info: Any) -> bool:
+    """Whether ``get_server_info()``'s ``capabilities`` list ``APPS_CAPABILITY``."""
+    caps = info.get("capabilities") if isinstance(info, Mapping) else None
+    return isinstance(caps, list) and APPS_CAPABILITY in caps
+
+
 class SDKEngine:
     """``Engine`` on ``ClaudeSDKClient``.
 
@@ -1095,21 +1153,41 @@ class SDKEngine:
         self._models: list[ModelChoice] | None = None
         # v0.10: this engine's subagents and workflows.
         self.agents = AgentTracker()
+        # v0.18: set by ``start`` from the CLI's capabilities.
+        self.apps_capable = False
 
-    async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
+    async def start(
+        self,
+        folder: Path,
+        resume: str | None,
+        setting_sources: list[str],
+        callbacks: EngineCallbacks,
+        *,
+        extra_servers: dict[str, dict] | None = None,
+        plugin_paths: list[str] | None = None,
+    ) -> str:
         if self._client is not None:
             raise RuntimeError("engine already started")
         self._callbacks = callbacks
         self.session_id = resume
         self._client = ClaudeSDKClient(
             build_options(
-                folder, resume, setting_sources, callbacks, self.permission_mode, self.system_prompt, model=self.model
+                folder,
+                resume,
+                setting_sources,
+                callbacks,
+                self.permission_mode,
+                self.system_prompt,
+                model=self.model,
+                extra_servers=extra_servers,
+                plugin_paths=plugin_paths,
             )
         )
         await self._client.connect()
         info = await self._client.get_server_info()
         self._note_commands_from_server_info(info)
         self._note_models_from_server_info(info)
+        self.apps_capable = apps_capable(info)
         self._pump = asyncio.create_task(self._run_pump(), name=f"portico-engine-{self.chat}")
         try:
             await asyncio.wait_for(self._init_seen.wait(), self.init_timeout)
@@ -1268,6 +1346,42 @@ class SDKEngine:
             return None
         model = usage.get("model")
         return float(percent), model if isinstance(model, str) and model else None
+
+    # --- v0.18: the MCP seam (ruling 29) -------------------------------------------
+    # Status, toggle and reconnect use the SDK's public calls. Reading an app's
+    # HTML and calling a tool for an app have no public call in SDK 0.2.174
+    # (pinned): they go through the private ``Query._send_control_request``,
+    # here only (``tests/test_sdk_seam.py`` fails if it goes away).
+
+    def _connected(self) -> ClaudeSDKClient:
+        if self._client is None:
+            raise RuntimeError("engine not started")
+        return self._client
+
+    async def mcp_status(self) -> list[dict[str, Any]]:
+        status = await self._connected().get_mcp_status()
+        servers = status.get("mcpServers") if isinstance(status, Mapping) else None
+        return [dict(s) for s in servers if isinstance(s, Mapping)] if isinstance(servers, list) else []
+
+    async def mcp_toggle(self, name: str, enabled: bool) -> None:
+        await self._connected().toggle_mcp_server(name, enabled)
+
+    async def mcp_reconnect(self, name: str) -> None:
+        await self._connected().reconnect_mcp_server(name)
+
+    async def _control(self, request: dict[str, Any]) -> dict[str, Any]:
+        query = getattr(self._connected(), "_query", None)
+        if query is None:
+            raise RuntimeError("engine not connected")
+        return await query._send_control_request(request)
+
+    async def mcp_app_read(self, server: str, uri: str) -> dict[str, Any]:
+        return await self._control({"subtype": "mcp_read_resource", "serverName": server, "uri": uri})
+
+    async def mcp_app_call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await self._control(
+            {"subtype": "mcp_call", "tool": tool, "arguments": dict(arguments), "result_not_for_model": True}
+        )
 
     async def close(self) -> None:
         self._closing = True

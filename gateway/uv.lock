@@ -388,7 +388,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "claude-agent-sdk", specifier = ">=0.2.174" },
+    { name = "claude-agent-sdk", specifier = "==0.2.174" },
     { name = "pydantic", specifier = ">=2" },
     { name = "websockets", specifier = ">=17" },
 ]

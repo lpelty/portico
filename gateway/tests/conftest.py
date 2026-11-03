@@ -21,8 +21,10 @@ from claude_agent_sdk import ResultMessage
 
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
+from portico_gateway import server as server_mod
 from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
 from portico_gateway.messages import Action, AgentCommand, Brand, ModelChoice, Root, ServerMessage, TurnFinished, TurnStarted
+from portico_gateway.mcp_inventory import CliResult, invalidate_plugin_cache
 from portico_gateway.state import StateDir
 
 # --- script items -------------------------------------------------------------
@@ -190,6 +192,22 @@ class FakeEngine:
         # The last turn a result closed: an ``opens_turn`` message after it
         # begins a turn nobody sent, as in the real adapter.
         self.finished_turn = 0
+        # v0.18: what ``start`` was given of the person's MCP servers and plugins.
+        self.started_servers: dict[str, dict] = {}
+        self.started_plugins: list[str] = []
+        # v0.18 (ruling 29): the MCP seam, scripted. ``mcp_status_value`` is what
+        # ``mcp_status`` answers; ``toggles`` and ``reconnects`` record calls;
+        # ``app_reads`` answers ``mcp_app_read`` by ``(server, uri)`` (an exception
+        # value is raised; a missing key raises ``KeyError``); ``app_calls``
+        # records ``mcp_app_call`` and ``app_call_result`` is its answer (an
+        # exception value is raised). ``apps_capable`` is set by the test.
+        self.apps_capable = False
+        self.mcp_status_value: list[dict[str, Any]] = []
+        self.toggles: list[tuple[str, bool]] = []
+        self.reconnects: list[str] = []
+        self.app_reads: dict[tuple[str, str], dict[str, Any] | Exception] = {}
+        self.app_calls: list[tuple[str, dict[str, Any]]] = []
+        self.app_call_result: dict[str, Any] | Exception = {"content": []}
 
     def script(self, *items: Any) -> None:
         self.scripts.append(list(items))
@@ -213,8 +231,19 @@ class FakeEngine:
         self.model_switches.append(value)
         self.model = value
 
-    async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
+    async def start(
+        self,
+        folder: Path,
+        resume: str | None,
+        setting_sources: list[str],
+        callbacks: EngineCallbacks,
+        *,
+        extra_servers: dict[str, dict] | None = None,
+        plugin_paths: list[str] | None = None,
+    ) -> str:
         self.calls.append(("start", (folder, resume, list(setting_sources))))
+        self.started_servers = dict(extra_servers or {})
+        self.started_plugins = list(plugin_paths or [])
         self.started_mode = self.permission_mode
         self.started_model = self.model
         self.callbacks = callbacks
@@ -284,6 +313,36 @@ class FakeEngine:
             raise self.context_error
         return self.context
 
+    def _require_started(self) -> None:
+        if not self.started or self.closed:
+            raise RuntimeError("engine not started")
+
+    async def mcp_status(self) -> list[dict[str, Any]]:
+        self._require_started()
+        return [dict(s) for s in self.mcp_status_value]
+
+    async def mcp_toggle(self, name: str, enabled: bool) -> None:
+        self._require_started()
+        self.toggles.append((name, enabled))
+
+    async def mcp_reconnect(self, name: str) -> None:
+        self._require_started()
+        self.reconnects.append(name)
+
+    async def mcp_app_read(self, server: str, uri: str) -> dict[str, Any]:
+        self._require_started()
+        reply = self.app_reads[(server, uri)]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    async def mcp_app_call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._require_started()
+        self.app_calls.append((tool, dict(arguments)))
+        if isinstance(self.app_call_result, Exception):
+            raise self.app_call_result
+        return self.app_call_result
+
     async def interrupt(self) -> None:
         self.calls.append(("interrupt", None))
         self._interrupted.set()
@@ -342,6 +401,32 @@ def config() -> Config:
 @pytest.fixture
 def fake_engine() -> FakeEngine:
     return FakeEngine()
+
+
+class FakeCli:
+    """``CliRunner`` (v0.18) that never runs the real ``claude``: every command answers ``result``; ``calls`` records them."""
+
+    def __init__(self, result: CliResult | None = None) -> None:
+        self.result = result or CliResult(code=0, stdout="[]", stderr="")
+        self.calls: list[tuple[list[str], Path, float, str | None]] = []
+
+    async def run(self, args: list[str], *, cwd: Path, timeout: float, stdin_text: str | None = None) -> CliResult:
+        self.calls.append((list(args), Path(cwd), timeout, stdin_text))
+        return self.result
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """v0.18: no test reads the person's ``~/.claude.json`` or runs the real ``claude`` CLI.
+
+    ``CLAUDE_CONFIG_DIR`` points at an empty throwaway folder (live runs,
+    ``PORTICO_LIVE=1``, keep the real one: their engine needs it), the
+    server's default CLI runner is ``FakeCli``, and the plugin cache starts empty.
+    """
+    if os.environ.get("PORTICO_LIVE") != "1":
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-config")))
+    monkeypatch.setattr(server_mod, "SubprocessCli", FakeCli)
+    invalidate_plugin_cache()
 
 
 @pytest.fixture(autouse=True)

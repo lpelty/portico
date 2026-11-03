@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from claude_agent_sdk import AssistantMessage, StreamEvent, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
@@ -784,11 +785,13 @@ class GatedEngine(FakeEngine):
         self.gate = gate
         self.fail = fail
 
-    async def start(self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks) -> str:
+    async def start(
+        self, folder: Path, resume: str | None, setting_sources: list[str], callbacks: EngineCallbacks, **mcp: Any
+    ) -> str:
         await self.gate.wait()
         if self.fail is not None:
             raise self.fail
-        return await super().start(folder, resume, setting_sources, callbacks)
+        return await super().start(folder, resume, setting_sources, callbacks, **mcp)
 
 
 class GatedFactory(EngineFactory):

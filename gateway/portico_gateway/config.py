@@ -317,6 +317,19 @@ class ThreadsConfig(BaseModel):
     max: int = Field(2, ge=0, le=2)
 
 
+class McpConfig(BaseModel):
+    """``[mcp]`` (v0.18): MCP servers.
+
+    ``core`` names servers in the agent folder's ``.mcp.json`` that are part of
+    the deployment itself; Settings lists them as built in, beside Portico's
+    own server, instead of as shipped servers a person may turn off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    core: list[str] = []
+
+
 def with_default_spaces(config: Config, state_path: Path) -> Config:
     """v0.14: with no ``[spaces] folder``, the spaces folder is ``<state dir>/spaces``, created if missing.
 
@@ -410,6 +423,8 @@ class Config(BaseModel):
     spaces: SpacesConfig = SpacesConfig()
     # v0.16: threads beside Main (``[threads] max``).
     threads: ThreadsConfig = ThreadsConfig()
+    # v0.18: MCP servers (``[mcp] core``).
+    mcp: McpConfig = McpConfig()
 
     @field_validator("title_model")
     @classmethod

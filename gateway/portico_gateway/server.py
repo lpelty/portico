@@ -181,6 +181,7 @@ from .engine import (
     read_history,
 )
 from .lifecycle import CommandFailed, run_lifecycle_command
+from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
 from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
@@ -853,10 +854,14 @@ class GatewayServer:
         plugins: Plugins | None = None,
         config_path: Path | None = None,
         titler: Titler | None = None,
+        cli: CliRunner | None = None,
     ) -> None:
         # v0.14: no [spaces] folder means <state dir>/spaces (created here), treated like a configured one.
         config = with_default_spaces(config, state.path)
         self.config = config
+        # v0.18: runs the bundled ``claude`` CLI for the person's plugins and MCP servers
+        # (``mcp_inventory``); tests pass a fake.
+        self.cli: CliRunner = cli if cli is not None else SubprocessCli()
         # The file the config came from and its modification time at start:
         # a newer file means the running gateway is not using it (v0.3).
         self.config_path = Path(config_path) if config_path is not None else None
@@ -1593,7 +1598,11 @@ class GatewayServer:
         engine.system_prompt = prompt
         # v0.15: every engine starts on the stored model.set choice (``None``: the deployment's default).
         engine.model = self.registry.model
-        session = await engine.start(chat.folder, chat.session_id, list(self.config.setting_sources), callbacks)
+        sources = list(self.config.setting_sources)
+        extra_servers, plugin_paths = await self._person_mcp(chat, sources)
+        session = await engine.start(
+            chat.folder, chat.session_id, sources, callbacks, extra_servers=extra_servers, plugin_paths=plugin_paths
+        )
         chat.engine = engine
         if session:
             chat.session_id = session
@@ -1601,6 +1610,26 @@ class GatewayServer:
         await self._report_commands(chat, engine)
         await self._report_models(chat, engine)
         return engine
+
+    async def _person_mcp(self, chat: Chat, sources: list[str]) -> tuple[dict[str, dict], list[str]]:
+        """v0.18 §3.2: the person's MCP servers and plugins for ``chat``'s engine (rulings 2 and 3).
+
+        Never breaks a start: a failure is logged and the engine starts without them.
+        Only server names are ever logged, never their configs.
+        """
+        try:
+            servers = servers_for_engine(chat.folder, sources, list(self.config.mcp.core))
+        except Exception as e:
+            log.warning("chat %d: could not read the person's MCP servers: %s", chat.number, type(e).__name__)
+            servers = {}
+        try:
+            paths = await plugin_paths_for_engine(self.cli, chat.folder, sources)
+        except Exception as e:
+            log.warning("chat %d: could not read the person's plugins: %s", chat.number, type(e).__name__)
+            paths = []
+        if servers or paths:
+            log.info("chat %d: bringing in servers %s and %d plugins", chat.number, sorted(servers), len(paths))
+        return servers, paths
 
     async def _report_commands(self, chat: Chat, engine: Engine) -> None:
         """After an engine starts: its commands as ``chat.commands``, kept for the folder (v0.11 item 66).
