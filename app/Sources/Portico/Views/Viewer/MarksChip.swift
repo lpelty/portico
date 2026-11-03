@@ -25,7 +25,7 @@ struct MarksChip: View {
         }
         .buttonStyle(.hover)
         .fixedSize()
-        .help("Marks: open the list")
+        .tip("Marks: open the list")
         .accessibilityLabel(Self.spokenLabel(count: list.count, pages: Set(list.map(\.page)).count))
         .popover(isPresented: $open, arrowEdge: .bottom) {
             MarksList(chat: chat, store: store, agent: agent, accent: accent, onDone: { open = false })
@@ -177,7 +177,7 @@ struct MarksList: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(mark.label)
+        .tip(mark.label)
         .accessibilityLabel(Self.spokenLabel(for: mark))
     }
 }

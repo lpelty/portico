@@ -52,7 +52,7 @@ struct SidebarFooter: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.hover)
-                .help("Settings")
+                .tip("Settings")
                 .accessibilityLabel("Settings")
             }
             .padding(.horizontal, 16)

@@ -181,7 +181,7 @@ struct SlashCommandList: View {
         .background(selected ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .contentShape(Rectangle())
         .hoverHighlight(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .help(item.description.isEmpty ? "/\(item.name)" : "/\(item.name) — \(item.description)")
+        .tip(item.description.isEmpty ? "/\(item.name)" : "/\(item.name) — \(item.description)")
     }
 }
 

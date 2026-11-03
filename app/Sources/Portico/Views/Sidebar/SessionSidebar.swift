@@ -105,7 +105,7 @@ struct EarlierRow: View {
         .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))))
         .background(selected ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .focusEffectDisabled()
-        .help(summary.logged == true ? "Logged" : summary.logged == false ? "Not logged" : "")
+        .tip(summary.logged == true ? "Logged" : summary.logged == false ? "Not logged" : "")
     }
 
     @ViewBuilder
@@ -182,7 +182,7 @@ struct SessionCard: View {
             .onTapGesture { if opensLive { model.openLiveSession(chat) } }
             .onHover { hovering = $0 }
             .pointerStyle(opensLive && hovering ? .link : nil)
-            .help(cardHelp)
+            .tip(cardHelp)
             .modifier(OpensLiveAccessibility(label: opensLive ? cardHelp : nil) { model.openLiveSession(chat) })
     }
 
@@ -417,7 +417,7 @@ struct SessionCard: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PillButtonStyle(kind: .quiet, compact: keepsWidth))
-        .help("End this session and start the next")
+        .tip("End this session and start the next")
     }
 
     /// Log session: shown even when it cannot log (disabled, the hint
@@ -440,7 +440,7 @@ struct SessionCard: View {
         }
         .buttonStyle(PillButtonStyle(kind: canLogSession ? .primary(model.brand.accent ?? Theme.accent) : .quiet, compact: listed))
         .disabled(!canLogSession)
-        .help(model.logSessionOffReason(chat: chat)
+        .tip(model.logSessionOffReason(chat: chat)
             ?? "Save what this session did, so the next one can pick up where it left off. The session goes on.")
     }
 
@@ -481,7 +481,7 @@ struct SessionCard: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
-        .help("Close this thread; its summary goes to History")
+        .tip("Close this thread; its summary goes to History")
         .disabled(closing)
     }
 
@@ -558,7 +558,7 @@ struct CompactTime: View {
                 .foregroundStyle(Theme.faintText(inPopover: inPopover))
                 .lineLimit(1)
                 .fixedSize()
-                .help(SessionTime.tooltip(date))
+                .tip(SessionTime.tooltip(date))
         }
     }
 }

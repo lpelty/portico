@@ -422,7 +422,7 @@ struct McpServersTab: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("More for \(row.title)")
+                .tip("More for \(row.title)")
             }
         }
     }

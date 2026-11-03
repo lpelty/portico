@@ -164,7 +164,7 @@ struct ArtifactMenu: View {
                         Image(systemName: origin.systemImage)
                             .font(Theme.iconFont(9))
                             .foregroundStyle(Theme.text2)
-                            .help(origin.accessibilityLabel)
+                            .tip(origin.accessibilityLabel)
                             .accessibilityLabel(origin.accessibilityLabel)
                     }
                     Text(shown.kindLabel)
@@ -184,7 +184,7 @@ struct ArtifactMenu: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(shown.subtitle)
+        .tip(shown.subtitle)
         .contextMenu {
             Button("Open externally") { shown.openExternally() }
         }

@@ -88,7 +88,7 @@ struct FormCard: View {
                 .buttonStyle(.borderedProminent)
                 .pointerStyle(.link)
                 .disabled(!draft.isComplete)
-                .help(draft.isComplete ? "Send the form" : "Fill in every field first")
+                .tip(draft.isComplete ? "Send the form" : "Fill in every field first")
             }
         }
     }

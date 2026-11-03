@@ -46,7 +46,7 @@ struct MicButton: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(HoverButtonStyle(shape: AnyShape(RoundedRectangle(cornerRadius: corner ?? 5, style: .continuous))))
-            .help(active ? Dictation.listeningLine : "Talk: your words become text on this Mac")
+            .tip(active ? Dictation.listeningLine : "Talk: your words become text on this Mac")
             .accessibilityLabel(active ? "Stop listening" : "Talk")
             .onAppear { dictation.shown(shown) }
             .onDisappear { dictation.hidden(composer.id, instance: instance) }
@@ -121,6 +121,6 @@ struct ReadAloudButton: View {
             .padding(.vertical, 3)
         }
         .buttonStyle(.hover)
-        .help(reading ? "Stop reading (Esc)" : "Read this reply aloud; code and tables are not read")
+        .tip(reading ? "Stop reading (Esc)" : "Read this reply aloud; code and tables are not read")
     }
 }

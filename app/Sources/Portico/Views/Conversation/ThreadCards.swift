@@ -71,7 +71,7 @@ private struct FileChips: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Theme.surface, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .help(path)
+                    .tip(path)
                 }
             }
         }
@@ -129,7 +129,7 @@ struct ProposalCard: View {
                 if let label = shown.goLabel, let slot = shown.goSlot {
                     Button(label) { model.switchToConversation(slot: slot) }
                         .buttonStyle(PillButtonStyle(kind: .quiet))
-                        .help(shown.goHelp ?? "")
+                        .tip(shown.goHelp ?? "")
                 }
             case .notStarted:
                 brief(shown, quiet: true)
@@ -288,7 +288,7 @@ struct CallingCardView: View {
             HStack(spacing: 8) {
                 Button(card.goLabel) { model.switchToConversation(slot: card.slot) }
                     .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                    .help(card.goHelp)
+                    .tip(card.goHelp)
                 Button("Later") { model.dismissCalling(card) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
             }
@@ -325,12 +325,12 @@ struct DoneCardView: View {
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .help(line)
+                    .tip(line)
             }
             HStack(spacing: 8) {
                 Button(card.goLabel) { model.switchToConversation(slot: card.slot) }
                     .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                    .help(card.goHelp)
+                    .tip(card.goHelp)
                 Button("Dismiss") { model.dismissDone(card) }
                     .buttonStyle(PillButtonStyle(kind: .quiet))
             }

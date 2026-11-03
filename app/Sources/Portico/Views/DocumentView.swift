@@ -68,7 +68,7 @@ struct DocumentView: View {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.hover)
                         .foregroundStyle(Theme.text3)
-                        .help("Clear the search")
+                        .tip("Clear the search")
                 }
                 Text("⌘⇧F")
                     .scaledFont(11)
@@ -85,7 +85,7 @@ struct DocumentView: View {
                 Label("Conversation", systemImage: "bubble.left")
             }
             .buttonStyle(PillButtonStyle(kind: .quiet))
-            .help("Back to the conversation (⌘⇧F)")
+            .tip("Back to the conversation (⌘⇧F)")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -148,7 +148,7 @@ struct DocumentView: View {
         }
         .contentShape(Rectangle())
         .hoverHighlight()
-        .help(path)
+        .tip(path)
         .onTapGesture { model.reveal(file: path, in: chat) }
     }
 
@@ -215,7 +215,7 @@ struct DocumentHeader: View {
                     .lineLimit(1)
                     .truncationMode(.head)
             }
-            .help(path)
+            .tip(path)
             Spacer(minLength: 8)
             Button {
                 model.toggleBookmark(path)
@@ -229,7 +229,7 @@ struct DocumentHeader: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.hover)
-            .help(bookmarked ? "Remove bookmark" : "Bookmark")
+            .tip(bookmarked ? "Remove bookmark" : "Bookmark")
             if Obsidian.opens(path: path) {
                 Button {
                     Obsidian.open(path: path)
@@ -238,7 +238,7 @@ struct DocumentHeader: View {
                 }
                 .buttonStyle(PillButtonStyle(kind: .quiet))
                 .disabled(!obsidian)
-                .help(obsidian ? "Open this note in Obsidian" : Obsidian.notInstalledHelp)
+                .tip(obsidian ? "Open this note in Obsidian" : Obsidian.notInstalledHelp)
             }
         }
         .padding(.horizontal, 20)

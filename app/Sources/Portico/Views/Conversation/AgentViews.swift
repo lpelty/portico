@@ -107,7 +107,7 @@ struct AgentTray: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show the agents")
+        .tip("Show the agents")
         .accessibilityLabel("\(counts). Show the agents")
     }
 
@@ -132,7 +132,7 @@ struct AgentTray: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Fold the agents to one line")
+            .tip("Fold the agents to one line")
             Rectangle().fill(Theme.border).frame(height: 1)
             ScrollView {
                 VStack(spacing: 2) {
@@ -256,7 +256,7 @@ struct AgentRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show this agent's steps")
+        .tip("Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
                 .popoverSurface()
@@ -403,7 +403,7 @@ struct WorkflowBox: View {
                     }
                     .onEnded { _ in dragStart = nil }
             )
-            .help("Drag to resize")
+            .tip("Drag to resize")
     }
 
     private func header(now: Date) -> some View {
@@ -442,7 +442,7 @@ struct WorkflowBox: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(collapsed ? "Show the workflow" : "Fold the workflow to one line")
+            .tip(collapsed ? "Show the workflow" : "Fold the workflow to one line")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, collapsed ? 9 : 6)
@@ -640,7 +640,7 @@ struct PhaseAgentRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show this agent's steps")
+        .tip("Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
                 .popoverSurface()

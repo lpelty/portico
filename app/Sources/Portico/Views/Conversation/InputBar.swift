@@ -124,7 +124,7 @@ struct InputBar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.hoverBox)
-                .help("Attach files to the next message")
+                .tip("Attach files to the next message")
                 .disabled(!connected)
                 if let mode = model.mode(of: chat) {
                     ModeChip(
@@ -148,7 +148,7 @@ struct InputBar: View {
                     }
                     .buttonStyle(PillButtonStyle(kind: typing ? .quiet : .primary(model.brand.accent ?? Theme.accent)))
                     .keyboardShortcut(".", modifiers: .command)
-                    .help("Stop the running turn (⌘.)")
+                    .tip("Stop the running turn (⌘.)")
                     .disabled(!connected)
                     if typing {
                         sendButton
@@ -181,7 +181,7 @@ struct InputBar: View {
         }
         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
         .keyboardShortcut(.return, modifiers: .command)
-        .help(
+        .tip(
             model.dockedQuestion(for: chat) != nil
                 ? "Reply instead of answering the question (Enter)"
                 : busy ? "Send at \(model.hello?.brand.agentName ?? model.brand.name)'s next step (Enter)" : "Send (Enter)")
@@ -280,14 +280,14 @@ struct InputBar: View {
                         }
                         .buttonStyle(.hover)
                         .foregroundStyle(.secondary)
-                        .help("Remove \(path)")
+                        .tip("Remove \(path)")
                     }
                     .scaledFont(12)
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Theme.surface, in: Capsule())
-                    .help(path)
+                    .tip(path)
                 }
             }
         }
@@ -319,7 +319,7 @@ struct InputBar: View {
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.hoverCapsule)
-                    .help(action.text)
+                    .tip(action.text)
                     .disabled(!connected || busy || sending || renewing || logging)
                 }
             }

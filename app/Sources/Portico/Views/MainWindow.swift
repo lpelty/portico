@@ -340,7 +340,7 @@ struct PanelToggle: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(help)
     }
 }

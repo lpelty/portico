@@ -140,6 +140,6 @@ struct CardInlineView: View {
         .padding(10)
         .background(shown.tint.opacity(status == .open ? 0.08 : 0.05), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(shown.tint.opacity(0.4)))
-        .help(shown.label ?? "Waiting for your answer in the card above the input")
+        .tip(shown.label ?? "Waiting for your answer in the card above the input")
     }
 }

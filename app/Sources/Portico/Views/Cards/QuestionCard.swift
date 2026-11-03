@@ -403,7 +403,7 @@ struct QuestionCard: View {
             }
         }
         .pointerStyle(.link)
-        .help(multi ? (ticked ? "Untick \(option.label)" : "Tick \(option.label)") : "Answer \(option.label)")
+        .tip(multi ? (ticked ? "Untick \(option.label)" : "Tick \(option.label)") : "Answer \(option.label)", keepsOwnHint: true)
         .accessibilityLabel(multi ? "\(option.label), \(ticked ? "ticked" : "not ticked")" : "\(index + 1). \(option.label)")
         .accessibilityHint(option.description)
     }
@@ -446,15 +446,15 @@ struct QuestionCard: View {
                 .foregroundStyle(Theme.text)
                 .focused($fieldFocused)
                 .onSubmit { finish(draft.submitOther(for: page)) }
-                .help(multi ? "An answer of your own, with the ticked ones (Return)" : "An answer of your own (Return)")
+                .tip(multi ? "An answer of your own, with the ticked ones (Return)" : "An answer of your own (Return)")
             Button("Skip") { finish(draft.skip(page)) }
                 .buttonStyle(PillButtonStyle(kind: .quiet))
-                .help("Leave this question unanswered")
+                .tip("Leave this question unanswered")
             if multi {
                 Button(draft.advanceLabel) { finish(draft.next()) }
                     .buttonStyle(PillButtonStyle(kind: .primary(accent)))
                     .disabled(draft.labels(for: page).isEmpty)
-                    .help(draft.labels(for: page).isEmpty ? "Tick an option first" : "Answer with the ticked options")
+                    .tip(draft.labels(for: page).isEmpty ? "Tick an option first" : "Answer with the ticked options")
             }
         }
         .padding(.horizontal, 10)
@@ -480,7 +480,7 @@ struct QuestionCard: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.hoverBox)
-            .help("Open the preview larger")
+            .tip("Open the preview larger")
             .padding(6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

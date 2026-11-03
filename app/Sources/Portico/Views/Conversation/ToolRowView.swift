@@ -164,7 +164,7 @@ struct ToolRowView: View {
                         .scaledFont(13, weight: .medium)
                         .foregroundStyle(Theme.text2)
                         .lineLimit(1)
-                        .help(row.tool)
+                        .tip(row.tool)
                     if let summary = shown.summaryText {
                         Text(Self.display(summary, in: folder))
                             .scaledFont(13)
@@ -186,7 +186,7 @@ struct ToolRowView: View {
                             .foregroundStyle(outcomeColor)
                             .lineLimit(1)
                             .fixedSize()
-                            .help(row.unanswered ?? outcome)
+                            .tip(row.unanswered ?? outcome)
                     }
                     Image(systemName: "chevron.right")
                         .font(Theme.iconFont(11, weight: .semibold))
@@ -219,7 +219,7 @@ struct ToolRowView: View {
         .background(hovering || expanded ? Theme.panel : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { hovering = $0 }
-        .help(shown.stateText)
+        .tip(shown.stateText)
     }
 
     @ViewBuilder

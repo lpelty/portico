@@ -712,7 +712,7 @@ struct EndedSessionBar: View {
                     .fixedSize()
                 }
                 .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
-                .help("Go back to Session \(live)")
+                .tip("Go back to Session \(live)")
             }
         }
         .padding(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 10))

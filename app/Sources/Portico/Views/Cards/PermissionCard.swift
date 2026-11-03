@@ -285,7 +285,7 @@ struct PermissionCard: View {
             }
         }
         .pointerStyle(.link)
-        .help(help(for: choice))
+        .tip(help(for: choice))
         .accessibilityLabel("\(index + 1). \(choice.label)")
     }
 
@@ -311,11 +311,11 @@ struct PermissionCard: View {
                 .foregroundStyle(Theme.text)
                 .focused($fieldFocused)
                 .onSubmit { if let answer = draft.submitReason() { onAnswer(answer) } }
-                .help("Deny, and tell \(agentName) why or what to do instead (Return). \(PermissionPresentation.noteHint(agentName: agentName))")
+                .tip("Deny, and tell \(agentName) why or what to do instead (Return). \(PermissionPresentation.noteHint(agentName: agentName))")
             Button("Deny") { if let answer = draft.submitReason() { onAnswer(answer) } }
                 .buttonStyle(PillButtonStyle(kind: .primary(Theme.deny)))
                 .disabled(draft.submitReason() == nil)
-                .help("Refuse; what you typed goes to \(agentName)")
+                .tip("Refuse; what you typed goes to \(agentName)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)

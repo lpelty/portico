@@ -426,7 +426,7 @@ struct PluginsTab: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help(row.moreHelp)
+                .tip(row.moreHelp)
             }
             .disabled(!row.controlsEnabled)
         }

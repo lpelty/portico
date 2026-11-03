@@ -56,7 +56,43 @@ final class SmallItemsV017Tests: XCTestCase {
             offenders += Self.unnamedIconButtons(in: text).map { "\(url.lastPathComponent):\($0)" }
         }
         XCTAssertGreaterThan(scanned, 20)
-        XCTAssertEqual(offenders, [], "icon-only Button with no .help: \(offenders)")
+        XCTAssertEqual(offenders, [], "icon-only Button with no .tip: \(offenders)")
+    }
+
+    // MARK: - v0.18 §4.2: no native tooltip left
+
+    func test_no_native_help_left() throws {
+        var offenders: [String] = []
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: ListFontSweepTests.sources, includingPropertiesForKeys: nil))
+        var scanned = 0
+        for case let url as URL in files where url.pathExtension == "swift" && url.lastPathComponent != "Tip.swift" {
+            scanned += 1
+            let text = ListFontSweepTests.withoutComments(try String(contentsOf: url, encoding: .utf8))
+            offenders += Self.nativeHelpLines(in: text).map { "\(url.lastPathComponent):\($0)" }
+        }
+        XCTAssertGreaterThan(scanned, 20)
+        XCTAssertEqual(offenders, [], "`.help(` outside Tip.swift; use `.tip(`: \(offenders)")
+    }
+
+    func test_the_native_help_checker() {
+        let source = """
+            Image(systemName: "x")
+                .help("Close")
+            Button("a") {}.help(text)
+            RowActionButton(help: Self.help(control))
+            ServiceRowView.help(.restart)
+            Button("b") {}.tip("Fine")
+            """
+        XCTAssertEqual(Self.nativeHelpLines(in: source), [2, 3])
+    }
+
+    /// The lines with a `.help(` modifier (not a `Type.help(...)` call).
+    static func nativeHelpLines(in text: String) -> [Int] {
+        let pattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])\.help\("#)
+        return pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { match in
+            let start = Range(match.range, in: text)!.lowerBound
+            return text[..<start].filter { $0 == "\n" }.count + 1
+        }
     }
 
     func test_the_checker_catches_an_unnamed_icon_button() {
@@ -69,9 +105,9 @@ final class SmallItemsV017Tests: XCTestCase {
                 Image(systemName: "gear")
             }
             .buttonStyle(.plain)
-            .help("Settings")
+            .tip("Settings")
             Button(action: go) { Image(systemName: "plus") }
-            Button(action: go) { Image(systemName: "plus") }.help("Add")
+            Button(action: go) { Image(systemName: "plus") }.tip("Add")
             Button("Title") { go() }
             Button { go() } label: {
                 HStack { Image(systemName: "x"); Text("Close") }
@@ -82,7 +118,7 @@ final class SmallItemsV017Tests: XCTestCase {
     }
 
     /// The line numbers of `Button`s whose label draws only an `Image` and
-    /// whose modifier chain has no `.help(`.
+    /// whose modifier chain has no `.tip(` (v0.18: Portico's own tooltip).
     static func unnamedIconButtons(in text: String) -> [Int] {
         let chars = Array(text)
         let pattern = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_.])Button\s*(\(|\{)"#)
@@ -106,7 +142,7 @@ final class SmallItemsV017Tests: XCTestCase {
                 label = Self.labelClosure(chars, after: &index)
             }
             guard let body = label, body.contains("Image("), !body.contains("Text("), !body.contains("Label(") else { continue }
-            if !Self.chainHasHelp(chars, after: index) {
+            if !Self.chainHasTip(chars, after: index) {
                 lines.append(chars[..<start].filter { $0 == "\n" }.count + 1)
             }
         }
@@ -137,8 +173,8 @@ final class SmallItemsV017Tests: XCTestCase {
         return String(chars[(next + 1)..<close])
     }
 
-    /// Whether `.help(` appears among the modifiers that follow `index`.
-    private static func chainHasHelp(_ chars: [Character], after start: Int) -> Bool {
+    /// Whether `.tip(` appears among the modifiers that follow `index`.
+    private static func chainHasTip(_ chars: [Character], after start: Int) -> Bool {
         var index = start
         while true {
             var next = index + 1
@@ -147,7 +183,7 @@ final class SmallItemsV017Tests: XCTestCase {
             var end = next + 1
             while end < chars.count, chars[end].isLetter || chars[end].isNumber || chars[end] == "_" { end += 1 }
             let name = String(chars[(next + 1)..<end])
-            if name == "help" { return true }
+            if name == "tip" { return true }
             if end < chars.count, chars[end] == "(" {
                 guard let close = ListFontSweepTests.closing(chars, from: end) else { return false }
                 index = close

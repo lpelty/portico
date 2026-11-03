@@ -38,9 +38,9 @@ struct QueuedMessages: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 SmallButton(symbol: "pencil", title: "Edit") { model.editQueued(chat: chat, id: item.id) }
-                    .help("Take it back into the message box to change it")
+                    .tip("Take it back into the message box to change it")
                 SmallButton(symbol: "xmark", title: "Cancel") { model.cancelQueued(chat: chat, id: item.id) }
-                    .help("Don't send it")
+                    .tip("Don't send it")
             }
             Text(item.text)
                 .scaledFont(13)

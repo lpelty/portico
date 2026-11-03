@@ -186,7 +186,7 @@ struct StartView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.hover)
-                .help(continuing == nil ? "Attach files to the first message" : "Attach files to the message")
+                .tip(continuing == nil ? "Attach files to the first message" : "Attach files to the message")
                 if let live = continuing {
                     // The continued session's own mode, changed on it.
                     if let mode = model.mode(of: live.chat) {
@@ -221,7 +221,7 @@ struct StartView: View {
                 }
                 .buttonStyle(.hover)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help(sendHelp)
+                .tip(sendHelp)
                 .disabled(!canSend)
             }
         }
@@ -305,11 +305,11 @@ struct StartView: View {
             .foregroundStyle(Theme.text3)
             HStack(spacing: 8) {
                 SmallBorderedButton(title: "View Session \(live.chat)") { model.open(chat: live.chat) }
-                    .help("Show Session \(live.chat)'s conversation")
+                    .tip("Show Session \(live.chat)'s conversation")
                 if model.canRenew(chat: live.chat) {
                     SmallBorderedButton(title: "Start a new session") { model.requestNew(chat: live.chat) }
                         .disabled(!connected || model.isSessionCommandPending(chat: live.chat))
-                        .help("End Session \(live.chat) and start the next")
+                        .tip("End Session \(live.chat) and start the next")
                 }
             }
         }
@@ -324,7 +324,7 @@ struct StartView: View {
                 .scaledFont(12)
         }
         .foregroundStyle(Theme.text3)
-        .help(model.startFolder?.path ?? "Settings › General › Folder")
+        .tip(model.startFolder?.path ?? "Settings › General › Folder")
     }
 
     private var chips: some View {
@@ -339,14 +339,14 @@ struct StartView: View {
                         }
                         .buttonStyle(.hover)
                         .foregroundStyle(Theme.text3)
-                        .help("Remove \(path)")
+                        .tip("Remove \(path)")
                     }
                     .scaledFont(12)
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Theme.surface, in: Capsule())
-                    .help(path)
+                    .tip(path)
                 }
             }
         }
@@ -379,7 +379,7 @@ struct StartView: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.hoverCapsule)
-                .help(action.text)
+                .tip(action.text)
                 .disabled(!canSuggest)
             }
         }

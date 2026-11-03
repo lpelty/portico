@@ -87,7 +87,7 @@ struct GeneralSettingsTab: View {
                 LabeledContent("Works in") {
                     HStack {
                         Text(model.startFolder?.lastPathComponent ?? "None chosen")
-                            .help(model.startFolder?.path ?? "")
+                            .tip(model.startFolder?.path ?? "")
                         Button("Choose…", action: chooseFolder)
                     }
                 }
@@ -272,7 +272,7 @@ struct TextScaleStepper: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(help)
     }
 }
