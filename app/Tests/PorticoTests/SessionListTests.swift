@@ -73,6 +73,24 @@ final class SessionListTests: XCTestCase {
         XCTAssertEqual(SessionFileOrigin.opened.systemImage, "eye")
     }
 
+    /// Fix round 1: the row leads with the file's type; made or opened is
+    /// a small mark after the title, in text2.
+    func test_a_row_leads_with_the_file_type_and_marks_its_origin_after_the_title() throws {
+        let text = ListFontSweepTests.withoutComments(try String(
+            contentsOf: ListFontSweepTests.sources.appendingPathComponent("Views/Viewer/SessionFileList.swift"), encoding: .utf8))
+        let start = try XCTUnwrap(text.range(of: "private func row(_ artifact: Artifact) -> some View {"))
+        let row = String(text[start.upperBound...])
+        let firstImage = try XCTUnwrap(row.range(of: "Image(systemName: "))
+        XCTAssertTrue(row[firstImage.upperBound...].hasPrefix("shown.systemImage)"), "the leading icon is the file type")
+        let title = try XCTUnwrap(row.range(of: "Text(shown.title)"))
+        let mark = try XCTUnwrap(row.range(of: "Image(systemName: origin.systemImage)"), "the origin mark")
+        XCTAssertLessThan(title.lowerBound, mark.lowerBound, "the mark follows the title")
+        let markLines = row[mark.upperBound...].prefix(400)
+        XCTAssertTrue(markLines.contains("Theme.text2"), String(markLines))
+        XCTAssertTrue(markLines.contains("origin.accessibilityLabel"), String(markLines))
+        XCTAssertTrue(markLines.contains(".help(origin.accessibilityLabel)"), String(markLines))
+    }
+
     // MARK: - the filter
 
     func test_the_filter_shows_past_twelve_files() {
@@ -231,6 +249,96 @@ final class SessionListTests: XCTestCase {
 
         _ = try await view.evaluateJavaScript("document.querySelector('details.fm summary').click(); true")
         try await poll("and unfolded again") { store.propertiesOpen == true }
+    }
+
+    /// Fix round 1: only Portico's own rendered Markdown page, in the main
+    /// frame, may move the fold.
+    func test_only_the_main_frame_of_a_rendered_markdown_page_moves_the_fold() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-gate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let markdown = dir.appendingPathComponent("note.md")
+        try "---\nstatus: draft\n---\n# Note\n".write(to: markdown, atomically: true, encoding: .utf8)
+        let html = dir.appendingPathComponent("page.html")
+        try "<h1>Page</h1>".write(to: html, atomically: true, encoding: .utf8)
+
+        let coordinator = WebPane.Coordinator()
+        var told: [Bool] = []
+        coordinator.onPropertiesToggle = { told.append($0) }
+        let page = try XCTUnwrap(coordinator.renderedURL(for: markdown))
+        let served = coordinator.handler.register(file: html)
+        coordinator.loadedForTesting = .markdown(markdown)
+
+        coordinator.propertiesToggled(["open": true], isMainFrame: false, frameURL: page)
+        coordinator.propertiesToggled(["open": true], isMainFrame: true, frameURL: URL(string: "https://acme.example/")!)
+        coordinator.propertiesToggled(["open": true], isMainFrame: true, frameURL: served)
+        XCTAssertEqual(told, [], "a frame, an outside site, a served HTML file")
+        coordinator.loadedForTesting = .html(html)
+        coordinator.propertiesToggled(["open": true], isMainFrame: true, frameURL: page)
+        XCTAssertEqual(told, [], "the pane is not showing Markdown")
+        coordinator.loadedForTesting = .markdown(markdown)
+        coordinator.propertiesToggled(["open": true], isMainFrame: true, frameURL: page)
+        XCTAssertEqual(told, [true])
+    }
+
+    /// Hosted: an HTML file's own script posting to the handler changes nothing.
+    func test_a_post_from_an_html_page_changes_nothing() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-gate-html-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let html = dir.appendingPathComponent("page.html")
+        try """
+            <!doctype html><h1>Page</h1><script>
+            window.webkit.messageHandlers.porticoProperties.postMessage({open: true});
+            document.title = 'posted';
+            </script>
+            """.write(to: html, atomically: true, encoding: .utf8)
+        let (defaults, _) = try suite()
+        let store = Settings(defaults: defaults)
+        let coordinator = WebPane.Coordinator()
+        coordinator.onPropertiesToggle = { store.propertiesOpen = $0 }
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.html(html), to: view)
+        try await poll("the page posted") { !view.isLoading && view.title == "posted" }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(store.propertiesOpen)
+    }
+
+    /// Hosted: a frame inside a Markdown page posting to the handler
+    /// changes nothing.
+    func test_a_post_from_a_frame_in_a_markdown_page_changes_nothing() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-gate-frame-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let markdown = dir.appendingPathComponent("note.md")
+        try "---\nstatus: draft\n---\n# Note\n\n<iframe src=\"frame.html\"></iframe>\n".write(to: markdown, atomically: true, encoding: .utf8)
+        try """
+            <!doctype html><p>Frame</p><script>
+            window.webkit.messageHandlers.porticoProperties.postMessage({open: false});
+            document.title = 'posted';
+            </script>
+            """.write(to: dir.appendingPathComponent("frame.html"), atomically: true, encoding: .utf8)
+        let (defaults, _) = try suite()
+        let store = Settings(defaults: defaults)
+        let coordinator = WebPane.Coordinator()
+        coordinator.propertiesOpen = true
+        coordinator.onPropertiesToggle = { store.propertiesOpen = $0 }
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        keepAlive = [view, coordinator]
+        coordinator.apply(.markdown(markdown), to: view)
+        try await poll("the page renders") { !view.isLoading && view.url?.scheme == RenderedPageHandler.scheme }
+        let framePosted = "(function(){var f=document.querySelector('iframe');return !!(f&&f.contentDocument&&f.contentDocument.title==='posted');})()"
+        for _ in 0..<250 {
+            if try await view.evaluateJavaScript(framePosted) as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let posted = try await view.evaluateJavaScript(framePosted) as? Bool
+        XCTAssertEqual(posted, true, "the frame loaded and posted")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(store.propertiesOpen)
     }
 
     // MARK: - the header's icons

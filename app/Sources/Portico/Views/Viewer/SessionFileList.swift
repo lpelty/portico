@@ -74,7 +74,8 @@ struct SessionFilesPresentation: Equatable {
 // MARK: - ArtifactMenu
 
 /// The viewer title's menu, "This session": the files the agent made and
-/// the ones the person opened, newest first, each marked which; a filter
+/// the ones the person opened, newest first, each led by its type's icon
+/// and marked made or opened after its title; a filter
 /// past 12. A pick shows it; every row can open externally.
 struct ArtifactMenu: View {
     let chat: Int
@@ -148,17 +149,24 @@ struct ArtifactMenu: View {
             onPick()
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: origin.systemImage)
+                Image(systemName: shown.systemImage)
                     .font(Theme.iconFont(12))
                     .foregroundStyle(Theme.text2)
                     .frame(width: 16)
-                    .accessibilityLabel(origin.accessibilityLabel)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(shown.title)
-                        .scaledFont(13)
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    HStack(spacing: 5) {
+                        Text(shown.title)
+                            .scaledFont(13)
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        // Made or opened: a small mark after the title.
+                        Image(systemName: origin.systemImage)
+                            .font(Theme.iconFont(9))
+                            .foregroundStyle(Theme.text2)
+                            .help(origin.accessibilityLabel)
+                            .accessibilityLabel(origin.accessibilityLabel)
+                    }
                     Text(shown.kindLabel)
                         .scaledFont(11)
                         .foregroundStyle(Theme.text2)

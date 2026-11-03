@@ -363,6 +363,11 @@ struct WebPane: NSViewRepresentable {
         /// The file viewer's header address (v0.13); `nil` elsewhere.
         weak var address: ViewerPageAddress?
         private var loaded: Load?
+        /// What the pane was asked to show, set directly (tests).
+        var loadedForTesting: Load? {
+            get { loaded }
+            set { loaded = newValue }
+        }
         /// The load whose navigation failed (or whose file could not be
         /// read), until a retry or another load. It stays `loaded` too:
         /// SwiftUI re-evaluates the viewer on every text delta while a
@@ -711,8 +716,15 @@ struct WebPane: NSViewRepresentable {
         }
 
         /// The person folded or unfolded a Properties block (`{open}`).
-        func propertiesToggled(_ body: Any) {
-            guard let open = (body as? [String: Any])?["open"] as? Bool else { return }
+        /// Taken only from Portico's own rendered Markdown page, in the main
+        /// frame, while the pane shows Markdown: an HTML file, a site, or a
+        /// frame inside the page cannot move the fold.
+        func propertiesToggled(_ body: Any, isMainFrame: Bool, frameURL: URL?) {
+            guard isMainFrame, let frameURL, frameURL.scheme == RenderedPageHandler.scheme,
+                  handler.source(for: frameURL) != nil,
+                  case .markdown = loaded,
+                  let open = (body as? [String: Any])?["open"] as? Bool
+            else { return }
             propertiesOpen = open
             onPropertiesToggle?(open)
         }
@@ -740,6 +752,9 @@ private final class PropertiesToggle: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        MainActor.assumeIsolated { coordinator?.propertiesToggled(message.body) }
+        MainActor.assumeIsolated {
+            coordinator?.propertiesToggled(
+                message.body, isMainFrame: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url)
+        }
     }
 }

@@ -249,15 +249,14 @@ final class Settings: ObservableObject {
         didSet { Self.store(viewerAgentCanSee, forKey: Key.viewerAgentCanSee, in: defaults) }
     }
     /// The person's choice for "Agent checks HTML it creates"; `nil` as above.
+    @Published var viewerAgentChecksHTML: Bool? {
+        didSet { Self.store(viewerAgentChecksHTML, forKey: Key.viewerAgentChecksHTML, in: defaults) }
+    }
     /// Whether a front-matter Properties block opens unfolded: the
     /// person's last toggle of one (v0.17 §3.7); `nil` until the first, so
     /// the deployment's `[viewer] properties` applies.
     @Published var propertiesOpen: Bool? {
         didSet { Self.store(propertiesOpen, forKey: Key.propertiesOpen, in: defaults) }
-    }
-
-    @Published var viewerAgentChecksHTML: Bool? {
-        didSet { Self.store(viewerAgentChecksHTML, forKey: Key.viewerAgentChecksHTML, in: defaults) }
     }
     /// "Notify when a space is updated": the dot and the notification.
     @Published var spacesNotify: Bool {
