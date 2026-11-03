@@ -173,6 +173,64 @@ final class AgentPointerTests: XCTestCase {
         XCTAssertEqual(NSEvent.mouseLocation, before, "the person's own mouse never moves")
     }
 
+    /// A parent that isn't flipped: y grows upward, bottom centre is y 0.
+    private final class UnflippedWebView: WKWebView {
+        override var isFlipped: Bool { false }
+    }
+
+    func testUnflippedParent() async throws {
+        let size = NSSize(width: 800, height: 600)
+        let view = UnflippedWebView(frame: NSRect(origin: .zero, size: size))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        keepAlive += [view, window]
+        XCTAssertFalse(view.isFlipped)
+        let pointer = AgentPointer(reduceMotion: { false })
+        let box = CGRect(x: 380, y: 500, width: 40, height: 20)
+        let moving = Task { await pointer.move(to: box, in: view, kind: .click) }
+        try await Task.sleep(for: .milliseconds(30))
+        let early = try XCTUnwrap(pointer.tipPosition)
+        XCTAssertLessThan(early.y, 120, "the first glide starts at the bottom centre (y 0 when unflipped): \(early)")
+        XCTAssertEqual(early.x, 400, accuracy: 60)
+        await moving.value
+        let tip = try XCTUnwrap(pointer.tipPosition)
+        XCTAssertEqual(tip, CGPoint(x: 400, y: 510))
+        XCTAssertEqual(pointer.frame.midX, tip.x, accuracy: 0.5, "the tip is the view's centre")
+        XCTAssertEqual(pointer.frame.midY, tip.y, accuracy: 0.5)
+    }
+
+    func testFlippedParentStartsAtTheBottomToo() async throws {
+        let view = hostedView()
+        XCTAssertTrue(view.isFlipped)
+        let pointer = AgentPointer(reduceMotion: { false })
+        let moving = Task { await pointer.move(to: CGRect(x: 380, y: 80, width: 40, height: 20), in: view, kind: .click) }
+        try await Task.sleep(for: .milliseconds(30))
+        let early = try XCTUnwrap(pointer.tipPosition)
+        XCTAssertGreaterThan(early.y, 480, "bottom centre is the largest y when flipped: \(early)")
+        await moving.value
+    }
+
+    func testPointerGoesWithItsWebView() async throws {
+        weak var weakPointer: AgentPointer?
+        do {
+            let size = NSSize(width: 400, height: 300)
+            let view = WKWebView(frame: NSRect(origin: .zero, size: size))
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = view
+            let pointer = AgentPointer(reduceMotion: { true })
+            weakPointer = pointer
+            await pointer.move(to: CGRect(x: 100, y: 100, width: 40, height: 20), in: view, kind: .click)
+            XCTAssertTrue(pointer.superview === view)
+            window.contentView = nil
+            window.close()
+        }
+        // The pending fade holds it weakly; only the web view kept it.
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(weakPointer, "released with its web view")
+    }
+
     // MARK: - fading
 
     func testFadesAfterIdle() async throws {
@@ -223,6 +281,60 @@ final class AgentPointerTests: XCTestCase {
         let tip = try XCTUnwrap(pointer.tipPosition)
         let zoom = rig.view.pageZoom * rig.view.magnification
         XCTAssertEqual(tip.x, CGFloat(field[0].doubleValue) * zoom + 8, accuracy: 1)
+    }
+
+    /// The box's centre in the (flipped) web view, as `outline` converts it.
+    private func centre(of selector: String, in view: WKWebView) async throws -> CGPoint {
+        let value = try await view.evaluateJavaScript(
+            "(() => { const r = document.querySelector('\(selector)').getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })()") as? [NSNumber]
+        let r = try XCTUnwrap(value).map { CGFloat($0.doubleValue) }
+        let zoom = view.pageZoom * view.magnification
+        XCTAssertTrue(view.isFlipped)
+        return CGPoint(x: (r[0] + r[2] / 2) * zoom, y: (r[1] + r[3] / 2) * zoom)
+    }
+
+    func testTipLandsAtTheBoxCentreLineOnThePage() async throws {
+        let rig = try rig("""
+            <button style="margin: 150px 0 0 250px; height: 40px">Start trail</button>
+            <input aria-label="Trailhead" style="margin: 120px 0 0 60px; height: 30px">
+            """)
+        _ = await rig.agent.perform(act(.look))
+        let click = await rig.agent.perform(act(.click, ["target": .string("Start trail")]))
+        XCTAssertTrue(click.ok, click.text)
+        let pointer = try XCTUnwrap(pointers(in: rig.view).first)
+        let button = try await centre(of: "button", in: rig.view)
+        let clickTip = try XCTUnwrap(pointer.tipPosition)
+        XCTAssertEqual(clickTip.x, button.x, accuracy: 1, "a click: the box's centre")
+        XCTAssertEqual(clickTip.y, button.y, accuracy: 1, "a click: the box's middle")
+
+        let typed = await rig.agent.perform(act(.type, ["target": .string("Trailhead"), "text": .string("Eagle Rock")]))
+        XCTAssertTrue(typed.ok, typed.text)
+        let field = try await centre(of: "input", in: rig.view)
+        let typeTip = try XCTUnwrap(pointer.tipPosition)
+        XCTAssertEqual(typeTip.y, field.y, accuracy: 1, "a type: the field's middle")
+        XCTAssertLessThan(typeTip.x, field.x, "a type: at the left edge, not the centre")
+    }
+
+    /// Plan ruling R-c30: the glide runs alongside the outline ring, so a
+    /// click costs the outline's wait and no more; it still lands after the
+    /// pointer arrives, and the ring is shown its full time.
+    func testGlideRunsAlongsideTheOutline() async throws {
+        let rig = try rig("""
+            <script>window.clickedAt = 0</script>
+            <button style="margin: 300px 0 0 500px" onclick="clickedAt = Date.now()">Start trail</button>
+            """)
+        rig.agent.highlightDuration = .milliseconds(600)
+        _ = await rig.agent.perform(act(.look))
+        let start = Date()
+        let click = await rig.agent.perform(act(.click, ["target": .string("Start trail")]))
+        XCTAssertTrue(click.ok, click.text)
+        let value = try await rig.view.evaluateJavaScript("clickedAt") as? NSNumber
+        let clickedAt = try XCTUnwrap(value).doubleValue / 1000
+        let took = clickedAt - start.timeIntervalSince1970
+        XCTAssertGreaterThanOrEqual(took, 0.6 - 0.01, "the ring is shown its full 0.6 s first")
+        XCTAssertLessThan(took, 0.6 + AgentPointer.glide - 0.15, "the glide overlaps the ring: no extra third of a second")
+        let arrival = try XCTUnwrap(pointers(in: rig.view).first?.lastArrival)
+        XCTAssertGreaterThanOrEqual(clickedAt * 1000, (arrival.timeIntervalSince1970 * 1000).rounded(.down), "and lands after the pointer")
     }
 
     func testRefusedClickDrawsNoPointer() async throws {

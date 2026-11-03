@@ -135,6 +135,11 @@ final class AgentPointer: NSView {
             place(at: start)
             await glide(from: start, to: target, step: mine)
         }
+        // A newer step took over mid-glide (it now owns the position and
+        // the fade): return without arriving. The older act still runs its
+        // click or typing once its own outline wait is over; ViewerAgent
+        // runs acts one at a time, so this only happens if a caller moves
+        // the pointer from two tasks at once.
         guard step == mine else { return }
         place(at: target)
         lastArrival = Date()

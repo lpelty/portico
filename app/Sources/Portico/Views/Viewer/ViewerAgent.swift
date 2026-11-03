@@ -448,7 +448,7 @@ final class ViewerAgent: ObservableObject {
         guard !target.isEmpty else { return fail(act, "Say what to click: a ref from the last look, or a button's or link's words.") }
         let page = lookedPage ?? ""
         switch await outline(target, page: page, field: false, in: view) {
-        case .shown(let box): await point(at: box, in: view, kind: .click)
+        case .shown(let box): await highlight(box, in: view, kind: .click)
         case .missing: return await notFound(act, [target], in: view)
         case .heading: return fail(act, Message.heading)
         }
@@ -471,7 +471,7 @@ final class ViewerAgent: ObservableObject {
         guard case .shown(let box) = await outline(target, page: page, field: true, in: view) else {
             return await notFound(act, [target], in: view)
         }
-        await point(at: box, in: view, kind: .type)
+        await highlight(box, in: view, kind: .type)
         let before = view.url
         let answer = await call(
             "return window.__porticoAgent.type(target, text, submit, page, place)",
@@ -526,13 +526,12 @@ final class ViewerAgent: ObservableObject {
         return ViewerResult(id: act.id, ok: ok, text: text)
     }
 
-    /// What `outline` did: drew the ring (or would have) around the box,
-    /// in the web view's coordinates; found nothing; or found a heading
-    /// with nothing clickable around it.
+    /// What `outline` found: the target's box, in the web view's
+    /// coordinates; nothing; or a heading with nothing clickable around it.
     private enum Outlined { case shown(CGRect), missing, heading }
 
-    /// Outline the target in the accent colour for `highlightDuration`
-    /// (scrolling it into view first).
+    /// Find the target's box (scrolling it into view first); `highlight`
+    /// then shows it.
     private func outline(_ target: String, page: String, field: Bool, in view: WKWebView) async -> Outlined {
         guard let box = await call(
             "return window.__porticoAgent.rect(target, page, field)",
@@ -544,8 +543,25 @@ final class ViewerAgent: ObservableObject {
         let size = CGSize(width: number("w") * zoom, height: number("h") * zoom)
         let top = number("y") * zoom
         let origin = CGPoint(x: number("x") * zoom, y: view.isFlipped ? top : view.bounds.height - top - size.height)
-        let frame = CGRect(origin: origin, size: size)
-        guard highlightDuration > .zero else { return .shown(frame) }
+        return .shown(CGRect(origin: origin, size: size))
+    }
+
+    /// Outline `box` in the accent colour for `highlightDuration` while the
+    /// agent's pointer glides to it (plan ruling R-c30): both start
+    /// together, and the click or typing runs once both are over, so the
+    /// pointer adds no time beyond the outline's own wait.
+    private func highlight(_ box: CGRect, in view: WKWebView, kind: AgentPointer.Kind) async {
+        // The ring goes on first, so the pointer is drawn above it.
+        let ring = highlightDuration > .zero ? ring(around: box, in: view) : nil
+        async let pointed: Void = point(at: box, in: view, kind: kind)
+        if ring != nil {
+            try? await Task.sleep(until: min(ContinuousClock.now + highlightDuration, deadline))
+        }
+        ring?.removeFromSuperview()
+        await pointed
+    }
+
+    private func ring(around frame: CGRect, in view: WKWebView) -> NSView {
         let ring = NSView(frame: frame.insetBy(dx: -3, dy: -3))
         ring.wantsLayer = true
         let accent = NSColor(model?.brand.accent ?? Theme.accent)
@@ -556,9 +572,7 @@ final class ViewerAgent: ObservableObject {
         ring.layer?.borderWidth = 2
         ring.layer?.cornerRadius = 4
         view.addSubview(ring)
-        try? await Task.sleep(until: min(ContinuousClock.now + highlightDuration, deadline))
-        ring.removeFromSuperview()
-        return .shown(frame)
+        return ring
     }
 
     /// Whether Reduce Motion is on, for the agent's pointer (injectable for tests).
