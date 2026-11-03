@@ -513,6 +513,11 @@ final class AppModel: ObservableObject {
     /// "Agent checks HTML it creates": as above, and always off while the agent cannot see.
     var agentChecksHTML: Bool { agentCanSee && (settings.viewerAgentChecksHTML ?? hello?.viewerDefaults?.agentChecksHTML ?? true) }
 
+    /// Whether a Properties block opens unfolded (v0.17 §3.7): the
+    /// person's last choice, else the deployment's `[viewer] properties`,
+    /// else folded.
+    var propertiesOpen: Bool { settings.propertiesOpen ?? (hello?.viewerDefaults?.properties == "open") }
+
     /// Tell the gateway how the two switches stand. Only to a gateway that
     /// sent `viewer_defaults` (v0.12 on): an older one has no such message.
     func sendViewerSettings() {
@@ -1027,7 +1032,7 @@ final class AppModel: ObservableObject {
                 finished.outcome != .error || turnHadAgentOutput(chat: chat, turn: finished.turn)
             {
                 noteLastReply(chat: chat, at: finished.ts)
-                noteThreadTurnFinished(chat: chat)
+                noteThreadTurnFinished(chat: chat, outcome: finished.outcome)
             }
             if FolderRelist.triggers(message, tool: { toolName(chat: chat, toolUseId: $0) }) {
                 scheduleRelist(chat: chat)
@@ -1652,9 +1657,21 @@ final class AppModel: ObservableObject {
             showing: viewerToRemember, saved: settings.viewerAtQuit, held: heldViewer != nil)
     }
 
-    /// The chat's artifacts, newest first, for the history list.
+    /// The chat's files for the "This session" list, newest first: one row
+    /// per location, its newest showing (the gateway makes a new artifact
+    /// for every show of a file).
     func history(for chat: Int) -> [Artifact] {
-        (artifacts[chat] ?? []).reversed()
+        var seen = Set<String>()
+        return (artifacts[chat] ?? []).reversed().filter { seen.insert($0.location).inserted }
+    }
+
+    /// X (v0.17 §3.4, Larry's hand check 11-02): the viewer holds one file,
+    /// so X clears it and closes the viewer. Opened again with the toolbar
+    /// button, it is empty; every file stays in the list.
+    func closeFile(in chat: Int) {
+        current[chat] = nil
+        viewerVisible[chat] = false
+        if viewerFocus?.chat == chat { endFocus() }
     }
 
     /// The viewer column is there when the person opened it, or when an
@@ -1699,9 +1716,9 @@ final class AppModel: ObservableObject {
         sidebarVisible = focus.sidebarWasVisible
     }
 
-    /// The artifacts menu's heading: `Made in this session` (or chat).
+    /// The session list's heading (v0.17 §3.6): `This session` (or chat).
     var madeHereLabel: String {
-        isSinglePresentation ? "Made in this session" : "Made in this chat"
+        isSinglePresentation ? "This session" : "This chat"
     }
 
     // MARK: - sidebar actions
@@ -2480,12 +2497,11 @@ extension AppModel {
         let artifact = Artifact(
             id: id, kind: .file, location: path, media: Media.of(path: path),
             title: URL(fileURLWithPath: path).lastPathComponent, source: .text, open: true)
+        // Opened again, it moves to the end: the list is newest first, each
+        // file at its newest showing (v0.17 ruling 7).
         var list = artifacts[chat] ?? []
-        if let index = list.firstIndex(where: { $0.id == id }) {
-            list[index] = artifact
-        } else {
-            list.append(artifact)
-        }
+        list.removeAll { $0.id == id }
+        list.append(artifact)
         artifacts[chat] = list
         supersedeRemembered(in: chat)
         leaveSpaceForFile()

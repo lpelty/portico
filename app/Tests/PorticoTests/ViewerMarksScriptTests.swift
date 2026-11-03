@@ -438,4 +438,135 @@ final class ViewerMarksScriptTests: XCTestCase {
             """, in: view)
         XCTAssertTrue(follows, "the box moved with its button")
     }
+
+    // MARK: - any visible text; badges that never cover each other (v0.17 §3.3)
+
+    /// `markLocate(target)` with no page: the answer as a dictionary.
+    private func locate(_ target: String, in view: WKWebView) async throws -> [String: Any] {
+        try await js("return window.__porticoAgent.markLocate(target);", ["target": target], in: view, as: [String: Any].self)
+    }
+
+    private func locatedTag(_ answer: [String: Any]) -> String? {
+        (answer["locator"] as? [String: Any])?["tag"] as? String
+    }
+
+    func testBodyTextIsMarkable() async throws {
+        let view = try webView()
+        try await load(Self.trail, in: view)
+        let plain = try await locate("420 m over the first", in: view)
+        XCTAssertEqual(plain["ok"] as? Bool, true, "\(plain)")
+        XCTAssertEqual(locatedTag(plain), "p")
+        XCTAssertEqual((plain["locator"] as? [String: Any])?["path"] as? String, "body > p:nth-of-type(1)")
+        let loose = try await locate("GAINS   420", in: view)
+        XCTAssertEqual(loose["ok"] as? Bool, true, "case and spaces don't matter: \(loose)")
+        XCTAssertEqual(locatedTag(loose), "p")
+        // Drawn from that locator, the box is on the paragraph.
+        let shown = try await show([["n": 1, "note": "Climb", "locator": plain["locator"] ?? [:]]], in: view)
+        XCTAssertEqual(shown.first?["found"] as? Bool, true)
+    }
+
+    func testTheInnermostElementWins() async throws {
+        let view = try webView()
+        try await load("<div><section><p>Late fee is <b>$25</b> a month</p></section></div>", in: view)
+        let sentence = try await locate("late fee is $25", in: view)
+        XCTAssertEqual(sentence["ok"] as? Bool, true, "\(sentence)")
+        XCTAssertEqual(locatedTag(sentence), "p")
+        let amount = try await locate("$25", in: view)
+        XCTAssertEqual(amount["ok"] as? Bool, true, "\(amount)")
+        XCTAssertEqual(locatedTag(amount), "b")
+    }
+
+    /// Review Focus 4: text only the whole page holds (across two
+    /// elements), the overlay's own text, and hidden text are no match.
+    func testTextOnlyThePageContainsIsNotAMatch() async throws {
+        let view = try webView()
+        try await load(Self.trail + "<p style=\"display:none\">Closed in winter</p>", in: view)
+        let one = try await locate("Gains", in: view)
+        XCTAssertEqual(locatedTag(one), "p", "a word inside one element is found: \(one)")
+        let across = try await locate("Elevation Gains", in: view)
+        XCTAssertEqual(across["notFound"] as? Bool, true, "never body or html: \(across)")
+        _ = try await show(list(try await locateTrail(in: view)), in: view)
+        let badge = try await locate("1", in: view)
+        XCTAssertEqual(badge["notFound"] as? Bool, true, "never the overlay: \(badge)")
+        // The overlay's own badges live in a shadow root under `html`, out of
+        // reach anyway; an overlay host with light-DOM text in `body` is
+        // still never a match.
+        _ = try await js("""
+            var host = document.createElement('portico-marks');
+            host.textContent = 'Overlay words';
+            document.body.appendChild(host);
+            return 0;
+            """, in: view)
+        let overlay = try await locate("Overlay words", in: view)
+        XCTAssertEqual(overlay["notFound"] as? Bool, true, "never an overlay host's text: \(overlay)")
+        let hidden = try await locate("Closed in winter", in: view)
+        XCTAssertEqual(hidden["notFound"] as? Bool, true, "never hidden text: \(hidden)")
+    }
+
+    /// A page wrapper (a box over 80% of the viewport) is no match: text
+    /// only it holds, across its h2 and p, is not found.
+    func testAWrapperAroundTheViewIsNotAMatch() async throws {
+        let view = try webView()
+        try await load("""
+            <style>body{margin:0}</style>
+            <main style="min-height:100vh"><h2>Elevation</h2><p>Gains 420 m over the first two miles.</p></main>
+            """, in: view)
+        let inside = try await locate("Gains 420", in: view)
+        XCTAssertEqual(locatedTag(inside), "p", "\(inside)")
+        let across = try await locate("Elevation Gains", in: view)
+        XCTAssertEqual(across["notFound"] as? Bool, true, "never the page's wrapper: \(across)")
+    }
+
+    /// An element with no width or height is never the one marked.
+    func testAZeroSizeElementIsNotAMatch() async throws {
+        let view = try webView()
+        try await load("""
+            <section><p>Trail notes</p><div style="height:0">Closed in winter</div></section>
+            """, in: view)
+        let found = try await locate("winter", in: view)
+        XCTAssertEqual(locatedTag(found), "section", "the zero-height div is skipped: \(found)")
+    }
+
+    func testTouchingMarksBadgesDoNotOverlap() async throws {
+        let view = try webView()
+        try await load("""
+            <style>body{margin:40px} p{margin:0;font-size:10px;line-height:12px} button{display:block;margin:0}</style>
+            <div><p>Plan summary</p></div>
+            <button>Upgrade</button>
+            """, in: view)
+        let marks = try await js("""
+            var a = window.__porticoAgent;
+            var p = a.markLocate('Plan summary').locator;
+            var b = a.markLocate('Upgrade').locator;
+            var div = { path: 'body > div:nth-of-type(1)', tag: 'div', text: 'Plan summary' };
+            return [{ n: 1, locator: div }, { n: 2, locator: p }, { n: 3, locator: b }];
+            """, in: view, as: [[String: Any]].self)
+        let shown = try await show(marks, in: view)
+        XCTAssertEqual(shown.map { $0["found"] as? Bool }, [true, true, true])
+        let rects = try await js("""
+            var badges = document.querySelector('portico-marks').shadowRoot.querySelectorAll('.badge');
+            return Array.prototype.map.call(badges, function (b) {
+              var r = b.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom];
+            });
+            """, in: view, as: [[Double]].self)
+        XCTAssertEqual(rects.count, 3)
+        for i in rects.indices {
+            for j in rects.indices where j > i {
+                let a = rects[i], b = rects[j]
+                let overlap = a[0] < b[2] - 0.5 && b[0] < a[2] - 0.5 && a[1] < b[3] - 0.5 && b[1] < a[3] - 0.5
+                XCTAssertFalse(overlap, "badge \(i + 1) covers badge \(j + 1): \(rects)")
+            }
+        }
+        let spots = try await js("""
+            var a = window.__porticoAgent;
+            if (typeof a.badgeSpots !== 'function') return null;
+            var box = { left: 100, top: 50, width: 200, height: 40 };
+            return a.badgeSpots([box, box]);
+            """, in: view) as? [[String: Double]]
+        let two = try XCTUnwrap(spots, "badgeSpots answers a spot per box")
+        XCTAssertEqual(two.count, 2)
+        guard two.count == 2 else { return }
+        XCTAssertEqual((two[1]["x"] ?? 0) - (two[0]["x"] ?? 0), 22, accuracy: 0.01)
+        XCTAssertEqual(two[1]["y"] ?? 0, two[0]["y"] ?? -1, accuracy: 0.01)
+    }
 }

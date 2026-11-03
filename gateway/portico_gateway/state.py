@@ -1,7 +1,9 @@
 """The gateway's state directory: token, ledger, index, lock.
 
-Everything the gateway keeps between launches lives in one directory,
-``$PORTICO_HOME`` or ``~/.portico``:
+Everything the gateway keeps between launches lives in one directory: the
+``--state`` given, else ``$PORTICO_HOME``, else the folder named in the
+checkout's git-ignored ``.portico-home`` (written by ``bin/install --home``),
+else ``~/.portico``:
 
 - ``token``        per-launch secret the app presents at connect (mode 0600)
 - ``ledger.json``  host, port, pid, epoch of the running gateway — a hint the
@@ -17,12 +19,15 @@ Everything the gateway keeps between launches lives in one directory,
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import secrets
 import tempfile
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+from . import REPO_ROOT
 
 from .messages import (
     AgentCommand,
@@ -36,7 +41,16 @@ from .messages import (
 )
 
 ENV_HOME = "PORTICO_HOME"
+# v0.17: where whoever set ``PORTICO_HOME`` found the folder (the app: "Info.plist" or
+# "the default"; a running gateway: its own source), so ``doctor`` can name it.
+ENV_HOME_SOURCE = "PORTICO_HOME_SOURCE"
 DEFAULT_DIRNAME = ".portico"
+# v0.17: the checkout's record of the folder ``bin/install --home`` chose (one
+# line, an absolute path); git-ignored, so ``bin/update`` still sees a clean checkout.
+HOME_FILE = ".portico-home"
+# v0.17: how ``index.json`` writes a path inside the state folder, so moving the
+# folder (re-install with a new ``--home``) leaves no stale absolute path behind.
+STATE_PREFIX = "@state"
 # v0.11 (item 66): how many folders' command lists ``commands.json`` keeps,
 # newest last; older folders are dropped when it is written.
 COMMAND_FOLDERS_KEPT = 20
@@ -166,17 +180,65 @@ class CommandLists(BaseModel):
     folders: dict[str, list[AgentCommand]] = {}
 
 
+def _map_index_paths(data: dict, fn) -> dict:  # noqa: ANN001 - fn: str -> str, applied in place to a copy
+    """A copy of a dumped index with ``fn`` applied to each path field (see ``StateDir._to_state_relative``)."""
+    data = json.loads(json.dumps(data))
+
+    def each(items: object, key: str) -> None:
+        for item in items if isinstance(items, list) else []:
+            if isinstance(item, dict) and key in item:
+                item[key] = fn(item[key])
+
+    def files(holder: object) -> None:
+        if isinstance(holder, dict) and isinstance(holder.get("files"), list):
+            holder["files"] = [fn(f) for f in holder["files"]]
+
+    if "default_folder" in data:
+        data["default_folder"] = fn(data["default_folder"])
+    for chat in data.get("chats") or []:
+        if not isinstance(chat, dict):
+            continue
+        if "folder" in chat:
+            chat["folder"] = fn(chat["folder"])
+        each(chat.get("artifacts"), "location")
+        files(chat.get("thread"))
+    for proposal in data.get("proposals") or []:
+        files(proposal)
+    return data
+
+
 class StateDir:
     """The state directory. Creating one makes the directory (mode 0700)."""
 
     @staticmethod
+    def _home_file_folder() -> Path | None:
+        """The folder the checkout's ``.portico-home`` names, or ``None`` (no checkout, no file, or empty)."""
+        if not (REPO_ROOT / "bin" / "portico-gateway").is_file():
+            return None  # not running from a checkout: there is no file to read
+        try:
+            line = (REPO_ROOT / HOME_FILE).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        return Path(line).expanduser() if line else None
+
+    @staticmethod
     def default_path() -> Path:
-        """``$PORTICO_HOME`` when set, else ``~/.portico``. Creates nothing."""
+        """``$PORTICO_HOME``, else the checkout's ``.portico-home``, else ``~/.portico``. Creates nothing."""
         env = os.environ.get(ENV_HOME)
-        return Path(env).expanduser() if env else Path.home() / DEFAULT_DIRNAME
+        if env:
+            return Path(env).expanduser()
+        return StateDir._home_file_folder() or Path.home() / DEFAULT_DIRNAME
+
+    @staticmethod
+    def default_source() -> str:
+        """Where ``default_path`` found the folder: ``PORTICO_HOME``, ``.portico-home`` or ``the default``."""
+        if os.environ.get(ENV_HOME):
+            return ENV_HOME
+        return HOME_FILE if StateDir._home_file_folder() is not None else "the default"
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = Path(path) if path is not None else self.default_path()
+        # Absolute, so a relative --state still matches the index's absolute paths.
+        self.path = (Path(path) if path is not None else self.default_path()).absolute()
         self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._lock_fd: int | None = None
 
@@ -259,7 +321,13 @@ class StateDir:
         except FileNotFoundError:
             return Index()
         try:
-            return Index.model_validate_json(raw)
+            data = json.loads(raw)
+        except ValueError:
+            data = None  # not JSON: pydantic below says so in its own words
+        try:
+            if data is None:
+                return Index.model_validate_json(raw)
+            return Index.model_validate_json(json.dumps(self._from_state_relative(data) if isinstance(data, dict) else data))
         except ValidationError as e:
             raise StateError(
                 f"{self.index_path} is not a usable index.json; refusing to start and "
@@ -267,8 +335,43 @@ class StateDir:
             ) from e
 
     def save_index(self, index: Index) -> None:
-        """Write the whole index through a temp file and rename, so a crash never leaves half a file."""
-        self._atomic_write(self.index_path, index.model_dump_json(indent=2) + "\n")
+        """Write the whole index through a temp file and rename, so a crash never leaves half a file.
+
+        v0.17: a path inside the state folder is written ``@state/<relative>``
+        (``load_index`` expands it), so the index survives moving the folder.
+        """
+        data = self._to_state_relative(index.model_dump(mode="json"))
+        self._atomic_write(self.index_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+    # The index's path fields (v0.17): ``default_folder``; each chat's ``folder``,
+    # ``artifacts[].location`` and ``thread.files``; each proposal's ``files``.
+    # Text (titles, briefs) is never rewritten, even when it mentions the folder.
+
+    def _to_state_relative(self, data: dict) -> dict:
+        roots = [r for r in dict.fromkeys((str(self.path), str(self.path.resolve()))) if r != "/"]
+
+        def rel(value: object) -> object:
+            if isinstance(value, str):
+                for root in roots:
+                    if value == root:
+                        return STATE_PREFIX
+                    if value.startswith(root + "/"):
+                        return f"{STATE_PREFIX}/{value[len(root) + 1 :]}"
+            return value
+
+        return _map_index_paths(data, rel)
+
+    def _from_state_relative(self, data: dict) -> dict:
+        root = self.path.resolve()
+
+        def expand(value: object) -> object:
+            if value == STATE_PREFIX:
+                return str(root)
+            if isinstance(value, str) and value.startswith(STATE_PREFIX + "/"):
+                return str(root / value[len(STATE_PREFIX) + 1 :])
+            return value
+
+        return _map_index_paths(data, expand)
 
     # --- commands (v0.11 item 66) ------------------------------------------------
 

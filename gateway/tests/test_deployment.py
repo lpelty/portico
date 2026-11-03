@@ -116,8 +116,30 @@ def test_hello_advertises_restart_all_only_when_there_is_one(tmp_path: Path) -> 
 
 def test_parse_status_reads_rows_text_or_dict() -> None:
     rows = parse_status(status_json({"id": "memory", "name": "Memory", "up": True, "detail": "recall"}, {"id": "b", "name": "B", "up": False}))
-    assert [(r.id, r.name, r.up, r.detail) for r in rows] == [("memory", "Memory", True, "recall"), ("b", "B", False, None)]
+    assert [(r.id, r.name, r.state, r.detail) for r in rows] == [("memory", "Memory", "up", "recall"), ("b", "B", "down", None)]
     assert parse_status({"services": []}) == []
+
+
+def test_status_row_state() -> None:
+    rows = parse_status(status_json({"id": "memory", "name": "Memory", "up": True, "state": "stuck", "detail": "index rebuilding"}))
+    assert [(r.state, r.detail) for r in rows] == [("stuck", "index rebuilding")]
+    assert [r.state for r in parse_status(status_json({"id": "m", "name": "M", "state": "down"}))] == ["down"]
+    assert [r.state for r in parse_status(status_json({"id": "m", "name": "M", "state": "up"}))] == ["up"]
+    with pytest.raises(SourceFailed, match="state"):
+        parse_status(status_json({"id": "m", "name": "M", "state": "sleepy"}))
+    with pytest.raises(SourceFailed):
+        parse_status(status_json({"id": "m", "name": "M"}))
+
+
+async def test_a_stuck_status_row_is_stuck_without_an_outage() -> None:
+    mon, rec = status_monitor(
+        "printf '%s' '"
+        + json.dumps({"services": [{"id": "m", "name": "M", "state": "stuck", "detail": "index rebuilding"}]})
+        + "'"
+    )
+    await mon.check_all()
+    (row,) = rec.calls[-1]
+    assert (row.state, row.detail) == ("stuck", "index rebuilding")
 
 
 @pytest.mark.parametrize(

@@ -280,3 +280,67 @@ def test_sessions_clear_declined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert main(["sessions", "clear", "--state", str(home)]) == 0
     assert prompts == ["Clear earlier sessions? The transcripts on disk stay. [y/N] "]
     assert _chat_numbers(home) == [1, 2, 3]
+
+
+# --- v0.17 §5: where the folder comes from ----------------------------------------
+
+
+def test_every_state_option_names_the_home_order() -> None:
+    import argparse
+
+    from portico_gateway.__main__ import build_parser
+
+    wanted = "state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)"
+    found: list[str] = []
+
+    def walk(parser: argparse.ArgumentParser) -> None:
+        for action in parser._actions:
+            if "--state" in action.option_strings:
+                found.append(action.help or "")
+            if isinstance(action, argparse._SubParsersAction):
+                for sub in action.choices.values():
+                    walk(sub)
+
+    walk(build_parser())
+    assert len(found) >= 7
+    assert set(found) == {wanted}
+
+
+def test_doctor_is_told_whether_state_was_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import portico_gateway.doctor as doctor_module
+
+    seen: list[bool] = []
+
+    def fake_doctor(state, config_path, *, state_given: bool = False):  # noqa: ANN001, ANN202
+        seen.append(state_given)
+        return []
+
+    monkeypatch.setattr(doctor_module, "doctor", fake_doctor)
+    monkeypatch.setenv("PORTICO_HOME", str(tmp_path / "env-home"))
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert main(["doctor", "--state", str(tmp_path / "given")]) == 0
+        assert main(["doctor"]) == 0
+    assert seen == [True, False]
+
+
+def test_run_exports_its_folder_to_what_it_starts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix round 1: plug-ins, service checks and lifecycle commands that call portico-gateway find the same folder."""
+    folder = tmp_path / "acme-root" / "app"
+    folder.mkdir(parents=True)
+    (folder / "config.toml").write_text("this is [not toml\n")  # stops the run right after the folder is known
+    monkeypatch.setenv("PORTICO_HOME", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("PORTICO_HOME_SOURCE", "")  # unset for the run; restored after the test
+    with contextlib.redirect_stderr(io.StringIO()):
+        assert main(["run", "--state", str(folder)]) == 1
+    assert os.environ["PORTICO_HOME"] == str(folder)
+    assert os.environ["PORTICO_HOME_SOURCE"] == "--state"
+
+
+def test_run_keeps_the_apps_source_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "config.toml").write_text("this is [not toml\n")
+    monkeypatch.setenv("PORTICO_HOME_SOURCE", "Info.plist")
+    with contextlib.redirect_stderr(io.StringIO()):
+        assert main(["run", "--state", str(folder)]) == 1
+    assert os.environ["PORTICO_HOME_SOURCE"] == "Info.plist"

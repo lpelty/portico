@@ -631,6 +631,7 @@ enum ServiceColors {
         switch state {
         case .up: Theme.working
         case .down: Theme.deny
+        case .stuck: Theme.wait
         case .checking: Theme.idle
         }
     }
@@ -703,6 +704,12 @@ struct ServiceRowView: View {
             if restarting {
                 ProgressView().controlSize(.small)
                     .help("Restarting \(row.name)…")
+            } else if ServicesPresentation.rowActions(row).contains(.restart) {
+                // v0.17: a down or stuck service's Restart is on its row, always visible.
+                RowActionButton(title: "Restart", systemImage: "arrow.clockwise", help: "Restart \(row.name)") {
+                    model.restartService(row.id)
+                }
+                .disabled(!model.canRestart(service: row.id))
             } else if hovering {
                 // v0.12, item 1: the Gateway row's Stop and Restart, visible on hover,
                 // drawn as the app's other small row actions (Copy under a reply).
@@ -750,7 +757,7 @@ struct ServiceRowView: View {
                 Button("\(control.title) gateway") { press(control) }
                     .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
             }
-        } else if row.canRestart {
+        } else if ServicesPresentation.rowActions(row).contains(.restart) {
             Button("Restart \(row.name)") { model.restartService(row.id) }
                 .disabled(!model.canRestart(service: row.id))
         }

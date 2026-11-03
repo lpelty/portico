@@ -25,7 +25,7 @@ from pathlib import Path
 from . import REPO_ROOT
 from .config import EMPTY_SETTING_SOURCES_MESSAGE, ConfigError, load_config
 from .plugins import check_plugin
-from .state import StateDir
+from .state import ENV_HOME, ENV_HOME_SOURCE, StateDir
 
 MIN_PYTHON = (3, 13)
 MIN_SDK = (0, 2, 174)
@@ -638,14 +638,25 @@ def check_checkout(repo: Path = REPO_ROOT) -> Check:
     return Check("checkout", True, f"{where}, no local changes")
 
 
+def check_home(state: StateDir, given: bool) -> Check:
+    """v0.17: the state folder in use and where it came from (``--state``, ``PORTICO_HOME``, ``.portico-home``, the default)."""
+    hint = os.environ.get(ENV_HOME_SOURCE) if os.environ.get(ENV_HOME) else None
+    source = "--state" if given else (hint or StateDir.default_source())
+    return Check("home", True, f"{state.path} (from {source})")
+
+
 # --- the whole run ------------------------------------------------------------
 
 
-def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT) -> list[Check]:
-    """Every check, in the order a person reads them. Never raises for a bad machine; it reports."""
+def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT, *, state_given: bool = False) -> list[Check]:
+    """Every check, in the order a person reads them. Never raises for a bad machine; it reports.
+
+    ``state_given``: the folder came from ``--state`` (the ``home`` line says so).
+    """
     config_path = Path(config_path)
     return [
         check_checkout(repo),
+        check_home(state, state_given),
         check_python(),
         check_sdk(),
         check_sdk_lock(Path(repo) / "gateway" / "uv.lock"),

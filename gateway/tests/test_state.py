@@ -174,3 +174,215 @@ def test_portico_home_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     explicit = tmp_path / "explicit"
     monkeypatch.setenv("PORTICO_HOME", str(override))
     assert StateDir(explicit).path == explicit
+
+
+# --- v0.17 §5: the home folder chosen at install -------------------------------------
+
+
+def fake_checkout(root: Path) -> Path:
+    """A directory that looks like a Portico checkout to ``state.py``: it has ``bin/portico-gateway``."""
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "portico-gateway").write_text("#!/bin/sh\n")
+    return root
+
+
+def test_home_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import portico_gateway.state as state_module
+
+    checkout = fake_checkout(tmp_path / "checkout")
+    monkeypatch.setattr(state_module, "REPO_ROOT", checkout)
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    home_file = checkout / ".portico-home"
+    home_file.write_text("/tmp/acme/app\n")
+
+    # PORTICO_HOME first, over the checkout's file.
+    monkeypatch.setenv("PORTICO_HOME", str(tmp_path / "from-env"))
+    assert StateDir.default_path() == tmp_path / "from-env"
+    assert StateDir.default_source() == "PORTICO_HOME"
+
+    # Then the checkout's .portico-home.
+    monkeypatch.delenv("PORTICO_HOME")
+    assert StateDir.default_path() == Path("/tmp/acme/app")
+    assert StateDir.default_source() == ".portico-home"
+
+    # An empty file is no folder: ~/.portico.
+    home_file.write_text("\n")
+    assert StateDir.default_path() == tmp_path / "fake-home" / ".portico"
+    assert StateDir.default_source() == "the default"
+
+    # No file: ~/.portico.
+    home_file.unlink()
+    assert StateDir.default_path() == tmp_path / "fake-home" / ".portico"
+    assert StateDir.default_source() == "the default"
+    assert not (tmp_path / "fake-home").exists()  # resolving creates nothing
+
+
+def test_the_home_file_is_read_only_in_a_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import portico_gateway.state as state_module
+
+    not_a_checkout = tmp_path / "site-packages"
+    not_a_checkout.mkdir()
+    (not_a_checkout / ".portico-home").write_text("/tmp/acme/app\n")
+    monkeypatch.setattr(state_module, "REPO_ROOT", not_a_checkout)
+    monkeypatch.delenv("PORTICO_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    assert StateDir.default_path() == tmp_path / "fake-home" / ".portico"
+
+
+def test_index_stores_state_folder_paths_relative_and_loads_old_absolute_ones(tmp_path: Path) -> None:
+    folder = tmp_path / "portico-home"
+    state = StateDir(folder)
+    inside = str(folder / "spaces" / "plan.md")
+    outside = "/Users/someone/projects/demo/summary.md"
+    index = Index(
+        chats=[
+            ChatRecord(
+                chat=1,
+                folder=str(folder / "spaces"),
+                state="idle",
+                created="2026-11-02T12:00:00Z",
+                artifacts=[
+                    Artifact(id="a", kind="file", location=inside, media="markdown", title="plan.md", source="tool", open=True),
+                    Artifact(id="b", kind="file", location=outside, media="markdown", title="summary.md", source="tool", open=True),
+                ],
+            )
+        ],
+        next_chat=2,
+    )
+    state.save_index(index)
+    on_disk = json.loads(state.index_path.read_text())
+    chat = on_disk["chats"][0]
+    assert chat["folder"] == "@state/spaces"
+    assert chat["artifacts"][0]["location"] == "@state/spaces/plan.md"
+    assert chat["artifacts"][1]["location"] == outside  # outside the folder: as it was
+    assert state.load_index() == index
+
+    # An index from before v0.17 holds absolute paths: it loads as written.
+    old = {
+        "chats": [
+            {
+                "chat": 1,
+                "folder": str(folder / "spaces"),
+                "state": "idle",
+                "created": "2026-11-02T12:00:00Z",
+                "artifacts": [
+                    {"id": "a", "kind": "file", "location": inside, "media": "markdown", "title": "plan.md", "source": "tool", "open": True}
+                ],
+            }
+        ],
+        "next_chat": 2,
+    }
+    state.index_path.write_text(json.dumps(old))
+    loaded = state.load_index()
+    assert loaded.chats[0].folder == str(folder / "spaces")
+    assert loaded.chats[0].artifacts[0].location == inside
+
+
+async def test_no_absolute_state_paths_survive_a_move(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from portico_gateway import __version__
+    from portico_gateway.chats import ChatRegistry
+    from portico_gateway.messages import ChatNew, dump
+    from portico_gateway.server import GatewayServer
+    from tests.conftest import make_config
+    from tests.test_server import TS
+    from tests.test_spaces import frames_until, hello
+    from tests.test_turns import EngineFactory
+
+    a = tmp_path / "a"
+    monkeypatch.setenv("PORTICO_HOME", str(a))
+    work = tmp_path / "work"
+    work.mkdir()
+
+    state_a = StateDir(a)
+    config = make_config(setting_sources=["project"])
+    registry = ChatRegistry(index=state_a.load_index(), state=state_a, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_a, registry=registry, engine_factory=EngineFactory(), version=__version__)
+    page = a / "spaces" / "plan.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("---\ntitle: Plan\n---\n", encoding="utf-8")
+    await srv.serve(0)
+    try:
+        assert state_a.token_path.is_file() and state_a.ledger_path.is_file()
+        conn = await hello(srv)
+        try:
+            await conn.send(dump(ChatNew(ts=TS, id="req-new", folder=str(work))))
+            number = (await frames_until(conn, "chat.state")).chat
+            assert await srv.show_files(srv.registry.get(number), [str(page)]) is None
+            await frames_until(conn, "artifact.created")
+        finally:
+            await conn.close()
+    finally:
+        await srv.shutdown()
+
+    for name in ("index.json", "ledger.json", "token"):
+        path = a / name
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            assert str(a) not in text and str(a.resolve()) not in text, f"{name} holds the folder's absolute path"
+
+    b = tmp_path / "b"
+    a.rename(b)
+    monkeypatch.setenv("PORTICO_HOME", str(b))
+    state_b = StateDir(b)
+    registry_b = ChatRegistry(index=state_b.load_index(), state=state_b, history_buffer=config.history_buffer)
+    srv_b = GatewayServer(config=make_config(setting_sources=["project"]), state=state_b, registry=registry_b, engine_factory=EngineFactory(), version=__version__)
+    await srv_b.serve(0)
+    try:
+        locations = [art.location for art in srv_b.registry.get(number).artifacts]
+        assert str((b / "spaces" / "plan.md").resolve()) in locations
+    finally:
+        await srv_b.shutdown()
+
+
+def test_only_path_fields_are_made_state_relative(tmp_path: Path) -> None:
+    """Fix round 1: a title or brief that mentions the folder is text, kept as written."""
+    from portico_gateway.messages import ThreadInfo
+    from portico_gateway.state import ProposalRecord
+
+    folder = tmp_path / "portico-home"
+    state = StateDir(folder)
+    plan = str(folder / "spaces" / "plan.md")
+    index = Index(
+        default_folder=str(folder / "spaces"),
+        chats=[
+            ChatRecord(
+                chat=1,
+                folder=str(folder / "work"),
+                title=plan,
+                state="idle",
+                created="2026-11-02T12:00:00Z",
+                artifacts=[Artifact(id="a", kind="file", location=plan, media="markdown", title=plan, source="tool", open=True)],
+                thread=ThreadInfo(label="Thread 1", slot=1, parent=1, brief=plan, files=[plan], opened_at="2026-11-02T12:00:00Z"),
+            )
+        ],
+        proposals=[ProposalRecord(id="p", chat=1, tool_use_id=None, brief=plan, files=[plan], created="2026-11-02T12:00:00Z", state="pending")],
+        next_chat=2,
+    )
+    state.save_index(index)
+    on_disk = json.loads(state.index_path.read_text())
+    chat = on_disk["chats"][0]
+    assert on_disk["default_folder"] == "@state/spaces"
+    assert chat["folder"] == "@state/work"
+    assert chat["artifacts"][0]["location"] == "@state/spaces/plan.md"
+    assert chat["thread"]["files"] == ["@state/spaces/plan.md"]
+    assert on_disk["proposals"][0]["files"] == ["@state/spaces/plan.md"]
+    # Text stays text.
+    assert chat["title"] == plan and chat["artifacts"][0]["title"] == plan
+    assert chat["thread"]["brief"] == plan and on_disk["proposals"][0]["brief"] == plan
+    assert state.load_index() == index
+
+
+def test_a_relative_state_folder_is_made_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    state = StateDir(Path("rel-home"))
+    assert state.path == tmp_path / "rel-home"
+    state.save_index(Index(default_folder=str(tmp_path / "rel-home" / "spaces")))
+    assert json.loads(state.index_path.read_text())["default_folder"] == "@state/spaces"
+
+
+def test_a_root_state_folder_rewrites_nothing(tmp_path: Path) -> None:
+    state = StateDir(tmp_path / "home")
+    state.path = Path("/")  # never made on disk: only the rewriting is under test
+    data = {"default_folder": "/Users/someone/x", "chats": [{"folder": "/", "artifacts": []}], "proposals": []}
+    out = state._to_state_relative(data)
+    assert out["default_folder"] == "/Users/someone/x" and out["chats"][0]["folder"] == "/"

@@ -646,6 +646,19 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(sent.frames.count, count)
     }
 
+    func testAStoppedThreadIsNotDoneAndGetsNoDot() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        model.open(chat: 3)
+        model.apply(.turnStarted(TurnStarted(chat: 5, turn: 1, seq: 1)))
+        model.apply(.textDelta(TextDelta(chat: 5, turn: 1, text: "Half a reply.", seq: 2)))
+        model.apply(.turnFinished(TurnFinished(chat: 5, turn: 1, outcome: .stopped, seq: 3)))
+        XCTAssertEqual(model.doneCards(in: 3), [], "stopped by the person: not done")
+        XCTAssertNotEqual(model.threads.rows(now: Date()).first { $0.chat == 5 }?.status, .newReply)
+
+        runTurn(model, chat: 5, turn: 2, reply: "Finished.", seq: 5)
+        XCTAssertEqual(model.doneCards(in: 3).map(\.line), ["Finished."], "a turn that ends done still does")
+    }
+
     func testOpeningTheThreadClearsTheCardAndTheDot() {
         let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
         model.open(chat: 3)

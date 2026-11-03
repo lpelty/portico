@@ -30,7 +30,9 @@ PermissionMode = Literal["default", "acceptEdits", "auto"]
 # What happened to one tool use's permission, drawn on its tool row.
 PermissionOutcome = Literal["once", "session", "auto", "declined", "blocked"]
 # A deployment service's state (v0.4): ``checking`` until its first check answers.
-ServiceState = Literal["up", "down", "checking"]
+# v0.17: ``stuck`` is up but not working (a check's exit 75, a status row's
+# ``"state": "stuck"``); only an app with ``services.stuck.v1`` is sent it.
+ServiceState = Literal["up", "down", "stuck", "checking"]
 # How a subagent ended (v0.10).
 AgentOutcome = Literal["done", "failed", "stopped"]
 # Where one workflow phase stands (v0.10).
@@ -55,6 +57,11 @@ QUEUE_CAPABILITY = "queue.v1"
 # presentation with ``[threads] max`` above 0; only an app that lists it too
 # is sent ``thread.proposal``.
 THREADS_CAPABILITY = "threads.v1"
+
+# v0.17: the capability an app lists when it can show a service as ``stuck``.
+# Any other app is sent a stuck service as ``down`` (its decoder would refuse
+# the whole ``services.status`` for a state it does not know).
+SERVICES_STUCK_CAPABILITY = "services.stuck.v1"
 
 
 class ProtocolError(Exception):
@@ -505,6 +512,8 @@ class ViewerDefaults(Strict):
     agent_can_see: bool = True
     agent_checks_html: bool = True
     act_hosts: list[str] = []
+    # v0.17: how a front-matter Properties block first opens, until the person folds or unfolds one.
+    properties: Literal["folded", "open"] = "folded"
 
 
 class HelloServer(Envelope):
@@ -1008,12 +1017,16 @@ class SpacesList(Envelope):
 
 
 class ViewerAct(Envelope):
-    """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``."""
+    """v0.12: the agent acts in the viewer; the app answers with ``viewer.result`` carrying the same ``id``.
+
+    v0.17: ``show`` (``{artifact, location}``), only to an app that declared
+    ``viewer.show.v1``, is answered once the shown page has loaded.
+    """
 
     type: Literal["viewer.act"] = "viewer.act"
     id: str
     chat: int
-    action: Literal["look", "click", "type", "scroll", "back", "mark", "clear_marks"]
+    action: Literal["look", "click", "type", "scroll", "back", "mark", "clear_marks", "show"]
     args: dict[str, Any] = {}
 
 
@@ -1191,7 +1204,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.16.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1"]),
+        HelloClient(ts=_TS, app_version="0.17.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),

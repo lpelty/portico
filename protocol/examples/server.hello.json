@@ -48,6 +48,7 @@
       "figma.com"
     ],
     "agent_can_see": true,
-    "agent_checks_html": true
+    "agent_checks_html": true,
+    "properties": "folded"
   }
 }

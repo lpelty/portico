@@ -73,11 +73,11 @@ final class ArtifactFocusTests: XCTestCase {
 
     func testMadeHereHeading() throws {
         let (model, _) = try model()
-        XCTAssertEqual(model.madeHereLabel, "Made in this chat")
+        XCTAssertEqual(model.madeHereLabel, "This chat")
         model.apply(.hello(HelloServer(
             protocol: protocolVersion, gatewayVersion: "0.3.0", epoch: "e",
             brand: Brand(name: "Portico", agentName: "Agent"), actions: [], roots: [], commands: [],
             capabilities: [], presentation: "single")))
-        XCTAssertEqual(model.madeHereLabel, "Made in this session")
+        XCTAssertEqual(model.madeHereLabel, "This session")
     }
 }

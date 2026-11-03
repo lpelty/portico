@@ -85,6 +85,7 @@ final class WebPaneRenderTests: XCTestCase {
             .write(to: markdown, atomically: true, encoding: .utf8)
 
         let coordinator = WebPane.Coordinator()
+        coordinator.propertiesOpen = true  // the person's last choice (v0.17 §3.7)
         let view = coordinator.makeWebView()
         view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         keepAlive = [view, coordinator]

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Run the gateway from a fresh clone: the installed CLI, nothing else.
 #
-# ${PORTICO_HOME:-$HOME/.portico}/env is an optional 0600 file of KEY=value lines the
+# Portico's folder: --state, else $PORTICO_HOME, else the folder this checkout's .portico-home
+# names (bin/install --home writes it), else ~/.portico. The CLI resolves it; this script doesn't.
+#
+# <folder>/env is an optional 0600 file of KEY=value lines the
 # deployment fills with its provider credential. The CLI reads it itself (literal
 # values, no shell, no expansion) for `run` and `doctor`; this script never sources
 # it. The repo never names a provider; the engine reads the environment. Everything

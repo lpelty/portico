@@ -29,6 +29,13 @@ final class ViewerAgent: ObservableObject {
         /// A click by a heading's words with nothing clickable around it (v0.14 §6b.5).
         static let heading = "That's a heading, not something to click; use its ref."
         static let timedOut = "The viewer didn't answer in 10 s."
+        /// A show answered: the file or page is in front and has loaded (v0.17).
+        static let shown = "Shown in the viewer."
+
+        /// A show whose page failed to load, with the error's words (v0.17).
+        static func notLoaded(_ why: String) -> String {
+            "Not loaded: \(why)"
+        }
 
         /// "This is a PDF; it can be looked at, not used."
         static func notUsed(kind: String) -> String {
@@ -46,6 +53,16 @@ final class ViewerAgent: ObservableObject {
         }
 
         static let markCount = "Mark 1 to 9 things at a time."
+
+        /// A mark target that is no ref, no listed name and no visible text on the page (v0.17 §3.3).
+        static func noVisibleText(_ target: String) -> String {
+            "No visible text matches '\(target)'"
+        }
+
+        /// A mark by a ref that is on no element of the page, with no reload or input to explain it.
+        static func noElement(_ ref: String) -> String {
+            "No element \(ref) on this page; look again."
+        }
 
         static func cleared(_ count: Int) -> String {
             "Cleared \(count) mark\(count == 1 ? "" : "s")."
@@ -229,6 +246,9 @@ final class ViewerAgent: ObservableObject {
     }
 
     private func performNow(_ act: ViewerAct, due: ContinuousClock.Instant) async -> ViewerResult {
+        // A show only reports that a page loaded, never what is on it: it
+        // ignores the "agent can see" switch and draws no glow (v0.17).
+        if act.action == .show { return await performShow(act, due: due) }
         // The store keeps at most nine a call; more is refused, not cut.
         if act.action == .mark, !(1...MarkStore.perCall).contains(Self.markItems(act).count) {
             return fail(act, Message.markCount)
@@ -265,6 +285,38 @@ final class ViewerAgent: ObservableObject {
             return await performWeb(act, shown: shown, load: load)
         }
         return await performNative(act, shown: shown)
+    }
+
+    /// The agent showed `{artifact, location}` (v0.17 §3.2): answer once it
+    /// is in front and, for a web page, has loaded. Auto-open runs as the
+    /// `artifact.created` arrives, ahead of the show on the same
+    /// connection, so a file not in front now never will be: another chat
+    /// on screen, auto-open off for its kind, or not marked to open. That,
+    /// and a pane that isn't a web page, answers ok at once. A pane on its
+    /// failure page or on a site a link went to loads the file again. A
+    /// page that failed answers "Not loaded: <why>"; one still loading at
+    /// the deadline answers `timedOut`, which the gateway reads as "Shown;
+    /// still loading.".
+    private func performShow(_ act: ViewerAct, due: ContinuousClock.Instant) async -> ViewerResult {
+        let answered = ViewerResult(id: act.id, ok: true, text: Message.shown)
+        guard let model, model.shownChat == act.chat else { return answered }
+        let location = act.args["location"]?.stringValue ?? ""
+        guard let artifact = model.shownArtifact(for: act.chat), artifact.location == location else { return answered }
+        // In front: the viewer is where the person looks, as `show(_:in:)` leaves it.
+        model.closeDocumentView()
+        let shown = ArtifactPresentation(artifact: artifact)
+        guard !shown.isMissing, let load = WebPane.Load(shown) else { return answered }
+        deadline = due
+        expired = false
+        guard let view = await webView(showing: load) else { return fail(act, Message.timedOut) }
+        let coordinator = web?.coordinator
+        if let coordinator, coordinator.isAway(in: view) {
+            coordinator.showAgain(in: view)
+        }
+        await settle(view)
+        if expired || ContinuousClock.now >= deadline { return fail(act, Message.timedOut) }
+        if let failure = coordinator?.failure { return fail(act, Message.notLoaded(failure)) }
+        return answered
     }
 
     private func fail(_ act: ViewerAct, _ text: String) -> ViewerResult {
@@ -358,6 +410,9 @@ final class ViewerAgent: ObservableObject {
             let count = model?.markStore.clear(chat: runChat) ?? 0
             await draw([], chat: runChat, page: nil, in: view, quiet: false)
             return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+        case .show:
+            assertionFailure("a show is answered by performShow")
+            return ViewerResult(id: act.id, ok: true, text: Message.shown)
         case .back:
             guard view.canGoBack else { return fail(act, "There's nothing to go back to in the viewer.") }
             view.goBack()
@@ -687,7 +742,7 @@ final class ViewerAgent: ObservableObject {
                 missing.append(item.target)
             }
         }
-        guard !located.isEmpty else { return await notFound(act, missing, in: view) }
+        guard !located.isEmpty else { return fail(act, await missedText(missing, in: view, endsWithPeriod: false)) }
         let store = model.markStore
         let added = store.add(
             chat: runChat, page: page, items: located, call: act.id,
@@ -697,16 +752,33 @@ final class ViewerAgent: ObservableObject {
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": first.number], in: view)
         }
         var text = "Marked " + added.map { "\($0.number) · \($0.label)" }.joined(separator: ", ") + "."
-        if !missing.isEmpty {
-            let why: String
-            switch await notFoundText(missing, in: view) {
-            case Message.pageReloaded: why = " — the page reloaded since your last look; look again."
-            case Message.personUsed: why = " — the person used the page since your last look; look again."
-            default: why = " — look again."
-            }
-            text += " Not found: " + missing.map { "\"\($0)\"" }.joined(separator: ", ") + why
-        }
+        if !missing.isEmpty { text += " " + (await missedText(missing, in: view, endsWithPeriod: true)) }
         return ViewerResult(id: act.id, ok: true, text: text)
+    }
+
+    /// What the agent is told about mark targets not found (Ruling 11, as
+    /// refined in review): a ref says why it isn't there — "The page
+    /// reloaded…", else "The person used the page…", else "No element eN on
+    /// this page; look again." — and text says "No visible text matches
+    /// '<target>'"; one sentence per target, a repeated one said once.
+    /// Sentences end with a period except, when `endsWithPeriod` is false,
+    /// a last no-match sentence (the refusal reads as `noVisibleText` alone).
+    private func missedText(_ missing: [String], in view: WKWebView, endsWithPeriod: Bool) async -> String {
+        let refs = missing.filter(Self.isRef)
+        let refWhy: String? = refs.isEmpty ? nil
+            : await reloaded(refs, in: view) ? Message.pageReloaded
+            : await personUsed(in: view) ? Message.personUsed
+            : nil
+        var sentences: [String] = []
+        for target in missing {
+            let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sentence = Self.isRef(target) ? (refWhy ?? Message.noElement(trimmed)) : Message.noVisibleText(target)
+            if !sentences.contains(sentence) { sentences.append(sentence) }
+        }
+        return sentences.enumerated().map { index, sentence in
+            let last = index == sentences.count - 1
+            return sentence.hasSuffix(".") || (last && !endsWithPeriod) ? sentence : sentence + "."
+        }.joined(separator: " ")
     }
 
     /// The page `view` shows, as marks know it: a file path for the app's
@@ -991,6 +1063,9 @@ final class ViewerAgent: ObservableObject {
         case .clearMarks:
             let count = model?.markStore.clear(chat: runChat) ?? 0
             return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+        case .show:
+            assertionFailure("a show is answered by performShow")
+            return ViewerResult(id: act.id, ok: true, text: Message.shown)
         }
     }
 

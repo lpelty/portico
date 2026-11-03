@@ -141,7 +141,8 @@ class ServiceConfig(BaseModel):
     """``[[services]]`` (v0.4): one thing the deployment depends on, and how to tell it is up.
 
     ``check`` runs with ``/bin/sh -c``; exit 0 means up. ``restart``, when
-    set, is what the menu's Restart runs. ``up_detail`` is the line shown
+    set, is what the menu's Restart runs. Exit 75 (EX_TEMPFAIL) means stuck (v0.17: running
+    but not working); any other non-zero exit is down. ``up_detail`` is the line shown
     while it is up. ``timeout_seconds`` bounds each check (a restart is
     bounded by ``command_timeout_seconds``). Portico never knows what a
     service is.
@@ -240,6 +241,8 @@ class ViewerConfig(BaseModel):
     Settings switches. ``act_hosts`` are the outside sites the agent may click
     and type on (it can only look at and scroll the rest); an entry is a bare
     host name matching that host and its subdomains. Set by the deployment only.
+    ``properties`` (v0.17) is how a front-matter Properties block first opens
+    in the app, until the person folds or unfolds one.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -247,6 +250,7 @@ class ViewerConfig(BaseModel):
     agent_can_see: bool = True
     agent_checks_html: bool = True
     act_hosts: list[str] = []
+    properties: Literal["folded", "open"] = "folded"
 
     @field_validator("act_hosts")
     @classmethod

@@ -966,7 +966,7 @@ final class ViewerAgentTests: XCTestCase {
         let result = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("nonexistent words", nil)])))
         XCTAssertTrue(result.ok, result.text)
         XCTAssertTrue(result.text.hasPrefix("Marked 1 · "), result.text)
-        XCTAssertTrue(result.text.hasSuffix(" Not found: \"nonexistent words\" — look again."), result.text)
+        XCTAssertTrue(result.text.hasSuffix(" No visible text matches 'nonexistent words'."), result.text)
         XCTAssertEqual(rig.model.markStore.marks[1]?.count, 1)
     }
 
@@ -975,7 +975,7 @@ final class ViewerAgentTests: XCTestCase {
         _ = await rig.agent.perform(act(.look))
         let result = await rig.agent.perform(act(.mark, markArgs([("nonexistent words", nil)])))
         XCTAssertFalse(result.ok)
-        XCTAssertEqual(result.text, "Not found — look again")
+        XCTAssertEqual(result.text, "No visible text matches 'nonexistent words'")
         XCTAssertNil(rig.model.markStore.marks[1])
     }
 
@@ -1551,7 +1551,7 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(mark.text, Self.pageReloaded)
         let partly = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), (save, nil)])))
         XCTAssertTrue(partly.ok, partly.text)
-        XCTAssertTrue(partly.text.hasSuffix("Not found: \"\(save)\" — the page reloaded since your last look; look again."), partly.text)
+        XCTAssertTrue(partly.text.hasSuffix(". The page reloaded since your last look; look again."), partly.text)
 
         // By name the target is looked for on the page as it is: no reload to speak of.
         let byName = await rig.agent.perform(act(.click, ["target": .string("Nowhere")]))
@@ -1582,8 +1582,12 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(type.text, Self.personUsed)
         let scroll = await rig.agent.perform(act(.scroll, ["target": .string("Nowhere")]))
         XCTAssertEqual(scroll.text, Self.personUsed)
+        // A mark's miss says what it is: no such text (v0.17 Ruling 11).
         let mark = await rig.agent.perform(act(.mark, markArgs([("Nowhere", nil)])))
-        XCTAssertEqual(mark.text, Self.personUsed)
+        XCTAssertEqual(mark.text, "No visible text matches 'Nowhere'")
+        // A missing ref is about the page, so the person's input is named.
+        let markRef = await rig.agent.perform(act(.mark, markArgs([("e999", nil)])))
+        XCTAssertEqual(markRef.text, Self.personUsed, "a mark by a ref that isn't there")
         let stale = await rig.agent.perform(act(.click, ["target": .string("e999")]))
         XCTAssertEqual(stale.text, Self.personUsed, "a ref that isn't there either")
 
@@ -1609,6 +1613,8 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(click.text, Self.personUsed)
     }
 
+    /// v0.17 Ruling 11: a mark's missing text is named as such even after
+    /// the person used the page; no look would find it.
     func test_a_partly_found_mark_after_person_input_says_so_for_the_missing() async throws {
         let rig = try rig(Self.inputPage)
         _ = await rig.agent.perform(act(.look))
@@ -1616,9 +1622,51 @@ final class ViewerAgentTests: XCTestCase {
         let result = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Nowhere", nil)])))
         XCTAssertTrue(result.ok, result.text)
         XCTAssertTrue(result.text.hasPrefix("Marked 1 · "), result.text)
-        XCTAssertTrue(
-            result.text.hasSuffix(" Not found: \"Nowhere\" — the person used the page since your last look; look again."),
-            result.text)
+        XCTAssertTrue(result.text.hasSuffix(". No visible text matches 'Nowhere'."), result.text)
+    }
+
+    // MARK: - no visible text (v0.17 §3.3, Ruling 11)
+
+    func test_no_visible_text_wording() {
+        XCTAssertEqual(ViewerAgent.Message.noVisibleText("Gains 420 m"), "No visible text matches 'Gains 420 m'")
+    }
+
+    func test_no_element_wording() {
+        XCTAssertEqual(ViewerAgent.Message.noElement("e12"), "No element e12 on this page; look again.")
+    }
+
+    func test_mark_no_match_says_no_visible_text() async throws {
+        let rig = try rig(Self.inputPage)
+        let look = await rig.agent.perform(act(.look))
+        let none = await rig.agent.perform(act(.mark, markArgs([("Nowhere", nil)])))
+        XCTAssertFalse(none.ok)
+        XCTAssertEqual(none.text, "No visible text matches 'Nowhere'")
+        XCTAssertNil(rig.model.markStore.marks[1])
+
+        let partly = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Nowhere", nil)])))
+        XCTAssertTrue(partly.ok, partly.text)
+        let label = rig.model.markStore.marks[1]?.first?.label ?? "?"
+        XCTAssertEqual(partly.text, "Marked 1 · \(label). No visible text matches 'Nowhere'.")
+
+        // A ref that isn't on the page (no reload, no input) says so as a ref.
+        let noRef = await rig.agent.perform(act(.mark, markArgs([("e999", nil)])))
+        XCTAssertFalse(noRef.ok)
+        XCTAssertEqual(noRef.text, "No element e999 on this page; look again.")
+        let both = await rig.agent.perform(act(.mark, markArgs([("e999", nil), ("Nowhere", nil)])))
+        XCTAssertEqual(both.text, "No element e999 on this page; look again. No visible text matches 'Nowhere'")
+
+        // A stale ref on a reloaded page keeps its own sentence.
+        let save = ref(for: "Save trail", in: look.text)
+        let token = try await evaluate("window.__porticoAgent.page", in: rig.view) as? String
+        rig.view.reload()
+        let reloaded = await waitFor {
+            let now = try? await self.evaluate("window.__porticoAgent && window.__porticoAgent.page", in: rig.view) as? String
+            return now != nil && now != token
+        }
+        XCTAssertTrue(reloaded, "the page loaded again under a new token")
+        let stale = await rig.agent.perform(act(.mark, markArgs([(save, nil)])))
+        XCTAssertFalse(stale.ok)
+        XCTAssertEqual(stale.text, "The page reloaded since your last look; look again.")
     }
 
     func test_input_before_the_look_and_script_events_dont_count() async throws {

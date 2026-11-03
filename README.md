@@ -18,6 +18,7 @@ credential for the agent.
 ```sh
 git clone <this repo> ~/dev-projects/portico && cd ~/dev-projects/portico
 bin/install                      # prerequisites, gateway (uv sync), app (release build) -> ~/Applications/Portico.app
+bin/install --home ~/acme/portico   # the same, with Portico's folder (config, token, index, log) kept there
 bin/doctor                       # one line per check; tells you if a credential is missing
 open ~/Applications/Portico.app  # the app starts the gateway itself
 ```
@@ -37,6 +38,21 @@ same name is replaced. Stock macOS tools only (`sips`, `iconutil`,
 `codesign`, and `swift` from the Command Line Tools for the icon). The app
 keeps using this checkout: move or delete the checkout and run `bin/install`
 again from its new place.
+
+**Portico's folder (v0.17).** `bin/install --home DIR` keeps config, token,
+index and log in `DIR` (made, with any missing folder above it, mode 0700;
+`~/` and a relative path are expanded, a trailing slash dropped; a `DIR`
+that is a file stops the install before anything runs). It is written into
+the app's `Info.plist` as `PorticoHome` and, once the install has succeeded,
+into this checkout's git-ignored `.portico-home`, so `bin/update` and the
+app's own Update keep it. Everything finds the folder in the same order:
+the app's `PorticoHome`; `$PORTICO_HOME`; the folder `.portico-home` names
+(read only from a real checkout); `~/.portico`. A plain `bin/install` writes
+nothing into the app, and `$PORTICO_HOME` alone is used for the install but
+not baked in. An app whose `PorticoHome` folder has been deleted says
+"Portico's folder <path> is missing; reinstall" on the Gateway row instead
+of making a new one. `bin/doctor` names the folder and which of these it
+came from.
 
 The config is read before the build. A config that does not load (a
 `[brand]` without `agent_name`, a relative `app_icon`, a typo'd key) stops
@@ -83,7 +99,7 @@ is fixed.
 
 | What | Where |
 |---|---|
-| State: token, ledger, index, lock, gateway log, the agent's last command lists (`commands.json`) | `~/.portico/` (`PORTICO_HOME` moves it) |
+| State: token, ledger, index, lock, gateway log, the agent's last command lists (`commands.json`) | `~/.portico/` (v0.17: `bin/install --home DIR` or `PORTICO_HOME` moves it; see Portico's folder) |
 | Config | `~/.portico/config.toml` (optional; defaults apply when absent) |
 | Credential file | `~/.portico/env` (optional) |
 | App settings (auto-open, quit behaviour, appearance, gateway address and token file overrides) | the app's Settings window, stored in `UserDefaults` |
@@ -136,12 +152,17 @@ run = "my-tool update"              # performs it; the app's "Update available" 
 restart = "my-tool restart-all"     # /bin/sh -c, bounded by command_timeout_seconds; exit 0 = done;
                                     # the services menu's Restart all runs it (without it,
                                     # Restart all restarts the gateway)
-status = "my-tool status --json"    # prints {"services": [{"id", "name", "up": true|false, "detail"?}]} on stdout
+status = "my-tool status --json"    # prints {"services": [{"id", "name", "state": "up"|"down"|"stuck" (or "up": true|false), "detail"?}]} on stdout
                                     # (stderr is not read as JSON; it only names the reason when it fails);
                                     # when set, its rows replace the [[services]] checks; a row's
                                     # context menu offers Restart when a [[services]] entry with the
                                     # same id gives one
 ```
+
+A service is **stuck** when its check exits 75 (`EX_TEMPFAIL`): running but not
+working. The row says "stuck" with the check's first line of output, and the
+row offers Restart when the service has a `restart` (a status row can say
+`"state": "stuck"` too). An app without `services.stuck.v1` is told "down".
 
 A row's `detail` is shown while the row is up, so a count worth
 spot-checking over time (a memory count, say) goes there. The status
@@ -162,7 +183,7 @@ text = "/review"
 [[services]]                        # what the deployment depends on, shown in the app's services menu
 id = "memory"                       # unique, lowercase letters, digits and dashes
 name = "Memory"
-check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up
+check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up, 75 = stuck, other = down
 restart = "my-tool restart memory"  # optional: the menu offers Restart
 up_detail = "recall and capture"    # optional: shown while it is up
 timeout_seconds = 10                # optional, default 10, at least 1: the check is killed after this
@@ -186,6 +207,8 @@ hide_session_folder = false         # true: the pane lists only the [[roots]], n
 agent_can_see = true                # default for Settings > Agent can see the viewer (look, scroll, click, type)
 agent_checks_html = true            # default for Settings > Agent checks HTML it creates
 act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and type on; ships empty (see below)
+properties = "folded"               # v0.17: "folded" or "open", how a Markdown page's front-matter Properties start;
+                                    # the person's own fold, once made, is remembered and wins
 
 [spaces]                            # optional (v0.12): files the agent keeps current, in the app's switcher
 folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
@@ -233,8 +256,8 @@ Both are recorded in the conversation as quiet lines, at once and again
 when they finish: "Log session — running the log step", then "Session
 logged" (or "The log step didn't finish; the session isn't logged");
 "New — logging, then ending this session" (or "New — ending this
-session"), then "Session ended · continues in Session M", and "Continues
-Session N" first in the next. A replay shows them.
+session"), then "Session ended · continues in Session M" (v0.17: the next
+session no longer opens with a "Continues Session N" line). A replay shows them.
 
 The log step is `log_prompt`, sent to the agent as a message — so the
 agent logs itself with the command or skill its folder already has. A
@@ -458,6 +481,13 @@ the viewer**). **Agent checks HTML it creates** (on by default, off with
 the first) has the agent open an HTML page it wrote and look at it before
 it replies; it uses more tokens. `[viewer] agent_can_see` and
 `agent_checks_html` set the defaults.
+
+**v0.17.** `show_in_viewer` takes a web address (`http://` or `https://`) as
+well as a file, and waits until the page has loaded: the agent reads "Shown in
+the viewer.", "Not loaded: <why>" or, after 10 s, "Shown; still loading."
+(`viewer.show.v1`). A conversation's viewer calls run one at a time, in the
+order sent; Stop drops the ones still waiting. `viewer_mark` finds any text
+the person can see, not only controls.
 
 **Outside sites.** The viewer keeps website sign-ins the way a browser does,
 so a click on an outside site is the person's click. Local pages (`file://`

@@ -14,6 +14,8 @@ struct PorticoApp: App {
     @StateObject private var dictation: Dictation
 
     init() {
+        // v0.17: tooltips after 0.8 s, in this app's own defaults only.
+        TooltipDelay.register()
         // The model reads the auto-open settings (spec §5.3), so it holds the
         // same `Settings` object the settings scene edits.
         let settings = Settings()
@@ -78,6 +80,9 @@ struct PorticoApp: App {
                 .preferredColorScheme(settings.appearance.colorScheme)
                 // One text scale for everything the window draws (v0.15 §3).
                 .environment(\.textScale, CGFloat(settings.textScale))
+                // The Properties block's fold, remembered (v0.17 §3.7).
+                .environment(\.propertiesOpen, model.propertiesOpen)
+                .environment(\.setPropertiesOpen) { [settings] open in settings.propertiesOpen = open }
                 // Brand from hello (spec section 8): the accent on every
                 // control (nil keeps the system accent), the icon in the Dock only
                 // for a build without one of its own (v0.5).

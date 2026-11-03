@@ -30,6 +30,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         state = StateDir(Path(args.state).expanduser() if args.state else None)
+        _export_home(state, given=bool(args.state))
         config_path = Path(args.config).expanduser() if args.config else state.config_path
         config = load_config(config_path)
         plugins = load_plugins(config.plugins, config.plugin_paths)
@@ -91,6 +92,21 @@ async def _run_server(config, state, port: int, engine_factory=None, plugins=Non
     return 0
 
 
+def _export_home(state, given: bool) -> None:  # noqa: ANN001 - StateDir lives in state.py
+    """v0.17: what the gateway starts (plug-ins, service checks, ``portico-gateway`` itself) uses its folder.
+
+    ``PORTICO_HOME`` is this folder; ``PORTICO_HOME_SOURCE`` says where it came
+    from, unless the app that started this gateway already said (``Info.plist``).
+    """
+    import os
+
+    from portico_gateway.state import ENV_HOME, ENV_HOME_SOURCE, StateDir
+
+    if not os.environ.get(ENV_HOME_SOURCE):
+        os.environ[ENV_HOME_SOURCE] = "--state" if given else StateDir.default_source()
+    os.environ[ENV_HOME] = str(state.path)
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Print one line per check; exit 1 when any check fails."""
     from portico_gateway.doctor import doctor, format_check
@@ -98,7 +114,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     state = StateDir(Path(args.state).expanduser() if args.state else None)
     config_path = Path(args.config).expanduser() if args.config else state.config_path
-    checks = doctor(state, config_path)
+    checks = doctor(state, config_path, state_given=bool(args.state))
     for check in checks:
         print(format_check(check))
     failed = sum(1 for c in checks if not c.ok)
@@ -317,13 +333,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("run", help="run the gateway (prints PORTICO_READY port=<n> once listening)")
     p.add_argument("--port", type=int, default=0, help="port on 127.0.0.1; 0 (default) picks a free one")
-    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.add_argument("--verbose", action="store_true", help="debug logging on stderr")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("doctor", help="check this machine, the state directory and the config; one line per check")
-    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_doctor)
 
@@ -332,13 +348,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_check_env)
 
     p = sub.add_parser("stop", help="stop the gateway running on this state directory (exit 3 when none runs)")
-    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.add_argument("--timeout", type=float, help="seconds to wait for it to stop (default: command_timeout_seconds + 30)")
     p.set_defaults(func=cmd_stop)
 
     p = sub.add_parser("status", help="whether a gateway runs here and its live session (exit 0 running, 3 not)")
-    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
     p.set_defaults(func=cmd_status)
 
@@ -346,19 +362,19 @@ def build_parser() -> argparse.ArgumentParser:
     sessions_sub = p.add_subparsers(dest="sessions_command", required=True)
     c = sessions_sub.add_parser("clear", help="forget every earlier session (the gateway must be stopped; transcripts stay)")
     c.add_argument("--yes", action="store_true", help="do not ask first")
-    c.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     c.add_argument("--config", help="config file (default: <state>/config.toml)")
     c.set_defaults(func=cmd_sessions_clear)
 
     p = sub.add_parser("update", help="run the deployment's update (stops the gateway first); --check only asks")
     p.add_argument("--check", action="store_true", help="exit 0 and print the version when an update is available, 1 when none, 2 when not configured, 4 when the check failed")
-    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("config-value", help="print one config value (e.g. brand.name, brand.app_icon), or nothing")
     p.add_argument("key", help="dotted key: brand.name, brand.app_icon, update.run, ...")
-    p.add_argument("--state", help="state directory (default: $PORTICO_HOME or ~/.portico)")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_config_value)
 

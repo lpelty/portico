@@ -133,8 +133,8 @@ final class FrontMatterTests: XCTestCase {
     func testHTMLIsAFoldableQuietBlockWithEscapedValues() throws {
         let source = "---\ntitle: <b>Q3</b> & more\nstatus: draft\ntags: [a, b]\n---\nBody"
         let matter = try XCTUnwrap(FrontMatter.split(source).frontMatter)
-        let html = matter.html(now: date("2026-10-30"), calendar: utc, locale: posix)
-        XCTAssertTrue(html.hasPrefix("<details class=\"fm\" open>"), html)
+        let html = matter.html(open: true, now: date("2026-10-30"), calendar: utc, locale: posix)
+        XCTAssertTrue(html.hasPrefix("<details class=\"fm\" open "), html)
         XCTAssertTrue(html.contains("<span class=\"fm-label\">Properties</span>"))
         XCTAssertTrue(html.contains("<span class=\"fm-summary\">· 3 — draft, 2 tags</span>"), html)
         XCTAssertTrue(html.contains("&lt;b&gt;Q3&lt;/b&gt; &amp; more"))
@@ -145,8 +145,8 @@ final class FrontMatterTests: XCTestCase {
     }
 
     func testMarkdownPageCarriesTheBlockAndOnlyTheBody() throws {
-        let page = try MarkdownPage.html(source: note, title: "usability-synthesis.md")
-        XCTAssertTrue(page.contains("<details class=\"fm\" open>"))
+        let page = try MarkdownPage.html(source: note, title: "usability-synthesis.md", propertiesOpen: true)
+        XCTAssertTrue(page.contains("<details class=\"fm\" open "))
         XCTAssertFalse(page.contains("status: draft"), "the raw block is not handed to the renderer")
         XCTAssertTrue(page.contains("# Trail Detail"))
         XCTAssertFalse(page.contains("{{"))

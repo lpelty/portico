@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import plistlib
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -213,6 +214,7 @@ def test_app_bundle_has_the_info_plist_keys(products: Path, tmp_path: Path) -> N
     assert info["NSHighResolutionCapable"] is True
     assert info["CFBundleShortVersionString"] == "0.3.0"
     assert info["PorticoGatewayBin"] == "/opt/portico/bin/portico-gateway"
+    assert "PorticoHome" not in info  # a generic install bakes no folder (v0.17 §5)
     # Voice input (v0.9): the usage strings the microphone and speech prompts show.
     assert info["NSMicrophoneUsageDescription"].startswith("Acme Agent listens only while you hold or press the mic")
     assert "on this Mac" in info["NSSpeechRecognitionUsageDescription"]
@@ -443,3 +445,303 @@ def test_install_stops_with_the_reason_when_the_config_does_not_load(tmp_path: P
     assert "does not load" in done.stderr and "nothing was installed" in done.stderr
     assert "== app" not in done.stdout  # stopped before the build
     assert not (tmp_path / "Applications").exists()
+
+
+# --- v0.17 §5: the home folder chosen at install ------------------------------------
+
+
+def test_app_bundle_carries_the_home_folder_when_given(products: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "Applications"
+    done = make_app(products, dest, extra=["--home", "/opt/acme/app"])
+    assert done.returncode == 0, done.stderr
+    with (dest / "Acme Agent.app" / "Contents" / "Info.plist").open("rb") as f:
+        info = plistlib.load(f)
+    assert info["PorticoHome"] == "/opt/acme/app"
+    assert info["PorticoGatewayBin"] == "/opt/portico/bin/portico-gateway"
+
+
+def test_install_refuses_an_unknown_argument(tmp_path: Path) -> None:
+    env = {**os.environ, "PORTICO_APP_DIR": str(tmp_path / "Applications")}
+    done = run([REPO_ROOT / "bin" / "install", "--colour"], env)
+    assert done.returncode == 2
+    assert "usage: bin/install" in done.stderr
+    assert done.stdout == ""
+    assert not (tmp_path / "Applications").exists()
+
+
+@pytest.fixture
+def stub_checkout(tmp_path: Path) -> dict[str, Path]:
+    """A checkout with the real ``bin/install`` and every step it calls stubbed: each stub logs its arguments."""
+    repo = tmp_path / "checkout"
+    log = tmp_path / "calls.log"
+    (repo / "bin").mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "bin" / "install", repo / "bin" / "install")
+    packaging = repo / "app" / "Packaging"
+    packaging.mkdir(parents=True)
+    shutil.copy2(DEFAULT_ICON, packaging / "AppIcon.png")
+    (repo / "app" / "Package.swift").write_text("platforms: [.macOS(.v15)]\n")
+    (repo / "VERSION").write_text("0.17.0\n")
+    logger = f'echo "$(basename "$0") $*" >> "{log}"'
+    stub(packaging, "prereqs.sh", logger)
+    stub(packaging, "build-app.sh", logger + f'\necho "{tmp_path}/products"')
+    stub(packaging, "make-app.sh", logger + '\nwhile [ $# -gt 0 ]; do [ "$1" = --dest ] && d="$2"; shift; done\necho "$d/Acme.app"')
+    venv_bin = repo / "gateway" / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    stub(venv_bin, "portico-gateway", logger)
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    stub(stubs, "uv", logger)
+    return {"repo": repo, "log": log, "stubs": stubs, "apps": tmp_path / "Applications"}
+
+
+def install_env(c: dict[str, Path], **extra: str) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k != "PORTICO_HOME"}
+    env.update(PATH=f"{c['stubs']}:{env.get('PATH', '/usr/bin:/bin')}", PORTICO_APP_DIR=str(c["apps"]), **extra)
+    return env
+
+
+def calls(c: dict[str, Path], name: str) -> list[str]:
+    return [line for line in c["log"].read_text().splitlines() if line.split(" ", 1)[0] == name]
+
+
+def test_install_reads_the_checkouts_home_file(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    home_file = c["repo"] / ".portico-home"
+
+    # A checkout installed earlier with --home: bin/update's reinstall keeps the folder.
+    acme = tmp_path / "acme" / "app"
+    acme.mkdir(parents=True)
+    home_file.write_text(f"{acme}\n")
+    done = run([install], install_env(c))  # install_env drops PORTICO_HOME: a plain terminal run
+    assert done.returncode == 0, done.stderr
+    config_calls = calls(c, "portico-gateway")
+    assert config_calls and all(call.endswith(f"--state {acme}") for call in config_calls), config_calls
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {acme}" in make
+    assert f"Folder:    {acme}" in done.stdout
+    assert home_file.read_text() == f"{acme}\n"
+
+    # --home: the folder is made (0700) and remembered once the install succeeds.
+    c["log"].unlink()
+    home_file.unlink()
+    new = tmp_path / "acme-root" / "app"
+    done = run([install, "--home", new], install_env(c))
+    assert done.returncode == 0, done.stderr
+    assert new.is_dir() and stat.S_IMODE(new.stat().st_mode) == 0o700
+    assert home_file.read_text() == f"{new}\n"
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {new}" in make
+    assert all(call.endswith(f"--state {new}") for call in calls(c, "portico-gateway"))
+
+    # --home=DIR works the same.
+    c["log"].unlink()
+    other = tmp_path / "other"
+    done = run([install, f"--home={other}"], install_env(c))
+    assert done.returncode == 0, done.stderr
+    assert home_file.read_text() == f"{other}\n"
+
+    # Neither, with PORTICO_HOME set: that folder is used, and nothing is baked into the app.
+    c["log"].unlink()
+    home_file.unlink()
+    env_home = tmp_path / "env-home"
+    done = run([install], install_env(c, PORTICO_HOME=str(env_home)))
+    assert done.returncode == 0, done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert "--home" not in make
+    assert all(call.endswith(f"--state {env_home}") for call in calls(c, "portico-gateway"))
+    assert not home_file.exists()
+
+
+def test_a_failed_install_does_not_remember_the_folder(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    c = stub_checkout
+    stub(c["repo"] / "app" / "Packaging", "make-app.sh", 'echo "make-app: codesign failed" >&2; exit 1')
+    done = run([c["repo"] / "bin" / "install", "--home", tmp_path / "acme"], install_env(c))
+    assert done.returncode != 0
+    assert not (c["repo"] / ".portico-home").exists()
+
+
+def test_portico_home_is_git_ignored() -> None:
+    done = run(["git", "-C", REPO_ROOT, "check-ignore", "-q", ".portico-home"])
+    assert done.returncode == 0
+
+
+def test_an_update_from_the_app_keeps_the_home_folder(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    """Fix round 1: the app's updater exports PORTICO_HOME; a checkout installed with --home still bakes it."""
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    home_file = c["repo"] / ".portico-home"
+    folder = tmp_path / "acme-root" / "app"
+    folder.mkdir(parents=True)
+    (tmp_path / "other").mkdir()
+    home_file.write_text(f"{folder}\n")
+
+    # The same folder in both: baked, no warning.
+    done = run([install], install_env(c, PORTICO_HOME=str(folder)))
+    assert done.returncode == 0, done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {folder}" in make
+    assert "differs" not in done.stderr
+
+    # PORTICO_HOME names another folder: that one is baked, with a warning naming both.
+    c["log"].unlink()
+    other = tmp_path / "other"
+    done = run([install], install_env(c, PORTICO_HOME=str(other)))
+    assert done.returncode == 0, done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {other}" in make
+    assert f"PORTICO_HOME ({other}) differs from .portico-home ({folder})" in done.stderr
+    assert all(call.endswith(f"--state {other}") for call in calls(c, "portico-gateway"))
+
+
+def test_the_default_folder_is_not_a_choice(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    """The app exports PORTICO_HOME even when it fell back to the default; the source says so, and .portico-home wins."""
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    folder = tmp_path / "acme-root" / "app"
+    folder.mkdir(parents=True)
+    (c["repo"] / ".portico-home").write_text(f"{folder}\n")
+    done = run([install], install_env(c, PORTICO_HOME=str(tmp_path / "dot-default"), PORTICO_HOME_SOURCE="the default"))
+    assert done.returncode == 0, done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {folder}" in make
+    assert "differs" not in done.stderr
+    assert all(call.endswith(f"--state {folder}") for call in calls(c, "portico-gateway"))
+
+    # With no .portico-home, "the default" bakes nothing and passes no --state.
+    c["log"].unlink()
+    (c["repo"] / ".portico-home").unlink()
+    done = run([install], install_env(c, PORTICO_HOME=str(tmp_path / "dot-default"), PORTICO_HOME_SOURCE="the default"))
+    assert done.returncode == 0, done.stderr
+    assert "--home" not in calls(c, "make-app.sh")[0]
+    assert all("--state" not in call for call in calls(c, "portico-gateway"))
+
+
+def test_the_folder_is_normalised_before_it_is_compared_or_baked(
+    stub_checkout: dict[str, Path], tmp_path: Path
+) -> None:
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    folder = tmp_path / "acme-root" / "app"
+    folder.mkdir(parents=True)
+    (c["repo"] / ".portico-home").write_text(f"{folder}/\n")  # a trailing slash in the file
+
+    # The same folder, spelled with a trailing slash: equal, so no warning; baked once, clean.
+    done = run([install], install_env(c, PORTICO_HOME=f"{folder}//"))
+    assert done.returncode == 0, done.stderr
+    assert "differs" not in done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert make.split("--home ", 1)[1].split(" ")[0] == str(folder)
+
+    # ~ expands and a relative path is made absolute: PORTICO_HOME alone (used, not baked), then the file (baked).
+    c["log"].unlink()
+    (c["repo"] / ".portico-home").unlink()
+    env = install_env(c, PORTICO_HOME="~/acme-portico/")
+    home = Path(env.get("HOME", Path.home()))
+    done = run([install], env)
+    assert done.returncode == 0, done.stderr
+    assert all(call.endswith(f"--state {home}/acme-portico") for call in calls(c, "portico-gateway"))
+
+    c["log"].unlink()
+    done = run([install], install_env(c, PORTICO_HOME="rel/folder"), cwd=tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert all(call.endswith(f"--state {tmp_path.resolve()}/rel/folder") for call in calls(c, "portico-gateway"))
+    (home / "from-file").mkdir(exist_ok=True)
+    (c["repo"] / ".portico-home").write_text("~/from-file/\n")
+    c["log"].unlink()
+    done = run([install], install_env(c))
+    assert done.returncode == 0, done.stderr
+    assert calls(c, "make-app.sh")[0].split("--home ", 1)[1].split(" ")[0] == f"{home}/from-file"
+
+
+def test_an_app_started_update_bakes_the_folder_without_a_home_file(
+    stub_checkout: dict[str, Path], tmp_path: Path
+) -> None:
+    """The app's updater exports PORTICO_HOME with the source Info.plist; a re-cloned checkout has no .portico-home."""
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    folder = tmp_path / "acme-root" / "app"
+    folder.mkdir(parents=True)
+    done = run([install], install_env(c, PORTICO_HOME=str(folder), PORTICO_HOME_SOURCE="Info.plist"))
+    assert done.returncode == 0, done.stderr
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {folder}" in make
+    # .portico-home is back in step, so a later terminal bin/update keeps the folder.
+    assert (c["repo"] / ".portico-home").read_text() == f"{folder}\n"
+
+    # A shell export with no source hint is used for the install and baked into nothing.
+    c["log"].unlink()
+    (c["repo"] / ".portico-home").unlink()
+    done = run([install], install_env(c, PORTICO_HOME=str(folder)))
+    assert done.returncode == 0, done.stderr
+    assert "--home" not in calls(c, "make-app.sh")[0]
+    assert not (c["repo"] / ".portico-home").exists()
+
+
+def test_the_home_file_follows_the_folder_the_app_carries(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    (c["repo"] / ".portico-home").write_text(f"{old}\n")
+    done = run([install], install_env(c, PORTICO_HOME=str(new), PORTICO_HOME_SOURCE="Info.plist"))
+    assert done.returncode == 0, done.stderr
+    assert f"--home {new}" in calls(c, "make-app.sh")[0]
+    assert (c["repo"] / ".portico-home").read_text() == f"{new}\n"
+
+
+def test_a_folder_that_has_gone_is_not_made_again(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    c = stub_checkout
+    install = c["repo"] / "bin" / "install"
+    gone = tmp_path / "gone" / "app"
+    message = f"Portico's folder {gone} is missing; reinstall with --home {gone}"
+
+    (c["repo"] / ".portico-home").write_text(f"{gone}\n")
+    done = run([install], install_env(c))
+    assert done.returncode == 1
+    assert message in done.stderr
+    assert not gone.exists()
+    assert not c["log"].exists() or not calls(c, "portico-gateway")  # before any config-value call
+
+    (c["repo"] / ".portico-home").unlink()
+    done = run([install], install_env(c, PORTICO_HOME=str(gone), PORTICO_HOME_SOURCE="Info.plist"))
+    assert done.returncode == 1
+    assert message in done.stderr
+    assert not gone.exists()
+    assert not calls(c, "portico-gateway")
+
+    # --home still makes its folder.
+    done = run([install, "--home", gone], install_env(c))
+    assert done.returncode == 0, done.stderr
+    assert gone.is_dir()
+
+
+def test_install_refuses_a_home_that_is_a_file(stub_checkout: dict[str, Path], tmp_path: Path) -> None:
+    c = stub_checkout
+    a_file = tmp_path / "not-a-folder"
+    a_file.write_text("x")
+    done = run([c["repo"] / "bin" / "install", "--home", a_file], install_env(c))
+    assert done.returncode == 2
+    assert f"--home {a_file} is a file, not a folder" in done.stderr
+    assert done.stdout == ""  # before the prerequisites
+    assert not c["log"].exists()  # nothing ran: no prereqs, no uv sync
+    assert not (c["repo"] / ".portico-home").exists()
+
+
+def test_a_home_folder_with_a_space(stub_checkout: dict[str, Path], products: Path, tmp_path: Path) -> None:
+    c = stub_checkout
+    folder = tmp_path / "Acme Root" / "app"
+    done = run([c["repo"] / "bin" / "install", "--home", folder], install_env(c))
+    assert done.returncode == 0, done.stderr
+    assert folder.is_dir()
+    assert (c["repo"] / ".portico-home").read_text() == f"{folder}\n"
+    (make,) = calls(c, "make-app.sh")
+    assert f"--home {folder}" in make
+    assert all(call.endswith(f"--state {folder}") for call in calls(c, "portico-gateway"))
+
+    dest = tmp_path / "Applications"
+    made = make_app(products, dest, extra=["--home", folder])
+    assert made.returncode == 0, made.stderr
+    with (dest / "Acme Agent.app" / "Contents" / "Info.plist").open("rb") as f:
+        assert plistlib.load(f)["PorticoHome"] == str(folder)

@@ -414,6 +414,42 @@ final class DockedQuestionCardTests: XCTestCase {
         })]
     }
 
+    func testTheBubbleIsSpokenAsYourAnswer() {
+        XCTAssertEqual(
+            AnswerBubble.spokenLabel(AnswerPair(question: "Which tone for step 2?", answer: "Plain")), "Your answer: Plain")
+    }
+
+    func testHoverHighlightsButDoesNotArm() {
+        var draft = QuestionDraft(card: Self.card([Self.question(labels: ["Plain", "Explained", "Terse"])]))
+        draft.hover(2)
+        XCTAssertEqual(draft.highlighted, 2)
+        XCTAssertEqual(draft.focused, 0, "Return and the digits still act on the keyboard focus")
+        XCTAssertEqual(QuestionDockKeys.action(for: .return, cardFocused: true, optionCount: 3), .confirm)
+        draft.move(by: 1)
+        XCTAssertNil(draft.hovered, "an arrow takes the highlight back from the pointer")
+        XCTAssertEqual(draft.highlighted, 1)
+        draft.hover(2)
+        draft.hover(nil)
+        XCTAssertEqual(draft.highlighted, draft.focused)
+    }
+
+    /// R-c7: the preview shows the highlighted option, so the pointer moves
+    /// it; whichever input came last wins, and Return stays on the focus.
+    func testThePreviewFollowsTheHighlightedOption() {
+        var draft = QuestionDraft(card: Self.card([Self.question(labels: ["Plain", "Explained", "Terse"],
+                                                                previews: ["# Plain", "# Explained", "# Terse"])]))
+        XCTAssertEqual(draft.preview(0), "# Plain")
+        draft.hover(1)
+        XCTAssertEqual(draft.preview(0), "# Explained", "the pointer moves the preview")
+        XCTAssertEqual(draft.focused, 0)
+        draft.focus(2)
+        XCTAssertNil(draft.hovered, "a digit or click takes the highlight back from the pointer")
+        XCTAssertEqual(draft.preview(0), "# Terse")
+        draft.hover(0)
+        draft.move(by: -1)
+        XCTAssertEqual(draft.preview(0), "# Explained", "an arrow takes it back again")
+    }
+
     func testOneAnsweredQuestionIsOneBubbleWithItsHeader() {
         let input = Self.input([(Self.tone, ["Plain", "Explained"])])
         XCTAssertEqual(

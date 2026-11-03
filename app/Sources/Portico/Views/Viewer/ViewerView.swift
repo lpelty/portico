@@ -216,17 +216,9 @@ struct ViewerView: View {
             }
             openButtons(labelled: fit.labelled)
             focusButton
-            Button {
-                model.setViewer(visible: false, for: chat)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(Theme.iconFont(13, weight: .medium))
-                    .foregroundStyle(Theme.text2)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
+            ViewerCloseButton(help: "Close the viewer", label: "Close the viewer") {
+                model.closeFile(in: chat)
             }
-            .buttonStyle(.hover)
-            .help("Collapse the viewer")
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.toolbarHeight)
@@ -262,7 +254,7 @@ struct ViewerView: View {
     @ViewBuilder
     private func openButtons(labelled: Bool) -> some View {
         if let outside = page.outside {
-            headerButton("Open externally", systemImage: "arrow.up.right", labelled: labelled,
+            headerButton("Open externally", icon: .symbol("arrow.up.right"), labelled: labelled,
                          help: "Open \(ViewerPageAddress.display(outside)) in your browser") {
                 NSWorkspace.shared.open(outside)
             }
@@ -270,13 +262,14 @@ struct ViewerView: View {
             let shown = ArtifactPresentation(artifact: current)
             if vault != nil, let path = shown.fileURL?.path, Obsidian.opens(path: path) {
                 let installed = Obsidian.isInstalled
-                headerButton("Open in Obsidian", systemImage: "diamond", labelled: labelled,
+                headerButton("Open in Obsidian", icon: Obsidian.appIcon.map { .image($0) } ?? .symbol("diamond"),
+                             labelled: labelled,
                              help: installed ? "Open this note in Obsidian" : Obsidian.notInstalledHelp) {
                     Obsidian.open(path: path)
                 }
                 .disabled(!installed)
             }
-            headerButton("Open externally", systemImage: "arrow.up.right", labelled: labelled,
+            headerButton("Open externally", icon: .symbol("arrow.up.right"), labelled: labelled,
                          help: shown.openLabel) {
                 shown.openExternally()
             }
@@ -284,9 +277,9 @@ struct ViewerView: View {
     }
 
     private func headerButton(
-        _ title: String, systemImage: String, labelled: Bool, help: String, action: @escaping () -> Void
+        _ title: String, icon: ViewerHeaderIcon, labelled: Bool, help: String, action: @escaping () -> Void
     ) -> some View {
-        ViewerHeaderButton(title: title, systemImage: systemImage, labelled: labelled, help: help, action: action)
+        ViewerHeaderButton(title: title, icon: icon, labelled: labelled, help: help, action: action)
     }
 
     private var focusButton: some View { ViewerFocusButton(chat: chat) }
@@ -384,12 +377,28 @@ struct ViewerView: View {
     }
 }
 
+/// The header's buttons share one glyph size and weight (v0.17 §3.5,
+/// ruling 10): every glyph drawn in a 14 pt square.
+enum ViewerHeader {
+    static let iconSize: CGFloat = 12
+    static let iconWeight: Font.Weight = .medium
+    /// The square each button's glyph is drawn in.
+    static let glyphSide: CGFloat = 14
+}
+
+/// A header button's glyph: an SF Symbol, or an app's own icon (Open in
+/// Obsidian, read from the installed app).
+enum ViewerHeaderIcon {
+    case symbol(String)
+    case image(NSImage)
+}
+
 /// One of the header's open buttons (AG2/AG2b): icon and words on a
 /// control fill while the viewer is wide; the icon alone, its words in
 /// the tooltip, when it is narrow.
 struct ViewerHeaderButton: View {
     let title: String
-    let systemImage: String
+    let icon: ViewerHeaderIcon
     let labelled: Bool
     let help: String
     let action: () -> Void
@@ -397,16 +406,15 @@ struct ViewerHeaderButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .font(Theme.iconFont(10, weight: .semibold))
+                glyph
                 if labelled {
                     Text(title)
                         .scaledFont(12)
                 }
             }
             .foregroundStyle(Theme.text2)
-            .padding(.vertical, labelled ? 4 : 6)
-            .padding(.horizontal, labelled ? 9 : 6)
+            .padding(.vertical, labelled ? 4 : 5)
+            .padding(.horizontal, labelled ? 9 : 5)
             .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
             .fixedSize()
@@ -415,6 +423,23 @@ struct ViewerHeaderButton: View {
         .buttonStyle(.hover)
         .help(help)
         .accessibilityLabel(title)
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch icon {
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
+                .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
+        case .image(let image):
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -430,7 +455,8 @@ struct ViewerFocusButton: View {
             model.toggleFocus(chat: chat)
         } label: {
             Image(systemName: on ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                .font(Theme.iconFont(11, weight: .semibold))
+                .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
+                .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(on ? accent : Theme.text2)
                 .frame(width: 24, height: 24)
                 .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -439,8 +465,30 @@ struct ViewerFocusButton: View {
         }
         .buttonStyle(.hover)
         .keyboardShortcut(.return, modifiers: [.command, .shift])
-        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Focus on this: hide the sidebar and widen the viewer (⌘⇧↩)")
-        .accessibilityLabel(on ? "Leave focus" : "Focus")
+        .help(on ? "Back to the usual layout (⌘⇧↩)" : "Widen the viewer (⌘⇧↩)")
+        .accessibilityLabel(on ? "Back to the usual layout" : "Widen the viewer")
+    }
+}
+
+/// The header's X: the file viewer's closes the file (v0.17 §3.4), a
+/// space's goes back to Work.
+struct ViewerCloseButton: View {
+    let help: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
+                .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
+                .foregroundStyle(Theme.text2)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .help(help)
+        .accessibilityLabel(label)
     }
 }
 
@@ -607,7 +655,7 @@ struct SpaceViewer: View {
     private func actionButton(_ action: HeaderAction, _ space: SpaceInfo, labelled: Bool) -> some View {
         switch action {
         case .openExternally(let url):
-            ViewerHeaderButton(title: "Open externally", systemImage: "arrow.up.right", labelled: labelled,
+            ViewerHeaderButton(title: "Open externally", icon: .symbol("arrow.up.right"), labelled: labelled,
                                help: "Open \(ViewerPageAddress.display(url)) in your browser") {
                 NSWorkspace.shared.open(url)
             }
@@ -617,7 +665,7 @@ struct SpaceViewer: View {
     }
 
     private func refreshButton(_ space: SpaceInfo, labelled: Bool) -> some View {
-        ViewerHeaderButton(title: "Refresh", systemImage: "arrow.clockwise", labelled: labelled, help: "Ask the agent to update this now") {
+        ViewerHeaderButton(title: "Refresh", icon: .symbol("arrow.clockwise"), labelled: labelled, help: "Ask the agent to update this now") {
             model.refreshSpace(space.id)
         }
     }
@@ -638,18 +686,9 @@ struct SpaceViewer: View {
                 actionButton(action, space, labelled: fit.labelled)
             }
             if let chat { ViewerFocusButton(chat: chat) }
-            Button {
+            ViewerCloseButton(help: "Back to Work (⌘0)", label: "Close the space") {
                 model.setOpenSpace(nil)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(Theme.iconFont(13, weight: .medium))
-                    .foregroundStyle(Theme.text2)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.hover)
-            .help("Back to Work (⌘0)")
-            .accessibilityLabel("Close the space")
         }
         .padding(.horizontal, 16)
         .frame(height: Theme.toolbarHeight)
@@ -742,76 +781,6 @@ extension View {
             .accessibilityHidden(true)
             .allowsHitTesting(false)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { report($0) }
-    }
-}
-
-/// The viewer title's menu: everything made in this session, newest
-/// first. A pick shows it; every row can open externally.
-struct ArtifactMenu: View {
-    let chat: Int
-    let artifacts: [Artifact]
-    let onPick: () -> Void
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(model.madeHereLabel.uppercased())
-                .scaledFont(10, weight: .semibold)
-                .foregroundStyle(Theme.text2)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(artifacts, id: \.id) { artifact in
-                        row(artifact)
-                    }
-                }
-            }
-            .frame(maxHeight: 360)
-        }
-        .padding(6)
-        .frame(width: 340)
-    }
-
-    private func row(_ artifact: Artifact) -> some View {
-        let shown = ArtifactPresentation(artifact: artifact)
-        let isCurrent = model.current[chat]?.id == artifact.id
-        return Button {
-            model.show(artifact, in: chat)
-            onPick()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: shown.systemImage)
-                    .font(Theme.iconFont(12))
-                    .foregroundStyle(Theme.text2)
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(shown.title)
-                        .scaledFont(13)
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(shown.kindLabel)
-                        .scaledFont(11)
-                        .foregroundStyle(Theme.text2)
-                }
-                Spacer(minLength: 8)
-                if isCurrent {
-                    Image(systemName: "checkmark")
-                        .font(Theme.iconFont(11, weight: .semibold))
-                        .foregroundStyle(model.brand.accent ?? Theme.accent)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(isCurrent ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.hover)
-        .help(shown.subtitle)
-        .contextMenu {
-            Button("Open externally") { shown.openExternally() }
-        }
     }
 }
 

@@ -23,8 +23,9 @@ enum MarkdownPage {
     /// The page for `source`, titled `title`. Front matter at the top is
     /// taken out and drawn as the Properties block (v0.11, item 68); only
     /// the body reaches the renderer. At a text scale other than 100% the
-    /// body's 15px (viewer.css) is multiplied by it (v0.15 §3).
-    static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1) throws -> String {
+    /// body's 15px (viewer.css) is multiplied by it (v0.15 §3). The
+    /// Properties block opens unfolded only when `propertiesOpen` (v0.17 §3.7).
+    static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1, propertiesOpen: Bool = false) throws -> String {
         let template = try resource("viewer.html")
         let css = try resource("viewer.css")
         let marked = try resource("marked.min.js")
@@ -32,7 +33,7 @@ enum MarkdownPage {
         // The block goes in first, its braces as entities, so a value that
         // reads `{{SOURCE}}` is not taken for the next placeholder.
         let shownProperties = split.frontMatter?.hiding(hiding)
-        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html() : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html(open: propertiesOpen) : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
@@ -236,6 +237,11 @@ extension EnvironmentValues {
     @Entry var webPaneRevision: String? = nil
     /// Where the file viewer's page has gone, for its header (v0.13).
     @Entry var viewerPageAddress: ViewerPageAddress? = nil
+    /// Whether a Properties block is drawn unfolded (v0.17 §3.7): what the
+    /// next page drawn uses; a change does not draw the shown page again.
+    @Entry var propertiesOpen: Bool = false
+    /// Remembers the person's toggle of a Properties block.
+    @Entry var setPropertiesOpen: ((Bool) -> Void)? = nil
 }
 
 /// A `WKWebView` for the three web-rendered kinds: a markdown file (the
@@ -328,12 +334,16 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.slot = context.environment.viewerSlot
         context.coordinator.address = context.environment.viewerPageAddress
         context.coordinator.scale = context.environment.textScale
+        context.coordinator.propertiesOpen = context.environment.propertiesOpen
+        context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.propertiesOpen = context.environment.propertiesOpen
+        context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         context.coordinator.apply(
             load, revision: context.environment.webPaneRevision, scale: context.environment.textScale, to: view)
     }
@@ -353,6 +363,11 @@ struct WebPane: NSViewRepresentable {
         /// The file viewer's header address (v0.13); `nil` elsewhere.
         weak var address: ViewerPageAddress?
         private var loaded: Load?
+        /// What the pane was asked to show, set directly (tests).
+        var loadedForTesting: Load? {
+            get { loaded }
+            set { loaded = newValue }
+        }
         /// The load whose navigation failed (or whose file could not be
         /// read), until a retry or another load. It stays `loaded` too:
         /// SwiftUI re-evaluates the viewer on every text delta while a
@@ -365,6 +380,9 @@ struct WebPane: NSViewRepresentable {
         /// another load starts. The header names it and Retry asks for it
         /// (v0.16, candidate 18).
         private var failedURL: URL?
+        /// Why the last load failed (the error's short description), while
+        /// the failure page is up (v0.17: a show answers "Not loaded: …").
+        private(set) var failure: String?
         /// The revision and text scale the shown file was last drawn at: a
         /// visit to an outside site holds re-reads back, and coming back to
         /// a file drawn for older ones reads it once (v0.16).
@@ -374,6 +392,11 @@ struct WebPane: NSViewRepresentable {
         private var revision: String?
         /// The text scale a Markdown page is rendered at (v0.15 §3).
         var scale: CGFloat = 1
+        /// Whether a Markdown page draws its Properties block unfolded
+        /// (v0.17 §3.7): used for the next page drawn, never a redraw.
+        var propertiesOpen = false
+        /// Told the person's toggle of a Properties block on the page.
+        var onPropertiesToggle: ((Bool) -> Void)?
         let handler = RenderedPageHandler()
 
         /// The link on the failure page that asks for the load again. It
@@ -392,6 +415,7 @@ struct WebPane: NSViewRepresentable {
             if agent != nil, let script = ViewerAgentScript.userScript() {
                 configuration.userContentController.addUserScript(script)
             }
+            configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
             return configuration
         }
 
@@ -528,6 +552,9 @@ struct WebPane: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // A page other than the failure page (Back to the file, a
+            // retry) leaves no failure behind.
+            if let url = webView.url, url.absoluteString != "about:blank" { failure = nil }
             noteAddress(of: webView)
             // Marks are drawn again on every load. WebKit calls this on
             // Back too, from its back-forward cache or not (v0.14).
@@ -553,10 +580,41 @@ struct WebPane: NSViewRepresentable {
             rereadKeepingScroll(load, in: view, scaleOnly: !revised)
         }
 
+        /// The pane is off what it was asked to show (v0.17): on its failure
+        /// page, on a site a link went to, or on another local page a link
+        /// went to (fragments aside).
+        func isAway(in view: WKWebView) -> Bool {
+            failure != nil || ViewerPageAddress.outside(current: view.url, loaded: loaded) != nil
+                || isOnAnotherLocalPage(view.url)
+        }
+
+        /// `url` is a page this pane serves that is not the file it was asked
+        /// to show. Compared by the file the URL stands for, not the URL
+        /// itself, so a re-render of the same file (a new text size) is home.
+        private func isOnAnotherLocalPage(_ url: URL?) -> Bool {
+            guard let url, url.scheme == RenderedPageHandler.scheme, let loaded else { return false }
+            switch loaded {
+            case .markdown(let file, _):
+                return handler.source(for: url) != file.standardizedFileURL.resolvingSymlinksInPath()
+            case .html(let file):
+                return handler.file(for: url) != file.standardizedFileURL.resolvingSymlinksInPath()
+            case .url:
+                return true
+            }
+        }
+
+        /// Load what the pane was asked to show again: the agent showed it
+        /// again while the pane was away from it (v0.17).
+        func showAgain(in view: WKWebView) {
+            guard let loaded else { return }
+            start(loaded, in: view)
+        }
+
         /// Ask for the current load again: the failure page's link.
         func retry(in view: WKWebView) {
             if let link = failedURL {
                 failed = nil
+                failure = nil
                 pendingScroll = nil
                 view.load(URLRequest(url: link))
                 return
@@ -569,6 +627,7 @@ struct WebPane: NSViewRepresentable {
             loaded = load
             failed = nil
             failedURL = nil
+            failure = nil
             readRevision = revision
             readScale = scale
             pendingScroll = scroll
@@ -581,7 +640,7 @@ struct WebPane: NSViewRepresentable {
             case .markdown(let file, let hiding):
                 do {
                     let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
                     let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
                     view.load(URLRequest(url: url))
                 } catch {
@@ -611,7 +670,7 @@ struct WebPane: NSViewRepresentable {
                 return handler.register(file: file)
             case "md", "markdown":
                 guard let source = try? String(contentsOf: file, encoding: .utf8),
-                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
                 else { return nil }
                 return handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
             default:
@@ -625,6 +684,7 @@ struct WebPane: NSViewRepresentable {
         private func showFailure(_ message: String, in view: WKWebView, link: URL? = nil) {
             failed = link == nil ? loaded : nil
             failedURL = link
+            failure = message
             pendingScroll = nil
             if let link, address?.outside != link { address?.outside = link }
             view.loadHTMLString(Self.errorPage(message), baseURL: nil)
@@ -655,6 +715,20 @@ struct WebPane: NSViewRepresentable {
             decisionHandler(.allow)
         }
 
+        /// The person folded or unfolded a Properties block (`{open}`).
+        /// Taken only from Portico's own rendered Markdown page, in the main
+        /// frame, while the pane shows Markdown: an HTML file, a site, or a
+        /// frame inside the page cannot move the fold.
+        func propertiesToggled(_ body: Any, isMainFrame: Bool, frameURL: URL?) {
+            guard isMainFrame, let frameURL, frameURL.scheme == RenderedPageHandler.scheme,
+                  handler.source(for: frameURL) != nil,
+                  case .markdown = loaded,
+                  let open = (body as? [String: Any])?["open"] as? Bool
+            else { return }
+            propertiesOpen = open
+            onPropertiesToggle?(open)
+        }
+
         static func errorPage(_ message: String) -> String {
             """
                 <!doctype html><html><head><meta charset="utf-8"><style>
@@ -663,6 +737,24 @@ struct WebPane: NSViewRepresentable {
                 </style></head><body><p>\(MarkdownPage.escapeHTML(message))</p>
                 <p><a href="\(retryURL.absoluteString)">Try again</a></p></body></html>
                 """
+        }
+    }
+}
+
+/// The page's `porticoProperties` handler (v0.17 §3.7). Holds its pane
+/// weakly: the web view's content controller keeps its handlers.
+private final class PropertiesToggle: NSObject, WKScriptMessageHandler {
+    static let name = "porticoProperties"
+    weak var coordinator: WebPane.Coordinator?
+
+    init(_ coordinator: WebPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            coordinator?.propertiesToggled(
+                message.body, isMainFrame: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url)
         }
     }
 }

@@ -80,6 +80,17 @@ final class UpdateAndStaleConfigTests: XCTestCase {
         XCTAssertTrue(runner.lines.first?.hasSuffix(" update") == true, "the command line is shown first")
     }
 
+    func testRunnerHandsTheChildTheInfoPlistFolderAheadOfAnInheritedOne() async throws {
+        let script = try script("echo home=$PORTICO_HOME\necho source=$PORTICO_HOME_SOURCE\n")
+        let runner = UpdateRunner(
+            resolve: { script }, environment: ["PATH": "/usr/bin:/bin", "PORTICO_HOME": "/inherited/elsewhere"],
+            infoDictionary: ["PorticoHome": "/chosen/at/install"], waitFor: nil)
+        let state = await runner.run()
+        XCTAssertEqual(state, .succeeded)
+        XCTAssertTrue(runner.lines.contains("home=/chosen/at/install"), "\(runner.lines)")
+        XCTAssertTrue(runner.lines.contains("source=Info.plist"), "\(runner.lines)")
+    }
+
     func testRunnerWaitsForTheOldAppToExitBeforeUpdating() async throws {
         let old = Process()
         old.executableURL = URL(fileURLWithPath: "/bin/sleep")

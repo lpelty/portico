@@ -124,6 +124,45 @@ async def test_a_long_last_line_is_cut_and_only_the_last_non_empty_line_counts()
     assert len(tail) == DETAIL_LINE_LIMIT and tail.endswith("…") and tail.startswith("xxx")
 
 
+async def test_check_exit_75_is_stuck() -> None:
+    mon, rec = monitor(
+        [
+            svc("a", "printf 'queue wedged\\nmore\\n'; exit 75"),
+            svc("b", "exit 75"),
+            svc("c", "echo nope; exit 1"),
+            svc("e", "echo usage error; exit 2"),
+            svc("d", "true"),
+        ]
+    )
+    await mon.check_all()
+    by_id = {s.id: s for s in mon.snapshot()}
+    assert (by_id["a"].state, by_id["a"].detail) == ("stuck", "queue wedged")
+    assert (by_id["b"].state, by_id["b"].detail) == ("stuck", None)
+    assert by_id["c"].state == "down" and (by_id["c"].detail or "").endswith(" · nope")
+    assert by_id["d"].state == "up"
+    assert by_id["e"].state == "down", "exit 2 is a usage or syntax error, not stuck"
+
+
+async def test_a_stuck_service_sorts_before_an_up_one_and_after_down() -> None:
+    mon, _ = monitor([svc("up", "true"), svc("stuck", "exit 75"), svc("down", "exit 1")])
+    await mon.check_all()
+    assert [s.id for s in mon.snapshot()] == ["down", "stuck", "up"]
+
+
+async def test_stuck_is_not_an_outage_and_does_not_end_one() -> None:
+    mon, _ = monitor([svc("a", "true")])
+    mon._set("a", "down", "x")
+    began = mon._status["a"].down_since
+    assert began is not None
+    mon._set("a", "stuck", None)
+    assert mon._status["a"].down_since == began, "stuck neither starts nor ends an outage"
+    mon._set("a", "up", None)
+    assert mon._status["a"].down_since is None
+    mon._set("a", "stuck", "wedged")
+    assert mon._status["a"].down_since is None, "a stuck row is not an outage"
+    assert mon._status["a"].since == NOON
+
+
 async def test_a_check_that_hangs_is_killed_at_its_timeout_and_is_down() -> None:
     # The service's own ``timeout_seconds`` bounds the check, not the monitor's (restart) timeout.
     mon, rec = monitor([svc("slow", "sleep 30", timeout_seconds=1)], timeout=60)

@@ -362,3 +362,18 @@ async def test_update_check_at_start_reaches_the_app_now_and_later(state_dir: St
         await again.close()
     finally:
         await srv.shutdown()
+
+
+def test_stuck_reaches_an_old_app_as_down() -> None:
+    from portico_gateway.messages import Service
+    from portico_gateway.server import for_app
+
+    stuck = Service(id="m", name="M", state="stuck", detail="index rebuilding")
+    up = Service(id="u", name="U", state="up")
+    msg = ServicesStatus(ts=TS, services=[stuck, up])
+    for caps in (frozenset(), frozenset({"agents.v1"})):
+        old = for_app(msg, caps)
+        assert [(s.state, s.detail) for s in old.services] == [("down", "index rebuilding"), ("up", None)]
+    for caps in (frozenset({"services.stuck.v1"}), frozenset({"services.stuck.v1", "agents.v1"})):
+        assert [s.state for s in for_app(msg, caps).services] == ["stuck", "up"]
+    assert msg.services[0].state == "stuck", "the original is not changed"

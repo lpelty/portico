@@ -90,7 +90,9 @@ workflows): without it the gateway sends none of those frames; v0.11:
 `queue.v1` (see Messages while the agent works); v0.12: `viewer.v1`
 (the app can carry out `viewer.act`; see The viewer and spaces) and
 `spaces.v1` (it shows `spaces.list`); v0.14: `viewer.marks.v1` (it
-can draw the agent's marks; see The viewer and spaces). Absent
+can draw the agent's marks; see The viewer and spaces); v0.17:
+`viewer.show.v1` (it answers `viewer.act` `show` once the page has
+loaded; see The viewer and spaces). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -335,8 +337,8 @@ v0.7: the renewal is recorded in both conversations as `chat.notice`
 lines. In the ending session, at once (before any log turn): "New —
 logging, then ending this session" when the log step runs, else "New —
 ending this session"; once it has ended, "Session ended · continues in
-Session M". In the next session, its first event: "Continues Session N".
-All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
+Session M". (v0.17: the next session no longer gets a "Continues Session N"
+line; the divider already says it.) All are sent before `session.renewed`. A refused renewal writes none. Errors: `chat.unknown`, `chat.busy` (a turn or another
 renew is running), `session.ended` (already ended), `thread.renew` (v0.16:
 `chat` is a thread, which closes instead). v0.16: open threads stay open,
 and the ending session's pending thread proposals become `dismissed`. While a renew runs,
@@ -498,6 +500,11 @@ look and scroll only). `act_hosts` is the deployment's alone: no
 `viewer.settings` field changes it. Local pages (`file://`, `localhost`,
 `127.0.0.1`, `::1`) are always usable. Absent from an older gateway: the
 app then uses `true` for both switches and an empty list.
+
+v0.17: `viewer_defaults.properties?: "folded" | "open"` (config
+`[viewer] properties`, default `"folded"`): how a front-matter Properties
+block first opens, until the person folds or unfolds one (the app then
+remembers the person's choice). Absent from an older gateway: `"folded"`.
 
 v0.16: `threads_max?: int` (config `[threads] max`, 1 or 2): how many
 threads may be open beside Main, sent with `threads.v1` and absent
@@ -778,7 +785,10 @@ the turn made. The agent can also show a file during the turn: its
 `show_in_viewer` tool, or a plain `open <path>` in its shell that the
 gateway catches, sends the file at once as `artifact.created` with
 `source: tool` and `open: true` — only a viewable file inside the chat's
-folder or a configured root. Such a file is not reported again at the end
+folder or a configured root (v0.17: or, through `show_in_viewer` only, an
+`http://` or `https://` address, sent as `kind: url`; one with no host
+name, such as `https://` alone, is refused "Not shown: '<address>' is not
+a web address."; a caught `open` of an address still runs as before). Such a file is not reported again at the end
 of the turn. A relative path given to `show_in_viewer` is the chat
 folder's; a relative path in a caught `open` is the shell's working
 directory's (the Bash tool's directory persists between calls, so after
@@ -860,11 +870,11 @@ after its log step (`logged_at`, `unlogged`; `ended` absent). Note that
 `chat.list`.
 
 ### `services.status` — `ServicesStatus` *(v0.4)*
-`services: [Service]`, each `{id, name, state: "up" | "down" |
+`services: [Service]`, each `{id, name, state: "up" | "down" | "stuck" |
 "checking", detail?, since?, can_restart}`: `detail` one line for the
 menu, `since` when the current state began (UTC, ISO 8601),
 `can_restart` whether the service has a `restart` command (default
-`false`). Down services first, then the rest in config order. Sent right
+`false`). Down services first, then stuck ones, then the rest in config order. Sent right
 after `hello` and `chat.list` on every connection (an empty list when the
 deployment lists no services: the app draws its own Gateway row either
 way), and broadcast whenever any service's state or detail changes. Not
@@ -879,9 +889,20 @@ N s` when it printed nothing and was killed. An outage's `since` and
 `H:MM` are when the service was first seen down: a restart that does not
 bring it back keeps them.
 
+v0.17: `stuck` is a service that is running but not working. A check that
+exits 75 (`EX_TEMPFAIL`) is `stuck`; its `detail` is the check's first non-empty output
+line (cut to 240 characters), or none when it printed nothing. A stuck
+service is not an outage: no `not responding since`, and it neither starts
+nor ends one. `stuck` goes only to an app whose `hello` lists
+`services.stuck.v1` in its `capabilities`; any other app is sent that
+service as `down`, detail kept, because its decoder refuses a state it
+does not know. The app offers Restart on a row only when it is `down` or
+`stuck` and `can_restart`.
+
 v0.8: with a deployment status (see Services) the rows are the status's,
 in its order (down first): `up` with the row's `detail`, or `down` with
-`not responding since H:MM` plus ` · <detail>`. A status that cannot be
+`not responding since H:MM` plus ` · <detail>`; v0.17: or `stuck`, with
+the row's `detail` as given. A status that cannot be
 read is one `down` row, id `status`, name `Services status`, detail
 `status command failed · <reason>` (`status plug-in failed · ...` for a
 plug-in's). Rows appear with the first reading; there are no `checking`
@@ -1346,7 +1367,8 @@ the last look), `viewer_click(target)`, `viewer_type(target, text,
 submit?)`, `viewer_scroll(direction | target)`, `viewer_back()`, and (v0.14)
 `viewer_mark(marks, replace?)` and `viewer_clear_marks()`. A
 `target` is a ref from the last look, or the visible text of a button or
-link. Each carries out its action in the app over the connection and
+link (v0.17: for `viewer_mark`, any text the person can see on the
+page). Each carries out its action in the app over the connection and
 returns what happened. The tool texts are the reference gateway's and the
 app's; the protocol carries only the frames below.
 
@@ -1365,7 +1387,7 @@ it is the one `viewer.act` goes to. Until one does, the gateway uses
 
 #### `viewer.act` — `ViewerAct` *(gateway → app)*
 `id`, `chat`, `action: look | click | type | scroll | back | mark |
-clear_marks`, `args` (`{}` for `look`, `back` and `clear_marks`;
+clear_marks | show` (`show` v0.17), `args` (`{}` for `look`, `back` and `clear_marks`;
 `{target}` for `click`; `{target, text, submit}` for `type`;
 `{direction}` or `{target}` for `scroll`; v0.14: `{marks: [{target,
 note?}], replace: bool, tool_use_id?}` for `mark`, 1 to 9 marks, `note`
@@ -1378,6 +1400,35 @@ turned the agent's view off. The app shows the viewer for `chat` if it is
 not open. In multiple presentation an act for a chat that is not on
 screen is answered "The person is looking at another chat." (by the
 app, in its `viewer.result`).
+
+v0.17: `show`, `{artifact, location}` — the id and location of the
+artifact the gateway has just sent as `artifact.created` with `open:
+true` (for a show of several files, the last one, the one in front). Sent
+only to an app that declared `viewer.show.v1`, whatever the person's
+"agent can see" switch (it reports only that a page loaded, never what is
+on it), and it draws no acting glow. The app answers `viewer.result`
+`ok: true` once that page has loaded; at once when it will not put the
+artifact in front (auto-open off for that kind, the gateway did not mark
+it to open, or another chat is on screen); and, for a pane that is not a
+web page, once it is in front. A page that failed to load answers `ok:
+false` with "Not loaded: <why>", which the agent reads as it is. A show of
+the file already in front loads it again when the pane is on a failure
+page or on a site a link went to. The gateway waits 10 s: no answer, the
+app's own timeout answer (or `ok: false` with no text), or the app
+leaving (or the send failing) mid-show, and the agent reads "Shown; still
+loading."; loaded, "Shown in the viewer.".
+An app without `viewer.show.v1` (or no app) is sent nothing and the agent
+reads "Shown in the viewer." at once, as before v0.17.
+
+v0.17 (gateway behaviour): a conversation's viewer calls run one at a
+time, in the order the gateway receives them — the seven tools,
+`show_in_viewer` and a caught `open`. Each starts only when the one before
+has finished (answered, timed out, or refused), so a show followed by two
+clicks and a look acts on the page the show loaded. A caught `open` waits
+in the same queue as the viewer tools and `show_in_viewer`. When the turn
+a call was made in is stopped while the call waits, it does not act and
+answers "Stopped." (a call already sent finishes as before). Calls in
+different conversations do not wait for each other.
 
 #### `viewer.result` — `ViewerResult` *(app → gateway)*
 `id` (the act's), `ok: bool`, `text`, `image?: {data, media_type}`
@@ -1406,7 +1457,20 @@ last look, "The person used the page since your last look; look again.",
 or, for a ref from a page that has reloaded or been replaced since that
 look, "The page reloaded since your last look; look again." — an image or PDF
 pane "can be looked at, not used", a page whose host is not allowed) is
-the app's. For outside sites the app checks the page's *current* host at
+the app's. v0.17, for `mark` (a mark target is a ref, a listed name or any
+visible text on the page, the innermost element that holds it): a target
+that is none of these is refused one sentence per target, a repeated
+sentence said once. A ref gets "The page reloaded since your last look;
+look again." when the page has reloaded or been replaced, else "The person
+used the page since your last look; look again.", else "No element e12 on
+this page; look again."; text gets "No visible text matches '<text>'"
+(no period when it is the whole answer). When every target is refused the
+answer is `ok: false`; when some are marked it is `ok: true`, "Marked 1 ·
+Save, 2 · Cancel." followed by the refusal sentences. The show answers
+the agent reads, `viewer.show.v1`: "Shown in the viewer." (loaded, or the
+app will not put the file in front), "Not loaded: <why>" (the page failed),
+"Shown; still loading." (10 s without a loaded answer) and "Stopped."
+(the person pressed Stop while the call waited). For outside sites the app checks the page's *current* host at
 every click and type against `viewer_defaults.act_hosts` (a redirect or a
 link to another site is checked again), and always allows `file://`,
 `localhost`, `127.0.0.1` and `::1`. Look and scroll work on any page.
@@ -1480,7 +1544,7 @@ services_interval_seconds = 30   # default 30, at least 5
 [[services]]
 id = "memory"                    # required, unique, [a-z0-9-]+
 name = "Memory (recall server)"      # required: what the menu says
-check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up
+check = "curl -sf http://localhost:8888/health"   # required: /bin/sh -c, exit 0 = up, 75 = stuck, other = down
 restart = "launchctl kickstart -k gui/$UID/com.example.memory"  # optional: the menu offers Restart
 up_detail = "recall and capture" # optional: the detail shown while up
 timeout_seconds = 10             # optional, default 10, at least 1: the check's time limit
@@ -1511,6 +1575,10 @@ status = "my-tool status --json"  # optional: prints the services as JSON
 
 `status` prints `{"services": [{"id": "memory", "name": "Memory", "up":
 true, "detail": "recall and capture"}]}` (`detail` optional) on stdout;
+v0.17: a row may carry `"state": "up" | "down" | "stuck"` instead of (or
+as well as) `up`; `state` wins, and `up` may then be left out
+(`{"id": "memory", "name": "Memory", "state": "stuck", "detail": "index
+rebuilding"}`);
 its stderr is kept apart (a warning there never breaks the JSON) and only
 gives the reason when the command fails. When it is
 set, the gateway runs it at start and every `services_interval_seconds`

@@ -234,12 +234,23 @@ struct ThreadInfo: Codable, Equatable, Sendable {
 
 /// What a service check last said (v0.4).
 enum ServiceState: String, Codable, Sendable {
-    case up, down, checking
+    case up, down, stuck, checking
+
+    /// v0.17: `stuck` is running but not working. A state this app does
+    /// not know reads as down rather than failing the whole status.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ServiceState(rawValue: raw) ?? .down
+    }
 }
 
 /// One of the deployment's services as the gateway last checked it
 /// (`services.status`, v0.4). Portico draws it; it never knows what it is.
 struct Service: Codable, Equatable, Sendable, Identifiable {
+    /// v0.17: the capability this app lists so the gateway may send it
+    /// `stuck`; to any other app the gateway sends down.
+    static let stuckCapability = "services.stuck.v1"
+
     var id: String
     var name: String
     var state: ServiceState
@@ -336,7 +347,8 @@ struct HelloClient: Codable, Equatable, Sendable {
     /// messages typed while the agent works).
     static let appCapabilities = [
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
-        MarkStore.capability, Models.capability, ThreadProposal.capability,
+        MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
+        Service.stuckCapability,
     ]
 }
 
@@ -715,17 +727,22 @@ struct ViewerDefaults: Codable, Equatable, Sendable {
     var agentCanSee: Bool
     var agentChecksHTML: Bool
     var actHosts: [String]
+    /// How a Properties block first opens, `"folded"` or `"open"` (v0.17,
+    /// config `[viewer] properties`); absent from an older gateway.
+    var properties: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case agentCanSee = "agent_can_see"
         case agentChecksHTML = "agent_checks_html"
         case actHosts = "act_hosts"
+        case properties
     }
 
-    init(agentCanSee: Bool = true, agentChecksHTML: Bool = true, actHosts: [String] = []) {
+    init(agentCanSee: Bool = true, agentChecksHTML: Bool = true, actHosts: [String] = [], properties: String? = nil) {
         self.agentCanSee = agentCanSee
         self.agentChecksHTML = agentChecksHTML
         self.actHosts = actHosts
+        self.properties = properties
     }
 
     /// Each field on its own: a partial object takes the defaults (both
@@ -736,6 +753,7 @@ struct ViewerDefaults: Codable, Equatable, Sendable {
         agentCanSee = try c.decodeIfPresent(Bool.self, forKey: .agentCanSee) ?? true
         agentChecksHTML = try c.decodeIfPresent(Bool.self, forKey: .agentChecksHTML) ?? true
         actHosts = try c.decodeIfPresent([String].self, forKey: .actHosts) ?? []
+        properties = try c.decodeIfPresent(String.self, forKey: .properties)
     }
 }
 
@@ -744,16 +762,23 @@ struct ViewerDefaults: Codable, Equatable, Sendable {
 struct ViewerAct: Codable, Equatable, Sendable {
     static let messageType = "viewer.act"
 
+    /// Named in the app's `hello.capabilities` (v0.17): this app answers
+    /// `show` once the page the agent showed has loaded.
+    static let showCapability = "viewer.show.v1"
+
     enum Action: String, Codable, Sendable {
         case look, click, type, scroll, back, mark
         case clearMarks = "clear_marks"
+        /// v0.17: answer once the file or page `{artifact, location}` the
+        /// agent showed is in front and has loaded.
+        case show
     }
 
     var id: String
     var chat: Int
     var action: Action
     /// look `{}`, click `{target}`, type `{target, text, submit}`,
-    /// scroll `{direction}` or `{target}`, back `{}`.
+    /// scroll `{direction}` or `{target}`, back `{}`, show `{artifact, location}`.
     var args: [String: JSONValue] = [:]
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()

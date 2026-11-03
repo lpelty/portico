@@ -6,6 +6,8 @@
 # A gateway still running the old version is stopped once the checkout has moved (before the install);
 # the app starts the new one.
 # Refuses to update over local changes: deployment code belongs in a plug-in, outside the checkout.
+# Portico's folder is kept: bin/install reads the checkout's .portico-home (written by an earlier
+# bin/install --home; git-ignored, so the checkout still counts as clean) and bakes it in again.
 set -euo pipefail
 
 usage() {

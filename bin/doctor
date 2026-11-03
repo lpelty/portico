@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Check this machine, the state directory and the config: one line per check, exit 1 on any failure.
 # Goes through bin/portico-gateway so the deployment's env file is loaded the way `run` loads it.
+# Its `home` line names the folder in use and where it came from (--state, PORTICO_HOME,
+# .portico-home, or the default).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$here/portico-gateway" doctor "$@"

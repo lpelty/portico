@@ -9,7 +9,9 @@ would produce.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -340,3 +342,15 @@ def config() -> Config:
 @pytest.fixture
 def fake_engine() -> FakeEngine:
     return FakeEngine()
+
+
+@pytest.fixture(autouse=True)
+def _home_env_restored() -> Iterator[None]:
+    """``portico-gateway run`` exports its folder (v0.17); a test that runs ``main(["run", ...])`` must not leak it."""
+    saved = {name: os.environ.get(name) for name in ("PORTICO_HOME", "PORTICO_HOME_SOURCE")}
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value

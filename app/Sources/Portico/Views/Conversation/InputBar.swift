@@ -371,8 +371,9 @@ struct InputBar: View {
         panel.allowsMultipleSelection = true
         panel.prompt = "Attach"
         panel.message = "Choose files to attach to the next message"
-        guard panel.runModal() == .OK else { return }
-        model.attach(panel.urls.map(\.path), to: chat)
+        FilePanel.present(panel, from: NSApp.keyWindow ?? NSApp.mainWindow) { urls in
+            model.attach(urls.map(\.path), to: chat)
+        }
     }
 
     private func isDirectory(_ url: URL) -> Bool {

@@ -18,8 +18,15 @@ service's ``timeout_seconds``; a restart is killed after
 ``command_timeout_seconds``). A check that exits 0 is ``up`` with the
 service's ``up_detail``; anything else is ``down`` with
 ``not responding since H:MM`` (local time) plus `` · <last output line>``
-when the check printed one. The monitor hands the app a ``services.status``
-only when some service's state or detail changed, as each check answers:
+when the check printed one.
+
+v0.17: a check that exits 75 (``EX_TEMPFAIL``) is ``stuck``: up but not
+working, with the check's first output line as the detail (none if it
+printed nothing). A stuck service is not an outage (no ``not responding
+since``). Exit 2 is not used for this: shell syntax errors and usage
+errors return it, and they mean down.
+
+The monitor hands the app a ``services.status`` only when some service's state or detail changed, as each check answers:
 one slow check never holds back what the others found. Portico never
 knows what a service is: it draws what the deployment lists.
 
@@ -29,7 +36,8 @@ its services (``[deployment] status`` / ``restart``, or a plug-in's
 With a status source the monitor reads it at start and every interval
 instead of running each check: its rows are the services (``up`` true is
 ``up`` with the row's ``detail``; false is ``down``, ``not responding
-since H:MM`` plus `` · <detail>``), and a status that cannot be read
+since H:MM`` plus `` · <detail>``; ``"state"`` may instead say ``stuck``,
+with the row's ``detail`` as it is), and a status that cannot be read
 (the command fails or times out, its output is not the expected JSON, the
 hook raises) is one ``down`` row, ``status``, saying so with the reason.
 A row's Restart comes from the ``[[services]]`` entry with the same id.
@@ -77,18 +85,27 @@ class SourceFailed(Exception):
     """A status or restart source did not work; the message is the reason, one line."""
 
 
+# A check that exits with this is stuck (v0.17), not down.
+STUCK_EXIT = 75  # EX_TEMPFAIL
+
+ROW_STATES = ("up", "down", "stuck")
+
+
 @dataclass
 class StatusRow:
     """One service as the deployment's status gives it."""
 
     id: str
     name: str
-    up: bool
+    state: ServiceState
     detail: str | None = None
 
 
 def parse_status(raw: Any) -> list[StatusRow]:
-    """``{"services": [{"id", "name", "up", "detail"?}]}`` (text or dict) as rows; ``SourceFailed`` otherwise."""
+    """``{"services": [{"id", "name", "up"?, "state"?, "detail"?}]}`` (text or dict) as rows; ``SourceFailed`` otherwise.
+
+    ``state`` (``up``, ``down`` or ``stuck``, v0.17) wins over ``up``; either one is needed.
+    """
     if isinstance(raw, (str, bytes)):
         try:
             raw = json.loads(raw)
@@ -102,18 +119,27 @@ def parse_status(raw: Any) -> list[StatusRow]:
         if not isinstance(item, dict):
             raise SourceFailed(f"services[{n}] is not an object")
         id, name, up, detail = item.get("id"), item.get("name"), item.get("up"), item.get("detail")
+        given = item.get("state")
         if not isinstance(id, str) or not id.strip():
             raise SourceFailed(f"services[{n}] has no id")
         if id in seen:
             raise SourceFailed(f"services[{n}]: id {id!r} is used twice")
         if not isinstance(name, str) or not name.strip():
             raise SourceFailed(f"services[{n}] ({id}) has no name")
-        if not isinstance(up, bool):
+        if given is not None:
+            if given not in ROW_STATES:
+                raise SourceFailed(f"services[{n}] ({id}): state must be up, down or stuck")
+            state: ServiceState = given
+        elif isinstance(up, bool):
+            state = "up" if up else "down"
+        else:
+            raise SourceFailed(f"services[{n}] ({id}): up must be true or false")
+        if up is not None and not isinstance(up, bool):
             raise SourceFailed(f"services[{n}] ({id}): up must be true or false")
         if detail is not None and not isinstance(detail, str):
             raise SourceFailed(f"services[{n}] ({id}): detail must be text")
         seen.add(id)
-        rows.append(StatusRow(id=id, name=name, up=up, detail=_short(detail) if detail and detail.strip() else None))
+        rows.append(StatusRow(id=id, name=name, state=state, detail=_short(detail) if detail and detail.strip() else None))
     return rows
 
 
@@ -283,7 +309,7 @@ class ServiceMonitor:
         return None
 
     def snapshot(self) -> list[Service]:
-        """Every service as last found: down ones first, then in config (or status) order."""
+        """Every service as last found: down ones first, then stuck ones, then in config (or status) order."""
         rows = self._rows if self.status_source is not None else [(s.id, s.name) for s in self.services]
         out: list[Service] = []
         for service_id, name in rows:
@@ -298,7 +324,7 @@ class ServiceMonitor:
                     can_restart=self._restart_command(service_id) is not None,
                 )
             )
-        return sorted(out, key=lambda s: 0 if s.state == "down" else 1)
+        return sorted(out, key=lambda s: {"down": 0, "stuck": 1}.get(s.state, 2))
 
     async def _publish_if_changed(self, force: bool = False) -> None:
         """Hand the app the list when a state or detail differs from what it last got (or ``force``)."""
@@ -334,10 +360,13 @@ class ServiceMonitor:
 
     async def _run_check(self, service: ServiceConfig) -> None:
         last: str | None = None
+        first: str | None = None
 
         async def seen(line: str) -> None:
-            nonlocal last
+            nonlocal last, first
             last = line
+            if first is None and line.strip():
+                first = line
 
         try:
             code = await run_command(service.check, seen, float(service.timeout_seconds))
@@ -350,6 +379,11 @@ class ServiceMonitor:
             last = f"check could not start: {e}"
         if code == 0:
             self._set(service.id, "up", service.up_detail)
+            return
+        if code == STUCK_EXIT:
+            if self._status[service.id].state != "stuck":
+                log.warning("service %s is stuck: %s", service.id, first or "no detail")
+            self._set(service.id, "stuck", _short(first) if first else None)
             return
         status = self._status[service.id]
         if status.down_since is None:
@@ -379,17 +413,17 @@ class ServiceMonitor:
                 failed = False
             except SourceFailed as e:
                 log.warning("services: the %s failed: %s", self.status_label, e)
-                rows = [StatusRow(STATUS_FAILED_ID, STATUS_FAILED_NAME, False, f"{self.status_label} failed · {_short(str(e))}")]
+                rows = [StatusRow(STATUS_FAILED_ID, STATUS_FAILED_NAME, "down", f"{self.status_label} failed · {_short(str(e))}")]
             except Exception as e:
                 log.exception("services: reading the %s failed", self.status_label)
-                rows = [StatusRow(STATUS_FAILED_ID, STATUS_FAILED_NAME, False, f"{self.status_label} failed · {e}")]
+                rows = [StatusRow(STATUS_FAILED_ID, STATUS_FAILED_NAME, "down", f"{self.status_label} failed · {e}")]
             ids = {row.id for row in rows}
             for gone in [i for i in self._status if i not in ids]:
                 del self._status[gone]
             self._rows = [(row.id, row.name) for row in rows]
             for row in rows:
-                if row.up:
-                    self._set(row.id, "up", row.detail)
+                if row.state in ("up", "stuck"):
+                    self._set(row.id, row.state, row.detail)
                 elif failed:
                     self._set(row.id, "down", row.detail)
                 else:

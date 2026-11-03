@@ -110,6 +110,65 @@ final class ServicesAndSessionCommandsTests: XCTestCase {
             ServicesPresentation(gateway: gatewayUp, services: [service("m", "Memory", .checking)]).label, "Checking…")
     }
 
+    // MARK: - stuck (v0.17)
+
+    func testStuckDecodesAndAnUnknownStateReadsAsDown() throws {
+        guard case .servicesStatus(let status) = try decode("""
+            {"type":"services.status","ts":"2026-10-28T12:00:00Z","services":[
+              {"id":"a","name":"A","state":"stuck","detail":"index rebuilding"},
+              {"id":"b","name":"B","state":"later"}]}
+            """) else { return XCTFail() }
+        XCTAssertEqual(status.services.map(\.state), [.stuck, .down])
+        XCTAssertEqual(status.services[0].detail, "index rebuilding")
+        XCTAssertTrue(HelloClient.appCapabilities.contains("services.stuck.v1"))
+    }
+
+    func testStuckLabelsAndOrder() {
+        let oneStuck = ServicesPresentation(gateway: gatewayUp, services: [
+            service("search", "Search", .up),
+            service("memory", "Memory (recall server)", .stuck, detail: "index rebuilding", restart: true),
+        ])
+        XCTAssertEqual(oneStuck.label, "Memory is stuck")
+        XCTAssertEqual(oneStuck.tone, .down)
+        XCTAssertEqual(oneStuck.rows.map(\.id), ["memory", "gateway", "search"], "a stuck row floats above the Gateway row when nothing is down")
+        XCTAssertEqual(oneStuck.rows[0].detail, "index rebuilding")
+        XCTAssertTrue(oneStuck.rows[0].menuDetailIsError)
+
+        let noDetail = ServicesPresentation(gateway: gatewayUp, services: [service("memory", "Memory", .stuck)])
+        XCTAssertEqual(noDetail.rows[0].menuDetail, "stuck", "no detail: the word")
+
+        let mixed = ServicesPresentation(gateway: gatewayUp, services: [
+            service("a", "A", .stuck), service("b", "B", .down),
+        ])
+        XCTAssertEqual(mixed.label, "2 services down or stuck")
+        XCTAssertEqual(mixed.rows.map(\.id), ["b", "a", "gateway"], "down before stuck")
+
+        let twoDown = ServicesPresentation(gateway: gatewayUp, services: [service("a", "A", .down), service("b", "B", .down)])
+        XCTAssertEqual(twoDown.label, "2 services down")
+    }
+
+    func testRestartShowsOnlyOnADownOrStuckRowThatCanRestart() {
+        func row(_ state: ServiceState, canRestart: Bool = true, gateway: Bool = false) -> ServiceRow {
+            ServiceRow(id: "x", name: "X", state: state, detail: "", canRestart: canRestart, isGateway: gateway)
+        }
+        XCTAssertTrue(row(.down).showsRestart)
+        XCTAssertTrue(row(.stuck).showsRestart)
+        XCTAssertFalse(row(.up).showsRestart)
+        XCTAssertFalse(row(.checking).showsRestart)
+        XCTAssertFalse(row(.down, canRestart: false).showsRestart)
+        XCTAssertFalse(row(.down, gateway: true).showsRestart, "the Gateway row has its own controls")
+        XCTAssertTrue(row(.stuck).isProblem && row(.down).isProblem && !row(.up).isProblem)
+
+        // The view draws what rowActions says: a healthy row offers no Restart.
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.stuck)), [.restart])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.down)), [.restart])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.up)), [])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.checking)), [])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.down, canRestart: false)), [])
+        XCTAssertEqual(ServicesPresentation.rowActions(row(.down, gateway: true)), [])
+        XCTAssertEqual(ServiceColors.row(.stuck), Theme.wait)
+    }
+
     /// v0.11 (60): the menu's second line is there only when it says
     /// something: the gateway's port, a check's detail, an error. A bare
     /// "up" or "running" or "checking" is the dot's job.

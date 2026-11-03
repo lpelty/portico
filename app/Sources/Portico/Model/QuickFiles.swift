@@ -394,4 +394,15 @@ enum Obsidian {
     }
 
     static let notInstalledHelp = "Obsidian is not installed"
+
+    /// Obsidian's own icon, read from the app that opens `obsidian://`
+    /// (v0.17 §3.5); `nil` when nothing does. Portico ships no copy of it.
+    /// Read once per app run.
+    @MainActor static let appIcon: NSImage? = appIcon(resolving: { NSWorkspace.shared.urlForApplication(toOpen: $0) })
+
+    /// The icon of the app `appFor` names for `obsidian://`, if any.
+    @MainActor static func appIcon(resolving appFor: (URL) -> URL?) -> NSImage? {
+        guard let probe = URL(string: "obsidian://open"), let app = appFor(probe) else { return nil }
+        return NSWorkspace.shared.icon(forFile: app.path)
+    }
 }

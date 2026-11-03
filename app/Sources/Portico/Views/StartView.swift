@@ -339,6 +339,7 @@ struct StartView: View {
                         }
                         .buttonStyle(.hover)
                         .foregroundStyle(Theme.text3)
+                        .help("Remove \(path)")
                     }
                     .scaledFont(12)
                     .foregroundStyle(Theme.text)
@@ -427,8 +428,9 @@ struct StartView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.prompt = "Attach"
-        guard panel.runModal() == .OK else { return }
-        model.attachToStart(panel.urls.map(\.path))
+        FilePanel.present(panel, from: NSApp.keyWindow ?? NSApp.mainWindow) { urls in
+            model.attachToStart(urls.map(\.path))
+        }
     }
 }
 

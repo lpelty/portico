@@ -495,3 +495,53 @@ def test_doctor_viewer_line_is_one_line_when_config_is_bad(state_dir: StateDir, 
     state_dir.config_path.write_text('[viewer]\nact_hosts = ["https://figma.com"]\n', encoding="utf-8")
     got = by_name(doctor(state_dir, state_dir.config_path))
     assert not got["viewer"].ok and "https://figma.com" in got["viewer"].line and "\n" not in got["viewer"].line
+
+
+# --- v0.17 §5: the folder in use ----------------------------------------------------
+
+
+def test_doctor_names_the_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import portico_gateway.state as state_module
+    from portico_gateway.doctor import check_home
+
+    monkeypatch.delenv("PORTICO_HOME_SOURCE", raising=False)
+    folder = tmp_path / "acme-root" / "app"
+    check = check_home(StateDir(folder), given=True)
+    assert check.ok and check.name == "home"
+    assert check.line == f"{folder} (from --state)"
+    assert format_check(check) == f"ok   home: {folder} (from --state)"
+
+    checkout = tmp_path / "checkout"
+    (checkout / "bin").mkdir(parents=True)
+    (checkout / "bin" / "portico-gateway").write_text("#!/bin/sh\n")
+    (checkout / ".portico-home").write_text(f"{folder}\n")
+    monkeypatch.setattr(state_module, "REPO_ROOT", checkout)
+    monkeypatch.delenv("PORTICO_HOME", raising=False)
+    assert check_home(StateDir(), given=False).line == f"{folder} (from .portico-home)"
+
+    monkeypatch.setenv("PORTICO_HOME", str(folder))
+    assert check_home(StateDir(), given=False).line == f"{folder} (from PORTICO_HOME)"
+
+
+def test_doctor_lists_home_right_after_the_checkout(state_dir: StateDir, with_credential: None) -> None:
+    names = [c.name for c in doctor(state_dir, state_dir.config_path)]
+    assert names[:2] == ["checkout", "home"]
+
+
+def test_doctor_prefers_the_apps_source_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix round 1: the app exports PORTICO_HOME for its doctor; the hint says where the app found it."""
+    from portico_gateway.doctor import check_home
+
+    folder = tmp_path / "acme-root" / "app"
+    monkeypatch.setenv("PORTICO_HOME", str(folder))
+    monkeypatch.setenv("PORTICO_HOME_SOURCE", "Info.plist")
+    assert check_home(StateDir(), given=False).line == f"{folder} (from Info.plist)"
+    # --state given wins over any hint.
+    assert check_home(StateDir(folder), given=True).line == f"{folder} (from --state)"
+    # A hint without PORTICO_HOME is not about this folder.
+    monkeypatch.delenv("PORTICO_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    import portico_gateway.state as state_module
+
+    monkeypatch.setattr(state_module, "REPO_ROOT", tmp_path / "no-checkout")
+    assert check_home(StateDir(), given=False).line.endswith("(from the default)")

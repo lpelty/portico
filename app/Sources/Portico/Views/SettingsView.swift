@@ -135,8 +135,9 @@ struct GeneralSettingsTab: View {
         panel.prompt = "Use Folder"
         panel.message = "Choose the folder the agent works in"
         if let current = model.startFolder { panel.directoryURL = current }
-        guard panel.runModal() == .OK, let folder = panel.url else { return }
-        model.chooseStartFolder(folder)
+        FilePanel.present(panel, from: NSApp.keyWindow ?? NSApp.mainWindow) { urls in
+            if let folder = urls.first { model.chooseStartFolder(folder) }
+        }
     }
 
     private func binding(for kind: String) -> Binding<Bool> {

@@ -9,6 +9,7 @@ the hook are called directly, the server runs with the scripted
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,9 @@ from portico_gateway.engine import (
     SHOW_TOOL,
     SHOW_TOOL_NAME,
     SHOWN_TEXT,
+    STILL_LOADING_TEXT,
     VIEWER_PROMPT,
+    Shown,
     build_open_hook,
     build_options,
     build_show_tool,
@@ -33,13 +36,29 @@ from portico_gateway.engine import (
     summarize_tool,
     with_viewer_prompt,
 )
-from portico_gateway.messages import ArtifactCreated, Root
+from portico_gateway import viewer as viewer_mod
+from portico_gateway.messages import (
+    ArtifactCreated,
+    HelloClient,
+    HelloServer,
+    Root,
+    ChatState,
+    MessageSend,
+    ServicesStatus,
+    TurnFinished,
+    TurnStop,
+    ViewerResult,
+    ViewerSettings,
+    dump,
+    parse_server,
+)
+from portico_gateway.viewer import QUEUE_NOTE, STOPPED, build_viewer_tools
 from portico_gateway.server import ChatCallbacks, GatewayServer
 from portico_gateway.state import StateDir
-from tests.conftest import RecordingCallbacks, Show, make_config
+from tests.conftest import Block, RecordingCallbacks, Show, make_config
 from tests.test_artifacts import run_turn, touch, write_tool
-from tests.test_server import attach
-from tests.test_turns import EngineFactory, new_chat, recv, text_delta, tool_result
+from tests.test_server import TS, attach, connect, ws_url
+from tests.test_turns import EngineFactory, new_chat, recv, recv_until, text_delta, tool_result
 
 MODES = ("default", "acceptEdits", "plan", "auto")
 
@@ -127,6 +146,49 @@ async def test_the_tool_passes_a_refusal_back_as_an_error() -> None:
     assert out["is_error"] is True and out["content"][0]["text"] == cb.show_refusal
     blank = await build_show_tool(cb).handler({"path": "  "})
     assert blank["is_error"] is True and cb.shown == [["/etc/hosts"]]
+
+
+async def test_the_tool_says_still_loading() -> None:
+    class Loading(RecordingCallbacks):
+        async def on_show(self, paths: list[str]) -> Any:
+            self.shown.append(list(paths))
+            return Shown(STILL_LOADING_TEXT)
+
+    cb = Loading()
+    out = await build_show_tool(cb).handler({"path": "https://acme.example/pricing"})
+    assert out == {"content": [{"type": "text", "text": "Shown; still loading."}]}
+    assert cb.shown == [["https://acme.example/pricing"]]
+
+
+async def test_a_still_loading_open_is_still_caught() -> None:
+    class Loading(RecordingCallbacks):
+        async def on_show(self, paths: list[str]) -> Any:
+            return Shown(STILL_LOADING_TEXT)
+
+    out = await build_open_hook(Loading())(bash("open login.html"), "t1", {"signal": None})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+async def test_an_open_stopped_in_the_queue_is_not_run() -> None:
+    cb = RecordingCallbacks()
+    cb.show_refusal = STOPPED
+    out = await build_open_hook(cb)(bash("open login.html"), "t1", {"signal": None})
+    assert out == {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Stopped.",
+        }
+    }
+
+
+def test_the_tool_says_it_shows_files_and_web_pages_in_order() -> None:
+    description = build_show_tool(RecordingCallbacks()).description
+    assert description == (
+        "Show a file or a web page in the viewer beside this conversation, where the person sees it. "
+        "path is a file's path (relative to the session's folder, or absolute) or an http:// or https:// "
+        "address. Answers once the page has loaded." + QUEUE_NOTE
+    )
 
 
 # --- catching `open` ----------------------------------------------------------------------
@@ -353,5 +415,189 @@ async def test_a_file_shown_mid_turn_is_not_reported_again_at_the_end(
         created = [m.artifact for m in frames if isinstance(m, ArtifactCreated)]
         assert [(a.location, a.open) for a in created] == [(str(page.resolve()), True)], "once, when shown"
         assert len(server.registry.get(number).artifacts) == 1
+    finally:
+        await conn.close()
+
+
+# --- v0.17: web addresses, and the show waits for the page ------------------------------
+
+
+async def test_show_files_takes_a_web_address(server: GatewayServer, folder: Path) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        out = await server.show_files(chat, ["https://acme.example/pricing"])
+        assert not isinstance(out, str)
+        event = await recv(conn)
+        assert isinstance(event, ArtifactCreated)
+        art = event.artifact
+        assert (art.kind, art.media, art.location) == ("url", "url", "https://acme.example/pricing")
+        assert art.open is True and art.source == "tool"
+        assert [a.location for a in chat.artifacts] == ["https://acme.example/pricing"]
+
+        assert not isinstance(await server.show_files(chat, ["HTTP://acme.example"]), str)
+        assert (await recv(conn)).artifact.location == "HTTP://acme.example"  # type: ignore[union-attr]
+
+        # Only http(s) is a web address: the rest are still paths.
+        for raw in ("www.acme.example", "file:///tmp/x.html"):
+            assert await server.show_files(chat, [raw]) == f"Not shown: there is no file at {raw}."
+    finally:
+        await conn.close()
+
+
+async def attach_viewer_app(server: GatewayServer, capabilities: list[str]):
+    """An app that declared ``capabilities``, past the handshake, with ``viewer.settings`` sent."""
+    conn = await connect(ws_url(server, server.token))
+    await conn.send(dump(HelloClient(ts=TS, app_version="0.17.0", capabilities=capabilities)))
+    assert isinstance(parse_server(await conn.recv()), HelloServer)
+    await recv_until(conn, ServicesStatus)
+    await conn.send(dump(ViewerSettings(ts=TS, can_see=True, check_html=True)))
+
+    async def poll() -> None:
+        while server.viewer.settings is None:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(poll(), 2)
+    return conn
+
+
+async def next_of(conn: Any, type_name: str) -> Any:
+    while True:
+        msg = await recv(conn, 2)
+        if msg.type == type_name:
+            return msg
+
+
+async def test_server_show_answers_after_the_page_loads(
+    server: GatewayServer, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = await attach_viewer_app(server, ["viewer.v1", "viewer.show.v1"])
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        touch(folder / "login.html")
+        task = asyncio.create_task(server.show_files(chat, ["login.html"]))
+        created = await next_of(conn, "artifact.created")
+        act = await next_of(conn, "viewer.act")
+        assert act.action == "show" and act.chat == number
+        assert act.args == {"artifact": created.artifact.id, "location": created.artifact.location}
+        await asyncio.sleep(0.05)
+        assert not task.done()  # not until the page has loaded
+        await conn.send(dump(ViewerResult(ts=TS, id=act.id, ok=True, text="Loaded.")))
+        assert await asyncio.wait_for(task, 2) in (None, Shown(SHOWN_TEXT))
+
+        # No answer within the show's timeout: shown, still loading; a look queued behind it then runs.
+        monkeypatch.setattr(viewer_mod, "SHOW_TIMEOUT", 0.2)
+        look = {t.name: t for t in build_viewer_tools(server.viewer, number)}["viewer_look"]
+        show_task = asyncio.create_task(server.show_files(chat, ["https://acme.example/slow"]))
+        assert (await next_of(conn, "viewer.act")).args["location"] == "https://acme.example/slow"
+        look_task = asyncio.create_task(look.handler({}))
+        await asyncio.sleep(0.05)
+        assert not look_task.done()  # waiting behind the show
+        assert await asyncio.wait_for(show_task, 2) == Shown("Shown; still loading.")
+        looked = await next_of(conn, "viewer.act")
+        assert looked.action == "look"
+        await conn.send(dump(ViewerResult(ts=TS, id=looked.id, ok=True, text="Pricing page.")))
+        assert (await asyncio.wait_for(look_task, 2))["content"][0]["text"] == "Pricing page."
+    finally:
+        await conn.close()
+
+
+async def test_server_show_that_did_not_load_says_why(server: GatewayServer, folder: Path) -> None:
+    conn = await attach_viewer_app(server, ["viewer.v1", "viewer.show.v1"])
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        task = asyncio.create_task(server.show_files(chat, ["https://acme.example/down"]))
+        act = await next_of(conn, "viewer.act")
+        await conn.send(dump(ViewerResult(ts=TS, id=act.id, ok=False, text="Not loaded: Could not connect to the server.")))
+        assert await asyncio.wait_for(task, 2) == Shown("Not loaded: Could not connect to the server.")
+    finally:
+        await conn.close()
+
+
+async def test_the_tool_relays_a_page_that_did_not_load() -> None:
+    class NotLoaded(RecordingCallbacks):
+        async def on_show(self, paths: list[str]) -> Any:
+            return Shown("Not loaded: Could not connect to the server.")
+
+    out = await build_show_tool(NotLoaded()).handler({"path": "https://acme.example/down"})
+    assert out == {"content": [{"type": "text", "text": "Not loaded: Could not connect to the server."}]}
+    hooked = await build_open_hook(NotLoaded())(bash("open login.html"), "t1", {"signal": None})
+    assert hooked["hookSpecificOutput"]["permissionDecision"] == "deny", "the real open never runs"
+
+
+async def test_server_show_to_an_app_without_the_round_trip_answers_at_once(
+    server: GatewayServer, folder: Path
+) -> None:
+    conn = await attach_viewer_app(server, ["viewer.v1"])
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        assert await asyncio.wait_for(server.show_files(chat, ["https://acme.example/pricing"]), 1) is None
+        frames: list[Any] = []
+        with pytest.raises(TimeoutError):
+            while True:
+                frames.append(await recv(conn, 0.3))
+        assert "viewer.act" not in [f.type for f in frames]
+        assert "artifact.created" in [f.type for f in frames]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize("raw", ["https://", "http:// x", "https:///pricing"])
+async def test_a_web_address_needs_a_host(server: GatewayServer, folder: Path, raw: str) -> None:
+    conn = await attach(server)
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        assert await server.show_files(chat, [raw]) == f"Not shown: '{raw}' is not a web address."
+        with pytest.raises(TimeoutError):
+            await recv(conn, timeout=0.2)
+        assert chat.artifacts == []
+    finally:
+        await conn.close()
+
+
+async def test_a_stop_drops_queued_viewer_calls(
+    server: GatewayServer, factory: EngineFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(viewer_mod, "SHOW_TIMEOUT", 0.5)
+    conn = await attach_viewer_app(server, ["viewer.v1", "viewer.show.v1"])
+    try:
+        number = await new_chat(conn, folder)
+        chat = server.registry.get(number)
+        engine = factory.last
+        engine.script(Block())
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="go")))
+        await recv_until(conn, ChatState)
+        await engine.wait_blocked()
+
+        tools = {t.name: t for t in build_viewer_tools(server.viewer, number)}
+        show_task = asyncio.create_task(server.show_files(chat, ["https://acme.example/pricing"]))
+        show_act = await next_of(conn, "viewer.act")
+        assert show_act.action == "show"
+        clicks = [asyncio.create_task(tools["viewer_click"].handler({"target": t})) for t in ("e1", "e2")]
+        await asyncio.sleep(0.05)
+        queued_show = asyncio.create_task(server.show_files(chat, ["https://acme.example/later"]))
+        await asyncio.sleep(0.05)
+
+        await conn.send(dump(TurnStop(ts=TS, chat=number)))
+        frames = await recv_until(conn, TurnFinished)
+        # The show already in flight finishes as before (here: times out).
+        assert await asyncio.wait_for(show_task, 2) == Shown(STILL_LOADING_TEXT)
+        # Nothing queued behind it reaches the app.
+        rest: list[Any] = list(frames)
+        with pytest.raises(TimeoutError):
+            while True:
+                rest.append(await recv(conn, 0.3))
+        assert [f.action for f in rest if f.type == "viewer.act"] == []
+        assert [f.artifact.location for f in rest if f.type == "artifact.created"] == []
+        for click in clicks:
+            assert await asyncio.wait_for(click, 2) == {"content": [{"type": "text", "text": "Stopped."}], "is_error": True}
+        assert STOPPED == "Stopped."
+        assert await asyncio.wait_for(queued_show, 2) == "Stopped."
+        assert [x.location for x in chat.artifacts] == ["https://acme.example/pricing"]
     finally:
         await conn.close()

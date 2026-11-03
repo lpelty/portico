@@ -25,6 +25,8 @@ final class GatewaySupervisor: ObservableObject {
         case exitedBeforeReady(String?)
         case readyTimeout(Duration)
         case tokenUnreadable(String)
+        /// v0.17: the folder `bin/install --home` wrote into Info.plist is gone.
+        case homeMissing(String)
 
         var description: String {
             switch self {
@@ -38,6 +40,8 @@ final class GatewaySupervisor: ObservableObject {
                 "the gateway did not report ready within \(limit)"
             case .tokenUnreadable(let path):
                 "the gateway is up but its token file \(path) cannot be read"
+            case .homeMissing(let path):
+                "Portico's folder \(path) is missing; reinstall"
             }
         }
     }
@@ -56,6 +60,24 @@ final class GatewaySupervisor: ObservableObject {
     /// The Info.plist key an assembled `.app` carries: the absolute path of
     /// the deployment's `bin/portico-gateway` (written by `bin/install`).
     nonisolated static let infoPlistCommandKey = "PorticoGatewayBin"
+    /// v0.17: the Info.plist key `bin/install --home` writes: the absolute
+    /// path of Portico's folder (config, token, index, log).
+    nonisolated static let infoPlistHomeKey = "PorticoHome"
+
+    /// Portico's folder and where it was found.
+    struct Home: Equatable, Sendable {
+        enum Source: Equatable, Sendable {
+            /// The app's Info.plist (`bin/install --home`): it must already exist.
+            case infoPlist
+            /// `PORTICO_HOME`, or a folder given to the supervisor: created if missing.
+            case environment
+            /// `~/.portico`: created if missing.
+            case standard
+        }
+
+        var url: URL
+        var source: Source
+    }
 
     @Published private(set) var status: Status = .stopped
 
@@ -65,7 +87,10 @@ final class GatewaySupervisor: ObservableObject {
     /// How long `start` waits for the ready line.
     var readyTimeout: Duration = .seconds(30)
 
-    let stateDir: URL
+    /// Portico's folder and where it came from.
+    let home: Home
+    /// The gateway's state directory (`home.url`).
+    var stateDir: URL { home.url }
     private let explicitCommand: URL?
     private var stdoutDrain: Task<Void, Never>?
 
@@ -74,18 +99,59 @@ final class GatewaySupervisor: ObservableObject {
     var tokenOverride: URL?
 
     /// - Parameters:
-    ///   - stateDir: the gateway's state directory; default `$PORTICO_HOME` or `~/.portico`.
+    ///   - stateDir: the gateway's state directory (created if missing); default `resolveHome()`.
     ///   - gatewayCommand: the gateway command; default is resolved by `resolveCommand()`.
-    init(stateDir: URL? = nil, gatewayCommand: URL? = nil) {
-        self.stateDir = stateDir ?? Self.defaultStateDir()
+    convenience init(stateDir: URL? = nil, gatewayCommand: URL? = nil) {
+        self.init(
+            home: stateDir.map { Home(url: $0, source: .environment) } ?? Self.resolveHome(),
+            gatewayCommand: gatewayCommand)
+    }
+
+    init(home: Home, gatewayCommand: URL? = nil) {
+        self.home = home
         self.explicitCommand = gatewayCommand
     }
 
-    static func defaultStateDir(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        if let home = environment[homeEnvironmentVariable], !home.isEmpty {
-            return URL(fileURLWithPath: (home as NSString).expandingTildeInPath, isDirectory: true)
+    /// Portico's folder, in order: the Info.plist's `PorticoHome` (written by
+    /// `bin/install --home`), `$PORTICO_HOME`, then `~/.portico`.
+    nonisolated static func resolveHome(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> Home {
+        if let baked = infoDictionary?[infoPlistHomeKey] as? String, !baked.isEmpty {
+            return Home(url: folderURL(baked), source: .infoPlist)
         }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".portico", isDirectory: true)
+        if let home = environment[homeEnvironmentVariable], !home.isEmpty {
+            return Home(url: folderURL(home), source: .environment)
+        }
+        return Home(
+            url: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".portico", isDirectory: true),
+            source: .standard)
+    }
+
+    private nonisolated static func folderURL(_ path: String) -> URL {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    /// The environment for what the app starts with its folder (the gateway, the doctor):
+    /// `PORTICO_HOME` is the folder and `PORTICO_HOME_SOURCE` says where the app found
+    /// it, so a doctor names it and a `portico-gateway` call without `--state` agrees.
+    nonisolated static func childEnvironment(home: Home, base: [String: String]) -> [String: String] {
+        var environment = base
+        environment[homeEnvironmentVariable] = home.url.path
+        environment["PORTICO_HOME_SOURCE"] =
+            switch home.source {
+            case .infoPlist: "Info.plist"
+            case .environment: homeEnvironmentVariable
+            case .standard: "the default"
+            }
+        return environment
+    }
+
+    /// What the app starts the gateway with: its folder given explicitly, so
+    /// the gateway never looks for it on its own.
+    nonisolated static func launchArguments(state: URL) -> [String] {
+        ["run", "--port", "0", "--state", state.path]
     }
 
     var ledgerURL: URL { stateDir.appendingPathComponent("ledger.json") }
@@ -190,6 +256,14 @@ final class GatewaySupervisor: ObservableObject {
     }
 
     private func launch() async throws -> (port: Int, token: String) {
+        // The folder bin/install wrote into the app must exist: making a new,
+        // empty one would quietly start a gateway with no config.
+        var isDirectory: ObjCBool = false
+        if home.source == .infoPlist,
+            !(FileManager.default.fileExists(atPath: stateDir.path, isDirectory: &isDirectory) && isDirectory.boolValue)
+        {
+            throw SupervisorError.homeMissing(stateDir.path)
+        }
         let command = try resolveCommand()
         try FileManager.default.createDirectory(
             at: stateDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -202,7 +276,8 @@ final class GatewaySupervisor: ObservableObject {
         let child: pid_t
         do {
             child = try Self.spawnDetached(
-                command: command.path, arguments: ["run", "--port", "0"],
+                command: command.path, arguments: Self.launchArguments(state: stateDir),
+                environment: Self.childEnvironment(home: home, base: ProcessInfo.processInfo.environment),
                 stdout: writeEnd, stderrPath: logURL.path)
         } catch {
             close(readEnd)
@@ -352,9 +427,7 @@ final class GatewaySupervisor: ObservableObject {
         let sibling = command.deletingLastPathComponent().appendingPathComponent("doctor")
         let (executable, arguments): (URL, [String]) =
             FileManager.default.isExecutableFile(atPath: sibling.path) ? (sibling, []) : (command, ["doctor"])
-        var environment = ProcessInfo.processInfo.environment
-        environment[Self.homeEnvironmentVariable] = stateDir.path
-        let env = environment
+        let env = Self.childEnvironment(home: home, base: ProcessInfo.processInfo.environment)
         return await Task.detached {
             Self.runCapturing(executable, arguments, environment: env)
         }.value
@@ -404,7 +477,9 @@ final class GatewaySupervisor: ObservableObject {
     /// so a signal to the app's group never reaches it. stdin is `/dev/null`,
     /// stdout is the given descriptor, stderr appends to `stderrPath`, and
     /// every other descriptor is closed (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
-    private static func spawnDetached(command: String, arguments: [String], stdout: Int32, stderrPath: String) throws
+    private static func spawnDetached(
+        command: String, arguments: [String], environment: [String: String], stdout: Int32, stderrPath: String
+    ) throws
         -> pid_t
     {
         var attrs: posix_spawnattr_t? = nil
@@ -422,7 +497,7 @@ final class GatewaySupervisor: ObservableObject {
         let argv: [UnsafeMutablePointer<CChar>?] = ([command] + arguments).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         let envp: [UnsafeMutablePointer<CChar>?] =
-            ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+            environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { envp.forEach { free($0) } }
 
         var child: pid_t = 0
