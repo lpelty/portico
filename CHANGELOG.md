@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.17.0 (unreleased)
+## v0.17.0 (2026-11-02)
 
 A field-fix release. What is verified by tests is said so; what is verified
 only on screen is listed at the end, under "Owed".

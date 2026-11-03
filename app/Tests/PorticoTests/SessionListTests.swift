@@ -142,7 +142,7 @@ final class SessionListTests: XCTestCase {
         XCTAssertFalse(SessionFilesPresentation.isInFront(rows[0], current: nil))
     }
 
-    /// X (Task 2) closes the file but it stays in the list.
+    /// X clears the viewer, but every file stays in the list.
     func test_a_file_closed_with_x_stays_in_the_list() throws {
         let (model, _) = try model()
         hello(model)
@@ -152,7 +152,7 @@ final class SessionListTests: XCTestCase {
         model.apply(.artifactCreated(ArtifactCreated(chat: 1, artifact: b)))
         model.show(b, in: 1)
         model.closeFile(in: 1)
-        XCTAssertEqual(model.current[1]?.id, "a-1")
+        XCTAssertNil(model.current[1])
         let list = SessionFilesPresentation(files: model.history(for: 1), query: "")
         XCTAssertEqual(list.shown.map(\.id), ["b-1", "a-1"])
     }
