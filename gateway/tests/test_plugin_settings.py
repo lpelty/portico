@@ -300,6 +300,17 @@ async def test_marketplace_add_and_update(plugins: PluginSettings, cli: FixtureC
         await plugins.marketplace_update("nowhere")
 
 
+async def test_marketplace_add_logs_no_source(
+    plugins: PluginSettings, cli: FixtureCli, caplog: pytest.LogCaptureFixture
+) -> None:
+    """R-c13: the source can be an address with a key in it; the log line stops at ``plugin marketplace add``."""
+    caplog.set_level("INFO", logger="portico_gateway.plugin_settings")
+    await plugins.marketplace_add("https://sam:s3cret@git.acme.example/plugins.git", id="m-1")
+    lines = [r.getMessage() for r in caplog.records]
+    assert "claude plugin marketplace add: done" in lines
+    assert all("s3cret" not in line and "acme.example" not in line for line in lines)
+
+
 async def test_a_marketplace_change_fetches_available_again(plugins: PluginSettings, cli: FixtureCli) -> None:
     await plugins.state(available=True)
     await plugins.marketplace_update("acme")

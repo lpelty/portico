@@ -81,13 +81,15 @@ def _tools_word(n: int) -> str:
     return f"{n} tool" if n == 1 else f"{n} tools"
 
 
-# A web address's query string (``?code=…&state=…``) can carry a sign-in code or a key.
+# A web address's query string (``?code=…&state=…``) can carry a sign-in code or a key,
+# and so can its userinfo (``https://user:pass@host``, R-c13).
 _URL_QUERY = re.compile(r"(https?://[^\s?#]*)\?[^\s#]*")
+_URL_USERINFO = re.compile(r"(https?://)[^\s/?#@]*@")
 
 
 def strip_url_queries(text: str) -> str:
-    """``text`` with every web address's query string taken out, before it reaches the app."""
-    return _URL_QUERY.sub(r"\1", text)
+    """``text`` with every web address's userinfo and query string taken out, before it reaches the app."""
+    return _URL_QUERY.sub(r"\1", _URL_USERINFO.sub(r"\1", text))
 
 
 def _cli_message(stderr: str, args: list[str], code: int) -> str:

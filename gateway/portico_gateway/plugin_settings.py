@@ -369,7 +369,9 @@ class PluginSettings:
             raise ProtocolError("plugins.refused", COMMAND_INSTALL)
         if result.code != 0:
             raise ProtocolError("plugins.failed", _cli_message(result.stderr, args, result.code))
-        log.info("claude %s: done", " ".join(args[:4]))
+        # R-c13: a marketplace's source can be an address carrying a key; it is never logged.
+        shown = args[:3] if args[1:3] == ["marketplace", "add"] else args[:4]
+        log.info("claude %s: done", " ".join(shown))
 
     async def set_enabled(self, plugin: str, enabled: bool, id: str | None = None) -> PluginsState:
         row = await self._row(plugin)

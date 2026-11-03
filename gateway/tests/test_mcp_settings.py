@@ -751,6 +751,17 @@ async def test_url_queries_never_reach_the_app(server: GatewayServer, folder: Pa
         await conn.close()
 
 
+def test_strip_url_queries_takes_out_userinfo_too() -> None:
+    """R-c13: ``user:pass@`` in an http(s) address never reaches the app, nor a query string."""
+    from portico_gateway.mcp_settings import strip_url_queries
+
+    assert strip_url_queries("401 from https://sam:s3cret@mcp.acme.example/v1?token=abc") == "401 from https://mcp.acme.example/v1"
+    assert strip_url_queries("see http://token@acme.example and https://acme.example/a@b") == (
+        "see http://acme.example and https://acme.example/a@b"
+    )
+    assert strip_url_queries("mail sam@acme.example") == "mail sam@acme.example"
+
+
 async def test_a_slow_remove_does_not_hold_other_frames(server: GatewayServer, folder: Path, cli: ScriptedCli) -> None:
     """R-c6: the CLI runs in a task; ``mcp.list`` sent after a blocked remove answers first."""
     seed(folder)
