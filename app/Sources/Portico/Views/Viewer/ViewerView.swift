@@ -169,6 +169,15 @@ struct ViewerView: View {
     @StateObject private var page = ViewerPageAddress()
 
     var body: some View {
+        if let id = model.viewerApp[chat], let app = model.app(forToolUse: id) {
+            // v0.18 (ruling 36): an app's copy in place of the file view.
+            AppViewerPane(chat: chat, state: app)
+        } else {
+            fileView
+        }
+    }
+
+    private var fileView: some View {
         VStack(spacing: 0) {
             header
             Rectangle().fill(Theme.border).frame(height: 1)

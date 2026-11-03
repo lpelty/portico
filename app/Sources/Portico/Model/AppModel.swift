@@ -344,6 +344,24 @@ final class AppModel: ObservableObject {
         case failed(String)
     }
 
+    // MCP Apps (v0.18 §2.3; read and acted on in MCPApps.swift).
+
+    /// The app cards by the agent's call (`tool_use_id`), every chat's.
+    @Published var apps: [String: AppState] = [:]
+    /// Per chat, its live cards' ids (at most three; the newest last).
+    @Published var liveApps: [Int: [String]] = [:]
+    /// Frozen cards' last looks, in memory only (a restart shows the placeholder).
+    @Published var appSnapshots: [String: NSImage] = [:]
+    /// Per chat, the card whose page the viewer shows in place of the file view.
+    @Published var viewerApp: [Int: String] = [:]
+    /// The pages drawn (a card's, a viewer copy's) and their bridges.
+    var appPages: [AppPageKey: MCPAppPage] = [:]
+    var appBridges: [AppPageKey: MCPAppBridge] = [:]
+    /// A page's `tools/call` out as `app.call_tool`, by request id.
+    var pendingAppCalls: [String: (AppCallResult) -> Void] = [:]
+    /// A page's `ui/message` out as `app.message`, oldest first.
+    var pendingAppMessages: [PendingAppMessage] = []
+
     /// The last `seq` seen per chat, the watermark a reconnect asks for events since.
     private(set) var lastSeq: [Int: Int] = [:]
 
@@ -800,6 +818,7 @@ final class AppModel: ObservableObject {
                 openSpace = nil
                 pendingOpenSpace = nil
             }
+            failPendingAppRequests()
             for frame in handleHello(hello) {
                 if case .chatOpen(let open) = frame {
                     pendingOpenSince[open.chat] = open.since
@@ -868,6 +887,7 @@ final class AppModel: ObservableObject {
             applyHistory(history)
 
         case .chatQueued(let accepted):
+            noteAppMessageTaken(chat: accepted.chat, id: accepted.id, echo: false)
             // Held for the agent's next step (v0.11): the send is answered;
             // the card comes with the `chat.queue` that follows.
             if let id = accepted.id, pendingSends[accepted.chat]?.id == id {
@@ -960,6 +980,7 @@ final class AppModel: ObservableObject {
 
         case .error(let error):
             lastError = error
+            applyAppRefusal(error)
             if error.code == Self.replacedCode { replacedElsewhere = true }
             // A refused renew: the card is no longer busy; the status line
             // (below) carries the gateway's reason like any other error.
@@ -1013,6 +1034,14 @@ final class AppModel: ObservableObject {
             if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileListErrors[key] = error.message
             }
+
+        case .appCallResult(let result):
+            applyAppCallResult(result)
+
+        case .appOpen, .appResult, .appCancelled:
+            // Not sequenced (no seq): applied as they come, live or replayed.
+            guard let chat = message.envelope.chat else { return }
+            applyEvent(message, to: chat)
 
         case .turnStarted, .userText, .textDelta, .toolStarted, .toolFinished, .turnFinished, .cardAsk, .cardAnswered, .cardCancel,
             .chatCompacted, .chatNotice, .agentStarted, .agentProgress, .agentFinished, .workflowStarted, .workflowPhase,
@@ -1173,6 +1202,7 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = user.turn
             items.append(.userText(user))
             pendingSends[chat] = nil
+            if user.via != nil, !replayingHistory { noteAppMessageTaken(chat: chat, id: user.id, echo: true) }
             // The gateway records a session's title from its first message but
             // only says so in the next chat.list; take it from the echo now.
             if let index = chats.firstIndex(where: { $0.chat == chat }), chats[index].title == nil {
@@ -1315,6 +1345,9 @@ final class AppModel: ObservableObject {
             if restoreCurrent[chat] == artifact.id { restoreCurrent[chat] = nil }
             if launchViewer[chat] == artifact.id { launchViewer[chat] = nil }
 
+        case .appOpen, .appResult, .appCancelled:
+            applyApp(event, chat: chat, items: items)
+
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
 
@@ -1363,7 +1396,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult:
             break
         }
     }
@@ -1588,6 +1621,7 @@ final class AppModel: ObservableObject {
     func show(_ artifact: Artifact, in chat: Int) {
         if !replayingFromBeginning { supersedeRemembered(in: chat) }
         leaveSpaceForFile()
+        closeAppInViewer(chat: chat)
         current[chat] = artifact
         viewerVisible[chat] = true
         send(.artifactOpened(ArtifactOpened(chat: chat, artifactId: artifact.id, id: Self.requestId())))
@@ -1632,7 +1666,11 @@ final class AppModel: ObservableObject {
             // A file opened from the Files pane: the gateway never lists
             // it, so it is opened again here, if it is still there.
             let path = String(id.dropFirst(Self.localArtifactPrefix.count))
-            if FileManager.default.fileExists(atPath: path) { openArtifact(file: path, in: chat) }
+            if path.hasPrefix("https://") || path.hasPrefix("http://") {
+                openLink(path, chat: chat)
+            } else if FileManager.default.fileExists(atPath: path) {
+                openArtifact(file: path, in: chat)
+            }
         } else if let listed = artifacts[chat]?.first(where: { $0.id == id }) {
             current[chat] = listed
             viewerVisible[chat] = true
@@ -1669,6 +1707,7 @@ final class AppModel: ObservableObject {
     /// so X clears it and closes the viewer. Opened again with the toolbar
     /// button, it is empty; every file stays in the list.
     func closeFile(in chat: Int) {
+        closeAppInViewer(chat: chat)
         current[chat] = nil
         viewerVisible[chat] = false
         if viewerFocus?.chat == chat { endFocus() }
@@ -2141,6 +2180,7 @@ final class AppModel: ObservableObject {
 
     private func forget(chat: Int) {
         noteClosed(chat: chat)
+        forgetApps(chat: chat)
         draftAttachments[chat] = nil
         drafts[chat] = nil
         pendingSends[chat] = nil
@@ -2503,8 +2543,47 @@ extension AppModel {
         list.removeAll { $0.id == id }
         list.append(artifact)
         artifacts[chat] = list
+        showLocal(artifact, in: chat)
+    }
+
+    /// The viewer column shows `chat`'s viewer (an app's copy): out of an open space, as a file would.
+    func showViewerForApp(chat: Int) {
+        leaveSpaceForFile()
+        viewerVisible[chat] = true
+    }
+
+    /// The app's copy closed with no file under it: the viewer closes too.
+    func hideViewerAfterApp(chat: Int) {
+        viewerVisible[chat] = false
+        if viewerFocus?.chat == chat { endFocus() }
+    }
+
+    /// The page's `ui/open-link` (v0.18, ruling 37): an http(s) address opens in
+    /// the chat's viewer as a web page, the way a `show_in_viewer` of one shows,
+    /// with no round trip (the gateway's look/act rules apply as ever). Any
+    /// other address is refused.
+    @discardableResult
+    func openLink(_ address: String, chat: Int) -> Bool {
+        guard let url = URL(string: address), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http", url.host?.isEmpty == false else { return false }
+        let id = Self.localArtifactPrefix + url.absoluteString
+        let artifact = Artifact(
+            id: id, kind: .url, location: url.absoluteString, media: .other,
+            title: url.host ?? url.absoluteString, source: .tool, open: true)
+        var list = artifacts[chat] ?? []
+        list.removeAll { $0.id == id }
+        list.append(artifact)
+        artifacts[chat] = list
+        showLocal(artifact, in: chat)
+        return true
+    }
+
+    /// Show an artifact only this app knows (a file from the Files pane, a
+    /// page's link): no gateway round trip; it takes the viewer from an app.
+    func showLocal(_ artifact: Artifact, in chat: Int) {
         supersedeRemembered(in: chat)
         leaveSpaceForFile()
+        closeAppInViewer(chat: chat)
         current[chat] = artifact
         viewerVisible[chat] = true
     }

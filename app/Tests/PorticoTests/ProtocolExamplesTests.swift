@@ -238,6 +238,48 @@ final class ProtocolExamplesTests: XCTestCase {
         XCTAssertEqual(without.actHosts, ["acme.example"])
     }
 
+    // MARK: - v0.18 MCP Apps
+
+    func testTheAppDeclaresApps() {
+        XCTAssertTrue(HelloClient.appCapabilities.contains("apps.v1"))
+    }
+
+    func testAppExamplesDecodeIntoTheirCases() throws {
+        let decoder = JSONDecoder()
+        func server(_ name: String) throws -> ServerMessage {
+            try decoder.decode(ServerMessage.self, from: Data(contentsOf: Self.examplesDir.appendingPathComponent(name)))
+        }
+        func client(_ name: String) throws -> ClientMessage {
+            try decoder.decode(ClientMessage.self, from: Data(contentsOf: Self.examplesDir.appendingPathComponent(name)))
+        }
+        guard case .appOpen(let open) = try server("server.app.open.json") else { return XCTFail("app.open") }
+        XCTAssertEqual(open.serverTitle, "Acme Tracker")
+        XCTAssertEqual(open.prefersBorder, true)
+        XCTAssertEqual(open.csp?["connectDomains"], .array([.string("https://api.acme.example")]))
+        XCTAssertNotNil(open.html)
+        guard case .appResult(let result) = try server("server.app.result.json") else { return XCTFail("app.result") }
+        XCTAssertNotNil(result.structuredContent)
+        guard case .appCancelled = try server("server.app.cancelled.json") else { return XCTFail("app.cancelled") }
+        guard case .appCallResult(let call) = try server("server.app.call_result.json") else { return XCTFail("app.call_result") }
+        XCTAssertEqual(call.id, "req-40")
+        XCTAssertTrue(call.ok)
+        guard case .appCallTool = try client("client.app.call_tool.json") else { return XCTFail("app.call_tool") }
+        guard case .appMessage = try client("client.app.message.json") else { return XCTFail("app.message") }
+        guard case .appContext = try client("client.app.context.json") else { return XCTFail("app.context") }
+        guard case .appReload = try client("client.app.reload.json") else { return XCTFail("app.reload") }
+    }
+
+    func testUserTextViaIsOptional() throws {
+        func text(_ json: String) throws -> UserText? {
+            guard case .userText(let user) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else { return nil }
+            return user
+        }
+        let typed = try XCTUnwrap(try text(#"{"type":"user.text","chat":1,"turn":2,"text":"Hi","ts":"2026-11-03T12:00:00Z"}"#))
+        XCTAssertNil(typed.via)
+        let sent = try XCTUnwrap(try text(#"{"type":"user.text","chat":1,"turn":2,"text":"Mark it done","via":"Acme Tracker","ts":"2026-11-03T12:00:00Z"}"#))
+        XCTAssertEqual(sent.via, "Acme Tracker")
+    }
+
     func testUnknownServerTypeFailsToDecode() {
         let data = Data(#"{"type":"nope","ts":"2026-10-27T12:00:00Z"}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ServerMessage.self, from: data))

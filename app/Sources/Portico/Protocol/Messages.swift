@@ -348,7 +348,7 @@ struct HelloClient: Codable, Equatable, Sendable {
     static let appCapabilities = [
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
-        Service.stuckCapability,
+        Service.stuckCapability, AppOpen.capability,
     ]
 }
 
@@ -956,6 +956,9 @@ struct UserText: Codable, Equatable, Sendable {
     var chat: Int
     var turn: Int
     var text: String
+    /// v0.18: a message an MCP app sent (`app.message`) carries the app's
+    /// server title; the transcript shows "via <title>" under the bubble.
+    var via: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -1606,6 +1609,161 @@ struct ErrorMessage: Codable, Equatable, Sendable {
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
 
+// MARK: - MCP Apps (v0.18, `apps.v1`)
+
+/// Show the app card for the agent's call `toolUseId` (gateway -> app).
+/// `html` is absent in a `chat.history` replay: the card comes back frozen.
+/// `csp`, `permissions` and `prefersBorder` are the resource's `_meta.ui`
+/// members as the server gave them. Carries `id` when it answers `app.reload`.
+struct AppOpen: Codable, Equatable, Sendable {
+    static let messageType = "app.open"
+    /// What the app names in hello's `capabilities` to be sent `app.*` frames.
+    static let capability = "apps.v1"
+    var chat: Int
+    var toolUseId: String
+    var server: String
+    var serverTitle: String
+    var tool: String
+    var resourceUri: String
+    var html: String? = nil
+    var csp: [String: JSONValue]? = nil
+    var permissions: [String: JSONValue]? = nil
+    var prefersBorder: Bool? = nil
+    var input: [String: JSONValue] = [:]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, server, tool, html, csp, permissions, input, id, ts
+        case toolUseId = "tool_use_id"
+        case serverTitle = "server_title"
+        case resourceUri = "resource_uri"
+        case prefersBorder = "prefers_border"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
+/// The call's result for the page (`structuredContent` absent when the
+/// server sent none or it was over the gateway's cap).
+struct AppResult: Codable, Equatable, Sendable {
+    static let messageType = "app.result"
+    var chat: Int
+    var toolUseId: String
+    var content: [JSONValue] = []
+    var structuredContent: [String: JSONValue]? = nil
+    var isError: Bool = false
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, content, id, ts
+        case toolUseId = "tool_use_id"
+        case structuredContent = "structured_content"
+        case isError = "is_error"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
+/// The call ended (stopped, or an error) with no result.
+struct AppCancelled: Codable, Equatable, Sendable {
+    static let messageType = "app.cancelled"
+    var chat: Int
+    var toolUseId: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, id, ts
+        case toolUseId = "tool_use_id"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: nil) }
+}
+
+/// The answer to `app.call_tool` (its `id`). `ok` false carries `error`.
+struct AppCallResult: Codable, Equatable, Sendable {
+    static let messageType = "app.call_result"
+    var toolUseId: String
+    var ok: Bool
+    var content: [JSONValue] = []
+    var structuredContent: [String: JSONValue]? = nil
+    var isError: Bool = false
+    var error: String? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case ok, content, error, id, ts
+        case toolUseId = "tool_use_id"
+        case structuredContent = "structured_content"
+        case isError = "is_error"
+    }
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// The page's `tools/call` (app -> gateway): a bare `tool` is the card's own server's.
+struct AppCallTool: Codable, Equatable, Sendable {
+    static let messageType = "app.call_tool"
+    var chat: Int
+    var toolUseId: String
+    var tool: String
+    var arguments: [String: JSONValue] = [:]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, tool, arguments, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+/// The page's `ui/message`: sent as the person's message, labelled via the app.
+struct AppMessage: Codable, Equatable, Sendable {
+    static let messageType = "app.message"
+    var chat: Int
+    var toolUseId: String
+    var text: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, text, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+/// The page's `ui/update-model-context`: the latest is put before the person's next message.
+struct AppContext: Codable, Equatable, Sendable {
+    static let messageType = "app.context"
+    var chat: Int
+    var toolUseId: String
+    var text: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, text, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
+/// Read the card's page again; answered `app.open` (with `html`) then `app.result`.
+struct AppReload: Codable, Equatable, Sendable {
+    static let messageType = "app.reload"
+    var chat: Int
+    var toolUseId: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, id, ts
+        case toolUseId = "tool_use_id"
+    }
+}
+
 // MARK: - The discriminated unions
 
 private enum TypeKey: String, CodingKey {
@@ -1651,6 +1809,10 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case threadStart(ThreadStart)
     case threadDismiss(ThreadDismiss)
     case threadClose(ThreadClose)
+    case appCallTool(AppCallTool)
+    case appMessage(AppMessage)
+    case appContext(AppContext)
+    case appReload(AppReload)
 
     var type: String {
         switch self {
@@ -1683,6 +1845,10 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .threadStart: ThreadStart.messageType
         case .threadDismiss: ThreadDismiss.messageType
         case .threadClose: ThreadClose.messageType
+        case .appCallTool: AppCallTool.messageType
+        case .appMessage: AppMessage.messageType
+        case .appContext: AppContext.messageType
+        case .appReload: AppReload.messageType
         }
     }
 
@@ -1718,6 +1884,10 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case ThreadStart.messageType: self = .threadStart(try ThreadStart(from: decoder))
         case ThreadDismiss.messageType: self = .threadDismiss(try ThreadDismiss(from: decoder))
         case ThreadClose.messageType: self = .threadClose(try ThreadClose(from: decoder))
+        case AppCallTool.messageType: self = .appCallTool(try AppCallTool(from: decoder))
+        case AppMessage.messageType: self = .appMessage(try AppMessage(from: decoder))
+        case AppContext.messageType: self = .appContext(try AppContext(from: decoder))
+        case AppReload.messageType: self = .appReload(try AppReload(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1755,6 +1925,10 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .threadStart(let m): try m.encode(to: encoder)
         case .threadDismiss(let m): try m.encode(to: encoder)
         case .threadClose(let m): try m.encode(to: encoder)
+        case .appCallTool(let m): try m.encode(to: encoder)
+        case .appMessage(let m): try m.encode(to: encoder)
+        case .appContext(let m): try m.encode(to: encoder)
+        case .appReload(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1802,6 +1976,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case spacesList(SpacesList)
     case models(Models)
     case threadProposal(ThreadProposal)
+    case appOpen(AppOpen)
+    case appResult(AppResult)
+    case appCancelled(AppCancelled)
+    case appCallResult(AppCallResult)
 
     var type: String {
         switch self {
@@ -1845,6 +2023,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .spacesList: SpacesList.messageType
         case .models: Models.messageType
         case .threadProposal: ThreadProposal.messageType
+        case .appOpen: AppOpen.messageType
+        case .appResult: AppResult.messageType
+        case .appCancelled: AppCancelled.messageType
+        case .appCallResult: AppCallResult.messageType
         }
     }
 
@@ -1890,6 +2072,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .spacesList(let m): m.envelope
         case .models(let m): m.envelope
         case .threadProposal(let m): m.envelope
+        case .appOpen(let m): m.envelope
+        case .appResult(let m): m.envelope
+        case .appCancelled(let m): m.envelope
+        case .appCallResult(let m): m.envelope
         }
     }
 
@@ -1936,6 +2122,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case SpacesList.messageType: self = .spacesList(try SpacesList(from: decoder))
         case Models.messageType: self = .models(try Models(from: decoder))
         case ThreadProposal.messageType: self = .threadProposal(try ThreadProposal(from: decoder))
+        case AppOpen.messageType: self = .appOpen(try AppOpen(from: decoder))
+        case AppResult.messageType: self = .appResult(try AppResult(from: decoder))
+        case AppCancelled.messageType: self = .appCancelled(try AppCancelled(from: decoder))
+        case AppCallResult.messageType: self = .appCallResult(try AppCallResult(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -1984,6 +2174,10 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .spacesList(let m): try m.encode(to: encoder)
         case .models(let m): try m.encode(to: encoder)
         case .threadProposal(let m): try m.encode(to: encoder)
+        case .appOpen(let m): try m.encode(to: encoder)
+        case .appResult(let m): try m.encode(to: encoder)
+        case .appCancelled(let m): try m.encode(to: encoder)
+        case .appCallResult(let m): try m.encode(to: encoder)
         }
     }
 }
