@@ -28,10 +28,13 @@ struct SlashCompletion: Equatable, Sendable {
     }
 
     /// Portico's own, as the gateway and the session card know them:
-    /// `/log` logs the session without ending it, `/new` starts the next.
+    /// `/log` logs the session without ending it, `/new` starts the next;
+    /// `/mcp` and `/plugin` open Settings at that tab (v0.18 ruling 15).
     static let porticoCommands: [AgentCommand] = [
         AgentCommand(name: "log", description: "Log this session"),
         AgentCommand(name: "new", description: "Start a new session"),
+        AgentCommand(name: "mcp", description: "Manage MCP servers"),
+        AgentCommand(name: "plugin", description: "Manage plugins"),
     ]
 
     /// The rows the list shows before it scrolls (the footer's "N more").

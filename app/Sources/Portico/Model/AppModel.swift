@@ -344,6 +344,24 @@ final class AppModel: ObservableObject {
         case failed(String)
     }
 
+    // Settings (v0.18 §3.1; MCP servers acted on in McpServers.swift).
+
+    /// The Settings tab shown; `/mcp` and `/plugin` choose one.
+    @Published var settingsTab: SettingsTab = .general
+    /// Asks to bring Settings forward: the main window calls SwiftUI's
+    /// `openSettings` each time this changes.
+    @Published var settingsOpenRequests = 0
+    /// Settings → MCP servers: the gateway's list and what is in flight.
+    @Published var mcpServers = McpServersState()
+    /// Remove… asked first (ruling 11); `nil` when nothing is being asked.
+    @Published var mcpRemoving: McpRemoveConfirmation?
+    /// The Add sheet's request out, by id; `nil` when none.
+    @Published var mcpAdding: String?
+    /// Why the last Add was refused, shown in the sheet.
+    @Published var mcpAddError: String?
+    /// Counts Adds answered with the list: the sheet closes on a change.
+    @Published var mcpAddFinished = 0
+
     // MCP Apps (v0.18 §2.3; read and acted on in MCPApps.swift).
 
     /// The app cards by the agent's call (`tool_use_id`), every chat's.
@@ -798,6 +816,8 @@ final class AppModel: ObservableObject {
             restartingAll = nil
             lastRestartAllId = nil
             restartAllError = nil
+            // Settings' MCP servers are asked for afresh (v0.18).
+            resetMcpServers()
             // The models too (v0.15): the gateway sends its kept list for
             // each live session after hello, so nothing older outlives it.
             models = [:]
@@ -986,6 +1006,7 @@ final class AppModel: ObservableObject {
         case .error(let error):
             lastError = error
             applyAppRefusal(error)
+            applyMcpError(error)
             if error.code == Self.replacedCode { replacedElsewhere = true }
             // A refused renew: the card is no longer busy; the status line
             // (below) carries the gateway's reason like any other error.
@@ -1042,6 +1063,9 @@ final class AppModel: ObservableObject {
 
         case .appCallResult(let result):
             applyAppCallResult(result)
+
+        case .mcpServers(let list):
+            applyMcpServers(list)
 
         case .appOpen, .appResult, .appCancelled:
             // Not sequenced (no seq): applied as they come, live or replayed.
@@ -1401,7 +1425,7 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers:
             break
         }
     }
@@ -1950,6 +1974,11 @@ final class AppModel: ObservableObject {
     /// it cannot in a notice. `about` is the document
     /// view's open file, attached to the message along with the chips.
     func sendMessage(chat: Int, text: String, about: String? = nil) {
+        // `/mcp` and `/plugin` open Settings; nothing is sent (v0.18 ruling 15).
+        if runSettingsCommand(text) {
+            drafts[chat] = nil
+            return
+        }
         let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if command == Self.renewCommand, canRenew(chat: chat) {
             guard !isSessionCommandPending(chat: chat) else { return }

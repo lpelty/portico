@@ -36,9 +36,10 @@ final class SlashCompletionTests: XCTestCase {
 
     func testASlashAloneListsPorticosOwnFirstThenTheAgentsAlphabetically() throws {
         let c = try XCTUnwrap(SlashCompletion(text: "/", agentCommands: acme))
-        XCTAssertEqual(c.portico.map(\.name), ["log", "new"])
+        // v0.18 (ruling 15): /mcp and /plugin follow /log and /new.
+        XCTAssertEqual(c.portico.map(\.name), ["log", "new", "mcp", "plugin"])
         XCTAssertEqual(c.agent.map(\.name), ["acme:review", "log-session", "plan", "research", "standup"])
-        XCTAssertEqual(c.total, 7)
+        XCTAssertEqual(c.total, 9)
         XCTAssertEqual(c.portico.first?.description, "Log this session")
     }
 
@@ -46,7 +47,7 @@ final class SlashCompletionTests: XCTestCase {
         // AG4's right frame: "/lo" is /log, then /log-session, then /standup (its description says "log").
         let c = try XCTUnwrap(SlashCompletion(text: "/lo", agentCommands: acme))
         XCTAssertEqual(names(c), ["log", "log-session", "standup"])
-        XCTAssertEqual(c.footer, "3 of 7")
+        XCTAssertEqual(c.footer, "3 of 9")
     }
 
     func testPrefixThenContainsThenDescriptionAndAPluginPrefixCountsAsAStart() throws {
@@ -69,17 +70,17 @@ final class SlashCompletionTests: XCTestCase {
             AgentCommand(name: "plan", description: "two"),
         ]
         let c = try XCTUnwrap(SlashCompletion(text: "/", agentCommands: commands))
-        XCTAssertEqual(names(c), ["log", "new", "plan"])
+        XCTAssertEqual(names(c), ["log", "new", "mcp", "plugin", "plan"])
         XCTAssertEqual(c.agent.first?.description, "one")
-        XCTAssertEqual(c.total, 3)
+        XCTAssertEqual(c.total, 5)
     }
 
     func testTheFooterSaysHowManyMoreWhenTheListScrolls() throws {
         let many = (1...135).map { AgentCommand(name: String(format: "cmd%03d", $0), description: "") }
         let c = try XCTUnwrap(SlashCompletion(text: "/", agentCommands: many))
-        XCTAssertEqual(c.footer, "↓ 130 more — scroll, or keep typing")
+        XCTAssertEqual(c.footer, "↓ 132 more — scroll, or keep typing")
         let filtered = try XCTUnwrap(SlashCompletion(text: "/cmd00", agentCommands: many))
-        XCTAssertEqual(filtered.footer, "9 of 137")
+        XCTAssertEqual(filtered.footer, "9 of 139")
     }
 
     // MARK: - keys

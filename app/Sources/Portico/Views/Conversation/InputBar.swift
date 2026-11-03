@@ -357,6 +357,12 @@ struct InputBar: View {
     /// The model clears the draft on send and restores it if the gateway
     /// refuses (`attachment.missing`, `chat.busy`).
     private func send() {
+        // `/mcp` and `/plugin` open Settings at that tab, even while the
+        // agent works; nothing is sent (v0.18 ruling 15).
+        if model.runSettingsCommand(draft.wrappedValue) {
+            draft.wrappedValue = ""
+            return
+        }
         guard canSend else { return }
         // A talk into this composer ends first: what is shown is what goes.
         dictation.willSend(from: voiceComposer.id)

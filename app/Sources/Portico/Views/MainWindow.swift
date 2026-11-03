@@ -10,6 +10,8 @@ import SwiftUI
 struct MainWindow: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var settings: Settings
+    /// `/mcp` and `/plugin` bring Settings forward at their tab (v0.18).
+    @Environment(\.openSettings) private var openSettings
     /// The width a column had when its divider drag began.
     @State private var dragStart: CGFloat?
     /// v0.14 (§6b.2): the viewer divider's grip sits on the conversation
@@ -73,6 +75,7 @@ struct MainWindow: View {
         .askToLogDialog(model)
         .newSpaceSheet(model)
         .gatewayConfirmDialog(model, place: .window)
+        .onChange(of: model.settingsOpenRequests) { openSettings() }
         .overlay {
             if model.quickOpenShown, let chat = model.filesChat {
                 QuickOpenView(chat: chat)

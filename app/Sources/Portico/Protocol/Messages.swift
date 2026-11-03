@@ -1764,6 +1764,163 @@ struct AppReload: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - MCP servers in Settings (v0.18 §3.1, `mcp.v1`)
+
+/// The capability a gateway names in hello when Settings may send `mcp.*`.
+enum McpCapability {
+    static let name = "mcp.v1"
+}
+
+/// One tool of a server; `policy` is the effective one (the person's choice, else the default).
+struct McpToolRow: Codable, Equatable, Sendable, Identifiable {
+    enum Policy: String, Codable, Equatable, Sendable, CaseIterable {
+        case allow, ask
+    }
+
+    var name: String
+    var description: String = ""
+    var readOnly: Bool = false
+    var policy: Policy
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, policy
+        case readOnly = "read_only"
+    }
+}
+
+/// One server as Settings shows it. `detail` is the gateway's status line;
+/// group titles and brand words are the app's.
+struct McpServerRow: Codable, Equatable, Sendable, Identifiable {
+    enum Group: String, Codable, Equatable, Sendable {
+        case user, local, shipped, core, account
+    }
+
+    enum Transport: String, Codable, Equatable, Sendable {
+        case stdio, http, sse, sdk, other
+    }
+
+    enum Status: String, Codable, Equatable, Sendable {
+        case connected
+        case needsAuth = "needs_auth"
+        case failed, pending, off
+        case signingIn = "signing_in"
+        case unknown
+    }
+
+    var name: String
+    var title: String
+    var group: Group
+    var transport: Transport
+    var status: Status
+    var detail: String
+    var toolCount: Int? = nil
+    var tools: [McpToolRow] = []
+    var account: String? = nil
+    var canToggle: Bool
+    var canRemove: Bool
+    var canSignOut: Bool
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, title, group, transport, status, detail, tools, account
+        case toolCount = "tool_count"
+        case canToggle = "can_toggle"
+        case canRemove = "can_remove"
+        case canSignOut = "can_sign_out"
+    }
+}
+
+/// The answer to every `mcp.*` request (with its `id`), and after a sign-in
+/// finishes (no `id`). Not sequenced.
+struct McpServers: Codable, Equatable, Sendable {
+    static let messageType = "mcp.servers"
+    var servers: [McpServerRow] = []
+    var live: Bool = false
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// The servers as they stand.
+struct McpList: Codable, Equatable, Sendable {
+    static let messageType = "mcp.list"
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Turn a server off (`enabled` false) or on again, for Settings' folder.
+struct McpToggle: Codable, Equatable, Sendable {
+    static let messageType = "mcp.toggle"
+    var name: String
+    var enabled: Bool
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Reconnect a server in every live engine on Settings' folder.
+struct McpReconnect: Codable, Equatable, Sendable {
+    static let messageType = "mcp.reconnect"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Remove a user or local server; the app asks first.
+struct McpRemove: Codable, Equatable, Sendable {
+    static let messageType = "mcp.remove"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Add a server by a web address (`url`) or a program on this Mac (`command`).
+struct McpAdd: Codable, Equatable, Sendable {
+    static let messageType = "mcp.add"
+
+    enum Transport: String, Codable, Equatable, Sendable { case http, stdio }
+    /// `user`: All your projects; `local`: this deployment only.
+    enum Where: String, Codable, Equatable, Sendable { case user, local }
+
+    var name: String
+    var transport: Transport
+    var url: String? = nil
+    var command: String? = nil
+    var `where`: Where
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Sign in to a server: answered at once, a fresh `mcp.servers` (no id) when done.
+struct McpSignIn: Codable, Equatable, Sendable {
+    static let messageType = "mcp.sign_in"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Sign out of a server.
+struct McpSignOut: Codable, Equatable, Sendable {
+    static let messageType = "mcp.sign_out"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Whether one tool runs without asking (`allow`) or asks first (`ask`);
+/// `nil` is back to the default.
+struct McpToolPolicy: Codable, Equatable, Sendable {
+    static let messageType = "mcp.tool_policy"
+    var server: String
+    var tool: String
+    var policy: McpToolRow.Policy? = nil
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 // MARK: - The discriminated unions
 
 private enum TypeKey: String, CodingKey {
@@ -1813,6 +1970,14 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case appMessage(AppMessage)
     case appContext(AppContext)
     case appReload(AppReload)
+    case mcpList(McpList)
+    case mcpToggle(McpToggle)
+    case mcpReconnect(McpReconnect)
+    case mcpRemove(McpRemove)
+    case mcpAdd(McpAdd)
+    case mcpSignIn(McpSignIn)
+    case mcpSignOut(McpSignOut)
+    case mcpToolPolicy(McpToolPolicy)
 
     var type: String {
         switch self {
@@ -1849,6 +2014,14 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .appMessage: AppMessage.messageType
         case .appContext: AppContext.messageType
         case .appReload: AppReload.messageType
+        case .mcpList: McpList.messageType
+        case .mcpToggle: McpToggle.messageType
+        case .mcpReconnect: McpReconnect.messageType
+        case .mcpRemove: McpRemove.messageType
+        case .mcpAdd: McpAdd.messageType
+        case .mcpSignIn: McpSignIn.messageType
+        case .mcpSignOut: McpSignOut.messageType
+        case .mcpToolPolicy: McpToolPolicy.messageType
         }
     }
 
@@ -1888,6 +2061,14 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case AppMessage.messageType: self = .appMessage(try AppMessage(from: decoder))
         case AppContext.messageType: self = .appContext(try AppContext(from: decoder))
         case AppReload.messageType: self = .appReload(try AppReload(from: decoder))
+        case McpList.messageType: self = .mcpList(try McpList(from: decoder))
+        case McpToggle.messageType: self = .mcpToggle(try McpToggle(from: decoder))
+        case McpReconnect.messageType: self = .mcpReconnect(try McpReconnect(from: decoder))
+        case McpRemove.messageType: self = .mcpRemove(try McpRemove(from: decoder))
+        case McpAdd.messageType: self = .mcpAdd(try McpAdd(from: decoder))
+        case McpSignIn.messageType: self = .mcpSignIn(try McpSignIn(from: decoder))
+        case McpSignOut.messageType: self = .mcpSignOut(try McpSignOut(from: decoder))
+        case McpToolPolicy.messageType: self = .mcpToolPolicy(try McpToolPolicy(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -1929,6 +2110,14 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .appMessage(let m): try m.encode(to: encoder)
         case .appContext(let m): try m.encode(to: encoder)
         case .appReload(let m): try m.encode(to: encoder)
+        case .mcpList(let m): try m.encode(to: encoder)
+        case .mcpToggle(let m): try m.encode(to: encoder)
+        case .mcpReconnect(let m): try m.encode(to: encoder)
+        case .mcpRemove(let m): try m.encode(to: encoder)
+        case .mcpAdd(let m): try m.encode(to: encoder)
+        case .mcpSignIn(let m): try m.encode(to: encoder)
+        case .mcpSignOut(let m): try m.encode(to: encoder)
+        case .mcpToolPolicy(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -1980,6 +2169,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case appResult(AppResult)
     case appCancelled(AppCancelled)
     case appCallResult(AppCallResult)
+    case mcpServers(McpServers)
 
     var type: String {
         switch self {
@@ -2027,6 +2217,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .appResult: AppResult.messageType
         case .appCancelled: AppCancelled.messageType
         case .appCallResult: AppCallResult.messageType
+        case .mcpServers: McpServers.messageType
         }
     }
 
@@ -2076,6 +2267,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .appResult(let m): m.envelope
         case .appCancelled(let m): m.envelope
         case .appCallResult(let m): m.envelope
+        case .mcpServers(let m): m.envelope
         }
     }
 
@@ -2126,6 +2318,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case AppResult.messageType: self = .appResult(try AppResult(from: decoder))
         case AppCancelled.messageType: self = .appCancelled(try AppCancelled(from: decoder))
         case AppCallResult.messageType: self = .appCallResult(try AppCallResult(from: decoder))
+        case McpServers.messageType: self = .mcpServers(try McpServers(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -2178,6 +2371,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .appResult(let m): try m.encode(to: encoder)
         case .appCancelled(let m): try m.encode(to: encoder)
         case .appCallResult(let m): try m.encode(to: encoder)
+        case .mcpServers(let m): try m.encode(to: encoder)
         }
     }
 }

@@ -388,6 +388,11 @@ struct StartView: View {
     // MARK: actions
 
     private func send() {
+        // `/mcp` and `/plugin` open Settings at that tab (v0.18 ruling 15).
+        if model.runSettingsCommand(model.startDraft) {
+            model.startDraft = ""
+            return
+        }
         guard canSend else { return }
         // A talk into this composer ends first: what is shown is what goes.
         dictation.willSend(from: voiceComposer.id)
