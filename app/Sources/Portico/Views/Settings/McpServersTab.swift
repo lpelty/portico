@@ -54,7 +54,8 @@ enum McpServersPresentation {
 
     /// The groups in AR1's order (All your projects, <brand> only, Built
     /// into <brand>), then the Claude account's (ruling 14); empty ones are left out.
-    static func sections(_ state: McpServersState, brand: String) -> [Section] {
+    /// `connected` false: every control is off until the connection is back (R-c25).
+    static func sections(_ state: McpServersState, brand: String, connected: Bool = true) -> [Section] {
         let order: [[McpServerRow.Group]] = [[.user], [.local, .shipped], [.core], [.account]]
         return order.compactMap { groups in
             let rows = state.rows.filter { groups.contains($0.group) }
@@ -62,7 +63,7 @@ enum McpServersPresentation {
             return Section(
                 title: groupTitle(first.group, brand: brand),
                 trailing: groups == [.user] ? userScopeNote : nil,
-                rows: rows.map { McpRowPresentation(row: $0, state: state, brand: brand) })
+                rows: rows.map { McpRowPresentation(row: $0, state: state, brand: brand, connected: connected) })
         }
     }
 }
@@ -92,11 +93,12 @@ struct McpRowPresentation: Equatable, Identifiable {
     /// A request is out for the row: a spinner, and its controls are off.
     let busy: Bool
     let error: String?
+    let connected: Bool
 
     var id: String { name }
-    var controlsEnabled: Bool { !busy }
+    var controlsEnabled: Bool { !busy && connected }
 
-    init(row: McpServerRow, state: McpServersState, brand: String) {
+    init(row: McpServerRow, state: McpServersState, brand: String, connected: Bool = true) {
         name = row.name
         title = McpServersPresentation.displayName(row, brand: brand)
         initial = title.first.map { String($0).uppercased() } ?? "?"
@@ -117,6 +119,7 @@ struct McpRowPresentation: Equatable, Identifiable {
         canSignOut = row.canSignOut
         busy = state.busy.contains(row.name)
         error = state.rowErrors[row.name]
+        self.connected = connected
     }
 
     static func tone(_ status: McpServerRow.Status) -> Tone {
@@ -256,9 +259,8 @@ struct McpServersTab: View {
             }
         }
         .onAppear { model.mcpTabAppeared() }
-        .onChange(of: model.mcpAvailable) { _, available in if available { model.mcpTabAppeared() } }
-        // A new hello forgets the list: ask again while the tab is shown.
-        .onChange(of: model.mcpServers.loaded) { _, loaded in if !loaded { model.mcpTabAppeared() } }
+        // A new hello asks again while the tab is shown (the model's resumeSettingsLists).
+        .onDisappear { model.mcpTabDisappeared() }
         .onChange(of: model.mcpAddFinished) { adding = false }
         .sheet(isPresented: $adding, onDismiss: { model.mcpAddDismissed() }) {
             McpAddSheet(isPresented: $adding)
@@ -293,6 +295,7 @@ struct McpServersTab: View {
                     }
                 }
                 .buttonStyle(SettingsButtonStyle(kind: .quiet))
+                .disabled(!model.settingsConnected)
             }
             .padding(.bottom, 4)
             if let error = model.mcpServers.lastError {
@@ -300,7 +303,7 @@ struct McpServersTab: View {
                     .scaledFont(11.5)
                     .foregroundStyle(Theme.deny)
             }
-            let sections = McpServersPresentation.sections(model.mcpServers, brand: brand)
+            let sections = McpServersPresentation.sections(model.mcpServers, brand: brand, connected: model.settingsConnected)
             if sections.isEmpty && !model.mcpServers.loaded {
                 Text(McpServersPresentation.loading)
                     .scaledFont(12)
@@ -433,7 +436,7 @@ struct McpServersTab: View {
 
     private func details(_ row: McpServerRow) -> some View {
         let page = McpDetailsPresentation(row: row, brand: brand, expanded: expandedTools)
-        let busy = model.mcpServers.busy.contains(row.name)
+        let busy = model.mcpServers.busy.contains(row.name) || !model.settingsConnected
         return VStack(alignment: .leading, spacing: 10) {
             Button { shownServer = nil } label: {
                 HStack(spacing: 4) {
@@ -644,16 +647,19 @@ struct McpAddSheet: View {
                 Button(McpAddPresentation.cancelLabel) { isPresented = false }
                     .buttonStyle(SettingsButtonStyle(kind: .quiet))
                     .keyboardShortcut(.cancelAction)
+                    // R-c25: the Add stays answerable; Cancel waits for its reply.
+                    .disabled(!model.mcpAddCanCancel)
                 Button(sending ? McpAddPresentation.addingLabel : McpAddPresentation.addLabel) { model.mcpAdd(draft) }
                     .buttonStyle(SettingsButtonStyle(kind: .accent))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(sending || !draft.canAdd(existing: existing))
+                    .disabled(sending || !model.settingsConnected || !draft.canAdd(existing: existing))
             }
             .padding(.top, 4)
         }
         .padding(EdgeInsets(top: 20, leading: 20, bottom: 18, trailing: 20))
         .frame(width: 460)
         .background(Theme.panel)
+        .interactiveDismissDisabled(!model.mcpAddCanCancel)
     }
 
     private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {

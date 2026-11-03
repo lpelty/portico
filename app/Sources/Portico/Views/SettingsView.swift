@@ -54,18 +54,10 @@ struct SettingsView: View {
         case .general: GeneralSettingsTab()
         case .gateway: GatewaySettingsTab()
         case .mcpServers: McpServersTab()
-        case .plugins: PluginsSettingsTab()
+        case .plugins: PluginsTab()
         case .voice: VoiceSettingsTab()
         case .appearance: AppearanceSettingsTab()
         }
-    }
-}
-
-/// Settings → Plugins: its place among the tabs; the tab itself (AR4)
-/// is v0.18 Task 7's.
-struct PluginsSettingsTab: View {
-    var body: some View {
-        Color.clear
     }
 }
 

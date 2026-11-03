@@ -435,4 +435,65 @@ final class McpSettingsTests: XCTestCase {
             capabilities: ["mcp.v1"])))
         XCTAssertEqual(model.mcpServers, McpServersState())
     }
+
+    // MARK: - R-c25: in flight, the connection, a hello before the list
+
+    func testAddCancelWaitsForTheReply() {
+        let (model, sent) = loaded()
+        XCTAssertTrue(model.mcpAddCanCancel)
+        model.mcpAdd(McpAddDraft(name: "acme-tasks", address: "https://mcp.acme.example/"))
+        guard case .mcpAdd(let add) = sent.frames.last else { return XCTFail("mcp.add") }
+        XCTAssertFalse(model.mcpAddCanCancel, "Cancel is off while the Add is out")
+        model.apply(.mcpServers(McpServers(servers: Self.fixture, live: true, id: add.id)))
+        XCTAssertTrue(model.mcpAddCanCancel)
+    }
+
+    func testRequestsEndWhenTheConnectionGoes() throws {
+        let (model, sent) = loaded()
+        model.mcpReconnect("docs")
+        model.mcpAdd(McpAddDraft(name: "acme-tasks", address: "https://mcp.acme.example/"))
+        XCTAssertFalse(model.mcpServers.busy.isEmpty)
+        model.setConnection(.disconnected)
+        XCTAssertTrue(model.mcpServers.busy.isEmpty)
+        XCTAssertTrue(model.mcpServers.pending.isEmpty)
+        XCTAssertNil(model.mcpAdding)
+        XCTAssertTrue(model.mcpAddCanCancel)
+        XCTAssertEqual(model.mcpServers.rows.count, 5, "the rows stay on screen")
+
+        // Controls are off, and nothing is sent, until it is back.
+        let offline = McpServersPresentation.sections(model.mcpServers, brand: "Acme", connected: false)[0].rows[0]
+        XCTAssertFalse(offline.controlsEnabled)
+        sent.frames = []
+        model.mcpReconnect("docs")
+        model.mcpTabAppeared()
+        XCTAssertEqual(sent.frames, [])
+
+        model.setConnection(.connected)
+        model.mcpReconnect("docs")
+        XCTAssertEqual(sent.types(), ["mcp.reconnect"])
+        model.setConnection(.failed("gone"))
+        XCTAssertTrue(model.mcpServers.busy.isEmpty)
+    }
+
+    func testAHelloBeforeTheFirstListAsksAgain() {
+        let (model, sent) = model()
+        model.mcpTabAppeared()
+        XCTAssertEqual(sent.types(), ["mcp.list"])
+        sent.frames = []
+        // The gateway restarted before answering: the tab must not stay "Loading…".
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.18.0", epoch: "e2",
+            brand: Brand(name: "Acme", agentName: "Sam"), actions: [], roots: [], commands: [],
+            capabilities: ["mcp.v1"])))
+        XCTAssertEqual(sent.types().filter { $0 == "mcp.list" }.count, 1)
+        XCTAssertEqual(model.mcpServers.pending.count, 1)
+
+        model.mcpTabDisappeared()
+        sent.frames = []
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.18.0", epoch: "e3",
+            brand: Brand(name: "Acme", agentName: "Sam"), actions: [], roots: [], commands: [],
+            capabilities: ["mcp.v1"])))
+        XCTAssertFalse(sent.types().contains("mcp.list"))
+    }
 }

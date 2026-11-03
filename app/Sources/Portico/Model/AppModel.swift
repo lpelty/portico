@@ -170,7 +170,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var live: Set<Int> = []
     /// The socket's state, for the status strip.
     @Published private(set) var connection: ConnectionState = .disconnected {
-        didSet { if gaveUpConnecting { gaveUpBeforeList = true } }
+        didSet {
+            if gaveUpConnecting { gaveUpBeforeList = true }
+            // Settings' requests in flight end with the connection (v0.18 R-c25).
+            switch connection {
+            case .disconnected, .failed:
+                endMcpRequests()
+                endPluginRequests()
+            case .connecting, .connected: break
+            }
+        }
     }
     /// The connection gave up before the first `chat.list`: the welcome
     /// keeps saying "Not connected" through each retry's `connecting`,
@@ -361,6 +370,12 @@ final class AppModel: ObservableObject {
     @Published var mcpAddError: String?
     /// Counts Adds answered with the list: the sheet closes on a change.
     @Published var mcpAddFinished = 0
+    /// Settings → Plugins (AR4; acted on in Plugins.swift).
+    @Published var plugins = PluginsState()
+    /// The Settings tabs on screen: a hello asks their lists again.
+    var settingsTabsShowing: Set<SettingsTab> = []
+    /// Plugins' Browse segment is on screen.
+    var pluginsBrowseShowing = false
 
     // MCP Apps (v0.18 §2.3; read and acted on in MCPApps.swift).
 
@@ -818,6 +833,7 @@ final class AppModel: ObservableObject {
             restartAllError = nil
             // Settings' MCP servers are asked for afresh (v0.18).
             resetMcpServers()
+            resetPlugins()
             // The models too (v0.15): the gateway sends its kept list for
             // each live session after hello, so nothing older outlives it.
             models = [:]
@@ -852,6 +868,7 @@ final class AppModel: ObservableObject {
                 send(frame)
             }
             sendViewerSettings()
+            resumeSettingsLists()
 
         case .viewerAct(let act):
             if let viewerActHandler { viewerActHandler(act) } else { answerViewerAct(act) }
@@ -1007,6 +1024,7 @@ final class AppModel: ObservableObject {
             lastError = error
             applyAppRefusal(error)
             applyMcpError(error)
+            applyPluginsError(error)
             if error.code == Self.replacedCode { replacedElsewhere = true }
             // A refused renew: the card is no longer busy; the status line
             // (below) carries the gateway's reason like any other error.
@@ -1066,6 +1084,15 @@ final class AppModel: ObservableObject {
 
         case .mcpServers(let list):
             applyMcpServers(list)
+
+        case .pluginsState(let state):
+            applyPluginsState(state)
+
+        case .pluginsDetails(let details):
+            applyPluginsDetails(details)
+
+        case .pluginsOptions(let options):
+            applyPluginsOptions(options)
 
         case .appOpen, .appResult, .appCancelled:
             // Not sequenced (no seq): applied as they come, live or replayed.
@@ -1425,7 +1452,8 @@ final class AppModel: ObservableObject {
 
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
-            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers:
+            .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
+            .pluginsState, .pluginsDetails, .pluginsOptions:
             break
         }
     }

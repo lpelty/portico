@@ -152,10 +152,15 @@ extension AppModel {
 
     /// The tab came on screen: ask for the servers as they stand.
     func mcpTabAppeared() {
-        guard mcpAvailable else { return }
+        settingsTabsShowing.insert(.mcpServers)
+        guard mcpAvailable, settingsConnected else { return }
         let id = Self.requestId()
         mcpServers.pending[id] = ""
         send(.mcpList(McpList(id: id)))
+    }
+
+    func mcpTabDisappeared() {
+        settingsTabsShowing.remove(.mcpServers)
     }
 
     private func mcpRow(_ name: String) -> McpServerRow? {
@@ -164,7 +169,7 @@ extension AppModel {
 
     /// One request for one row: none while that row already has one out.
     private func mcpRequest(for name: String, _ make: (String) -> ClientMessage) {
-        guard mcpAvailable, !mcpServers.busy.contains(name) else { return }
+        guard mcpAvailable, settingsConnected, !mcpServers.busy.contains(name) else { return }
         let id = Self.requestId()
         mcpServers.busy.insert(name)
         mcpServers.pending[id] = name
@@ -215,13 +220,16 @@ extension AppModel {
     /// Add (AR3): the sheet stays open, Adding…, until the reply; a
     /// refusal keeps it open with the gateway's reason.
     func mcpAdd(_ draft: McpAddDraft) {
-        guard mcpAvailable, mcpAdding == nil, draft.canAdd(existing: mcpServers.rows.map(\.name)) else { return }
+        guard mcpAvailable, settingsConnected, mcpAdding == nil, draft.canAdd(existing: mcpServers.rows.map(\.name)) else { return }
         let id = Self.requestId()
         mcpAdding = id
         mcpAddError = nil
         mcpServers.lastError = nil
         send(.mcpAdd(draft.message(id: id)))
     }
+
+    /// Cancel is off while an Add is out (R-c25): its reply would land on a closed sheet.
+    var mcpAddCanCancel: Bool { mcpAdding == nil }
 
     /// The Add sheet closed without adding.
     func mcpAddDismissed() {
@@ -261,6 +269,21 @@ extension AppModel {
             mcpAdding = nil
             mcpAddError = error.message
         }
+    }
+
+    /// The connection went: nothing in flight will be answered (R-c25).
+    /// The rows stay on screen, their controls off until it is back.
+    func endMcpRequests() {
+        mcpServers.busy = []
+        mcpServers.pending = [:]
+        mcpAdding = nil
+    }
+
+    /// After a hello: the tabs on screen ask for their lists again, so one
+    /// asked of the gateway before isn't left "Loading…" (R-c25).
+    func resumeSettingsLists() {
+        if settingsTabsShowing.contains(.mcpServers) { mcpTabAppeared() }
+        if settingsTabsShowing.contains(.plugins) { requestPluginsList(available: pluginsBrowseShowing) }
     }
 
     /// A new hello: the list is asked for afresh.

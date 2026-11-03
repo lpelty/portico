@@ -1921,6 +1921,192 @@ struct McpToolPolicy: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+// MARK: - Plugins in Settings (v0.18 §3, `plugins.v1`)
+//
+// `plugin` is the plugin's id as Claude Code prints it (`name@marketplace`);
+// `id` stays the request's own (R-c10). The list and every change are
+// answered with `plugins.state` carrying the id; details and options have
+// their own replies; a refusal or failure is an `error` with the id.
+
+/// The capability a gateway names in hello when Settings may send `plugins.*`.
+enum PluginsCapability {
+    static let name = "plugins.v1"
+}
+
+/// One installed plugin. `description` and `marketplace` come from its
+/// marketplace entry; `update_to` is the marketplace's version when it differs.
+struct PluginRow: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var name: String
+    var version: String
+    var scope: String
+    var enabled: Bool
+    var description: String = ""
+    var marketplace: String
+    var updateTo: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, version, scope, enabled, description, marketplace
+        case updateTo = "update_to"
+    }
+}
+
+/// One plugin a marketplace offers (Browse).
+struct AvailablePlugin: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var name: String
+    var description: String = ""
+    var marketplace: String
+    var version: String? = nil
+    var installed: Bool = false
+}
+
+/// One marketplace. `source_label` is absent for the official one; `checked`
+/// is "today", "yesterday", a date like "Oct 24", or "" when unknown.
+struct PluginMarketplace: Codable, Equatable, Sendable, Identifiable {
+    var name: String
+    var sourceLabel: String? = nil
+    var pluginCount: Int = 0
+    var checked: String = ""
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, checked
+        case sourceLabel = "source_label"
+        case pluginCount = "plugin_count"
+    }
+}
+
+/// One option of a plugin. A sensitive option's `value` never arrives; `set` says whether it has one.
+struct PluginOption: Codable, Equatable, Sendable, Identifiable {
+    var key: String
+    var title: String
+    var description: String = ""
+    var sensitive: Bool = false
+    var set: Bool = false
+    var value: String? = nil
+
+    var id: String { key }
+}
+
+/// The answer to `plugins.list` and to every change. `available` only for a
+/// `plugins.list` with `available: true`. Not sequenced.
+struct PluginsStateMessage: Codable, Equatable, Sendable {
+    static let messageType = "plugins.state"
+    var installed: [PluginRow] = []
+    var available: [AvailablePlugin]? = nil
+    var marketplaces: [PluginMarketplace] = []
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// A plugin's `claude plugin details` text.
+struct PluginsDetails: Codable, Equatable, Sendable {
+    static let messageType = "plugins.details"
+    var plugin: String
+    var text: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// A plugin's options (empty: nothing to configure).
+struct PluginsOptions: Codable, Equatable, Sendable {
+    static let messageType = "plugins.options"
+    var plugin: String
+    var options: [PluginOption] = []
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
+/// The installed plugins and the marketplaces; `available` adds Browse's list.
+struct PluginsList: Codable, Equatable, Sendable {
+    static let messageType = "plugins.list"
+    var available: Bool = false
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Turn a plugin on or off.
+struct PluginsSetEnabled: Codable, Equatable, Sendable {
+    static let messageType = "plugins.set_enabled"
+    var plugin: String
+    var enabled: Bool
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Install a plugin; one that installs by running a command is refused.
+struct PluginsInstall: Codable, Equatable, Sendable {
+    static let messageType = "plugins.install"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Uninstall a plugin; the app asks first.
+struct PluginsUninstall: Codable, Equatable, Sendable {
+    static let messageType = "plugins.uninstall"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Update a plugin (Update to …, Check for update).
+struct PluginsUpdate: Codable, Equatable, Sendable {
+    static let messageType = "plugins.update"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Add a marketplace: a GitHub `owner/repo`, a git address or a folder.
+struct PluginsMarketplaceAdd: Codable, Equatable, Sendable {
+    static let messageType = "plugins.marketplace_add"
+    var source: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Check a marketplace for updates.
+struct PluginsMarketplaceUpdate: Codable, Equatable, Sendable {
+    static let messageType = "plugins.marketplace_update"
+    var name: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Ask for a plugin's details text (answered with `plugins.details`).
+struct PluginsDetailsRequest: Codable, Equatable, Sendable {
+    static let messageType = "plugins.details"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Ask for a plugin's options (answered with `plugins.options`).
+struct PluginsOptionsRequest: Codable, Equatable, Sendable {
+    static let messageType = "plugins.options"
+    var plugin: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// Save option values: only the changed ones (answered with `plugins.options`).
+struct PluginsConfigure: Codable, Equatable, Sendable {
+    static let messageType = "plugins.configure"
+    var plugin: String
+    var values: [String: String]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 // MARK: - The discriminated unions
 
 private enum TypeKey: String, CodingKey {
@@ -1978,6 +2164,16 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case mcpSignIn(McpSignIn)
     case mcpSignOut(McpSignOut)
     case mcpToolPolicy(McpToolPolicy)
+    case pluginsList(PluginsList)
+    case pluginsSetEnabled(PluginsSetEnabled)
+    case pluginsInstall(PluginsInstall)
+    case pluginsUninstall(PluginsUninstall)
+    case pluginsUpdate(PluginsUpdate)
+    case pluginsMarketplaceAdd(PluginsMarketplaceAdd)
+    case pluginsMarketplaceUpdate(PluginsMarketplaceUpdate)
+    case pluginsDetails(PluginsDetailsRequest)
+    case pluginsOptions(PluginsOptionsRequest)
+    case pluginsConfigure(PluginsConfigure)
 
     var type: String {
         switch self {
@@ -2022,6 +2218,16 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .mcpSignIn: McpSignIn.messageType
         case .mcpSignOut: McpSignOut.messageType
         case .mcpToolPolicy: McpToolPolicy.messageType
+        case .pluginsList: PluginsList.messageType
+        case .pluginsSetEnabled: PluginsSetEnabled.messageType
+        case .pluginsInstall: PluginsInstall.messageType
+        case .pluginsUninstall: PluginsUninstall.messageType
+        case .pluginsUpdate: PluginsUpdate.messageType
+        case .pluginsMarketplaceAdd: PluginsMarketplaceAdd.messageType
+        case .pluginsMarketplaceUpdate: PluginsMarketplaceUpdate.messageType
+        case .pluginsDetails: PluginsDetailsRequest.messageType
+        case .pluginsOptions: PluginsOptionsRequest.messageType
+        case .pluginsConfigure: PluginsConfigure.messageType
         }
     }
 
@@ -2069,6 +2275,16 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case McpSignIn.messageType: self = .mcpSignIn(try McpSignIn(from: decoder))
         case McpSignOut.messageType: self = .mcpSignOut(try McpSignOut(from: decoder))
         case McpToolPolicy.messageType: self = .mcpToolPolicy(try McpToolPolicy(from: decoder))
+        case PluginsList.messageType: self = .pluginsList(try PluginsList(from: decoder))
+        case PluginsSetEnabled.messageType: self = .pluginsSetEnabled(try PluginsSetEnabled(from: decoder))
+        case PluginsInstall.messageType: self = .pluginsInstall(try PluginsInstall(from: decoder))
+        case PluginsUninstall.messageType: self = .pluginsUninstall(try PluginsUninstall(from: decoder))
+        case PluginsUpdate.messageType: self = .pluginsUpdate(try PluginsUpdate(from: decoder))
+        case PluginsMarketplaceAdd.messageType: self = .pluginsMarketplaceAdd(try PluginsMarketplaceAdd(from: decoder))
+        case PluginsMarketplaceUpdate.messageType: self = .pluginsMarketplaceUpdate(try PluginsMarketplaceUpdate(from: decoder))
+        case PluginsDetailsRequest.messageType: self = .pluginsDetails(try PluginsDetailsRequest(from: decoder))
+        case PluginsOptionsRequest.messageType: self = .pluginsOptions(try PluginsOptionsRequest(from: decoder))
+        case PluginsConfigure.messageType: self = .pluginsConfigure(try PluginsConfigure(from: decoder))
         default: throw unknownType(type, direction: "client", decoder)
         }
     }
@@ -2118,6 +2334,16 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .mcpSignIn(let m): try m.encode(to: encoder)
         case .mcpSignOut(let m): try m.encode(to: encoder)
         case .mcpToolPolicy(let m): try m.encode(to: encoder)
+        case .pluginsList(let m): try m.encode(to: encoder)
+        case .pluginsSetEnabled(let m): try m.encode(to: encoder)
+        case .pluginsInstall(let m): try m.encode(to: encoder)
+        case .pluginsUninstall(let m): try m.encode(to: encoder)
+        case .pluginsUpdate(let m): try m.encode(to: encoder)
+        case .pluginsMarketplaceAdd(let m): try m.encode(to: encoder)
+        case .pluginsMarketplaceUpdate(let m): try m.encode(to: encoder)
+        case .pluginsDetails(let m): try m.encode(to: encoder)
+        case .pluginsOptions(let m): try m.encode(to: encoder)
+        case .pluginsConfigure(let m): try m.encode(to: encoder)
         }
     }
 }
@@ -2170,6 +2396,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case appCancelled(AppCancelled)
     case appCallResult(AppCallResult)
     case mcpServers(McpServers)
+    case pluginsState(PluginsStateMessage)
+    case pluginsDetails(PluginsDetails)
+    case pluginsOptions(PluginsOptions)
 
     var type: String {
         switch self {
@@ -2218,6 +2447,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .appCancelled: AppCancelled.messageType
         case .appCallResult: AppCallResult.messageType
         case .mcpServers: McpServers.messageType
+        case .pluginsState: PluginsStateMessage.messageType
+        case .pluginsDetails: PluginsDetails.messageType
+        case .pluginsOptions: PluginsOptions.messageType
         }
     }
 
@@ -2268,6 +2500,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .appCancelled(let m): m.envelope
         case .appCallResult(let m): m.envelope
         case .mcpServers(let m): m.envelope
+        case .pluginsState(let m): m.envelope
+        case .pluginsDetails(let m): m.envelope
+        case .pluginsOptions(let m): m.envelope
         }
     }
 
@@ -2319,6 +2554,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case AppCancelled.messageType: self = .appCancelled(try AppCancelled(from: decoder))
         case AppCallResult.messageType: self = .appCallResult(try AppCallResult(from: decoder))
         case McpServers.messageType: self = .mcpServers(try McpServers(from: decoder))
+        case PluginsStateMessage.messageType: self = .pluginsState(try PluginsStateMessage(from: decoder))
+        case PluginsDetails.messageType: self = .pluginsDetails(try PluginsDetails(from: decoder))
+        case PluginsOptions.messageType: self = .pluginsOptions(try PluginsOptions(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -2372,6 +2610,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .appCancelled(let m): try m.encode(to: encoder)
         case .appCallResult(let m): try m.encode(to: encoder)
         case .mcpServers(let m): try m.encode(to: encoder)
+        case .pluginsState(let m): try m.encode(to: encoder)
+        case .pluginsDetails(let m): try m.encode(to: encoder)
+        case .pluginsOptions(let m): try m.encode(to: encoder)
         }
     }
 }
