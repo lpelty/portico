@@ -12,6 +12,7 @@ caps, or one that cannot be read, goes as a path only, and the person is told
 
 from __future__ import annotations
 
+import re
 import base64
 import os
 from collections.abc import Iterable
@@ -124,6 +125,18 @@ def not_image_notice(name: str, why: str = TOO_LARGE) -> str:
     if why == PAST_MESSAGE_CAP:
         return f"{name} is past what one message can show the agent as images; it can still open the file."
     return f"{name} is too large to show the agent as an image; it can still open the file."
+
+
+_EDITED_NOTE = re.compile(r"\(Edited in the viewer since your last message: [^()\x00-\x1f]*\)\n\n")
+
+
+def split_edited_note(text: str) -> str:
+    """``text`` without a LEADING edits note (v0.20 §2.7) exactly as the gateway writes it.
+
+    The note is for the agent only; replay of the stored transcript must show what was typed.
+    """
+    m = _EDITED_NOTE.match(text)
+    return text[m.end():] if m else text
 
 
 def split_attachments(text: str) -> tuple[str, list[str]]:

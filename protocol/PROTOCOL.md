@@ -350,7 +350,10 @@ the chat's folder is named relative to it, any other absolute. The note goes
 to the engine only: `user.text` stays what the person typed. A queued message
 written into the running turn gets the note too. Either way the list is
 cleared once the note is made. A slash command gets no note and leaves the
-list for the next message. The list lives in the gateway's memory (gone at
+list for the next message. A path with a control character, a parenthesis or more than 1024
+characters is dropped without a reply; paths are normalised, and the list
+holds the 20 most recent. If the message never reaches the engine the paths
+stay for the next one. The list lives in the gateway's memory (gone at
 restart) and for an unknown `chat` the answer is `error` `chat.unknown`.
 
 ### `artifact.opened` — `ArtifactOpened`
