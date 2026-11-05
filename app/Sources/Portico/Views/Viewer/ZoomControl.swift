@@ -91,10 +91,12 @@ struct ZoomControl: View {
     let onActual: () -> Void
     /// Whether the pointer moved lately (the pane drives it).
     var awake: Bool = true
+    /// VoiceOver, followed live: turned on while the control is faded, it shows.
+    @ObservedObject var voiceOver: VoiceOverWatch = .shared
 
     static let fadeDelay: Duration = .seconds(2)
 
-    private var shown: Bool { awake || NSWorkspace.shared.isVoiceOverEnabled }
+    private var shown: Bool { awake || voiceOver.running }
 
     static func percentText(_ scale: CGFloat) -> String { "\(Int((scale * 100).rounded()))%" }
 
@@ -139,6 +141,45 @@ struct ZoomControl: View {
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+/// Whether VoiceOver is running, kept current: the workspace's
+/// accessibility-display-options notification and KVO on
+/// `isVoiceOverEnabled` both re-read it.
+@MainActor
+final class VoiceOverWatch: ObservableObject {
+    static let shared = VoiceOverWatch()
+
+    @Published private(set) var running: Bool
+    private let read: @MainActor () -> Bool
+    private var observer: (any NSObjectProtocol)?
+    private var kvo: NSKeyValueObservation?
+
+    /// `center` and `read` are the workspace's unless a test gives its own;
+    /// `watchWorkspace` adds the KVO on the shared workspace.
+    init(
+        center: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        read: @escaping @MainActor () -> Bool = { NSWorkspace.shared.isVoiceOverEnabled },
+        watchWorkspace: Bool = true
+    ) {
+        self.read = read
+        running = read()
+        observer = center.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        if watchWorkspace {
+            kvo = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refresh() }
+            }
+        }
+    }
+
+    func refresh() {
+        let now = read()
+        if now != running { running = now }
     }
 }
 

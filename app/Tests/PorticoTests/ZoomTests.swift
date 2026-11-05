@@ -248,4 +248,19 @@ final class ZoomTests: XCTestCase {
         XCTAssertEqual(c2.scale, 1.5, accuracy: 0.001)
         XCTAssertEqual(memory.scale(for: b.path) ?? 0, 1.5, accuracy: 0.001)
     }
+
+    func testVoiceOverIsFollowedLive() async throws {
+        let center = NotificationCenter()
+        var on = false
+        let watch = VoiceOverWatch(center: center, read: { on }, watchWorkspace: false)
+        XCTAssertFalse(watch.running)
+        on = true
+        center.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        for _ in 0..<100 where !watch.running { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertTrue(watch.running, "turned on while the control shows: it follows")
+        on = false
+        center.post(name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        for _ in 0..<100 where watch.running { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertFalse(watch.running)
+    }
 }

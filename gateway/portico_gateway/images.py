@@ -127,7 +127,9 @@ def not_image_notice(name: str, why: str = TOO_LARGE) -> str:
     return f"{name} is too large to show the agent as an image; it can still open the file."
 
 
-_EDITED_NOTE = re.compile(r"\(Edited in the viewer since your last message: [^()\x00-\x1f]*\)\n\n")
+# The paths hold no parenthesis and nothing of Unicode categories Cc, Zl or Zp
+# (``server.not_plain_path_char``): C0, DEL, C1 (with NEL), U+2028, U+2029.
+_EDITED_NOTE = re.compile(r"\(Edited in the viewer since your last message: [^()\x00-\x1f\x7f-\x9f\u2028\u2029]*\)\n\n")
 
 
 def split_edited_note(text: str) -> str:

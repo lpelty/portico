@@ -155,6 +155,38 @@ final class FrontMatterTests: XCTestCase {
         XCTAssertFalse(plain.contains("<details class=\"fm\""), "no block without front matter")
     }
 
+    // MARK: - typed wrongly (v0.20 §2.3)
+
+    func testFrontMatterThatCantBeReadSaysSoInPlaceOfTheBlock() throws {
+        for bad in [
+            "---\ntitle: Notes\nthis line is not yaml\n---\n# Body\n",
+            "---\n  indented: first\n---\nBody\n",
+            "---\n- a list at the top\n---\nBody\n",
+            "---\ntags: [one, two\n---\nBody\n",
+            "---\ntitle: \"never closed\n---\nBody\n",
+        ] {
+            let split = FrontMatter.split(bad)
+            XCTAssertEqual(split.frontMatter?.unreadable, true, bad)
+            let page = try MarkdownPage.html(source: bad, title: "n.md")
+            XCTAssertTrue(page.contains("Properties couldn&#39;t be read") || page.contains("Properties couldn't be read"), bad)
+            XCTAssertFalse(page.contains("<details class=\"fm\""), "no block in its place")
+            XCTAssertFalse(page.contains("{{"))
+        }
+        XCTAssertEqual(FrontMatter.unreadableWords, "Properties couldn't be read")
+    }
+
+    func testReadableFrontMatterIsNeverCalledUnreadable() throws {
+        XCTAssertEqual(FrontMatter.split(note).frontMatter?.unreadable, false)
+        XCTAssertEqual(FrontMatter.split("---\n---\n# Title\n").frontMatter?.unreadable, false)
+        let fine = "---\n# a comment\ntitle: 'it''s'\naliases:\n  - One\nnested:\n  owner: Sam\n\nempty:\n---\nBody\n"
+        XCTAssertEqual(FrontMatter.split(fine).frontMatter?.unreadable, false)
+        let page = try MarkdownPage.html(source: note, title: "n.md")
+        XCTAssertFalse(page.contains(FrontMatter.unreadableWords))
+        // Hiding every key of an unreadable block still says it.
+        let hidden = try MarkdownPage.html(source: "---\ntitle: x\noops\n---\nB\n", title: "n.md", hiding: ["title"])
+        XCTAssertTrue(hidden.contains(FrontMatter.unreadableWords))
+    }
+
     // MARK: - helpers
 
     private let utc = { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }()

@@ -263,3 +263,58 @@ async def test_a_failed_send_keeps_the_edits_for_the_next_message(
         assert sent(factory)[-1] == "(Edited in the viewer since your last message: a.md, b.md)\n\nagain"
     finally:
         await conn.close()
+
+
+# --- final review ----------------------------------------------------------------
+
+
+async def test_control_line_and_paragraph_separators_are_dropped(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    conn, _ = await attach_app(server)
+    try:
+        number = await new_chat(conn, folder)
+        for bad in ("\x7f", "\x80", "\x85", "\x9f", " ", " "):
+            await edited(conn, number, f"{folder}/a{bad}b.md")
+        await edited(conn, number, folder / "ok é.md")
+        await one_turn(conn, factory, number, "go")
+        assert sent(factory) == ["(Edited in the viewer since your last message: ok é.md)\n\ngo"]
+    finally:
+        await conn.close()
+
+
+def test_the_replay_strip_uses_the_same_rule() -> None:
+    from portico_gateway.images import split_edited_note
+    from portico_gateway.server import not_plain_path_char
+
+    for bad in ("\x00", "\x1f", "\x7f", "\x80", "\x85", "\x9f", " ", " ", "(", ")"):
+        assert not_plain_path_char(bad)
+        note = f"(Edited in the viewer since your last message: a{bad}b.md)\n\n"
+        assert split_edited_note(note + "x") == note + "x", repr(bad)
+    for good in ("a", " ", "é", " ", "/"):
+        assert not not_plain_path_char(good)
+    assert split_edited_note("(Edited in the viewer since your last message: ok é.md)\n\nx") == "x"
+
+
+async def test_the_note_leads_ahead_of_the_apps_context(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    from portico_gateway.engine import history_events
+
+    conn, _ = await attach_app(server)
+    try:
+        number = await new_chat(conn, folder)
+        await edited(conn, number, folder / "a.md")
+        server.apps._context[number] = {"toolu_1": ("acme", "tasks: 4")}
+        await one_turn(conn, factory, number, "hi")
+        (text,) = sent(factory)
+        assert text == (
+            "(Edited in the viewer since your last message: a.md)\n\n"
+            '<app-context server="acme">\ntasks: 4\n</app-context>\n\nhi'
+        )
+        # Replay's leading strip finds the note.
+        msg = {"type": "user", "uuid": "u", "session_id": "s", "message": {"role": "user", "content": text}}
+        (said,) = [e for e in history_events([msg], chat=1) if isinstance(e, UserText)]
+        assert "Edited in the viewer" not in said.text
+    finally:
+        await conn.close()

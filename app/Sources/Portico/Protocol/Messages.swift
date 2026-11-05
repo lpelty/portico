@@ -355,7 +355,7 @@ struct HelloClient: Codable, Equatable, Sendable {
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
-        FilesRootsSet.capability,
+        FilesRootsSet.capability, FilesEdited.capability,
     ]
 }
 

@@ -149,6 +149,7 @@ import logging
 import os
 import re
 import secrets
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -429,6 +430,13 @@ def _frame_type(raw: str | bytes) -> str | None:
 
 EDITED_MAX = 20  # per chat; the oldest is dropped
 EDITED_PATH_MAX = 1024
+
+
+def not_plain_path_char(c: str) -> bool:
+    """A character an edited path may not hold: a parenthesis, or any control, line or paragraph
+    separator (Unicode Cc, Zl, Zp: C0, DEL, C1 with NEL, U+2028, U+2029). ``images._EDITED_NOTE``
+    is the same rule."""
+    return c in "()" or unicodedata.category(c) in ("Cc", "Zl", "Zp")
 
 
 def edited_note(paths: list[str], folder: Path) -> str:
@@ -2961,7 +2969,7 @@ class GatewayServer:
         raw = msg.path
         # The path is interpolated into the agent's text: nothing that could end the note or
         # start a line of its own. Dropped silently (there is no reply).
-        if not raw or len(raw) > EDITED_PATH_MAX or any(ord(c) < 0x20 or c in "()" for c in raw):
+        if not raw or len(raw) > EDITED_PATH_MAX or any(not_plain_path_char(c) for c in raw):
             log.info("chat %d: files.edited path dropped (not a plain path)", chat.number)
             return
         path = Path(os.path.normpath(raw))
@@ -3549,8 +3557,9 @@ class GatewayServer:
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
             run.first_line_title = title
-        text, edited = self._take_edited_note(chat, text)
+        # The note leads, ahead of the apps' context, so replay's leading strip finds it.
         engine_text, context = self._with_app_context(chat, text)
+        engine_text, edited = self._take_edited_note(chat, engine_text)
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
         # v0.19 (spec §8.3): images go as images too, their paths still in the
@@ -3723,8 +3732,8 @@ class GatewayServer:
                     continue  # taken back meanwhile: the next one, from the top
             else:
                 images, notices = [], []
-            text, edited = self._take_edited_note(chat, with_attachments(item.text, item.attachments))
-            engine_text, context = self._with_app_context(chat, text)
+            engine_text, context = self._with_app_context(chat, with_attachments(item.text, item.attachments))
+            engine_text, edited = self._take_edited_note(chat, engine_text)
             try:
                 await engine.inject(engine_text, images)
             except Exception:

@@ -33,7 +33,9 @@ enum MarkdownPage {
         // The block goes in first, its braces as entities, so a value that
         // reads `{{SOURCE}}` is not taken for the next placeholder.
         let shownProperties = split.frontMatter?.hiding(hiding)
-        let properties = ((shownProperties?.properties.isEmpty == false ? shownProperties?.html(open: propertiesOpen) : nil) ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        // Present but unreadable: the words in its place (v0.20 §2.3), even with nothing to show.
+        let drawn = shownProperties.flatMap { $0.unreadable || !$0.properties.isEmpty ? $0.html(open: propertiesOpen) : nil }
+        let properties = (drawn ?? "").replacingOccurrences(of: "{", with: "&#123;")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))

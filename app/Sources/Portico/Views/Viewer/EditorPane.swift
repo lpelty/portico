@@ -206,7 +206,7 @@ struct EditorPane: NSViewRepresentable {
                 ready = true
                 Task { await load() }
             case "dirty":
-                session?.markDirty()
+                if holdsText { session?.markDirty() }
             case "changed", "saveNow":
                 if holdsText, let text = message["text"] as? String { session?.textChanged(text) }
             default:
@@ -224,11 +224,24 @@ struct EditorPane: NSViewRepresentable {
                 "scale": Double(scale),
             ]
             let line = line ?? topLine
-            _ = try? await view.callAsyncJavaScript(
-                "portico.load(options); if (line > 1) portico.scrollToLine(line); portico.view.focus(); return true;",
-                arguments: ["options": options, "line": line], in: nil, contentWorld: .page)
+            let value = try? await view.callAsyncJavaScript(
+                loadScript, arguments: ["options": options, "line": line], in: nil, contentWorld: .page)
+            // Only a load that finished puts the session's text in the editor.
+            // Until then the editor's text is an empty document, never the
+            // person's: nothing it says is saved, and an end saves only what
+            // the session already holds.
+            guard (value as? NSNumber)?.boolValue == true else {
+                holdsText = false
+                session.notice = "The editor couldn't show the text; nothing was changed"
+                return
+            }
             holdsText = true
         }
+
+        /// The page's load call (a test makes it fail).
+        var loadScript =
+            "portico.load(options); if (line > 1) portico.scrollToLine(line); portico.view.focus(); return true;"
+
 
         /// Settings' Wrap code changed: reconfigured in place (a CodeMirror
         /// compartment), so the text, the cursor and ⌘Z history stay.
@@ -392,6 +405,13 @@ final class ViewerEdit: ObservableObject {
     @Published var note: String?
     /// A recovery copy whose text differs from the file, offered back.
     @Published private(set) var restore: EditRecovery.Offer?
+    /// In read mode: a recovery copy newer than the shown file, with other
+    /// text (left by a quit or a crash), so the offer survives a relaunch.
+    /// The header says "Unsaved edits found — Restore".
+    @Published private(set) var readOffer: EditRecovery.Offer?
+
+    static let readOfferWords = "Unsaved edits found —"
+    static let readOfferAction = "Restore"
     /// The chat whose viewer this is.
     var chat: Int?
     let registry: EditSessions
@@ -429,6 +449,7 @@ final class ViewerEdit: ObservableObject {
 
     func turnOn(_ artifact: Artifact) {
         guard session == nil else { return }
+        readOffer = nil
         if let existing = registry.session(for: artifact.location) {
             guard !existing.attached else {
                 note = Self.elsewhere
@@ -478,7 +499,7 @@ final class ViewerEdit: ObservableObject {
         turningOff = true
         defer { turningOff = false }
         if let top = await editor?.scrollTopLine() { topLines[session.url.path] = top }
-        guard await session.end(), self.session === session else { return }
+        guard await session.end(leaving: true), self.session === session else { return }
         _ = detach()
     }
 
@@ -494,6 +515,29 @@ final class ViewerEdit: ObservableObject {
         if session == nil, let location, let waiting = registry.waiting(for: location) {
             attach(waiting)
         }
+        readOffer = session == nil ? location.flatMap(recoveryOffer(for:)) : nil
+    }
+
+    /// A recovery copy for the file at `location` newer than it and with
+    /// other text; `nil` for anything else (no folder, not a file path).
+    func recoveryOffer(for location: String) -> EditRecovery.Offer? {
+        guard let folder = registry.recoveryFolder, location.hasPrefix("/") else { return nil }
+        let url = URL(fileURLWithPath: location)
+        guard let modified = FileStamp.of(url)?.modified, let text = try? FileEditing.read(url),
+              let offer = EditRecovery.offer(for: url, differingFrom: text.text, in: folder),
+              offer.date > modified
+        else { return nil }
+        return offer
+    }
+
+    /// The header's Restore in read mode: Edit on, then the copy restored
+    /// (undoable, saved, the copy deleted once on disk).
+    func restoreFromReadMode(_ artifact: Artifact?) async {
+        guard let artifact, readOffer != nil else { return }
+        readOffer = nil
+        turnOn(artifact)
+        guard session != nil, restore != nil else { return }
+        await restoreUnsaved()
     }
 
     /// "Restore unsaved edits": the recovery copy's text replaces the

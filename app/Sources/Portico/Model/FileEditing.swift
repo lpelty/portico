@@ -27,9 +27,11 @@ struct FileStamp: Equatable, Sendable {
     let modified: Date?
     let size: Int64
 
-    /// The stamp of the file at `url` now; `nil` when it can't be read.
+    /// The stamp of the file at `url` now; `nil` when it can't be read. A
+    /// link is stamped by the file it points at, as `read` and `write` see it.
     static func of(_ url: URL) -> FileStamp? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
+        let target = url.resolvingSymlinksInPath()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: target.path) else { return nil }
         return FileStamp(attributes)
     }
 
@@ -407,12 +409,15 @@ final class EditSession: ObservableObject, Identifiable {
     /// The editor's first edit since a load or a send.
     func markDirty() {
         editorDirty = true
+        registry?.add(self)
     }
 
     /// The editor sent its text (typing stopped, or it lost focus): save it.
+    /// The session is (back) in the registry, so a quit covers it.
     func textChanged(_ newText: String) {
         text = newText
         editorDirty = false
+        registry?.add(self)
         Task { await self.saveNow() }
     }
 
@@ -498,7 +503,12 @@ final class EditSession: ObservableObject, Identifiable {
     /// it couldn't be: the text stays here, a recovery copy is written, and
     /// the session stays in the registry. A session a viewer picked up
     /// again while this ran is left as it is (it's that viewer's now).
-    func end() async -> Bool {
+    ///
+    /// `leaving`: the caller lets go of it once this returns true (Edit off).
+    /// Otherwise a session still shown after its save (a quit's `endAll`) stays
+    /// registered and hooked to its editor: the person may keep typing while
+    /// a quit is held by another file, and that text must still be covered.
+    func end(leaving: Bool = false) async -> Bool {
         let wasAttached = attached
         if let currentText, let latest = await currentText() {
             if latest != text { text = latest }
@@ -519,6 +529,7 @@ final class EditSession: ObservableObject, Identifiable {
             if !attached { registry?.detachedFailed(self) }
             return false
         }
+        if attached && !leaving { return true }
         currentText = nil
         editorReplace = nil
         registry?.remove(self)
@@ -589,6 +600,9 @@ final class EditSession: ObservableObject, Identifiable {
         case .success(let stamp):
             didSave(snapshot, stamp: stamp)
         case .failure(let failure):
+            // The person chose their text over the disk's: Retry writes over
+            // what was there, rather than raising the bar again.
+            baseline = disk
             state = .failed(failure.description)
             writeRecovery()
         }
@@ -779,17 +793,32 @@ enum EditRecovery {
     }
 
     /// Copies older than 30 days go (at launch). Only files carrying the
-    /// source attribute are touched.
+    /// source attribute are touched, and a crashed write's own temporaries
+    /// (`.<name>.<8 hex>.saving`, nothing else).
     static func sweep(_ folder: URL, now: Date = Date()) {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
         for name in names {
             let url = folder.appendingPathComponent(name)
+            if let copy = temporaryCopyName(name), FileEditing.isTemporary(name, for: folder.appendingPathComponent(copy)) {
+                unlink(url.path)
+                continue
+            }
             guard source(of: url) != nil,
                   let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
                   now.timeIntervalSince(date) > keepFor
             else { continue }
             unlink(url.path)
         }
+    }
+
+    /// The copy a `.<copy>.<8 hex>.saving` temporary was for; `nil` for any other name.
+    static func temporaryCopyName(_ name: String) -> String? {
+        let tail = ".saving"
+        guard name.hasPrefix("."), name.hasSuffix(tail), name.count >= 1 + 1 + 9 + tail.count else { return nil }
+        let inner = name.dropFirst().dropLast(tail.count)
+        let copy = inner.dropLast(9)
+        guard inner.dropFirst(copy.count).first == "." else { return nil }
+        return String(copy)
     }
 
     /// A path as people write it, `~` for the home folder.
@@ -866,7 +895,10 @@ final class EditSessions {
 
     func detachedFailed(_ session: EditSession) { onDetachedFailure?(session) }
     func saved(_ session: EditSession) { onSaved?(session) }
-    func attached(_ session: EditSession) { onResolved?(session) }
+    func attached(_ session: EditSession) {
+        add(session)
+        onResolved?(session)
+    }
 
     /// `end()` on every session; true when all saved.
     func endAll() async -> Bool {
@@ -880,19 +912,27 @@ final class EditSessions {
     /// The first quit failed: each unsaved file says why, and the first is
     /// brought forward.
     func holdQuit() {
-        for session in sessions { session.noteQuitHeld() }
-        if let first = sessions.first { onQuitHeld?(first) }
+        let held = unsaved
+        for session in held { session.noteQuitHeld() }
+        if let first = held.first { onQuitHeld?(first) }
+    }
+
+    /// Sessions whose text isn't on disk (a shown session stays registered
+    /// after its quit save, with nothing to keep).
+    private var unsaved: [EditSession] {
+        sessions.filter { $0.hasUnsavedText || $0.isFailed || $0.state == .paused }
     }
 
     /// The second quit: every unsaved text goes to a recovery copy. False
     /// when any couldn't be written (those say so; the first comes forward).
     func keepAllForQuit() -> Bool {
         var kept = true
-        for session in sessions where session.writeRecovery() == nil {
+        let held = unsaved
+        for session in held where session.writeRecovery() == nil {
             kept = false
             session.noteKeepFailed()
         }
-        if !kept, let first = sessions.first(where: { $0.recoveryURL == nil }) { onQuitHeld?(first) }
+        if !kept, let first = held.first(where: { $0.recoveryURL == nil }) { onQuitHeld?(first) }
         return kept
     }
 }

@@ -964,6 +964,216 @@ final class FileEditingTests: XCTestCase {
         XCTAssertEqual(text, edit.text, "the editor holds the file's text, CRLF and all")
         coordinator.tearDown(view)
     }
+
+    // MARK: - final review fixes
+
+    func testASymlinkedFileSavesTwiceWithNoConflict() async throws {
+        let real = try write("real-notes.md", "one\n")
+        let link = folder.appendingPathComponent("linked.md")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        // Give the link itself an old date, so its own stamp differs from its file's.
+        _ = link.path.withCString { path in
+            var times = [timeval(tv_sec: 1_000_000, tv_usec: 0), timeval(tv_sec: 1_000_000, tv_usec: 0)]
+            return lutimes(path, &times)
+        }
+        let edit = try session(link)
+        XCTAssertEqual(FileStamp.of(link), FileStamp.of(real), "a link is stamped by its file")
+        edit.textChanged("one two\n")
+        await edit.saveNow()
+        XCTAssertNil(edit.conflict)
+        XCTAssertEqual(edit.state, .saved)
+        edit.textChanged("one two three\n")
+        await edit.saveNow()
+        XCTAssertNil(edit.conflict, "the second save is not taken for the agent's change")
+        XCTAssertEqual(edit.state, .saved)
+        XCTAssertEqual(try String(contentsOf: real, encoding: .utf8), "one two three\n")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), real.path, "the link is intact")
+    }
+
+    func testAHeldQuitKeepsCoveringAShownFileThatGoesOnBeingEdited() async throws {
+        let recovery = folder.appendingPathComponent("home/unsaved")
+        let registry = EditSessions(recoveryFolder: recovery)
+        let a = try write("a.md", "a\n"), b = try write("b.md", "b\n")
+        let failingA = FailingWriter()
+        failingA.on = false
+        let first = try session(a, registry: registry, writer: { text, url, stamp, bom in
+            if failingA.on { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)) }
+            return try FileEditing.write(text, to: url, preserving: stamp, byteOrderMark: bom)
+        })
+        first.attached = true
+        var typed = "a, edited\n"
+        first.currentText = { typed }
+        let second = try session(b, registry: registry, writer: { _, _, _, _ in
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+        })
+        second.currentText = { "b, edited\n" }
+        let delegate = AppDelegate()
+        delegate.editSessions = registry
+        var held: [String] = []
+        registry.onQuitHeld = { held.append($0.name) }
+
+        let firstQuit = await delegate.prepareToTerminate()
+        XCTAssertFalse(firstQuit, "B's failure holds the quit")
+        XCTAssertEqual(held, ["b.md"])
+        XCTAssertEqual(try String(contentsOf: a, encoding: .utf8), "a, edited\n")
+        XCTAssertTrue(registry.all.contains { $0 === first }, "A is still shown: it stays registered")
+        XCTAssertNotNil(first.currentText, "and still hooked to its editor")
+        XCTAssertNil(first.notice, "A was saved: its header doesn't say the quit was held")
+
+        // A keeps typing while the quit is held, and its disk fills too.
+        failingA.on = true
+        typed = "a, typed after the hold\n"
+        first.textChanged(typed)
+        await first.saveNow()
+        XCTAssertTrue(first.isFailed)
+
+        let secondQuit = await delegate.prepareToTerminate()
+        XCTAssertTrue(secondQuit)
+        let copy = try XCTUnwrap(first.recoveryURL, "A's later typing is kept for the quit")
+        XCTAssertEqual(try String(contentsOf: copy, encoding: .utf8), "a, typed after the hold\n")
+        XCTAssertNotNil(second.recoveryURL)
+    }
+
+    func testAShownSessionRemovedFromTheRegistryComesBackOnTyping() async throws {
+        let registry = EditSessions()
+        let url = try write("back-in.md", "x\n")
+        let edit = try session(url, registry: registry)
+        registry.remove(edit)
+        XCTAssertTrue(registry.all.isEmpty)
+        edit.textChanged("x, more\n")
+        XCTAssertTrue(registry.all.contains { $0 === edit })
+        registry.remove(edit)
+        registry.attached(edit)
+        XCTAssertTrue(registry.all.contains { $0 === edit }, "attaching registers it too")
+    }
+
+    func testEditOffStillLetsASavedSessionGo() async throws {
+        let url = try write("off-go.md", "o\n")
+        let registry = EditSessions()
+        let edit = ViewerEdit(registry: registry)
+        edit.turnOn(artifact(url))
+        edit.session?.currentText = { "o, edited\n" }
+        await edit.turnOff()
+        XCTAssertFalse(edit.isEditing)
+        XCTAssertTrue(registry.all.isEmpty)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "o, edited\n")
+    }
+
+    /// The editor's load failing leaves it an empty document: never the
+    /// person's text, so nothing it says is saved and an end writes nothing.
+    func testAFailedEditorLoadNeverEmptiesTheFile() async throws {
+        let url = try write("keep.md", "# Keep me\n\nAll of it.\n")
+        let stamp = try XCTUnwrap(FileStamp.of(url))
+        let edit = EditSession(url: url, loaded: try FileEditing.read(url), mode: .markdown, language: "markdown", registry: nil)
+        let coordinator = EditorPane.Coordinator()
+        coordinator.session = edit
+        coordinator.loadScript = "throw new Error('the load failed');"
+        let view = coordinator.makeWebView()
+        view.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        coordinator.start(in: view)
+        for _ in 0..<500 where !coordinator.ready { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertTrue(coordinator.ready)
+        for _ in 0..<200 where edit.notice == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertFalse(coordinator.holdsText, "a failed load doesn't hold the text")
+        XCTAssertNotNil(edit.notice)
+        let visible = await coordinator.visibleText()
+        XCTAssertNil(visible)
+        // What the empty editor might say is ignored.
+        coordinator.received(["type": "dirty"], isMainFrame: true)
+        coordinator.received(["type": "changed", "text": ""], isMainFrame: true)
+        coordinator.received(["type": "saveNow", "text": ""], isMainFrame: true)
+        XCTAssertFalse(edit.hasUnsavedText)
+        coordinator.tearDown(view)
+        let ended = await edit.end()
+        XCTAssertTrue(ended)
+        XCTAssertEqual(FileStamp.of(url), stamp, "nothing was written")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "# Keep me\n\nAll of it.\n")
+    }
+
+    func testAFailedKeepMineRetriesWithoutRaisingTheBarAgain() async throws {
+        let url = try write("retry-mine.md", "one\n")
+        let failing = FailingWriter()
+        failing.on = false
+        let edit = try session(url, writer: { text, url, stamp, bom in
+            if failing.on { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)) }
+            return try FileEditing.write(text, to: url, preserving: stamp, byteOrderMark: bom)
+        })
+        edit.textChanged("one, mine\n")
+        try agentWrites("the agent's longer version\n", to: url)
+        await edit.saveNow()
+        XCTAssertEqual(edit.conflict, .agentChanged)
+        failing.on = true
+        await edit.keepMine()
+        XCTAssertTrue(edit.isFailed)
+        XCTAssertNil(edit.conflict)
+        XCTAssertEqual(edit.baseline, FileStamp.of(url), "the baseline is the disk the person chose to overwrite")
+        failing.on = false
+        await edit.saveNow()  // Retry
+        XCTAssertNil(edit.conflict, "Retry doesn't raise the bar again")
+        XCTAssertEqual(edit.state, .saved)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "one, mine\n")
+    }
+
+    func testTheSweepRemovesStaleRecoveryTemporaries() throws {
+        let recovery = folder.appendingPathComponent("unsaved")
+        let copy = try EditRecovery.newURL(for: "n.md", in: recovery)
+        try EditRecovery.write("n", byteOrderMark: false, to: copy, source: URL(fileURLWithPath: "/tmp/n.md"))
+        let stale = recovery.appendingPathComponent(".\(copy.lastPathComponent).0123abcd.saving")
+        try Data("half".utf8).write(to: stale)
+        let short = recovery.appendingPathComponent(".a.0123abcd.saving")
+        try Data("half".utf8).write(to: short)
+        let lookalike = recovery.appendingPathComponent(".n.md.NOTHEX12.saving")
+        try Data("mine".utf8).write(to: lookalike)
+        let other = recovery.appendingPathComponent(".hidden")
+        try Data("mine".utf8).write(to: other)
+        EditRecovery.sweep(recovery)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: short.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path), "a fresh copy stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: lookalike.path), "only the exact pattern")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+        XCTAssertEqual(EditRecovery.temporaryCopyName(".a.md.0123abcd.saving"), "a.md")
+        XCTAssertNil(EditRecovery.temporaryCopyName("a.md.0123abcd.saving"))
+        XCTAssertNil(EditRecovery.temporaryCopyName(".a.md.saving"))
+    }
+
+    func testReadModeOffersANewerDifferentRecoveryCopy() async throws {
+        let recovery = folder.appendingPathComponent("unsaved")
+        let registry = EditSessions(recoveryFolder: recovery)
+        let url = try write("relaunch.md", "on disk\n")
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: url.path)
+        let copy = try EditRecovery.newURL(for: "relaunch.md", in: recovery)
+        try EditRecovery.write("typed before the quit\n", byteOrderMark: false, to: copy, source: url.resolvingSymlinksInPath())
+        let edit = ViewerEdit(registry: registry)
+        edit.shown(url.path)
+        XCTAssertFalse(edit.isEditing, "read mode")
+        XCTAssertEqual(edit.readOffer?.url, copy, "the header offers it")
+        XCTAssertEqual(ViewerEdit.readOfferWords + " " + ViewerEdit.readOfferAction, "Unsaved edits found — Restore")
+        await edit.restoreFromReadMode(artifact(url))
+        XCTAssertTrue(edit.isEditing, "Restore turns Edit on")
+        XCTAssertNil(edit.readOffer)
+        XCTAssertEqual(edit.session?.text, "typed before the quit\n")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "typed before the quit\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
+    }
+
+    func testReadModeOffersNothingForAnOlderOrSameCopy() throws {
+        let recovery = folder.appendingPathComponent("unsaved")
+        let registry = EditSessions(recoveryFolder: recovery)
+        let url = try write("older.md", "now\n")
+        let copy = try EditRecovery.newURL(for: "older.md", in: recovery)
+        try EditRecovery.write("before\n", byteOrderMark: false, to: copy, source: url.resolvingSymlinksInPath())
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -120)], ofItemAtPath: copy.path)
+        let edit = ViewerEdit(registry: registry)
+        edit.shown(url.path)
+        XCTAssertNil(edit.readOffer, "the file is newer than the copy")
+        let same = try write("same-read.md", "same\n")
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: same.path)
+        let sameCopy = try EditRecovery.newURL(for: "same-read.md", in: recovery)
+        try EditRecovery.write("same\n", byteOrderMark: false, to: sameCopy, source: same.resolvingSymlinksInPath())
+        edit.shown(same.path)
+        XCTAssertNil(edit.readOffer, "the same text is no offer")
+    }
 }
 
 /// Records the editor replacements a session asked for.

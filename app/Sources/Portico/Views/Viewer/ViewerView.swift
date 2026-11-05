@@ -252,6 +252,21 @@ struct ViewerView: View {
                         .scaledFont(12)
                         .foregroundStyle(Theme.deny)
                         .lineLimit(1)
+                } else if let offer = edit.readOffer, editability.canEdit {
+                    HStack(spacing: 4) {
+                        Text(ViewerEdit.readOfferWords)
+                            .scaledFont(12)
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(1)
+                        Button(ViewerEdit.readOfferAction) {
+                            Task { await edit.restoreFromReadMode(model.current[chat]) }
+                        }
+                        .buttonStyle(.link)
+                        .scaledFont(12, weight: .semibold)
+                        .fixedSize()
+                    }
+                    .tip("Edits from \(offer.date.formatted(date: .abbreviated, time: .shortened)) weren't saved; "
+                        + "Restore turns Edit on and puts them back (⌘Z undoes it)")
                 }
                 ViewerEditToggle(on: edit.isEditing, editability: editability,
                                  accent: model.brand.accent ?? Theme.accent) {
