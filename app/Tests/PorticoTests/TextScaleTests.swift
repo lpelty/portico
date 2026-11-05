@@ -139,7 +139,8 @@ final class TextScaleTests: XCTestCase {
         let next = lines[(actual + 1)...].firstIndex { $0.contains("Button(") } ?? lines.count
         XCTAssertFalse(lines[actual..<next].joined().contains("keyboardShortcut"), "Actual Size has no shortcut")
 
-        let zeros = lines.indices.filter { lines[$0].contains("keyboardShortcut(\"0\"") }
+        // ⌘0 alone; ⌥⌘0 is v0.20's Zoom to Fit, a different key.
+        let zeros = lines.indices.filter { lines[$0].contains("keyboardShortcut(\"0\", modifiers: .command)") }
         XCTAssertEqual(zeros.count, 1, "only one item binds ⌘0")
         let work = try XCTUnwrap(lines.firstIndex { $0.contains("Button(\"Work\")") })
         XCTAssertEqual(zeros.first, work + 1, "and it is Work")

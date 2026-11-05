@@ -138,8 +138,8 @@ struct ZoomControl: View {
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(label)
+        .buttonStyle(.hover)
+        .tip(label)
         .accessibilityLabel(label)
     }
 }
