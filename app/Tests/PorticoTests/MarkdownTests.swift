@@ -387,4 +387,48 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(first.selectedRange().length, 5, "a click on a scroller keeps the selection")
         window.contentView = nil
     }
+
+    // MARK: v0.19 §9: prose wraps, code can
+
+    func testWhichFencesAreProse() {
+        for language in [nil, "", "text", "TXT", "plain", "Markdown", "md", "prose"] {
+            XCTAssertTrue(CodeBlockWrap.wraps(language: language), "\(language ?? "nil")")
+        }
+        for language in ["python", "swift", "json", "bash"] {
+            XCTAssertFalse(CodeBlockWrap.wraps(language: language), language)
+        }
+    }
+
+    func testAProseBlockWrapsWithoutAScrollViewAndCodeScrolls() {
+        let prose = CodeBlockLayout(language: nil, wrapCode: false)
+        XCTAssertTrue(prose.wraps)
+        XCTAssertFalse(prose.scrolls)
+        XCTAssertFalse(prose.showsWrapToggle)
+        let code = CodeBlockLayout(language: "python", wrapCode: false)
+        XCTAssertFalse(code.wraps)
+        XCTAssertTrue(code.scrolls)
+        XCTAssertTrue(code.showsWrapToggle)
+    }
+
+    func testTheWrapToggleWrapsCode() {
+        let code = CodeBlockLayout(language: "python", wrapCode: true)
+        XCTAssertTrue(code.wraps)
+        XCTAssertFalse(code.scrolls)
+    }
+
+    func testCopyIsTheCodeAsFencedWhetherItWrapsOrNot() {
+        let line = String(repeating: "word ", count: 60)
+        XCTAssertEqual(MarkdownCopy.code(line + "\n\n"), line)
+        XCTAssertEqual(MarkdownCopy.code("print(1)\n"), "print(1)")
+    }
+
+    @MainActor
+    func testABareURLInAReplyIsALink() {
+        let out = MarkdownAttributed.inline("open https://acme.example/x or `https://c.example`", color: .labelColor)
+        var links: [String] = []
+        out.enumerateAttribute(.link, in: NSRange(location: 0, length: out.length)) { value, _, _ in
+            if let url = value as? URL { links.append(url.absoluteString) }
+        }
+        XCTAssertEqual(links, ["https://acme.example/x"])
+    }
 }

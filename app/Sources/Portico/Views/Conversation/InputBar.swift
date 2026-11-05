@@ -11,8 +11,9 @@ import UniformTypeIdentifiers
 /// agent works: Stop alone while nothing is typed, Stop (quiet) and Send
 /// once something is; a send then waits above the composer
 /// (`QueuedMessages`) for the agent's next step. File URLs
-/// dropped anywhere on the bar become chips; the Files pane adds chips
-/// through `AppModel.attach`.
+/// dropped anywhere on the bar, the text included, become chips; the
+/// Files pane adds chips through `AppModel.attach`. v0.19: images show as
+/// thumbnails, and ⌘V of image data or files attaches them.
 ///
 /// v0.11 (item 66, AG4): `/` at the start opens the slash list above the
 /// box — Portico's own commands, then the agent's — filtered as one types;
@@ -27,6 +28,8 @@ struct InputBar: View {
     @Environment(\.textScale) private var textScale
     @FocusState private var editorFocused: Bool
     @State private var slash = SlashListState()
+    /// The composer's one intake for drops and pastes onto its text (v0.19 §8.1).
+    @State private var intakes = ComposerIntakeHolder()
 
     /// The editor's text lives in the model (per chat) so it survives
     /// switching chats and comes back when the gateway refuses a send.
@@ -58,13 +61,16 @@ struct InputBar: View {
     /// unanswered does, and the gateway holds the message until it can go.
     static func canSend(_ model: AppModel, chat: Int, text: String) -> Bool {
         let held = model.isBusy(chat: chat) || model.isRenewing(chat: chat) || model.isLogging(chat: chat)
+        // v0.19: attachments alone are a message.
+        let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(model.draftAttachments[chat] ?? []).isEmpty
         return model.connection == .connected && (!held || model.queuesWhileWorking) && !model.isSending(chat: chat)
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && hasContent
     }
 
     /// Send shows beside Stop while the agent works only with something to queue.
-    static func showsSendWhileBusy(queues: Bool, text: String) -> Bool {
-        queues && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    static func showsSendWhileBusy(queues: Bool, text: String, attachments: [String] = []) -> Bool {
+        queues && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     /// This composer for Talk (v0.9 decision 1): the words go into the
@@ -142,7 +148,7 @@ struct InputBar: View {
                 MicButton(composer: voiceComposer, side: InputBar.iconButtonSide, corner: InputBar.iconButtonCorner)
                     .disabled(renewing && !queues)
                 if busy {
-                    let typing = InputBar.showsSendWhileBusy(queues: queues, text: draft.wrappedValue)
+                    let typing = InputBar.showsSendWhileBusy(queues: queues, text: draft.wrappedValue, attachments: attachments)
                     Button(action: { model.stopTurn(chat: chat) }) {
                         Text("Stop")
                     }
@@ -208,6 +214,11 @@ struct InputBar: View {
                 .frame(minHeight: 20 * textScale, maxHeight: 160 * textScale)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
+                // v0.19 (§8.1): a file dropped or pasted onto the text, or
+                // pasted image data, becomes an attachment, never path text.
+                .background(ComposerTextViewFinder(intake: intakes.intake(for: chat) { [model, chat] in
+                    model.makeIntake { model.attach($0, to: chat) }
+                }))
                 .disabled(renewing && !queues)
                 .onKeyPress(.return, phases: .down) { press in
                     if slashCompletion != nil,
@@ -268,30 +279,12 @@ struct InputBar: View {
         return "Ask \(agentName), or drop a file here"
     }
 
+    /// v0.19 (§8.1): images as 64-pt thumbnails (× on hover), other files as chips.
     private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(attachments, id: \.self) { path in
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc")
-                        Text(URL(fileURLWithPath: path).lastPathComponent)
-                            .lineLimit(1)
-                        Button(action: { model.detach(path, from: chat) }) {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.hover)
-                        .foregroundStyle(.secondary)
-                        .tip("Remove \(path)")
-                    }
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Theme.surface, in: Capsule())
-                    .tip(path)
-                }
-            }
-        }
+        AttachmentStrip(
+            paths: attachments,
+            onOpen: { model.reveal(file: $0, in: chat) },
+            onRemove: { model.detach($0, from: chat) })
     }
 
     /// The deployment's actions as the frame's chips: a capsule in the

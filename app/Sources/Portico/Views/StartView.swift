@@ -23,6 +23,8 @@ struct StartView: View {
     @EnvironmentObject private var dictation: Dictation
     @FocusState private var focused: Bool
     @State private var slash = SlashListState()
+    /// The composer's one intake for drops and pastes onto its text (v0.19 §8.1).
+    @State private var intakes = ComposerIntakeHolder()
 
     /// The slash list for what is typed, when it is open (v0.11 item 66).
     private var slashCompletion: SlashCompletion? {
@@ -33,8 +35,18 @@ struct StartView: View {
     private var connected: Bool { model.connection == .connected }
     /// The live session this welcome continues, if it does.
     private var continuing: ChatSummary? { model.continuingSession.flatMap { model.summary(of: $0) } }
-    private var canSend: Bool {
-        guard connected, !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+    private var canSend: Bool { Self.canSend(model) }
+
+    /// Whether Send may go: something typed or attached (v0.19: attachments
+    /// alone are a message), except to a session started past the ones run
+    /// outside the app, which carries only the text.
+    static func canSend(_ model: AppModel) -> Bool {
+        let typed = !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard model.connection == .connected, typed || !model.startAttachments.isEmpty else { return false }
+        if let passed = model.passedBy {
+            return typed && model.canRenew(chat: passed.live) && !model.isSessionCommandPending(chat: passed.live)
+        }
+        let continuing = model.continuingSession.flatMap { model.summary(of: $0) }
         if let live = continuing?.chat { return !model.isSessionCommandPending(chat: live) }
         return model.startFolder != nil && !model.isStarting
     }
@@ -42,6 +54,7 @@ struct StartView: View {
     /// else to a new session in the start folder.
     private var canSuggest: Bool {
         guard connected else { return false }
+        if model.passedBy != nil { return false }
         if let live = continuing?.chat {
             return !model.isBusy(chat: live) && !model.isSending(chat: live) && !model.isSessionCommandPending(chat: live)
         }
@@ -63,7 +76,9 @@ struct StartView: View {
             if let actions = model.hello?.actions, !actions.isEmpty {
                 suggestions(actions)
             }
-            if let live = continuing {
+            if let passed = model.passedBy {
+                passedByLine(live: passed.live, next: passed.next)
+            } else if let live = continuing {
                 continuingLine(live)
             } else {
                 folderLine
@@ -120,7 +135,7 @@ struct StartView: View {
     private var greeting: some View {
         HStack(spacing: 16) {
             greetingMark
-            Text(Self.greeting())
+            Text(model.passedBy.map { "Start Session \($0.next)" } ?? Self.greeting())
                 .scaledFont(40, design: .serif)
                 .tracking(-0.6)
                 .foregroundStyle(Theme.text)
@@ -161,6 +176,10 @@ struct StartView: View {
                     .frame(minHeight: 44, maxHeight: 200)
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
+                    // v0.19 (§8.1): drops and pastes of files or images attach.
+                    .background(ComposerTextViewFinder(intake: intakes.intake(for: 0) { [model] in
+                        model.makeIntake { model.attachToStart($0) }
+                    }))
                     .onKeyPress(.return, phases: .down) { press in
                         if slashCompletion != nil,
                             let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing())
@@ -267,6 +286,9 @@ struct StartView: View {
 
     private var placeholder: String {
         if !connected { return "Not connected" }
+        if let passed = model.passedBy {
+            return model.isRenewing(chat: passed.live) ? "Starting the next session…" : SessionsPresentation.passedByPlaceholder(next: passed.next)
+        }
         if let live = continuing {
             // As the conversation's input bar says while a log or renewal is out.
             if model.isRenewing(chat: live.chat) { return "Starting the next session…" }
@@ -278,6 +300,7 @@ struct StartView: View {
     }
 
     private var sendHelp: String {
+        if let passed = model.passedBy { return "Start Session \(passed.next) and send (Enter)" }
         if let live = continuing { return "Send to Session \(live.chat) (Enter)" }
         return model.startFolder == nil ? "Choose a folder in Settings first" : "Start and send (Enter)"
     }
@@ -316,41 +339,40 @@ struct StartView: View {
         }
     }
 
+    /// Spec §6: which sessions ran outside the app, and View for the live
+    /// one the app last had.
+    private func passedByLine(live: Int, next: Int) -> some View {
+        VStack(spacing: 12) {
+            Text(SessionsPresentation.passedByLine(live: live, outside: model.passedByNumbers))
+                .scaledFont(12)
+                .foregroundStyle(Theme.text3)
+            SmallBorderedButton(title: "View Session \(live)") { model.open(chat: live) }
+                .tip("Show Session \(live)'s conversation")
+        }
+    }
+
     /// V4's quiet line: where the agent works, and that Settings changes it.
     private var folderLine: some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder")
+            Image(systemName: model.isFolderLocked ? "lock" : "folder")
                 .font(Theme.iconFont(11))
             Text(model.workingFolderLine)
                 .scaledFont(12)
         }
         .foregroundStyle(Theme.text3)
-        .tip(model.startFolder?.path ?? "Settings › General › Folder")
+        .tip(model.isFolderLocked
+            ? GeneralSettingsPresentation.folderLockedNote(brand: model.brand.name)
+            : model.startFolder?.path ?? "Settings › General › Folder")
     }
 
+    /// v0.19 (§8.1): images as thumbnails, other files as chips.
     private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(model.startAttachments, id: \.self) { path in
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc")
-                        Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1)
-                        Button { model.detachFromStart(path) } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.hover)
-                        .foregroundStyle(Theme.text3)
-                        .tip("Remove \(path)")
-                    }
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Theme.surface, in: Capsule())
-                    .tip(path)
-                }
-            }
-        }
+        AttachmentStrip(
+            paths: model.startAttachments,
+            onOpen: { path in
+                if let live = continuing { model.reveal(file: path, in: live.chat) } else { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+            },
+            onRemove: { model.detachFromStart($0) })
     }
 
     // MARK: suggestions
@@ -397,7 +419,9 @@ struct StartView: View {
         guard canSend else { return }
         // A talk into this composer ends first: what is shown is what goes.
         dictation.willSend(from: voiceComposer.id)
-        if let live = continuing?.chat {
+        if model.passedBy != nil {
+            model.startPassedBy(text: model.startDraft)
+        } else if let live = continuing?.chat {
             model.continueSession(chat: live, text: model.startDraft)
         } else {
             model.startChat(text: model.startDraft)
@@ -418,8 +442,11 @@ struct StartView: View {
     /// in the start folder, when that could be sent now.
     static func sendSpoken(_ model: AppModel) {
         let text = model.startDraft
-        guard model.connection == .connected, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if let live = model.continuingSession.flatMap({ model.summary(of: $0) })?.chat {
+        guard canSend(model) else { return }
+        if model.passedBy != nil {
+            guard let live = model.passedBy?.live, model.canRenew(chat: live), !model.isSessionCommandPending(chat: live) else { return }
+            model.startPassedBy(text: text)
+        } else if let live = model.continuingSession.flatMap({ model.summary(of: $0) })?.chat {
             guard !model.isSessionCommandPending(chat: live) else { return }
             model.continueSession(chat: live, text: text)
         } else {

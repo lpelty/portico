@@ -33,7 +33,7 @@ import re
 import shlex
 import time
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -61,6 +61,7 @@ from claude_agent_sdk import (
 )
 
 from .artifacts import paths_in
+from .images import split_attachments, user_message
 from .agents import AgentTracker
 from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
 from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
@@ -260,9 +261,11 @@ class Engine(Protocol):
         are local plugin directories to load."""
         ...
 
-    async def send(self, text: str) -> None: ...
+    async def send(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
+        """Send ``text`` as the next turn; v0.19: ``images`` (``images.image_block``) go after it as content blocks."""
+        ...
 
-    async def inject(self, text: str) -> None:
+    async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """Write a person's message into the turn in flight (v0.11, item 74); ``turn`` does not move.
 
         The engine reads it at its next step, inside the same turn; written
@@ -1327,17 +1330,17 @@ class SDKEngine:
         if isinstance(sid, str) and sid:
             self.session_id = sid
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         if self._client is None:
             raise RuntimeError("engine not started")
         self.turn += 1
-        await self._client.query(text)
+        await self._client.query(_prompt(text, images))
 
-    async def inject(self, text: str) -> None:
+    async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """``query`` mid-turn: checked live 10-30, the engine takes it at its next step, in the same turn."""
         if self._client is None:
             raise RuntimeError("engine not started")
-        await self._client.query(text)
+        await self._client.query(_prompt(text, images))
 
     async def interrupt(self) -> None:
         if self._client is not None:
@@ -1458,6 +1461,18 @@ def _blocks(content: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _prompt(text: str, images: list[dict[str, Any]] | None) -> str | AsyncIterator[dict[str, Any]]:
+    """What ``query`` gets: ``text`` as today, or (v0.19, spec §8.3) with images, one user message of blocks."""
+    if not images:
+        return text
+    message = user_message(text, list(images))
+
+    async def one() -> AsyncIterator[dict[str, Any]]:
+        yield message
+
+    return one()
+
+
 def _user_text(blocks: list[dict[str, Any]]) -> str:
     """The person's own words from a user message: text blocks, minus the engine's scaffolding."""
     parts: list[str] = []
@@ -1549,7 +1564,9 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
             if text:
                 end()
                 begin()
-                out.append(UserText(ts=ts, chat=chat, turn=turn, text=text))
+                # v0.19 (spec §8.4): the words typed, and the attachments apart.
+                typed, attachments = split_attachments(text)
+                out.append(UserText(ts=ts, chat=chat, turn=turn, text=typed, attachments=attachments))
             elif _is_task_notification(blocks):
                 # Background work reporting back (v0.10): the engine's own
                 # message, never the person's; its reply is a turn nobody sent.

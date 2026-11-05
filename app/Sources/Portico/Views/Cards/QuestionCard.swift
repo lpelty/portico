@@ -317,6 +317,7 @@ struct QuestionCard: View {
         }
         .sheet(isPresented: $expanded) {
             PreviewSheet(title: question?.question ?? card.title, text: draft.preview(page) ?? "") { expanded = false }
+                .presentationBackground(Theme.window)
         }
     }
 

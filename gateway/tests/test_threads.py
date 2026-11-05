@@ -596,7 +596,7 @@ async def test_close_and_start_when_the_log_step_cannot_start(
         assert engine is not None
         real_send = engine.send
 
-        async def refuse(text: str) -> None:
+        async def refuse(text: str, images: list[dict[str, Any]] | None = None) -> None:
             raise RuntimeError("the engine is gone")
 
         engine.send = refuse  # type: ignore[method-assign]
@@ -872,7 +872,7 @@ def refuse_once(engine: Any) -> None:
     """The engine's next ``send`` is refused (the log step cannot start); later ones go through."""
     real = engine.send
 
-    async def refuse(text: str) -> None:
+    async def refuse(text: str, images: list[dict[str, Any]] | None = None) -> None:
         engine.send = real
         raise RuntimeError("the engine is gone")
 

@@ -6,6 +6,8 @@ import SwiftUI
 /// AR4's lists as the view draws them: View-free so the words and controls
 /// are tested without a window.
 enum PluginsPresentation {
+    /// The segmented control's name to VoiceOver; each segment keeps its own.
+    static let segmentedLabel = "Plugins"
     enum Segment: String, CaseIterable, Sendable {
         case installed, browse
 
@@ -279,13 +281,16 @@ struct PluginsTab: View {
         .sheet(isPresented: $addingMarketplace, onDismiss: { model.pluginMarketplaceAddDismissed() }) {
             PluginMarketplaceAddSheet(isPresented: $addingMarketplace)
                 .environmentObject(model)
+                .presentationBackground(Theme.window)
         }
         .sheet(item: Binding(get: { model.plugins.details }, set: { if $0 == nil { model.pluginDetailsClosed() } })) { sheet in
             PluginDetailsSheetView(sheet: sheet) { model.pluginDetailsClosed() }
+                .presentationBackground(Theme.window)
         }
         .sheet(item: Binding(get: { model.plugins.configuring }, set: { if $0 == nil { model.pluginConfigureClosed() } })) { sheet in
             PluginConfigureSheetView(plugin: sheet.plugin)
                 .environmentObject(model)
+                .presentationBackground(Theme.window)
         }
         .alert(
             model.plugins.uninstalling?.title ?? "",
@@ -403,12 +408,7 @@ struct PluginsTab: View {
                     Button(update) { model.pluginUpdate(row.id) }
                         .buttonStyle(SettingsButtonStyle(kind: .accent))
                 }
-                Toggle(
-                    row.title,
-                    isOn: Binding(get: { row.isOn }, set: { model.pluginSetEnabled(row.id, enabled: $0) }))
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .labelsHidden()
+                SettingsSwitch(row.title, isOn: Binding(get: { row.isOn }, set: { model.pluginSetEnabled(row.id, enabled: $0) }))
                 Menu {
                     ForEach(row.menuItems, id: \.self) { item in
                         if item == .uninstall { Divider() }
@@ -552,31 +552,16 @@ struct PluginsTab: View {
     }
 }
 
-/// AR4's segmented control: the control colour, radius 7, a border, and the
-/// chosen segment on the selected fill, radius 5.
+/// AR4's segmented control, drawn by `SettingsSegmented` (the control
+/// colour, radius 7, a border, the chosen segment on the selected fill,
+/// radius 5, and the hover tint on every segment, v0.19 §3).
 struct PluginsSegmented: View {
     @Binding var selection: PluginsPresentation.Segment
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(PluginsPresentation.Segment.allCases, id: \.self) { segment in
-                let chosen = segment == selection
-                Button { selection = segment } label: {
-                    Text(segment.title)
-                        .scaledFont(12, weight: chosen ? .medium : .regular)
-                        .foregroundStyle(chosen ? Theme.text : Theme.text2)
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 12)
-                        .background(chosen ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(chosen ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(Theme.control, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        SettingsSegmented(
+            selection: $selection, options: PluginsPresentation.Segment.allCases.map { ($0, $0.title) },
+            label: PluginsPresentation.segmentedLabel)
     }
 }
 

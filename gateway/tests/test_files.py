@@ -14,16 +14,28 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from websockets.asyncio.client import ClientConnection
+from websockets.asyncio.client import ClientConnection, connect
 
 from portico_gateway import __version__
 from portico_gateway.chats import ChatRegistry
 from portico_gateway.config import Config
-from portico_gateway.messages import Error, FilesList, FilesListRequest, ProtocolError, Root, dump
+from portico_gateway.messages import (
+    Error,
+    FilesList,
+    FilesListRequest,
+    FilesRoots,
+    FilesRootsSet,
+    HelloClient,
+    HelloServer,
+    ProtocolError,
+    Root,
+    dump,
+    parse_server,
+)
 from portico_gateway.server import GatewayServer, list_directory
 from portico_gateway.state import StateDir
 from tests.conftest import make_config
-from tests.test_server import attach
+from tests.test_server import attach, ws_url
 from tests.test_turns import EngineFactory, new_chat, recv
 
 TS = "2026-10-27T12:00:00Z"
@@ -191,3 +203,105 @@ async def test_root_written_with_a_tilde_lists(state_dir: StateDir, tmp_path: Pa
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.19: folders a person adds (files.extra.v1, spec §4.2) -------------------
+
+
+async def set_roots(conn: ClientConnection, paths: list[str], *, id: str = "req-r") -> FilesRoots | Error:
+    await conn.send(dump(FilesRootsSet(ts=TS, id=id, paths=paths)))
+    reply = await recv(conn)
+    assert isinstance(reply, (FilesRoots, Error)), reply
+    return reply
+
+
+async def test_hello_carries_files_extra(server: GatewayServer) -> None:
+    conn = await connect(ws_url(server, server.token))
+    try:
+        await conn.send(dump(HelloClient(ts=TS, app_version="0.19.0")))
+        hello = parse_server(await conn.recv())
+        assert isinstance(hello, HelloServer)
+        assert "files.extra.v1" in hello.capabilities
+    finally:
+        await conn.close()
+
+
+async def test_set_lists_deployment_roots_then_extras_with_missing_marked(
+    server: GatewayServer, projects: Path, tmp_path: Path
+) -> None:
+    papers = tmp_path / "papers"
+    papers.mkdir()
+    (papers / "a.txt").write_text("a")
+    gone = tmp_path / "gone"
+    conn = await attach(server)
+    try:
+        reply = await set_roots(conn, [str(papers), str(gone)])
+        assert isinstance(reply, FilesRoots), reply
+        assert reply.id == "req-r"
+        assert [(r.name, r.extra, r.missing) for r in reply.roots] == [
+            ("projects", False, False),
+            ("papers", True, False),
+            ("gone", True, True),
+        ]
+        listed = await ask(conn, "papers", "", id="req-p")
+        assert isinstance(listed, FilesList), listed
+        assert [e.name for e in listed.entries] == ["a.txt"]
+        missing = await ask(conn, "gone", "", id="req-g")
+        assert isinstance(missing, Error), missing
+        assert missing.code == "files.not_found"
+    finally:
+        await conn.close()
+
+
+async def test_relative_path_is_invalid_root(server: GatewayServer) -> None:
+    conn = await attach(server)
+    try:
+        reply = await set_roots(conn, ["notes/here"])
+        assert isinstance(reply, Error), reply
+        assert reply.code == "files.invalid_root"
+    finally:
+        await conn.close()
+
+
+async def test_a_tilde_user_that_does_not_exist_is_invalid_root(server: GatewayServer) -> None:
+    conn = await attach(server)
+    try:
+        reply = await set_roots(conn, ["~no-such-user-portico/work"])
+        assert isinstance(reply, Error), reply
+        assert reply.code == "files.invalid_root"
+    finally:
+        await conn.close()
+
+
+async def test_resending_replaces_and_clashing_names_get_a_number(server: GatewayServer, projects: Path, tmp_path: Path) -> None:
+    one = tmp_path / "a" / "work"
+    two = tmp_path / "b" / "work"
+    other = tmp_path / "other"
+    for d in (one, two, other):
+        d.mkdir(parents=True)
+    conn = await attach(server)
+    try:
+        first = await set_roots(conn, [str(one), str(two), str(projects)])
+        assert isinstance(first, FilesRoots), first
+        assert [r.name for r in first.roots] == ["projects", "work", "work 2", "projects 2"]
+        second = await set_roots(conn, [str(other)])
+        assert isinstance(second, FilesRoots), second
+        assert [r.name for r in second.roots] == ["projects", "other"]
+        stale = await ask(conn, "work", "", id="req-s")
+        assert isinstance(stale, Error) and stale.code == "files.unknown_root"
+    finally:
+        await conn.close()
+
+
+async def test_extra_roots_belong_to_the_connection(server: GatewayServer, tmp_path: Path) -> None:
+    papers = tmp_path / "papers"
+    papers.mkdir()
+    first = await attach(server)
+    await set_roots(first, [str(papers)])
+    await first.close()
+    second = await attach(server)
+    try:
+        reply = await ask(second, "papers", "", id="req-n")
+        assert isinstance(reply, Error) and reply.code == "files.unknown_root"
+    finally:
+        await second.close()

@@ -195,6 +195,8 @@ path = "~/projects"                 # absolute; a leading ~ is expanded
 
 [sessions]                          # optional (v0.11)
 next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's number (see Session numbers)
+lock_folder = false                 # v0.19: true fixes "Works in" to the deployment's folder; Settings shows
+                                    # "Set by <brand>" and a person can't pick another (their own Files folders still work)
 
 [threads]                           # optional (v0.16): threads beside Main (single presentation only)
 max = 2                             # 0 to 2, default 2; 0 turns threads off (no tool, no thread UI)
@@ -209,6 +211,10 @@ agent_checks_html = true            # default for Settings > Agent checks HTML i
 act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and type on; ships empty (see below)
 properties = "folded"               # v0.17: "folded" or "open", how a Markdown page's front-matter Properties start;
                                     # the person's own fold, once made, is remembered and wins
+
+[links]                             # optional (v0.19): link chips in the person's messages
+sites = { "tracker.acme.example" = "Acme Tracker" }  # host (or a parent domain) -> the name the chip shows;
+                                    # adds to the built-in Slack, Google Docs/Sheets/Slides, GitHub, Figma and Notion
 
 [apps]                              # optional (v0.18): MCP Apps, a tool's page shown in the chat
 enabled = true                      # the default; false keeps every tool a plain tool row

@@ -68,6 +68,16 @@ APPS_CAPABILITY = "apps.v1"
 # the whole ``services.status`` for a state it does not know).
 SERVICES_STUCK_CAPABILITY = "services.stuck.v1"
 
+# v0.19 (spec §8.3-8.4): a gateway lists it when an image attachment goes to
+# the agent as an image, and ``user.text`` carries the typed ``text`` with the
+# ``attachments`` apart. An older gateway's ``user.text`` has the attachment
+# block inside ``text`` and no ``attachments``.
+MESSAGES_ATTACHMENTS_CAPABILITY = "messages.attachments.v1"
+
+# v0.19 (spec §4.2): a gateway lists it when it answers ``files.roots.set``
+# with the folders a person added to the Files pane (``files.roots``).
+FILES_EXTRA_CAPABILITY = "files.extra.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -103,6 +113,10 @@ class Action(Strict):
 class Root(Strict):
     name: str
     path: str
+    # v0.19 (``files.extra.v1``): a folder the person added (not the deployment's),
+    # and one that is not a directory (any more); ``files.list`` on it is ``files.not_found``.
+    extra: bool = False
+    missing: bool = False
 
 
 class ThreadInfo(Strict):
@@ -623,6 +637,13 @@ class FilesListRequest(Envelope):
     path: str = ""
 
 
+class FilesRootsSet(Envelope):
+    """v0.19 (``files.extra.v1``): the folders this connection adds to the Files pane; replaces the last list."""
+
+    type: Literal["files.roots.set"] = "files.roots.set"
+    paths: list[str] = []
+
+
 class ArtifactOpened(Envelope):
     type: Literal["artifact.opened"] = "artifact.opened"
     chat: int
@@ -743,6 +764,10 @@ class HelloServer(Envelope):
     # v0.11: the Files pane leaves out the session's own folder (the
     # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
     hide_session_folder: bool = False
+    # v0.19: the deployment fixes "Works in" (config ``[sessions] lock_folder``).
+    lock_folder: bool = False
+    # v0.19: host suffix to site name for link chips (config ``[links] sites``).
+    link_sites: dict[str, str] = {}
     # v0.12: the deployment's viewer defaults; the app uses them until the
     # person changes a switch. Absent from an older gateway.
     viewer_defaults: ViewerDefaults | None = None
@@ -783,7 +808,7 @@ class TurnStarted(Envelope):
 
 
 class UserText(Envelope):
-    """What the person sent to start a turn, as the engine received it.
+    """What the person sent to start a turn (v0.19: as typed, with ``attachments`` apart).
 
     Live, right after ``turn.started`` (stamped, in the ring), and in a
     transcript replay (``chat.history``, unstamped): one rendering path
@@ -797,6 +822,9 @@ class UserText(Envelope):
     # v0.18 (ruling 27): a message an MCP app sent (``app.message``) carries the
     # app's server title; the transcript shows "via <title>". Absent otherwise.
     via: str | None = None
+    # v0.19 (spec §8.4, ``messages.attachments.v1``): the attached files' paths;
+    # ``text`` is then what the person typed, without the "Attached files:" block.
+    attachments: list[str] = []
 
 
 class TextDelta(Envelope):
@@ -904,6 +932,13 @@ class FilesList(Envelope):
     entries: list[Entry] = []
 
 
+class FilesRoots(Envelope):
+    """v0.19: the roots this connection has: the deployment's, then the person's added folders in order."""
+
+    type: Literal["files.roots"] = "files.roots"
+    roots: list[Root] = []
+
+
 class StatusSet(Envelope):
     type: Literal["status.set"] = "status.set"
     text: str
@@ -962,6 +997,9 @@ class ChatNotice(Envelope):
     type: Literal["chat.notice"] = "chat.notice"
     chat: int
     text: str
+    # v0.19: what the notice is about, when the app may treat it apart
+    # (``attachment.not_image``); absent for a plain line.
+    kind: str | None = None
 
 
 class ChatQueued(Envelope):
@@ -1457,6 +1495,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     TurnStop,
     CardAnswer,
     FilesListRequest,
+    FilesRootsSet,
     ArtifactOpened,
     GatewayStop,
     SessionRenew,
@@ -1517,6 +1556,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     CardCancel,
     ArtifactCreated,
     FilesList,
+    FilesRoots,
     StatusSet,
     ContextUsage,
     ChatCompacted,
@@ -1641,7 +1681,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.18.1", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.19.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1664,6 +1704,7 @@ def example_messages() -> dict[str, BaseModel]:
             note="fine for this chat",
         ),
         FilesListRequest(ts=_TS, chat=1, id="req-3", root="chat", path="src"),
+        FilesRootsSet(ts=_TS, id="req-6", paths=["/Users/someone/papers"]),
         ArtifactOpened(ts=_TS, chat=1, artifact_id="art-3"),
         GatewayStop(ts=_TS),
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),
@@ -1735,6 +1776,8 @@ def example_messages() -> dict[str, BaseModel]:
             default_folder="/Users/someone/projects",
             permission_mode="auto",
             hide_session_folder=False,
+            lock_folder=False,
+            link_sites={"acme.example": "Acme"},
             viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
             threads_max=2,
         ),
@@ -1768,7 +1811,7 @@ def example_messages() -> dict[str, BaseModel]:
             truncated=False,
         ),
         ChatLive(ts=_TS, chat=1, seq=42),
-        UserText(ts=_TS, chat=1, turn=1, text="Say hello."),
+        UserText(ts=_TS, chat=1, turn=1, text="Compare these", attachments=[f"{_FOLDER}/before.png", f"{_FOLDER}/after.png"]),
         TurnStarted(ts=_TS, chat=1, seq=43, turn=2),
         TextDelta(ts=_TS, chat=1, seq=44, turn=2, text="Looking at the notes now."),
         ToolStarted(
@@ -1825,6 +1868,15 @@ def example_messages() -> dict[str, BaseModel]:
             root="chat",
             path="src",
             entries=[Entry(name="lib", dir=True, size=None), Entry(name="main.py", dir=False, size=1204)],
+        ),
+        FilesRoots(
+            ts=_TS,
+            id="req-6",
+            roots=[
+                Root(name="projects", path="/Users/someone/projects"),
+                Root(name="papers", path="/Users/someone/papers", extra=True),
+                Root(name="old", path="/Users/someone/old", extra=True, missing=True),
+            ],
         ),
         StatusSet(ts=_TS, chat=1, seq=51, text="Preparing the workspace..."),
         ContextUsage(

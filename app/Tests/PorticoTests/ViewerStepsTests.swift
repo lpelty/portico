@@ -18,17 +18,17 @@ final class ViewerStepsTests: XCTestCase {
     func test_a_run_of_two_or_more_viewer_steps_folds() {
         let entries = TranscriptEntry.entries([step("a", "look"), step("b", "click", "Start trail"), step("c", "look"), reply])
         XCTAssertEqual(entries.count, 2)
-        guard case .viewerSteps(let rows) = entries[0] else { return XCTFail("\(entries)") }
+        guard case .toolRun(.viewer, let rows) = entries[0] else { return XCTFail("\(entries)") }
         XCTAssertEqual(rows.map(\.toolUseId), ["a", "b", "c"])
-        XCTAssertEqual(entries[0].id, "viewer-steps:a", "the id holds while the run grows")
+        XCTAssertEqual(entries[0].id, "tool-run:a", "the id holds while the run grows")
     }
 
     func test_one_step_alone_and_other_tools_stay_rows() {
         let entries = TranscriptEntry.entries([
             step("a", "look"), reply,
-            tool("s", "mcp__portico__show_in_viewer"), step("b", "click"), tool("x", "Bash"), step("c", "look"),
+            tool("s", "mcp__portico__show_in_viewer"), step("b", "click"), reply, tool("x", "Bash"), step("c", "look"),
         ])
-        XCTAssertEqual(entries.map(\.id), ["tool:a", "assistant:r", "tool:s", "tool:b", "tool:x", "tool:c"])
+        XCTAssertEqual(entries.map(\.id), ["tool:a", "assistant:r", "tool:s", "tool:b", "assistant:r", "tool:x", "tool:c"])
     }
 
     func test_the_folded_row_reads_title_count_and_latest_step() {
@@ -49,7 +49,7 @@ final class ViewerStepsTests: XCTestCase {
     }
 
     func test_a_folded_run_closes_up_against_tool_rows() {
-        let run = TranscriptEntry.viewerSteps([])
+        let run = TranscriptEntry.toolRun(.viewer, [])
         XCTAssertEqual(TranscriptSpacing.gap(before: run, after: .item(tool("x", "Bash"))), 2)
         XCTAssertEqual(TranscriptSpacing.gap(before: .item(reply), after: run), 20)
     }
@@ -61,7 +61,7 @@ final class ViewerStepsTests: XCTestCase {
         XCTAssertEqual(three.map(\.id), ["tool:a", "tool:m", "tool:c"])
         let run = TranscriptEntry.entries([step("a", "look"), step("b", "look"), step("m", "mark"), step("c", "click")])
         XCTAssertEqual(run.count, 3)
-        guard case .viewerSteps(let rows) = run[0] else { return XCTFail("\(run)") }
+        guard case .toolRun(.viewer, let rows) = run[0] else { return XCTFail("\(run)") }
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(run[1].id, "tool:m")
         XCTAssertEqual(run[2].id, "tool:c")
@@ -69,7 +69,7 @@ final class ViewerStepsTests: XCTestCase {
 
     func test_clear_marks_folds_and_reads() {
         let entries = TranscriptEntry.entries([step("a", "look"), step("b", "clear_marks")])
-        guard case .viewerSteps(let rows) = entries.first else { return XCTFail("\(entries)") }
+        guard case .toolRun(.viewer, let rows) = entries.first else { return XCTFail("\(entries)") }
         XCTAssertEqual(ViewerSteps.verb(rows[1]), "Clear marks")
         XCTAssertEqual(ViewerSteps.markTool, "mcp__portico__viewer_mark")
     }

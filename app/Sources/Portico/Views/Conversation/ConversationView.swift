@@ -219,7 +219,7 @@ struct ConversationView: View {
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
             if target == .bottom {
-                toBottom()
+                toBottomThroughLastRow()
             } else if !scrollMemory.atBottom, position.edge == .bottom {
                 // The person left the end by input with no scroll phase (a
                 // key, or VoiceOver): AppKit moved the clip, so the position
@@ -264,7 +264,9 @@ struct ConversationView: View {
         .accessibilityScrollAction { edge in personInput.page(toward: edge) }
         .onAppear {
             personInput.install()
-            if let place = model.place(of: chat), !place.atBottom, let top = place.topItem, drawnIDs.contains(top) {
+            if let place = model.place(of: chat), !place.atBottom, let saved = place.topItem,
+                let top = TranscriptEntry.anchor(saved, in: drawn)
+            {
                 restore(top: top, at: place.topOffset)
             } else {
                 scrollToBottom()
@@ -314,13 +316,10 @@ struct ConversationView: View {
 
     /// The transcript's drawn rows.
     private var drawn: [TranscriptEntry] {
-        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
-    }
-
-    /// The drawn rows' ids: a place whose top row is gone (the transcript
-    /// read again) opens at the bottom instead.
-    private var drawnIDs: Set<String> {
-        Set(drawn.map(\.id))
+        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) }) { row in
+            // A proposal's card and an app's page stand apart; they split a run.
+            model.proposal(forToolUse: row.toolUseId) != nil || model.app(forToolUse: row.toolUseId) != nil
+        }
     }
 
     /// A thread's first message, drawn as its brief (AM3).
@@ -354,6 +353,23 @@ struct ConversationView: View {
     /// hosted here).
     private func toBottom() {
         position.scrollTo(edge: .bottom)
+    }
+
+    /// Back to the end after the column's width changed or the layout moved
+    /// it (v0.19 fix): to the last row by its id first, then the bottom edge.
+    /// The edge is the lazy stack's estimated content height, and with tool
+    /// rows folded the rows not laid out are few and very unlike (a 50 pt
+    /// group, a 1000 pt reply): found hosted, narrowing 900 to 640 left the
+    /// content at 32053 pt with the rows it drew placed below that end, so
+    /// the view at the edge showed none of them. Scrolling to an id lays
+    /// that row out where the view is; the edge after it keeps v0.16's
+    /// target, which SwiftUI drops when the person scrolls.
+    private func toBottomThroughLastRow() {
+        position.scrollTo(id: "bottom", anchor: .bottom)
+        Task { @MainActor in
+            await Task.yield()
+            toBottom()
+        }
     }
 
     /// Back to the place this conversation was left at (v0.16 §5): the row
@@ -468,7 +484,10 @@ struct TranscriptItemView: View {
     var body: some View {
         switch item {
         case .userText(let user):
-            UserBubble(text: user.text, maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth, via: user.via)
+            UserBubble(
+                content: BubbleContent(user), maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth,
+                via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) },
+                linkSites: model.hello?.linkSites ?? [:])
         case .assistantText(let id, let text):
             MarkdownText(text: text, id: id)
                 .frame(maxWidth: replyWidth, alignment: .leading)
@@ -533,30 +552,68 @@ enum TranscriptSpacing {
 }
 
 /// What the person sent, right-aligned on a tinted background. The text
-/// is the gateway's `user.text`: what the engine received, attachments
-/// listed under it. v0.11 (58, AG1): the replies' 15-point text (v0.12), 10 by 16
-/// padding, at most 70% of the reading column; a short message hugs.
+/// is the gateway's `user.text`. v0.19 (spec §8.1): with a gateway that
+/// sends `attachments` apart, images show as thumbnails at the top (up to
+/// 160 pt wide, wrapping), the typed text under them, then other files as
+/// chips; clicking one opens it in the viewer. An older gateway's text,
+/// attachments listed in it, shows as it came. v0.11 (58, AG1): the
+/// replies' 15-point text (v0.12), 10 by 16 padding, at most 70% of the
+/// reading column; a short message hugs.
 struct UserBubble: View {
-    let text: String
+    let content: BubbleContent
     /// The bubble's widest (`ConversationColumn.bubbleMaxWidth`).
     var maxWidth: CGFloat = fallbackMaxWidth
     /// v0.18: the app that sent this message (`user.text`'s `via`), named under the bubble.
     var via: String? = nil
+    /// Open an attachment where the person is looking (`AppModel.reveal`).
+    var onOpen: (String) -> Void = { _ in }
+    /// The deployment's names for link chips (hello `link_sites`).
+    var linkSites: [String: String] = [:]
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(text)
-                .scaledFont(MarkdownText.bodySize)
-                .lineSpacing(MarkdownText.lineSpacing)
-                .foregroundStyle(Theme.text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .frame(maxWidth: maxWidth, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 8) {
+                if !content.images.isEmpty {
+                    WrappingRows(spacing: 6, trailing: false) {
+                        ForEach(content.images, id: \.self) { path in
+                            AttachmentThumbnail(path: path, size: .bubble, onOpen: onOpen)
+                        }
+                    }
+                }
+                if !content.text.isEmpty {
+                    let parts = BubbleLinks.split(content.text, extra: linkSites)
+                    if !parts.text.isEmpty {
+                        Text(BubbleLinks.attributed(parts.text))
+                            .scaledFont(MarkdownText.bodySize)
+                            .lineSpacing(MarkdownText.lineSpacing)
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                    }
+                    if !parts.chips.isEmpty {
+                        WrappingRows(spacing: 6, trailing: false) {
+                            ForEach(parts.chips, id: \.self) { url in
+                                if let chip = LinkSites.chip(for: url, extra: linkSites) {
+                                    LinkChip(url: url, site: chip.site, path: chip.path)
+                                }
+                            }
+                        }
+                    }
+                }
+                if !content.files.isEmpty {
+                    WrappingRows(spacing: 6, trailing: false) {
+                        ForEach(content.files, id: \.self) { path in
+                            AttachmentChip(path: path, onOpen: onOpen)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, content.images.isEmpty ? 16 : 10)
+            .padding(.vertical, 10)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(maxWidth: maxWidth, alignment: .trailing)
             if let via {
                 Text("via \(via)")
                     .scaledFont(11)
@@ -565,6 +622,37 @@ struct UserBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// A link to a known site in the person's message (v0.19 §10): the site's
+/// name semibold, the start of its path in the second text colour, a link
+/// symbol; it opens the URL.
+struct LinkChip: View {
+    let url: URL
+    let site: String
+    let path: String
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button { openURL(url) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "link").font(Theme.iconFont(11))
+                Text(site).scaledFont(12, weight: .semibold)
+                if !path.isEmpty {
+                    Text("·").scaledFont(12)
+                    Text(path).scaledFont(12).foregroundStyle(Theme.text2).lineLimit(1)
+                }
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .tip(url.absoluteString)
     }
 }
 
@@ -659,7 +747,7 @@ struct CompactedLine: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 

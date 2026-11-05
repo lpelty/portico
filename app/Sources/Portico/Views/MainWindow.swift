@@ -196,7 +196,7 @@ struct MainColumn: View {
             case .conversation(let chat):
                 ConversationView(chat: chat)
                     .id(chat)
-            case .start, .continuing:
+            case .start, .continuing, .passedBy:
                 StartView()
             case .waiting:
                 Color.clear

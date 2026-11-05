@@ -1,0 +1,25 @@
+{
+  "id": "req-6",
+  "roots": [
+    {
+      "extra": false,
+      "missing": false,
+      "name": "projects",
+      "path": "/Users/someone/projects"
+    },
+    {
+      "extra": true,
+      "missing": false,
+      "name": "papers",
+      "path": "/Users/someone/papers"
+    },
+    {
+      "extra": true,
+      "missing": true,
+      "name": "old",
+      "path": "/Users/someone/old"
+    }
+  ],
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "files.roots"
+}

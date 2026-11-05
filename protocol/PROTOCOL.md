@@ -93,7 +93,10 @@ workflows): without it the gateway sends none of those frames; v0.11:
 can draw the agent's marks; see The viewer and spaces); v0.17:
 `viewer.show.v1` (it answers `viewer.act` `show` once the page has
 loaded; see The viewer and spaces); v0.18: `apps.v1` (it shows
-`app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)). Absent
+`app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)); v0.19:
+`messages.attachments.v1` (it sends `attachments` apart from the text and
+reads them in `user.text`) and `files.extra.v1` (it sends
+`files.roots.set` and shows the added folders). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -238,6 +241,18 @@ Attached files:
 - /abs/other
 ```
 
+v0.19 (`messages.attachments.v1` in the gateway's `hello.capabilities`): an
+attachment that is a png, jpeg, gif or webp (by its bytes, not its name) of
+at most 3,000,000 bytes also goes to the engine as a base64 `image` content
+block after the text; its path stays in the block above. One message carries
+at most 4 images and 12,000,000 bytes of their base64. An image that goes as
+a path only gets a `chat.notice` of `kind: "attachment.not_image"` in the
+turn: "<name> is too large to show the agent as an image; it can still open
+the file.", "<name> can't be read as an image; it can still open the file.",
+or, past the message's caps, "<name> is past what one message can show the
+agent as images; it can still open the file." Other files are paths only, and
+a slash command's attachments are paths only (the command goes as a string).
+
 ### `turn.stop` — `TurnStop`
 `chat`. Interrupts the running turn; it finishes with `outcome: stopped`
 (the engine's own finish is reported as `stopped`; if none arrives within
@@ -303,6 +318,14 @@ correlate. Reply: `files.list` (server), or `error` with `files.unknown_root`
 (no such root, or `chat` without a chat number), `files.outside_root` (the
 path leaves the root once `..` and symlinks are resolved, or is absolute),
 `files.not_found` (the path is not an existing directory under the root).
+
+### `files.roots.set` — `FilesRootsSet`
+v0.19 (`files.extra.v1` in the gateway's `hello.capabilities`): `paths:
+[string]` (absolute; `~` is expanded), `id` to correlate. The folders the
+person added to the Files pane; each send replaces the last list, and they
+belong to the connection: they are gone when it closes, so the app sends
+the list again on every connect. Reply: `files.roots`, or `error` with
+`files.invalid_root` (a relative path; nothing is changed).
 
 ### `artifact.opened` — `ArtifactOpened`
 `chat`, `artifact_id: string`. Optional telemetry: the app showed that
@@ -462,8 +485,11 @@ the mark beside the start screen's greeting, `header_image` (v0.7) an
 absolute path to an image the toolbar shows in place of the mark and the
 name, 28 points tall with its own proportions (an older app ignores it);
 absent or unreadable values fall back to "Portico" and the system
-defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
-absolute, as configured with any `~` expanded), `commands: [string]`
+defaults), `actions: [{label, text}]`, `roots: [{name, path, extra?, missing?}]` (`path`
+absolute, as configured with any `~` expanded; v0.19: `extra` and `missing`
+are `false` in `hello` (the deployment's own roots) and are meaningful in
+`files.roots`, where an added folder is `extra: true` and a path that is not a
+directory is `missing: true`), `commands: [string]`
 (Portico's own commands the deployment offers, without the `/`; empty in
 v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 `capabilities: [string]` (v0.1: `cards.form`,
@@ -480,7 +506,10 @@ see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
 `[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
 always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
 [Plugins](#plugins-v018), and `apps.v1` when `[apps] enabled` (the
-default), see [MCP Apps](#mcp-apps-v018)). Always followed by `chat.list`, so the app has the
+default), see [MCP Apps](#mcp-apps-v018); v0.19: `messages.attachments.v1`
+always, so the app may send `attachments` on `message.send` and reads them in
+`user.text`, and `files.extra.v1` always, so the app may send
+`files.roots.set`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -519,6 +548,16 @@ v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
 folder (the `chat` root) when the deployment has roots of its own to show.
 The `chat` root still resolves for `files.list` and paths in it still show.
+
+v0.19: `lock_folder: bool` (default `false`; config `[sessions] lock_folder`):
+the deployment fixes "Works in". The app shows the folder with a lock, offers
+no picker, and ignores a folder saved earlier; sessions start in
+`default_folder`, else the first root.
+
+v0.19: `link_sites: {host suffix: name}` (default `{}`; config `[links] sites`):
+the name a link chip shows for a site, added to the app's built-in names
+(Slack, Google Docs, Sheets and Slides, GitHub, Figma, Notion); a deployment's
+entry wins. The app matches the URL's host by suffix.
 
 ### `chat.list` — `ChatList`
 `chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
@@ -645,7 +684,13 @@ running turn is a further `user.text` in that turn, at the point it went
 start of a turn of its own. v0.18: `via?: string` — the message came from an
 MCP app's page (`app.message`); it is the app's server title, and the app
 shows "via <title>" under the bubble. Absent for what the person typed, and
-in a transcript replay. An older app ignores it.
+in a transcript replay. An older app ignores it. v0.19
+(`messages.attachments.v1`): `attachments: [string]` (default empty), the
+attached files' paths, and `text` is what the person typed, without the
+"Attached files:" block, live and in a transcript replay (which recovers the
+paths from the block's trailing form). Only to an app whose `hello` declared
+`messages.attachments.v1`: any other app, and any older gateway, has the block
+inside `text` and no `attachments`.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
@@ -824,6 +869,15 @@ name order; names starting with `.` are skipped; `size` is bytes for a
 file and absent for a directory. A direct reply, not a history event: no
 `seq`.
 
+### `files.roots` — `FilesRoots`
+v0.19: `roots: [{name, path, extra, missing}]`, `id` echoing the request: the
+deployment's `hello.roots` first, then the added folders in the order sent.
+An added folder is `extra: true`; its name is the folder's last path
+component, with " 2", " 3" and so on after a clash with any other root
+(or `chat`). A path that is not a directory is still listed, `missing:
+true`, and `files.list` on it is `error files.not_found`. A direct reply,
+not a history event: no `seq`.
+
 ### `status.set` — `StatusSet`
 `chat?`, `seq?`, `text`. One line for the status strip, shown verbatim.
 Without `chat` and `seq` it is gateway-wide and not part of any history:
@@ -850,7 +904,8 @@ earlier conversation to make room. Stamped and replayed with the history;
 counted in the chat's `compactions`.
 
 ### `chat.notice` — `ChatNotice` *(v0.3)*
-`chat`, `seq`, `text`. A quiet line from the gateway in the conversation,
+`chat`, `seq`, `text`, v0.19 `kind?: string` (`attachment.not_image`; absent
+for a plain line). A quiet line from the gateway in the conversation,
 e.g. `No command /foo here` for a slash command that neither the
 deployment nor the engine knows (the message is not sent to the agent).
 v0.7: also the session commands' lines (`session.log`, `session.renew`).
@@ -956,7 +1011,7 @@ message that has gone to the agent, or was never queued), `attachment.missing`, 
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
 `card.stale`, `card.invalid_answer`, `files.unknown_root`, `files.outside_root`,
-`files.not_found`, `files.search_failed` (Spotlight failed or timed out),
+`files.not_found`, `files.invalid_root` (v0.19: `files.roots.set` with a path that is not absolute, or a `~user` that does not exist), `files.search_failed` (Spotlight failed or timed out),
 `session.ended` (`session.renew`, `session.log` or `message.send` on a
 session that has ended), `session.cannot_log` (v0.4: `session.log` and the
 deployment has no log step), `service.unknown` (v0.4: `service.restart`

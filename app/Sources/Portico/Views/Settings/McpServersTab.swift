@@ -265,6 +265,7 @@ struct McpServersTab: View {
         .sheet(isPresented: $adding, onDismiss: { model.mcpAddDismissed() }) {
             McpAddSheet(isPresented: $adding)
                 .environmentObject(model)
+                .presentationBackground(Theme.window)
         }
         .alert(
             model.mcpRemoving?.title ?? "",
@@ -387,12 +388,7 @@ struct McpServersTab: View {
                 EmptyView()
             }
             if row.showsSwitch {
-                Toggle(
-                    row.title,
-                    isOn: Binding(get: { row.isOn }, set: { model.mcpToggle(row.name, enabled: $0) }))
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .labelsHidden()
+                SettingsSwitch(row.title, isOn: Binding(get: { row.isOn }, set: { model.mcpToggle(row.name, enabled: $0) }))
             }
             if row.builtIn {
                 HStack(spacing: 5) {
@@ -446,7 +442,7 @@ struct McpServersTab: View {
                 .foregroundStyle(Theme.accent)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hover)
             HStack(spacing: 12) {
                 McpLogo(
                     initial: page.title.first.map { String($0).uppercased() } ?? "?",
@@ -506,7 +502,7 @@ struct McpServersTab: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     if let more = page.moreText {
                         Button(more) { expandedTools = true }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hoverText)
                             .scaledFont(11.5)
                             .foregroundStyle(Theme.accent)
                     }
@@ -599,14 +595,11 @@ struct McpAddSheet: View {
                 }
             }
             field(McpAddPresentation.connectsByLabel) {
-                Picker(McpAddPresentation.connectsByLabel, selection: $draft.connectsBy) {
-                    ForEach(McpAddDraft.ConnectsBy.allCases, id: \.self) { way in
-                        Text(way.label).tag(way)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                SettingsSegmented(
+                    selection: $draft.connectsBy,
+                    options: McpAddDraft.ConnectsBy.allCases.map { ($0, $0.label) },
+                    label: McpAddPresentation.connectsByLabel)
+                    .fixedSize()
             }
             if draft.connectsBy == .web {
                 field(McpAddPresentation.addressLabel) {
@@ -691,62 +684,12 @@ struct McpAddSheet: View {
             .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hover)
         .accessibilityAddTraits(draft.scope == scope ? .isSelected : [])
     }
 }
 
-// MARK: - Pieces shared by Settings' list tabs
-
-/// A grouped panel: the panel colour, radius 9, a border (AR1).
-struct SettingsPanel<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(spacing: 0) { content }
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Theme.border, lineWidth: 1))
-    }
-}
-
-/// AR1–AR3's small buttons: 12-pt label, 4 by 9 padding, radius 6.
-struct SettingsButtonStyle: ButtonStyle {
-    enum Kind { case quiet, accent, destructive }
-    let kind: Kind
-
-    func makeBody(configuration: Configuration) -> some View {
-        Drawn(kind: kind, configuration: configuration)
-    }
-
-    private struct Drawn: View {
-        let kind: Kind
-        let configuration: ButtonStyleConfiguration
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .scaledFont(12, weight: kind == .accent ? .medium : .regular)
-                .foregroundStyle(kind == .accent ? Color.white : kind == .destructive ? Theme.deny : Theme.text)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 9)
-                .background(kind == .accent ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay {
-                    if kind != .accent {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1)
-                    }
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(!isEnabled ? .clear : configuration.isPressed ? Theme.pressTint : hovering ? Theme.hoverTint : .clear)
-                        .allowsHitTesting(false)
-                }
-                .opacity(isEnabled ? 1 : 0.45)
-                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .onHover { hovering = $0 }
-        }
-    }
-}
+// MARK: - Pieces of the list tabs (the shared ones are in SettingsKit.swift)
 
 /// A server's square logo: its initial in white on a fill.
 struct McpLogo: View {

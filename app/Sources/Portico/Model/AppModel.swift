@@ -42,6 +42,15 @@ struct TurnMarker: Equatable, Sendable {
 }
 
 /// What the conversation pane renders, oldest first.
+extension UserText {
+    /// What tells one sent message from another in a transcript: its words,
+    /// its files, and where it came in (two image-only messages, or the same
+    /// words with different files, are different rows).
+    var userKey: String {
+        "\(text)\u{1F}\((attachments ?? []).joined(separator: "\u{1E}"))\u{1F}\(seq.map(String.init) ?? "")\u{1F}\(ts)"
+    }
+}
+
 enum TranscriptItem: Equatable, Sendable, Identifiable {
     case userText(UserText)
     case assistantText(id: String, text: String)
@@ -58,7 +67,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
 
     var id: String {
         switch self {
-        case .userText(let u): "user:\(u.turn):\(u.text.hashValue)"
+        case .userText(let u): "user:\(u.turn):\(u.userKey.hashValue)"
         case .assistantText(let id, _): "assistant:\(id)"
         case .tool(let row): "tool:\(row.toolUseId)"
         case .card(let card): "card:\(card.id)"
@@ -203,6 +212,10 @@ final class AppModel: ObservableObject {
     /// normalised relative path), the entries the last `files.list` gave.
     /// A directory is fetched when it is expanded, once, until a refresh.
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
+    /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
+    @Published private(set) var extraRoots: [Root] = []
+    /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
+    @Published var extraFolderChecks: [String: Bool] = [:]
     /// Per directory, the gateway's refusal of its last `files.list`
     /// (`files.outside_root` for a link that leaves the root, say), shown
     /// in the directory's row instead of a listing; cleared when it is asked for again.
@@ -419,6 +432,11 @@ final class AppModel: ObservableObject {
     /// Per `chat.new` request id, the first message to send once the
     /// gateway answers with the new chat (the start screen's Send).
     private var pendingStarts: [String: PendingStart] = [:]
+    /// Per `session.renew` request id, the words typed on the passed-by
+    /// welcome (spec §6), sent into the next session once it exists.
+    private(set) var passedByTexts: [String: String] = [:]
+    func holdPassedBy(_ text: String, id: String) { passedByTexts[id] = text }
+    func takePassedBy(id: String) -> String? { passedByTexts.removeValue(forKey: id) }
 
     struct PendingStart: Equatable {
         var text: String
@@ -775,9 +793,16 @@ final class AppModel: ObservableObject {
         // replays may hold it (or the old connection lost it).
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
+        // A `chat.remove` out on the lost connection is unconfirmed: its images stay.
+        pendingRemovals = [:]
+        extraRoots = []
         var frames: [ClientMessage] = openedChats.sorted().map { chat in
             .chatOpen(ChatOpen(chat: chat, since: lastSeq[chat], id: Self.requestId()))
         }
+        // The extra folders go before any listing is asked again: a listing of one of them is
+        // refused until the gateway has the list.
+        frames += extraFoldersFrames()
+        refreshExtraFolderChecks()
         // A listing in flight when the socket went away was never answered
         // (or its answer was lost with the socket): ask for each directory
         // again, under a new id, so its row does not say "Listing…" until
@@ -847,6 +872,9 @@ final class AppModel: ObservableObject {
             // that follows says how each session is now.
             logging = [:]
             renewing = [:]
+            // Words held for a renewal that never answered go back to the composer.
+            for text in passedByTexts.values { startDraft = startDraft.isEmpty ? text : text + "\n" + startDraft }
+            passedByTexts = [:]
             // Likewise a thread start or close in flight (v0.16): the
             // proposals and `chat.list` that follow say how each stands.
             startingProposal = nil
@@ -881,6 +909,7 @@ final class AppModel: ObservableObject {
         case .chatList(let list):
             let wasLiveThread = selected.flatMap { shown in chats.first { $0.chat == shown } }
                 .map { $0.thread != nil && $0.ended == nil } ?? false
+            confirmRemovals(listed: list.chats)
             chats = list.chats
             nextChat = list.nextChat
             chatsListed = true
@@ -960,6 +989,18 @@ final class AppModel: ObservableObject {
             applyEvent(message, to: created.chat)
             noteSeq(of: message)
 
+        case .filesRoots(let roots):
+            let now = roots.roots.filter(\.isExtra)
+            // A name that now points elsewhere, or is gone, must not keep the old folder's listing.
+            let kept = Dictionary(now.map { ($0.name, $0.path) }, uniquingKeysWith: { _, last in last })
+            let stale = Set(extraRoots.filter { kept[$0.name] != $0.path }.map(\.name))
+            if !stale.isEmpty {
+                fileTree = fileTree.filter { !stale.contains($0.key.root) }
+                fileListErrors = fileListErrors.filter { !stale.contains($0.key.root) }
+                pendingFileLists = pendingFileLists.filter { !stale.contains($0.value.root) }
+            }
+            extraRoots = now
+
         case .filesList(let list):
             // A direct answer (`id`, no seq) to the Files pane's request,
             // filed under the directory that was asked for: the gateway
@@ -1023,6 +1064,8 @@ final class AppModel: ObservableObject {
             updateVersion = update.version
 
         case .error(let error):
+            // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
+            if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
             applyAppRefusal(error)
             applyMcpError(error)
@@ -1059,6 +1102,10 @@ final class AppModel: ObservableObject {
             }
             // A refused start: the chat was never made, so the words and
             // files go back on the start screen with the gateway's reason.
+            if let id = error.id, let text = passedByTexts.removeValue(forKey: id) {
+                startDraft = startDraft.isEmpty ? text : text + "\n" + startDraft
+                startError = error.message
+            }
             if let id = error.id, let start = pendingStarts.removeValue(forKey: id) {
                 pendingNewChats.remove(id)
                 startDraft = startDraft.isEmpty ? start.text : start.text + "\n" + startDraft
@@ -1452,7 +1499,7 @@ final class AppModel: ObservableObject {
         case .agentProgress, .agentFinished, .workflowPhase, .workflowFinished:
             break
 
-        case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
+        case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
             .pluginsState, .pluginsDetails, .pluginsOptions:
@@ -1832,12 +1879,20 @@ final class AppModel: ObservableObject {
     /// deployment's `default_folder`, else its first root. `nil` when there
     /// is nothing to offer.
     var startFolder: URL? {
+        if isFolderLocked {
+            if let folder = hello?.defaultFolder, Self.isDirectory(folder) { return URL(fileURLWithPath: folder) }
+            if let root = hello?.roots.first, Self.isDirectory(root.path) { return URL(fileURLWithPath: root.path) }
+            return nil
+        }
         if let chosen = chosenStartFolder { return chosen }
         if let last = settings.lastFolder, Self.isDirectory(last) { return URL(fileURLWithPath: last) }
         if let folder = hello?.defaultFolder, Self.isDirectory(folder) { return URL(fileURLWithPath: folder) }
         if let root = hello?.roots.first, Self.isDirectory(root.path) { return URL(fileURLWithPath: root.path) }
         return nil
     }
+
+    /// The deployment fixes "Works in" (v0.19 §4.1): no picking, and a saved folder is ignored.
+    var isFolderLocked: Bool { hello?.lockFolder == true }
 
     /// Folders the chip's menu lists: the last one used and the deployment's roots, de-duplicated.
     var startFolderChoices: [URL] {
@@ -1858,13 +1913,13 @@ final class AppModel: ObservableObject {
     /// `message.send`. Nothing happens without a folder or with blank text.
     func startChat(text: String, fromComposer: Bool = true) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let folder = startFolder, !isStarting else { return }
-        let id = Self.requestId()
         let attachments = fromComposer ? startAttachments : []
+        guard !trimmed.isEmpty || !attachments.isEmpty, let folder = startFolder, !isStarting else { return }
+        let id = Self.requestId()
         pendingNewChats.insert(id)
         pendingStarts[id] = PendingStart(text: trimmed, attachments: attachments, folder: folder)
         startError = nil
-        settings.lastFolder = folder.path
+        if !isFolderLocked { settings.lastFolder = folder.path }
         chosenStartFolder = nil
         if fromComposer {
             startDraft = ""
@@ -1881,7 +1936,7 @@ final class AppModel: ObservableObject {
     /// session is being logged or ended nothing goes: the welcome keeps it.
     func continueSession(chat: Int, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSessionCommandPending(chat: chat) else { return }
+        guard !trimmed.isEmpty || !startAttachments.isEmpty, !isSessionCommandPending(chat: chat) else { return }
         open(chat: chat)
         attach(startAttachments, to: chat)
         startAttachments = []
@@ -1904,6 +1959,7 @@ final class AppModel: ObservableObject {
 
     /// Settings › Folder: the folder new sessions start in, from now on.
     func chooseStartFolder(_ folder: URL) {
+        guard !isFolderLocked else { return }
         objectWillChange.send()
         settings.lastFolder = folder.path
         chosenStartFolder = nil
@@ -1923,12 +1979,6 @@ final class AppModel: ObservableObject {
     private static func isDirectory(_ path: String) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-    }
-
-    func newChat(folder: URL) {
-        let id = Self.requestId()
-        pendingNewChats.insert(id)
-        send(.chatNew(ChatNew(folder: folder.path, id: id)))
     }
 
     /// Show a chat and ask the gateway for its events: since our watermark
@@ -1972,8 +2022,24 @@ final class AppModel: ObservableObject {
 
     /// Remove a chat: the gateway forgets it and the app drops its state.
     func remove(chat: Int) {
-        send(.chatRemove(ChatRemove(chat: chat, id: Self.requestId())))
+        let id = Self.requestId()
+        pendingRemovals[id] = chat
+        send(.chatRemove(ChatRemove(chat: chat, id: id)))
         forget(chat: chat)
+    }
+
+    /// `chat.remove`s sent and not yet answered, by request id (v0.19 §8.2).
+    private var pendingRemovals: [String: Int] = [:]
+
+    /// The gateway answers a `chat.remove` with a `chat.list` without the
+    /// chat: only then do its pasted images go. A chat merely missing from
+    /// a list (a partial list while the gateway restarts) keeps them.
+    private func confirmRemovals(listed: [ChatSummary]) {
+        for (id, chat) in pendingRemovals where !listed.contains(where: { $0.chat == chat }) {
+            pendingRemovals[id] = nil
+            // Off the main thread: a chat's folder can hold many images.
+            if let home = attachmentsHome { Task.detached(priority: .utility) { PastedImages.remove(chat: chat, home: home) } }
+        }
     }
 
     /// Set or clear (empty or `nil`) a chat's alias.
@@ -2114,7 +2180,10 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending(chat: chat) else { return false }
+        // v0.19: a message may be attachments alone.
+        guard !trimmed.isEmpty || !attachments.isEmpty, !isSending(chat: chat) else { return false }
+        // Pasted images move from pending to the chat the message goes to (§8.2).
+        let attachments = attachmentsHome.map { PastedImages.adopt(attachments, chat: chat, home: $0) } ?? attachments
         let id = Self.requestId()
         pendingSends[chat] = PendingSend(
             id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
@@ -2222,6 +2291,43 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
     }
 
+    /// The app's home, where pasted images are kept (`PastedImages`, v0.19
+    /// §8.2): the supervisor's, set at launch; tests set their own. The one
+    /// resolver for saving, adopting and removing. `nil` (no supervisor):
+    /// nothing is written or removed.
+    var attachmentsHome: URL? {
+        get { attachmentsHomeOverride ?? supervisor?.home.url }
+        set { attachmentsHomeOverride = newValue }
+    }
+    private var attachmentsHomeOverride: URL?
+
+    /// Write pasted image data to the pending folder and return its path.
+    func savePastedImage(_ data: Data) throws -> String {
+        guard let home = attachmentsHome else { throw PastedImages.Failure.noHome }
+        return try PastedImages.save(data, home: home, now: Date())
+    }
+
+    /// A composer's intake (v0.19 §8.1): files dropped or pasted onto its
+    /// text become attachments (`attach`); pasted image data is saved first.
+    /// The composer keeps the one it makes.
+    func makeIntake(attach: @escaping ([String]) -> Void) -> ComposerIntake {
+        let intake = ComposerIntake(
+            attach: attach,
+            saveImage: { [weak self] data in
+                guard let self else { throw PastedImages.Failure.noHome }
+                return try self.savePastedImage(data)
+            })
+        // The transcode and the write happen off the main thread; the thumbnail
+        // appears once the file is on disk, so a send never names a file not yet there.
+        intake.saveImageTask = { [weak self] data in
+            guard let home = self?.attachmentsHome else {
+                return Task { throw PastedImages.Failure.noHome }
+            }
+            return Task.detached(priority: .userInitiated) { try PastedImages.save(data, home: home, now: Date()) }
+        }
+        return intake
+    }
+
     /// The chat's state word as the sidebar last heard it.
     func state(of chat: Int) -> ChatStateWord? {
         chats.first { $0.chat == chat }?.state
@@ -2242,6 +2348,8 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Drop a chat's state in memory. Its pasted images on disk stay
+    /// unless the gateway confirms a `chat.remove` (`confirmRemovals`).
     private func forget(chat: Int) {
         noteClosed(chat: chat)
         forgetApps(chat: chat)
@@ -2458,6 +2566,7 @@ extension AppModel {
         for root in hello?.roots ?? [] where root.name != Self.chatRoot {
             roots.append(root)
         }
+        roots += extraRoots
         return roots
     }
 
@@ -2470,9 +2579,12 @@ extension AppModel {
         let roots = fileRoots(for: chat)
         guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
         let others = roots.filter { $0.name != Self.chatRoot }
-        if hello?.hideSessionFolder == true, !others.isEmpty { return others }
+        // Only the deployment's own roots decide whether the session's folder
+        // hides: a folder the person added never takes it away (v0.19).
+        let deployment = others.filter { $0.extra != true }
+        if hello?.hideSessionFolder == true, !deployment.isEmpty { return others }
         let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
-        let shared = others.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        let shared = deployment.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
         return shared ? others : roots
     }
 

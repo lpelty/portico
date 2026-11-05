@@ -131,8 +131,12 @@ enum MarkdownAttributed {
             var attributes: [NSAttributedString.Key: Any] = [.font: runFont, .foregroundColor: color]
             if intent.contains(.code) { attributes[.backgroundColor] = NSColor(Theme.surface) }
             if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-            if let link = run.link { attributes[.link] = link }
+            if let link = run.link, Linkify.allowed(link) { attributes[.link] = link }
             out.append(NSAttributedString(string: string, attributes: attributes))
+        }
+        // v0.19 (§9): a bare URL is a link too.
+        for (range, url) in Linkify.ranges(in: text) where range.location + range.length <= out.length {
+            out.addAttribute(.link, value: url, range: range)
         }
         return out
     }

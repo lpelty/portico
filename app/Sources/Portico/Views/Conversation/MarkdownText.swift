@@ -469,6 +469,7 @@ struct MarkdownText: View {
         let shown = SpeakableText.displayed(text)
         VStack(alignment: .leading, spacing: 4) {
             MarkdownBlocksView(blocks: MarkdownCache.blocks(for: shown))
+                .environment(\.codeWrapControl, CodeWrapControl(on: settings.wrapCode, toggle: { settings.wrapCode.toggle() }))
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
             HStack(spacing: 2) {
@@ -557,10 +558,53 @@ struct MarkdownBlocksView: View {
     }
 }
 
+/// Which fences are prose (v0.19 §9): no language, or one that names text.
+enum CodeBlockWrap {
+    static func wraps(language: String?) -> Bool {
+        guard let language else { return true }
+        return ["", "text", "txt", "plain", "markdown", "md", "prose"].contains(
+            language.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+}
+
+/// How a code block is drawn, apart from the views: wrapped text with no
+/// scroll view, or lines kept in a horizontal one. The Wrap toggle shows
+/// only where it can change something (a fence with a language).
+struct CodeBlockLayout: Equatable {
+    let wraps: Bool
+    let showsWrapToggle: Bool
+    var scrolls: Bool { !wraps }
+
+    init(language: String?, wrapCode: Bool, canToggle: Bool = true) {
+        let prose = CodeBlockWrap.wraps(language: language)
+        wraps = prose || wrapCode
+        showsWrapToggle = !prose && canToggle
+    }
+}
+
+/// The Wrap switch for the code blocks below it. Absent (a view drawn
+/// without it) the blocks scroll and show no toggle.
+struct CodeWrapControl: @unchecked Sendable {
+    var on: Bool
+    var toggle: () -> Void
+}
+
+private struct CodeWrapControlKey: EnvironmentKey {
+    static let defaultValue: CodeWrapControl? = nil
+}
+
+extension EnvironmentValues {
+    var codeWrapControl: CodeWrapControl? {
+        get { self[CodeWrapControlKey.self] }
+        set { self[CodeWrapControlKey.self] = newValue }
+    }
+}
+
 struct MarkdownBlockView: View {
     let block: MarkdownBlock
     let first: Bool
     var secondary = false
+    @Environment(\.codeWrapControl) private var wrapControl
 
     private static let bodySize = MarkdownText.bodySize
     @Environment(\.textScale) private var textScale
@@ -617,29 +661,50 @@ struct MarkdownBlockView: View {
         .padding(.leading, item.level == 0 ? 6 : 26)
     }
 
-    /// Monospaced on the surface colour; a long line scrolls sideways. Over
-    /// it, the fence's language and Copy, which copies the code alone: no
-    /// fence, no wrapping, no trailing blank lines.
+    /// Monospaced on the surface colour. Prose in a fence (no language,
+    /// text, markdown) wraps and has no scroll bar; code keeps its lines and
+    /// scrolls sideways unless Wrap is on (v0.19 §9). Over it, the fence's
+    /// language, Wrap and Copy, which copies the code alone: no fence, no
+    /// wrapping, no trailing blank lines.
     private func codeBlock(_ text: String, language: String?) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let layout = CodeBlockLayout(language: language, wrapCode: wrapControl?.on ?? false, canToggle: wrapControl != nil)
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(language ?? "")
                     .scaledFont(11, design: .monospaced)
                     .foregroundStyle(Theme.text3)
                 Spacer(minLength: 0)
+                if layout.showsWrapToggle {
+                    Button { wrapControl?.toggle() } label: {
+                        Image(systemName: "text.wrap")
+                            .scaledFont(11)
+                            .foregroundStyle(wrapControl?.on == true ? Theme.accent : Theme.text3)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                    }
+                    .buttonStyle(.hover)
+                    .tip(wrapControl?.on == true ? "Don't wrap long lines" : "Wrap long lines")
+                }
                 CopyButton(help: "Copy the code") { MarkdownCopy.code(text) }
             }
             .padding(.leading, 12)
             .padding(.trailing, 6)
             .padding(.top, 4)
-            ScrollView(.horizontal) {
-                SelectableText(text: MarkdownAttributed.code(text, scale: textScale), wraps: false)
-                    .fixedSize(horizontal: true, vertical: true)
+            if layout.scrolls {
+                ScrollView(.horizontal) {
+                    SelectableText(text: MarkdownAttributed.code(text, scale: textScale), wraps: false)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 2)
+                        .padding(.bottom, 10)
+                }
+                .scrollIndicators(.automatic)
+            } else {
+                SelectableText(text: MarkdownAttributed.code(text, scale: textScale), wraps: true)
                     .padding(.horizontal, 12)
                     .padding(.top, 2)
                     .padding(.bottom, 10)
             }
-            .scrollIndicators(.automatic)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))

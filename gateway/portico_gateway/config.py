@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import APPS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -42,7 +42,8 @@ MCP_CAPABILITY = "mcp.v1"
 PLUGINS_CAPABILITY = "plugins.v1"
 CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-    MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY,
+    MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY,
+    FILES_EXTRA_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once
@@ -231,6 +232,8 @@ class SessionsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     next_number: str | None = None
+    # v0.19 (spec 4.1): the deployment fixes "Works in" (the agent's home).
+    lock_folder: bool = False
 
     @field_validator("next_number")
     @classmethod
@@ -374,6 +377,14 @@ def host_allowed(host: str, act_hosts: list[str]) -> bool:
     return any(h == e.lower() or h.endswith("." + e.lower()) for e in act_hosts)
 
 
+class LinksConfig(BaseModel):
+    """v0.19 (spec 10): ``[links] sites``, host suffix to the name a link chip shows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sites: dict[str, str] = {}
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -440,6 +451,8 @@ class Config(BaseModel):
     spaces: SpacesConfig = SpacesConfig()
     # v0.16: threads beside Main (``[threads] max``).
     threads: ThreadsConfig = ThreadsConfig()
+    # v0.19: names for the sites a link points at (``[links] sites``).
+    links: LinksConfig = LinksConfig()
     # v0.18: MCP servers (``[mcp] core``).
     mcp: McpConfig = McpConfig()
     # v0.18: MCP Apps (``[apps] enabled``).
@@ -618,6 +631,8 @@ def hello_for(
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
         permission_mode=config.permission_mode,
         hide_session_folder=config.files.hide_session_folder,
+        lock_folder=config.sessions.lock_folder,
+        link_sites=dict(config.links.sites),
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
     )

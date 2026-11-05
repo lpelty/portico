@@ -99,6 +99,7 @@ final class Settings: ObservableObject {
         static let tokenFile = "tokenFile"
         static let lastFolder = "lastFolder"
         static let pinnedFiles = "pinnedFiles"
+        static let extraFolders = "extraFolders"
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
@@ -108,6 +109,7 @@ final class Settings: ObservableObject {
         static let sendWhenStopTalking = "voice.sendWhenStopTalking"
         static let holdToTalk = "voice.holdToTalk"
         static let readAloudEnabled = "voice.readAloudEnabled"
+        static let wrapCode = "conversation.wrapCode"
         static let readAloudAvailable = "voice.readAloudAvailable"
         static let voiceIdentifier = "voice.identifier"
         static let speechRate = "voice.speechRate"
@@ -115,6 +117,7 @@ final class Settings: ObservableObject {
         static let viewerAgentChecksHTML = "viewer.agentChecksHTML"
         static let propertiesOpen = "viewer.propertiesOpen"
         static let spacesNotify = "spaces.notify"
+        static let gatewayAdvancedOpen = "gateway.advancedOpen"
         static let spacesLastOpened = "spaces.lastOpened"
         static let spacesFirstSeen = "spaces.firstSeen"
     }
@@ -196,6 +199,12 @@ final class Settings: ObservableObject {
         didSet { defaults.set(pinnedFiles, forKey: Key.pinnedFiles) }
     }
 
+    /// Folders the person added to the Files pane (Settings › General › Also
+    /// show in Files, v0.19 §4.2), by absolute path, in the order added.
+    @Published var extraFolders: [String] {
+        didSet { defaults.set(extraFolders, forKey: Key.extraFolders) }
+    }
+
     /// The sidebar's width as last dragged.
     @Published var sidebarWidth: CGFloat {
         didSet { defaults.set(Double(sidebarWidth), forKey: Key.sidebarWidth) }
@@ -233,6 +242,12 @@ final class Settings: ObservableObject {
     /// The code stays for a better voice later. Turn it on with
     /// `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`.
     let readAloudAvailable: Bool
+    /// Code blocks with a language wrap long lines when true (v0.19 §9);
+    /// prose in a fence always wraps. The code block header's toggle flips it.
+    @Published var wrapCode: Bool {
+        didSet { defaults.set(wrapCode, forKey: Key.wrapCode) }
+    }
+
     /// Read aloud is offered: the hidden flag, then the person's setting.
     var readAloudShown: Bool { readAloudAvailable && readAloudEnabled }
     /// The voice's identifier (`AVSpeechSynthesisVoice.identifier`); `nil` is the system default.
@@ -259,6 +274,11 @@ final class Settings: ObservableObject {
     /// the deployment's `[viewer] properties` applies.
     @Published var propertiesOpen: Bool? {
         didSet { Self.store(propertiesOpen, forKey: Key.propertiesOpen, in: defaults) }
+    }
+    /// Whether Settings › Gateway's Advanced disclosure is open (v0.19 §5);
+    /// closed until the person opens it.
+    @Published var gatewayAdvancedOpen: Bool {
+        didSet { defaults.set(gatewayAdvancedOpen, forKey: Key.gatewayAdvancedOpen) }
     }
     /// "Notify when a space is updated": the dot and the notification.
     @Published var spacesNotify: Bool {
@@ -331,6 +351,7 @@ final class Settings: ObservableObject {
         tokenFile = Self.read(Key.tokenFile, in: defaults)
         lastFolder = Self.read(Key.lastFolder, in: defaults)
         pinnedFiles = defaults.stringArray(forKey: Key.pinnedFiles) ?? []
+        extraFolders = defaults.stringArray(forKey: Key.extraFolders) ?? []
         sidebarWidth = Self.width(Key.sidebarWidth, in: defaults) ?? ColumnWidths.sidebarDefault
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault
@@ -339,6 +360,7 @@ final class Settings: ObservableObject {
         sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
         holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none
         readAloudEnabled = defaults.object(forKey: Key.readAloudEnabled) as? Bool ?? true
+        wrapCode = defaults.object(forKey: Key.wrapCode) as? Bool ?? false
         readAloudAvailable = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
@@ -346,6 +368,7 @@ final class Settings: ObservableObject {
         viewerAgentChecksHTML = defaults.object(forKey: Key.viewerAgentChecksHTML) as? Bool
         propertiesOpen = defaults.object(forKey: Key.propertiesOpen) as? Bool
         spacesNotify = defaults.object(forKey: Key.spacesNotify) as? Bool ?? true
+        gatewayAdvancedOpen = defaults.bool(forKey: Key.gatewayAdvancedOpen)
         let opened = defaults.dictionary(forKey: Key.spacesLastOpened) as? [String: Double] ?? [:]
         spacesLastOpened = opened.mapValues { Date(timeIntervalSince1970: $0) }
         let seen = defaults.dictionary(forKey: Key.spacesFirstSeen) as? [String: Double] ?? [:]

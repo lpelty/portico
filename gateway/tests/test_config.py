@@ -188,7 +188,7 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     # ``apps.v1`` with ``[apps] enabled`` (the default).
     assert hello.capabilities == [
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-        "models.v1", "mcp.v1", "plugins.v1", "sessions.clear", "threads.v1", "apps.v1",
+        "models.v1", "mcp.v1", "plugins.v1", "messages.attachments.v1", "files.extra.v1", "sessions.clear", "threads.v1", "apps.v1",
     ]
     assert hello.presentation == "single"
     assert hello.can_log is False
@@ -676,3 +676,50 @@ def test_threads_max_defaults_to_2_and_is_bounded(tmp_path: Path) -> None:
     path.write_text("[threads]\nmaximum = 1\n")
     with pytest.raises(ConfigError, match="threads.maximum"):
         load_config(path)
+
+
+# --- v0.19: [sessions] lock_folder ---------------------------------------------
+
+
+def test_sessions_lock_folder_loads_and_goes_out_in_hello(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[sessions]\nlock_folder = true\n")
+    config = load_config(path)
+    assert config.sessions.lock_folder is True
+    hello = hello_for(config, epoch="e", gateway_version="0.19.0")
+    assert hello.lock_folder is True
+    assert parse_server(dump(hello)) == hello
+
+
+def test_sessions_folder_is_unlocked_by_default() -> None:
+    assert Config().sessions.lock_folder is False
+    assert hello_for(Config(), epoch="e", gateway_version="0.19.0").lock_folder is False
+
+
+def test_a_non_bool_lock_folder_is_refused_naming_the_key(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[sessions]\nlock_folder = "yes please"\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "lock_folder" in str(e.value)
+
+
+# --- v0.19: [links] sites --------------------------------------------------------
+
+
+def test_links_sites_reach_hello(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[links]\nsites = {"acme.example" = "Acme"}\n')
+    config = load_config(path)
+    hello = hello_for(config, epoch="e", gateway_version="0.19.0")
+    assert hello.link_sites == {"acme.example": "Acme"}
+    assert parse_server(dump(hello)) == hello
+    assert hello_for(Config(), epoch="e", gateway_version="0.19.0").link_sites == {}
+
+
+def test_a_non_string_link_site_is_a_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[links]\nsites = {"acme.example" = 3}\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "sites" in str(e.value)

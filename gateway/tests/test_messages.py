@@ -33,6 +33,7 @@ EXPECTED_KEYS = {
     "client.turn.stop",
     "client.card.answer",
     "client.files.list",
+    "client.files.roots.set",
     "client.artifact.opened",
     "client.gateway.stop",
     "client.session.renew",
@@ -53,6 +54,7 @@ EXPECTED_KEYS = {
     "server.card.cancel",
     "server.artifact.created",
     "server.files.list",
+    "server.files.roots",
     "server.status.set",
     "server.context.usage",
     "server.chat.compacted",
@@ -142,7 +144,7 @@ def test_every_type_has_schema_def_and_example():
     # plugins.update, plugins.marketplace_add, plugins.marketplace_update, plugins.details (both ways),
     # plugins.options (both ways), plugins.configure, plugins.state;
     # app.call_tool, app.message, app.context, app.reload, app.open, app.result, app.cancelled, app.call_result
-    assert len(ex) == 99
+    assert len(ex) == 101
     assert set(ex) == EXPECTED_KEYS
 
 
