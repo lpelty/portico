@@ -421,7 +421,9 @@ final class AppModel: ObservableObject {
     private var pendingStarts: [String: PendingStart] = [:]
     /// Per `session.renew` request id, the words typed on the passed-by
     /// welcome (spec §6), sent into the next session once it exists.
-    var passedByTexts: [String: String] = [:]
+    private(set) var passedByTexts: [String: String] = [:]
+    func holdPassedBy(_ text: String, id: String) { passedByTexts[id] = text }
+    func takePassedBy(id: String) -> String? { passedByTexts.removeValue(forKey: id) }
 
     struct PendingStart: Equatable {
         var text: String
@@ -850,6 +852,9 @@ final class AppModel: ObservableObject {
             // that follows says how each session is now.
             logging = [:]
             renewing = [:]
+            // Words held for a renewal that never answered go back to the composer.
+            for text in passedByTexts.values { startDraft = startDraft.isEmpty ? text : text + "\n" + startDraft }
+            passedByTexts = [:]
             // Likewise a thread start or close in flight (v0.16): the
             // proposals and `chat.list` that follow say how each stands.
             startingProposal = nil

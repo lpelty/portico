@@ -272,7 +272,7 @@ struct StartView: View {
     private var placeholder: String {
         if !connected { return "Not connected" }
         if let passed = model.passedBy {
-            return model.isRenewing(chat: passed.live) ? "Starting the next session…" : "Start Session \(passed.next) — what's first?"
+            return model.isRenewing(chat: passed.live) ? "Starting the next session…" : SessionsPresentation.passedByPlaceholder(next: passed.next)
         }
         if let live = continuing {
             // As the conversation's input bar says while a log or renewal is out.
@@ -328,7 +328,7 @@ struct StartView: View {
     /// one the app last had.
     private func passedByLine(live: Int, next: Int) -> some View {
         VStack(spacing: 12) {
-            Text(SessionsPresentation.passedByLine(live: live, next: next))
+            Text(SessionsPresentation.passedByLine(live: live, outside: model.passedByNumbers))
                 .scaledFont(12)
                 .foregroundStyle(Theme.text3)
             SmallBorderedButton(title: "View Session \(live)") { model.open(chat: live) }

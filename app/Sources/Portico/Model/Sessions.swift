@@ -102,7 +102,8 @@ extension AppModel {
     var mainScreen: MainScreen {
         MainScreen.decide(
             selected: selected, listed: chatsListed, gaveUp: gaveUpConnecting || gaveUpBeforeList,
-            single: isSinglePresentation, live: liveSession?.chat, next: nextChat)
+            single: isSinglePresentation, live: liveSession?.chat, next: nextChat,
+            known: Set(chats.map(\.chat)))
     }
 
     /// The passed-by welcome's numbers: the live session and the one
@@ -110,6 +111,13 @@ extension AppModel {
     var passedBy: (live: Int, next: Int)? {
         if case .passedBy(let live, let next) = mainScreen { return (live, next) }
         return nil
+    }
+
+    /// The numbers between the live session and the next that the app's
+    /// list does not hold: the ones that ran outside the app.
+    var passedByNumbers: [Int] {
+        guard let passed = passedBy else { return [] }
+        return MainScreen.outside(live: passed.live, next: passed.next, known: Set(chats.map(\.chat)))
     }
 
     /// The live session the welcome continues (Y1), when it does.
@@ -251,7 +259,7 @@ extension AppModel {
         guard case .passedBy(let live, _) = mainScreen else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let id = renew(chat: live, log: false) else { return }
-        passedByTexts[id] = trimmed
+        holdPassedBy(trimmed, id: id)
         startDraft = ""
     }
 
@@ -314,8 +322,7 @@ extension AppModel {
         if selected == nil || selected == renewed.ended.chat {
             open(chat: renewed.next.chat)
         }
-        if let id = renewed.id, let text = passedByTexts.removeValue(forKey: id) {
-            open(chat: renewed.next.chat)
+        if let id = renewed.id, let text = takePassedBy(id: id) {
             let files = startAttachments
             attach(files, to: renewed.next.chat)
             files.forEach(detachFromStart)
@@ -614,11 +621,20 @@ enum MainScreen: Equatable {
     /// `chat.list` unless the connection has given up (then the welcome
     /// says "Not connected"); in single presentation with a live session
     /// the welcome continues it; otherwise it starts one.
-    static func decide(selected: Int?, listed: Bool, gaveUp: Bool, single: Bool, live: Int?, next: Int? = nil) -> MainScreen {
+    /// Numbers in live+1 ..< next that the list does not hold (threads and
+    /// ended chats share the counter, so only unlisted ones ran outside).
+    static func outside(live: Int, next: Int, known: Set<Int>) -> [Int] {
+        guard next > live + 1 else { return [] }
+        return ((live + 1)..<next).filter { !known.contains($0) }
+    }
+
+    static func decide(
+        selected: Int?, listed: Bool, gaveUp: Bool, single: Bool, live: Int?, next: Int? = nil, known: Set<Int> = []
+    ) -> MainScreen {
         if let selected { return .conversation(selected) }
         if !listed && !gaveUp { return .waiting }
         if single, let live {
-            if let next, next > live + 1 { return .passedBy(live: live, next: next) }
+            if let next, !outside(live: live, next: next, known: known).isEmpty { return .passedBy(live: live, next: next) }
             return .continuing(live)
         }
         return .start
@@ -658,10 +674,14 @@ enum ViewerRestore {
 enum SessionsPresentation {
     /// The welcome's line under the headline: which sessions ran elsewhere
     /// and where the live one went.
-    static func passedByLine(live: Int, next: Int) -> String {
-        let outside = next - live - 1 == 1
-            ? "Session \(live + 1) ran outside the app."
-            : "Sessions \(live + 1)\u{2013}\(next - 1) ran outside the app."
-        return "\(outside) Session \(live) is in History."
+    static func passedByLine(live: Int, outside: [Int]) -> String {
+        guard let first = outside.min(), let last = outside.max() else { return "Session \(live) is in History." }
+        let ran = first == last
+            ? "Session \(first) ran outside the app."
+            : "Sessions \(first)\u{2013}\(last) ran outside the app."
+        return "\(ran) Session \(live) is in History."
     }
+
+    /// The welcome composer's placeholder when it starts `next`.
+    static func passedByPlaceholder(next: Int) -> String { "Start Session \(next) \u{2014} what's first?" }
 }
