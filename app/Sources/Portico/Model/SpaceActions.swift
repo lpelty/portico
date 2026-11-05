@@ -88,6 +88,11 @@ struct SpaceRefreshing: Equatable {
         }
     }
 
+    /// When the earliest entry's five minutes are up; `nil` with none.
+    var nextDeadline: Date? {
+        entries.values.map(\.since).min().map { $0.addingTimeInterval(Self.timeout) }
+    }
+
     /// Drop those whose five minutes are up.
     mutating func expire(now: Date) {
         entries = entries.filter { now.timeIntervalSince($0.value.since) < Self.timeout }

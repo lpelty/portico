@@ -766,7 +766,13 @@ final class AppModel: ObservableObject {
     /// A refused or failed refresh or action: it ends the refreshing at once
     /// (an action's failure leaves a refresh alone), and its words show in
     /// the header. `space.no_act` is not shown: such links are ignored.
+    /// Codes only `space.rename` and `space.remove` answer: not a refresh's or an action's.
+    nonisolated static let renameOrRemoveCodes: Set<String> = [
+        "space.invalid", "space.rename_failed", "space.remove_failed", "space.fixed",
+    ]
+
     private func applySpaceError(_ error: ErrorMessage) {
+        guard !Self.renameOrRemoveCodes.contains(error.code) else { return }
         guard let id = error.id, let count = spaceRequestsInFlight[id] else { return }
         spaceRequestsInFlight[id] = count > 1 ? count - 1 : nil
         // `protocol.invalid` on a space's id is a bad action or item: only `space.act` carries those.
@@ -919,25 +925,32 @@ final class AppModel: ObservableObject {
         scheduleRefreshingExpiry()
     }
 
-    /// Redraw when the oldest refreshing space's five minutes are up.
+    /// Seconds from `now` until the earliest refreshing space's five minutes
+    /// are up (0 when overdue); `nil` with nothing refreshing.
+    var refreshingExpiryDelay: TimeInterval? {
+        spaceRefreshing.nextDeadline.map { max(0, $0.timeIntervalSince(now())) }
+    }
+
+    /// Redraw when the earliest refreshing space's five minutes are up.
     private func scheduleRefreshingExpiry() {
         refreshingExpiry?.cancel()
+        guard let delay = refreshingExpiryDelay else { return }
         refreshingExpiry = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(SpaceRefreshing.timeout + 1))
+            // A moment past the deadline, so `expire` sees it as up.
+            try? await Task.sleep(for: .seconds(delay + 0.5))
             guard !Task.isCancelled, let self else { return }
             self.spaceRefreshing.expire(now: self.now())
             if !self.spaceRefreshing.ids.isEmpty { self.scheduleRefreshingExpiry() }
         }
     }
 
-    // A rename or remove echoes the space's id too: its error is not a refresh's.
+    // A rename or remove echoes the space's id too; its own error codes are
+    // told apart in `applySpaceError`, so a refresh in flight keeps its count.
     func renameSpace(_ id: String, to title: String) {
-        spaceRequestsInFlight[id] = nil
         send(.spaceRename(SpaceRename(id: id, title: title)))
     }
 
     func removeSpace(_ id: String) {
-        spaceRequestsInFlight[id] = nil
         send(.spaceRemove(SpaceRemove(id: id)))
     }
 

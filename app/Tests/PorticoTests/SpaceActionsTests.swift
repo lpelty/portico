@@ -337,6 +337,60 @@ final class SpaceActionsTests: XCTestCase {
         XCTAssertFalse(model.isRefreshing("b"), "five minutes: done")
     }
 
+    // MARK: - S5 review fixes
+
+    func test_the_next_deadline_is_the_earliest_entrys() {
+        var state = SpaceRefreshing()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertNil(state.nextDeadline)
+        state.begin("a", updated: "u", at: start)
+        state.begin("b", updated: "u", at: start.addingTimeInterval(200))
+        XCTAssertEqual(state.nextDeadline, start.addingTimeInterval(SpaceRefreshing.timeout))
+        state.end("a")
+        XCTAssertEqual(state.nextDeadline, start.addingTimeInterval(200 + SpaceRefreshing.timeout))
+    }
+
+    func test_the_expiry_waits_for_the_earliest_refresh_not_the_newest() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let (model, _) = model(spaces: [space("a", updated: iso(start)), space("b", updated: iso(start))])
+        XCTAssertNil(model.refreshingExpiryDelay)
+        model.now = { start }
+        model.refreshSpace("a")
+        model.now = { start.addingTimeInterval(200) }
+        model.refreshSpace("b")
+        let delay = model.refreshingExpiryDelay
+        XCTAssertNotNil(delay)
+        XCTAssertLessThanOrEqual(delay ?? .infinity, 101, "a's five minutes end 100 s from now")
+        XCTAssertGreaterThanOrEqual(delay ?? 0, 100)
+        model.now = { start.addingTimeInterval(400) }
+        XCTAssertEqual(model.refreshingExpiryDelay ?? -1, 0, accuracy: 1, "overdue: at once")
+    }
+
+    func test_a_rename_does_not_lose_the_refresh_in_flight() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let (model, _) = model(spaces: [space("a", updated: iso(start))])
+        model.now = { start }
+        model.refreshSpace("a")
+        model.renameSpace("a", to: "New name")
+        model.apply(.error(ErrorMessage(code: "space.rename_failed", message: "read-only", id: "a")))
+        XCTAssertTrue(model.isRefreshing("a"), "the rename's failure is not the refresh's")
+        model.apply(.error(ErrorMessage(code: "space.refresh_failed", message: "exit 2", id: "a")))
+        XCTAssertFalse(model.isRefreshing("a"), "the refresh's own failure still ends it")
+        XCTAssertEqual(model.spaceErrors["a"], "exit 2")
+    }
+
+    func test_a_remove_does_not_lose_the_refresh_in_flight() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let (model, _) = model(spaces: [space("a", updated: iso(start))])
+        model.now = { start }
+        model.refreshSpace("a")
+        model.removeSpace("a")
+        model.apply(.error(ErrorMessage(code: "space.fixed", message: "fixed", id: "a")))
+        XCTAssertTrue(model.isRefreshing("a"))
+        model.apply(.error(ErrorMessage(code: "space.refresh_failed", message: "exit 3", id: "a")))
+        XCTAssertFalse(model.isRefreshing("a"))
+    }
+
     func test_header_note_prefers_refreshing_then_the_error() {
         let date = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertEqual(SpacesPresentation.headerNote(refreshing: true, error: "x", updated: date), .refreshing)
