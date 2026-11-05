@@ -102,7 +102,10 @@ struct DocumentView: View {
                     resultRow(name: hit.name, location: model.location(of: hit.absolutePath, chat: chat), snippet: hit.snippet, path: hit.absolutePath)
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.plain)
+            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+            .scrollContentBackground(.hidden)
+            .background(Theme.sidebar)
             .overlay {
                 if search?.isSearching == true && (search?.hits.isEmpty ?? true) {
                     ProgressView().controlSize(.small)
@@ -116,7 +119,10 @@ struct DocumentView: View {
             List(items) { item in
                 resultRow(name: item.name, location: item.location, snippet: nil, path: item.path)
             }
-            .listStyle(.sidebar)
+            .listStyle(.plain)
+            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+            .scrollContentBackground(.hidden)
+            .background(Theme.sidebar)
             .overlay {
                 if items.isEmpty { ContentUnavailableView.search(text: query) }
             }

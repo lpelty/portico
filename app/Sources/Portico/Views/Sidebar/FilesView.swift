@@ -160,7 +160,10 @@ struct FilesView: View {
                 FileRow(node: node, subtitle: "\(node.root)/\(node.path)")
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .scrollContentBackground(.hidden)
+        .background(Theme.sidebar)
         .overlay {
             if nodes.isEmpty && changed.isEmpty {
                 ContentUnavailableView.search(text: filter)
@@ -232,7 +235,10 @@ struct FileTree: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .scrollContentBackground(.hidden)
+        .background(Theme.sidebar)
         .overlay {
             if model.browsableRoots(for: chat).isEmpty {
                 ContentUnavailableView("No folders", systemImage: "folder", description: Text("The chat's folder appears once the gateway lists the chat."))

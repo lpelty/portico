@@ -8,17 +8,45 @@ import SwiftUI
 enum Theme {
     // MARK: colours (light, dark)
 
-    static let window = dynamic("#FFFFFF", "#1E1E20")
-    static let sidebar = dynamic("#F3F3F5", "#28282A")
-    static let panel = dynamic("#F8F8F9", "#232325")
-    static let surface = dynamic("#F2F2F4", "#2C2C2E")
-    static let control = dynamic("#FFFFFF", "#343436")
-    static let border = dynamic("#E4E4E7", "#3A3A3E")
-    static let borderStrong = dynamic("#CDCDD2", "#4C4C50")
-    static let text = dynamic("#1C1C1E", "#F2F2F4")
-    static let text2 = dynamic("#6B6B70", "#A3A3A9")
-    static let text3 = dynamic("#A3A3A8", "#6F6F75")
-    static let selected = dynamic("#E3E3E7", "#3A3A3E")
+    /// The solid palette (v0.19 spec §2.2): one table, read by the code and the tests.
+    enum Token: CaseIterable {
+        case window, sidebar, panel, surface, control, border, borderStrong, text, text2, text3, selected
+    }
+
+    static let palette: [Token: (light: String, dark: String)] = [
+        .window: ("#FFFFFF", "#161618"),
+        .sidebar: ("#EFEFF2", "#1C1C1F"),
+        .panel: ("#F5F5F7", "#1B1B1D"),
+        .surface: ("#EEEEF1", "#242427"),
+        .control: ("#FFFFFF", "#2D2D31"),
+        .border: ("#D9D9DE", "#45454B"),
+        .borderStrong: ("#BDBDC4", "#5C5C63"),
+        .text: ("#1C1C1E", "#F5F5F7"),
+        .text2: ("#5E5E64", "#B6B6BC"),
+        .text3: ("#6C6C72", "#8A8A91"),
+        .selected: ("#E0E0E5", "#34343A"),
+    ]
+
+    static func hex(_ token: Token) -> (light: String, dark: String) {
+        palette[token] ?? ("#FF00FF", "#FF00FF")
+    }
+
+    private static func color(_ token: Token) -> Color {
+        let pair = hex(token)
+        return dynamic(pair.light, pair.dark)
+    }
+
+    static let window = color(.window)
+    static let sidebar = color(.sidebar)
+    static let panel = color(.panel)
+    static let surface = color(.surface)
+    static let control = color(.control)
+    static let border = color(.border)
+    static let borderStrong = color(.borderStrong)
+    static let text = color(.text)
+    static let text2 = color(.text2)
+    static let text3 = color(.text3)
+    static let selected = color(.selected)
     static let accent = dynamic("#3B6BE0", "#6B8FF2")
     static let accentSoft = dynamic("#EBF0FC", "#26304A")
     static let wait = dynamic("#B86E00", "#F0B24A")
@@ -148,11 +176,6 @@ private struct InPopoverKey: EnvironmentKey {
 }
 
 extension Theme {
-    /// How opaque the window-background tint behind a popover's content is:
-    /// enough that text no longer sits on the bare glass, little enough that
-    /// the glass still shows (Larry, 11-02).
-    static let popoverTintOpacity: Double = 0.6
-
     /// The faint secondary colour: `text3` in the window, `text2` inside a
     /// popover, where the glass behind would wash `text3` out.
     static func faintText(inPopover: Bool) -> Color {
@@ -160,15 +183,15 @@ extension Theme {
     }
 }
 
-/// A tint of the window's background behind a popover's whole content, edge
-/// to edge, over the system glass (which stays).
+/// A solid `Theme.panel` behind a popover's whole content, edge to edge, with
+/// a hairline border. `.presentationBackground` replaces the system glass,
+/// arrow area included; the fill underneath covers the content's own bounds.
 private struct PopoverSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .background {
-                Theme.window.opacity(Theme.popoverTintOpacity)
-                    .ignoresSafeArea()
-            }
+            .background { Theme.panel.ignoresSafeArea() }
+            .overlay { Rectangle().strokeBorder(Theme.border, lineWidth: 1).ignoresSafeArea() }
+            .presentationBackground(Theme.panel)
             .environment(\.inPopover, true)
     }
 }

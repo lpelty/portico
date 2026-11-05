@@ -659,7 +659,7 @@ struct CompactedLine: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(Theme.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 

@@ -89,8 +89,4 @@ final class PopoverSurfaceTests: XCTestCase {
         XCTAssertEqual(Theme.faintText(inPopover: true), Theme.text2)
         XCTAssertEqual(Theme.faintText(inPopover: false), Theme.text3)
     }
-
-    func test_the_tint_is_the_window_background_at_sixty_percent() {
-        XCTAssertEqual(Theme.popoverTintOpacity, 0.6)
-    }
 }
