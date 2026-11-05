@@ -7,3 +7,5 @@ __pycache__/
 .pytest_cache/
 .superpowers/
 .portico-home
+app/Editor/node_modules/
+app/Editor/.out/

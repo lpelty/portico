@@ -64,3 +64,18 @@ def test_scripts_assume_no_checkout_or_home_path():
             if not line.lstrip().startswith("#") and state_literal.search(line):
                 hits.append(f"{where}: a .portico path")
     assert not hits, "scripts assume a place:\n" + "\n".join(hits)
+
+
+def test_editor_bundle_matches_its_sources():
+    """v0.20 §5: editor.js carries the hash of the editor's sources, so a
+    change to app/Editor without `app/Editor/build.sh` fails here."""
+    import hashlib
+
+    editor = REPO / "app" / "Editor"
+    digest = hashlib.sha256()
+    for f in sorted((editor / "src").glob("*.ts"), key=lambda p: p.name.encode()):
+        digest.update(f.read_bytes())
+    digest.update((editor / "package-lock.json").read_bytes())
+    bundle = REPO / "app" / "Sources" / "Portico" / "Resources" / "editor.js"
+    first = bundle.read_text(encoding="utf-8").split("\n", 1)[0]
+    assert first == f"/* portico-editor {digest.hexdigest()} */", "editor.js is stale: run app/Editor/build.sh"
