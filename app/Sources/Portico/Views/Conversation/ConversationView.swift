@@ -314,7 +314,10 @@ struct ConversationView: View {
 
     /// The transcript's drawn rows.
     private var drawn: [TranscriptEntry] {
-        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) })
+        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) }) { row in
+            // A proposal's card and an app's page stand apart; they split a run.
+            model.proposal(forToolUse: row.toolUseId) != nil || model.app(forToolUse: row.toolUseId) != nil
+        }
     }
 
     /// The drawn rows' ids: a place whose top row is gone (the transcript
