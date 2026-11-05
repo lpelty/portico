@@ -181,7 +181,7 @@ from .engine import (
     history_events,
     read_history,
 )
-from .images import ATTACHMENT_HEADER, NOT_IMAGE_NOTICE_KIND, image_blocks, not_image_notice
+from .images import ATTACHMENT_HEADER, NOT_IMAGE_NOTICE_KIND, image_blocks
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
 from .mcp_settings import McpSettings, ToolPolicy, strip_url_queries
@@ -197,6 +197,7 @@ from .messages import (
     AppReload,
     PROTOCOL_VERSION,
     QUEUE_CAPABILITY,
+    MESSAGES_ATTACHMENTS_CAPABILITY,
     SERVICES_STUCK_CAPABILITY,
     THREADS_CAPABILITY,
     AgentCommand,
@@ -527,6 +528,11 @@ def _is_agent_frame(msg: Any) -> bool:
     return isinstance(msg, (ToolStarted, ToolFinished)) and msg.agent_id is not None
 
 
+def _with_attachment_block(msg: UserText) -> UserText:
+    """``msg`` as a gateway before v0.19 sent it: the "Attached files:" block in ``text``, no ``attachments``."""
+    return msg.model_copy(update={"text": with_attachments(msg.text, msg.attachments), "attachments": []})
+
+
 def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     """``msg`` as an app with ``capabilities`` may be sent it; ``None`` when it may not.
 
@@ -540,6 +546,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     ``thread.proposal`` goes only to an app with ``threads.v1`` (v0.16).
     ``app.*`` goes only to an app with ``apps.v1`` (v0.18), live or in a ``chat.history``.
     A ``stuck`` service reaches an app without ``services.stuck.v1`` as ``down`` (v0.17).
+    ``user.text`` reaches an app without ``messages.attachments.v1`` with its attachment
+    block in ``text`` and no ``attachments`` (v0.19), live or in a ``chat.history``.
     """
     if isinstance(msg, ServicesStatus) and SERVICES_STUCK_CAPABILITY not in capabilities:
         if any(s.state == "stuck" for s in msg.services):
@@ -560,6 +568,14 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
             return None
         if isinstance(msg, ChatHistory) and any(e.type in APP_FRAME_TYPES for e in msg.events):
             msg = msg.model_copy(update={"events": [e for e in msg.events if e.type not in APP_FRAME_TYPES]})
+    if MESSAGES_ATTACHMENTS_CAPABILITY not in capabilities:
+        # v0.19 (fix round 1, ruling C): an older app gets today's user.text, the block inside ``text``.
+        if isinstance(msg, UserText) and msg.attachments:
+            msg = _with_attachment_block(msg)
+        elif isinstance(msg, ChatHistory) and any(isinstance(e, UserText) and e.attachments for e in msg.events):
+            msg = msg.model_copy(
+                update={"events": [_with_attachment_block(e) if isinstance(e, UserText) and e.attachments else e for e in msg.events]}
+            )
     if AGENTS_CAPABILITY in capabilities:
         return msg
     if _is_agent_frame(msg):
@@ -3420,11 +3436,9 @@ class GatewayServer:
         if first:
             title = title_from(msg.text)
         text = with_attachments(msg.text, attachments)
-        # v0.19 (spec §8.3): images go as images too; their paths stay in the text.
-        images, refused = await asyncio.to_thread(image_blocks, attachments)
-        # v0.19 (spec §8.4): the echo is what was typed, the attachments apart.
+        # v0.19 (spec §8.4): the echo is what was typed, the attachments apart
+        # (``for_app`` gives an app without ``messages.attachments.v1`` the full text).
         run = await self._echo_turn(chat, msg.text, via, attachments)
-        await self._not_image_notices(chat, refused)
         chat.sent_turn = True
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
@@ -3433,14 +3447,28 @@ class GatewayServer:
         engine_text, context = self._with_app_context(chat, text)
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
+        # v0.19 (spec §8.3): images go as images too, their paths still in the
+        # text; a slash command goes as a string, as the engine reads commands.
+        images_from = [] if command is not None else attachments
         self._spawn(
-            self._send_task(chat, run, engine_text, title, msg, conn, context, images), name=f"portico-send-{chat.number}"
+            self._send_task(chat, run, engine_text, title, msg, conn, context, images_from),
+            name=f"portico-send-{chat.number}",
         )
 
-    async def _not_image_notices(self, chat: Chat, names: list[str]) -> None:
+    async def _image_blocks(self, paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+        """``images.image_blocks`` off the event loop (files are read and encoded); nothing for no paths."""
+        if not paths:
+            return [], []
+        try:
+            return await asyncio.to_thread(image_blocks, paths)
+        except Exception:
+            log.exception("reading image attachments failed; they go as paths only")
+            return [], []
+
+    async def _not_image_notices(self, chat: Chat, notices: list[str]) -> None:
         """One ``chat.notice`` per image that goes to the agent as a path only (v0.19, spec §8.3)."""
-        for name in names:
-            await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=not_image_notice(name), kind=NOT_IMAGE_NOTICE_KIND))
+        for text in notices:
+            await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=text, kind=NOT_IMAGE_NOTICE_KIND))
 
     def _with_app_context(self, chat: Chat, text: str) -> tuple[str, dict[str, tuple[str, str]]]:
         """``text`` as the engine gets it, MCP apps' kept context first unless it is a command (v0.18),
@@ -3460,12 +3488,17 @@ class GatewayServer:
         msg: MessageSend,
         conn: ServerConnection | None,
         context: dict[str, tuple[str, str]] | None = None,
-        images: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
     ) -> None:
         """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``.
 
         v0.18 (R-c17): when the text never reached the engine, the apps' context taken for it is kept.
+        v0.19: ``image_paths`` are read here, after the echo (the echo goes first, v0.7), and
+        each image that goes as a path only gets its notice while the turn is still this one.
         """
+        images, notices = await self._image_blocks(list(image_paths or []))
+        if notices and self._runs.get(chat.number) is run:
+            await self._not_image_notices(chat, notices)
         try:
             await self._begin_turn(chat, run, text, images)
         except ProtocolError as e:
@@ -3568,9 +3601,20 @@ class GatewayServer:
             return  # an interrupted turn may drop the write; the stopped turn's end returns it
         while held and slash_command(held[0].text) is None:
             item = held[0]
+            if item.attachments:
+                # v0.19: read the images first; a stop or a queue change meanwhile wins.
+                images, notices = await self._image_blocks(list(item.attachments))
+                if run.stop_requested or self._runs.get(chat.number) is not run or chat.engine is not engine:
+                    return
+                held = self._queues.get(chat.number)
+                if not held:
+                    return
+                if held[0] is not item:
+                    continue  # taken back meanwhile: the next one, from the top
+            else:
+                images, notices = [], []
             text = with_attachments(item.text, item.attachments)
             engine_text, context = self._with_app_context(chat, text)
-            images, refused = await asyncio.to_thread(image_blocks, item.attachments)
             try:
                 await engine.inject(engine_text, images)
             except Exception:
@@ -3589,7 +3633,7 @@ class GatewayServer:
                     ts=_now(), chat=chat.number, turn=run.turn, text=item.text, via=via, attachments=list(item.attachments)
                 ),
             )
-            await self._not_image_notices(chat, refused)
+            await self._not_image_notices(chat, notices)
 
     async def _send_queued(self, chat: Chat) -> None:
         """No turn running and something held: the oldest goes as the next turn.

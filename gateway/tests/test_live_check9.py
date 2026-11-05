@@ -265,8 +265,7 @@ async def test_b_an_attached_file_is_read_by_the_agent(server: GatewayServer, va
         assert isinstance(events[0], TurnStarted), events[0]
         user = events[1]
         assert isinstance(user, UserText), user
-        # v0.19 (spec §8.4): the typed text, the attachments apart.
-        assert user.attachments == [str(vault.alpha)] and "Attached files:" not in user.text, user
+        assert user.text.endswith(f"\n\nAttached files:\n- {vault.alpha}"), user.text
         assert isinstance(events[2], ChatState) and events[2].state == "working", events[2]
         assert isinstance(events[-1], TurnFinished) and events[-1].outcome == "done", events[-1]
         seqs = [e.seq for e in events if getattr(e, "seq", None) is not None]
@@ -343,7 +342,7 @@ async def test_d_a_spaced_path_and_a_unicode_path_are_both_read(server: GatewayS
         )
         user = events[1]
         assert isinstance(user, UserText), user
-        assert user.attachments == [str(vault.spaced), str(vault.unicode)] and "Attached files:" not in user.text, user
+        assert user.text.endswith(f"\n\nAttached files:\n- {vault.spaced}\n- {vault.unicode}"), user.text
         for path in (vault.spaced, vault.unicode):
             reads = reads_of(events, path)
             assert reads, f"no tool.started Read of {path}:\n{describe(events)}"

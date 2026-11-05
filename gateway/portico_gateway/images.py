@@ -4,20 +4,27 @@ An attachment that is a png, jpeg, gif or webp of at most ``MAX_IMAGE_BYTES``
 goes to the engine as a base64 ``image`` block after the message's text block;
 its path stays in the text's "Attached files:" block as well, so the agent
 knows where the file lives. The format is read from the file's first bytes,
-never its name. An image too large, or one that cannot be read, goes as a
-path only, and the person is told (``not_image_notice``). Other files are
-paths only, as before.
+never its name. One message carries at most ``MAX_IMAGES`` images and
+``MAX_ENCODED_TOTAL`` base64 bytes of them. An image too large, past those
+caps, or one that cannot be read, goes as a path only, and the person is told
+(``image_blocks``' notices). Other files are paths only, as before.
 """
 
 from __future__ import annotations
 
 import base64
+import os
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-# The API's 5 MB limit is on the base64 text; 3.75 MB of raw bytes encodes to it.
-MAX_IMAGE_BYTES = 3_750_000
+# Raw bytes per image (fix round 1, ruling A): base64 of 3 MB is about 4.0 MB,
+# under the API's 5 MB limit on the encoded text with margin.
+MAX_IMAGE_BYTES = 3_000_000
+
+# Per message (ruling B): images past either cap go as paths only.
+MAX_IMAGES = 4
+MAX_ENCODED_TOTAL = 12_000_000
 
 # The exact form attachments take in the text the engine receives
 # (PROTOCOL.md, ``message.send``): "\n\n" + this + "\n", then "- /path" lines.
@@ -25,6 +32,11 @@ ATTACHMENT_HEADER = "Attached files:"
 
 # The ``chat.notice`` kind for an image that goes as a path only.
 NOT_IMAGE_NOTICE_KIND = "attachment.not_image"
+
+# Why an image goes as a path only; each has its notice (``not_image_notice``).
+TOO_LARGE = "too_large"
+UNREADABLE = "unreadable"
+PAST_MESSAGE_CAP = "past_message_cap"
 
 # Names that read as an image the agent could have been shown; one that
 # cannot be read or sniffed is still the person's image, and they hear why.
@@ -44,51 +56,64 @@ def media_type(head: bytes) -> str | None:
     return None
 
 
+def read_image(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """``path``'s ``image`` block, or ``None`` and why: ``TOO_LARGE``, ``UNREADABLE``, or ``None`` for not an image.
+
+    A file that can't be opened or read (gone since it was checked, no
+    permission) is ``UNREADABLE`` when its name says image, else not one.
+    """
+    try:
+        with path.open("rb") as f:
+            head = f.read(12)
+            kind = media_type(head)
+            if kind is None:
+                return None, None
+            if os.fstat(f.fileno()).st_size > MAX_IMAGE_BYTES:
+                return None, TOO_LARGE
+            data = head + f.read(MAX_IMAGE_BYTES + 1 - len(head))
+    except OSError:
+        return None, (UNREADABLE if path.suffix.lower() in _IMAGE_SUFFIXES else None)
+    if len(data) > MAX_IMAGE_BYTES:
+        return None, TOO_LARGE  # grew since the stat
+    return {"type": "image", "source": {"type": "base64", "media_type": kind, "data": base64.b64encode(data).decode("ascii")}}, None
+
+
 def image_block(path: Path) -> dict[str, Any] | None:
     """The ``image`` content block for ``path``; ``None`` when it is not a supported image, is too large, or can't be read."""
-    try:
-        if path.stat().st_size > MAX_IMAGE_BYTES:
-            return None
-        with path.open("rb") as f:
-            data = f.read(MAX_IMAGE_BYTES + 1)
-    except OSError:
-        return None
-    if len(data) > MAX_IMAGE_BYTES:
-        return None  # grew since the stat
-    kind = media_type(data[:12])
-    if kind is None:
-        return None
-    return {"type": "image", "source": {"type": "base64", "media_type": kind, "data": base64.b64encode(data).decode("ascii")}}
-
-
-def _reads_as_image(path: Path) -> bool:
-    """Whether ``path`` is a supported image by its bytes, or, when they can't be read, by its name."""
-    try:
-        with path.open("rb") as f:
-            return media_type(f.read(12)) is not None
-    except OSError:
-        return path.suffix.lower() in _IMAGE_SUFFIXES
+    return read_image(path)[0]
 
 
 def image_blocks(paths: Iterable[str]) -> tuple[list[dict[str, Any]], list[str]]:
-    """The image blocks for ``paths``, in order, and the names of the images that go as paths only.
+    """The image blocks for one message's ``paths``, in order, and a notice for each image that goes as a path only.
 
-    A file that is not a supported image (HEIC, a PDF, text) is neither: it goes as a path, as any file does.
+    A file that is not a supported image (HEIC, a PDF, text) is neither: it
+    goes as a path, as any file does. Past ``MAX_IMAGES`` images or
+    ``MAX_ENCODED_TOTAL`` encoded bytes, a further image goes as a path only.
     """
     blocks: list[dict[str, Any]] = []
-    refused: list[str] = []
+    notices: list[str] = []
+    total = 0
     for raw in paths:
         path = Path(raw)
-        block = image_block(path)
+        block, why = read_image(path)
         if block is not None:
-            blocks.append(block)
-        elif _reads_as_image(path):
-            refused.append(path.name)
-    return blocks, refused
+            size = len(block["source"]["data"])
+            if len(blocks) >= MAX_IMAGES or total + size > MAX_ENCODED_TOTAL:
+                block, why = None, PAST_MESSAGE_CAP
+            else:
+                blocks.append(block)
+                total += size
+        if block is None and why is not None:
+            notices.append(not_image_notice(path.name, why))
+    return blocks, notices
 
 
-def not_image_notice(name: str) -> str:
+def not_image_notice(name: str, why: str = TOO_LARGE) -> str:
     """What the person sees for an image the agent is not shown."""
+    if why == UNREADABLE:
+        return f"{name} can't be read as an image; it can still open the file."
+    if why == PAST_MESSAGE_CAP:
+        return f"{name} is past what one message can show the agent as images; it can still open the file."
     return f"{name} is too large to show the agent as an image; it can still open the file."
 
 

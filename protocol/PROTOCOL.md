@@ -240,11 +240,15 @@ Attached files:
 
 v0.19 (`messages.attachments.v1` in the gateway's `hello.capabilities`): an
 attachment that is a png, jpeg, gif or webp (by its bytes, not its name) of
-at most 3,750,000 bytes also goes to the engine as a base64 `image` content
-block after the text; its path stays in the block above. An image too large
-or unreadable goes as a path only, with a `chat.notice` of `kind:
-"attachment.not_image"` in the turn: "<name> is too large to show the agent
-as an image; it can still open the file." Other files are paths only.
+at most 3,000,000 bytes also goes to the engine as a base64 `image` content
+block after the text; its path stays in the block above. One message carries
+at most 4 images and 12,000,000 bytes of their base64. An image that goes as
+a path only gets a `chat.notice` of `kind: "attachment.not_image"` in the
+turn: "<name> is too large to show the agent as an image; it can still open
+the file.", "<name> can't be read as an image; it can still open the file.",
+or, past the message's caps, "<name> is past what one message can show the
+agent as images; it can still open the file." Other files are paths only, and
+a slash command's attachments are paths only (the command goes as a string).
 
 ### `turn.stop` — `TurnStop`
 `chat`. Interrupts the running turn; it finishes with `outcome: stopped`
@@ -662,8 +666,9 @@ in a transcript replay. An older app ignores it. v0.19
 (`messages.attachments.v1`): `attachments: [string]` (default empty), the
 attached files' paths, and `text` is what the person typed, without the
 "Attached files:" block, live and in a transcript replay (which recovers the
-paths from the block's trailing form). An older gateway sends no
-`attachments`, with the block inside `text`.
+paths from the block's trailing form). Only to an app whose `hello` declared
+`messages.attachments.v1`: any other app, and any older gateway, has the block
+inside `text` and no `attachments`.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
