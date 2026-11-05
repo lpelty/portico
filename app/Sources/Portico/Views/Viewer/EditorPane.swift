@@ -601,6 +601,54 @@ struct ViewerEditStatus: View {
     }
 }
 
+/// The bar over the page when the agent changed the file while the person
+/// had edits (§2.6): Keep mine, Use the agent's. Autosave waits for one.
+struct EditConflictBar: View {
+    @ObservedObject var session: EditSession
+
+    static let message = "The agent changed this file while you were editing"
+
+    var body: some View {
+        if session.conflict != nil {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(Theme.iconFont(12, weight: .medium))
+                    .foregroundStyle(Theme.wait)
+                Text(Self.message)
+                    .scaledFont(12, weight: .medium)
+                    .foregroundStyle(Theme.wait)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                barButton("Keep mine", help: "Save your version over the agent's") { Task { await session.keepMine() } }
+                barButton("Use the agent's", help: "Show the agent's version; ⌘Z brings yours back while Edit is on") {
+                    Task { await session.useTheirs() }
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 38)
+            .background(Theme.waitSoft)
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
+        }
+    }
+
+    private func barButton(_ title: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .scaledFont(12)
+                .foregroundStyle(Theme.text)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 9)
+                .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+                .fixedSize()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.hover)
+        .tip(help)
+    }
+}
+
 /// "Restore unsaved edits" over the page, when a recovery copy newer than
 /// the file exists (fix round 1, ruling B).
 struct EditRestoreBar: View {

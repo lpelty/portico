@@ -521,6 +521,113 @@ final class FileEditingTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
     }
 
+    // MARK: - the agent changed the file (§2.6, Task 3)
+
+    private func conflictSession(_ url: URL) throws -> (EditSession, ReplaceLog) {
+        let log = ReplaceLog()
+        let edit = try session(url)
+        edit.editorReplace = { text, options in
+            log.calls.append((text, options))
+            return log.accept
+        }
+        return (edit, log)
+    }
+
+    private func agentWrites(_ text: String, to url: URL) throws {
+        // A different size, so the stamp moves whatever the clock's grain.
+        try Data(text.utf8).write(to: url)
+    }
+
+    func testACleanSessionReloadsWithNoBar() async throws {
+        let url = try write("clean.md", "one\n")
+        let (edit, log) = try conflictSession(url)
+        try agentWrites("one, and the agent's line\n", to: url)
+        await edit.recheckDisk()
+        XCTAssertNil(edit.conflict)
+        XCTAssertEqual(edit.state, .saved)
+        XCTAssertEqual(edit.text, "one, and the agent's line\n")
+        XCTAssertEqual(edit.baseline, FileStamp.of(url))
+        XCTAssertEqual(log.calls.first?.1, EditSession.Replace(keepCursorLine: true, keepUndo: false, force: false))
+    }
+
+    func testTheEditorRefusingAReloadShowsTheBar() async throws {
+        let url = try write("refuse.md", "one\n")
+        let (edit, log) = try conflictSession(url)
+        log.accept = false
+        try agentWrites("agent's\n", to: url)
+        await edit.recheckDisk()
+        XCTAssertEqual(edit.conflict, .agentChanged)
+        XCTAssertEqual(edit.state, .paused)
+    }
+
+    func testADirtySessionShowsTheBarAndWritesNothing() async throws {
+        let url = try write("dirty.md", "one\n")
+        let (edit, log) = try conflictSession(url)
+        edit.markDirty()
+        try agentWrites("the agent's version\n", to: url)
+        await edit.recheckDisk()
+        XCTAssertEqual(edit.conflict, .agentChanged)
+        XCTAssertEqual(edit.state, .paused)
+        XCTAssertTrue(log.calls.isEmpty, "never replaced while edits are unsaved")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "the agent's version\n")
+    }
+
+    func testASaveTimeMismatchShowsTheBarAndWritesNothing() async throws {
+        let url = try write("race.md", "one\n")
+        let (edit, _) = try conflictSession(url)
+        try agentWrites("the agent got there first\n", to: url)
+        edit.textChanged("one, mine\n")
+        await edit.saveNow()
+        XCTAssertEqual(edit.conflict, .agentChanged)
+        XCTAssertEqual(edit.state, .paused)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "the agent got there first\n")
+    }
+
+    func testWhilePausedAutosaveDoesNothing() async throws {
+        let url = try write("paused.md", "one\n")
+        let (edit, _) = try conflictSession(url)
+        edit.markDirty()
+        try agentWrites("agent's text\n", to: url)
+        await edit.recheckDisk()
+        edit.textChanged("more of mine\n")
+        await edit.saveNow()
+        XCTAssertEqual(edit.state, .paused)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "agent's text\n")
+        let ended = await edit.end()
+        XCTAssertFalse(ended, "ending while the bar is up keeps the session")
+    }
+
+    func testKeepMineWrites() async throws {
+        let url = try write("mine.md", "one\n")
+        let (edit, _) = try conflictSession(url)
+        edit.textChanged("one, mine\n")
+        try agentWrites("the agent's longer version\n", to: url)
+        await edit.saveNow()
+        XCTAssertEqual(edit.conflict, .agentChanged)
+        edit.currentText = { "one, mine, final\n" }
+        await edit.keepMine()
+        XCTAssertNil(edit.conflict)
+        XCTAssertEqual(edit.state, .saved)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "one, mine, final\n")
+        XCTAssertEqual(edit.baseline, FileStamp.of(url))
+    }
+
+    func testUseTheirsLoadsTheDiskText() async throws {
+        let url = try write("theirs.md", "one\n")
+        let (edit, log) = try conflictSession(url)
+        edit.markDirty()
+        try agentWrites("the agent's version\n", to: url)
+        await edit.recheckDisk()
+        XCTAssertEqual(edit.conflict, .agentChanged)
+        await edit.useTheirs()
+        XCTAssertNil(edit.conflict)
+        XCTAssertEqual(edit.state, .saved)
+        XCTAssertEqual(edit.text, "the agent's version\n")
+        XCTAssertFalse(edit.hasUnsavedText, "a forced replace clears the editor's dirty flag")
+        XCTAssertEqual(log.calls.last?.1, EditSession.Replace(keepCursorLine: true, keepUndo: true, force: true))
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "the agent's version\n", "nothing written")
+    }
+
     func testEditorLinksRouteSafely() {
         let base = folder!
         XCTAssertEqual(EditorLink.route(URL(string: "https://example.com/a"), folder: base), .external(URL(string: "https://example.com/a")!))
@@ -590,6 +697,13 @@ final class FileEditingTests: XCTestCase {
         XCTAssertEqual(text, edit.text, "the editor holds the file's text, CRLF and all")
         coordinator.tearDown(view)
     }
+}
+
+/// Records the editor replacements a session asked for.
+@MainActor
+private final class ReplaceLog {
+    var calls: [(String, EditSession.Replace)] = []
+    var accept = true
 }
 
 private final class FailingWriter: @unchecked Sendable {

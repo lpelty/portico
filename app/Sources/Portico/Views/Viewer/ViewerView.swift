@@ -213,6 +213,20 @@ struct ViewerView: View {
         // The viewer hidden or gone: the edit is ended (the registry keeps
         // text that couldn't be saved).
         .onDisappear { edit.shown(nil) }
+        // The agent may have written the file (§2.6): an artifact event or
+        // any redraw that sees a new date or size.
+        .onChange(of: editedFileIdentity) { _, identity in
+            guard identity != nil, let session = edit.session else { return }
+            Task { await session.recheckDisk() }
+        }
+    }
+
+    /// The edited file's date and size, while Edit is on.
+    private var editedFileIdentity: String? {
+        guard let session = edit.session, let current = model.current[chat], current.location == session.location else {
+            return nil
+        }
+        return ArtifactPresentation(artifact: current).contentIdentity + "|" + current.id
     }
 
     /// The shown file's editability, for the toggle; `nil` with no file
@@ -436,6 +450,7 @@ struct ViewerView: View {
             // While editing, the pane is keyed on the file alone: its own
             // saves change the date and size, and must not reload it.
             VStack(spacing: 0) {
+                EditConflictBar(session: session)
                 EditRestoreBar(edit: edit)
                 EditorPaneHost(
                     settings: model.settings, session: session, topLine: edit.topLine(for: session.url),
