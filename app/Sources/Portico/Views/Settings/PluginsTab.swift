@@ -6,6 +6,8 @@ import SwiftUI
 /// AR4's lists as the view draws them: View-free so the words and controls
 /// are tested without a window.
 enum PluginsPresentation {
+    /// The segmented control's name to VoiceOver; each segment keeps its own.
+    static let segmentedLabel = "Plugins"
     enum Segment: String, CaseIterable, Sendable {
         case installed, browse
 
@@ -406,8 +408,7 @@ struct PluginsTab: View {
                     Button(update) { model.pluginUpdate(row.id) }
                         .buttonStyle(SettingsButtonStyle(kind: .accent))
                 }
-                SettingsSwitch(isOn: Binding(get: { row.isOn }, set: { model.pluginSetEnabled(row.id, enabled: $0) }))
-                    .accessibilityLabel(row.title)
+                SettingsSwitch(row.title, isOn: Binding(get: { row.isOn }, set: { model.pluginSetEnabled(row.id, enabled: $0) }))
                 Menu {
                     ForEach(row.menuItems, id: \.self) { item in
                         if item == .uninstall { Divider() }
@@ -558,7 +559,9 @@ struct PluginsSegmented: View {
     @Binding var selection: PluginsPresentation.Segment
 
     var body: some View {
-        SettingsSegmented(selection: $selection, options: PluginsPresentation.Segment.allCases.map { ($0, $0.title) })
+        SettingsSegmented(
+            selection: $selection, options: PluginsPresentation.Segment.allCases.map { ($0, $0.title) },
+            label: PluginsPresentation.segmentedLabel)
     }
 }
 

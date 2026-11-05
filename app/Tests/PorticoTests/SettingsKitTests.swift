@@ -21,10 +21,12 @@ final class SettingsKitTests: XCTestCase {
             "Form {", ".formStyle(", ".toggleStyle(.checkbox)", ".toggleStyle(.switch)",
             ".pickerStyle(.radioGroup)", ".pickerStyle(.segmented)",
             // A plain button has no hover: `.hover`, `.hoverText` or `SettingsButtonStyle` instead.
-            ".buttonStyle(.plain)",
+            ".buttonStyle(.plain)", ".buttonStyle(.borderless", ".buttonStyle(.bordered", ".buttonStyle(.link",
+            ".toggleStyle(.button)",
         ]
-        // A `Toggle` in a tab is a default one: the kit's switch and checkbox instead.
-        let toggle = try NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])Toggle\s*\("#)
+        // A `Toggle` in a tab is a default one, in any form (`Toggle(`, `Toggle {`,
+        // `Toggle(isOn:)`): the kit's switch and checkbox instead.
+        let toggle = try NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])Toggle\s*[({]"#)
         let files = try tabSources()
         XCTAssertGreaterThanOrEqual(files.count, 4)
         var offenders: [String] = []
@@ -36,6 +38,15 @@ final class SettingsKitTests: XCTestCase {
             }
         }
         XCTAssertEqual(offenders, [])
+    }
+
+    func testTheToggleSweepCatchesEveryForm() throws {
+        let toggle = try NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])Toggle\s*[({]"#)
+        for text in ["Toggle(\"a\", isOn: $b)", "Toggle(isOn: $b) { Text(\"a\") }", "Toggle { Text(\"a\") }"] {
+            XCTAssertNotNil(toggle.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), text)
+        }
+        let kit = "SettingsSwitch(\"a\", isOn: $b)"
+        XCTAssertNil(toggle.firstMatch(in: kit, range: NSRange(kit.startIndex..., in: kit)))
     }
 
     func testTheSweepWouldCatchAForm() {
@@ -63,6 +74,32 @@ final class SettingsKitTests: XCTestCase {
         XCTAssertTrue(Settings(defaults: defaults).gatewayAdvancedOpen)
     }
 
+    /// A close while a custom connection is set is ignored (the stored
+    /// state is kept); without one, a click stores what it asks for.
+    func testAdvancedIgnoresACloseWhileCustom() {
+        XCTAssertNil(GatewaySettingsPresentation.storedAfterToggle(open: false, address: "ws://x", tokenFile: ""))
+        XCTAssertNil(GatewaySettingsPresentation.storedAfterToggle(open: false, address: "", tokenFile: "/t"))
+        XCTAssertEqual(GatewaySettingsPresentation.storedAfterToggle(open: true, address: "ws://x", tokenFile: ""), true)
+        XCTAssertEqual(GatewaySettingsPresentation.storedAfterToggle(open: false, address: "", tokenFile: ""), false)
+        XCTAssertEqual(GatewaySettingsPresentation.storedAfterToggle(open: true, address: "", tokenFile: ""), true)
+        XCTAssertEqual(GatewaySettingsPresentation.lockedOpenTip, "Clear the custom connection to close")
+    }
+
+    /// Every switch and checkbox has a name, the toggle trait and On/Off;
+    /// a radio button or segment its own words, selected when chosen.
+    func testControlsSayWhatTheyAre() {
+        let on = SettingsControlAccessibility.toggle("Voice input", isOn: true)
+        XCTAssertEqual(on.label, "Voice input")
+        XCTAssertEqual(on.traits, .isToggle)
+        XCTAssertEqual(on.value, "On")
+        XCTAssertEqual(SettingsControlAccessibility.toggle("Voice input", isOn: false).value, "Off")
+        let chosen = SettingsControlAccessibility.option("Fast", chosen: true)
+        XCTAssertEqual(chosen.label, "Fast")
+        XCTAssertEqual(chosen.traits, .isSelected)
+        XCTAssertNil(chosen.value)
+        XCTAssertEqual(SettingsControlAccessibility.option("Slow", chosen: false).traits, [])
+    }
+
     func testHoverTintOnControls() {
         XCTAssertEqual(SettingsControlState.background(hovering: true, pressed: false), Theme.hoverTint)
         XCTAssertEqual(SettingsControlState.background(hovering: true, pressed: true), Theme.pressTint)
@@ -77,13 +114,16 @@ final class SettingsKitTests: XCTestCase {
     func testKitControlsHost() {
         let view = VStack {
             SettingsSection("Title", footnote: "Note") {
-                SettingsRow("Row", help: "Help") { SettingsSwitch(isOn: .constant(true)) }
+                SettingsRow("Row", help: "Help") { SettingsSwitch("Row", isOn: .constant(true)) }
                 SettingsCheckbox("Box", help: "Help", isOn: .constant(false))
                 SettingsRow("Radio") {
-                    SettingsRadioGroup(selection: .constant(1), options: [(1, "One"), (2, "Two")])
+                    SettingsRadioGroup(selection: .constant(1), options: [(1, "One"), (2, "Two")], label: "Radio")
+                }
+                SettingsRow("Segments") {
+                    SettingsSegmented(selection: .constant(1), options: [(1, "One"), (2, "Two")], label: "Segments")
                 }
             }
-            SettingsDisclosure("Advanced", isOpen: .constant(true)) { Text("Inside").scaledFont(12) }
+            SettingsDisclosure("Advanced", isOpen: .constant(true), lockedOpen: "Locked") { Text("Inside").scaledFont(12) }
         }
         .environmentObject(Settings(defaults: UserDefaults(suiteName: "portico.tests.kit.\(UUID().uuidString)")!))
         let host = NSHostingView(rootView: view)

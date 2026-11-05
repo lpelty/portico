@@ -16,12 +16,10 @@ struct VoiceSettingsTab: View {
                 footnote: "Press the mic in the message box and speak; press it again, or Esc, to stop. Your words appear as you speak and are turned into text on this Mac. The first time, macOS asks to allow the microphone and speech recognition."
             ) {
                 SettingsRow("Voice input") {
-                    SettingsSwitch(isOn: $settings.voiceInputEnabled)
-                        .accessibilityLabel("Voice input")
+                    SettingsSwitch("Voice input", isOn: $settings.voiceInputEnabled)
                 }
                 SettingsRow("Send when I stop talking") {
-                    SettingsSwitch(isOn: $settings.sendWhenStopTalking)
-                        .accessibilityLabel("Send when I stop talking")
+                    SettingsSwitch("Send when I stop talking", isOn: $settings.sendWhenStopTalking)
                 }
                 .disabled(!settings.voiceInputEnabled)
                 SettingsRow("Hold-to-talk shortcut") {
@@ -33,6 +31,7 @@ struct VoiceSettingsTab: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .fixedSize()
+                    .hoverHighlight()
                 }
                 .disabled(!settings.voiceInputEnabled)
             }
@@ -43,8 +42,7 @@ struct VoiceSettingsTab: View {
                     footnote: "Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading."
                 ) {
                     SettingsRow("Read aloud on replies") {
-                        SettingsSwitch(isOn: $settings.readAloudEnabled)
-                            .accessibilityLabel("Read aloud on replies")
+                        SettingsSwitch("Read aloud on replies", isOn: $settings.readAloudEnabled)
                     }
                     SettingsRow("Voice") {
                         Picker("Voice", selection: $settings.voiceIdentifier) {
@@ -60,13 +58,14 @@ struct VoiceSettingsTab: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .fixedSize()
+                        .hoverHighlight()
                     }
                     .disabled(!settings.readAloudEnabled)
                     SettingsRow("Speed") {
                         SettingsSegmented(
                             selection: $settings.speechRate,
-                            options: Settings.SpeechRate.allCases.map { ($0, $0.label) })
-                            .accessibilityLabel("Speed")
+                            options: Settings.SpeechRate.allCases.map { ($0, $0.label) },
+                            label: "Speed")
                     }
                     .disabled(!settings.readAloudEnabled)
                     HStack {

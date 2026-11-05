@@ -149,27 +149,68 @@ enum SettingsControlState {
     }
 }
 
+/// What VoiceOver hears for one of the kit's controls: its name, its
+/// traits and its value. The views read it, so a test can too.
+struct SettingsControlAccessibility: Equatable {
+    let label: String
+    let traits: AccessibilityTraits
+    let value: String?
+
+    static func toggle(_ label: String, isOn: Bool) -> Self {
+        Self(label: label, traits: .isToggle, value: isOn ? "On" : "Off")
+    }
+
+    /// A radio button or a segment: its own words, selected when chosen.
+    static func option(_ label: String, chosen: Bool) -> Self {
+        Self(label: label, traits: chosen ? .isSelected : [], value: nil)
+    }
+}
+
+extension View {
+    func settingsAccessibility(_ a: SettingsControlAccessibility) -> some View {
+        accessibilityLabel(a.label)
+            .accessibilityAddTraits(a.traits)
+            .accessibilityValue(a.value ?? "")
+    }
+
+    /// A group of options as one container with a name; each option inside
+    /// keeps its own name (`.contain`, so the label does not push down).
+    @ViewBuilder
+    func settingsGroupLabel(_ label: String?) -> some View {
+        if let label {
+            accessibilityElement(children: .contain).accessibilityLabel(label)
+        } else {
+            self
+        }
+    }
+}
+
 /// The button style of the kit's switches, checkboxes, radio buttons and
 /// segments: the label as drawn, its hit area tinted on hover and press.
 struct SettingsControlStyle: ButtonStyle {
     var radius: CGFloat = SettingsKit.hitRadius
+    /// Lay the tint over the label rather than under it, for a label with an
+    /// opaque fill of its own (the chosen segment).
+    var tintOnTop = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Drawn(label: configuration.label, pressed: configuration.isPressed, radius: radius)
+        Drawn(label: configuration.label, pressed: configuration.isPressed, radius: radius, tintOnTop: tintOnTop)
     }
 
     private struct Drawn<Label: View>: View {
         let label: Label
         let pressed: Bool
         let radius: CGFloat
+        let tintOnTop: Bool
         @State private var hovering = false
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
+            let tint = SettingsControlState.background(hovering: hovering, pressed: pressed, enabled: isEnabled)
+            let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
             label
-                .background(
-                    SettingsControlState.background(hovering: hovering, pressed: pressed, enabled: isEnabled),
-                    in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .background(tintOnTop ? .clear : tint, in: shape)
+                .overlay { shape.fill(tintOnTop ? tint : .clear).allowsHitTesting(false) }
                 .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                 .opacity(isEnabled ? 1 : SettingsKit.disabledOpacity)
                 .onHover { hovering = $0 }
@@ -181,9 +222,13 @@ struct SettingsControlStyle: ButtonStyle {
 /// An on/off switch, drawn here so it can show hover and press: a 26 by 15
 /// track, the accent when on, a white knob.
 struct SettingsSwitch: View {
+    let label: String
     @Binding var isOn: Bool
 
-    init(isOn: Binding<Bool>) {
+    /// The name is required: VoiceOver reads it, and a switch without one
+    /// cannot be written.
+    init(_ label: String, isOn: Binding<Bool>) {
+        self.label = label
         _isOn = isOn
     }
 
@@ -204,8 +249,7 @@ struct SettingsSwitch: View {
             .padding(4)
         }
         .buttonStyle(SettingsControlStyle(radius: 6))
-        .accessibilityAddTraits(.isToggle)
-        .accessibilityValue(isOn ? "On" : "Off")
+        .settingsAccessibility(.toggle(label, isOn: isOn))
     }
 }
 
@@ -242,9 +286,7 @@ struct SettingsCheckbox: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(SettingsControlStyle())
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(.isToggle)
-        .accessibilityValue(isOn ? "On" : "Off")
+        .settingsAccessibility(.toggle(label, isOn: isOn))
     }
 }
 
@@ -274,10 +316,12 @@ struct SettingsCheckboxBox: View {
 struct SettingsRadioGroup<V: Hashable>: View {
     @Binding var selection: V
     let options: [(V, String)]
+    let label: String?
 
-    init(selection: Binding<V>, options: [(V, String)]) {
+    init(selection: Binding<V>, options: [(V, String)], label: String? = nil) {
         _selection = selection
         self.options = options
+        self.label = label
     }
 
     var body: some View {
@@ -297,21 +341,25 @@ struct SettingsRadioGroup<V: Hashable>: View {
                     .padding(.vertical, 4)
                 }
                 .buttonStyle(SettingsControlStyle())
-                .accessibilityAddTraits(chosen ? .isSelected : [])
+                .settingsAccessibility(.option(option.1, chosen: chosen))
             }
         }
+        .settingsGroupLabel(label)
     }
 }
 
 /// A segmented choice (AR4): the control colour, radius 7, a border, the
-/// chosen segment on the selected fill, radius 5, the hover tint on each.
+/// chosen segment on the selected fill, radius 5, the hover tint laid over
+/// each (over, so it shows on the chosen one too).
 struct SettingsSegmented<V: Hashable>: View {
     @Binding var selection: V
     let options: [(V, String)]
+    let label: String?
 
-    init(selection: Binding<V>, options: [(V, String)]) {
+    init(selection: Binding<V>, options: [(V, String)], label: String? = nil) {
         _selection = selection
         self.options = options
+        self.label = label
     }
 
     var body: some View {
@@ -326,13 +374,14 @@ struct SettingsSegmented<V: Hashable>: View {
                         .padding(.horizontal, 12)
                         .background(chosen ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 }
-                .buttonStyle(SettingsControlStyle(radius: 5))
-                .accessibilityAddTraits(chosen ? .isSelected : [])
+                .buttonStyle(SettingsControlStyle(radius: 5, tintOnTop: true))
+                .settingsAccessibility(.option(option.1, chosen: chosen))
             }
         }
         .padding(2)
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        .settingsGroupLabel(label)
     }
 }
 
@@ -361,13 +410,19 @@ struct SettingsTextField: View {
 struct SettingsDisclosure<Content: View>: View {
     let title: String
     @Binding var isOpen: Bool
+    /// Why it can't close now (Gateway's custom connection), else nil.
+    /// While set and open, the heading is disabled and says why.
+    let lockedOpen: String?
     let content: Content
 
-    init(_ title: String, isOpen: Binding<Bool>, @ViewBuilder content: () -> Content) {
+    init(_ title: String, isOpen: Binding<Bool>, lockedOpen: String? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
         _isOpen = isOpen
+        self.lockedOpen = lockedOpen
         self.content = content()
     }
+
+    private var locked: Bool { isOpen && lockedOpen != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -387,6 +442,8 @@ struct SettingsDisclosure<Content: View>: View {
                 .padding(.trailing, 6)
             }
             .buttonStyle(SettingsControlStyle())
+            .disabled(locked)
+            .tip(locked ? lockedOpen ?? "" : "")
             .accessibilityValue(isOpen ? "Open" : "Closed")
             if isOpen {
                 content

@@ -388,8 +388,7 @@ struct McpServersTab: View {
                 EmptyView()
             }
             if row.showsSwitch {
-                SettingsSwitch(isOn: Binding(get: { row.isOn }, set: { model.mcpToggle(row.name, enabled: $0) }))
-                    .accessibilityLabel(row.title)
+                SettingsSwitch(row.title, isOn: Binding(get: { row.isOn }, set: { model.mcpToggle(row.name, enabled: $0) }))
             }
             if row.builtIn {
                 HStack(spacing: 5) {
@@ -598,8 +597,8 @@ struct McpAddSheet: View {
             field(McpAddPresentation.connectsByLabel) {
                 SettingsSegmented(
                     selection: $draft.connectsBy,
-                    options: McpAddDraft.ConnectsBy.allCases.map { ($0, $0.label) })
-                    .accessibilityLabel(McpAddPresentation.connectsByLabel)
+                    options: McpAddDraft.ConnectsBy.allCases.map { ($0, $0.label) },
+                    label: McpAddPresentation.connectsByLabel)
                     .fixedSize()
             }
             if draft.connectsBy == .web {

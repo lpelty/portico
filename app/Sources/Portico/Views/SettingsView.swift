@@ -49,6 +49,16 @@ enum GatewaySettingsPresentation {
     static func advancedOpen(stored: Bool, address: String, tokenFile: String) -> Bool {
         isCustom(address: address, tokenFile: tokenFile) ? true : stored
     }
+
+    /// The heading's tip while a custom connection holds Advanced open.
+    static let lockedOpenTip = "Clear the custom connection to close"
+
+    /// What a click on the heading stores: nil when it is ignored, a close
+    /// while a custom connection is set (the stored state is kept).
+    static func storedAfterToggle(open: Bool, address: String, tokenFile: String) -> Bool? {
+        if !open && isCustom(address: address, tokenFile: tokenFile) { return nil }
+        return open
+    }
 }
 
 /// The tabs in `SettingsTab` order; the selection is the model's, so
@@ -121,8 +131,7 @@ struct GeneralSettingsTab: View {
                     "Open files in the viewer automatically",
                     help: "When the agent creates or changes a file of these kinds. Anything else is listed in the chat and opens only when clicked."
                 ) {
-                    SettingsSwitch(isOn: $settings.autoOpen)
-                        .accessibilityLabel("Open files in the viewer automatically")
+                    SettingsSwitch("Open files in the viewer automatically", isOn: $settings.autoOpen)
                 }
                 HStack(spacing: 10) {
                     ForEach(AutoOpenKindPresentation.all) { kind in
@@ -134,20 +143,17 @@ struct GeneralSettingsTab: View {
                 .padding(.vertical, SettingsKit.rowVertical - 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 SettingsRow("Agent can see the viewer", help: GeneralSettingsPresentation.canSeeNote) {
-                    SettingsSwitch(isOn: canSeeBinding)
-                        .accessibilityLabel("Agent can see the viewer")
+                    SettingsSwitch("Agent can see the viewer", isOn: canSeeBinding)
                 }
                 SettingsRow("Agent checks HTML it creates", help: GeneralSettingsPresentation.checksHTMLNote) {
-                    SettingsSwitch(isOn: checksHTMLBinding)
-                        .accessibilityLabel("Agent checks HTML it creates")
+                    SettingsSwitch("Agent checks HTML it creates", isOn: checksHTMLBinding)
                 }
                 .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
             }
             if titles.contains("Spaces") {
                 SettingsSection("Spaces") {
                     SettingsRow("Notify when a space is updated", help: GeneralSettingsPresentation.spacesNote(brand: model.brand.name)) {
-                        SettingsSwitch(isOn: $settings.spacesNotify)
-                            .accessibilityLabel("Notify when a space is updated")
+                        SettingsSwitch("Notify when a space is updated", isOn: $settings.spacesNotify)
                     }
                 }
             }
@@ -214,6 +220,7 @@ struct AppearanceSettingsTab: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .fixedSize()
+                    .hoverHighlight()
                 }
                 SettingsRow(AppearanceSettingsPresentation.textSizeLabel, help: AppearanceSettingsPresentation.textSizeNote) {
                     TextScaleStepper()
@@ -347,13 +354,16 @@ struct GatewaySettingsTab: View {
             ) {
                 SettingsRadioGroup(
                     selection: $settings.quitBehaviour,
-                    options: Settings.QuitBehaviour.allCases.map { ($0, $0.label) })
-                    .accessibilityLabel("When \(model.brand.name) quits")
+                    options: Settings.QuitBehaviour.allCases.map { ($0, $0.label) },
+                    label: "When \(model.brand.name) quits")
                     .padding(.horizontal, SettingsKit.rowHorizontal - 6)
                     .padding(.vertical, SettingsKit.rowVertical - 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            SettingsDisclosure(GatewaySettingsPresentation.advancedTitle, isOpen: advancedOpen) {
+            SettingsDisclosure(
+                GatewaySettingsPresentation.advancedTitle, isOpen: advancedOpen,
+                lockedOpen: isCustom ? GatewaySettingsPresentation.lockedOpenTip : nil
+            ) {
                 SettingsSection("", footnote: GatewayConnectionPresentation.caption) {
                     SettingsRow("Address") {
                         SettingsTextField("Address", text: optional($settings.gatewayURL), prompt: "discovered from the ledger")
@@ -390,8 +400,11 @@ struct GatewaySettingsTab: View {
                         address: settings.gatewayURL ?? "", tokenFile: settings.tokenFile ?? "")
             },
             set: { open in
-                settings.gatewayAdvancedOpen = open
-                if !open { openedForCustom = false }
+                guard let stored = GatewaySettingsPresentation.storedAfterToggle(
+                    open: open, address: settings.gatewayURL ?? "", tokenFile: settings.tokenFile ?? "")
+                else { return }
+                settings.gatewayAdvancedOpen = stored
+                if !stored { openedForCustom = false }
             })
     }
 
