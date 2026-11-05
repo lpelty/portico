@@ -666,6 +666,9 @@ struct SpaceViewer: View {
                     .environment(\.viewerAgent, model.viewerAgent)
                     .environment(\.viewerSlot, .space)
                     .environment(\.viewerPageAddress, page)
+                    // v0.22: the page's action links, and a notice's fragment.
+                    .environment(\.spaceActionLink, spaceActionLink)
+                    .environment(\.webPaneFragment, fragmentRequest)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if let chat {
@@ -739,14 +742,37 @@ struct SpaceViewer: View {
         }
     }
 
-    /// "Updated <time>", or the outside note while the page is on another
-    /// site (the note slot gives way the same either way).
+    /// v0.22 (S1): a `space-action:` link clicked in the open space's page.
+    private var spaceActionLink: ((URL) -> Void)? {
+        guard let id = model.openSpace else { return nil }
+        return { [model] url in model.spaceActionLinkActivated(url, space: id) }
+    }
+
+    /// v0.22 (S2): the notice's fragment, for this space only.
+    private var fragmentRequest: WebPane.FragmentRequest? {
+        guard let request = model.spaceScrollRequest, request.space == model.openSpace else { return nil }
+        return WebPane.FragmentRequest(key: "\(request.serial)", fragment: request.fragment)
+    }
+
+    /// "Updated <time>", "Refreshing…" (v0.22) or the last failure, or the
+    /// outside note while the page is on another site (the note slot gives
+    /// way the same either way).
     private func updatedText(_ space: SpaceInfo) -> some View {
-        Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) }
-             ?? SpacesPresentation.updatedText(space.updatedDate))
+        let note = SpacesPresentation.headerNote(
+            refreshing: model.isRefreshing(space.id), error: model.spaceErrors[space.id], updated: space.updatedDate)
+        let text: String
+        var failed = false
+        switch note {
+        case .updated(let words): text = words
+        case .refreshing: text = SpacesPresentation.refreshingText
+        case .error(let words): text = words; failed = true
+        }
+        return Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) } ?? text)
             .scaledFont(12)
-            .foregroundStyle(Theme.text3)
+            .foregroundStyle(failed && page.outside == nil ? Theme.deny : Theme.text3)
             .lineLimit(1)
+            .truncationMode(.tail)
+            .tip(failed && page.outside == nil ? text : "")
     }
 
     /// The header's one button: Open externally while the page is on an

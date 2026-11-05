@@ -33,7 +33,7 @@ struct PorticoApp: App {
         // (`swift run`) has no notification centre to ask.
         if Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" {
             let notifier = SpaceNotifier()
-            notifier.open = { [weak model] id in model?.setOpenSpace(id) }
+            notifier.open = { [weak model] id, target in model?.openSpace(id, scrollTo: target) }
             notifier.install()
             model.spaceNotifier = notifier
         }

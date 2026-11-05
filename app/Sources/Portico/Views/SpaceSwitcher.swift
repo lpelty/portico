@@ -62,8 +62,9 @@ enum SpacesPresentation {
         spaces.isEmpty && query.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// A space's own front-matter keys, kept out of the Properties block.
-    static let hiddenFrontMatterKeys: Set<String> = ["title", "icon", "order"]
+    /// A space's own front-matter keys, kept out of the Properties block
+    /// (v0.22 adds the notice keys and `removable`).
+    static let hiddenFrontMatterKeys: Set<String> = ["title", "icon", "order", "notice", "notice_target", "removable"]
 
     /// The notification's body: "Updated — 7:02 AM".
     static func notificationBody(_ date: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
@@ -181,9 +182,14 @@ struct SpaceSwitcher: View {
     var body: some View {
         Button { open.toggle() } label: {
             HStack(spacing: 6) {
-                Image(systemName: current?.icon ?? "briefcase")
-                    .font(Theme.iconFont(12))
-                    .foregroundStyle(Theme.text2)
+                // v0.22 (S5): a spinner in place of the icon while the open space refreshes.
+                if let current, model.isRefreshing(current.id) {
+                    SpaceRefreshingSpinner()
+                } else {
+                    Image(systemName: current?.icon ?? "briefcase")
+                        .font(Theme.iconFont(12))
+                        .foregroundStyle(Theme.text2)
+                }
                 Text(current?.title ?? "Work")
                     .scaledFont(12.5, weight: .medium)
                     .foregroundStyle(Theme.text)
@@ -222,6 +228,16 @@ struct SpaceSwitcher: View {
             }
             Button("Cancel", role: .cancel) { pendingRemove = nil }
         }
+    }
+}
+
+/// v0.22 (S5): what stands in a space's icon while it refreshes.
+private struct SpaceRefreshingSpinner: View {
+    var body: some View {
+        ProgressView()
+            .controlSize(.mini)
+            .frame(width: 14, height: 14)
+            .accessibilityLabel(SpacesPresentation.refreshingText)
     }
 }
 
@@ -375,10 +391,17 @@ private struct SpaceMenu: View {
         } else {
             Button { pick(entry) } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: space.icon).font(Theme.iconFont(13)).foregroundStyle(Theme.text2).frame(width: 18)
+                    Group {
+                        if model.isRefreshing(space.id) {
+                            SpaceRefreshingSpinner()
+                        } else {
+                            Image(systemName: space.icon).font(Theme.iconFont(13)).foregroundStyle(Theme.text2)
+                        }
+                    }
+                    .frame(width: 18)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(space.title).scaledFont(13, weight: .medium).foregroundStyle(Theme.text).lineLimit(1)
-                        Text(SpacesPresentation.updatedText(space.updatedDate))
+                        Text(model.isRefreshing(space.id) ? SpacesPresentation.refreshingText : SpacesPresentation.updatedText(space.updatedDate))
                             .scaledFont(11.5)
                             .foregroundStyle(isNew ? Theme.accent : Theme.text2)
                             .lineLimit(1)
@@ -395,11 +418,18 @@ private struct SpaceMenu: View {
             .buttonStyle(.plain)
             .onHover { if $0 { state.selection = entry } }
             .contextMenu {
-                Button("Rename…") {
-                    renameText = space.title
-                    renaming = space.id
+                // v0.22 (S4): a fixed space has neither.
+                ForEach(SpacesPresentation.menuActions(for: space), id: \.self) { action in
+                    switch action {
+                    case .rename:
+                        Button("Rename…") {
+                            renameText = space.title
+                            renaming = space.id
+                        }
+                    case .remove:
+                        Button("Remove…") { askToRemove(space) }
+                    }
                 }
-                Button("Remove…") { askToRemove(space) }
             }
         }
     }

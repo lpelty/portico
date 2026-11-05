@@ -34,7 +34,8 @@ final class SpacesTests: XCTestCase {
 
     @MainActor final class FakeNotifier: SpaceNotifying {
         var posted: [(space: String, title: String, body: String)] = []
-        func post(space: String, title: String, body: String) { posted.append((space, title, body)) }
+        func post(space: String, title: String, body: String, target: String?) { posted.append((space, title, body)) }
+        func postMessage(id: String, title: String, body: String) {}
     }
 
     private func model(spaces: [SpaceInfo] = []) -> (AppModel, AppModelTests.Sent) {
