@@ -35,6 +35,7 @@ from portico_gateway.config import Config
 from portico_gateway.engine import translate
 from portico_gateway.messages import (
     AGENTS_CAPABILITY,
+    TASKS_CAPABILITY,
     AgentFinished,
     AgentProgress,
     AgentStarted,
@@ -119,14 +120,18 @@ def progress(task_id: str, tool_uses: int = 0, duration_ms: int = 0, last_tool: 
                                usage=usage, uuid="u", session_id="s", last_tool_name=last_tool)  # type: ignore[arg-type]
 
 
-def notified(task_id: str, status: str, summary: str = "") -> TaskNotificationMessage:
-    return TaskNotificationMessage(subtype="task_notification", data={}, task_id=task_id, status=status,  # type: ignore[arg-type]
+def notified(task_id: str, status: str, summary: str = "", **data: Any) -> TaskNotificationMessage:
+    return TaskNotificationMessage(subtype="task_notification", data=dict(data), task_id=task_id, status=status,  # type: ignore[arg-type]
                                    output_file="", summary=summary, uuid="u", session_id="s")
 
 
 def updated(task_id: str, status: str) -> TaskUpdatedMessage:
     return TaskUpdatedMessage(subtype="task_updated", data={}, task_id=task_id, patch={"status": status},
                               status=status)  # type: ignore[arg-type]
+
+
+def moved_to_background(task_id: str) -> TaskUpdatedMessage:
+    return TaskUpdatedMessage(subtype="task_updated", data={}, task_id=task_id, patch={"is_backgrounded": True})
 
 
 def sub_call(parent: str, tool_use_id: str, tool: str, input: dict[str, Any]) -> AssistantMessage:
@@ -281,19 +286,92 @@ def test_turn_result_ends_foreground_agents_still_open() -> None:
     assert {(f.id, f.outcome) for f in of(events, AgentFinished)} == {("x", "stopped"), ("y", "failed")}
 
 
-def test_shell_and_monitor_tasks_are_not_agents() -> None:
+def test_background_shell_and_monitor_tasks_show_until_they_end() -> None:
     tracker = AgentTracker()
     events = run(
         [
-            started("sh", "c-sh", task_type="local_bash"),
+            started("sh", "c-sh", task_type="local_bash", is_backgrounded=True),
             started("mon", "c-mon", task_type="monitor"),
-            progress("sh", tool_uses=1),
-            notified("sh", "completed", "done"),
-            updated("mon", "killed"),
         ],
         tracker,
     )
+    starts = of(events, AgentStarted)
+    assert [(s.id, s.task, s.kind, s.background, s.tool_use_id) for s in starts] == [
+        ("sh", "shell", "shell", True, "c-sh"),
+        ("mon", "monitor", "monitor", True, "c-mon"),
+    ]
+    assert starts[0].description == "task sh"
+    # They outlive their turn's result, like background agents.
+    assert not of(run([fake_result()], tracker), AgentFinished)
+    events = run([notified("sh", "completed", "exit code 0\nmore"), updated("mon", "killed")], tracker)
+    assert [(f.id, f.outcome, f.summary) for f in of(events, AgentFinished)] == [
+        ("sh", "done", "exit code 0"),
+        ("mon", "stopped", None),
+    ]
+    assert run([notified("mon", "stopped", "late")], tracker) == []
+
+
+def test_housekeeping_tasks_stay_out() -> None:
+    events = run(
+        [
+            started("w", "c-w", task_type="monitor", ambient=True),
+            started("h", "c-h", task_type="local_bash", is_backgrounded=True, skip_transcript=True),
+            started("x", "c-x", task_type="dream"),
+            notified("w", "completed"),
+            notified("h", "completed"),
+        ]
+    )
     assert events == []
+
+
+def test_a_foreground_command_shows_once_it_moves_to_the_background() -> None:
+    tracker = AgentTracker()
+    assert run([started("fg", "c-fg", task_type="local_bash", is_backgrounded=False)], tracker) == []
+    events = run([moved_to_background("fg")], tracker)
+    assert [(s.id, s.task, s.background) for s in of(events, AgentStarted)] == [("fg", "shell", True)]
+    assert run([moved_to_background("fg")], tracker) == []
+    assert [f.outcome for f in of(run([notified("fg", "failed", "exit code 1")], tracker), AgentFinished)] == ["failed"]
+    # One that ends in the foreground was never shown and ends silently.
+    tracker2 = AgentTracker()
+    run([started("q", "c-q", task_type="local_bash", is_backgrounded=False)], tracker2)
+    assert run([notified("q", "completed")], tracker2) == []
+
+
+def test_a_resumed_agent_runs_again_as_a_new_run() -> None:
+    tracker = AgentTracker()
+    run([started("a", "c-a", run_id="r1")], tracker)
+    run([notified("a", "completed", "first report")], tracker)
+    # SendMessage resumes it: same task id, a later run id, a new call, a later turn.
+    events = run([started("a", "c-send", run_id="r2", is_backgrounded=True)], tracker, turn=3)
+    [again] = of(events, AgentStarted)
+    assert (again.id, again.run, again.turn, again.tool_use_id, again.background) == ("a", 2, 3, "c-a", True)
+    # A frame of the first run arriving now is late.
+    assert run([notified("a", "completed", "stale", run_id="r1")], tracker) == []
+    # The resumed run's own steps and end come through; its turn's result does not end it.
+    assert not of(run([fake_result()], tracker, turn=3), AgentFinished)
+    assert of(run([sub_call("c-send", "t1", "Read", {"file_path": "/x/y.md"})], tracker), ToolStarted)
+    events = run([notified("a", "completed", "fixed", run_id="r2")], tracker)
+    assert [(f.id, f.summary) for f in of(events, AgentFinished)] == [("a", "fixed")]
+
+
+def test_a_foreground_agent_moved_to_the_background_is_announced_again_as_background() -> None:
+    tracker = AgentTracker()
+    run([started("f", "c-f")], tracker)
+    [again] = of(run([moved_to_background("f")], tracker), AgentStarted)
+    assert (again.id, again.background, again.run) == ("f", True, None)
+    assert run([moved_to_background("f")], tracker) == []
+    assert not of(run([fake_result()], tracker), AgentFinished), "its turn's end no longer ends it"
+
+
+def test_a_repeated_start_of_a_running_agent_is_not_a_new_run() -> None:
+    tracker = AgentTracker()
+    run([started("a", "c-a", run_id="r1")], tracker)
+    assert run([started("a", "c-a", run_id="r1")], tracker) == []
+    # Without run ids, a start after the end is a new run.
+    tracker2 = AgentTracker()
+    run([started("b", "c-b"), notified("b", "completed")], tracker2)
+    [again] = of(run([started("b", "c-b2")], tracker2), AgentStarted)
+    assert again.run == 2
 
 
 def test_unknown_parent_stays_out() -> None:
@@ -695,3 +773,29 @@ async def test_renewing_during_a_turn_nobody_sent_ends_that_turn_and_its_work(se
         assert number not in server._runs and chat.ended is not None and following.number != number
     finally:
         await conn.close()
+
+
+async def run_background_command(server: GatewayServer, conn: ClientConnection, folder: Path) -> tuple[int, list[ServerMessage]]:
+    number = await new_chat(conn, folder)
+    engine = server.registry.get(number).engine
+    engine.script(  # type: ignore[union-attr]
+        started("sh", "c-sh", task_type="local_bash", is_backgrounded=True), fake_result()
+    )
+    await conn.send(dump(MessageSend(ts=TS, chat=number, id="req", text="rebuild in the background")))
+    frames = await recv_until(conn, TurnFinished)
+    await recv(conn)  # chat.state idle
+    return number, frames
+
+
+async def test_a_background_command_reaches_only_an_app_with_tasks(server: GatewayServer, folder: Path) -> None:
+    for capabilities, shown in (([AGENTS_CAPABILITY, TASKS_CAPABILITY], True), ([AGENTS_CAPABILITY], False)):
+        conn = await attach_app(server, capabilities)
+        try:
+            number, frames = await run_background_command(server, conn, folder)
+            live = [(s.id, s.task) for s in of(frames, AgentStarted)]
+            assert live == ([("sh", "shell")] if shown else [])
+            history = await open_chat(conn, number)
+            replayed = [(e.id, e.task) for e in history.events if isinstance(e, AgentStarted)]
+            assert replayed == live
+        finally:
+            await conn.close()

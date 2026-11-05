@@ -124,10 +124,10 @@ final class AgentActivityTests: XCTestCase {
 
     func testTheClientHelloNamesAgentsV1() throws {
         // v0.11 adds queue.v1 (messages typed while the agent works); v0.12 viewer.v1 and spaces.v1.
-        XCTAssertEqual(HelloClient.appCapabilities, ["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", "services.stuck.v1", "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1"])
+        XCTAssertEqual(HelloClient.appCapabilities, ["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", "services.stuck.v1", "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", "tasks.v1"])
         let hello = HelloClient(appVersion: "0.10.0", capabilities: HelloClient.appCapabilities, ts: "2026-10-27T12:00:00Z")
         let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ClientMessage.hello(hello))) as? [String: Any]
-        XCTAssertEqual(raw?["capabilities"] as? [String], ["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", "services.stuck.v1", "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1"])
+        XCTAssertEqual(raw?["capabilities"] as? [String], ["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", "services.stuck.v1", "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", "tasks.v1"])
         // Without capabilities the field is not sent at all.
         let bare = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ClientMessage.hello(HelloClient(appVersion: "0.10.0")))) as? [String: Any]
         XCTAssertNil(bare?["capabilities"])
@@ -140,7 +140,7 @@ final class AgentActivityTests: XCTestCase {
         let client = GatewayClient()
         _ = try await client.connect(url: gateway.url, token: "tok", appVersion: "0.10.0-test")
         let first = try XCTUnwrap(gateway.received.first)
-        XCTAssertEqual(first["capabilities"] as? [String], ["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", "services.stuck.v1", "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1"])
+        XCTAssertEqual(first["capabilities"] as? [String], ["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", "services.stuck.v1", "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", "tasks.v1"])
         await client.disconnect()
     }
 
@@ -189,11 +189,17 @@ final class AgentActivityTests: XCTestCase {
     }
 
     private func started(_ id: String, _ description: String, turn: Int = 1, tool: String? = nil,
-                         workflow: String? = nil, phase: PhaseRef? = nil, background: Bool? = nil) -> ServerMessage {
+                         workflow: String? = nil, phase: PhaseRef? = nil, background: Bool? = nil,
+                         task: String? = nil, run: Int? = nil, at stamp: String? = nil) -> ServerMessage {
         .agentStarted(AgentStarted(
             chat: 1, turn: turn, id: id, toolUseId: tool ?? "toolu_\(id)", description: description,
-            kind: workflow == nil ? "subagent" : "workflow",
-            workflowId: workflow, phase: phase, background: background ?? (workflow == nil ? nil : true), seq: next(), ts: ts))
+            kind: task ?? (workflow == nil ? "subagent" : "workflow"),
+            workflowId: workflow, phase: phase, background: background ?? (workflow == nil ? nil : true),
+            task: task, run: run, seq: next(), ts: stamp ?? ts))
+    }
+
+    private func bashTool(_ id: String, turn: Int = 1) -> ServerMessage {
+        .toolStarted(ToolStarted(chat: 1, turn: turn, toolUseId: id, tool: "Bash", summary: "make build", input: [:], seq: next(), ts: ts))
     }
 
     private func progress(_ id: String, step: String?, steps: Int, elapsed: Double) -> ServerMessage {
@@ -741,6 +747,90 @@ final class AgentActivityTests: XCTestCase {
             .appendingPathComponent("protocol/examples/client.hello.json")
         let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         XCTAssertEqual(raw?["capabilities"] as? [String], HelloClient.appCapabilities)
+    }
+
+    // MARK: - v0.21: background commands and Monitors, resumed agents
+
+    func testAgentStartedCarriesATaskAndARun() throws {
+        let message = try decode(#"""
+            {"type":"agent.started","chat":1,"turn":2,"id":"b7","tool_use_id":"toolu_9","description":"Rebuild the playground",
+             "kind":"shell","background":true,"task":"shell","run":2,"ts":"2026-10-27T12:00:00Z"}
+            """#)
+        guard case .agentStarted(let started) = message else { return XCTFail("got \(message)") }
+        XCTAssertEqual(started.task, "shell")
+        XCTAssertEqual(started.run, 2)
+        let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any]
+        XCTAssertEqual(raw?["task"] as? String, "shell")
+        XCTAssertEqual(raw?["run"] as? Int, 2)
+        XCTAssertTrue(HelloClient.appCapabilities.contains("tasks.v1"))
+    }
+
+    func testABackgroundCommandStaysInTheTrayAfterItsTurnAndKeepsItsBashRow() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(bashTool("tB"))
+        model.apply(started("sh", "Rebuild the playground", tool: "tB", background: true, task: "shell"))
+        model.apply(turnFinished(1))
+        var activity = model.agentActivity[1]!
+        XCTAssertTrue(groups(model).isEmpty, "no Started row for a task")
+        let drawn = (model.transcripts[1] ?? []).filter { model.isDrawn($0, in: 1) }
+        XCTAssertTrue(drawn.contains { if case .tool(let row) = $0 { row.toolUseId == "tB" } else { false } }, "its Bash row stays")
+        XCTAssertTrue(activity.showsTray, "the app does not look idle")
+        XCTAssertTrue(activity.trayHasTasks)
+        let sh = activity.agent("sh")!
+        XCTAssertEqual(activity.status(of: sh), .working)
+        XCTAssertEqual(
+            AgentPresentation.counts(activity.trayAgents.map(activity.status(of:)), tasks: 1), "1 task · 1 working")
+        XCTAssertEqual(
+            AgentPresentation.stepLine(status: .working, step: nil, summary: nil, isTask: true), "Running in the background")
+
+        model.apply(.agentFinished(AgentFinished(
+            chat: 1, id: "sh", outcome: .done, summary: "exit code 0", seq: next(), ts: "2026-10-27T12:05:10Z")))
+        activity = model.agentActivity[1]!
+        XCTAssertEqual(activity.status(of: activity.agent("sh")!), .done)
+        XCTAssertEqual(activity.agent("sh")?.elapsed, 310, "its time runs from its start to its end")
+        XCTAssertFalse(activity.showsTray, "gone once it ended")
+    }
+
+    func testAResumedAgentWorksAgainInTheTurnThatResumedIt() {
+        let model = model()
+        model.apply(turnStarted(1))
+        model.apply(spawnTool("tA"))
+        model.apply(started("a", "Fix round", tool: "tA", background: true))
+        model.apply(agentTool("r1", agent: "a", summary: "x.md"))
+        model.apply(finished("a", summary: "first report"))
+        model.apply(turnFinished(1))
+        XCTAssertFalse(model.agentActivity[1]!.showsTray)
+
+        model.apply(turnStarted(2))
+        model.apply(.toolStarted(ToolStarted(
+            chat: 1, turn: 2, toolUseId: "tSend", tool: "SendMessage", summary: "a", input: [:], seq: next(), ts: ts)))
+        model.apply(started("a", "Fix round", turn: 2, tool: "tSend", background: true, run: 2, at: "2026-10-27T12:05:00Z"))
+        model.apply(turnFinished(2))
+        let activity = model.agentActivity[1]!
+        let a = activity.agent("a")!
+        XCTAssertEqual(activity.status(of: a), .working, "running again, though turn 2 ended")
+        XCTAssertNil(a.summary)
+        XCTAssertNil(a.step, "the last run's step is not this run's")
+        XCTAssertEqual(a.run, 2)
+        XCTAssertEqual(a.rows.count, 1, "its earlier steps stay")
+        XCTAssertEqual(a.startedAt, SessionTime.parse("2026-10-27T12:05:00Z"))
+        XCTAssertEqual(activity.trayAgents.map(\.id), ["a"])
+        XCTAssertEqual(groups(model).count, 1, "no second Started row")
+        let drawn = (model.transcripts[1] ?? []).filter { model.isDrawn($0, in: 1) }
+        XCTAssertTrue(drawn.contains { if case .tool(let row) = $0 { row.toolUseId == "tSend" } else { false } }, "the SendMessage row draws")
+
+        // A start re-sent for the same run changes nothing.
+        model.apply(finished("a", summary: "fixed"))
+        model.apply(started("a", "Fix round", turn: 2, tool: "tSend", background: true, run: 2))
+        XCTAssertEqual(model.agentActivity[1]!.status(of: model.agentActivity[1]!.agent("a")!), .done)
+    }
+
+    func testCountsWithTasks() {
+        XCTAssertEqual(AgentPresentation.counts([.working, .done], tasks: 2), "2 tasks · 1 working")
+        XCTAssertEqual(AgentPresentation.counts([.working, .working, .done], tasks: 2), "1 agent · 2 tasks · 2 working")
+        XCTAssertEqual(AgentPresentation.counts([.done], tasks: 1), "1 task · done")
+        XCTAssertEqual(AgentPresentation.counts([.working, .done]), "2 agents · 1 working")
     }
 
     // MARK: - words

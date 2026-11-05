@@ -37,6 +37,8 @@ ServiceState = Literal["up", "down", "stuck", "checking"]
 AgentOutcome = Literal["done", "failed", "stopped"]
 # Where one workflow phase stands (v0.10).
 PhaseState = Literal["pending", "running", "done", "failed"]
+# v0.21: background work that is not an agent.
+TaskKind = Literal["shell", "monitor"]
 # Where a thread proposal stands (v0.16): ``pending`` until the person starts
 # or dismisses it, or Main's session ends (then ``dismissed``).
 ProposalState = Literal["pending", "started", "dismissed"]
@@ -45,6 +47,8 @@ ProposalState = Literal["pending", "started", "dismissed"]
 # shows subagents and workflows. Only such an app is sent the ``agent.*`` and
 # ``workflow.*`` frames and the tool rows of a subagent's own steps.
 AGENTS_CAPABILITY = "agents.v1"
+# v0.21: the app can show background commands and Monitors (``agent.started.task``) in its tray.
+TASKS_CAPABILITY = "tasks.v1"
 
 # v0.11 (item 74): the capability, on both sides, for messages typed while
 # the agent works. A gateway that lists it queues a ``message.send`` that
@@ -1356,6 +1360,11 @@ class AgentStarted(Envelope):
     ``workflow_id`` and ``phase`` (an index into ``workflow.started``'s
     ``phases``). ``background`` is set when the agent runs on after its
     turn finishes.
+
+    v0.21: ``task`` marks background work that is not an agent, a
+    command (``shell``) or a Monitor (``monitor``); ``kind`` repeats it.
+    Sent only to an app that names ``tasks.v1``. ``run`` (2, 3, …) is a
+    resumed agent's new run: the same ``id``, running again in ``turn``.
     """
 
     type: Literal["agent.started"] = "agent.started"
@@ -1368,6 +1377,8 @@ class AgentStarted(Envelope):
     workflow_id: str | None = None
     phase: int | None = None
     background: bool | None = None
+    task: TaskKind | None = None
+    run: int | None = None
 
 
 class AgentProgress(Envelope):
@@ -1701,7 +1712,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.20.1", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1"]),
+        HelloClient(ts=_TS, app_version="0.21.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),

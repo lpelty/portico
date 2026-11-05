@@ -40,6 +40,13 @@ struct AgentRun: Equatable, Sendable, Identifiable {
     /// When it last moved, on the activity's own clock: the collapsed
     /// tray line follows the agent that moved last.
     var moved: Int = 0
+    /// v0.21: a background command (`shell`) or Monitor (`monitor`), not
+    /// an agent: it has no steps and no "Started" row of its own.
+    var task: String? = nil
+    /// Which run this is: 2 and on once it was resumed.
+    var run: Int = 1
+
+    var isTask: Bool { task != nil }
 
     /// Steps taken: the gateway's count, or the rows seen when more.
     var steps: Int { max(reportedSteps, rows.count) }
@@ -112,6 +119,8 @@ struct AgentGroup: Equatable, Sendable {
 struct AgentActivity: Equatable, Sendable {
     /// What the app names in its `hello` to get these frames (v0.10).
     static let capability = "agents.v1"
+    /// v0.21: background commands and Monitors in the tray.
+    static let tasksCapability = "tasks.v1"
 
     /// Every agent, in start order.
     private(set) var agents: [AgentRun] = []
@@ -168,8 +177,24 @@ struct AgentActivity: Equatable, Sendable {
                 description: started.description, kind: started.kind,
                 workflowId: started.workflowId, phase: started.phase,
                 background: started.background ?? false || started.workflowId != nil,
-                startedAt: SessionTime.parse(started.ts), moved: clock)
-            if let index = index(of: started.id) {
+                startedAt: SessionTime.parse(started.ts), moved: clock, task: started.task, run: started.run ?? 1)
+            if let index = index(of: started.id), (started.run ?? 1) > agents[index].run {
+                // A resumed agent's new run (v0.21): working again, in the
+                // turn that resumed it. Its steps stay; so does the tool use
+                // that first started it, so the resuming call draws as a row.
+                var resumed = agents[index]
+                resumed.turn = started.turn
+                resumed.background = started.background ?? false
+                resumed.outcome = nil
+                resumed.summary = nil
+                resumed.step = nil
+                resumed.elapsed = 0
+                resumed.startedAt = agent.startedAt
+                resumed.run = agent.run
+                resumed.moved = clock
+                agents[index] = resumed
+                trayCollapsed = nil
+            } else if let index = index(of: started.id) {
                 // A re-sent start keeps what the agent already did.
                 let old = agents[index]
                 agent.step = old.step
@@ -179,6 +204,7 @@ struct AgentActivity: Equatable, Sendable {
                 agent.summary = old.summary
                 agent.rows = old.rows
                 agent.stepHistory = old.stepHistory
+                agent.run = old.run
                 agents[index] = agent
             } else {
                 agents.append(agent)
@@ -209,6 +235,10 @@ struct AgentActivity: Equatable, Sendable {
             agents[index].outcome = finished.outcome
             agents[index].summary = finished.summary
             agents[index].moved = clock
+            // A task reports no progress (v0.21): its time is from its start to its end.
+            if let start = agents[index].startedAt, let end = SessionTime.parse(finished.ts) {
+                agents[index].elapsed = max(agents[index].elapsed, end.timeIntervalSince(start))
+            }
             // The tray folds itself when the last one is done (decision 1).
             if trayAgents.allSatisfy({ status(of: $0).isFinished }) { trayCollapsed = nil }
 
@@ -341,8 +371,13 @@ struct AgentActivity: Equatable, Sendable {
     }
 
     /// The tool uses that started agents: their rows are the "Started N
-    /// agents" row, not tool rows of their own.
-    var startingToolUses: Set<String> { Set(agents.map(\.toolUseId)) }
+    /// agents" row, not tool rows of their own. A task's Bash or Monitor
+    /// row stays the conversation's own (v0.21).
+    var startingToolUses: Set<String> { Set(agents.filter { !$0.isTask }.map(\.toolUseId)) }
+
+    /// Whether the tray holds background commands or Monitors (v0.21): its
+    /// words then speak of background work, not only agents.
+    var trayHasTasks: Bool { trayAgents.contains(where: \.isTask) }
 
     /// The tray's agents (AF2): those of a running turn outside any
     /// workflow, and background ones still working after their turn ended.
@@ -510,11 +545,29 @@ enum AgentPresentation {
         count == 1 ? "1 agent" : "\(count) agents"
     }
 
+    /// `2 tasks`, `1 task` (v0.21: background commands and Monitors).
+    static func taskCount(_ count: Int) -> String {
+        count == 1 ? "1 task" : "\(count) tasks"
+    }
+
+    /// A task row's second line while it runs, when it reported no step.
+    static let taskRunning = "Running in the background"
+
     /// The tray's header and collapsed line (AF2): `3 agents · 2 working`;
     /// when none works, `3 agents · 1 failed`, `3 agents · 1 stopped`, or
-    /// `3 agents · done`.
-    static func counts(_ statuses: [AgentStatus]) -> String {
-        let all = agentCount(statuses.count)
+    /// `3 agents · done`. With `tasks` of them background commands or
+    /// Monitors (v0.21): `2 tasks · 1 working`, `1 agent · 2 tasks · 2 working`.
+    static func counts(_ statuses: [AgentStatus], tasks: Int = 0) -> String {
+        let tasks = min(max(tasks, 0), statuses.count)
+        let agents = statuses.count - tasks
+        let all: String
+        if tasks == 0 {
+            all = agentCount(agents)
+        } else if agents == 0 {
+            all = taskCount(tasks)
+        } else {
+            all = "\(agentCount(agents)) · \(taskCount(tasks))"
+        }
         let working = statuses.filter { $0 == .working || $0 == .queued }.count
         if working > 0 { return "\(all) · \(working) working" }
         let failed = statuses.filter { $0 == .failed }.count
@@ -607,9 +660,10 @@ enum AgentPresentation {
     static let shortSummary = 24
 
     /// An agent row's second line: its step, else what it ended with.
-    static func stepLine(status: AgentStatus, step: String?, summary: String?) -> String? {
+    static func stepLine(status: AgentStatus, step: String?, summary: String?, isTask: Bool = false) -> String? {
         if status == .queued { return "Waiting for its phase" }
         if let step, !step.isEmpty, !status.isFinished { return step }
+        if isTask, !status.isFinished { return taskRunning }
         if let summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             return summary.split(separator: "\n").first.map(String.init)
         }

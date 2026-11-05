@@ -190,6 +190,7 @@ from .plugin_settings import PluginSettings
 from .messages import (
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
+    AgentStarted,
     APP_FRAME_TYPES,
     APPS_CAPABILITY,
     AppCallTool,
@@ -198,6 +199,7 @@ from .messages import (
     AppReload,
     PROTOCOL_VERSION,
     QUEUE_CAPABILITY,
+    TASKS_CAPABILITY,
     MESSAGES_ATTACHMENTS_CAPABILITY,
     SERVICES_STUCK_CAPABILITY,
     THREADS_CAPABILITY,
@@ -569,6 +571,11 @@ def _is_agent_frame(msg: Any) -> bool:
     return isinstance(msg, (ToolStarted, ToolFinished)) and msg.agent_id is not None
 
 
+def _is_task_start(msg: Any) -> bool:
+    """A v0.21 ``agent.started`` for a background command or Monitor."""
+    return isinstance(msg, AgentStarted) and msg.task is not None
+
+
 def _with_attachment_block(msg: UserText) -> UserText:
     """``msg`` as a gateway before v0.19 sent it: the "Attached files:" block in ``text``, no ``attachments``."""
     return msg.model_copy(update={"text": with_attachments(msg.text, msg.attachments), "attachments": []})
@@ -617,6 +624,13 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
             msg = msg.model_copy(
                 update={"events": [_with_attachment_block(e) if isinstance(e, UserText) and e.attachments else e for e in msg.events]}
             )
+    if TASKS_CAPABILITY not in capabilities:
+        # v0.21: an app without tasks.v1 never hears of a background command or Monitor; the frames
+        # that follow name an id it never saw, which it ignores.
+        if _is_task_start(msg):
+            return None
+        if isinstance(msg, ChatHistory) and any(_is_task_start(e) for e in msg.events):
+            msg = msg.model_copy(update={"events": [e for e in msg.events if not _is_task_start(e)]})
     if AGENTS_CAPABILITY in capabilities:
         return msg
     if _is_agent_frame(msg):
