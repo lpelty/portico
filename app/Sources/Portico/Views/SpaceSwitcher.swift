@@ -62,8 +62,9 @@ enum SpacesPresentation {
         spaces.isEmpty && query.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// A space's own front-matter keys, kept out of the Properties block.
-    static let hiddenFrontMatterKeys: Set<String> = ["title", "icon", "order"]
+    /// A space's own front-matter keys, kept out of the Properties block
+    /// (v0.22 adds the notice keys and `removable`).
+    static let hiddenFrontMatterKeys: Set<String> = ["title", "icon", "order", "notice", "notice_target", "removable"]
 
     /// The notification's body: "Updated — 7:02 AM".
     static func notificationBody(_ date: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {

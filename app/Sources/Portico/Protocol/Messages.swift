@@ -360,6 +360,7 @@ struct HelloClient: Codable, Equatable, Sendable {
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
         FilesRootsSet.capability, FilesEdited.capability, AgentActivity.tasksCapability,
+        DeploymentMessage.capability,
     ]
 }
 
@@ -678,6 +679,20 @@ struct SpaceRefresh: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// v0.22 (S1): run the space's action, from a `space-action:` link in its
+/// page. Like `space.refresh`, `id` is the space's id and is what an
+/// `error` echoes; answered by a new `spaces.list` or an `error`
+/// (`space.act_failed`, `space.no_act`). Sent only when the gateway's
+/// hello names `spaces.act`.
+struct SpaceAct: Codable, Equatable, Sendable {
+    static let messageType = "space.act"
+    var id: String
+    var action: String
+    /// Left out of the frame when the link had none.
+    var item: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
 struct SpaceRename: Codable, Equatable, Sendable {
     static let messageType = "space.rename"
     var id: String
@@ -855,6 +870,21 @@ struct SpaceInfo: Codable, Equatable, Sendable, Identifiable {
     var media: String
     /// The file's modification time, UTC ISO 8601.
     var updated: String
+    /// v0.22 (S2): the space-updated notification's words, from the page's
+    /// front matter; `""` means no notification for this update, `nil` the
+    /// usual "Updated — <time>".
+    var notice: String? = nil
+    /// v0.22 (S2): the fragment in the page a click on the notification
+    /// scrolls to (`meeting-1000`, without the `#`).
+    var noticeTarget: String? = nil
+    /// v0.22 (S4): `false` for a fixed space, which has no Rename or Remove.
+    /// The gateway sends the key only when it is `false`.
+    var removable: Bool = true
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, icon, order, location, media, updated, notice, removable
+        case noticeTarget = "notice_target"
+    }
 
     /// `updated` as a date; `nil` if the gateway sent something else.
     var updatedDate: Date? {
@@ -865,6 +895,61 @@ struct SpaceInfo: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+extension SpaceInfo {
+    /// The v0.22 keys are optional on the wire: an older gateway sends none,
+    /// and `removable` comes only when it is `false`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        icon = try c.decode(String.self, forKey: .icon)
+        order = try c.decodeIfPresent(Int.self, forKey: .order)
+        location = try c.decode(String.self, forKey: .location)
+        media = try c.decode(String.self, forKey: .media)
+        updated = try c.decode(String.self, forKey: .updated)
+        notice = try c.decodeIfPresent(String.self, forKey: .notice)
+        noticeTarget = try c.decodeIfPresent(String.self, forKey: .noticeTarget)
+        removable = try c.decodeIfPresent(Bool.self, forKey: .removable) ?? true
+    }
+
+    /// As the gateway sends it: `removable` only when `false`, the notice keys only when present.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(icon, forKey: .icon)
+        try c.encodeIfPresent(order, forKey: .order)
+        try c.encode(location, forKey: .location)
+        try c.encode(media, forKey: .media)
+        try c.encode(updated, forKey: .updated)
+        try c.encodeIfPresent(notice, forKey: .notice)
+        try c.encodeIfPresent(noticeTarget, forKey: .noticeTarget)
+        if !removable { try c.encode(false, forKey: .removable) }
+    }
+}
+
+/// v0.22 (S3): a message from the deployment (its routines, by
+/// `portico-gateway message`), for the open chat. Sent only to an app that
+/// names `messages.deployment.v1`. Not chat-scoped: the app docks it above
+/// whichever conversation is open, never sends it to the agent, and never
+/// keeps it in a chat's history.
+struct DeploymentMessage: Codable, Equatable, Sendable, Identifiable {
+    static let messageType = "deployment.message"
+    /// Named in the app's `hello.capabilities`.
+    static let capability = "messages.deployment.v1"
+    var id: String
+    /// Markdown.
+    var text: String
+    var title: String? = nil
+    /// Also post a system notification.
+    var notify: Bool? = nil
+    /// The space the card's Open opens.
+    var space: String? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: nil, id: id, seq: nil) }
+}
+
 /// The whole list of spaces, after `hello` and on every change.
 struct SpacesList: Codable, Equatable, Sendable {
     static let messageType = "spaces.list"
@@ -872,6 +957,9 @@ struct SpacesList: Codable, Equatable, Sendable {
     static let capability = "spaces.v1"
     /// Named when the gateway has a refresh command.
     static let refreshCapability = "spaces.refresh"
+    /// v0.22 (S1): named when the gateway has `[spaces] act`; only then does
+    /// the app take `space-action:` links in a space's page.
+    static let actCapability = "spaces.act"
     var spaces: [SpaceInfo]
     var id: String? = nil
     var seq: Int? = nil
@@ -2211,6 +2299,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case viewerSettings(ViewerSettings)
     case viewerResult(ViewerResult)
     case spaceRefresh(SpaceRefresh)
+    case spaceAct(SpaceAct)
     case spaceRename(SpaceRename)
     case spaceRemove(SpaceRemove)
     case modelSet(ModelSet)
@@ -2267,6 +2356,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .viewerSettings: ViewerSettings.messageType
         case .viewerResult: ViewerResult.messageType
         case .spaceRefresh: SpaceRefresh.messageType
+        case .spaceAct: SpaceAct.messageType
         case .spaceRename: SpaceRename.messageType
         case .spaceRemove: SpaceRemove.messageType
         case .modelSet: ModelSet.messageType
@@ -2326,6 +2416,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case ViewerSettings.messageType: self = .viewerSettings(try ViewerSettings(from: decoder))
         case ViewerResult.messageType: self = .viewerResult(try ViewerResult(from: decoder))
         case SpaceRefresh.messageType: self = .spaceRefresh(try SpaceRefresh(from: decoder))
+        case SpaceAct.messageType: self = .spaceAct(try SpaceAct(from: decoder))
         case SpaceRename.messageType: self = .spaceRename(try SpaceRename(from: decoder))
         case SpaceRemove.messageType: self = .spaceRemove(try SpaceRemove(from: decoder))
         case ModelSet.messageType: self = .modelSet(try ModelSet(from: decoder))
@@ -2387,6 +2478,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .viewerSettings(let m): try m.encode(to: encoder)
         case .viewerResult(let m): try m.encode(to: encoder)
         case .spaceRefresh(let m): try m.encode(to: encoder)
+        case .spaceAct(let m): try m.encode(to: encoder)
         case .spaceRename(let m): try m.encode(to: encoder)
         case .spaceRemove(let m): try m.encode(to: encoder)
         case .modelSet(let m): try m.encode(to: encoder)
@@ -2461,6 +2553,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case chatCommands(ChatCommands)
     case viewerAct(ViewerAct)
     case spacesList(SpacesList)
+    case deploymentMessage(DeploymentMessage)
     case models(Models)
     case threadProposal(ThreadProposal)
     case appOpen(AppOpen)
@@ -2513,6 +2606,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCommands: ChatCommands.messageType
         case .viewerAct: ViewerAct.messageType
         case .spacesList: SpacesList.messageType
+        case .deploymentMessage: DeploymentMessage.messageType
         case .models: Models.messageType
         case .threadProposal: ThreadProposal.messageType
         case .appOpen: AppOpen.messageType
@@ -2567,6 +2661,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCommands(let m): m.envelope
         case .viewerAct(let m): m.envelope
         case .spacesList(let m): m.envelope
+        case .deploymentMessage(let m): m.envelope
         case .models(let m): m.envelope
         case .threadProposal(let m): m.envelope
         case .appOpen(let m): m.envelope
@@ -2622,6 +2717,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case ChatCommands.messageType: self = .chatCommands(try ChatCommands(from: decoder))
         case ViewerAct.messageType: self = .viewerAct(try ViewerAct(from: decoder))
         case SpacesList.messageType: self = .spacesList(try SpacesList(from: decoder))
+        case DeploymentMessage.messageType: self = .deploymentMessage(try DeploymentMessage(from: decoder))
         case Models.messageType: self = .models(try Models(from: decoder))
         case ThreadProposal.messageType: self = .threadProposal(try ThreadProposal(from: decoder))
         case AppOpen.messageType: self = .appOpen(try AppOpen(from: decoder))
@@ -2679,6 +2775,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .chatCommands(let m): try m.encode(to: encoder)
         case .viewerAct(let m): try m.encode(to: encoder)
         case .spacesList(let m): try m.encode(to: encoder)
+        case .deploymentMessage(let m): try m.encode(to: encoder)
         case .models(let m): try m.encode(to: encoder)
         case .threadProposal(let m): try m.encode(to: encoder)
         case .appOpen(let m): try m.encode(to: encoder)
