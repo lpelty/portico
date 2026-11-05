@@ -120,7 +120,7 @@ extension SpacesPresentation {
     }
 
     /// What a space row's context menu offers.
-    enum MenuAction: Equatable {
+    enum MenuAction: Hashable {
         case rename, remove
     }
 

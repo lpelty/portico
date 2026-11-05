@@ -62,6 +62,15 @@ struct ConversationView: View {
             if !model.pinnedCards(for: chat).isEmpty {
                 pinnedCards
             }
+            // v0.22 (S3): the deployment's messages dock in the same place,
+            // above a question or permission card.
+            if !model.dockedDeploymentMessages.shown.isEmpty {
+                DeploymentMessageDock()
+                    .environment(\.dockMaxHeight, conversationHeight.map(DockedCardLayout.maxHeight))
+                    .padding(.horizontal, Self.sideInset)
+                    .padding(.bottom, 8)
+                    .inConversationColumn()
+            }
             // v0.16 (AO1): the docked question or permission card, at the
             // composer's width above it; the composer stays under it.
             if model.dockedCard(for: chat) != nil {
@@ -432,6 +441,7 @@ struct ConversationView: View {
             .joined(separator: ",")
         // A card docking or leaving changes the transcript's height (v0.16).
         let docked = model.dockedCard(for: chat).map { ":d:" + $0.id } ?? ""
+            + model.dockedDeploymentMessages.shown.map { ":m:" + $0.id }.joined()
         return itemsKey + working + (calling.isEmpty ? "" : ":c:" + calling) + docked
     }
 
