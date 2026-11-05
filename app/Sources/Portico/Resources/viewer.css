@@ -203,3 +203,18 @@ details.fm:not([open]) .fm-summary {
 .fm-wait { background: var(--fm-wait); }
 .fm-done { background: var(--fm-done); }
 .fm-stopped { background: var(--fm-stopped); }
+
+/* v0.22 item 21: thin rounded scroll bars over the page's edge, with no
+   track, whatever the system's "Show scroll bars" setting (the editor's
+   page inlines this stylesheet too). The thumb is the rule colour, the
+   muted text colour while pointed at or dragged. */
+::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--rule);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 5px;
+  min-height: 24px;
+}
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: var(--fg-muted); }

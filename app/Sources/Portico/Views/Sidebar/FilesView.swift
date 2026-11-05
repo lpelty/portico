@@ -148,14 +148,12 @@ struct FilesView: View {
         return List {
             if !changed.isEmpty {
                 Section {
+                    ChangedHeading().solidRow()
                     ForEach(changed, id: \.path) { file in
                         ChangedFileRow(chat: chat, path: file.path, at: file.at).solidRow()
                     }
-                } header: {
-                    Text("Changed this session")
-                        .scaledFont(FileTree.headerSize, weight: .semibold)
-                        .solidHeader()
                 }
+                .listSectionSeparator(.hidden)
             }
             ForEach(nodes) { node in
                 FileRow(node: node, subtitle: "\(node.root)/\(node.path)").solidRow()
@@ -255,6 +253,7 @@ struct FileTree: View {
         if !changed.isEmpty {
             let shown = ChangedFiles.shown(count: changed.count, expanded: allChanged)
             Section {
+                ChangedHeading().solidRow()
                 ForEach(changed.prefix(shown), id: \.path) { file in
                     ChangedFileRow(chat: chat, path: file.path, at: file.at).solidRow()
                 }
@@ -272,11 +271,8 @@ struct FileTree: View {
                     .buttonStyle(.plain)
                     .solidRow()
                 }
-            } header: {
-                Text("Changed this session")
-                    .scaledFont(Self.headerSize, weight: .semibold)
-                    .solidHeader()
             }
+            .listSectionSeparator(.hidden)
         }
     }
 
@@ -510,6 +506,24 @@ enum ChangedFiles {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
         if needle.isEmpty { return changed }
         return changed.filter { $0.name.lowercased().contains(needle) }
+    }
+}
+
+/// CHANGED THIS SESSION's heading (v0.22 item 20): a plain heading in the
+/// folders' type, drawn as the section's first row. As a list section
+/// header it was the plain list's first, pinned header, which the system
+/// draws in a band with a faint edge and a rule under it.
+struct ChangedHeading: View {
+    static let text = "Changed this session"
+
+    var body: some View {
+        Text(Self.text)
+            .scaledFont(FileTree.headerSize, weight: .semibold)
+            .foregroundStyle(.secondary)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 

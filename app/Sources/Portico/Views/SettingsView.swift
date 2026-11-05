@@ -10,6 +10,40 @@ import SwiftUI
 enum SettingsWindow {
     static let width: CGFloat = 700
     static let height: CGFloat = 640
+    /// The main window's background (v0.22 item 22), not the lighter panel.
+    static let background: Theme.Token = .window
+
+    /// The window and its tab header on `background`, solid.
+    @MainActor
+    static func style(_ window: NSWindow) {
+        window.backgroundColor = Theme.nsColor(background)
+        window.isOpaque = true
+        window.titlebarAppearsTransparent = true
+    }
+}
+
+/// v0.22 item 22: the settings window is drawn on `SettingsWindow.background`
+/// (the main window's solid colour), its title bar and tab header too: the
+/// header is the window's toolbar, which shows the window's own background
+/// once the title bar is transparent.
+struct SettingsWindowBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> BackgroundView { BackgroundView() }
+    func updateNSView(_ view: BackgroundView, context: Context) { view.apply() }
+
+    final class BackgroundView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+
+        // Never takes a click meant for the content in front of it.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        func apply() {
+            guard let window else { return }
+            SettingsWindow.style(window)
+        }
+    }
 }
 
 /// What Settings → General shows and says (v0.12 spec sections 3.5, 4.5, 6).
@@ -98,6 +132,9 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: SettingsWindow.width, height: SettingsWindow.height)
+        // v0.22 item 22: the main window's background, tab header included;
+        // the section boxes keep `Theme.panel`.
+        .background(SettingsWindowBackground())
     }
 
     @ViewBuilder
