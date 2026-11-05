@@ -1,5 +1,74 @@
 # Changelog
 
+## v0.22.0 (2026-11-05)
+
+Five visual fixes from using v0.20.1 (field notes 7 and 20–23), and five
+things a deployment's spaces and routines asked for (S1–S5).
+
+### What a person gets (app)
+
+- **Tooltips sit by their control again (7).** The tip's panel was being
+  held to its text's minimum size (narrow and very tall), so once on
+  screen it grew from its top edge and the bubble dropped well below the
+  control; a long path's tip ended near the bottom of the window. Tips now
+  keep the size they're given and stay on the control's screen.
+- **"Changed this session" is a plain heading (20)** like the Files pane's
+  other sections, without the band and rule.
+- **Thin overlay scroll bars everywhere (21)**, over the content's edge,
+  also in the viewer and the editor, even with "Show scroll bars: Always".
+- **The Settings window is the main window's dark colour (22)**, header
+  included.
+- **The viewer's header buttons are one height (23).** The close button is
+  24 pt everywhere, the app card's header included.
+- **Space actions (S1).** A link `space-action:<action>?item=<item>` on a
+  space's page (HTML or Markdown) runs the deployment's `[spaces] act`
+  with the space, the action and the item. A failure shows in the space's
+  header, in red, until the next refresh or action.
+- **Worded notices (S2).** A page's `notice` key is the notification's
+  text ("Prep for your 10:00 is ready"), and `notice_target` the place in
+  the page a click scrolls to; `notice: ""` means no notification.
+- **Messages from the deployment (S3)** dock above the message box like
+  question cards, held while a reply streams: title, text, Dismiss, and
+  Open when they name a space; up to three stacked, then "N more". They can
+  also post a system notification. They aren't sent to the agent or kept
+  in the chat.
+- **Fixed spaces (S4).** `removable: false` on a page hides Remove and
+  Rename for it.
+- **Refreshing (S5).** After Refresh, the space shows a spinner in the
+  switcher and "Refreshing…" in its header until its page changes, or for
+  five minutes.
+
+### The gateway
+
+- `[spaces] act = "..."`: a command run with `/bin/sh -c` for up to 30 s,
+  with `$PORTICO_SPACE`, `$PORTICO_ACTION` and `$PORTICO_ITEM` in its
+  environment. New frame `space.act {id, action, item?}`; errors
+  `space.no_act`, `space.act_failed`, and `protocol.invalid` for an action
+  or item outside `[A-Za-z0-9._:-]{1,128}`. Capability `spaces.act` when
+  the key is set.
+- `SpaceInfo` gains `notice?`, `notice_target?` and `removable?` (sent
+  only as `false`). `space.remove` and `space.rename` of a fixed space
+  answer `space.fixed`, and nothing is touched.
+- `portico-gateway message "<text>" [--title T] [--notify] [--space ID]`
+  drops a message into `<state dir>/messages/` (or write the JSON file
+  yourself; see PROTOCOL.md). The gateway sends it as `deployment.message`
+  to apps naming `messages.deployment.v1` within two seconds, or at the
+  next hello; at most 50 wait, a file that doesn't parse goes to
+  `messages/failed/`.
+- **Update the gateway before adding `[spaces] act`.** An older gateway
+  refuses a key it doesn't know. The page keys (`notice`,
+  `notice_target`, `removable`) are safe on any gateway.
+
+### Owed
+
+- On screen, on the Smartsheet Mac: the tooltips on "Hide the sidebar" and
+  the Files Archive row; the scroll bars; the Settings window (macOS 26 may
+  still draw its own glass on the tab header); the viewer's buttons; the
+  "Changed this session" heading lining up with the folder headings.
+- On screen anywhere: an action link in HTML and in Markdown; a worded
+  notice and its click; docked messages (three or more, and Open); a fixed
+  space's menu; the refreshing spinner.
+
 ## v0.21.0 (2026-11-05)
 
 Field notes 19 and 18: background work you can see, and only real
