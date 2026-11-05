@@ -21,6 +21,7 @@
     "context",
     "spaces.v1",
     "spaces.refresh",
+    "spaces.act",
     "threads.v1"
   ],
   "commands": [

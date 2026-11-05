@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import APPS_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -43,7 +43,7 @@ PLUGINS_CAPABILITY = "plugins.v1"
 CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
     MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY,
-    FILES_EXTRA_CAPABILITY, FILES_EDITED_CAPABILITY, TASKS_CAPABILITY,
+    FILES_EXTRA_CAPABILITY, FILES_EDITED_CAPABILITY, TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once
@@ -59,6 +59,8 @@ CLEAR_SESSIONS_CAPABILITY = "sessions.clear"
 # when ``[spaces] refresh`` is (the app then offers Refresh).
 SPACES_CAPABILITY = "spaces.v1"
 SPACES_REFRESH_CAPABILITY = "spaces.refresh"
+# v0.22: also when ``[spaces] act`` is (the app then turns ``space-action:`` links in a page into ``space.act``).
+SPACES_ACT_CAPABILITY = "spaces.act"
 
 # Always usable by the agent in the viewer, whatever ``act_hosts`` says.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -284,8 +286,9 @@ class ViewerConfig(BaseModel):
 class SpacesConfig(BaseModel):
     """``[spaces]`` (v0.12): a folder of files the agent keeps current, shown in the app's switcher.
 
-    ``refresh`` and ``remove`` are commands (``/bin/sh -c``, 30 s, with
-    ``$PORTICO_SPACE`` set to the space's id). ``require_folder`` (v0.21): a
+    ``refresh``, ``remove`` and (v0.22) ``act`` are commands (``/bin/sh -c``, 30 s, with
+    ``$PORTICO_SPACE`` set to the space's id; ``act`` also gets ``$PORTICO_ACTION``
+    and ``$PORTICO_ITEM``). ``require_folder`` (v0.21): a
     page is a space only with a folder of its name beside it (``brief.html``
     and ``brief/``), so other files there, such as a README for the agent,
     are not listed.
@@ -296,6 +299,7 @@ class SpacesConfig(BaseModel):
     folder: str | None = None
     refresh: str | None = None
     remove: str | None = None
+    act: str | None = None
     require_folder: bool = False
 
     @field_validator("folder")
@@ -309,7 +313,7 @@ class SpacesConfig(BaseModel):
         # Absolute from here on: it goes to the agent's add_dirs and prompt.
         return str(path.resolve())
 
-    @field_validator("refresh", "remove")
+    @field_validator("refresh", "remove", "act")
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value if value is not None and value.strip() else None
@@ -601,7 +605,8 @@ def hello_for(
     deployment can restart all its services, (v0.11) ``sessions.clear``
     in single presentation, and (v0.16) ``threads.v1`` in single
     presentation with ``[threads] max`` above 0, with ``threads_max`` set to it,
-    and (v0.18) ``apps.v1`` when ``[apps] enabled``.
+    and (v0.18) ``apps.v1`` when ``[apps] enabled``, and (v0.22) ``spaces.act`` with ``[spaces] act``
+    (``messages.deployment.v1`` is always listed: the gateway can send ``deployment.message``).
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
@@ -617,6 +622,8 @@ def hello_for(
         capabilities.append(SPACES_CAPABILITY)
         if config.spaces.refresh:
             capabilities.append(SPACES_REFRESH_CAPABILITY)
+        if config.spaces.act:
+            capabilities.append(SPACES_ACT_CAPABILITY)
     hello = HelloServer(
         ts=_now(),
         gateway_version=gateway_version,

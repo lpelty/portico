@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``sessions clear``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``sessions clear``, ``message``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -308,6 +308,28 @@ def cmd_update(args: argparse.Namespace) -> int:
     return done.returncode
 
 
+def cmd_message(args: argparse.Namespace) -> int:
+    """v0.22: leave a message from the deployment for the app: one JSON file in ``<state dir>/messages/``.
+
+    The running gateway delivers it within a few seconds (or on the app's next connect) and deletes
+    the file; nothing here needs the gateway to be running.
+    """
+    from portico_gateway.deployment_messages import write_message
+    from portico_gateway.state import StateDir
+
+    if not args.text.strip():
+        print("portico-gateway: message needs some text", file=sys.stderr)
+        return 2
+    state_path = Path(args.state).expanduser() if args.state else StateDir.default_path()
+    try:
+        path = write_message(state_path, args.text, title=args.title, notify=args.notify, space=args.space)
+    except OSError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -377,6 +399,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_config_value)
+
+    p = sub.add_parser("message", help="leave a message from the deployment for the open app (a file in <state>/messages/)")
+    p.add_argument("text", help="the message (Markdown)")
+    p.add_argument("--title", help="a short heading shown in bold")
+    p.add_argument("--notify", action="store_true", help="also raise a system notification")
+    p.add_argument("--space", help="the id of a space the app offers to open with the message")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    p.set_defaults(func=cmd_message)
 
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")

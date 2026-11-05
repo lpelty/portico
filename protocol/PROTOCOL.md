@@ -99,7 +99,8 @@ reads them in `user.text`) and `files.extra.v1` (it sends
 `files.roots.set` and shows the added folders); v0.20: `files.edited.v1`
 (it sends `files.edited` after each save in the viewer's editor); v0.21:
 `tasks.v1` (it shows background commands and Monitors, `agent.started`
-with `task`; see Subagents and workflows). Absent
+with `task`; see Subagents and workflows); v0.22: `messages.deployment.v1`
+(it docks `deployment.message`; see Messages from the deployment). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -546,7 +547,10 @@ default), see [MCP Apps](#mcp-apps-v018); v0.19: `messages.attachments.v1`
 always, so the app may send `attachments` on `message.send` and reads them in
 `user.text`, and `files.extra.v1` always, so the app may send
 `files.roots.set`; v0.20: `files.edited.v1` always, so the app may send
-`files.edited`). Always followed by `chat.list`, so the app has the
+`files.edited`; v0.22: `messages.deployment.v1` always, so the gateway may
+send `deployment.message` to an app that lists it too, and `spaces.act` as
+well when `[spaces] act` is, so the app acts on `space-action:` links).
+Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -1063,7 +1067,8 @@ is live; renew it instead),
 carries its last line and no chat was created),
 `space.not_configured`, `space.not_found`, `space.invalid`,
 `space.no_refresh`, `space.refresh_failed`, `space.rename_failed`,
-`space.remove_failed` (v0.12: see The viewer and spaces),
+`space.remove_failed` (v0.12: see The viewer and spaces), `space.no_act`,
+`space.act_failed`, `space.fixed` (v0.22: see The viewer and spaces),
 `threads.off`, `thread.proposal_unknown`, `thread.proposal_resolved`,
 `thread.limit`, `thread.not_open`, `thread.renew` (v0.16: `session.renew`
 on a thread: "a thread closes rather than renews; close it with
@@ -1938,7 +1943,8 @@ folder configured as `[spaces] folder`, or, when that is not set (v0.14),
 the extension. Its title, icon and order come from front matter (`---`
 lines at the top) or, for any file, a leading `<!-- key: value -->`
 block: `title`, `icon` (an SF Symbol name; default `doc.text`), `order`
-(an integer, optional). A file with broken or missing front matter, or
+(an integer, optional); v0.22: `notice`, `notice_target` and `removable`
+(see below). A file with broken or missing front matter, or
 that is not UTF-8, is listed by its file name with the defaults. Files
 whose names start with `.` or `_` are not spaces. Subfolders of the
 spaces folder are ignored: nothing inside them is listed or watched.
@@ -1952,11 +1958,44 @@ declared `spaces.v1`. The agent is told in its system prompt where the
 folder is and passed it as an extra directory, so it can write there.
 
 #### `spaces.list` — `SpacesList` *(gateway → app)*
-`spaces: [{id, title, icon, order?, location, media, updated}]`.
+`spaces: [{id, title, icon, order?, location, media, updated, notice?,
+notice_target?, removable?}]`.
 `location` is the absolute path, `media` as for `artifact.created`
 (`markdown` or `html`), `updated` the file's modification time (UTC, ISO
 8601). The whole list every time. Sent after `services.status` on `hello`
 and whenever a file is added, changed or removed.
+
+v0.22 fields, all left out when the page does not set them (an older app
+ignores them):
+- `notice?: string`: from the page's `notice` key, the wording of the
+  notification a change to the space raises. `notice: ""` is sent as `""`
+  and means no notification for that update. Without the key the app
+  words the notification itself.
+- `notice_target?: string`: from `notice_target`, a fragment in the page
+  (`meeting-1000`) a click on the notification scrolls to. A leading `#`
+  is dropped; an empty value is left out.
+- `removable?: false`: from `removable: false` (also `no`, any case) in the
+  front matter or comment block. Sent only when `false`; absent means
+  `true`. The gateway refuses `space.rename` and `space.remove` for such a
+  space with `space.fixed`, before anything is touched (the file never goes
+  to the Trash); the app hides Remove and Rename. A page whose block is
+  malformed is listed with the defaults, so it is removable.
+
+#### `space.act` *(app → gateway, v0.22)*
+`space.act {id, action, item?}`. `id` is **the space's id**, as for
+`space.refresh`, and is the `id` an `error` echoes. `action` and `item`
+(optional) each match `[A-Za-z0-9._:-]{1,128}`; anything else is refused
+with `error code=protocol.invalid` and nothing runs. The app sends it for a
+link `space-action:<action>?item=<item>` in a space's page, and only when
+the gateway lists `spaces.act`. The gateway runs `[spaces] act` with
+`/bin/sh -c` for up to 30 s, with `$PORTICO_SPACE`, `$PORTICO_ACTION` and
+`$PORTICO_ITEM` (empty with no item) set in the environment, never in the
+command string, and answers with a new `spaces.list` (the deployment
+rewrites the page; no result goes back to the link) or an `error`. It runs
+beside the app's other frames. Errors: `space.no_act` (no `[spaces] act`;
+the app ignores such links), `space.not_found`, `space.act_failed` (the
+message carries the command's last line), `protocol.invalid`. A fixed
+space can still act.
 
 #### `space.refresh`, `space.rename`, `space.remove` *(app → gateway)*
 `space.refresh {id}`, `space.rename {id, title}`, `space.remove {id}`. On
@@ -1976,11 +2015,48 @@ Error codes: `space.not_configured` (no spaces folder; since v0.14 a gateway alw
 in a comment block), `space.no_refresh` (no refresh command),
 `space.refresh_failed`, `space.rename_failed`,
 `space.remove_failed` (its message says when the file is already in the
-Trash).
+Trash); v0.22: `space.no_act` (no act command), `space.act_failed`, and
+`space.fixed` (`space.rename` or `space.remove` of a space with
+`removable: false`).
 
 #### The space's file as an artifact
 `artifact.created.artifact.space?` carries the space's id when the file is
 one, so the app opens it as that space.
+
+## Messages from the deployment *(v0.22)*
+
+The deployment's routines are scripts, so it leaves a message in a folder:
+no socket and no token, and a message survives the gateway restarting.
+`bin/portico-gateway message "<text>" [--title T] [--notify] [--space ID]`
+(with `--state` as elsewhere) writes one file into `<state dir>/messages/`
+and prints its path. A deployment may write the file itself.
+
+**The drop file** is a UTF-8 JSON object in `<state dir>/messages/`, named
+`<anything>.json` (names starting with `.` are ignored, so write aside
+and rename), at most 256 KB:
+
+```json
+{"text": "Today's standup is at **10:30**.", "title": "Standup moved", "notify": true,
+ "space": "meeting-prep", "id": "20261105T100000000000Z-1a2b3c4d", "ts": "2026-11-05T10:00:00Z"}
+```
+
+`text` (Markdown, not blank) is required. `title`, `space` (a space's
+id), `id` and `ts` are strings and `notify` is true or false, all
+optional; `id` defaults to the file name without `.json` and `ts` to the
+time of sending. Other keys are ignored. A file that is not valid in this
+way is moved to `messages/failed/` with a log line; the rest still go.
+
+#### `deployment.message` — `DeploymentMessage` *(gateway → app)*
+`{id, text, title?, notify?, space?, ts}` as above (`notify` is sent only
+when true). The gateway looks at the folder every 2 s and when an app
+attaches, sends each file in order of its modification time, oldest first,
+then deletes it. Only an app that listed `messages.deployment.v1` is
+sent one. With no such app attached, files wait in the folder, at most 50
+(beyond that the oldest are deleted, with a log line), and go out on the
+next `hello`. The message is not chat history: it is not sent to the agent
+and not kept in `chat.history`. The app docks it above the message box
+until the person dismisses it (**Open** opens `space`); a dismissed message
+is gone. With `notify` the app also posts a system notification.
 
 ## Services *(v0.4)*
 
@@ -2059,6 +2135,10 @@ for the reference gateway, not protocol messages.
   a person ends "; threads: Thread 1 (working), Thread 2 (idle)").
   `version` changes only if a key changes meaning. Exit 0 when a gateway runs, 3 when none does. Without
   `--json`, one line for a person.
+- `message "<text>" [--title T] [--notify] [--space ID]` (v0.22) — leaves
+  a message from the deployment as a drop file (see Messages from the
+  deployment); it needs no running gateway. Exit 0 and the file's path on
+  stdout, 2 for a blank text, 1 when the file could not be written.
 - `stop` — stops the gateway running on this state directory through its
   own stop path (as `gateway.stop`: running turns reported as stopped,
   `on_stop`, index saved) and waits for it to exit. Exit 0 when one was

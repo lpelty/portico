@@ -1,0 +1,9 @@
+{
+  "id": "msg-20261105-1",
+  "notify": true,
+  "space": "meeting-prep",
+  "text": "Today's standup is at **10:30**.",
+  "title": "Standup moved",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "deployment.message"
+}

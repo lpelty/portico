@@ -232,6 +232,7 @@ core = ["acme-tracker"]             # servers in the folder's .mcp.json that are
 folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
 refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
 remove = "my-tool forget-space"     # optional: runs after the file is moved to the Trash; same environment
+act = "my-tool space-action"        # optional (v0.22): same, plus $PORTICO_ACTION and $PORTICO_ITEM, for space-action: links in a page
 require_folder = true               # optional (v0.21): a page is a space only with a folder of its name beside it
 ```
 
@@ -581,7 +582,12 @@ Portico schedules nothing: the deployment rewrites the files (it can ask
 the agent to). The gateway checks the folder every 5 seconds and tells the
 agent where it is in the system prompt. `refresh` and `remove` run
 commands you provide, so a space can be re-run on demand or its source
-dropped when the person removes it. `examples/spaces/meeting-prep.md` is a
+dropped when the person removes it. `act` (v0.22) runs for a link
+`space-action:<action>?item=<item>` in a page, with the action and item
+in `$PORTICO_ACTION` and `$PORTICO_ITEM`; the deployment rewrites the
+page. A page can word the notification its change raises (`notice`, and
+`notice_target`, a fragment in the page; `notice: ""` for none) and can be
+fixed (`removable: false`: no Remove, no Rename). `examples/spaces/meeting-prep.md` is a
 starting file. Spaces need an app that lists `spaces.v1`, and the
 viewer tools need `viewer.v1`; an older app is sent neither.
 
@@ -620,6 +626,9 @@ bin/portico-gateway stop               # stop the running gateway (its own stop 
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
+bin/portico-gateway message "Standup moved" --title Heads-up --notify --space meeting-prep
+                                       # (v0.22) leave a message for the open app: a file in <state>/messages/,
+                                       # sent within 2 s or on the app's next connect (up to 50 wait)
 bin/portico-gateway sessions clear     # (v0.12) forget every earlier session; asks first, --yes skips that;
                                        # refuses while a gateway runs ("Stop the gateway first.") and in
                                        # multiple presentation; the transcripts on disk stay
