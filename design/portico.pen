@@ -183443,7 +183443,7 @@
                               "name": "Icon",
                               "width": 12,
                               "height": 12,
-                              "icon": "stethoscope",
+                              "icon": "activity",
                               "library": "lucide",
                               "fill": "$text-2"
                             },
@@ -184312,7 +184312,7 @@
                               "name": "Icon",
                               "width": 12,
                               "height": 12,
-                              "icon": "stethoscope",
+                              "icon": "activity",
                               "library": "lucide",
                               "fill": "$text-2"
                             },
