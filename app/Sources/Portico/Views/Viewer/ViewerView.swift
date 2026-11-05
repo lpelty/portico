@@ -873,27 +873,26 @@ struct ImagePane: View {
     }
 }
 
-/// A PDF in PDFKit's view, continuous pages, fit to width.
-struct PDFPane: NSViewRepresentable {
+/// A PDF in PDFKit's view, continuous pages, fit to width by default, with
+/// the zoom control and the page shown (v0.20 §3.3).
+struct PDFPane: View {
     let file: URL
+    @State private var scale: CGFloat = 1
+    @State private var page = ""
+    @State private var awake = true
+    @State private var box = PDFZoomPane.ControllerBox()
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
-        view.document = PDFDocument(url: file)
-        // The agent reads and scrolls the viewer's PDF (v0.12).
-        context.environment.viewerAgent?.attachNative(view, file: file, slot: context.environment.viewerSlot)
-        return view
-    }
-
-    func updateNSView(_ view: PDFView, context: Context) {
-        if view.document?.documentURL != file {
-            view.document = PDFDocument(url: file)
-            // The same view, another file: the agent reads the new one.
-            context.environment.viewerAgent?.attachNative(view, file: file, slot: context.environment.viewerSlot)
-        }
+    var body: some View {
+        PDFZoomPane(file: file, scale: $scale, page: $page, controllerBox: box)
+            .overlay(alignment: .bottomTrailing) {
+                ZoomControl(
+                    percent: Int((scale * 100).rounded()), page: page.isEmpty ? nil : page,
+                    onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
+                    onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
+                    awake: awake)
+                    .padding(16)
+            }
+            .modifier(ZoomWake(awake: $awake))
     }
 }
 

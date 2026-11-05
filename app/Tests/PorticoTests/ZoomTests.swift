@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import XCTest
 @testable import Portico
@@ -146,6 +147,78 @@ final class ZoomTests: XCTestCase {
             weakController = coordinator.controller
             XCTAssertNotNil(weakController)
             ImageZoomPane.teardown(coordinator)
+        }
+        XCTAssertNil(weakController)
+    }
+
+    // MARK: PDF (§3.3)
+
+    private func pdfFile() throws -> URL {
+        let doc = PDFDocument()
+        for n in 0..<3 {
+            let img = NSImage(size: NSSize(width: 200, height: 300))
+            img.lockFocus(); NSColor.white.setFill(); NSRect(x: 0, y: 0, width: 200, height: 300).fill(); img.unlockFocus()
+            doc.insert(PDFPage(image: img)!, at: n)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("zoom-\(UUID().uuidString).pdf")
+        XCTAssertTrue(doc.write(to: url))
+        return url
+    }
+
+    private func pdfController() throws -> PDFZoomController {
+        let c = PDFZoomController()
+        c.memory = ZoomMemory()
+        c.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
+        c.load(url: try pdfFile())
+        return c
+    }
+
+    func testPDFPageLabelFormat() throws {
+        XCTAssertEqual(PDFZoomController.pageLabel(page: 3, of: 12), "Page 3 of 12")
+        XCTAssertEqual(try pdfController().pageLabel, "Page 1 of 3")
+    }
+
+    func testPDFScaleGoesThroughStepsAndFitSetsAutoScales() throws {
+        let c = try pdfController()
+        XCTAssertTrue(c.fitting)
+        c.zoomActual()
+        XCTAssertFalse(c.fitting)
+        XCTAssertEqual(c.scale, 1, accuracy: 0.001)
+        c.zoomIn()
+        XCTAssertEqual(c.scale, 1.25, accuracy: 0.001)
+        c.zoomOut(); c.zoomOut()
+        XCTAssertEqual(c.scale, 0.75, accuracy: 0.001)
+        c.zoomToFit()
+        XCTAssertTrue(c.fitting)
+        XCTAssertNil(c.memory.scale(for: c.path))
+    }
+
+    func testPDFMemoryPerPath() throws {
+        let c = try pdfController()
+        c.zoomIn()
+        let remembered = c.memory.scale(for: c.path)
+        XCTAssertNotNil(remembered)
+        let again = PDFZoomController()
+        again.memory = c.memory
+        again.load(url: URL(fileURLWithPath: c.path))
+        XCTAssertFalse(again.fitting)
+        XCTAssertEqual(again.scale, remembered ?? 0, accuracy: 0.001)
+    }
+
+    func testDismantledPDFPaneReleasesItsController() throws {
+        let url = try pdfFile()
+        weak var weakController: PDFZoomController?
+        autoreleasepool {
+            var scale: CGFloat = 1
+            var page = ""
+            let box = PDFZoomPane.ControllerBox()
+            let coordinator = PDFZoomPane.Coordinator()
+            _ = PDFZoomPane.assemble(file: url, scale: Binding(get: { scale }, set: { scale = $0 }),
+                                     page: Binding(get: { page }, set: { page = $0 }),
+                                     box: box, coordinator: coordinator, slot: .space)
+            weakController = coordinator.controller
+            XCTAssertNotNil(weakController)
+            PDFZoomPane.teardown(coordinator)
         }
         XCTAssertNil(weakController)
     }
