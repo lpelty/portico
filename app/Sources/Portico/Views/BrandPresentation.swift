@@ -14,9 +14,19 @@ struct BrandPresentation: Equatable {
 
     static let defaultName = "Portico"
 
+    /// The name before `hello` (v0.20.1): an installed `.app` is named for
+    /// the deployment, so its bundle name is the brand's; only a build with
+    /// no bundle (`swift run`, tests) falls back to the default.
+    static let fallbackName: String = fallbackName(bundle: .main)
+
+    static func fallbackName(bundle: Bundle) -> String {
+        guard Updater.appBundle(bundle) != nil else { return defaultName }
+        return Updater.brandName(info: bundle.infoDictionary)
+    }
+
     var name: String {
         let trimmed = brand?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? Self.defaultName : trimmed
+        return trimmed.isEmpty ? Self.fallbackName : trimmed
     }
 
     /// The accent for `.tint`, or `nil` for the system accent when the
@@ -197,15 +207,78 @@ struct BrandHeader: View {
 }
 
 extension BrandPresentation {
-    /// The standard About panel with the brand's name and icon, and the app's version.
+    /// The version the About panel shows (v0.20.1): the deployment's
+    /// `brand.version` when it gives one, else the app's own.
+    func aboutVersion(appVersion: String) -> String {
+        let deployment = brand?.version?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return deployment.isEmpty ? appVersion : deployment
+    }
+
+    /// The About panel's text under the version (v0.20.1). The deployment's
+    /// `brand.about` with `{app_version}` and `{built}` filled in (an empty
+    /// string shows nothing); without one, the app's own line, which says
+    /// "App" and never the app's code name, and only when the version above
+    /// is the deployment's, plus the build time when the bundle records it.
+    func aboutText(appVersion: String, built: Date?) -> String {
+        let builtText = built.map(Self.builtFormat) ?? ""
+        if let about = brand?.about {
+            return about
+                .replacingOccurrences(of: "{app_version}", with: appVersion)
+                .replacingOccurrences(of: "{built}", with: builtText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let deployment = !(brand?.version?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        var parts: [String] = []
+        if deployment { parts.append("App \(appVersion)") }
+        if !builtText.isEmpty { parts.append("Built \(builtText)") }
+        return parts.joined(separator: " · ")
+    }
+
+    static func builtFormat(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// When this bundle was built: `PorticoBuildDate` (ISO 8601, written by
+    /// make-app.sh); `nil` for a build without one.
+    static func buildDate(info: [String: Any]? = Bundle.main.infoDictionary) -> Date? {
+        guard let text = info?["PorticoBuildDate"] as? String else { return nil }
+        return ISO8601DateFormatter().date(from: text)
+    }
+
+    /// The About panel's text, with web and email addresses as links.
+    static func aboutCredits(_ text: String) -> NSAttributedString? {
+        guard !text.isEmpty else { return nil }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let credits = NSMutableAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ])
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            for match in detector.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length)) {
+                guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { continue }
+                credits.addAttribute(.link, value: url, range: match.range)
+            }
+        }
+        return credits
+    }
+
+    /// The standard About panel with the brand's name and icon, the
+    /// deployment's version (else the app's), and the About text.
     @MainActor
     func showAboutPanel(version: String) {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [
             .applicationName: name,
-            .applicationVersion: version,
+            .applicationVersion: aboutVersion(appVersion: version),
+            // No "(build)" after the version: the app's own is in the text.
+            .version: "",
         ]
         if let icon = iconImage {
             options[.applicationIcon] = icon
+        }
+        if let credits = Self.aboutCredits(aboutText(appVersion: version, built: Self.buildDate())) {
+            options[.credits] = credits
         }
         NSApplication.shared.orderFrontStandardAboutPanel(options: options)
     }
@@ -231,5 +304,37 @@ extension BrandPresentation {
             }
         }
         return true
+    }
+}
+
+/// Keeps the hosting window's title on the brand's name (v0.20.1). A
+/// WindowGroup's title is read when the window is made, so a `hello` that
+/// arrives later would leave the fallback in the Dock's window list.
+struct WindowTitleSetter: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> TitleView {
+        let view = TitleView()
+        view.title = title
+        return view
+    }
+
+    func updateNSView(_ view: TitleView, context: Context) {
+        view.title = title
+        view.apply()
+    }
+
+    final class TitleView: NSView {
+        var title = ""
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+
+        func apply() {
+            guard let window, window.title != title else { return }
+            window.title = title
+        }
     }
 }

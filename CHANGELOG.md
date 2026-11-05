@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.20.1 (2026-11-05)
+
+Field notes 16 and 17: the About panel is the deployment's, and nothing says
+"Portico" before the gateway's `hello` arrives.
+
+### What a person gets (app)
+
+- **The About panel shows the deployment's version** (`[brand] version`,
+  e.g. "Version 0.40.2"), with the app's own version on a generic line
+  under it: "App 0.20.1 · Built 5 Nov 2026 at 09:30". Without the key the
+  panel shows the app's version, as before, and when it was built.
+- **The deployment writes the panel's text** with `[brand] about`: any
+  lines (contact details, a support link), with `{app_version}` and
+  `{built}` filled in and web and email addresses as links. `""` shows
+  nothing.
+- **The Dock's menu and the window title use the brand from launch.**
+  Before `hello`, an installed app is called by its bundle's name (the
+  brand's, from `bin/install`), and the window's title follows the brand
+  when `hello` changes it.
+
+### The gateway
+
+- `brand` in `hello` gains optional `version` and `about`. An older app
+  ignores them.
+
+### Packaging
+
+- `make-app.sh` records the build time as `PorticoBuildDate` (ISO 8601,
+  UTC) in `Info.plist`. `CFBundleShortVersionString` and `app_version`
+  stay the app's own version.
+
+### Owed (on screen)
+
+- The About panel with and without the keys, links clickable; the Dock's
+  right-click menu on an installed, branded app before and after `hello`.
+
 ## v0.20.0 (2026-11-04)
 
 Edit in the viewer, and zoom images and PDFs. What is verified by tests is

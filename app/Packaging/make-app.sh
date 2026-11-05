@@ -133,6 +133,8 @@ set_string LSMinimumSystemVersion "$min_macos"
 set_string NSPrincipalClass NSApplication
 plutil -insert NSHighResolutionCapable -bool YES "$plist"
 set_string PorticoGatewayBin "$gateway_bin"
+# v0.20.1: when this bundle was built (UTC), for the About panel's text.
+set_string PorticoBuildDate "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 [ -z "$home" ] || set_string PorticoHome "$home"
 # Voice input (v0.9): the system shows these when it first asks for the
 # microphone and speech recognition; without them the app may not ask.
