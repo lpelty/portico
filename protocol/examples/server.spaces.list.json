@@ -5,6 +5,8 @@
       "id": "meeting-prep",
       "location": "/Users/sam/Spaces/meeting-prep.md",
       "media": "markdown",
+      "notice": "Prep for your 10:00 meeting is ready",
+      "notice_target": "meeting-1000",
       "order": 2,
       "title": "Meeting prep",
       "updated": "2026-10-31T14:05:11.250000Z"
@@ -14,6 +16,7 @@
       "id": "brief",
       "location": "/Users/sam/Spaces/brief.html",
       "media": "html",
+      "removable": false,
       "title": "brief",
       "updated": "2026-10-31T07:30:00.000000Z"
     }

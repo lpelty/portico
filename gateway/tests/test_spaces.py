@@ -26,6 +26,7 @@ from portico_gateway.messages import (
     Error,
     HelloClient,
     HelloServer,
+    SpaceAct,
     SpaceRefresh,
     SpaceRemove,
     SpaceRename,
@@ -39,6 +40,7 @@ from portico_gateway.spaces import (
     Space,
     SpaceError,
     SpacesWatcher,
+    act,
     refresh,
     remove,
     rename,
@@ -700,4 +702,187 @@ async def test_require_folder_reaches_the_apps_list(state_dir: StateDir, factory
         finally:
             await conn.close()
     finally:
+        await srv.shutdown()
+
+
+# --- v0.22 S1: space actions ------------------------------------------------------
+
+
+async def test_act_runs_with_the_three_values_in_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = tmp_path / "out.txt"
+    await act("brief", "mark-done", "task:1_a.b", f'printf "%s|%s|%s" "$PORTICO_SPACE" "$PORTICO_ACTION" "$PORTICO_ITEM" > {out}')
+    assert out.read_text() == "brief|mark-done|task:1_a.b"
+    await act("brief", "go", None, f'printf "[%s]" "$PORTICO_ITEM" > {out}')
+    assert out.read_text() == "[]"
+
+
+async def test_act_refuses_names_that_are_not_plain(tmp_path: Path) -> None:
+    marker = tmp_path / "hacked"
+    for action, item in (("go;touch " + str(marker), None), ("go", "$(touch " + str(marker) + ")"), ("a b", None), ("", None)):
+        with pytest.raises(SpaceError) as e:
+            await act("brief", action, item, "true")
+        assert e.value.code == "protocol.invalid"
+    assert not marker.exists()
+
+
+async def test_act_failure_carries_the_last_line_and_timeout_stops_it() -> None:
+    with pytest.raises(SpaceError) as e:
+        await act("brief", "go", None, "echo first; echo no luck >&2; exit 2")
+    assert "no luck" in str(e.value)
+    with pytest.raises(SpaceError, match="did not finish"):
+        await act("brief", "go", None, "sleep 5", timeout=0.2)
+
+
+@pytest.fixture
+def act_server_factory(state_dir: StateDir, factory: EngineFactory, spaces_dir: Path):
+    async def make(**spaces: Any) -> GatewayServer:
+        config = make_config(setting_sources=["project"], spaces=SpacesConfig(folder=str(spaces_dir), **spaces))
+        registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+        srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+        await srv.serve(0)
+        return srv
+
+    return make
+
+
+def test_spaces_config_takes_act_and_advertises_it_only_with_one() -> None:
+    from portico_gateway.config import hello_for
+
+    cfg = Config(spaces={"act": "true"})
+    assert cfg.spaces.act == "true"
+    assert Config(spaces={"act": "  "}).spaces.act is None
+    assert "spaces.act" not in hello_for(Config(), "e", "0.22.0").capabilities
+
+
+def test_hello_advertises_spaces_act_with_the_command(spaces_dir: Path) -> None:
+    from portico_gateway.config import hello_for
+
+    cfg = Config(spaces={"folder": str(spaces_dir), "act": "true"})
+    assert "spaces.act" in hello_for(cfg, "e", "0.22.0").capabilities
+    assert "spaces.act" not in hello_for(Config(spaces={"folder": str(spaces_dir)}), "e", "0.22.0").capabilities
+
+
+async def test_space_act_runs_the_command_and_answers_with_the_list(
+    act_server_factory, spaces_dir: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "act.txt"
+    put(spaces_dir, "brief.md")
+    srv = await act_server_factory(act=f'printf "%s %s %s" "$PORTICO_SPACE" "$PORTICO_ACTION" "$PORTICO_ITEM" > {out}')
+    conn = await hello(srv, ["spaces.v1", "spaces.act"])
+    try:
+        await frames_until(conn, "spaces.list")
+        await conn.send(dump(SpaceAct(ts=TS, id="brief", action="done", item="t-1")))
+        await asyncio.wait_for(frames_until(conn, "spaces.list"), 4)
+        assert out.read_text() == "brief done t-1"
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_space_act_failure_no_act_not_found_and_bad_names(act_server_factory, spaces_dir: Path) -> None:
+    put(spaces_dir, "brief.md")
+    srv = await act_server_factory(act="echo it broke; exit 3")
+    conn = await hello(srv, ["spaces.v1", "spaces.act"])
+    try:
+        await frames_until(conn, "spaces.list")
+        await conn.send(dump(SpaceAct(ts=TS, id="brief", action="go")))
+        err = await asyncio.wait_for(frames_until(conn, "error"), 4)
+        assert err.code == "space.act_failed" and err.id == "brief" and "it broke" in err.message
+        await conn.send(dump(SpaceAct(ts=TS, id="nope", action="go")))
+        assert (await frames_until(conn, "error")).code == "space.not_found"
+        for bad in ({"action": "a b"}, {"action": ""}, {"action": "x" * 129}, {"action": "go", "item": "$(id)"}, {"action": "go", "item": "a/b"}):
+            await conn.send(dump(SpaceAct(ts=TS, id="brief", **bad)))
+            assert (await frames_until(conn, "error")).code == "protocol.invalid", bad
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_space_act_without_a_command_answers_no_act(server: GatewayServer, spaces_dir: Path) -> None:
+    put(spaces_dir, "brief.md")
+    conn = await hello(server)
+    try:
+        await frames_until(conn, "spaces.list")
+        await conn.send(dump(SpaceAct(ts=TS, id="brief", action="go")))
+        err = await frames_until(conn, "error")
+        assert err.code == "space.no_act" and err.id == "brief"
+    finally:
+        await conn.close()
+
+
+# --- v0.22 S2: notices a space can word -------------------------------------------
+
+
+def test_scan_reads_notice_and_notice_target(spaces_dir: Path) -> None:
+    put(spaces_dir, "a.md", "---\ntitle: A\nnotice: Prep for your 10:00 is ready\nnotice_target: meeting-1000\n---\n")
+    put(spaces_dir, "b.html", "<!-- notice: Hello there # not a comment? -->\n<p>x</p>\n")
+    put(spaces_dir, "c.md", "---\nnotice: \"\"\nnotice_target: '#top'\n---\n")
+    put(spaces_dir, "d.md", "plain\n")
+    got = {s.id: (s.notice, s.notice_target) for s in scan(spaces_dir)}
+    assert got["a"] == ("Prep for your 10:00 is ready", "meeting-1000")
+    assert got["b"] == ("Hello there", None)
+    assert got["c"] == ("", "top"), "an empty notice is kept (it means: no notification); a leading # is dropped"
+    assert got["d"] == (None, None)
+
+
+async def test_spaces_list_carries_notice_fields_only_when_set(server: GatewayServer, spaces_dir: Path) -> None:
+    put(spaces_dir, "a.md", "---\nnotice: Ready\nnotice_target: x1\n---\n")
+    put(spaces_dir, "b.md", "plain\n")
+    put(spaces_dir, "c.md", "---\nnotice: \"\"\n---\n")
+    await server.spaces_watcher.poll()
+    conn = await hello(server)
+    try:
+        listing = await frames_until(conn, "spaces.list")
+        raw = {s.id: s.model_dump(exclude_none=True) for s in listing.spaces}
+        assert raw["a"]["notice"] == "Ready" and raw["a"]["notice_target"] == "x1"
+        assert "notice" not in raw["b"] and "notice_target" not in raw["b"]
+        assert raw["c"]["notice"] == ""
+    finally:
+        await conn.close()
+
+
+# --- v0.22 S4: spaces that cannot be removed or renamed ---------------------------
+
+
+def test_scan_reads_removable(spaces_dir: Path) -> None:
+    put(spaces_dir, "a.md", "---\nremovable: false\n---\n")
+    put(spaces_dir, "b.md", "---\nremovable: No\n---\n")
+    put(spaces_dir, "c.html", "<!-- removable: FALSE -->\n")
+    put(spaces_dir, "d.md", "---\nremovable: true\n---\n")
+    put(spaces_dir, "e.md", "plain\n")
+    assert {s.id: s.removable for s in scan(spaces_dir)} == {"a": False, "b": False, "c": False, "d": True, "e": True}
+
+
+def test_remove_and_rename_functions_refuse_a_fixed_space(spaces_dir: Path, fake_home: Path) -> None:
+    path = put(spaces_dir, "fixed.md", "---\nremovable: false\n---\nbody\n")
+    before = path.read_text()
+    with pytest.raises(SpaceError) as e:
+        rename(spaces_dir, "fixed", "New")
+    assert e.value.code == "space.fixed" and path.read_text() == before
+    with pytest.raises(SpaceError) as e2:
+        asyncio.run(remove(spaces_dir, "fixed", None))
+    assert e2.value.code == "space.fixed" and path.exists() and not (fake_home / ".Trash" / "fixed.md").exists()
+
+
+async def test_server_refuses_remove_and_rename_of_a_fixed_space_and_sends_removable_only_when_false(
+    act_server_factory, spaces_dir: Path, fake_home: Path, tmp_path: Path
+) -> None:
+    ran = tmp_path / "ran"
+    path = put(spaces_dir, "fixed.md", "---\nremovable: false\n---\nbody\n")
+    put(spaces_dir, "free.md", "plain\n")
+    srv = await act_server_factory(remove=f"touch {ran}")
+    conn = await hello(srv)
+    try:
+        listing = await frames_until(conn, "spaces.list")
+        wire = {s.id: s.model_dump(exclude_none=True) for s in listing.spaces}
+        assert wire["fixed"]["removable"] is False and "removable" not in wire["free"]
+        await conn.send(dump(SpaceRemove(ts=TS, id="fixed")))
+        err = await frames_until(conn, "error")
+        assert err.code == "space.fixed" and err.id == "fixed"
+        await conn.send(dump(SpaceRename(ts=TS, id="fixed", title="Other")))
+        assert (await frames_until(conn, "error")).code == "space.fixed"
+        assert path.exists() and "title: Other" not in path.read_text()
+        assert not ran.exists() and not (fake_home / ".Trash").exists()
+    finally:
+        await conn.close()
         await srv.shutdown()

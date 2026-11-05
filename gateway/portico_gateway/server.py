@@ -193,6 +193,8 @@ from .messages import (
     AgentStarted,
     APP_FRAME_TYPES,
     APPS_CAPABILITY,
+    DEPLOYMENT_MESSAGE_CAPABILITY,
+    DeploymentMessage,
     AppCallTool,
     AppContext,
     AppMessage,
@@ -277,6 +279,7 @@ from .messages import (
     ViewerResult,
     ViewerSettings,
     ServicesStatus,
+    SpaceAct,
     SpaceInfo,
     SpaceRefresh,
     SpaceRemove,
@@ -324,6 +327,7 @@ from .threads import (
     thread_prompt,
     use_key,
 )
+from . import deployment_messages as dmsg
 from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
 from .viewer import MARKS_CAPABILITY, SHOW_CAPABILITY, STOPPED, VIEWER_CAPABILITY, ViewerBridge
@@ -592,6 +596,7 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
     ``chat.queue`` and ``chat.queued`` go only to an app with ``queue.v1``.
     ``models`` goes only to an app with ``models.v1`` (v0.15).
     ``thread.proposal`` goes only to an app with ``threads.v1`` (v0.16).
+    ``deployment.message`` goes only to an app with ``messages.deployment.v1`` (v0.22).
     ``app.*`` goes only to an app with ``apps.v1`` (v0.18), live or in a ``chat.history``.
     A ``stuck`` service reaches an app without ``services.stuck.v1`` as ``down`` (v0.17).
     ``user.text`` reaches an app without ``messages.attachments.v1`` with its attachment
@@ -604,6 +609,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
             )
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
+    if isinstance(msg, DeploymentMessage) and DEPLOYMENT_MESSAGE_CAPABILITY not in capabilities:
+        return None  # v0.22: an app that cannot dock a message from the deployment is sent none
     if isinstance(msg, Models) and MODELS_CAPABILITY not in capabilities:
         return None  # v0.15: an app that did not declare models.v1 cannot decode models
     if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
@@ -1105,7 +1112,10 @@ class GatewayServer:
             if config.spaces.folder
             else None
         )
+        # v0.22: messages from the deployment, a drop folder polled while the gateway runs.
+        self._messages_lock = asyncio.Lock()
         self.register("space.refresh", self.on_space_refresh)
+        self.register("space.act", self.on_space_act)
         self.register("space.rename", self.on_space_rename)
         self.register("space.remove", self.on_space_remove)
         self.register("viewer.settings", self.on_viewer_settings)
@@ -1237,6 +1247,8 @@ class GatewayServer:
         if self.spaces_watcher is not None:
             self.spaces_watcher.spaces = await asyncio.to_thread(self.spaces_watcher.scan)
             self._spawn(self.spaces_watcher.run(), name="portico-spaces")
+        dmsg.messages_dir(self.state.path).mkdir(mode=0o700, exist_ok=True)
+        self._spawn(self._watch_messages(), name="portico-deployment-messages")
         if callable(getattr(self.engine_factory, "probe_models", None)):
             self._probe_task = self._spawn(self._probe_models(), name="portico-model-probe")
         print(f"{READY_PREFIX} port={self.port}", flush=True)
@@ -1523,6 +1535,7 @@ class GatewayServer:
         await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
         if self.spaces_watcher is not None:
             await self._send(conn, self._spaces_frame(self.spaces_watcher.spaces))
+        await self._deliver_messages()  # v0.22: what waited for an app, oldest first
         if self.update_version is not None:
             # Found before this app attached: it hears it now.
             await self._send(conn, UpdateAvailable(ts=_now(), version=self.update_version))
@@ -2638,6 +2651,48 @@ class GatewayServer:
     async def _send_viewer_act(self, conn: ServerConnection, act: ViewerAct) -> None:
         await conn.send(dump(act))
 
+    # --- messages from the deployment (v0.22) -----------------------------------
+
+    async def _watch_messages(self) -> None:
+        while True:
+            await asyncio.sleep(dmsg.POLL_SECONDS)
+            try:
+                await self._deliver_messages()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("messages: looking at the drop folder failed; trying again")
+
+    async def _deliver_messages(self) -> None:
+        """Send each waiting drop file to the attached app (``messages.deployment.v1``) and delete it.
+
+        A file that does not parse goes to ``failed/``. With no app that can show one,
+        valid files wait, up to ``HOLD_MAX``; ``hello`` and the 2 s poll both come here.
+        """
+        async with self._messages_lock:
+            folder = dmsg.messages_dir(self.state.path)
+            ready: list[tuple[Path, DeploymentMessage]] = []
+            for path in await asyncio.to_thread(dmsg.pending, folder):
+                try:
+                    ready.append((path, await asyncio.to_thread(dmsg.read_message, path)))
+                except dmsg.DropError as e:
+                    log.warning("messages: %s %s; moved to failed/", path.name, e)
+                    await asyncio.to_thread(dmsg.quarantine, path)
+            conn = self._app
+            if conn is None or DEPLOYMENT_MESSAGE_CAPABILITY not in _capabilities(conn):
+                await asyncio.to_thread(dmsg.trim, [path for path, _ in ready])
+                return
+            for path, msg in ready:
+                try:
+                    await conn.send(dump(msg))
+                except ConnectionClosed:
+                    return  # the file stays for the next hello
+                log.info("messages: %s sent", msg.id)
+                try:
+                    path.unlink()
+                except OSError as e:
+                    log.error("messages: %s could not be deleted after sending: %s", path.name, e)
+
     # --- spaces (v0.12) ---------------------------------------------------------
 
     @staticmethod
@@ -2646,6 +2701,8 @@ class GatewayServer:
             id=space.id, title=space.title, icon=space.icon, order=space.order,
             location=space.location, media=space.media,  # type: ignore[arg-type]
             updated=space.updated,
+            notice=space.notice, notice_target=space.notice_target,
+            removable=False if not space.removable else None,  # v0.22: sent only when false
         )
 
     def _spaces_frame(self, spaces: list[Space]) -> SpacesList:
@@ -2678,7 +2735,7 @@ class GatewayServer:
         await self._spaces_answer()
 
     def _spawn_space_action(
-        self, msg: SpaceRefresh | SpaceRemove, conn: ServerConnection,
+        self, msg: SpaceRefresh | SpaceAct | SpaceRemove, conn: ServerConnection,
         action: Callable[[], Awaitable[None]], failed_code: str,
     ) -> None:
         """Run a space command as a task, like ``service.restart``, so other frames keep moving.
@@ -2708,8 +2765,30 @@ class GatewayServer:
             raise ProtocolError(e.code, str(e)) from None
         self._spawn_space_action(msg, conn, lambda: spaces_mod.refresh(msg.id, command), "space.refresh_failed")
 
+    async def on_space_act(self, msg: SpaceAct, conn: ServerConnection) -> None:
+        """v0.22: run ``[spaces] act`` for a space (``$PORTICO_ACTION``, ``$PORTICO_ITEM``); answered by the fresh list."""
+        folder = self._space_folder()
+        command = self.config.spaces.act
+        if not command:
+            raise ProtocolError("space.no_act", "this deployment has no actions for spaces")
+        if not spaces_mod.ACT_NAME.fullmatch(msg.action) or (msg.item is not None and not spaces_mod.ACT_NAME.fullmatch(msg.item)):
+            raise ProtocolError("protocol.invalid", "an action and an item are letters, digits and . _ : - (up to 128)")
+        try:
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id, self.config.spaces.require_folder)  # not_found first
+        except SpaceError as e:
+            raise ProtocolError(e.code, str(e)) from None
+        self._spawn_space_action(
+            msg, conn, lambda: spaces_mod.act(msg.id, msg.action, msg.item, command), "space.act_failed"
+        )
+
     async def on_space_rename(self, msg: SpaceRename, conn: ServerConnection) -> None:
         folder = self._space_folder()
+        try:
+            space = await asyncio.to_thread(spaces_mod.lookup, folder, msg.id, self.config.spaces.require_folder)
+        except SpaceError as e:
+            raise ProtocolError(e.code, str(e)) from None
+        if not space.removable:
+            raise ProtocolError("space.fixed", str(spaces_mod.fixed(space)))  # v0.22: before anything is touched
 
         async def do() -> None:
             await asyncio.to_thread(spaces_mod.rename, folder, msg.id, msg.title, self.config.spaces.require_folder)
@@ -2720,9 +2799,11 @@ class GatewayServer:
         folder = self._space_folder()
         require_folder = self.config.spaces.require_folder
         try:
-            await asyncio.to_thread(spaces_mod.find, folder, msg.id, require_folder)  # not_found before anything runs
+            space = await asyncio.to_thread(spaces_mod.lookup, folder, msg.id, require_folder)  # not_found before anything runs
         except SpaceError as e:
             raise ProtocolError(e.code, str(e)) from None
+        if not space.removable:
+            raise ProtocolError("space.fixed", str(spaces_mod.fixed(space)))  # v0.22: the file never goes to the Trash
         self._spawn_space_action(
             msg,
             conn,
