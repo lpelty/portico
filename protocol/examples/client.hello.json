@@ -1,5 +1,5 @@
 {
-  "app_version": "0.18.1",
+  "app_version": "0.19.0",
   "capabilities": [
     "agents.v1",
     "queue.v1",

@@ -1,5 +1,82 @@
 # Changelog
 
+## v0.19.0 (2026-11-04)
+
+The first field round from a deployment: solid colours, Settings drawn one
+way, a folder a deployment can lock, extra folders in Files, images as
+images, runs of commands folded, prose that wraps, and links. What is
+verified by tests is said so; what still needs a person at the screen is
+under "Owed".
+
+### What a person gets (app)
+
+- **Solid colours, more contrast.** No translucent surfaces anywhere:
+  lists, popovers and sheets are solid. Darker backgrounds in dark mode;
+  brighter borders and secondary text in both modes. Secondary text meets
+  WCAG AA on the window, sidebar and panel (tested from the hex values).
+- **Settings, one drawing for every tab.** General, Gateway, Voice and
+  Appearance are drawn like MCP servers and Plugins: a title on the panel's
+  edge, rows in one solid box. Every switch, checkbox, radio, menu and
+  button has a hover state and says what it is to VoiceOver.
+- **Gateway → Advanced.** The connection address and token file sit behind
+  an Advanced disclosure, closed by default; it opens by itself, with
+  "Custom connection in use", when either is set.
+- **A folder a deployment can lock** (`[sessions] lock_folder`). "Works in"
+  shows the path with a lock and "Set by <brand>"; there is no Choose….
+- **More folders in Files.** Settings → General → Also show in Files: add
+  folders to browse beside the deployment's; a missing one says "Not
+  found". The agent isn't told about them.
+- **Continue only the newest session.** When sessions ran outside the app
+  since the last one here, the welcome offers "Start Session N" and names
+  them ("Sessions 153–158 ran outside the app"). Threads on the same
+  counter don't count.
+- **Runs of commands fold.** Three or more steps in a row fold into one row:
+  "Ran 7 steps · Bash ×5 · Read ×2", or "Working · N steps" with the
+  newest step while it runs. A failed step stays visible under the folded
+  row. The viewer's own fold is unchanged.
+- **Images are images.** Drop, paste or pick an image and it's a
+  thumbnail, never path text, in the composer and in the sent message. A
+  message can be only an image. Pasted images are kept with the session and
+  removed when the gateway confirms the session's removal.
+- **Prose wraps.** A fenced box with no language (or text, markdown, prose)
+  wraps to the column. Code keeps its lines, with a Wrap toggle. Copy gives
+  the original text either way.
+- **Links.** Bare web addresses are links, in replies and in your own
+  messages. A Slack, Google Docs/Sheets/Slides, GitHub, Figma or Notion
+  link in your message shows as a chip with the site's name; a deployment
+  adds its own sites with `[links] sites`. Nothing is fetched. Only http,
+  https and mailto links open.
+
+### The gateway
+
+- **Images reach the agent as images.** png, jpeg, gif and webp up to 3 MB
+  each, at most 4 and 12 MB encoded per message, go as image content
+  blocks; the text still lists every path. Anything else, or past a cap, goes
+  as a path with a notice saying the agent can still open the file.
+- **`user.text.attachments`** and typed-only `text`, for apps that declare
+  `messages.attachments.v1`; older apps get today's text.
+- **`files.extra.v1`**: `files.roots.set` / `files.roots`, per connection.
+- **hello** gains `lock_folder` and `link_sites`; notices gain an optional
+  `kind`.
+
+### Checks
+
+- New sweeps: no translucent surfaces; no Settings tab on `Form` or
+  default control styles; no "Portico" in a string a person reads; no
+  Xcode-only SwiftUI macros. Built with only the Command Line Tools
+  (`PORTICO_CLT_BUILD=1`).
+
+### Owed (on screen, or live)
+
+- A real image reaching a real model through the gateway
+  (`PORTICO_LIVE=1 uv run pytest tests/test_live_image_block.py`).
+- The palette in light and dark; every Settings tab, its hover states and
+  VoiceOver; a Finder drag onto the composer; thumbnails; the folded runs;
+  the welcome's "ran outside the app" line.
+- Tooltip position under the viewer's side-panel and column-expand
+  buttons (field note 7): correct under the toolbar's sidebar button in a
+  real window; the reported buttons wait for a screenshot.
+
 ## v0.18.1 (2026-11-04)
 
 The app builds on a Mac with only the Command Line Tools again, plus three
