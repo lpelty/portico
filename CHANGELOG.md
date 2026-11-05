@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.20.0 (2026-11-04)
+
+Edit in the viewer, and zoom images and PDFs. What is verified by tests is
+said so; what still needs a person at the screen is under "Owed".
+
+### What a person gets (app)
+
+- **Edit** (pencil in the viewer header, ⌘E) for Markdown, text, code and
+  HTML source on this Mac. Off at every open; spaces, web pages, tables and
+  files over 2 MB stay read-only, and so does a file you can't write.
+- **Markdown as the page.** CodeMirror 6 with a live preview: headings,
+  bold, italic, links (⌘-click), lists, checkboxes (click to toggle) and code
+  are drawn; the line with the cursor shows its marks. The file keeps exactly
+  what was written — tested: moving through every line changes nothing, and a
+  CRLF file round-trips byte for byte. Front matter is edited as its YAML.
+- **Code** with line numbers and syntax colours for common languages; Wrap
+  code applies without losing undo.
+- **Autosave**, atomic, keeping line endings, permissions, extended
+  attributes and Finder tags; written through symlinks.
+- **When the agent changes the file mid-edit:** with nothing unsaved the
+  editor reloads in place; with unsaved edits a bar offers **Keep mine** or
+  **Use the agent's** (your edits stay in undo), and nothing is written until
+  you choose.
+- **Never lost silently.** A failed save keeps the text, says why, and keeps
+  a copy in `<home>/unsaved/` (offered back when the file is reopened);
+  closing, switching, hiding the viewer or quitting saves first, and a quit
+  that can't save stops and says so. **Discard my edits** takes a second
+  click to confirm.
+- **One editor per file**: a second viewer on a file being edited shows it
+  read-only.
+- **The agent hears about edits** with your next message ("Edited in the
+  viewer since your last message: …"), never mid-turn. While you edit, the
+  agent can look but not click, type, scroll or mark in that file.
+- **Zoom images and PDFs**: a control at the bottom right (−, percent, +,
+  Fit, Actual size; a PDF also shows "Page N of M"), pinch, double-click, and
+  ⌥⌘= / ⌥⌘− / ⌥⌘0. Each file keeps its zoom for the session.
+
+### The gateway
+
+- **`files.edited.v1`**: `files.edited {chat, path}`; the note goes to the
+  agent ahead of the person's next message only, is stripped from replayed
+  history, and survives a failed send. Paths with control characters or
+  parentheses are dropped.
+
+### Checks
+
+- The editor bundle carries a hash of its sources; the distribution test
+  fails on a stale bundle and scans it for deployment names.
+
+### Owed (on screen, or live)
+
+- The live preview in light and dark; a real agent write during an edit;
+  quitting with an unsaved, failing edit; ⌘E against the system's Find
+  shortcut; pinch and pan on a trackpad; VoiceOver on the zoom control.
+- From v0.19: the live image probe and the tooltip screenshot.
+
 ## v0.19.0 (2026-11-04)
 
 The first field round from a deployment: solid colours, Settings drawn one

@@ -31,6 +31,10 @@ final class ViewerAgent: ObservableObject {
         static let timedOut = "The viewer didn't answer in 10 s."
         /// A show answered: the file or page is in front and has loaded (v0.17).
         static let shown = "Shown in the viewer."
+        /// v0.20 §4: a look while the person edits the file.
+        static let editing = "The person is editing this file."
+        /// v0.20 §4: click and type never reach the person's buffer.
+        static let editingRefused = "The person is editing this file; ask them, or wait."
 
         /// A show whose page failed to load, with the error's words (v0.17).
         static func notLoaded(_ why: String) -> String {
@@ -281,10 +285,41 @@ final class ViewerAgent: ObservableObject {
         if !model.isViewerShown(for: chat) { model.setViewer(visible: true, for: chat) }
 
         let shown = ArtifactPresentation(artifact: artifact)
+        // v0.20 §4: the person is editing the file in this viewer.
+        if activeSlot == .work, let session = editSessions.session(for: artifact.location), session.attached {
+            return await performEditing(act, shown: shown, session: session)
+        }
         if !shown.isMissing, let load = WebPane.Load(shown) {
             return await performWeb(act, shown: shown, load: load)
         }
         return await performNative(act, shown: shown)
+    }
+
+    /// The edit sessions, to know when the person is editing the shown file.
+    var editSessions = EditSessions.shared
+
+    /// The agent's tools while the person edits the shown file (v0.20 §4):
+    /// look reads the editor's text (the file's text) and says so; click
+    /// and type never reach the person's buffer. Scrolling and marks wait
+    /// too: look already reads the whole text, and marks draw on the page.
+    private func performEditing(_ act: ViewerAct, shown: ArtifactPresentation, session: EditSession) async -> ViewerResult {
+        switch act.action {
+        case .look:
+            let visible = await session.currentText?() ?? session.text
+            try? await Task.sleep(for: .milliseconds(50))
+            let text = "Open: \(shown.title) — \(shown.fileURL?.path ?? shown.artifact.location)\n\(Message.editing)\n\n"
+                + Self.capped(visible)
+            return ViewerResult(id: act.id, ok: true, text: text, image: paneSnapshot())
+        case .click, .type, .scroll, .mark:
+            return fail(act, Message.editingRefused)
+        case .back:
+            return fail(act, "There's nothing to go back to in the viewer.")
+        case .clearMarks:
+            let count = model?.markStore.clear(chat: runChat) ?? 0
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+        case .show:
+            return ViewerResult(id: act.id, ok: true, text: Message.shown)
+        }
     }
 
     /// The agent showed `{artifact, location}` (v0.17 §3.2): answer once it

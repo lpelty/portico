@@ -167,6 +167,8 @@ struct ViewerView: View {
     @State private var vault: String?
     /// Where the page has gone when a link left the file (v0.13, AL4).
     @StateObject private var page = ViewerPageAddress()
+    /// The Edit switch and the file being edited (v0.20 §2.2).
+    @StateObject private var edit = ViewerEdit()
 
     var body: some View {
         let app = model.viewerApp[chat].flatMap { model.app(forToolUse: $0) }
@@ -194,6 +196,84 @@ struct ViewerView: View {
                 .onChange(of: model.current[chat]?.location) { page.outside = nil }
         }
         .background(Theme.panel)
+        // Edit is off at every open; another file (or none) saves the old
+        // one, and a file whose edits are still unsaved comes back in Edit.
+        .onChange(of: model.current[chat]?.location) { _, location in edit.shown(location) }
+        .onAppear {
+            edit.chat = chat
+            ViewerEditing.shared.register(edit, chat: chat)
+            edit.shown(model.current[chat]?.location)
+        }
+        .onChange(of: chat) { _, chat in
+            edit.shown(nil)
+            edit.chat = chat
+            ViewerEditing.shared.register(edit, chat: chat)
+            edit.shown(model.current[chat]?.location)
+        }
+        // The viewer hidden or gone: the edit is ended (the registry keeps
+        // text that couldn't be saved).
+        .onDisappear { edit.shown(nil) }
+        // The agent may have written the file (§2.6): an artifact event or
+        // any redraw that sees a new date or size.
+        .onChange(of: editedFileIdentity) { _, identity in
+            guard identity != nil, let session = edit.session else { return }
+            Task { await session.recheckDisk() }
+        }
+    }
+
+    /// The edited file's date and size, while Edit is on.
+    private var editedFileIdentity: String? {
+        guard let session = edit.session, let current = model.current[chat], current.location == session.location else {
+            return nil
+        }
+        return ArtifactPresentation(artifact: current).contentIdentity + "|" + current.id
+    }
+
+    /// The shown file's editability, for the toggle; `nil` with no file
+    /// on disk (or a page a link went to).
+    private var editability: Editability? {
+        guard page.outside == nil, let current = model.current[chat] else { return nil }
+        let shown = ArtifactPresentation(artifact: current)
+        guard !shown.isMissing else { return nil }
+        // One session per file: another viewer's edit makes this one read-only.
+        if !edit.isEditing, edit.editedElsewhere(current.location) { return .readOnly(reason: ViewerEdit.elsewhere) }
+        return FileEditing.editability(for: shown)
+    }
+
+    /// The Edit toggle and the save state, while there is a file to edit.
+    @ViewBuilder
+    private var editControls: some View {
+        if let editability {
+            HStack(spacing: 8) {
+                if let session = edit.session {
+                    ViewerEditStatus(session: session, onDiscard: { Task { await edit.discard() } })
+                } else if let note = edit.note {
+                    Text(note)
+                        .scaledFont(12)
+                        .foregroundStyle(Theme.deny)
+                        .lineLimit(1)
+                } else if let offer = edit.readOffer, editability.canEdit {
+                    HStack(spacing: 4) {
+                        Text(ViewerEdit.readOfferWords)
+                            .scaledFont(12)
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(1)
+                        Button(ViewerEdit.readOfferAction) {
+                            Task { await edit.restoreFromReadMode(model.current[chat]) }
+                        }
+                        .buttonStyle(.link)
+                        .scaledFont(12, weight: .semibold)
+                        .fixedSize()
+                    }
+                    .tip("Edits from \(offer.date.formatted(date: .abbreviated, time: .shortened)) weren't saved; "
+                        + "Restore turns Edit on and puts them back (⌘Z undoes it)")
+                }
+                ViewerEditToggle(on: edit.isEditing, editability: editability,
+                                 accent: model.brand.accent ?? Theme.accent) {
+                    edit.toggle(model.current[chat])
+                }
+            }
+        }
     }
 
     private var made: [Artifact] { model.history(for: chat) }
@@ -217,7 +297,8 @@ struct ViewerView: View {
             chipCount: chip ? spaced(measured.chipCount) : 0,
             buttonsLabelled: spaced(measured.buttonsLabelled),
             buttonsIcons: spaced(measured.buttonsIcons),
-            fixed: 32 + 8 + 8 + (8 + 24) + (8 + 20))
+            fixed: 32 + 8 + 8 + (8 + 24) + (8 + 20),
+            edit: editability != nil ? measured.edit + 8 : 0)
     }
 
     private var fileHeader: some View {
@@ -229,6 +310,7 @@ struct ViewerView: View {
                 MarksChip(chat: chat, store: marks, agent: model.viewerAgent, form: fit.chipForm,
                           accent: model.brand.accent ?? Theme.accent)
             }
+            editControls
             openButtons(labelled: fit.labelled)
             focusButton
             ViewerCloseButton(help: "Close the viewer", label: "Close the viewer") {
@@ -257,6 +339,8 @@ struct ViewerView: View {
                     measured.setChip(form, width)
                 }
             }
+            editControls
+                .headerMeasure { measured.edit = $0 }
             HStack(spacing: 8) { openButtons(labelled: true) }
                 .headerMeasure { measured.buttonsLabelled = $0 }
             HStack(spacing: 8) { openButtons(labelled: false) }
@@ -379,7 +463,23 @@ struct ViewerView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let current = model.current[chat] {
+        if let current = model.current[chat], let session = edit.session, edit.location == current.location {
+            // While editing, the pane is keyed on the file alone: its own
+            // saves change the date and size, and must not reload it.
+            VStack(spacing: 0) {
+                EditConflictBar(session: session)
+                EditRestoreBar(edit: edit)
+                EditorPaneHost(
+                    settings: model.settings, session: session, topLine: edit.topLine(for: session.url),
+                    onStop: { Task { await edit.turnOff() } },
+                    onOpenFile: { [chat] path in model.reveal(file: path, in: chat) },
+                    onCoordinator: { [edit] in edit.editor = $0 })
+                    .id("edit|\(current.location)|\(ObjectIdentifier(session).hashValue)")
+            }
+            // The editor's view, for the agent's look (v0.20 §4).
+            .background { ViewerPaneAnchor(agent: model.viewerAgent) }
+            .environment(\.viewerSlot, .work)
+        } else if let current = model.current[chat] {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
                 .environment(\.viewerAgent, model.viewerAgent)
@@ -736,6 +836,9 @@ struct SpaceViewer: View {
 enum HeaderFit {
     struct Widths: Equatable {
         var title, note, chipFull, chipShort, chipCount, buttonsLabelled, buttonsIcons, fixed: CGFloat
+        /// The Edit toggle with the save state beside it (v0.20 §2.2); it
+        /// keeps its room at every step.
+        var edit: CGFloat = 0
 
         static let zero = Widths(title: 0, note: 0, chipFull: 0, chipShort: 0, chipCount: 0,
                                  buttonsLabelled: 0, buttonsIcons: 0, fixed: 0)
@@ -775,7 +878,7 @@ enum HeaderFit {
             (.chipShort, 0, w.chipShort, w.buttonsIcons),
             (.chipCount, 0, w.chipCount, w.buttonsIcons),
         ]
-        for (step, note, chip, buttons) in tries where w.title + note + chip + buttons + w.fixed <= available {
+        for (step, note, chip, buttons) in tries where w.title + note + chip + buttons + w.fixed + w.edit <= available {
             return step
         }
         return .titleShrinks
@@ -846,48 +949,53 @@ struct ArtifactContent: View {
     }
 }
 
-/// An image at its own size inside scroll views, centred when smaller.
+/// An image, fit to the pane by default (never enlarged past 100%), with
+/// the zoom control, pinch, keys and double-click (v0.20 §3.1).
 struct ImagePane: View {
     let file: URL
     let shown: ArtifactPresentation
+    @State private var scale: CGFloat = 1
+    @State private var awake = true
+    @State private var box = ImageZoomPane.ControllerBox()
 
     var body: some View {
         if let image = NSImage(contentsOf: file) {
-            ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: max(image.size.width, 1), maxHeight: max(image.size.height, 1))
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            ImageZoomPane(file: file, image: image, scale: $scale, controllerBox: box)
+                .overlay(alignment: .bottomTrailing) {
+                    ZoomControl(
+                        percent: Int((scale * 100).rounded()), page: nil,
+                        onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
+                        onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
+                        awake: awake)
+                        .padding(16)
+                }
+                .modifier(ZoomWake(awake: $awake))
         } else {
             OtherPane(shown: shown, message: "This image can't be read here. Open it in the app that can.")
         }
     }
 }
 
-/// A PDF in PDFKit's view, continuous pages, fit to width.
-struct PDFPane: NSViewRepresentable {
+/// A PDF in PDFKit's view, continuous pages, fit to width by default, with
+/// the zoom control and the page shown (v0.20 §3.3).
+struct PDFPane: View {
     let file: URL
+    @State private var scale: CGFloat = 1
+    @State private var page = ""
+    @State private var awake = true
+    @State private var box = PDFZoomPane.ControllerBox()
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
-        view.document = PDFDocument(url: file)
-        // The agent reads and scrolls the viewer's PDF (v0.12).
-        context.environment.viewerAgent?.attachNative(view, file: file, slot: context.environment.viewerSlot)
-        return view
-    }
-
-    func updateNSView(_ view: PDFView, context: Context) {
-        if view.document?.documentURL != file {
-            view.document = PDFDocument(url: file)
-            // The same view, another file: the agent reads the new one.
-            context.environment.viewerAgent?.attachNative(view, file: file, slot: context.environment.viewerSlot)
-        }
+    var body: some View {
+        PDFZoomPane(file: file, scale: $scale, page: $page, controllerBox: box)
+            .overlay(alignment: .bottomTrailing) {
+                ZoomControl(
+                    percent: Int((scale * 100).rounded()), page: page.isEmpty ? nil : page,
+                    onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
+                    onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
+                    awake: awake)
+                    .padding(16)
+            }
+            .modifier(ZoomWake(awake: $awake))
     }
 }
 

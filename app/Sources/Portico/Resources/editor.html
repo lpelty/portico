@@ -1,0 +1,145 @@
+<!doctype html>
+<!--
+  The viewer's editor page (v0.20 §2.3–2.4). The app fills two placeholders,
+  as it does for viewer.html: the CSS placeholder with viewer.css, so the editor has read
+  mode's fonts, sizes and colour tokens, and the EDITOR placeholder with editor.js (the
+  bundled CodeMirror; app/Editor/build.sh). Swift drives it through the
+  `portico` global (load, setTheme, setReadOnly, replaceAll, visibleText,
+  scrollTopLine, scrollToLine) and hears it on the `portico` message
+  handler (ready, dirty, changed, saveNow). Theme values set with portico.setTheme
+  override the tokens below; the text scale is --portico-scale.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Nothing is fetched: the page and its script are inline, images come
+     from the file's own folder (served as this page's origin, or file:) or
+     data:, and a remote image is drawn as a placeholder. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:">
+<style>
+{{CSS}}
+</style>
+<style>
+:root {
+  --portico-scale: 1;
+  --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --syn-keyword: #9b2393;
+  --syn-string: #c41a16;
+  --syn-number: #1c00cf;
+  --syn-comment: #707f8c;
+  --syn-function: #326d74;
+  --syn-type: #0b4f79;
+  --syn-property: #3e6d74;
+  --syn-tag: #9b2393;
+  --syn-meta: #643820;
+  --syn-invalid: #d12f1b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --syn-keyword: #fc5fa3;
+    --syn-string: #fc6a5d;
+    --syn-number: #d0bf69;
+    --syn-comment: #7f8c98;
+    --syn-function: #67b7a4;
+    --syn-type: #5dd8ff;
+    --syn-property: #a167e6;
+    --syn-tag: #fc5fa3;
+    --syn-meta: #fd8f3f;
+    --syn-invalid: #ff8170;
+  }
+}
+html, body { height: 100%; margin: 0; overflow: hidden; }
+#editor { height: 100vh; }
+
+.cm-editor { height: 100%; background: var(--bg); color: var(--fg); }
+.cm-editor.cm-focused { outline: none; }
+.cm-editor .cm-content { caret-color: var(--fg); }
+.cm-editor .cm-cursor { border-left-color: var(--fg); }
+
+/* Markdown as the page: read mode's measure, font and size. */
+.cm-editor.portico-markdown { font-size: calc(15px * var(--portico-scale)); }
+.cm-editor.portico-markdown .cm-scroller { font-family: var(--sans); line-height: 1.55; }
+.cm-editor.portico-markdown .cm-content {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(76ch + 64px);
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+}
+.cm-editor.portico-markdown .cm-line { padding: 0; }
+
+.cm-md-h { font-weight: 600; line-height: 1.25; }
+.cm-md-h1 { font-size: 1.9em; }
+.cm-md-h2 { font-size: 1.45em; border-bottom: 1px solid var(--rule); padding-bottom: 0.25em; }
+.cm-md-h3 { font-size: 1.2em; }
+.cm-md-h4 { font-size: 1.05em; }
+.cm-md-setext-mark { color: var(--fg-muted); font-size: 0.8em; }
+.cm-md-strong { font-weight: 700; }
+.cm-md-em { font-style: italic; }
+.cm-md-strike { text-decoration: line-through; }
+.cm-md-link { color: var(--link); cursor: pointer; }
+.cm-md-code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.12em 0.35em;
+}
+.cm-editor.portico-markdown .cm-line.cm-md-codeblock {
+  font-family: var(--mono);
+  font-size: 0.83em;
+  line-height: 1.45;
+  background: var(--code-bg);
+  padding: 0 14px;
+}
+.cm-md-fence { color: var(--fg-muted); }
+.cm-editor.portico-markdown .cm-line.cm-md-quote {
+  border-left: 3px solid var(--rule);
+  padding-left: 1em;
+  color: var(--quote);
+}
+.cm-md-rule { display: inline-block; width: 100%; border-top: 1px solid var(--rule); vertical-align: middle; }
+.cm-md-bullet, .cm-md-listmark { color: var(--fg-muted); }
+.cm-md-bullet { display: inline-block; width: 1ch; }
+.cm-md-checkbox { margin: 0 0.4em 0 0; vertical-align: middle; cursor: pointer; }
+.cm-md-image { padding: 4px 0; }
+.cm-md-image img { max-width: 100%; height: auto; border-radius: 4px; }
+.cm-md-remote-image {
+  display: inline-block;
+  font-size: 0.8em;
+  color: var(--fg-muted);
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  padding: 0.2em 0.6em;
+}
+.cm-md-table table { margin: 0; }
+.cm-md-tablesource { font-family: var(--mono); font-size: 0.92em; }
+.cm-editor.portico-markdown .cm-line.cm-md-frontmatter {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  line-height: 1.45;
+  background: var(--code-bg);
+  color: var(--fm-value);
+  padding: 0 14px;
+}
+
+/* Plain text and code: monospaced 12, line numbers, as read mode shows it. */
+.cm-editor.portico-code { font-size: calc(12px * var(--portico-scale)); }
+.cm-editor.portico-code .cm-scroller { font-family: var(--mono); line-height: 1.45; }
+.cm-editor.portico-code .cm-content { padding: 12px 0; }
+.cm-editor.portico-code .cm-gutters {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border-right: 1px solid var(--rule);
+}
+</style>
+</head>
+<body>
+<div id="editor"></div>
+<script>
+{{EDITOR}}
+</script>
+</body>
+</html>

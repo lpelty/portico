@@ -70,6 +70,39 @@ struct PorticoApp: App {
         return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
     }
 
+    /// The shown viewer file's media, when a viewer is on screen.
+    private var shownMedia: (media: Media, missing: Bool)? {
+        guard viewerShown, let chat = model.shownChat, let artifact = model.shownArtifact(for: chat) else { return nil }
+        let shown = ArtifactPresentation(artifact: artifact)
+        return (shown.media, shown.isMissing)
+    }
+
+    private var zoomAvailable: Bool {
+        ZoomMenu.isEnabled(media: shownMedia?.media, missing: shownMedia?.missing ?? false)
+    }
+
+    /// The shown viewer's Edit switch, when a file viewer is on screen.
+    private var shownEdit: ViewerEdit? {
+        guard viewerShown, model.openSpace == nil, let chat = model.shownChat else { return nil }
+        return ViewerEditing.shared.controller(for: chat)
+    }
+
+    private var editing: Bool { shownEdit?.isEditing ?? false }
+
+    private var editAvailable: Bool {
+        guard viewerShown, let chat = model.shownChat else { return false }
+        return ViewerEditing.canToggle(artifact: model.shownArtifact(for: chat), spaceOpen: model.openSpace != nil)
+    }
+
+    private func toggleEdit() {
+        guard let chat = model.shownChat, let edit = shownEdit else { return }
+        edit.toggle(model.current[chat])
+    }
+
+    private var zoomTarget: (any ZoomTarget)? {
+        ZoomHub.shared.target(space: model.openSpace != nil)
+    }
+
     var body: some Scene {
         // The id names the saved window frame; "a1" starts fresh at the
         // frame's size after the three-column layout landed.
@@ -94,6 +127,25 @@ struct PorticoApp: App {
                     model.brand.applyApplicationIcon()
                 }
                 .task {
+                    // Text that couldn't be saved is kept under the home folder (v0.20).
+                    let unsaved = supervisor.home.url.appendingPathComponent("unsaved")
+                    EditSessions.shared.recoveryFolder = unsaved
+                    Task.detached(priority: .utility) { EditRecovery.sweep(unsaved) }
+                    EditSessions.shared.onDetachedFailure = { [model] session in
+                        model.editNotice = EditNotice(name: session.name, path: session.location, chat: session.chat)
+                    }
+                    // After every save (and Keep mine, Restore): files.edited (§2.7).
+                    EditSessions.shared.onSaved = { [model] session in
+                        model.fileEdited(path: session.url.path, chat: session.chat)
+                    }
+                    EditSessions.shared.onResolved = { [model] session in
+                        if model.editNotice?.path == session.location { model.editNotice = nil }
+                    }
+                    EditSessions.shared.onQuitHeld = { [model] session in
+                        model.showEditedFile(path: session.location, chat: session.chat)
+                        NSApplication.shared.activate()
+                        NSApplication.shared.windows.first { $0.canBecomeMain && $0.isVisible }?.makeKeyAndOrderFront(nil)
+                    }
                     // ⌘= is Bigger Text too (v0.15 §3): the menu shows ⌘+.
                     delegate.biggerText = { [settings] in settings.biggerText() }
                     // Quit honours the setting (spec §5.5, D19): keep the
@@ -142,6 +194,23 @@ struct PorticoApp: App {
                     .disabled(!settings.canMakeTextSmaller)
                 Button("Actual Size") { settings.actualSize() }
                     .disabled(settings.textScale == 1.0)
+                Divider()
+                // Images and PDFs (v0.20 §3.1): ⌘+ and ⌘− are the text's.
+                let zoomOn = zoomAvailable
+                Button("Zoom In") { zoomTarget?.zoomIn() }
+                    .keyboardShortcut("=", modifiers: [.command, .option])
+                    .disabled(!zoomOn)
+                Button("Zoom Out") { zoomTarget?.zoomOut() }
+                    .keyboardShortcut("-", modifiers: [.command, .option])
+                    .disabled(!zoomOn)
+                Button("Zoom to Fit") { zoomTarget?.zoomToFit() }
+                    .keyboardShortcut("0", modifiers: [.command, .option])
+                    .disabled(!zoomOn)
+                Divider()
+                // The viewer's Edit switch (v0.20 §2.2): only for a file it can edit.
+                Button(editing ? "Stop Editing" : "Edit File") { toggleEdit() }
+                    .keyboardShortcut("e", modifiers: .command)
+                    .disabled(!editing && !editAvailable)
             }
             CommandGroup(after: .toolbar) {
                 Divider()
@@ -193,9 +262,19 @@ struct PorticoApp: App {
 /// says. With "keep the agent running" the handler returns at once; with
 /// "stop everything" it sends `gateway.stop` and waits up to ten seconds
 /// for the socket to close, then the app terminates either way.
+///
+/// v0.20 (Review Focus 4): every file being edited is saved first. When a
+/// save fails, the quit is cancelled with no alert (an alert would block
+/// automation): the file is brought forward and its header says "Couldn't
+/// save <name> — ⌘Q again quits and keeps your edits in <home>/unsaved/".
+/// A second quit writes recovery copies of every unsaved text and quits.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var quitHandler: (() async -> Void)?
+    /// The edit sessions a quit saves first.
+    var editSessions = EditSessions.shared
+    /// How far a quit with unsaved edits got (`QuitGate`).
+    private(set) var quitStage: QuitGate.Stage = .none
     /// Bigger Text, for ⌘= (the menu item shows ⌘+).
     var biggerText: (() -> Void)?
     private var textKeyMonitor: Any?
@@ -220,12 +299,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let quitHandler else { return .terminateNow }
+        if quitHandler == nil && editSessions.all.isEmpty { return .terminateNow }
         Task { @MainActor in
-            await quitHandler()
-            sender.reply(toApplicationShouldTerminate: true)
+            let proceed = await self.prepareToTerminate()
+            sender.reply(toApplicationShouldTerminate: proceed)
         }
         return .terminateLater
+    }
+
+    /// Save every edit, then the quit handler; false cancels the quit.
+    func prepareToTerminate() async -> Bool {
+        let saved = await editSessions.endAll()
+        // Whenever every edit is saved, a later failure starts over.
+        if saved { quitStage = .none }
+        switch QuitGate.decide(saved: saved, stage: quitStage) {
+        case .cancel:
+            quitStage = .held
+            editSessions.holdQuit()
+            return false
+        case .keepAndQuit:
+            guard editSessions.keepAllForQuit() else {
+                quitStage = .keepFailed
+                return false
+            }
+        case .quit, .quitAnyway:
+            break
+        }
+        await quitHandler?()
+        return true
     }
 }
 

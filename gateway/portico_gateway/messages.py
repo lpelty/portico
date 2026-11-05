@@ -78,6 +78,10 @@ MESSAGES_ATTACHMENTS_CAPABILITY = "messages.attachments.v1"
 # with the folders a person added to the Files pane (``files.roots``).
 FILES_EXTRA_CAPABILITY = "files.extra.v1"
 
+# v0.20 (spec §2.7): a gateway lists it when it takes ``files.edited`` and tells
+# the agent, ahead of the person's next message, which files they edited.
+FILES_EDITED_CAPABILITY = "files.edited.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -642,6 +646,17 @@ class FilesRootsSet(Envelope):
 
     type: Literal["files.roots.set"] = "files.roots.set"
     paths: list[str] = []
+
+
+class FilesEdited(Envelope):
+    """v0.20 (``files.edited.v1``): the person saved ``path`` in the viewer's editor; no reply.
+
+    The agent hears of it in a note ahead of the person's next message.
+    """
+
+    type: Literal["files.edited"] = "files.edited"
+    chat: int
+    path: str
 
 
 class ArtifactOpened(Envelope):
@@ -1496,6 +1511,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     CardAnswer,
     FilesListRequest,
     FilesRootsSet,
+    FilesEdited,
     ArtifactOpened,
     GatewayStop,
     SessionRenew,
@@ -1681,7 +1697,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.19.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.20.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1705,6 +1721,7 @@ def example_messages() -> dict[str, BaseModel]:
         ),
         FilesListRequest(ts=_TS, chat=1, id="req-3", root="chat", path="src"),
         FilesRootsSet(ts=_TS, id="req-6", paths=["/Users/someone/papers"]),
+        FilesEdited(ts=_TS, chat=1, path=f"{_FOLDER}/notes.md"),
         ArtifactOpened(ts=_TS, chat=1, artifact_id="art-3"),
         GatewayStop(ts=_TS),
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),

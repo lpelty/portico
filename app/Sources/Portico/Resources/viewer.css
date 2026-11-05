@@ -128,7 +128,7 @@ input[type="checkbox"] { margin-right: 0.4em; }
     --fm-neutral: #6f6f75;
   }
 }
-details.fm {
+details.fm, div.fm-unreadable {
   border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 8px 12px 10px;
@@ -138,6 +138,8 @@ details.fm {
   line-height: 1.45;
 }
 details.fm:not([open]) { padding-bottom: 8px; }
+/* v0.20 §2.3: front matter that can't be read, in place of the block */
+div.fm-unreadable { padding-bottom: 8px; color: var(--fm-key); }
 details.fm > summary {
   list-style: none;
   cursor: default;

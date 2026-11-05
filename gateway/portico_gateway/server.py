@@ -149,6 +149,7 @@ import logging
 import os
 import re
 import secrets
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
@@ -232,6 +233,7 @@ from .messages import (
     FilesList,
     FilesListRequest,
     FilesRoots,
+    FilesEdited,
     FilesRootsSet,
     FilesResults,
     FilesSearch,
@@ -424,6 +426,34 @@ def _frame_type(raw: str | bytes) -> str | None:
 
 
 # --- turns: helpers ----------------------------------------------------------
+
+
+EDITED_MAX = 20  # per chat; the oldest is dropped
+EDITED_PATH_MAX = 1024
+
+
+def not_plain_path_char(c: str) -> bool:
+    """A character an edited path may not hold: a parenthesis, or any control, line or paragraph
+    separator (Unicode Cc, Zl, Zp: C0, DEL, C1 with NEL, U+2028, U+2029). ``images._EDITED_NOTE``
+    is the same rule."""
+    return c in "()" or unicodedata.category(c) in ("Cc", "Zl", "Zp")
+
+
+def edited_note(paths: list[str], folder: Path) -> str:
+    """The note ahead of the person's next message (v0.20 §2.7); empty for no paths.
+
+    Exactly ``(Edited in the viewer since your last message: a.md, b.md)`` and a blank line.
+    A path inside ``folder`` is shown relative to it, any other absolute.
+    """
+    if not paths:
+        return ""
+    names: list[str] = []
+    for raw in paths:
+        try:
+            names.append(str(Path(raw).relative_to(folder)))
+        except ValueError:
+            names.append(raw)
+    return f"(Edited in the viewer since your last message: {', '.join(names)})\n\n"
 
 
 def with_attachments(text: str, attachments: list[str]) -> str:
@@ -978,6 +1008,9 @@ class GatewayServer:
         self._queues: dict[int, list[QueuedMessage]] = {}
         # v0.18: which held messages an MCP app sent, by (chat, queued id): their ``via``.
         self._queued_via: dict[tuple[int, str], str] = {}
+        # v0.20 (``files.edited.v1``): per chat, the files the person saved in the
+        # viewer since their last message (ordered, unique); noted to the engine, then cleared.
+        self._edited: dict[int, list[str]] = {}
         # v0.11 (item 66): the agent's commands, last list per folder (newest
         # last), kept in ``commands.json`` so an app hears one before any
         # engine of this launch has started.
@@ -1074,6 +1107,7 @@ class GatewayServer:
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
         self.register("files.roots.set", self.on_files_roots_set)
+        self.register("files.edited", self.on_files_edited)
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
         self.register("session.mode", self.on_session_mode)
@@ -2881,6 +2915,7 @@ class GatewayServer:
         await self.cards.cancel_all(chat, "chat removed", self.emit)
         await self._close_engine(chat)
         self._queues.pop(chat.number, None)
+        self._edited.pop(chat.number, None)
         self.registry.remove(chat.number)
         self._engine_locks.pop(chat.number, None)
         await self.send_chat_list()
@@ -2927,6 +2962,40 @@ class GatewayServer:
             extras.append(Root(name=name, path=str(path), extra=True, missing=not there))
         setattr(conn, _EXTRA_ROOTS_ATTR, extras)
         await self._send(conn, FilesRoots(ts=_now(), id=msg.id, roots=[*self.config.roots, *extras]))
+
+    async def on_files_edited(self, msg: FilesEdited, conn: ServerConnection) -> None:
+        """v0.20: remember that the person saved ``msg.path``; the agent is told with the next message. No reply."""
+        chat = self.registry.get(msg.chat)
+        raw = msg.path
+        # The path is interpolated into the agent's text: nothing that could end the note or
+        # start a line of its own. Dropped silently (there is no reply).
+        if not raw or len(raw) > EDITED_PATH_MAX or any(not_plain_path_char(c) for c in raw):
+            log.info("chat %d: files.edited path dropped (not a plain path)", chat.number)
+            return
+        path = Path(os.path.normpath(raw))
+        if not path.is_absolute():
+            path = Path(os.path.normpath(chat.folder / path))
+        edited = self._edited.setdefault(chat.number, [])
+        if str(path) in edited:
+            return
+        edited.append(str(path))
+        del edited[:-EDITED_MAX]
+
+    def _take_edited_note(self, chat: Chat, text: str) -> tuple[str, list[str]]:
+        """``text`` with the edits note first, the chat's edits cleared, and the paths taken
+        (``_put_back_edited`` them if the text never goes); a slash command is left as it is."""
+        if slash_command(text) is not None:
+            return text, []
+        paths = self._edited.pop(chat.number, None) or []
+        return edited_note(paths, chat.folder) + text, paths
+
+    def _put_back_edited(self, chat: Chat, paths: list[str]) -> None:
+        """Edits whose note never reached the engine: first again, without repeating a newer save."""
+        if not paths:
+            return
+        newer = self._edited.get(chat.number, [])
+        merged = [*paths, *(p for p in newer if p not in paths)]
+        self._edited[chat.number] = merged[-EDITED_MAX:]
 
     async def on_files_list(self, msg: FilesListRequest, conn: ServerConnection) -> None:
         root = self.root_path(msg.root, msg.chat, conn)
@@ -3477,6 +3546,8 @@ class GatewayServer:
         first = chat.title is None and not chat.sent_turn and not chat.restored
         if first:
             title = title_from(msg.text)
+        # v0.20: what goes to the engine is the note, the typed text, then the attachment
+        # block (the apps' context goes before all of it); the echo is only the typed text.
         text = with_attachments(msg.text, attachments)
         # v0.19 (spec §8.4): the echo is what was typed, the attachments apart
         # (``for_app`` gives an app without ``messages.attachments.v1`` the full text).
@@ -3486,14 +3557,16 @@ class GatewayServer:
             # v0.8: this turn may name the session once it finishes cleanly.
             run.title_message = msg.text
             run.first_line_title = title
+        # The note leads, ahead of the apps' context, so replay's leading strip finds it.
         engine_text, context = self._with_app_context(chat, text)
+        engine_text, edited = self._take_edited_note(chat, engine_text)
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
         # v0.19 (spec §8.3): images go as images too, their paths still in the
         # text; a slash command goes as a string, as the engine reads commands.
         images_from = [] if command is not None else attachments
         self._spawn(
-            self._send_task(chat, run, engine_text, title, msg, conn, context, images_from),
+            self._send_task(chat, run, engine_text, title, msg, conn, context, images_from, edited),
             name=f"portico-send-{chat.number}",
         )
 
@@ -3531,6 +3604,7 @@ class GatewayServer:
         conn: ServerConnection | None,
         context: dict[str, tuple[str, str]] | None = None,
         image_paths: list[str] | None = None,
+        edited: list[str] | None = None,
     ) -> None:
         """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``.
 
@@ -3545,10 +3619,12 @@ class GatewayServer:
             await self._begin_turn(chat, run, text, images)
         except ProtocolError as e:
             self.apps.put_back(chat, context or {})
+            self._put_back_edited(chat, edited or [])
             await self._reply(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
             return
         except Exception as e:
             self.apps.put_back(chat, context or {})
+            self._put_back_edited(chat, edited or [])
             log.exception("chat %d: message.send failed", chat.number)
             if self._runs.get(chat.number) is run:
                 await self._fail_turn(chat, run)
@@ -3556,6 +3632,7 @@ class GatewayServer:
             return
         if not run.sent:
             self.apps.put_back(chat, context or {})
+            self._put_back_edited(chat, edited or [])
         if title is not None and chat.title is None:
             chat.title = title
             self.registry.persist()
@@ -3655,12 +3732,13 @@ class GatewayServer:
                     continue  # taken back meanwhile: the next one, from the top
             else:
                 images, notices = [], []
-            text = with_attachments(item.text, item.attachments)
-            engine_text, context = self._with_app_context(chat, text)
+            engine_text, context = self._with_app_context(chat, with_attachments(item.text, item.attachments))
+            engine_text, edited = self._take_edited_note(chat, engine_text)
             try:
                 await engine.inject(engine_text, images)
             except Exception:
                 self.apps.put_back(chat, context)
+                self._put_back_edited(chat, edited)
                 log.exception("chat %d: writing a queued message into turn %d failed; it waits", chat.number, run.turn)
                 break
             held.pop(0)

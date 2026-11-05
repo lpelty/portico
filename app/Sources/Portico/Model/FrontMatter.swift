@@ -27,6 +27,14 @@ struct FrontMatter: Equatable, Sendable {
     }
 
     var properties: [Property]
+    /// The block is there but isn't YAML this reads (v0.20 §2.3: typed
+    /// wrongly in the editor, saved as typed): a top-level line that isn't
+    /// `key: value`, a `- item` or indented line with no key above it, an
+    /// unclosed `[` list or quote. Read mode then says "Properties couldn't
+    /// be read" in place of the block.
+    var unreadable = false
+
+    static let unreadableWords = "Properties couldn't be read"
 
     // MARK: finding it
 
@@ -57,22 +65,32 @@ struct FrontMatter: Equatable, Sendable {
             let close = lines.last, ["---", "..."].contains(bare(close.text))
         else { return (nil, source) }
         let block = lines.dropFirst().dropLast().map { String(bare($0.text)) }
-        return (FrontMatter(properties: parse(block)), String(text[close.next...]))
+        let parsed = parse(block)
+        return (FrontMatter(properties: parsed.properties, unreadable: parsed.unreadable), String(text[close.next...]))
     }
 
     // MARK: reading
 
-    private static func parse(_ lines: [String]) -> [Property] {
+    private static func parse(_ lines: [String]) -> (properties: [Property], unreadable: Bool) {
         var properties: [Property] = []
+        var unreadable = false
         var index = 0
         while index < lines.count {
             let line = lines[index]
             index += 1
-            guard let first = line.first, first != " ", first != "\t", first != "#", first != "-",
-                let colon = keyColon(in: line)
-            else { continue }
+            guard let first = line.first, first != "#" else { continue }
+            if first == " " || first == "\t" {
+                // Indented with no key above it (a key's own are taken below).
+                if !stripComment(line).trimmingCharacters(in: .whitespaces).isEmpty { unreadable = true }
+                continue
+            }
+            guard first != "-", let colon = keyColon(in: line) else {
+                unreadable = true
+                continue
+            }
             let key = unquote(String(line[..<colon]).trimmingCharacters(in: .whitespaces))
             let rest = stripComment(String(line[line.index(after: colon)...])).trimmingCharacters(in: .whitespaces)
+            if !closed(rest) { unreadable = true }
             // The indented lines under it: a `- item` list or a nested map.
             var children: [String] = []
             while index < lines.count, lines[index].isEmpty || lines[index].first == " " || lines[index].first == "\t" {
@@ -82,7 +100,14 @@ struct FrontMatter: Equatable, Sendable {
             }
             properties.append(Property(key: key, value: value(rest, children: children)))
         }
-        return properties
+        return (properties, unreadable)
+    }
+
+    /// A value whose `[` list or opening quote is closed (or has neither).
+    private static func closed(_ rest: String) -> Bool {
+        if rest.hasPrefix("[") { return rest.hasSuffix("]") }
+        if let q = rest.first, q == "\"" || q == "'" { return rest.count >= 2 && rest.last == q }
+        return true
     }
 
     /// The colon that ends the key: the first `: ` or a colon at the end
@@ -257,10 +282,14 @@ struct FrontMatter: Equatable, Sendable {
     /// Without the properties named in `keys` (case-insensitive).
     func hiding(_ keys: Set<String>) -> FrontMatter {
         guard !keys.isEmpty else { return self }
-        return FrontMatter(properties: properties.filter { !keys.contains($0.key.lowercased()) })
+        return FrontMatter(properties: properties.filter { !keys.contains($0.key.lowercased()) }, unreadable: unreadable)
     }
 
     // MARK: the block's HTML
+
+    /// In place of the block when it can't be read (v0.20 §2.3).
+    static let unreadableHTML =
+        "<div class=\"fm fm-unreadable\" role=\"note\"><span class=\"fm-label\">\(unreadableWords)</span></div>"
 
     /// The block's `ontoggle`: post only a change from what was last drawn
     /// or posted; nothing where no handler is registered.
@@ -279,6 +308,7 @@ struct FrontMatter: Equatable, Sendable {
     /// event WebKit fires for a block parsed open is not taken for a choice.
     func html(open: Bool, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         let e = MarkdownPage.escapeHTML
+        if unreadable { return Self.unreadableHTML }
         var rows = ""
         for property in properties {
             let value: String

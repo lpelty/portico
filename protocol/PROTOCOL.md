@@ -96,7 +96,8 @@ loaded; see The viewer and spaces); v0.18: `apps.v1` (it shows
 `app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)); v0.19:
 `messages.attachments.v1` (it sends `attachments` apart from the text and
 reads them in `user.text`) and `files.extra.v1` (it sends
-`files.roots.set` and shows the added folders). Absent
+`files.roots.set` and shows the added folders); v0.20: `files.edited.v1`
+(it sends `files.edited` after each save in the viewer's editor). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -327,6 +328,34 @@ belong to the connection: they are gone when it closes, so the app sends
 the list again on every connect. Reply: `files.roots`, or `error` with
 `files.invalid_root` (a relative path; nothing is changed).
 
+### `files.edited` — `FilesEdited`
+v0.20 (`files.edited.v1` in the gateway's `hello.capabilities`): `chat`,
+`path: string` (absolute; a relative one is taken from the chat's folder).
+The person saved that file in the viewer's editor. No reply. The gateway
+keeps the paths per chat, in the order first saved, each once, and tells the
+agent with the person's next message: the engine receives
+
+```
+(Edited in the viewer since your last message: a.md, b.md)
+
+<text>
+
+Attached files:
+- /abs/path
+```
+
+that is, the note, a blank line, the typed text, then the attachment block
+(the apps' kept context, v0.18, still goes before all of it). A path inside
+the chat's folder is named relative to it, any other absolute. The note goes
+to the engine only: `user.text` stays what the person typed. A queued message
+written into the running turn gets the note too. Either way the list is
+cleared once the note is made. A slash command gets no note and leaves the
+list for the next message. A path with a control character, a parenthesis or more than 1024
+characters is dropped without a reply; paths are normalised, and the list
+holds the 20 most recent. If the message never reaches the engine the paths
+stay for the next one. The list lives in the gateway's memory (gone at
+restart) and for an unknown `chat` the answer is `error` `chat.unknown`.
+
 ### `artifact.opened` — `ArtifactOpened`
 `chat`, `artifact_id: string`. Optional telemetry: the app showed that
 artifact. The gateway accepts it and answers nothing.
@@ -509,7 +538,8 @@ always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
 default), see [MCP Apps](#mcp-apps-v018); v0.19: `messages.attachments.v1`
 always, so the app may send `attachments` on `message.send` and reads them in
 `user.text`, and `files.extra.v1` always, so the app may send
-`files.roots.set`). Always followed by `chat.list`, so the app has the
+`files.roots.set`; v0.20: `files.edited.v1` always, so the app may send
+`files.edited`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 

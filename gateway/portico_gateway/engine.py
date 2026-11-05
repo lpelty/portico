@@ -61,7 +61,7 @@ from claude_agent_sdk import (
 )
 
 from .artifacts import paths_in
-from .images import split_attachments, user_message
+from .images import split_attachments, split_edited_note, user_message
 from .agents import AgentTracker
 from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
 from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
@@ -1565,7 +1565,7 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                 end()
                 begin()
                 # v0.19 (spec §8.4): the words typed, and the attachments apart.
-                typed, attachments = split_attachments(text)
+                typed, attachments = split_attachments(split_edited_note(text))
                 out.append(UserText(ts=ts, chat=chat, turn=turn, text=typed, attachments=attachments))
             elif _is_task_notification(blocks):
                 # Background work reporting back (v0.10): the engine's own
