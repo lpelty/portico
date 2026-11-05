@@ -846,21 +846,27 @@ struct ArtifactContent: View {
     }
 }
 
-/// An image at its own size inside scroll views, centred when smaller.
+/// An image, fit to the pane by default (never enlarged past 100%), with
+/// the zoom control, pinch, keys and double-click (v0.20 §3.1).
 struct ImagePane: View {
     let file: URL
     let shown: ArtifactPresentation
+    @State private var scale: CGFloat = 1
+    @State private var awake = true
+    @State private var box = ImageZoomPane.ControllerBox()
 
     var body: some View {
         if let image = NSImage(contentsOf: file) {
-            ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: max(image.size.width, 1), maxHeight: max(image.size.height, 1))
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            ImageZoomPane(file: file, image: image, scale: $scale, controllerBox: box)
+                .overlay(alignment: .bottom) {
+                    ZoomControl(
+                        percent: Int((scale * 100).rounded()), page: nil,
+                        onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
+                        onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
+                        awake: awake)
+                        .padding(.bottom, 14)
+                }
+                .modifier(ZoomWake(awake: $awake))
         } else {
             OtherPane(shown: shown, message: "This image can't be read here. Open it in the app that can.")
         }

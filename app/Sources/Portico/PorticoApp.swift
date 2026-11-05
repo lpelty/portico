@@ -70,6 +70,21 @@ struct PorticoApp: App {
         return model.shownChat.map { model.isViewerShown(for: $0) } ?? false
     }
 
+    /// The shown viewer file's media, when a viewer is on screen.
+    private var shownMedia: (media: Media, missing: Bool)? {
+        guard viewerShown, let chat = model.shownChat, let artifact = model.shownArtifact(for: chat) else { return nil }
+        let shown = ArtifactPresentation(artifact: artifact)
+        return (shown.media, shown.isMissing)
+    }
+
+    private var zoomAvailable: Bool {
+        ZoomMenu.isEnabled(media: shownMedia?.media, missing: shownMedia?.missing ?? false)
+    }
+
+    private var zoomTarget: (any ZoomTarget)? {
+        ZoomHub.shared.target(space: model.openSpace != nil)
+    }
+
     var body: some Scene {
         // The id names the saved window frame; "a1" starts fresh at the
         // frame's size after the three-column layout landed.
@@ -142,6 +157,18 @@ struct PorticoApp: App {
                     .disabled(!settings.canMakeTextSmaller)
                 Button("Actual Size") { settings.actualSize() }
                     .disabled(settings.textScale == 1.0)
+                Divider()
+                // Images and PDFs (v0.20 §3.1): ⌘+ and ⌘− are the text's.
+                let zoomOn = zoomAvailable
+                Button("Zoom In") { zoomTarget?.zoomIn() }
+                    .keyboardShortcut("=", modifiers: [.command, .option])
+                    .disabled(!zoomOn)
+                Button("Zoom Out") { zoomTarget?.zoomOut() }
+                    .keyboardShortcut("-", modifiers: [.command, .option])
+                    .disabled(!zoomOn)
+                Button("Zoom to Fit") { zoomTarget?.zoomToFit() }
+                    .keyboardShortcut("0", modifiers: [.command, .option])
+                    .disabled(!zoomOn)
             }
             CommandGroup(after: .toolbar) {
                 Divider()
