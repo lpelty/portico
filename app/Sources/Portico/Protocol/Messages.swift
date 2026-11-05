@@ -165,6 +165,12 @@ struct Action: Codable, Equatable, Sendable {
 struct Root: Codable, Equatable, Sendable {
     var name: String
     var path: String
+    /// v0.19 (`files.extra.v1`): a folder the person added, and one that is not a directory (any more).
+    var extra: Bool? = nil
+    var missing: Bool? = nil
+
+    var isExtra: Bool { extra == true }
+    var isMissing: Bool { missing == true }
 }
 
 struct ChatSummary: Codable, Equatable, Sendable {
@@ -349,6 +355,7 @@ struct HelloClient: Codable, Equatable, Sendable {
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
+        FilesRootsSet.capability,
     ]
 }
 
@@ -433,6 +440,16 @@ extension CardAnswer {
     var declined: QuestionDecline? {
         answer["declined"]?.stringValue.flatMap(QuestionDecline.init(rawValue:))
     }
+}
+
+/// v0.19 (`files.extra.v1`): the folders this app adds to the Files pane;
+/// each send replaces the last list. Answered with `files.roots`.
+struct FilesRootsSet: Codable, Equatable, Sendable {
+    static let messageType = "files.roots.set"
+    static let capability = "files.extra.v1"
+    var paths: [String]
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
 }
 
 struct FilesListRequest: Codable, Equatable, Sendable {
@@ -1149,6 +1166,19 @@ struct ArtifactCreated: Codable, Equatable, Sendable {
     static let messageType = "artifact.created"
     var chat: Int
     var artifact: Artifact
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// v0.19: every root this connection has: the deployment's, then the added
+/// folders in order (`extra`, and `missing` when not a directory).
+struct FilesRoots: Codable, Equatable, Sendable {
+    static let messageType = "files.roots"
+    var roots: [Root]
+    var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
@@ -2143,6 +2173,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case turnStop(TurnStop)
     case cardAnswer(CardAnswer)
     case filesList(FilesListRequest)
+    case filesRootsSet(FilesRootsSet)
     case artifactOpened(ArtifactOpened)
     case gatewayStop(GatewayStop)
     case sessionRenew(SessionRenew)
@@ -2197,6 +2228,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .turnStop: TurnStop.messageType
         case .cardAnswer: CardAnswer.messageType
         case .filesList: FilesListRequest.messageType
+        case .filesRootsSet: FilesRootsSet.messageType
         case .artifactOpened: ArtifactOpened.messageType
         case .gatewayStop: GatewayStop.messageType
         case .sessionRenew: SessionRenew.messageType
@@ -2254,6 +2286,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case TurnStop.messageType: self = .turnStop(try TurnStop(from: decoder))
         case CardAnswer.messageType: self = .cardAnswer(try CardAnswer(from: decoder))
         case FilesListRequest.messageType: self = .filesList(try FilesListRequest(from: decoder))
+        case FilesRootsSet.messageType: self = .filesRootsSet(try FilesRootsSet(from: decoder))
         case ArtifactOpened.messageType: self = .artifactOpened(try ArtifactOpened(from: decoder))
         case GatewayStop.messageType: self = .gatewayStop(try GatewayStop(from: decoder))
         case SessionRenew.messageType: self = .sessionRenew(try SessionRenew(from: decoder))
@@ -2313,6 +2346,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .turnStop(let m): try m.encode(to: encoder)
         case .cardAnswer(let m): try m.encode(to: encoder)
         case .filesList(let m): try m.encode(to: encoder)
+        case .filesRootsSet(let m): try m.encode(to: encoder)
         case .artifactOpened(let m): try m.encode(to: encoder)
         case .gatewayStop(let m): try m.encode(to: encoder)
         case .sessionRenew(let m): try m.encode(to: encoder)
@@ -2377,6 +2411,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case cardCancel(CardCancel)
     case artifactCreated(ArtifactCreated)
     case filesList(FilesList)
+    case filesRoots(FilesRoots)
     case statusSet(StatusSet)
     case error(ErrorMessage)
     case contextUsage(ContextUsage)
@@ -2428,6 +2463,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .cardCancel: CardCancel.messageType
         case .artifactCreated: ArtifactCreated.messageType
         case .filesList: FilesList.messageType
+        case .filesRoots: FilesRoots.messageType
         case .statusSet: StatusSet.messageType
         case .error: ErrorMessage.messageType
         case .contextUsage: ContextUsage.messageType
@@ -2481,6 +2517,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .cardCancel(let m): m.envelope
         case .artifactCreated(let m): m.envelope
         case .filesList(let m): m.envelope
+        case .filesRoots(let m): m.envelope
         case .statusSet(let m): m.envelope
         case .error(let m): m.envelope
         case .contextUsage(let m): m.envelope
@@ -2535,6 +2572,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case CardCancel.messageType: self = .cardCancel(try CardCancel(from: decoder))
         case ArtifactCreated.messageType: self = .artifactCreated(try ArtifactCreated(from: decoder))
         case FilesList.messageType: self = .filesList(try FilesList(from: decoder))
+        case FilesRoots.messageType: self = .filesRoots(try FilesRoots(from: decoder))
         case StatusSet.messageType: self = .statusSet(try StatusSet(from: decoder))
         case ErrorMessage.messageType: self = .error(try ErrorMessage(from: decoder))
         case ContextUsage.messageType: self = .contextUsage(try ContextUsage(from: decoder))
@@ -2591,6 +2629,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .cardCancel(let m): try m.encode(to: encoder)
         case .artifactCreated(let m): try m.encode(to: encoder)
         case .filesList(let m): try m.encode(to: encoder)
+        case .filesRoots(let m): try m.encode(to: encoder)
         case .statusSet(let m): try m.encode(to: encoder)
         case .error(let m): try m.encode(to: encoder)
         case .contextUsage(let m): try m.encode(to: encoder)

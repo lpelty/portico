@@ -188,7 +188,7 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     # ``apps.v1`` with ``[apps] enabled`` (the default).
     assert hello.capabilities == [
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-        "models.v1", "mcp.v1", "plugins.v1", "messages.attachments.v1", "sessions.clear", "threads.v1", "apps.v1",
+        "models.v1", "mcp.v1", "plugins.v1", "messages.attachments.v1", "files.extra.v1", "sessions.clear", "threads.v1", "apps.v1",
     ]
     assert hello.presentation == "single"
     assert hello.can_log is False

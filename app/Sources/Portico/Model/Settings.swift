@@ -99,6 +99,7 @@ final class Settings: ObservableObject {
         static let tokenFile = "tokenFile"
         static let lastFolder = "lastFolder"
         static let pinnedFiles = "pinnedFiles"
+        static let extraFolders = "extraFolders"
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
         static let canvasWidth = "viewerWidth.canvas"
@@ -195,6 +196,12 @@ final class Settings: ObservableObject {
     /// in the order they were added. The key keeps v0.2's name (`pinnedFiles`) so bookmarks made before v0.4 survive.
     @Published var pinnedFiles: [String] {
         didSet { defaults.set(pinnedFiles, forKey: Key.pinnedFiles) }
+    }
+
+    /// Folders the person added to the Files pane (Settings › General › Also
+    /// show in Files, v0.19 §4.2), by absolute path, in the order added.
+    @Published var extraFolders: [String] {
+        didSet { defaults.set(extraFolders, forKey: Key.extraFolders) }
     }
 
     /// The sidebar's width as last dragged.
@@ -337,6 +344,7 @@ final class Settings: ObservableObject {
         tokenFile = Self.read(Key.tokenFile, in: defaults)
         lastFolder = Self.read(Key.lastFolder, in: defaults)
         pinnedFiles = defaults.stringArray(forKey: Key.pinnedFiles) ?? []
+        extraFolders = defaults.stringArray(forKey: Key.extraFolders) ?? []
         sidebarWidth = Self.width(Key.sidebarWidth, in: defaults) ?? ColumnWidths.sidebarDefault
         readingWidth = Self.width(Key.readingWidth, in: defaults) ?? ColumnWidths.viewerDefault
         canvasWidth = Self.width(Key.canvasWidth, in: defaults) ?? ColumnWidths.canvasDefault

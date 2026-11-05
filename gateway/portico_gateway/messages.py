@@ -74,6 +74,10 @@ SERVICES_STUCK_CAPABILITY = "services.stuck.v1"
 # block inside ``text`` and no ``attachments``.
 MESSAGES_ATTACHMENTS_CAPABILITY = "messages.attachments.v1"
 
+# v0.19 (spec §4.2): a gateway lists it when it answers ``files.roots.set``
+# with the folders a person added to the Files pane (``files.roots``).
+FILES_EXTRA_CAPABILITY = "files.extra.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -109,6 +113,10 @@ class Action(Strict):
 class Root(Strict):
     name: str
     path: str
+    # v0.19 (``files.extra.v1``): a folder the person added (not the deployment's),
+    # and one that is not a directory (any more); ``files.list`` on it is ``files.not_found``.
+    extra: bool = False
+    missing: bool = False
 
 
 class ThreadInfo(Strict):
@@ -629,6 +637,13 @@ class FilesListRequest(Envelope):
     path: str = ""
 
 
+class FilesRootsSet(Envelope):
+    """v0.19 (``files.extra.v1``): the folders this connection adds to the Files pane; replaces the last list."""
+
+    type: Literal["files.roots.set"] = "files.roots.set"
+    paths: list[str] = []
+
+
 class ArtifactOpened(Envelope):
     type: Literal["artifact.opened"] = "artifact.opened"
     chat: int
@@ -913,6 +928,13 @@ class FilesList(Envelope):
     root: str
     path: str
     entries: list[Entry] = []
+
+
+class FilesRoots(Envelope):
+    """v0.19: the roots this connection has: the deployment's, then the person's added folders in order."""
+
+    type: Literal["files.roots"] = "files.roots"
+    roots: list[Root] = []
 
 
 class StatusSet(Envelope):
@@ -1471,6 +1493,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     TurnStop,
     CardAnswer,
     FilesListRequest,
+    FilesRootsSet,
     ArtifactOpened,
     GatewayStop,
     SessionRenew,
@@ -1531,6 +1554,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     CardCancel,
     ArtifactCreated,
     FilesList,
+    FilesRoots,
     StatusSet,
     ContextUsage,
     ChatCompacted,
@@ -1678,6 +1702,7 @@ def example_messages() -> dict[str, BaseModel]:
             note="fine for this chat",
         ),
         FilesListRequest(ts=_TS, chat=1, id="req-3", root="chat", path="src"),
+        FilesRootsSet(ts=_TS, id="req-6", paths=["/Users/someone/papers"]),
         ArtifactOpened(ts=_TS, chat=1, artifact_id="art-3"),
         GatewayStop(ts=_TS),
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),
@@ -1840,6 +1865,15 @@ def example_messages() -> dict[str, BaseModel]:
             root="chat",
             path="src",
             entries=[Entry(name="lib", dir=True, size=None), Entry(name="main.py", dir=False, size=1204)],
+        ),
+        FilesRoots(
+            ts=_TS,
+            id="req-6",
+            roots=[
+                Root(name="projects", path="/Users/someone/projects"),
+                Root(name="papers", path="/Users/someone/papers", extra=True),
+                Root(name="old", path="/Users/someone/old", extra=True, missing=True),
+            ],
         ),
         StatusSet(ts=_TS, chat=1, seq=51, text="Preparing the workspace..."),
         ContextUsage(

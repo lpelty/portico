@@ -231,6 +231,8 @@ from .messages import (
     Error,
     FilesList,
     FilesListRequest,
+    FilesRoots,
+    FilesRootsSet,
     FilesResults,
     FilesSearch,
     GatewayStop,
@@ -261,6 +263,7 @@ from .messages import (
     Outcome,
     ProtocolError,
     QueuedMessage,
+    Root,
     ServerMessage,
     Service,
     ServiceRestart,
@@ -515,6 +518,14 @@ def _has_host(url: str) -> bool:
         return bool(urlsplit(url).hostname)
     except ValueError:
         return False
+
+
+_EXTRA_ROOTS_ATTR = "portico_extra_roots"
+
+
+def _extra_roots(conn: ServerConnection) -> list[Root]:
+    """The folders this connection added to the Files pane (``files.roots.set``); gone with the connection."""
+    return getattr(conn, _EXTRA_ROOTS_ATTR, [])
 
 
 def _capabilities(conn: ServerConnection) -> frozenset[str]:
@@ -1062,6 +1073,7 @@ class GatewayServer:
         self.register("turn.stop", self.on_turn_stop)
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
+        self.register("files.roots.set", self.on_files_roots_set)
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
         self.register("session.mode", self.on_session_mode)
@@ -2875,8 +2887,8 @@ class GatewayServer:
 
     # --- handlers: files --------------------------------------------------------
 
-    def root_path(self, name: str, chat: int | None) -> Path:
-        """The directory a root name stands for: the chat's folder, or a config root."""
+    def root_path(self, name: str, chat: int | None, conn: ServerConnection | None = None) -> Path:
+        """The directory a root name stands for: the chat's folder, a config root, or a folder this connection added."""
         if name == CHAT_ROOT:
             if chat is None:
                 raise ProtocolError("files.unknown_root", "root 'chat' needs a chat number")
@@ -2884,10 +2896,32 @@ class GatewayServer:
         for root in self.config.roots:
             if root.name == name:
                 return Path(root.path)
+        if conn is not None:
+            for root in _extra_roots(conn):
+                if root.name == name:
+                    return Path(root.path)
         raise ProtocolError("files.unknown_root", f"no root named {name!r}")
 
+    async def on_files_roots_set(self, msg: FilesRootsSet, conn: ServerConnection) -> None:
+        """v0.19: this connection's added folders, replacing the last list; answered with every root it now has."""
+        taken = {CHAT_ROOT, *(root.name for root in self.config.roots)}
+        extras: list[Root] = []
+        for raw in msg.paths:
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                raise ProtocolError("files.invalid_root", f"a folder must be an absolute path: {raw}")
+            base = path.name or "folder"
+            name, n = base, 1
+            while name in taken:
+                n += 1
+                name = f"{base} {n}"
+            taken.add(name)
+            extras.append(Root(name=name, path=str(path), extra=True, missing=not path.is_dir()))
+        setattr(conn, _EXTRA_ROOTS_ATTR, extras)
+        await self._send(conn, FilesRoots(ts=_now(), id=msg.id, roots=[*self.config.roots, *extras]))
+
     async def on_files_list(self, msg: FilesListRequest, conn: ServerConnection) -> None:
-        root = self.root_path(msg.root, msg.chat)
+        root = self.root_path(msg.root, msg.chat, conn)
         rel, entries = await asyncio.to_thread(list_directory, root, msg.path)
         await self._send(conn, FilesList(ts=_now(), chat=msg.chat, id=msg.id, root=msg.root, path=rel, entries=entries))
 
@@ -3381,7 +3415,7 @@ class GatewayServer:
 
     async def on_files_search(self, msg: FilesSearch, conn: ServerConnection) -> None:
         """Hits for ``query`` under a root (named as ``files.list`` names them): a plug-in's, else Spotlight's."""
-        root = self.root_path(msg.root, msg.chat)
+        root = self.root_path(msg.root, msg.chat, conn)
         if not root.is_dir():
             raise ProtocolError("files.not_found", f"root {msg.root!r} is not a directory")
         if self.plugins.search is not None:

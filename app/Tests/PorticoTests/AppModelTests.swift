@@ -509,16 +509,18 @@ final class AppModelTests: XCTestCase {
 
     func testNewChatSendsAndSelectsTheReply() {
         let (model, sent) = model()
-        model.newChat(folder: URL(fileURLWithPath: "/tmp/demo"))
+        let demo = FileManager.default.temporaryDirectory
+        model.chooseStartFolder(demo)
+        model.startChat(text: "hello")
         guard case .chatNew(let new)? = sent.frames.last else { return XCTFail("expected chat.new, got \(sent.frames)") }
-        XCTAssertEqual(new.folder, "/tmp/demo")
+        XCTAssertEqual(new.folder, demo.path)
         let id = try! XCTUnwrap(new.id, "chat.new carries an id so the reply can be matched")
 
         // The gateway answers chat.state with that id, then chat.list.
         model.apply(.chatState(ChatState(chat: 4, state: .idle, id: id, seq: 1)))
         model.apply(.chatList(ChatList(chats: [summary(4)])))
         XCTAssertEqual(model.selected, 4)
-        XCTAssertEqual(sent.types().last, "chat.open", "the new chat is opened so its events stream")
+        XCTAssertTrue(sent.types().contains("chat.open"), "the new chat is opened so its events stream")
     }
 
     func testStopRemoveAliasSendTheRightFrames() {

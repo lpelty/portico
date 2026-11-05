@@ -2734,6 +2734,9 @@
           "$ref": "#/$defs/FilesListRequest"
         },
         {
+          "$ref": "#/$defs/FilesRootsSet"
+        },
+        {
           "$ref": "#/$defs/ArtifactOpened"
         },
         {
@@ -3303,6 +3306,136 @@
         "query"
       ],
       "title": "FilesResults",
+      "type": "object"
+    },
+    "FilesRoots": {
+      "additionalProperties": false,
+      "description": "v0.19: the roots this connection has: the deployment's, then the person's added folders in order.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "roots": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Root"
+          },
+          "title": "Roots",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "files.roots",
+          "default": "files.roots",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "FilesRoots",
+      "type": "object"
+    },
+    "FilesRootsSet": {
+      "additionalProperties": false,
+      "description": "v0.19 (``files.extra.v1``): the folders this connection adds to the Files pane; replaces the last list.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "files.roots.set",
+          "default": "files.roots.set",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "FilesRootsSet",
       "type": "object"
     },
     "FilesSearch": {
@@ -5898,6 +6031,16 @@
     "Root": {
       "additionalProperties": false,
       "properties": {
+        "extra": {
+          "default": false,
+          "title": "Extra",
+          "type": "boolean"
+        },
+        "missing": {
+          "default": false,
+          "title": "Missing",
+          "type": "boolean"
+        },
         "name": {
           "title": "Name",
           "type": "string"
@@ -5964,6 +6107,9 @@
         },
         {
           "$ref": "#/$defs/FilesList"
+        },
+        {
+          "$ref": "#/$defs/FilesRoots"
         },
         {
           "$ref": "#/$defs/StatusSet"

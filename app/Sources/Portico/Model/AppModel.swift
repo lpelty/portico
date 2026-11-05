@@ -203,6 +203,8 @@ final class AppModel: ObservableObject {
     /// normalised relative path), the entries the last `files.list` gave.
     /// A directory is fetched when it is expanded, once, until a refresh.
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
+    /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
+    @Published private(set) var extraRoots: [Root] = []
     /// Per directory, the gateway's refusal of its last `files.list`
     /// (`files.outside_root` for a link that leaves the root, say), shown
     /// in the directory's row instead of a listing; cleared when it is asked for again.
@@ -780,6 +782,7 @@ final class AppModel: ObservableObject {
         // replays may hold it (or the old connection lost it).
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
+        extraRoots = []
         var frames: [ClientMessage] = openedChats.sorted().map { chat in
             .chatOpen(ChatOpen(chat: chat, since: lastSeq[chat], id: Self.requestId()))
         }
@@ -792,6 +795,7 @@ final class AppModel: ObservableObject {
         for key in unanswered.sorted(by: { ($0.chat, $0.root, $0.path) < ($1.chat, $1.root, $1.path) }) {
             frames.append(filesListRequest(for: key))
         }
+        frames += extraFoldersFrames()
         return frames
     }
 
@@ -967,6 +971,9 @@ final class AppModel: ObservableObject {
             // Stored artifacts re-sent on chat.open carry no seq and arrive once each.
             applyEvent(message, to: created.chat)
             noteSeq(of: message)
+
+        case .filesRoots(let roots):
+            extraRoots = roots.roots.filter(\.isExtra)
 
         case .filesList(let list):
             // A direct answer (`id`, no seq) to the Files pane's request,
@@ -1464,7 +1471,7 @@ final class AppModel: ObservableObject {
         case .agentProgress, .agentFinished, .workflowPhase, .workflowFinished:
             break
 
-        case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .statusSet, .error,
+        case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
             .pluginsState, .pluginsDetails, .pluginsOptions:
@@ -1878,13 +1885,13 @@ final class AppModel: ObservableObject {
     /// `message.send`. Nothing happens without a folder or with blank text.
     func startChat(text: String, fromComposer: Bool = true) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let folder = startFolder, !isStarting else { return }
-        let id = Self.requestId()
         let attachments = fromComposer ? startAttachments : []
+        guard !trimmed.isEmpty || !attachments.isEmpty, let folder = startFolder, !isStarting else { return }
+        let id = Self.requestId()
         pendingNewChats.insert(id)
         pendingStarts[id] = PendingStart(text: trimmed, attachments: attachments, folder: folder)
         startError = nil
-        settings.lastFolder = folder.path
+        if !isFolderLocked { settings.lastFolder = folder.path }
         chosenStartFolder = nil
         if fromComposer {
             startDraft = ""
@@ -1901,7 +1908,7 @@ final class AppModel: ObservableObject {
     /// session is being logged or ended nothing goes: the welcome keeps it.
     func continueSession(chat: Int, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSessionCommandPending(chat: chat) else { return }
+        guard !trimmed.isEmpty || !startAttachments.isEmpty, !isSessionCommandPending(chat: chat) else { return }
         open(chat: chat)
         attach(startAttachments, to: chat)
         startAttachments = []
@@ -1944,12 +1951,6 @@ final class AppModel: ObservableObject {
     private static func isDirectory(_ path: String) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-    }
-
-    func newChat(folder: URL) {
-        let id = Self.requestId()
-        pendingNewChats.insert(id)
-        send(.chatNew(ChatNew(folder: folder.path, id: id)))
     }
 
     /// Show a chat and ask the gateway for its events: since our watermark
@@ -1995,8 +1996,6 @@ final class AppModel: ObservableObject {
     func remove(chat: Int) {
         send(.chatRemove(ChatRemove(chat: chat, id: Self.requestId())))
         forget(chat: chat)
-        // Its history is gone, so are the images pasted into it (v0.19 §8.2).
-        if let home = attachmentsHome { PastedImages.remove(chat: chat, home: home) }
     }
 
     /// Set or clear (empty or `nil`) a chat's alias.
@@ -2137,7 +2136,10 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func dispatch(chat: Int, text: String, attachments: [String], fromComposer: Bool) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending(chat: chat) else { return false }
+        // v0.19: a message may be attachments alone.
+        guard !trimmed.isEmpty || !attachments.isEmpty, !isSending(chat: chat) else { return false }
+        // Pasted images move from pending to the chat the message goes to (§8.2).
+        let attachments = attachmentsHome.map { PastedImages.adopt(attachments, chat: chat, home: $0) } ?? attachments
         let id = Self.requestId()
         pendingSends[chat] = PendingSend(
             id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
@@ -2245,40 +2247,31 @@ final class AppModel: ObservableObject {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
     }
 
-    /// The folder pasted images are written under (`PastedImages`, v0.19
-    /// §8.2): the app's home, as the supervisor resolved it. Tests set it.
+    /// The app's home, where pasted images are kept (`PastedImages`, v0.19
+    /// §8.2): the supervisor's, set at launch; tests set their own. The one
+    /// resolver for saving, adopting and removing. `nil` (no supervisor):
+    /// nothing is written or removed.
     var attachmentsHome: URL? {
         get { attachmentsHomeOverride ?? supervisor?.home.url }
         set { attachmentsHomeOverride = newValue }
     }
     private var attachmentsHomeOverride: URL?
 
-    /// Write pasted image data for `chat` and return the file's path.
-    func savePastedImage(_ data: Data, chat: Int) throws -> String {
-        let home = attachmentsHome ?? GatewaySupervisor.resolveHome().url
-        return try PastedImages.save(data, chat: chat, home: home, now: Date())
+    /// Write pasted image data to the pending folder and return its path.
+    func savePastedImage(_ data: Data) throws -> String {
+        guard let home = attachmentsHome else { throw PastedImages.Failure.noHome }
+        return try PastedImages.save(data, home: home, now: Date())
     }
 
-    /// The composer's intake for a chat (v0.19 §8.1): files dropped or
-    /// pasted onto its text become attachments; pasted image data is saved first.
-    func composerIntake(chat: Int) -> ComposerIntake {
+    /// A composer's intake (v0.19 §8.1): files dropped or pasted onto its
+    /// text become attachments (`attach`); pasted image data is saved first.
+    /// The composer keeps the one it makes.
+    func makeIntake(attach: @escaping ([String]) -> Void) -> ComposerIntake {
         ComposerIntake(
-            attach: { [weak self] in self?.attach($0, to: chat) },
+            attach: attach,
             saveImage: { [weak self] data in
-                guard let self else { throw PastedImages.Failure.notAnImage }
-                return try self.savePastedImage(data, chat: chat)
-            })
-    }
-
-    /// The start screen's intake: attachments for the first message. Pasted
-    /// images go under the session the start will make (the gateway's
-    /// `next_chat`), or the continued one.
-    func startIntake(continuing: Int?) -> ComposerIntake {
-        ComposerIntake(
-            attach: { [weak self] in self?.attachToStart($0) },
-            saveImage: { [weak self] data in
-                guard let self else { throw PastedImages.Failure.notAnImage }
-                return try self.savePastedImage(data, chat: continuing ?? self.nextChat ?? 0)
+                guard let self else { throw PastedImages.Failure.noHome }
+                return try self.savePastedImage(data)
             })
     }
 
@@ -2303,6 +2296,8 @@ final class AppModel: ObservableObject {
     }
 
     private func forget(chat: Int) {
+        // Its history is gone, so are the images pasted into it (v0.19 §8.2).
+        if let home = attachmentsHome { PastedImages.remove(chat: chat, home: home) }
         noteClosed(chat: chat)
         forgetApps(chat: chat)
         draftAttachments[chat] = nil
@@ -2518,6 +2513,7 @@ extension AppModel {
         for root in hello?.roots ?? [] where root.name != Self.chatRoot {
             roots.append(root)
         }
+        roots += extraRoots
         return roots
     }
 

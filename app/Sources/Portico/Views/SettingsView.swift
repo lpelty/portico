@@ -30,6 +30,19 @@ enum GeneralSettingsPresentation {
     /// The Works in row while the deployment fixes the folder (v0.19 §4.1).
     static func folderLockedNote(brand: String) -> String { "Set by \(brand)" }
 
+    /// The same note inside a sentence (the start screen's line): only the first word drops its capital, the brand keeps its case.
+    static func folderLockedClause(brand: String) -> String { "set by \(brand)" }
+
+    // Also show in Files (v0.19 §4.2).
+    static let extraFoldersTitle = "Also show in Files"
+    static let extraFoldersAdd = "Add folder…"
+    static let extraFolderRemove = "Remove"
+    static let extraFolderMissing = "Not found"
+    static let extraFoldersNeedsNewerGateway = "Needs a newer gateway"
+    static func extraFoldersFootnote(brand: String) -> String {
+        "Folders you browse in the Files pane, after \(brand)'s own. The agent isn't told about them; Add to chat attaches a file from one."
+    }
+
     /// "Agent checks HTML it creates" is disabled while the agent cannot see.
     static func checksHTMLEnabled(canSee: Bool) -> Bool { canSee }
 }
@@ -138,6 +151,7 @@ struct GeneralSettingsTab: View {
                     }
                 }
             }
+            ExtraFoldersSection()
             SettingsSection("Viewer") {
                 SettingsRow(
                     "Open files in the viewer automatically",
@@ -433,5 +447,81 @@ struct GatewaySettingsTab: View {
         Binding(
             get: { source.wrappedValue ?? "" },
             set: { source.wrappedValue = $0.isEmpty ? nil : $0 })
+    }
+}
+
+/// Settings › General › Also show in Files (v0.19 §4.2): the folders the person added, each with Remove
+/// (and "Not found" when it is gone), and Add folder… at the heading's right.
+struct ExtraFoldersSection: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var settings: Settings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(GeneralSettingsPresentation.extraFoldersTitle)
+                    .scaledFont(12, weight: .semibold)
+                    .foregroundStyle(Theme.text2)
+                Spacer()
+                Button(GeneralSettingsPresentation.extraFoldersAdd, action: addFolder)
+                    .buttonStyle(SettingsButtonStyle(kind: .quiet))
+                    .disabled(!model.offersExtraFolders)
+            }
+            let rows = model.extraFolderRows
+            if !rows.isEmpty {
+                SettingsPanel {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        if index > 0 { SettingsDivider() }
+                        folderRow(row)
+                    }
+                }
+            }
+            Text(model.extraFoldersNote)
+                .scaledFont(11.5)
+                .foregroundStyle(Theme.text3)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func folderRow(_ row: ExtraFolderRow) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .font(Theme.iconFont(12))
+                .foregroundStyle(row.missing ? Theme.text3 : Theme.text2)
+            Text(row.name)
+                .scaledFont(12.5, weight: .medium)
+                .foregroundStyle(row.missing ? Theme.text3 : Theme.text)
+                .lineLimit(1)
+            Text(row.shownPath)
+                .scaledFont(11)
+                .foregroundStyle(Theme.text3)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .tip(row.path)
+            Spacer(minLength: 8)
+            if row.missing {
+                Text(GeneralSettingsPresentation.extraFolderMissing)
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.text3)
+            }
+            Button(GeneralSettingsPresentation.extraFolderRemove) { model.removeExtraFolder(row.path) }
+                .buttonStyle(SettingsButtonStyle(kind: .quiet))
+        }
+        .padding(.horizontal, SettingsKit.rowHorizontal)
+        .padding(.vertical, SettingsKit.rowVertical)
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = "Add Folder"
+        panel.message = "Choose a folder to show in the Files pane"
+        FilePanel.present(panel, from: NSApp.keyWindow ?? NSApp.mainWindow) { urls in
+            if let folder = urls.first { model.addExtraFolder(folder) }
+        }
     }
 }

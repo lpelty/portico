@@ -37,6 +37,8 @@
   "protocol": 1,
   "roots": [
     {
+      "extra": false,
+      "missing": false,
       "name": "projects",
       "path": "/Users/someone/projects"
     }

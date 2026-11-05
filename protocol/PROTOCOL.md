@@ -316,6 +316,14 @@ correlate. Reply: `files.list` (server), or `error` with `files.unknown_root`
 path leaves the root once `..` and symlinks are resolved, or is absolute),
 `files.not_found` (the path is not an existing directory under the root).
 
+### `files.roots.set` — `FilesRootsSet`
+v0.19 (`files.extra.v1` in the gateway's `hello.capabilities`): `paths:
+[string]` (absolute; `~` is expanded), `id` to correlate. The folders the
+person added to the Files pane; each send replaces the last list, and they
+belong to the connection: they are gone when it closes, so the app sends
+the list again on every connect. Reply: `files.roots`, or `error` with
+`files.invalid_root` (a relative path; nothing is changed).
+
 ### `artifact.opened` — `ArtifactOpened`
 `chat`, `artifact_id: string`. Optional telemetry: the app showed that
 artifact. The gateway accepts it and answers nothing.
@@ -846,6 +854,15 @@ Entries: directories first, then files, each group in case-insensitive
 name order; names starting with `.` are skipped; `size` is bytes for a
 file and absent for a directory. A direct reply, not a history event: no
 `seq`.
+
+### `files.roots` — `FilesRoots`
+v0.19: `roots: [{name, path, extra, missing}]`, `id` echoing the request: the
+deployment's `hello.roots` first, then the added folders in the order sent.
+An added folder is `extra: true`; its name is the folder's last path
+component, with " 2", " 3" and so on after a clash with any other root
+(or `chat`). A path that is not a directory is still listed, `missing:
+true`, and `files.list` on it is `error files.not_found`. A direct reply,
+not a history event: no `seq`.
 
 ### `status.set` — `StatusSet`
 `chat?`, `seq?`, `text`. One line for the status strip, shown verbatim.

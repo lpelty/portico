@@ -64,4 +64,42 @@ final class FolderLockTests: XCTestCase {
     func testTheLockedNoteNamesTheBrand() {
         XCTAssertEqual(GeneralSettingsPresentation.folderLockedNote(brand: "Acme"), "Set by Acme")
     }
+
+    // Task 3 review follow-ups.
+
+    func testTheLockedClauseKeepsTheBrandsCase() {
+        XCTAssertEqual(GeneralSettingsPresentation.folderLockedClause(brand: "AcmeCo"), "set by AcmeCo")
+    }
+
+    func testTheStartScreenLineKeepsTheBrandsCase() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "portico-lock-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        let home = try dir()
+        _ = model.handleHello(hello(default: home, root: home, locked: true))
+        XCTAssertTrue(model.workingFolderLine.hasSuffix("set by Acme"), model.workingFolderLine)
+    }
+
+    func testAStartWhileLockedUsesTheLockedFolderAndSavesNothing() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "portico-lock-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        var sent: [ClientMessage] = []
+        model.outbound = { sent.append($0) }
+        let home = try dir(), other = try dir()
+        _ = model.handleHello(hello(default: home, root: home, locked: true))
+        model.chosenStartFolder = other
+        model.startChat(text: "hello")
+        guard case .chatNew(let new)? = sent.last else { return XCTFail("expected chat.new, got \(sent)") }
+        XCTAssertEqual(new.folder, home.path)
+        XCTAssertNil(model.settings.lastFolder)
+    }
+
+    func testAStartWhileUnlockedStillSavesTheFolder() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "portico-lock-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        model.outbound = { _ in }
+        let home = try dir()
+        _ = model.handleHello(hello(default: home, root: home, locked: false))
+        model.startChat(text: "hello")
+        XCTAssertEqual(model.settings.lastFolder, home.path)
+    }
 }
