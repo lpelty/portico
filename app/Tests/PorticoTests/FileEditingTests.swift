@@ -710,6 +710,81 @@ final class FileEditingTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
     }
 
+    // MARK: - files.edited (§2.7, Task 4)
+
+    private func editingModel(capabilities: [String]) throws -> (AppModel, EditSessions, () -> [ClientMessage]) {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "edit-sent-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        var frames: [ClientMessage] = []
+        model.outbound = { frames.append($0) }
+        model.setConnection(.connected)
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.20.0", epoch: "e",
+            brand: Brand(name: "Acme", agentName: "Agent"), actions: [], roots: [], commands: [],
+            capabilities: capabilities)))
+        let registry = EditSessions()
+        registry.onSaved = { [model] in model.fileEdited(path: $0.url.path, chat: $0.chat) }
+        return (model, registry, { frames.filter { $0.type == FilesEdited.messageType } })
+    }
+
+    func testEachSaveTellsTheGatewayInTheEditingChat() async throws {
+        let (_, registry, sent) = try editingModel(capabilities: [FilesEdited.capability])
+        let url = try write("told.md", "t\n")
+        let edit = ViewerEdit(registry: registry)
+        edit.chat = 7
+        edit.turnOn(artifact(url))
+        let session = try XCTUnwrap(edit.session)
+        session.textChanged("t2\n")
+        await session.saveNow()
+        session.textChanged("t3\n")
+        await session.saveNow()
+        let frames = sent()
+        XCTAssertEqual(frames.count, 2, "one per save")
+        guard case .filesEdited(let first) = try XCTUnwrap(frames.first) else { return XCTFail("not files.edited") }
+        XCTAssertEqual(first.chat, 7)
+        XCTAssertEqual(first.path, url.path)
+    }
+
+    func testKeepMineAndRestoreTellTheGatewayToo() async throws {
+        let (_, registry, sent) = try editingModel(capabilities: [FilesEdited.capability])
+        let url = try write("kept.md", "k\n")
+        let edit = ViewerEdit(registry: registry)
+        edit.chat = 2
+        edit.turnOn(artifact(url))
+        let session = try XCTUnwrap(edit.session)
+        session.markDirty()
+        try agentWrites("agent's version\n", to: url)
+        await session.recheckDisk()
+        session.currentText = { "mine\n" }
+        await session.keepMine()
+        await session.restore("restored\n")
+        XCTAssertEqual(sent().count, 2)
+    }
+
+    func testNothingIsSentWithoutTheCapability() async throws {
+        let (_, registry, sent) = try editingModel(capabilities: [])
+        let url = try write("quiet.md", "q\n")
+        let edit = ViewerEdit(registry: registry)
+        edit.chat = 1
+        edit.turnOn(artifact(url))
+        edit.session?.textChanged("q2\n")
+        await edit.session?.saveNow()
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "q2\n", "editing works on an older gateway")
+        XCTAssertTrue(sent().isEmpty)
+    }
+
+    func testAFailedSaveSendsNothing() async throws {
+        let (_, registry, sent) = try editingModel(capabilities: [FilesEdited.capability])
+        let url = try write("nope.md", "n\n")
+        let edit = try session(url, registry: registry, writer: { _, _, _, _ in
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))
+        })
+        edit.chat = 1
+        edit.textChanged("n2\n")
+        await edit.saveNow()
+        XCTAssertTrue(sent().isEmpty)
+    }
+
     // MARK: - the agent changed the file (§2.6, Task 3)
 
     private func conflictSession(_ url: URL) throws -> (EditSession, ReplaceLog) {

@@ -2714,6 +2714,14 @@ extension AppModel {
     /// no gateway round trip, the media from the extension the way the
     /// gateway maps it, listed once in the chat's history, and the viewer
     /// column brought back if it was collapsed.
+    /// v0.20 §2.7: the person saved `path` in the viewer's editor in
+    /// `chat`'s viewer; the gateway tells the agent with the next message.
+    /// Nothing is sent to a gateway without `files.edited.v1`.
+    func fileEdited(path: String, chat: Int?) {
+        guard let chat, offers(FilesEdited.capability) else { return }
+        send(.filesEdited(FilesEdited(chat: chat, path: path)))
+    }
+
     /// A file whose edits couldn't be saved when quitting, brought where
     /// the person sees it (v0.20): its chat, out of a space or the document
     /// view, the viewer open on it (Edit comes back with its session).

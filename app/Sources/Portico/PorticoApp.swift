@@ -134,6 +134,10 @@ struct PorticoApp: App {
                     EditSessions.shared.onDetachedFailure = { [model] session in
                         model.editNotice = EditNotice(name: session.name, path: session.location, chat: session.chat)
                     }
+                    // After every save (and Keep mine, Restore): files.edited (§2.7).
+                    EditSessions.shared.onSaved = { [model] session in
+                        model.fileEdited(path: session.url.path, chat: session.chat)
+                    }
                     EditSessions.shared.onResolved = { [model] session in
                         if model.editNotice?.path == session.location { model.editNotice = nil }
                     }
