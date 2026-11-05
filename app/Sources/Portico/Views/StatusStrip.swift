@@ -269,6 +269,19 @@ struct StatusStrip: View {
             }
             ServicesControl(services: strip.services, label: strip.servicesLabel(at: fit), shown: $servicesShown)
             Spacer(minLength: 0)
+            if let notice = model.editNotice {
+                Button {
+                    model.showEditedFile(path: notice.path, chat: notice.chat)
+                } label: {
+                    Text(notice.text)
+                        .scaledFont(12)
+                        .foregroundStyle(Theme.deny)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .buttonStyle(.plain)
+                .tip("Open \(notice.name); your edits are kept")
+            }
             if model.configStale {
                 restartButton(compact: !layout.restartWords)
             }

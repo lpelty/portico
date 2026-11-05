@@ -230,14 +230,12 @@ struct EditorPane: NSViewRepresentable {
             holdsText = true
         }
 
-        /// Settings' Wrap code changed: the editor is loaded again with the
-        /// session's newest text, at the same top line.
+        /// Settings' Wrap code changed: reconfigured in place (a CodeMirror
+        /// compartment), so the text, the cursor and ⌘Z history stay.
         func reconfigure() async {
-            guard ready, holdsText, let session else { return }
-            if let latest = await visibleText(), latest != session.text { session.textChanged(latest) }
-            let line = await scrollTopLine()
-            holdsText = false
-            await load(keeping: line)
+            guard ready, holdsText, let view = webView else { return }
+            _ = try? await view.callAsyncJavaScript(
+                "portico.setWrap(wrap); return true;", arguments: ["wrap": wrap], in: nil, contentWorld: .page)
         }
 
         func applyScale(in view: WKWebView) {
@@ -392,8 +390,8 @@ final class ViewerEdit: ObservableObject {
     @Published private(set) var session: EditSession?
     /// Why Edit couldn't turn on ("Can't edit — it isn't UTF-8 text").
     @Published var note: String?
-    /// A recovery copy newer than the file, offered back.
-    @Published private(set) var restore: URL?
+    /// A recovery copy whose text differs from the file, offered back.
+    @Published private(set) var restore: EditRecovery.Offer?
     /// The chat whose viewer this is.
     var chat: Int?
     let registry: EditSessions
@@ -421,9 +419,23 @@ final class ViewerEdit: ObservableObject {
         }
     }
 
+    static let elsewhere = "Being edited in another viewer"
+
+    /// Another viewer is editing the file at `location` (one session per file).
+    func editedElsewhere(_ location: String) -> Bool {
+        guard let other = registry.session(for: location) else { return false }
+        return other.attached && other !== session
+    }
+
     func turnOn(_ artifact: Artifact) {
         guard session == nil else { return }
-        if let waiting = registry.waiting(for: artifact.location) { return attach(waiting) }
+        if let existing = registry.session(for: artifact.location) {
+            guard !existing.attached else {
+                note = Self.elsewhere
+                return
+            }
+            return attach(existing)
+        }
         let shown = ArtifactPresentation(artifact: artifact)
         switch FileEditing.editability(for: shown) {
         case .readOnly(let reason):
@@ -436,10 +448,7 @@ final class ViewerEdit: ObservableObject {
                     url: url, location: artifact.location, loaded: text, mode: mode, language: language, registry: registry)
                 attach(session)
                 note = nil
-                restore = registry.recoveryFolder.flatMap {
-                    EditRecovery.newest(for: url.resolvingSymlinksInPath(), newerThan: text.stamp.modified, in: $0)
-                        ?? EditRecovery.newest(for: url, newerThan: text.stamp.modified, in: $0)
-                }
+                restore = registry.recoveryFolder.flatMap { EditRecovery.offer(for: url, differingFrom: text.text, in: $0) }
             } catch {
                 note = "Can't edit — \(FileEditing.Failure.from(error).description)"
             }
@@ -450,6 +459,7 @@ final class ViewerEdit: ObservableObject {
         session.attached = true
         if let chat { session.chat = chat }
         self.session = session
+        registry.attached(session)
     }
 
     private func detach() -> EditSession? {
@@ -487,13 +497,19 @@ final class ViewerEdit: ObservableObject {
     }
 
     /// "Restore unsaved edits": the recovery copy's text replaces the
-    /// editor's (undoable) and is saved.
+    /// editor's (undoable) and is saved; then the copy is deleted.
     func restoreUnsaved() async {
-        guard let url = restore, let session, let data = try? Data(contentsOf: url) else { return }
+        guard let offer = restore, let session, let data = try? Data(contentsOf: offer.url) else { return }
         let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
         guard let text = String(data: bom ? data.dropFirst(3) : data, encoding: .utf8) else { return }
         restore = nil
-        await session.restore(text)
+        await session.restore(text, from: offer.url)
+    }
+
+    /// "Discard my edits" (confirmed): the file as on disk.
+    func discard() async {
+        guard let session else { return }
+        await registry.discard(session)
     }
 
     func dismissRestore() { restore = nil }
@@ -563,6 +579,9 @@ struct ViewerEditToggle: View {
 /// words in deny red, the state in its tip.
 struct ViewerEditStatus: View {
     @ObservedObject var session: EditSession
+    /// Discard my edits (fix round 2), confirmed inline.
+    var onDiscard: () -> Void = {}
+    @State private var confirming = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -587,8 +606,28 @@ struct ViewerEditStatus: View {
                     .foregroundStyle(Theme.deny)
                     .fixedSize()
             }
+            if session.isFailed || session.state == .paused {
+                Button(confirming ? DiscardConfirm.confirmTitle : DiscardConfirm.title) {
+                    if confirming {
+                        confirming = false
+                        onDiscard()
+                    } else {
+                        confirming = true
+                    }
+                }
+                .buttonStyle(.link)
+                .scaledFont(12)
+                .foregroundStyle(confirming ? Theme.deny : Theme.text2)
+                .fixedSize()
+                .tip("Go back to the file as it is on disk")
+                .task(id: confirming) {
+                    guard confirming else { return }
+                    try? await Task.sleep(for: DiscardConfirm.window)
+                    confirming = false
+                }
+            }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     static func words(for state: EditSession.SaveState) -> String {
@@ -599,6 +638,13 @@ struct ViewerEditStatus: View {
         case .paused: "Editing · Not saved"
         }
     }
+}
+
+/// The two-step Discard: the button asks "sure?" for four seconds; no modal.
+enum DiscardConfirm {
+    static let title = "Discard my edits"
+    static let confirmTitle = "Discard — sure?"
+    static let window: Duration = .seconds(4)
 }
 
 /// The bar over the page when the agent changed the file while the person
@@ -655,16 +701,17 @@ struct EditRestoreBar: View {
     @ObservedObject var edit: ViewerEdit
 
     var body: some View {
-        if let url = edit.restore {
+        if let offer = edit.restore {
             HStack(spacing: 8) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(Theme.iconFont(12, weight: .medium))
                     .foregroundStyle(Theme.text2)
-                Text("Unsaved edits from \(EditRecovery.display(url))")
+                Text("Unsaved edits from \(offer.date.formatted(date: .abbreviated, time: .shortened))")
                     .scaledFont(12)
                     .foregroundStyle(Theme.text2)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .tip(EditRecovery.display(offer.url))
                 Spacer(minLength: 8)
                 Button("Restore unsaved edits") { Task { await edit.restoreUnsaved() } }
                     .buttonStyle(.link)

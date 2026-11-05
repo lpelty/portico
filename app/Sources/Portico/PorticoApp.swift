@@ -128,7 +128,15 @@ struct PorticoApp: App {
                 }
                 .task {
                     // Text that couldn't be saved is kept under the home folder (v0.20).
-                    EditSessions.shared.recoveryFolder = supervisor.home.url.appendingPathComponent("unsaved")
+                    let unsaved = supervisor.home.url.appendingPathComponent("unsaved")
+                    EditSessions.shared.recoveryFolder = unsaved
+                    Task.detached(priority: .utility) { EditRecovery.sweep(unsaved) }
+                    EditSessions.shared.onDetachedFailure = { [model] session in
+                        model.editNotice = EditNotice(name: session.name, path: session.location, chat: session.chat)
+                    }
+                    EditSessions.shared.onResolved = { [model] session in
+                        if model.editNotice?.path == session.location { model.editNotice = nil }
+                    }
                     EditSessions.shared.onQuitHeld = { [model] session in
                         model.showEditedFile(path: session.location, chat: session.chat)
                         NSApplication.shared.activate()
@@ -261,8 +269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var quitHandler: (() async -> Void)?
     /// The edit sessions a quit saves first.
     var editSessions = EditSessions.shared
-    /// A quit was already held once for a failed save.
-    private var quitHeld = false
+    /// How far a quit with unsaved edits got (`QuitGate`).
+    private(set) var quitStage: QuitGate.Stage = .none
     /// Bigger Text, for ⌘= (the menu item shows ⌘+).
     var biggerText: (() -> Void)?
     private var textKeyMonitor: Any?
@@ -298,15 +306,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Save every edit, then the quit handler; false cancels the quit.
     func prepareToTerminate() async -> Bool {
         let saved = await editSessions.endAll()
-        switch QuitGate.decide(saved: saved, alreadyHeld: quitHeld) {
+        // Whenever every edit is saved, a later failure starts over.
+        if saved { quitStage = .none }
+        switch QuitGate.decide(saved: saved, stage: quitStage) {
         case .cancel:
-            quitHeld = true
+            quitStage = .held
             editSessions.holdQuit()
             return false
         case .keepAndQuit:
-            editSessions.keepAllForQuit()
-        case .quit:
-            quitHeld = false
+            guard editSessions.keepAllForQuit() else {
+                quitStage = .keepFailed
+                return false
+            }
+        case .quit, .quitAnyway:
+            break
         }
         await quitHandler?()
         return true

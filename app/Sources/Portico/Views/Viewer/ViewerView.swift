@@ -235,6 +235,8 @@ struct ViewerView: View {
         guard page.outside == nil, let current = model.current[chat] else { return nil }
         let shown = ArtifactPresentation(artifact: current)
         guard !shown.isMissing else { return nil }
+        // One session per file: another viewer's edit makes this one read-only.
+        if !edit.isEditing, edit.editedElsewhere(current.location) { return .readOnly(reason: ViewerEdit.elsewhere) }
         return FileEditing.editability(for: shown)
     }
 
@@ -244,7 +246,7 @@ struct ViewerView: View {
         if let editability {
             HStack(spacing: 8) {
                 if let session = edit.session {
-                    ViewerEditStatus(session: session)
+                    ViewerEditStatus(session: session, onDiscard: { Task { await edit.discard() } })
                 } else if let note = edit.note {
                     Text(note)
                         .scaledFont(12)

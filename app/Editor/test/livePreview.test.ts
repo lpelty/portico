@@ -359,3 +359,24 @@ test("a remote image draws as a placeholder, never fetched", async () => {
   const notes = [...dom.querySelectorAll(".cm-md-remote-image")].map((n: any) => n.textContent);
   assert.deepEqual(notes, ["Remote image"]);
 });
+
+test("setWrap changes wrapping in place: the text and the undo history stay", async () => {
+  const { undoDepth } = await import("@codemirror/commands");
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const messages: Message[] = [];
+  const editor = createEditor(host, (m) => messages.push(m), () => {});
+  editor.load({ text: "let a = 1\r\nlet b = 2", mode: "code", language: "js", wrap: false });
+  const view = editor.view;
+  view.dispatch({ changes: { from: 0, insert: "// x\r\n" }, userEvent: "input.type" });
+  const depth = undoDepth(view.state);
+  assert.ok(depth > 0);
+  assert.ok(!view.dom.querySelector(".cm-lineWrapping"));
+  editor.setWrap(true);
+  assert.ok(view.contentDOM.classList.contains("cm-lineWrapping"));
+  assert.equal(undoDepth(view.state), depth, "undo history survives");
+  assert.equal(editor.visibleText(), "// x\r\nlet a = 1\r\nlet b = 2");
+  editor.setWrap(false);
+  assert.ok(!view.contentDOM.classList.contains("cm-lineWrapping"));
+  host.remove();
+});

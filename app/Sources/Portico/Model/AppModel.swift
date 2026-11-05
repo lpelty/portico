@@ -370,6 +370,9 @@ final class AppModel: ObservableObject {
 
     /// The Settings tab shown; `/mcp` and `/plugin` choose one.
     @Published var settingsTab: SettingsTab = .general
+    /// A save failed for a file no viewer shows (v0.20 fix round 2): the
+    /// status line says so until it's opened or saved.
+    @Published var editNotice: EditNotice?
     /// Asks to bring Settings forward: the main window calls SwiftUI's
     /// `openSettings` each time this changes.
     @Published var settingsOpenRequests = 0
@@ -2716,6 +2719,7 @@ extension AppModel {
     /// view, the viewer open on it (Edit comes back with its session).
     func showEditedFile(path: String, chat: Int?) {
         if documentMode { closeDocumentView() }
+        if editNotice?.path == path { editNotice = nil }
         guard let target = chat ?? shownChat else { return }
         if selected != target { selected = target }
         leaveSpaceForFile()
@@ -3039,4 +3043,13 @@ extension GatewaySupervisor {
     var statusText: String {
         StatusStripPresentation.gatewayText(status)
     }
+}
+
+/// The status line's one line about edits that couldn't be saved.
+struct EditNotice: Equatable, Sendable {
+    let name: String
+    let path: String
+    let chat: Int?
+
+    var text: String { "Couldn't save \(name) — open it to fix" }
 }

@@ -177,6 +177,7 @@ export interface PorticoEditor {
   load(options: LoadOptions): void;
   setTheme(vars: Record<string, string | null>): void;
   setReadOnly(readOnly: boolean): void;
+  setWrap(wrap: boolean): void;
   replaceAll(text: string, options?: ReplaceOptions | boolean): boolean;
   visibleText(): string;
   scrollTopLine(): number;
@@ -187,6 +188,8 @@ export interface PorticoEditor {
 export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOpener): PorticoEditor {
   const bridge = new Bridge(post);
   const readOnlyCompartment = new Compartment();
+  // Settings' Wrap code, changed in place so the undo history survives.
+  const wrapCompartment = new Compartment();
   let readOnly = false;
   let current: Required<Omit<LoadOptions, "text" | "theme">> = { mode: "markdown", language: null, wrap: false, scale: 1 };
 
@@ -225,7 +228,7 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       ...shared,
       lineNumbers(),
       ...(language ? [language] : []),
-      ...(current.wrap ? [EditorView.lineWrapping] : []),
+      wrapCompartment.of(current.wrap ? EditorView.lineWrapping : []),
       EditorView.editorAttributes.of({ class: "portico-code" }),
     ];
   }
@@ -262,6 +265,11 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
         if (value === null || value === undefined) root.style.removeProperty(name);
         else root.style.setProperty(name, String(value));
       }
+    },
+    setWrap(on) {
+      current.wrap = on === true;
+      if (current.mode !== "code") return; // Markdown as the page always wraps.
+      view.dispatch({ effects: wrapCompartment.reconfigure(current.wrap ? EditorView.lineWrapping : []) });
     },
     setReadOnly(on) {
       readOnly = on === true;
