@@ -183,7 +183,7 @@
     },
     "AgentStarted": {
       "additionalProperties": false,
-      "description": "A subagent started (v0.10).\n\n``id`` names the agent in the frames that follow; ``tool_use_id`` is the\ncall that started it (a workflow's agents share the workflow's call).\n``kind`` is the agent type the engine names (e.g. ``general-purpose``),\nor ``workflow`` for one of a workflow's agents, which also carries\n``workflow_id`` and ``phase`` (an index into ``workflow.started``'s\n``phases``). ``background`` is set when the agent runs on after its\nturn finishes.",
+      "description": "A subagent started (v0.10).\n\n``id`` names the agent in the frames that follow; ``tool_use_id`` is the\ncall that started it (a workflow's agents share the workflow's call).\n``kind`` is the agent type the engine names (e.g. ``general-purpose``),\nor ``workflow`` for one of a workflow's agents, which also carries\n``workflow_id`` and ``phase`` (an index into ``workflow.started``'s\n``phases``). ``background`` is set when the agent runs on after its\nturn finishes.\n\nv0.21: ``task`` marks background work that is not an agent, a\ncommand (``shell``) or a Monitor (``monitor``); ``kind`` repeats it.\nSent only to an app that names ``tasks.v1``. ``run`` (2, 3, …) is a\nresumed agent's new run: the same ``id``, running again in ``turn``.",
       "properties": {
         "background": {
           "anyOf": [
@@ -225,6 +225,18 @@
           "default": null,
           "title": "Phase"
         },
+        "run": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
         "seq": {
           "anyOf": [
             {
@@ -236,6 +248,22 @@
           ],
           "default": null,
           "title": "Seq"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "enum": [
+                "shell",
+                "monitor"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task"
         },
         "tool_use_id": {
           "title": "Tool Use Id",

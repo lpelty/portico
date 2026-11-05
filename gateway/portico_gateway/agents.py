@@ -23,7 +23,16 @@ them for one engine and turns them into protocol events:
 - A subagent's own subagent (``spawn_depth`` above 1) is not an agent of
   its own: its start is the parent's ``Agent`` step, and its messages are
   kept out like any subagent the gateway never heard start.
-- Shell and monitor tasks, and anything else, are left alone.
+- A **background command or Monitor** (v0.21; ``task_type`` ``local_bash``
+  or ``monitor``) is ``agent.started`` with ``task`` ``shell`` or
+  ``monitor``, ending like a background agent. One the engine marks
+  ``ambient`` or ``skip_transcript`` is housekeeping and stays out; a
+  command started in the foreground (its Bash row shows it) is announced
+  only if a ``task_updated`` moves it to the background.
+- A subagent **resumed** (SendMessage) keeps its task id and starts a new
+  run (``run_id``): ``agent.started`` again, with ``run`` 2, 3, …, in the
+  turn that resumed it. A frame naming an earlier run is late and dropped.
+- Anything else is left alone.
 
 A task ends with a ``task_notification`` (which carries the summary) or,
 for background work, possibly only with a ``task_updated`` whose status is
@@ -66,6 +75,7 @@ from .messages import (
     AgentStarted,
     PhaseState,
     ServerMessage,
+    TaskKind,
     ToolFinished,
     ToolStarted,
     WorkflowFinished,
@@ -75,6 +85,8 @@ from .messages import (
 
 SUBAGENT_TASK_TYPES: frozenset[str] = frozenset({"local_agent", "subagent", "remote_agent"})
 WORKFLOW_TASK_TYPES: frozenset[str] = frozenset({"local_workflow", "workflow"})
+# v0.21: background work that is not an agent, by the engine's task type -> ``agent.started.task``.
+TASK_KINDS: dict[str, TaskKind] = {"local_bash": "shell", "shell": "shell", "monitor": "monitor"}
 WORKFLOW_AGENT_KIND = "workflow"
 DEFAULT_AGENT_KIND = "agent"
 STEP_TARGET_LIMIT = 48
@@ -168,6 +180,16 @@ def _task_type(msg: TaskStartedMessage) -> str:
     return kind if isinstance(kind, str) else ""
 
 
+def _data(msg: Message) -> Mapping[str, Any]:
+    data = getattr(msg, "data", None)
+    return data if isinstance(data, Mapping) else {}
+
+
+def _run_id(msg: Message) -> str | None:
+    value = _data(msg).get("run_id")
+    return value if isinstance(value, str) and value else None
+
+
 def _number(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
@@ -195,6 +217,14 @@ class _Agent:
     pending_outcome: AgentOutcome | None = None
     # The last progress frame sent: (step, steps, elapsed).
     last_sent: tuple[str | None, int, float] | None = None
+    # v0.21: a background command or Monitor (``shell``/``monitor``), else ``None`` for an agent.
+    task: TaskKind | None = None
+    # A command started in the foreground: not announced until it moves to the background.
+    announced: bool = True
+    # The engine's id of the run under way, and which run it is (2 and on: resumed).
+    run_id: str | None = None
+    run: int = 1
+    kind: str = DEFAULT_AGENT_KIND
 
 
 @dataclass
@@ -230,14 +260,17 @@ class AgentTracker:
         """Events for ``msg`` when it is a task's or a subagent's; ``None`` when it is not (translate it as before)."""
         if isinstance(msg, TaskStartedMessage):
             return self._started(msg, chat, turn, ts)
+        if isinstance(msg, (TaskProgressMessage, TaskNotificationMessage, TaskUpdatedMessage)) and self._late(msg):
+            return []
         if isinstance(msg, TaskProgressMessage):
             return self._progress(msg, chat, ts)
         if isinstance(msg, TaskNotificationMessage):
             return self._ended(msg.task_id, msg.status, msg.summary, chat, ts, notified=True)
         if isinstance(msg, TaskUpdatedMessage):
-            if msg.status is None:
-                return []
-            return self._ended(msg.task_id, msg.status, None, chat, ts, notified=False)
+            out = self._backgrounded(msg, chat, ts)
+            if msg.status is not None:
+                out.extend(self._ended(msg.task_id, msg.status, None, chat, ts, notified=False))
+            return out
         if isinstance(msg, AssistantMessage) and msg.parent_tool_use_id is not None:
             return self._subagent_calls(msg, chat, ts)
         if isinstance(msg, UserMessage) and msg.parent_tool_use_id is not None:
@@ -275,6 +308,9 @@ class AgentTracker:
                 out.extend(self._finish_workflow(wf, wf.pending_outcome or outcome, None, chat, ts))
         for agent in self._agents.values():
             if not agent.finished:
+                if not agent.announced:
+                    agent.finished = True
+                    continue
                 out.append(self._finish(agent, agent.pending_outcome or outcome, None, chat, ts))
         return out
 
@@ -285,7 +321,7 @@ class AgentTracker:
         data = msg.data if isinstance(msg.data, Mapping) else {}
         if kind in SUBAGENT_TASK_TYPES:
             if msg.task_id in self._agents:
-                return []
+                return self._resumed(self._agents[msg.task_id], msg, data, chat, turn, ts)
             depth = data.get("spawn_depth")
             if isinstance(depth, int) and not isinstance(depth, bool) and depth > 1:
                 return []  # a subagent's own: its parent's Agent step stands for it
@@ -297,6 +333,8 @@ class AgentTracker:
                 started=self.clock(),
                 background=bool(data.get("is_backgrounded")),
                 description=msg.description,
+                run_id=_run_id(msg),
+                kind=subagent_type if isinstance(subagent_type, str) and subagent_type else DEFAULT_AGENT_KIND,
             )
             self._agents[agent.id] = agent
             if agent.tool_use_id:
@@ -309,7 +347,7 @@ class AgentTracker:
                     id=agent.id,
                     tool_use_id=agent.tool_use_id,
                     description=msg.description,
-                    kind=subagent_type if isinstance(subagent_type, str) and subagent_type else DEFAULT_AGENT_KIND,
+                    kind=agent.kind,
                     background=True if agent.background else None,
                 )
             ]
@@ -325,12 +363,14 @@ class AgentTracker:
             )
             self._workflows[wf.id] = wf
             return [WorkflowStarted(ts=ts, chat=chat, turn=turn, id=wf.id, name=wf.name, phases=[])]
-        return []  # shell, monitor and the rest: not shown as agents
+        if kind in TASK_KINDS:
+            return self._task_started(msg, TASK_KINDS[kind], data, chat, turn, ts)
+        return []  # the rest: not shown
 
     def _progress(self, msg: TaskProgressMessage, chat: int, ts: str) -> list[ServerMessage]:
         agent = self._agents.get(msg.task_id)
         if agent is not None:
-            if agent.finished:
+            if agent.finished or not agent.announced:
                 return []
             usage = msg.usage if isinstance(msg.usage, Mapping) else {}
             uses = usage.get("tool_uses")
@@ -411,6 +451,9 @@ class AgentTracker:
         if agent is not None:
             if agent.finished:
                 return []
+            if not agent.announced:
+                agent.finished = True  # a foreground command, never shown: its Bash row has the end
+                return []
             if not notified and not agent.background:
                 agent.pending_outcome = outcome  # its notification follows with the summary
                 return []
@@ -429,8 +472,93 @@ class AgentTracker:
         out: list[ServerMessage] = []
         for agent in self._agents.values():
             if not agent.finished and not agent.background and agent.turn == turn:
+                if not agent.announced:
+                    agent.finished = True
+                    continue
                 out.append(self._finish(agent, agent.pending_outcome or "stopped", None, chat, ts))
         return out
+
+    # --- background commands, Monitors and resumed runs (v0.21) ------------------------
+
+    def _task_started(
+        self, msg: TaskStartedMessage, task: TaskKind, data: Mapping[str, Any], chat: int, turn: int, ts: str
+    ) -> list[ServerMessage]:
+        if msg.task_id in self._agents or data.get("ambient") is True or data.get("skip_transcript") is True:
+            return []  # seen already, or housekeeping the engine says is not activity
+        foreground = task == "shell" and data.get("is_backgrounded") is False
+        agent = _Agent(
+            id=msg.task_id,
+            turn=turn,
+            tool_use_id=msg.tool_use_id or "",
+            started=self.clock(),
+            background=not foreground,
+            description=msg.description,
+            task=task,
+            announced=not foreground,
+            run_id=_run_id(msg),
+        )
+        self._agents[agent.id] = agent
+        return [self._start_event(agent, chat, ts)] if agent.announced else []
+
+    def _backgrounded(self, msg: TaskUpdatedMessage, chat: int, ts: str) -> list[ServerMessage]:
+        """A foreground command moved to the background: shown from now on."""
+        agent = self._agents.get(msg.task_id)
+        patch = msg.patch if isinstance(msg.patch, Mapping) else {}
+        if agent is None or agent.finished or patch.get("is_backgrounded") is not True or agent.background:
+            return []
+        agent.background = True
+        # Announced already (a foreground agent): the start again, now background, so the app
+        # does not end it with its turn. The app keeps what a re-sent start's agent already did.
+        agent.announced = True
+        return [self._start_event(agent, chat, ts)]
+
+    def _resumed(
+        self, agent: _Agent, msg: TaskStartedMessage, data: Mapping[str, Any], chat: int, turn: int, ts: str
+    ) -> list[ServerMessage]:
+        """A start for a known subagent: a new run when its run id is later, or (without run ids) once it ended."""
+        run_id = _run_id(msg)
+        if run_id is not None and agent.run_id is not None:
+            if run_id <= agent.run_id:
+                return []  # the same run again, or a late one
+        elif not agent.finished:
+            return []
+        agent.run += 1
+        agent.run_id = run_id
+        agent.turn = turn
+        agent.finished = False
+        agent.pending_outcome = None
+        agent.started = self.clock()
+        agent.elapsed = 0.0
+        agent.last_sent = None
+        # "A resumed subagent is always registered in the background", unless the call that resumed it waits.
+        agent.background = data.get("awaited") is not True and data.get("is_backgrounded") is not False
+        if msg.tool_use_id:
+            self._by_tool_use[msg.tool_use_id] = agent
+        # The call that first started it, not the resuming one: an app before v0.21 takes this as a
+        # re-sent start and keeps its rows where they were.
+        return [self._start_event(agent, chat, ts)]
+
+    def _late(self, msg: Message) -> bool:
+        """A task frame naming a run before the one under way."""
+        task_id = getattr(msg, "task_id", None)
+        agent = self._agents.get(task_id) if isinstance(task_id, str) else None
+        run_id = _run_id(msg)
+        return agent is not None and agent.run_id is not None and run_id is not None and run_id < agent.run_id
+
+    @staticmethod
+    def _start_event(agent: _Agent, chat: int, ts: str) -> AgentStarted:
+        return AgentStarted(
+            ts=ts,
+            chat=chat,
+            turn=agent.turn,
+            id=agent.id,
+            tool_use_id=agent.tool_use_id,
+            description=agent.description,
+            kind=agent.task or agent.kind,
+            background=True if agent.background else None,
+            task=agent.task,
+            run=agent.run if agent.run > 1 else None,
+        )
 
     # --- workflows ------------------------------------------------------------------
 

@@ -1475,6 +1475,9 @@ final class AppModel: ObservableObject {
                 }
                 break
             }
+            // A background command or Monitor (v0.21) is in the tray; its
+            // own Bash or Monitor row stands in the conversation.
+            if started.task != nil { break }
             let hidden = agentActivity[chat]?.startingToolUses ?? []
             if items.contains(where: { if case .agents(let g) = $0 { g.agentIds.contains(started.id) } else { false } }) {
                 break

@@ -80,7 +80,8 @@ struct AgentTray: View {
         .modifier(DockBox())
     }
 
-    private var counts: String { AgentPresentation.counts(statuses) }
+    private var counts: String { AgentPresentation.counts(statuses, tasks: agents.filter(\.isTask).count) }
+    private var subject: String { activity.trayHasTasks ? "the background work" : "the agents" }
 
     private var collapsed: some View {
         Button { model.setTrayCollapsed(false, chat: chat) } label: {
@@ -107,8 +108,8 @@ struct AgentTray: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .tip("Show the agents")
-        .accessibilityLabel("\(counts). Show the agents")
+        .tip("Show \(subject)")
+        .accessibilityLabel("\(counts). Show \(subject)")
     }
 
     private func open(now: Date) -> some View {
@@ -132,7 +133,7 @@ struct AgentTray: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .tip("Fold the agents to one line")
+            .tip("Fold \(subject) to one line")
             Rectangle().fill(Theme.border).frame(height: 1)
             ScrollView {
                 VStack(spacing: 2) {
@@ -235,7 +236,9 @@ struct AgentRowView: View {
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if let line = AgentPresentation.stepLine(status: status, step: agent.step, summary: agent.summary) {
+                    if let line = AgentPresentation.stepLine(
+                        status: status, step: agent.step, summary: agent.summary, isTask: agent.isTask)
+                    {
                         Text(ToolRowView.display(line, in: folder))
                             .scaledFont(11)
                             .foregroundStyle(Theme.text3)
@@ -244,7 +247,9 @@ struct AgentRowView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Text(AgentPresentation.stepsLabel(steps: agent.steps, elapsed: elapsed, finished: status.isFinished))
+                Text(agent.isTask
+                    ? AgentPresentation.duration(elapsed)
+                    : AgentPresentation.stepsLabel(steps: agent.steps, elapsed: elapsed, finished: status.isFinished))
                     .scaledFont(11, monospacedDigit: true)
                     .foregroundStyle(Theme.text3)
                     .fixedSize()
@@ -256,7 +261,7 @@ struct AgentRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .tip("Show this agent's steps")
+        .tip(agent.isTask ? "Show this task" : "Show this agent's steps")
         .popover(isPresented: $showingSteps, arrowEdge: .top) {
             AgentStepsView(agent: agent, status: status, folder: folder)
                 .popoverSurface()
@@ -293,6 +298,10 @@ struct AgentStepsView: View {
                         ForEach(Array(agent.stepHistory.enumerated()), id: \.offset) { _, step in
                             StepLine(text: ToolRowView.display(step, in: folder))
                         }
+                    } else if agent.isTask {
+                        Text(status.isFinished ? "Ran in the background." : "\(AgentPresentation.taskRunning).")
+                            .scaledFont(12)
+                            .foregroundStyle(Theme.text2)
                     } else {
                         Text("No steps yet.")
                             .scaledFont(12)

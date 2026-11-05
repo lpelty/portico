@@ -232,6 +232,7 @@ core = ["acme-tracker"]             # servers in the folder's .mcp.json that are
 folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
 refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
 remove = "my-tool forget-space"     # optional: runs after the file is moved to the Trash; same environment
+require_folder = true               # optional (v0.21): a page is a space only with a folder of its name beside it
 ```
 
 A title call goes through the Agent SDK to the same provider, with the
@@ -572,7 +573,10 @@ matter (`title`, `icon` as an SF Symbol name, `order`); an HTML file puts
 the same keys in a leading `<!-- ... -->` block. A file with no title is
 listed by its file name, and files starting with `.` or `_` are skipped.
 Subfolders of the spaces folder are ignored: nothing inside them is
-listed or watched.
+listed or watched. With `require_folder = true` (v0.21), a page is a space
+only when a folder of the same name sits beside it (`brief.html` and
+`brief/`), so other files in the spaces folder, such as a README with
+instructions for the agent, stay there for the agent and are not listed.
 Portico schedules nothing: the deployment rewrites the files (it can ask
 the agent to). The gateway checks the folder every 5 seconds and tells the
 agent where it is in the system prompt. `refresh` and `remove` run

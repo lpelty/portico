@@ -97,7 +97,9 @@ loaded; see The viewer and spaces); v0.18: `apps.v1` (it shows
 `messages.attachments.v1` (it sends `attachments` apart from the text and
 reads them in `user.text`) and `files.extra.v1` (it sends
 `files.roots.set` and shows the added folders); v0.20: `files.edited.v1`
-(it sends `files.edited` after each save in the viewer's editor). Absent
+(it sends `files.edited` after each save in the viewer's editor); v0.21:
+`tasks.v1` (it shows background commands and Monitors, `agent.started`
+with `task`; see Subagents and workflows). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -1709,6 +1711,19 @@ e.g. `general-purpose`, `Explore`; `agent` when it names none;
 (`true` when the agent runs on after its turn finishes: background
 subagents and every workflow agent).
 
+*v0.21.* `task?: shell | monitor` marks background work that is not an
+agent: a command run in the background (Bash `run_in_background`, or one
+moved there while it ran) or a Monitor. `kind` repeats it, `background`
+is `true`, `description` is the engine's, and `tool_use_id` is the Bash
+or Monitor call, whose row stays the conversation's own. It ends like a
+background agent, with `agent.finished` (the summary is the engine's
+notification, e.g. the exit code); it has no steps. Sent only to an app
+whose `hello` names `tasks.v1`; the engine's housekeeping tasks
+(`ambient`, `skip_transcript`) are never sent. `run?` (2, 3, …) is a
+resumed agent's new run (SendMessage to one that had finished): the same
+`id`, working again in `turn`, with its earlier steps kept. A frame the
+engine sends for an earlier run is dropped.
+
 ### `agent.progress` — `AgentProgress`
 `chat`, `seq`, `id`, `step?` (what it is doing now, one short line: the
 tool and its target from the agent's latest call, e.g. `Read
@@ -1725,7 +1740,7 @@ progress is not a loss and never makes a replay `truncated`.
 ### `agent.finished` — `AgentFinished`
 `chat`, `seq`, `id`, `outcome: done | failed | stopped`, `summary?` (the
 first line of what it reported, at most 120 characters). Exactly one per
-agent. A foreground agent still open when its own turn's engine result
+agent, or per run of a resumed one (v0.21). A foreground agent still open when its own turn's engine result
 arrives is ended then (`stopped`, or what the engine last said); another
 turn's result ends none of it. A background agent can finish during a
 later turn, or between turns.

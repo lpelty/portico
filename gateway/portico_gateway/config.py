@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import APPS_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -43,7 +43,7 @@ PLUGINS_CAPABILITY = "plugins.v1"
 CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
     MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY,
-    FILES_EXTRA_CAPABILITY, FILES_EDITED_CAPABILITY,
+    FILES_EXTRA_CAPABILITY, FILES_EDITED_CAPABILITY, TASKS_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once
@@ -285,7 +285,10 @@ class SpacesConfig(BaseModel):
     """``[spaces]`` (v0.12): a folder of files the agent keeps current, shown in the app's switcher.
 
     ``refresh`` and ``remove`` are commands (``/bin/sh -c``, 30 s, with
-    ``$PORTICO_SPACE`` set to the space's id).
+    ``$PORTICO_SPACE`` set to the space's id). ``require_folder`` (v0.21): a
+    page is a space only with a folder of its name beside it (``brief.html``
+    and ``brief/``), so other files there, such as a README for the agent,
+    are not listed.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -293,6 +296,7 @@ class SpacesConfig(BaseModel):
     folder: str | None = None
     refresh: str | None = None
     remove: str | None = None
+    require_folder: bool = False
 
     @field_validator("folder")
     @classmethod

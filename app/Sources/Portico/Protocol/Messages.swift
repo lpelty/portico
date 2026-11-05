@@ -359,7 +359,7 @@ struct HelloClient: Codable, Equatable, Sendable {
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
-        FilesRootsSet.capability, FilesEdited.capability,
+        FilesRootsSet.capability, FilesEdited.capability, AgentActivity.tasksCapability,
     ]
 }
 
@@ -1567,11 +1567,17 @@ struct AgentStarted: Codable, Equatable, Sendable {
     /// It runs on after its turn finishes: a background subagent, and
     /// every agent of a workflow. Its frames may come during later turns.
     var background: Bool? = nil
+    /// v0.21: background work that is not an agent, a command (`shell`) or
+    /// a Monitor (`monitor`). Sent only to an app naming `tasks.v1`.
+    var task: String? = nil
+    /// v0.21: a resumed agent's new run (2, 3, …): the same `id` running
+    /// again, in `turn`.
+    var run: Int? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case chat, turn, id, description, kind, phase, background, seq, ts
+        case chat, turn, id, description, kind, phase, background, task, run, seq, ts
         case toolUseId = "tool_use_id"
         case workflowId = "workflow_id"
     }

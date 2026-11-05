@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.21.0 (2026-11-05)
+
+Field notes 19 and 18: background work you can see, and only real
+spaces in the switcher. A command or Monitor running
+in the background showed nothing once the turn ended, so the app looked
+idle while work ran; an agent resumed with SendMessage didn't show as
+running again.
+
+### What a person gets (app)
+
+- **Background commands and Monitors sit in the tray** with the agents,
+  the same card: the command's description, "Running in the background"
+  under it, the time at the right, then a check (or a warning) and the
+  engine's summary when it ends. The tray stays after the turn ends while
+  any of it runs, and its header and folded line count it: "1 task · 1
+  working", "1 agent · 2 tasks · 2 working".
+- **The Bash or Monitor row stays in the conversation**; no "Started" row
+  for a task.
+- **A resumed agent works again in the tray** in the turn that resumed it,
+  with its earlier steps kept; the SendMessage row draws as usual.
+
+### The gateway
+
+- Shell (`local_bash`) and Monitor tasks become `agent.started` with
+  `task: shell | monitor`, for an app that names the new capability
+  `tasks.v1`. An older app sees the conversation as before. Housekeeping
+  tasks the engine marks `ambient` or `skip_transcript` are never sent; a
+  command started in the foreground is shown only once it moves to the
+  background.
+- A subagent the engine starts again under the same task id with a later
+  `run_id` is a new run: `agent.started` again, with `run` 2, 3, ….
+  Frames naming an earlier run are dropped.
+- **Field note 18: `[spaces] require_folder = true`** lists a page as a
+  space only when a folder of the same name sits beside it (`brief.html`
+  and `brief/`). Other files in the spaces folder, such as a README with
+  instructions for the agent, stay where they are and are not listed; the
+  switcher can't rename or remove them. Off by default. As with any new
+  key, update the gateway before adding it.
+
+### Owed
+
+- On screen: a background build in the tray after the turn ends, its end,
+  and a resumed agent, in a live chat; the switcher without the README on a
+  deployment with `require_folder`.
+
 ## v0.20.1 (2026-11-05)
 
 Field notes 16 and 17: the About panel is the deployment's, and nothing says
