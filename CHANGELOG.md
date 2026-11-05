@@ -61,7 +61,7 @@ things a deployment's spaces and routines asked for (S1–S5).
 
 ### Owed
 
-- On screen, on the Smartsheet Mac: the tooltips on "Hide the sidebar" and
+- On screen, on the 1x external display: the tooltips on "Hide the sidebar" and
   the Files Archive row; the scroll bars; the Settings window (macOS 26 may
   still draw its own glass on the tab header); the viewer's buttons; the
   "Changed this session" heading lining up with the folder headings.
