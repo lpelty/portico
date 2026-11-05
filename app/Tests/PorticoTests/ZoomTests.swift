@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import Portico
 
@@ -89,5 +90,63 @@ final class ZoomTests: XCTestCase {
         c.toggleFitAndActual()
         XCTAssertTrue(c.fitting)
         XCTAssertNil(c.memory.scale(for: "/t.png"))
+    }
+
+    func testZoomOutNeverEnlargesAndInGoesToSmallestStepAbove() {
+        XCTAssertEqual(Zoom.out(from: 0.1), 0.1)
+        XCTAssertEqual(Zoom.out(from: 1), 0.75)
+        XCTAssertEqual(Zoom.next(after: 0.1), 0.25)
+        let c = controller(image: CGSize(width: 8000, height: 6000))
+        let fit = c.scale
+        XCTAssertLessThan(fit, 0.25)
+        c.zoomOut()
+        XCTAssertLessThanOrEqual(c.scale, fit + 0.001)
+        c.zoomToFit()
+        c.zoomIn()
+        XCTAssertEqual(c.scale, 0.25, accuracy: 0.001)
+    }
+
+    func testDoubleClickTargets() {
+        XCTAssertNil(ImageZoomController.toggleTarget(atFit: false, fit: 0.5))
+        XCTAssertEqual(ImageZoomController.toggleTarget(atFit: true, fit: 0.5), 1)
+        XCTAssertEqual(ImageZoomController.toggleTarget(atFit: true, fit: 1), 2)
+        let c = controller(image: CGSize(width: 100, height: 80))
+        c.toggleFitAndActual()
+        XCTAssertEqual(c.scale, 2, accuracy: 0.001)
+        c.toggleFitAndActual()
+        XCTAssertTrue(c.fitting)
+    }
+
+    func testCentreMaths() {
+        let o = ImageZoomController.origin(centre: NSPoint(x: 500, y: 400), size: NSSize(width: 200, height: 100))
+        XCTAssertEqual(o, NSPoint(x: 400, y: 350))
+    }
+
+    func testResizeKeepsTheVisibleCentre() {
+        let c = controller(image: CGSize(width: 4000, height: 3000))
+        c.zoomActual()
+        c.scroll.contentView.scroll(to: NSPoint(x: 1500, y: 1200))
+        c.scroll.reflectScrolledClipView(c.scroll.contentView)
+        let before = NSPoint(x: c.scroll.contentView.bounds.midX, y: c.scroll.contentView.bounds.midY)
+        c.scroll.setFrameSize(NSSize(width: 800, height: 600))
+        let after = NSPoint(x: c.scroll.contentView.bounds.midX, y: c.scroll.contentView.bounds.midY)
+        XCTAssertEqual(after.x, before.x, accuracy: 1)
+        XCTAssertEqual(after.y, before.y, accuracy: 1)
+    }
+
+    func testDismantledPaneReleasesItsController() {
+        weak var weakController: ImageZoomController?
+        autoreleasepool {
+            var value: CGFloat = 1
+            let binding = Binding(get: { value }, set: { value = $0 })
+            let box = ImageZoomPane.ControllerBox()
+            let coordinator = ImageZoomPane.Coordinator()
+            _ = ImageZoomPane.assemble(file: URL(fileURLWithPath: "/leak.png"), image: NSImage(size: CGSize(width: 50, height: 50)),
+                                       scale: binding, box: box, coordinator: coordinator, slot: .work)
+            weakController = coordinator.controller
+            XCTAssertNotNil(weakController)
+            ImageZoomPane.teardown(coordinator)
+        }
+        XCTAssertNil(weakController)
     }
 }

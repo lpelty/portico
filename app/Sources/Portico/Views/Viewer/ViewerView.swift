@@ -858,13 +858,13 @@ struct ImagePane: View {
     var body: some View {
         if let image = NSImage(contentsOf: file) {
             ImageZoomPane(file: file, image: image, scale: $scale, controllerBox: box)
-                .overlay(alignment: .bottom) {
+                .overlay(alignment: .bottomTrailing) {
                     ZoomControl(
                         percent: Int((scale * 100).rounded()), page: nil,
                         onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
                         onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
                         awake: awake)
-                        .padding(.bottom, 14)
+                        .padding(16)
                 }
                 .modifier(ZoomWake(awake: $awake))
         } else {

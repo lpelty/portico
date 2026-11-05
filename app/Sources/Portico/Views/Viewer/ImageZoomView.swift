@@ -21,8 +21,10 @@ final class ZoomScrollView: NSScrollView {
     weak var controller: ImageZoomController?
 
     override func setFrameSize(_ newSize: NSSize) {
+        // The document point at the middle of the view, before the resize.
+        let centre = NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
         super.setFrameSize(newSize)
-        MainActor.assumeIsolated { controller?.viewportChanged() }
+        MainActor.assumeIsolated { controller?.viewportChanged(keeping: centre) }
     }
 }
 
@@ -32,6 +34,7 @@ final class ZoomImageView: NSView {
     var image: NSImage? { didSet { needsDisplay = true } }
     weak var controller: ImageZoomController?
     private var lastDrag: NSPoint?
+    private var pushedHand = false
 
     override var isFlipped: Bool { true }
 
@@ -56,7 +59,7 @@ final class ZoomImageView: NSView {
             return
         }
         lastDrag = event.locationInWindow
-        if overflows { NSCursor.closedHand.push() }
+        if overflows, !pushedHand { NSCursor.closedHand.push(); pushedHand = true }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -74,7 +77,7 @@ final class ZoomImageView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if lastDrag != nil, overflows { NSCursor.pop() }
+        if pushedHand { NSCursor.pop(); pushedHand = false }
         lastDrag = nil
     }
 }
@@ -156,15 +159,37 @@ final class ImageZoomController: NSObject, ZoomTarget {
     }
 
     /// The scroll view's size changed: Fit follows it, a chosen scale stays.
-    func viewportChanged() {
+    func viewportChanged(keeping centre: NSPoint? = nil) {
         guard imageSize.width > 0 else { return }
-        if fitting { applyFit() } else { scroll.minMagnification = min(Zoom.minimum, fitScale, scroll.magnification) }
+        if fitting {
+            applyFit()
+        } else {
+            scroll.minMagnification = min(Zoom.minimum, fitScale, scroll.magnification)
+            if let centre { recentre(on: centre) }
+        }
+    }
+
+    /// The clip origin that puts document point `centre` in the middle of a clip of `size`.
+    static func origin(centre: NSPoint, size: NSSize) -> NSPoint {
+        NSPoint(x: centre.x - size.width / 2, y: centre.y - size.height / 2)
+    }
+
+    private func recentre(on centre: NSPoint) {
+        let clip = scroll.contentView
+        let wanted = NSRect(origin: Self.origin(centre: centre, size: clip.bounds.size), size: clip.bounds.size)
+        clip.scroll(to: clip.constrainBoundsRect(wanted).origin)
+        scroll.reflectScrolledClipView(clip)
     }
 
     @objc private func magnified() {
+        let value = scroll.magnification
+        if abs(value - fitScale) <= fitScale * 0.005 {
+            zoomToFit()
+            return
+        }
         fitting = false
-        memory.set(scroll.magnification, for: path)
-        onChange?(scroll.magnification)
+        memory.set(value, for: path)
+        onChange?(value)
     }
 
     private func choose(_ value: CGFloat) {
@@ -174,7 +199,7 @@ final class ImageZoomController: NSObject, ZoomTarget {
     }
 
     func zoomIn() { choose(Zoom.next(after: scale)) }
-    func zoomOut() { choose(Zoom.previous(before: scale)) }
+    func zoomOut() { choose(Zoom.out(from: scale)) }
     func zoomActual() { choose(1) }
 
     func zoomToFit() {
@@ -183,8 +208,16 @@ final class ImageZoomController: NSObject, ZoomTarget {
         applyFit()
     }
 
+    /// Where a double-click goes: nil is Fit; at Fit, 100%, or 200% when
+    /// Fit already is 100% (a small image).
+    static func toggleTarget(atFit: Bool, fit: CGFloat) -> CGFloat? {
+        guard atFit else { return nil }
+        return fit >= 0.995 ? 2 : 1
+    }
+
     func toggleFitAndActual() {
-        if fitting || abs(scale - fitScale) < 0.005 { zoomActual() } else { zoomToFit() }
+        let atFit = fitting || abs(scale - fitScale) < 0.005
+        if let target = Self.toggleTarget(atFit: atFit, fit: fitScale) { choose(target) } else { zoomToFit() }
     }
 }
 
@@ -200,13 +233,22 @@ struct ImageZoomPane: NSViewRepresentable {
     @MainActor final class ControllerBox { var controller: ImageZoomController? }
 
     func makeNSView(context: Context) -> ZoomScrollView {
+        Self.assemble(file: file, image: image, scale: $scale, box: controllerBox,
+                      coordinator: context.coordinator, slot: context.environment.viewerSlot)
+    }
+
+    /// Builds the pane. The change callback holds only the binding: the
+    /// controller must not be reachable from anything it holds.
+    static func assemble(file: URL, image: NSImage, scale binding: Binding<CGFloat>, box: ControllerBox,
+                         coordinator: Coordinator, slot: ViewerAgent.Slot?) -> ZoomScrollView {
         let controller = ImageZoomController()
-        controller.slot = context.environment.viewerSlot
-        controller.onChange = { value in DispatchQueue.main.async { scale = value } }
+        controller.slot = slot
+        controller.onChange = { value in DispatchQueue.main.async { binding.wrappedValue = value } }
         controller.load(image, path: file.path)
-        controllerBox.controller = controller
-        context.coordinator.controller = controller
-        ZoomHub.shared.register(controller, slot: controller.slot)
+        box.controller = controller
+        coordinator.box = box
+        coordinator.controller = controller
+        ZoomHub.shared.register(controller, slot: slot)
         return controller.scroll
     }
 
@@ -216,14 +258,22 @@ struct ImageZoomPane: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: ZoomScrollView, coordinator: Coordinator) {
+        MainActor.assumeIsolated { teardown(coordinator) }
+    }
+
+    @MainActor static func teardown(_ coordinator: Coordinator) {
         if let controller = coordinator.controller {
-            MainActor.assumeIsolated { ZoomHub.shared.unregister(controller, slot: controller.slot) }
+            ZoomHub.shared.unregister(controller, slot: controller.slot)
+            controller.onChange = nil
         }
+        coordinator.box?.controller = nil
+        coordinator.controller = nil
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     @MainActor final class Coordinator {
         var controller: ImageZoomController?
+        var box: ControllerBox?
     }
 }

@@ -15,6 +15,9 @@ enum Zoom {
         steps.first { $0 > value + slack } ?? steps[steps.count - 1]
     }
 
+    /// Zoom Out: the next step below, never an enlargement (a Fit under the first step stays).
+    static func out(from value: CGFloat) -> CGFloat { min(previous(before: value), value) }
+
     /// The next step below `value`; the first step stays the first.
     static func previous(before value: CGFloat) -> CGFloat {
         steps.last { $0 < value - slack } ?? steps[0]
@@ -91,6 +94,8 @@ struct ZoomControl: View {
 
     static let fadeDelay: Duration = .seconds(2)
 
+    private var shown: Bool { awake || NSWorkspace.shared.isVoiceOverEnabled }
+
     static func percentText(_ scale: CGFloat) -> String { "\(Int((scale * 100).rounded()))%" }
 
     var body: some View {
@@ -104,24 +109,23 @@ struct ZoomControl: View {
                 Divider().frame(height: 14)
             }
             button("minus", "Zoom Out", onOut)
-            Button(action: onActual) {
-                Text("\(percent)%")
-                    .font(.system(size: 12, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.text)
-                    .frame(minWidth: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Zoom, \(percent) percent. Actual size")
+            Text("\(percent)%")
+                .font(.system(size: 12, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Theme.text)
+                .frame(minWidth: 44)
+                .accessibilityLabel("Zoom, \(percent) percent")
             button("plus", "Zoom In", onIn)
             Divider().frame(height: 14)
             button("arrow.up.left.and.arrow.down.right", "Zoom to Fit", onFit)
+            button("1.magnifyingglass", "Actual size (100%)", onActual)
         }
         .padding(.horizontal, 6)
         .frame(height: 30)
         .background(Capsule().fill(Theme.panel))
         .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
-        .opacity(awake || NSWorkspace.shared.isVoiceOverEnabled ? 1 : 0)
+        .opacity(shown ? 1 : 0)
+        .allowsHitTesting(shown)
         .animation(.easeOut(duration: 0.25), value: awake)
         .accessibilityElement(children: .contain)
     }
@@ -135,6 +139,7 @@ struct ZoomControl: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(label)
         .accessibilityLabel(label)
     }
 }
