@@ -649,6 +649,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(FilesTabSwitch.foldersTitle, "Folders")
     }
 
+    /// v0.19: a folder the person added never hides the session's folder;
+    /// only the deployment's own roots do.
+    func testAnExtraFolderAloneNeverHidesTheSessionFolder() {
+        let (model, _) = model()
+        var hello = hello()
+        hello.roots = []
+        hello.hideSessionFolder = true
+        model.apply(.hello(hello))
+        model.apply(.chatList(ChatList(chats: [summary(1)])))
+        model.apply(.filesRoots(FilesRoots(roots: [Root(name: "refs", path: "/tmp/refs", extra: true)])))
+        XCTAssertEqual(model.browsableRoots(for: 1).map(\.name), ["chat", "refs"])
+    }
+
     func testTheChatFolderIsNotBrowsedTwiceWhenARootIsTheSameFolder() {
         let (model, _) = model()
         var hello = hello()

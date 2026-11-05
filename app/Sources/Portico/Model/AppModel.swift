@@ -2578,11 +2578,13 @@ extension AppModel {
     func browsableRoots(for chat: Int) -> [Root] {
         let roots = fileRoots(for: chat)
         guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
-        // The deployment's own roots and the person's extra folders both count as "others".
         let others = roots.filter { $0.name != Self.chatRoot }
-        if hello?.hideSessionFolder == true, !others.isEmpty { return others }
+        // Only the deployment's own roots decide whether the session's folder
+        // hides: a folder the person added never takes it away (v0.19).
+        let deployment = others.filter { $0.extra != true }
+        if hello?.hideSessionFolder == true, !deployment.isEmpty { return others }
         let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path
-        let shared = others.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
+        let shared = deployment.contains { URL(fileURLWithPath: $0.path).standardizedFileURL.path == ownPath }
         return shared ? others : roots
     }
 
