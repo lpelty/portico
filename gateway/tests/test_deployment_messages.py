@@ -161,7 +161,7 @@ async def test_files_wait_without_an_app_and_come_on_the_next_hello_oldest_first
 
 
 async def test_an_app_without_the_capability_is_sent_nothing_and_the_files_stay(server: GatewayServer) -> None:
-    conn = await hello(server, ["spaces.v1"])  # as a v0.21 app declares
+    conn = await hello(server, ["spaces.v1"])  # the capabilities a v0.21 app sends
     try:
         dm.write_message(server.state.path, "for a newer app")
         await asyncio.sleep(0.3)
