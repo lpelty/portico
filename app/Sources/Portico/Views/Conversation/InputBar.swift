@@ -28,6 +28,8 @@ struct InputBar: View {
     @Environment(\.textScale) private var textScale
     @FocusState private var editorFocused: Bool
     @State private var slash = SlashListState()
+    /// The composer's one intake for drops and pastes onto its text (v0.19 §8.1).
+    @State private var intakes = ComposerIntakeHolder()
 
     /// The editor's text lives in the model (per chat) so it survives
     /// switching chats and comes back when the gateway refuses a send.
@@ -59,13 +61,16 @@ struct InputBar: View {
     /// unanswered does, and the gateway holds the message until it can go.
     static func canSend(_ model: AppModel, chat: Int, text: String) -> Bool {
         let held = model.isBusy(chat: chat) || model.isRenewing(chat: chat) || model.isLogging(chat: chat)
+        // v0.19: attachments alone are a message.
+        let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(model.draftAttachments[chat] ?? []).isEmpty
         return model.connection == .connected && (!held || model.queuesWhileWorking) && !model.isSending(chat: chat)
-            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && hasContent
     }
 
     /// Send shows beside Stop while the agent works only with something to queue.
-    static func showsSendWhileBusy(queues: Bool, text: String) -> Bool {
-        queues && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    static func showsSendWhileBusy(queues: Bool, text: String, attachments: [String] = []) -> Bool {
+        queues && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     /// This composer for Talk (v0.9 decision 1): the words go into the
@@ -143,7 +148,7 @@ struct InputBar: View {
                 MicButton(composer: voiceComposer, side: InputBar.iconButtonSide, corner: InputBar.iconButtonCorner)
                     .disabled(renewing && !queues)
                 if busy {
-                    let typing = InputBar.showsSendWhileBusy(queues: queues, text: draft.wrappedValue)
+                    let typing = InputBar.showsSendWhileBusy(queues: queues, text: draft.wrappedValue, attachments: attachments)
                     Button(action: { model.stopTurn(chat: chat) }) {
                         Text("Stop")
                     }
@@ -211,7 +216,9 @@ struct InputBar: View {
                 .focused($editorFocused)
                 // v0.19 (§8.1): a file dropped or pasted onto the text, or
                 // pasted image data, becomes an attachment, never path text.
-                .background(ComposerTextViewFinder(intake: model.composerIntake(chat: chat)))
+                .background(ComposerTextViewFinder(intake: intakes.intake(for: chat) { [model, chat] in
+                    model.makeIntake { model.attach($0, to: chat) }
+                }))
                 .disabled(renewing && !queues)
                 .onKeyPress(.return, phases: .down) { press in
                     if slashCompletion != nil,

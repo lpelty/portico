@@ -26,6 +26,9 @@ struct PorticoApp: App {
         // everything" after the window closed can still reach the gateway.
         model.supervisor = supervisor
         model.appVersion = Self.version
+        // Pasted images never sent go after a week (v0.19 §8.2), off the main thread.
+        let home = supervisor.home.url
+        Task.detached(priority: .utility) { PastedImages.prunePending(home: home, now: Date()) }
         // Space-updated notifications need an app bundle; a bare executable
         // (`swift run`) has no notification centre to ask.
         if Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" {

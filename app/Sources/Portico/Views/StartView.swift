@@ -23,6 +23,8 @@ struct StartView: View {
     @EnvironmentObject private var dictation: Dictation
     @FocusState private var focused: Bool
     @State private var slash = SlashListState()
+    /// The composer's one intake for drops and pastes onto its text (v0.19 §8.1).
+    @State private var intakes = ComposerIntakeHolder()
 
     /// The slash list for what is typed, when it is open (v0.11 item 66).
     private var slashCompletion: SlashCompletion? {
@@ -33,9 +35,18 @@ struct StartView: View {
     private var connected: Bool { model.connection == .connected }
     /// The live session this welcome continues, if it does.
     private var continuing: ChatSummary? { model.continuingSession.flatMap { model.summary(of: $0) } }
-    private var canSend: Bool {
-        guard connected, !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        if let passed = model.passedBy { return model.canRenew(chat: passed.live) && !model.isSessionCommandPending(chat: passed.live) }
+    private var canSend: Bool { Self.canSend(model) }
+
+    /// Whether Send may go: something typed or attached (v0.19: attachments
+    /// alone are a message), except to a session started past the ones run
+    /// outside the app, which carries only the text.
+    static func canSend(_ model: AppModel) -> Bool {
+        let typed = !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard model.connection == .connected, typed || !model.startAttachments.isEmpty else { return false }
+        if let passed = model.passedBy {
+            return typed && model.canRenew(chat: passed.live) && !model.isSessionCommandPending(chat: passed.live)
+        }
+        let continuing = model.continuingSession.flatMap { model.summary(of: $0) }
         if let live = continuing?.chat { return !model.isSessionCommandPending(chat: live) }
         return model.startFolder != nil && !model.isStarting
     }
@@ -166,7 +177,9 @@ struct StartView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
                     // v0.19 (§8.1): drops and pastes of files or images attach.
-                    .background(ComposerTextViewFinder(intake: model.startIntake(continuing: continuing?.chat)))
+                    .background(ComposerTextViewFinder(intake: intakes.intake(for: 0) { [model] in
+                        model.makeIntake { model.attachToStart($0) }
+                    }))
                     .onKeyPress(.return, phases: .down) { press in
                         if slashCompletion != nil,
                             let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing())
@@ -429,7 +442,7 @@ struct StartView: View {
     /// in the start folder, when that could be sent now.
     static func sendSpoken(_ model: AppModel) {
         let text = model.startDraft
-        guard model.connection == .connected, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard canSend(model) else { return }
         if model.passedBy != nil {
             guard let live = model.passedBy?.live, model.canRenew(chat: live), !model.isSessionCommandPending(chat: live) else { return }
             model.startPassedBy(text: text)

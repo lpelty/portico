@@ -47,46 +47,140 @@ final class ImageAttachmentTests: XCTestCase {
 
     // MARK: - pasted image files
 
-    func testSaveWritesAPNGUnderTheChatsFolderAndRemoveDeletesIt() throws {
+    func testSaveWritesAPNGToPendingAdoptMovesItAndRemoveDeletesIt() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000.123)
-        let path = try PastedImages.save(tiff(), chat: 7, home: home, now: now)
+        let path = try PastedImages.save(tiff(), home: home, now: now)
         let url = URL(fileURLWithPath: path)
         XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL.path,
-            home.appendingPathComponent("attachments/7").standardizedFileURL.path)
+            home.appendingPathComponent("attachments/pending").standardizedFileURL.path)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         XCTAssertEqual(url.lastPathComponent, "\(formatter.string(from: now)).png")
-        let written = try Data(contentsOf: url)
-        XCTAssertEqual(written.prefix(8), Self.pngSignature, "TIFF pasteboard data is converted to PNG")
+        XCTAssertEqual(try Data(contentsOf: url).prefix(8), Self.pngSignature, "TIFF pasteboard data is converted to PNG")
 
         // A second paste in the same millisecond keeps both.
-        let second = try PastedImages.save(tiff(), chat: 7, home: home, now: now)
+        let second = try PastedImages.save(tiff(), home: home, now: now)
         XCTAssertNotEqual(second, path)
 
-        PastedImages.remove(chat: 7, home: home)
+        // Sent to chat 7: pending files move there; other paths stay as they are.
+        let adopted = PastedImages.adopt([path, "/x/notes.md", second], chat: 7, home: home)
+        XCTAssertEqual(adopted[1], "/x/notes.md")
+        for moved in [adopted[0], adopted[2]] {
+            XCTAssertEqual(URL(fileURLWithPath: moved).deletingLastPathComponent().standardizedFileURL.path,
+                PastedImages.folder(chat: 7, home: home).standardizedFileURL.path)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: moved))
+        }
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+
+        PastedImages.remove(chat: 7, home: home)
         XCTAssertFalse(FileManager.default.fileExists(atPath: PastedImages.folder(chat: 7, home: home).path))
     }
 
     func testSaveRefusesDataThatIsNotAnImage() {
-        XCTAssertThrowsError(try PastedImages.save(Data("hello".utf8), chat: 1, home: home, now: Date()))
+        XCTAssertThrowsError(try PastedImages.save(Data("hello".utf8), home: home, now: Date()))
+    }
+
+    func testPruneRemovesPendingFilesOlderThanAWeek() throws {
+        let now = Date()
+        let old = try PastedImages.save(tiff(), home: home, now: now)
+        let fresh = try PastedImages.save(tiff(), home: home, now: now.addingTimeInterval(1))
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-8 * 24 * 3600)], ofItemAtPath: old)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-6 * 24 * 3600)], ofItemAtPath: fresh)
+        PastedImages.prunePending(home: home, now: now)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh))
+    }
+
+    private func startModel() throws -> (AppModel, [ClientMessage]) {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "image-attach-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        model.attachmentsHome = home
+        model.chosenStartFolder = home
+        return (model, [])
+    }
+
+    /// A paste on the start screen goes with the message to the chat the
+    /// gateway made, whatever number was expected.
+    func testAStartScreenPasteMovesToTheChatTheMessageWentTo() throws {
+        let (model, _) = try startModel()
+        var frames: [ClientMessage] = []
+        model.outbound = { frames.append($0) }
+        model.apply(.chatList(ChatList(chats: [], nextChat: 4)))
+        let pasted = try model.savePastedImage(tiff())
+        model.attachToStart([pasted])
+        // Image only: no words.
+        model.startChat(text: "")
+        guard case .chatNew(let new)? = frames.last else { return XCTFail("expected chat.new, got \(frames)") }
+        model.apply(.chatState(ChatState(chat: 9, state: .idle, id: new.id, seq: 1)))
+        guard case .messageSend(let message)? = frames.last else { return XCTFail("expected message.send") }
+        XCTAssertEqual(message.chat, 9)
+        XCTAssertEqual(message.text, "")
+        let sentPath = try XCTUnwrap(message.attachments.first)
+        XCTAssertEqual(URL(fileURLWithPath: sentPath).deletingLastPathComponent().standardizedFileURL.path,
+            PastedImages.folder(chat: 9, home: home).standardizedFileURL.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sentPath))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: pasted))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: PastedImages.folder(chat: 4, home: home).path))
+    }
+
+    func testAChatDroppingOutOfTheListRemovesItsImages() throws {
+        let model = AppModel()
+        var frames: [ClientMessage] = []
+        model.outbound = { frames.append($0) }
+        model.attachmentsHome = home
+        model.apply(.chatList(ChatList(chats: [ChatSummary(chat: 3, folder: home.path, alias: nil, state: .idle, created: "2026-11-04T12:00:00Z")])))
+        model.open(chat: 3)
+        model.attach([try model.savePastedImage(tiff())], to: 3)
+        model.sendMessage(chat: 3, text: "")
+        guard case .messageSend(let message)? = frames.last else { return XCTFail("expected message.send, got \(frames)") }
+        let sentPath = try XCTUnwrap(message.attachments.first)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sentPath))
+
+        model.apply(.chatList(ChatList(chats: [])))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: PastedImages.folder(chat: 3, home: home).path))
     }
 
     func testRemovingASessionRemovesItsPastedImages() throws {
         let model = AppModel()
         model.outbound = { _ in }
         model.attachmentsHome = home
-        let path = try model.savePastedImage(tiff(), chat: 3)
-        XCTAssertTrue(path.hasPrefix(home.path))
+        let folder = PastedImages.folder(chat: 3, home: home)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         model.remove(chat: 3)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    func testNoHomeWritesNothing() {
+        let model = AppModel()
+        XCTAssertThrowsError(try model.savePastedImage(tiff()))
+    }
+
+    func testAttachmentsAloneCanBeSent() {
+        let model = AppModel()
+        model.outbound = { _ in }
+        XCTAssertTrue(InputBar.showsSendWhileBusy(queues: true, text: " ", attachments: ["/x/a.png"]))
+        XCTAssertFalse(InputBar.showsSendWhileBusy(queues: true, text: " ", attachments: []))
+        model.setConnection(.connected)
+        XCTAssertFalse(InputBar.canSend(model, chat: 1, text: " "), "nothing typed, nothing attached")
+        model.attach(["/x/a.png"], to: 1)
+        XCTAssertTrue(InputBar.canSend(model, chat: 1, text: ""), "an image alone is a message")
+    }
+
+    func testTheStartScreenSendsAttachmentsAlone() throws {
+        let (model, _) = try startModel()
+        model.outbound = { _ in }
+        model.setConnection(.connected)
+        XCTAssertFalse(StartView.canSend(model))
+        model.attachToStart(["/x/a.png"])
+        XCTAssertTrue(StartView.canSend(model))
     }
 
     // MARK: - the composer's paste handler
 
     /// A class of the tests' own, so the hook leaves `NSTextView` itself alone.
-    private final class PlainTextView: NSTextView {}
+    private class PlainTextView: NSTextView {}
+    private final class ChildTextView: PlainTextView {}
 
     private final class Taken {
         var paths: [String] = []
@@ -97,8 +191,8 @@ final class ImageAttachmentTests: XCTestCase {
         view.isRichText = false
         let intake = ComposerIntake(
             attach: { taken.paths += $0 },
-            saveImage: { [home] data in try PastedImages.save(data, chat: 1, home: home!, now: Date()) })
-        intake.pasteboard = pasteboard
+            saveImage: { [home] data in try PastedImages.save(data, home: home!, now: Date()) },
+            pasteboard: pasteboard)
         XCTAssertTrue(ComposerTextViewHook.install(on: view, intake: intake))
         return view
     }
@@ -111,7 +205,7 @@ final class ImageAttachmentTests: XCTestCase {
         XCTAssertEqual(taken.paths.count, 1)
         XCTAssertEqual(view.string, "")
         let path = try XCTUnwrap(taken.paths.first)
-        XCTAssertTrue(path.hasPrefix(PastedImages.folder(chat: 1, home: home).path))
+        XCTAssertTrue(path.hasPrefix(PastedImages.pendingFolder(home: home).path))
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)).prefix(8), Self.pngSignature)
     }
 
@@ -154,8 +248,7 @@ final class ImageAttachmentTests: XCTestCase {
     /// The real composer: `TextEditor`'s own text view is found and hooked.
     func testTheTextEditorsTextViewIsFoundAndHooked() throws {
         let taken = Taken()
-        let intake = ComposerIntake(attach: { taken.paths += $0 }, saveImage: { _ in "" })
-        intake.pasteboard = pasteboard
+        let intake = ComposerIntake(attach: { taken.paths += $0 }, saveImage: { _ in "" }, pasteboard: pasteboard)
         struct Editor: View {
             let intake: ComposerIntake
             @State var text = ""
@@ -254,5 +347,55 @@ final class ImageAttachmentTests: XCTestCase {
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: file.path)
         let edited = AttachmentImageCache.shared.load(path: file.path)
         XCTAssertNotEqual(edited, first)
+    }
+
+    // MARK: - dragging reads types only
+
+    private final class Recorder: NSObject, NSPasteboardItemDataProvider {
+        var asked: [NSPasteboard.PasteboardType] = []
+        func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+            asked.append(type)
+        }
+    }
+
+    func testADragIsJudgedFromItsTypesWithoutReadingData() {
+        let recorder = Recorder()
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setDataProvider(recorder, forTypes: [.fileURL]))
+        pasteboard.writeObjects([item])
+        XCTAssertTrue(ComposerIntake.offers(types: pasteboard.types ?? []))
+
+        pasteboard.clearContents()
+        let image = NSPasteboardItem()
+        XCTAssertTrue(image.setDataProvider(recorder, forTypes: [.png]))
+        pasteboard.writeObjects([image])
+        XCTAssertTrue(ComposerIntake.offers(types: pasteboard.types ?? []))
+        XCTAssertEqual(recorder.asked, [], "no data is asked for while dragging")
+
+        XCTAssertFalse(ComposerIntake.offers(types: [.string, .png]), "text with a picture of it stays text")
+        XCTAssertFalse(ComposerIntake.offers(types: [.string]))
+    }
+
+    /// A subclass of a hooked class is covered by its parent's replacements, not hooked again.
+    func testASubclassOfAHookedClassIsNotHookedAgain() {
+        let taken = Taken()
+        _ = hookedTextView(taken)
+        let child = ChildTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        XCTAssertTrue(ComposerTextViewHook.isHooked(child), "covered through PlainTextView")
+        let intake = ComposerIntake(attach: { taken.paths += $0 }, saveImage: { _ in "" }, pasteboard: pasteboard)
+        ComposerTextViewHook.install(on: child, intake: intake)
+        pasteboard.setString("once", forType: .string)
+        child.paste(nil)
+        XCTAssertEqual(child.string, "once", "the paste ran once, not through two gates")
+    }
+
+    func testTheHolderKeepsOneIntakePerChat() {
+        let holder = ComposerIntakeHolder()
+        var made = 0
+        let make = { () -> ComposerIntake in made += 1; return ComposerIntake(attach: { _ in }, saveImage: { _ in "" }) }
+        let first = holder.intake(for: 1, make: make)
+        XCTAssertTrue(holder.intake(for: 1, make: make) === first)
+        XCTAssertFalse(holder.intake(for: 2, make: make) === first)
+        XCTAssertEqual(made, 2)
     }
 }

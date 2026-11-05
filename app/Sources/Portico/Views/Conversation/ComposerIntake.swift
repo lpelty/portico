@@ -12,12 +12,27 @@ final class ComposerIntake: NSObject {
     var attach: ([String]) -> Void
     /// Write pasted image data to a file and return its path.
     var saveImage: (Data) throws -> String
-    /// Where ⌘V reads; tests hand a private pasteboard.
-    var pasteboard: NSPasteboard = .general
+    /// Where ⌘V reads: the general pasteboard, or one a test hands in.
+    let pasteboard: NSPasteboard
 
-    init(attach: @escaping ([String]) -> Void, saveImage: @escaping (Data) throws -> String) {
+    init(
+        attach: @escaping ([String]) -> Void, saveImage: @escaping (Data) throws -> String,
+        pasteboard: NSPasteboard = .general
+    ) {
         self.attach = attach
         self.saveImage = saveImage
+        self.pasteboard = pasteboard
+    }
+
+    /// The image types a drag or paste may carry as data.
+    nonisolated static let imageTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType("public.jpeg")]
+
+    /// Whether a drag carries something the composer takes, from the
+    /// pasteboard's types alone: no data is read and no file looked at
+    /// (it is asked on every mouse move). `performDragOperation` reads.
+    nonisolated static func offers(types: [NSPasteboard.PasteboardType]) -> Bool {
+        if types.contains(.fileURL) { return true }
+        return !types.contains(.string) && types.contains(where: imageTypes.contains)
     }
 
     /// What a pasteboard holds, as the composer reads it.
@@ -67,11 +82,6 @@ final class ComposerIntake: NSObject {
         }
     }
 
-    /// Whether a drag carries something the composer takes.
-    static func takes(_ pasteboard: NSPasteboard) -> Bool {
-        if case .text = contents(of: pasteboard) { return false }
-        return true
-    }
 
     private static func isDirectory(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
@@ -94,7 +104,7 @@ final class ComposerIntake: NSObject {
 @MainActor
 enum ComposerTextViewHook {
     private nonisolated(unsafe) static var intakeKey: UInt8 = 0
-    /// The classes whose methods are already replaced.
+    /// The classes whose methods are replaced.
     private static var hookedClasses: Set<ObjectIdentifier> = []
 
     /// The intake installed on this text view, if any.
@@ -102,9 +112,21 @@ enum ComposerTextViewHook {
         objc_getAssociatedObject(textView, &intakeKey) as? ComposerIntake
     }
 
-    /// Whether `textView`'s class answers drops and pastes through an intake.
+    /// Whether `textView`'s class, or a class it inherits from, answers
+    /// drops and pastes through an intake.
     static func isHooked(_ textView: NSTextView) -> Bool {
-        hookedClasses.contains(ObjectIdentifier(baseClass(of: textView)))
+        isCovered(baseClass(of: textView))
+    }
+
+    /// `cls` or one of its superclasses has the replacements: hooking it
+    /// again would only run the gate twice.
+    private static func isCovered(_ cls: AnyClass) -> Bool {
+        var current: AnyClass? = cls
+        while let each = current {
+            if hookedClasses.contains(ObjectIdentifier(each)) { return true }
+            current = class_getSuperclass(each)
+        }
+        return false
     }
 
     /// Point `textView` at `intake` (each call); replace its class's
@@ -113,7 +135,7 @@ enum ComposerTextViewHook {
     static func install(on textView: NSTextView, intake: ComposerIntake) -> Bool {
         objc_setAssociatedObject(textView, &intakeKey, intake, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         let base: AnyClass = baseClass(of: textView)
-        if !hookedClasses.contains(ObjectIdentifier(base)) {
+        if !isCovered(base) {
             hook(base)
             hookedClasses.insert(ObjectIdentifier(base))
         }
@@ -121,7 +143,7 @@ enum ComposerTextViewHook {
         return true
     }
 
-    static let extraDragTypes: [NSPasteboard.PasteboardType] = [.fileURL, .png, .tiff]
+    static let extraDragTypes: [NSPasteboard.PasteboardType] = [.fileURL] + ComposerIntake.imageTypes
 
     /// The instance's class under any Key-Value Observing subclass.
     private static func baseClass(of object: AnyObject) -> AnyClass {
@@ -209,22 +231,19 @@ enum ComposerTextViewHook {
 
     // AppKit calls paste and the dragging methods on the main thread.
 
+    /// A paste into a text view with an intake: attachments, else the
+    /// intake's pasteboard read into the text as `paste:` reads the general one.
     private nonisolated static func takePaste(_ intake: ComposerIntake, view: NSTextView) -> Bool {
         MainActor.assumeIsolated {
-            if intake.take(from: intake.pasteboard) { return true }
-            // A private pasteboard (tests): the text view reads it as paste: would.
-            if intake.pasteboard != .general {
-                view.readSelection(from: intake.pasteboard)
-                return true
-            }
-            return false
+            if !intake.take(from: intake.pasteboard) { view.readSelection(from: intake.pasteboard) }
+            return true
         }
     }
 
+    /// Types only: asked on every move of a drag.
     private nonisolated static func takes(_ info: AnyObject, view: NSTextView) -> Bool {
         guard let info = info as? NSDraggingInfo, intake(of: view) != nil else { return false }
-        nonisolated(unsafe) let board = info.draggingPasteboard
-        return MainActor.assumeIsolated { ComposerIntake.takes(board) }
+        return ComposerIntake.offers(types: info.draggingPasteboard.types ?? [])
     }
 
     private nonisolated static func drop(_ info: AnyObject, view: NSTextView) -> Bool {
@@ -254,9 +273,15 @@ struct ComposerTextViewFinder: NSViewRepresentable {
             }
         }
 
+        /// The text view hooked last, to skip the search while it and the intake stand.
+        weak var hooked: NSTextView?
+
         func hook() {
-            guard let intake, window != nil, let textView = ComposerTextViewFinder.textView(behind: self) else { return }
+            guard let intake, let window else { return }
+            if let hooked, hooked.window === window, ComposerTextViewHook.intake(of: hooked) === intake { return }
+            guard let textView = ComposerTextViewFinder.textView(behind: self) else { return }
             ComposerTextViewHook.install(on: textView, intake: intake)
+            hooked = textView
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -304,5 +329,19 @@ struct ComposerTextViewFinder: NSViewRepresentable {
             }
         }
         return out
+    }
+}
+
+/// A composer's one intake, kept across body evaluations; made again only
+/// when the composer's chat changes.
+@MainActor
+final class ComposerIntakeHolder {
+    private var kept: (key: Int, intake: ComposerIntake)?
+
+    func intake(for key: Int, make: () -> ComposerIntake) -> ComposerIntake {
+        if let kept, kept.key == key { return kept.intake }
+        let intake = make()
+        kept = (key, intake)
+        return intake
     }
 }
