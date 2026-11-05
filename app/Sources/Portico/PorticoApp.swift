@@ -16,6 +16,8 @@ struct PorticoApp: App {
     init() {
         // v0.17: tooltips after 0.8 s, in this app's own defaults only.
         TooltipDelay.register()
+        // v0.22: thin overlay scroll bars everywhere, whatever the system setting.
+        OverlayScrollers.install()
         // The model reads the auto-open settings (spec §5.3), so it holds the
         // same `Settings` object the settings scene edits.
         let settings = Settings()
