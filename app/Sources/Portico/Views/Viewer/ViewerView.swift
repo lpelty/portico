@@ -461,6 +461,9 @@ struct ViewerView: View {
                     onCoordinator: { [edit] in edit.editor = $0 })
                     .id("edit|\(current.location)|\(ObjectIdentifier(session).hashValue)")
             }
+            // The editor's view, for the agent's look (v0.20 §4).
+            .background { ViewerPaneAnchor(agent: model.viewerAgent) }
+            .environment(\.viewerSlot, .work)
         } else if let current = model.current[chat] {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
