@@ -219,7 +219,7 @@ struct ConversationView: View {
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
             if target == .bottom {
-                toBottom()
+                toBottomThroughLastRow()
             } else if !scrollMemory.atBottom, position.edge == .bottom {
                 // The person left the end by input with no scroll phase (a
                 // key, or VoiceOver): AppKit moved the clip, so the position
@@ -353,6 +353,23 @@ struct ConversationView: View {
     /// hosted here).
     private func toBottom() {
         position.scrollTo(edge: .bottom)
+    }
+
+    /// Back to the end after the column's width changed or the layout moved
+    /// it (v0.19 fix): to the last row by its id first, then the bottom edge.
+    /// The edge is the lazy stack's estimated content height, and with tool
+    /// rows folded the rows not laid out are few and very unlike (a 50 pt
+    /// group, a 1000 pt reply): found hosted, narrowing 900 to 640 left the
+    /// content at 32053 pt with the rows it drew placed below that end, so
+    /// the view at the edge showed none of them. Scrolling to an id lays
+    /// that row out where the view is; the edge after it keeps v0.16's
+    /// target, which SwiftUI drops when the person scrolls.
+    private func toBottomThroughLastRow() {
+        position.scrollTo(id: "bottom", anchor: .bottom)
+        Task { @MainActor in
+            await Task.yield()
+            toBottom()
+        }
     }
 
     /// Back to the place this conversation was left at (v0.16 §5): the row
