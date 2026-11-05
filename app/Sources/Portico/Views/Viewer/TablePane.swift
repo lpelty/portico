@@ -26,7 +26,7 @@ struct TablePane: View {
             case .text(let read)?:
                 TextBody(read: read, file: file)
             case .unreadable?:
-                OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
+                OtherPane(shown: shown, message: "This file can't be read as text. Open it in the app that can.")
             }
         }
         .task(id: LoadKey(file: file, scale: textScale)) {

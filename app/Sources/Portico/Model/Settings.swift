@@ -22,7 +22,9 @@ final class Settings: ObservableObject {
         }
 
         /// The line under the choices in Settings › Gateway.
-        static let caption = "Keeping them running lets a long turn finish while Portico is closed; reopening attaches to it. Stopping saves battery, and runs the deployment's stop command first."
+        static func caption(brand: String) -> String {
+            "Keeping them running lets a long turn finish while \(brand) is closed; reopening attaches to it. Stopping saves battery, and runs the deployment's stop command first."
+        }
     }
 
     enum Appearance: String, CaseIterable, Sendable {

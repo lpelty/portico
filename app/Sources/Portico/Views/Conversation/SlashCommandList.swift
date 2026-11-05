@@ -74,6 +74,8 @@ struct SlashCommandList: View {
     let completion: SlashCompletion
     let selection: Int
     let agentName: String
+    /// The app's own commands are headed with its brand name (v0.18.1).
+    var appName: String = BrandPresentation.defaultName
     let pick: (SlashCompletion.Item) -> Void
 
     static let rowHeight: CGFloat = 29
@@ -93,7 +95,7 @@ struct SlashCommandList: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if !completion.portico.isEmpty {
-                            header("Portico")
+                            header(appName)
                             rows(completion.portico, offset: 0)
                         }
                         if !completion.agent.isEmpty {

@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.18.1 (2026-11-04)
+
+The app builds on a Mac with only the Command Line Tools again, plus three
+small fixes from the first field round.
+
+### Fixed
+
+- **Builds without Xcode.** v0.18.0 used SwiftUI's `@Entry` for nine
+  environment values. Its macro plugin ships only with Xcode, so on a Mac
+  with the Command Line Tools alone every SDK failed. They are hand-written
+  `EnvironmentKey`s now, with computed defaults (Swift 6's Sendable check).
+  The build falls back from the 27.0 SDK to 26.5 as before; the 27.0 SDK
+  cannot build a SwiftUI app without Xcode at all, since `@State` is a macro
+  there.
+- **The build names the cause.** When every SDK fails because a SwiftUI
+  macro's plugin is missing, `build-app.sh` names the macro and says it is a
+  bug in Portico, instead of advising a Command Line Tools update that cannot
+  help.
+- **Changed this session shows once,** under Files → Folders. The Bookmarks
+  tab holds bookmarks only.
+- **The brand's name, never "Portico".** The Spaces note, When … quits and
+  its caption, the "another window" notice and the slash list's heading use
+  the deployment's brand; the viewer's can't-show lines, the text-size note,
+  the spaces too-old tip and the missing-folder error no longer name the app.
+
+### Checks
+
+- `tests/test_build_without_xcode.py`: no Xcode-only SwiftUI macro (`@Entry`,
+  `@Previewable`, `#Preview`) in `app/Sources`; with `PORTICO_CLT_BUILD=1`,
+  the real build with `DEVELOPER_DIR=/Library/Developer/CommandLineTools`,
+  run before each release.
+- `BrandTests`: no string a person reads spells "Portico".
+
 ## v0.18.0 (2026-11-03)
 
 Your own MCP servers and plugins reach Portico; Settings manages them; MCP

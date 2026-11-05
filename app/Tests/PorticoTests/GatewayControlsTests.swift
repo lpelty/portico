@@ -327,7 +327,7 @@ final class GatewayControlsTests: XCTestCase {
         model.apply(.error(ErrorMessage(code: "session.replaced", message: "another app attached to this gateway")))
         XCTAssertTrue(model.replacedElsewhere)
         XCTAssertEqual(
-            AppModel.replacedText, "Another Portico window is using this gateway. Agent › Start brings it back here.")
+            AppModel.replacedText(brand: "Portico"), "Another Portico window is using this gateway. Agent › Start brings it back here.")
         model.startGateway()
         XCTAssertFalse(model.replacedElsewhere, "Start takes it back")
     }

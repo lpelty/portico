@@ -507,7 +507,9 @@ final class AppModel: ObservableObject {
     /// windows would take the gateway from each other forever, until Start.
     private(set) var replacedElsewhere = false
     static let replacedCode = "session.replaced"
-    static let replacedText = "Another Portico window is using this gateway. Agent › Start brings it back here."
+    static func replacedText(brand: String) -> String {
+        "Another \(brand) window is using this gateway. Agent › Start brings it back here."
+    }
     /// The loop's socket, while `run` is going; `stopGateway` closes it.
     private var client: GatewayClient?
     /// Whether `run` is going (the window is open).
@@ -2750,7 +2752,7 @@ extension AppModel {
             }
             if Task.isCancelled { break }
             if replacedElsewhere {
-                connection = .failed(Self.replacedText)
+                connection = .failed(Self.replacedText(brand: brand.name))
                 while replacedElsewhere && !Task.isCancelled { await pause(.seconds(3600)) }
                 backoff = .seconds(1)
                 continue

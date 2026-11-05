@@ -15,7 +15,10 @@ enum SettingsWindow {
 enum GeneralSettingsPresentation {
     static let canSeeNote = "The agent can look at, scroll and click what's open in the viewer, when asked or when it helps. You see every action as it happens."
     static let checksHTMLNote = "After creating or changing an HTML page, the agent opens it in the viewer and looks before replying. Uses more tokens."
-    static let spacesNote = "A dot on the switcher, and a macOS notification while Portico is in the background."
+    /// Names the app by its brand (v0.18.1): a deployment's people never see "Portico".
+    static func spacesNote(brand: String) -> String {
+        "A dot on the switcher, and a macOS notification while \(brand) is in the background."
+    }
 
     /// Spaces appears only on a gateway with `spaces.v1`. There is no
     /// Sessions section: Clear earlier sessions is an admin command.
@@ -120,7 +123,7 @@ struct GeneralSettingsTab: View {
             if titles.contains("Spaces") {
                 Section("Spaces") {
                     Toggle("Notify when a space is updated", isOn: $settings.spacesNotify)
-                    Text(GeneralSettingsPresentation.spacesNote)
+                    Text(GeneralSettingsPresentation.spacesNote(brand: model.brand.name))
                         .scaledFont(10)
                         .foregroundStyle(.secondary)
                 }
@@ -167,7 +170,7 @@ enum AppearanceSettingsPresentation {
     static let appearanceLabel = "Appearance"
     static let textSizeLabel = "Text size"
     static let textSizeNote = "Conversation, sidebar and documents. Web pages in the viewer keep their own size."
-    static let shortcutNote = "⌘+ and ⌘− change it anywhere in Portico."
+    static let shortcutNote = "⌘+ and ⌘− change it anywhere in the app."
 }
 
 /// AN3: one grouped panel of two rows, no heading above it. Appearance is
@@ -335,15 +338,15 @@ struct GatewaySettingsTab: View {
                 }
             }
             // Moved here from General with clearer wording (v0.9 decision 7, AE2).
-            Section("When Portico quits") {
-                Picker("When Portico quits", selection: $settings.quitBehaviour) {
+            Section("When \(model.brand.name) quits") {
+                Picker("When \(model.brand.name) quits", selection: $settings.quitBehaviour) {
                     ForEach(Settings.QuitBehaviour.allCases, id: \.self) { behaviour in
                         Text(behaviour.label).tag(behaviour)
                     }
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
-                Text(Settings.QuitBehaviour.caption)
+                Text(Settings.QuitBehaviour.caption(brand: model.brand.name))
                     .scaledFont(10)
                     .foregroundStyle(.secondary)
             }

@@ -155,4 +155,43 @@ final class BrandTests: XCTestCase {
         let json = #"{"name":"A","agent_name":"A","header_image":"/x/lockup.svg"}"#
         XCTAssertEqual(try JSONDecoder().decode(Brand.self, from: Data(json.utf8)).headerImage, "/x/lockup.svg")
     }
+
+    // MARK: - v0.18.1: a deployment's people never read "Portico" (field note 11)
+
+    func testTheSpacesNoteNamesTheBrand() {
+        XCTAssertEqual(
+            GeneralSettingsPresentation.spacesNote(brand: "Acme Agent"),
+            "A dot on the switcher, and a macOS notification while Acme Agent is in the background.")
+        XCTAssertTrue(Settings.QuitBehaviour.caption(brand: "Acme Agent").contains("while Acme Agent is closed"))
+        XCTAssertEqual(
+            AppModel.replacedText(brand: "Acme Agent"),
+            "Another Acme Agent window is using this gateway. Agent › Start brings it back here.")
+    }
+
+    /// No string the person reads spells "Portico": it comes from the brand.
+    /// The names below are the fallback and the app's identity to a page.
+    func testNoUserFacingStringSpellsPortico() throws {
+        let allowed = [
+            "static let defaultName = \"Portico\"",  // the brand when a deployment gives none
+            "return \"Portico\"",  // the updater's fallback, the same default
+            "agentName: String = \"Portico\"",  // a default parameter; callers pass the brand
+            "\"Portico/\\(",  // a page's user agent
+            ".string(\"Portico\")",  // MCP Apps hostInfo: the host's identity, not a label
+            "Logger(subsystem: \"Portico\"",  // the system log, not the window
+        ]
+        let literal = try NSRegularExpression(pattern: #""[^"\n]*\bPortico\b[^"\n]*""#)
+        var offenders: [String] = []
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: ListFontSweepTests.sources, includingPropertiesForKeys: nil))
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let lines = ListFontSweepTests.withoutComments(try String(contentsOf: url, encoding: .utf8))
+                .split(separator: "\n", omittingEmptySubsequences: false)
+            for (index, line) in lines.enumerated() {
+                let text = String(line)
+                guard literal.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { continue }
+                if allowed.contains(where: { text.contains($0) }) { continue }
+                offenders.append("\(url.lastPathComponent):\(index + 1): \(text.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+        XCTAssertEqual(offenders, [], "use the brand's name:\n" + offenders.joined(separator: "\n"))
+    }
 }
