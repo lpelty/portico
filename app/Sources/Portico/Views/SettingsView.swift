@@ -27,6 +27,9 @@ enum GeneralSettingsPresentation {
         ["Folder", "Viewer"] + (capabilities.contains("spaces.v1") ? ["Spaces"] : [])
     }
 
+    /// The Works in row while the deployment fixes the folder (v0.19 §4.1).
+    static func folderLockedNote(brand: String) -> String { "Set by \(brand)" }
+
     /// "Agent checks HTML it creates" is disabled while the agent cannot see.
     static func checksHTMLEnabled(canSee: Bool) -> Bool { canSee }
 }
@@ -121,8 +124,17 @@ struct GeneralSettingsTab: View {
                             .foregroundStyle(Theme.text2)
                             .lineLimit(1)
                             .tip(model.startFolder?.path ?? "")
-                        Button("Choose…", action: chooseFolder)
-                            .buttonStyle(SettingsButtonStyle(kind: .quiet))
+                        if model.isFolderLocked {
+                            Image(systemName: "lock")
+                                .font(Theme.iconFont(11))
+                                .foregroundStyle(Theme.text3)
+                            Text(GeneralSettingsPresentation.folderLockedNote(brand: model.brand.name))
+                                .scaledFont(11)
+                                .foregroundStyle(Theme.text3)
+                        } else {
+                            Button("Choose…", action: chooseFolder)
+                                .buttonStyle(SettingsButtonStyle(kind: .quiet))
+                        }
                     }
                 }
             }

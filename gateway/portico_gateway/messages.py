@@ -743,6 +743,8 @@ class HelloServer(Envelope):
     # v0.11: the Files pane leaves out the session's own folder (the
     # ``chat`` root); it still resolves (config ``[files] hide_session_folder``).
     hide_session_folder: bool = False
+    # v0.19: the deployment fixes "Works in" (config ``[sessions] lock_folder``).
+    lock_folder: bool = False
     # v0.12: the deployment's viewer defaults; the app uses them until the
     # person changes a switch. Absent from an older gateway.
     viewer_defaults: ViewerDefaults | None = None
@@ -1735,6 +1737,7 @@ def example_messages() -> dict[str, BaseModel]:
             default_folder="/Users/someone/projects",
             permission_mode="auto",
             hide_session_folder=False,
+            lock_folder=False,
             viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
             threads_max=2,
         ),

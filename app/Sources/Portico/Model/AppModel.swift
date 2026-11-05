@@ -1844,12 +1844,20 @@ final class AppModel: ObservableObject {
     /// deployment's `default_folder`, else its first root. `nil` when there
     /// is nothing to offer.
     var startFolder: URL? {
+        if isFolderLocked {
+            if let folder = hello?.defaultFolder, Self.isDirectory(folder) { return URL(fileURLWithPath: folder) }
+            if let root = hello?.roots.first, Self.isDirectory(root.path) { return URL(fileURLWithPath: root.path) }
+            return nil
+        }
         if let chosen = chosenStartFolder { return chosen }
         if let last = settings.lastFolder, Self.isDirectory(last) { return URL(fileURLWithPath: last) }
         if let folder = hello?.defaultFolder, Self.isDirectory(folder) { return URL(fileURLWithPath: folder) }
         if let root = hello?.roots.first, Self.isDirectory(root.path) { return URL(fileURLWithPath: root.path) }
         return nil
     }
+
+    /// The deployment fixes "Works in" (v0.19 §4.1): no picking, and a saved folder is ignored.
+    var isFolderLocked: Bool { hello?.lockFolder == true }
 
     /// Folders the chip's menu lists: the last one used and the deployment's roots, de-duplicated.
     var startFolderChoices: [URL] {
@@ -1916,6 +1924,7 @@ final class AppModel: ObservableObject {
 
     /// Settings › Folder: the folder new sessions start in, from now on.
     func chooseStartFolder(_ folder: URL) {
+        guard !isFolderLocked else { return }
         objectWillChange.send()
         settings.lastFolder = folder.path
         chosenStartFolder = nil

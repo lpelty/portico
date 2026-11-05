@@ -339,13 +339,15 @@ struct StartView: View {
     /// V4's quiet line: where the agent works, and that Settings changes it.
     private var folderLine: some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder")
+            Image(systemName: model.isFolderLocked ? "lock" : "folder")
                 .font(Theme.iconFont(11))
             Text(model.workingFolderLine)
                 .scaledFont(12)
         }
         .foregroundStyle(Theme.text3)
-        .tip(model.startFolder?.path ?? "Settings › General › Folder")
+        .tip(model.isFolderLocked
+            ? GeneralSettingsPresentation.folderLockedNote(brand: model.brand.name)
+            : model.startFolder?.path ?? "Settings › General › Folder")
     }
 
     private var chips: some View {

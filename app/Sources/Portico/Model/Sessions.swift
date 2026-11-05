@@ -53,6 +53,7 @@ extension AppModel {
     /// works and how to change it.
     var workingFolderLine: String {
         guard let folder = startFolder else { return "No folder yet · choose one in Settings" }
+        if isFolderLocked { return "Working in \(folder.lastPathComponent) · \(GeneralSettingsPresentation.folderLockedNote(brand: brand.name).lowercased())" }
         return "Working in \(folder.lastPathComponent) · chosen at setup, change it in Settings"
     }
 

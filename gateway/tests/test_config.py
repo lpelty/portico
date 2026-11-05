@@ -676,3 +676,29 @@ def test_threads_max_defaults_to_2_and_is_bounded(tmp_path: Path) -> None:
     path.write_text("[threads]\nmaximum = 1\n")
     with pytest.raises(ConfigError, match="threads.maximum"):
         load_config(path)
+
+
+# --- v0.19: [sessions] lock_folder ---------------------------------------------
+
+
+def test_sessions_lock_folder_loads_and_goes_out_in_hello(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[sessions]\nlock_folder = true\n")
+    config = load_config(path)
+    assert config.sessions.lock_folder is True
+    hello = hello_for(config, epoch="e", gateway_version="0.19.0")
+    assert hello.lock_folder is True
+    assert parse_server(dump(hello)) == hello
+
+
+def test_sessions_folder_is_unlocked_by_default() -> None:
+    assert Config().sessions.lock_folder is False
+    assert hello_for(Config(), epoch="e", gateway_version="0.19.0").lock_folder is False
+
+
+def test_a_non_bool_lock_folder_is_refused_naming_the_key(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[sessions]\nlock_folder = "yes please"\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "lock_folder" in str(e.value)

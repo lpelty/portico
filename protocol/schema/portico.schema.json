@@ -3625,6 +3625,11 @@
           "title": "Hide Session Folder",
           "type": "boolean"
         },
+        "lock_folder": {
+          "default": false,
+          "title": "Lock Folder",
+          "type": "boolean"
+        },
         "id": {
           "anyOf": [
             {

@@ -231,6 +231,8 @@ class SessionsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     next_number: str | None = None
+    # v0.19 (spec 4.1): the deployment fixes "Works in" (the agent's home).
+    lock_folder: bool = False
 
     @field_validator("next_number")
     @classmethod
@@ -618,6 +620,7 @@ def hello_for(
         default_folder=str(Path(config.default_folder).expanduser()) if config.default_folder else None,
         permission_mode=config.permission_mode,
         hide_session_folder=config.files.hide_session_folder,
+        lock_folder=config.sessions.lock_folder,
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
     )

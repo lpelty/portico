@@ -520,6 +520,11 @@ hide_session_folder`): the app's Files pane leaves out the chat's own
 folder (the `chat` root) when the deployment has roots of its own to show.
 The `chat` root still resolves for `files.list` and paths in it still show.
 
+v0.19: `lock_folder: bool` (default `false`; config `[sessions] lock_folder`):
+the deployment fixes "Works in". The app shows the folder with a lock, offers
+no picker, and ignores a folder saved earlier; sessions start in
+`default_folder`, else the first root.
+
 ### `chat.list` — `ChatList`
 `chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
 plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,

@@ -689,6 +689,8 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The Files pane leaves out the session's own folder (v0.11, config
     /// `[files] hide_session_folder`); it still resolves.
     var hideSessionFolder: Bool? = nil
+    /// The deployment fixes "Works in" (v0.19, config `[sessions] lock_folder`).
+    var lockFolder: Bool? = nil
     /// The deployment's defaults for the viewer switches (v0.12, config
     /// `[viewer]`); absent from an older gateway.
     var viewerDefaults: ViewerDefaults? = nil
@@ -711,6 +713,7 @@ struct HelloServer: Codable, Equatable, Sendable {
         case defaultFolder = "default_folder"
         case permissionMode = "permission_mode"
         case hideSessionFolder = "hide_session_folder"
+        case lockFolder = "lock_folder"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
