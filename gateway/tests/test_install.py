@@ -44,6 +44,10 @@ done
 echo "${SDKROOT:-<default>}" >> "$ATTEMPTS"
 if [ -z "${SDKROOT:-}" ] && [ "${DEFAULT_OK:-0}" = 1 ]; then echo "Build complete!"; exit 0; fi
 if [ -n "${SDKROOT:-}" ] && [ -n "${GOOD_SDK:-}" ] && [ "$SDKROOT" = "$GOOD_SDK" ]; then echo "Build complete!"; exit 0; fi
+if [ "${MACRO_FAIL:-0}" = 1 ]; then
+  echo "/src/Theme.swift:85:6: error: external macro implementation type 'SwiftUIMacros.EntryMacro' could not be found for macro 'Entry()'; plugin for module 'SwiftUIMacros' not found"
+  exit 1
+fi
 printf '\\033[1;31merror: \\033[0mcannot find %s in scope\\n' "'\\$x'"
 echo "note: some noise the person never needs"
 exit 1
@@ -134,6 +138,16 @@ def test_every_sdk_failing_shows_the_last_attempts_errors_plainly(build_env: dic
     assert "some noise" not in done.stderr
     assert "PORTICO_SDKROOT" in done.stderr
     assert done.stdout == ""
+
+
+def test_a_missing_swiftui_macro_plugin_is_named_not_blamed_on_the_tools(build_env: dict[str, object]) -> None:
+    # v0.18.1: Xcode alone ships SwiftUI's macro plugin, so updating the Command Line Tools cannot help.
+    env = {**build_env["env"], "MACRO_FAIL": "1"}  # type: ignore[dict-item]
+    done = run([BUILD_APP, build_env["repo"]], env)
+    assert done.returncode == 1
+    assert "SwiftUI macro Entry()" in done.stderr
+    assert "only with Xcode" in done.stderr
+    assert "update the Command Line Tools" not in done.stderr
 
 
 def test_candidates_can_be_given_explicitly(build_env: dict[str, object], tmp_path: Path) -> None:

@@ -1314,10 +1314,23 @@ enum ViewerSnapshot {
 extension EnvironmentValues {
     /// The agent that acts in the viewer; set by `ViewerView` for its
     /// panes only (the document view's panes are not the agent's).
-    @Entry var viewerAgent: ViewerAgent? = nil
+    var viewerAgent: ViewerAgent? {
+        get { self[ViewerAgentKey.self] }
+        set { self[ViewerAgentKey.self] = newValue }
+    }
     /// Which of the viewer column's two viewers a pane is in (Work's, or
     /// the open space's over it); `nil` outside the viewer column.
-    @Entry var viewerSlot: ViewerAgent.Slot? = nil
+    var viewerSlot: ViewerAgent.Slot? {
+        get { self[ViewerSlotKey.self] }
+        set { self[ViewerSlotKey.self] = newValue }
+    }
+}
+
+private struct ViewerAgentKey: EnvironmentKey {
+    static var defaultValue: ViewerAgent? { nil }
+}
+private struct ViewerSlotKey: EnvironmentKey {
+    static var defaultValue: ViewerAgent.Slot? { nil }
 }
 
 /// Registers the view behind a native pane with the agent, for its snapshot.

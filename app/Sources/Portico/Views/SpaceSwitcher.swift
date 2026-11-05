@@ -50,7 +50,7 @@ enum SpacesPresentation {
     static let noSpacesText = "No spaces yet"
 
     /// New space…'s tooltip when the gateway predates spaces.
-    static let tooOldHelp = "This Portico gateway is too old for spaces."
+    static let tooOldHelp = "This gateway is too old for spaces."
 
     /// New space… works only against a gateway that advertises `spaces.v1`.
     static func canCreateSpace(capabilities: [String]?) -> Bool {

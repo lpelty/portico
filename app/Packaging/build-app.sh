@@ -168,6 +168,15 @@ done <<<"$candidates"
 say
 say "app: the app did not build with any installed macOS SDK. Tried:"
 for t in "${tried[@]}"; do say "  - $t"; done
+macro="$(strip_ansi <"$last_log" | grep -oE "plugin for module 'SwiftUIMacros' not found" | head -n 1 || true)"
+if [ -n "$macro" ]; then
+  # SwiftUI's macro plugin ships only with Xcode, so no Command Line Tools update helps.
+  name="$(strip_ansi <"$last_log" | grep -oE "for macro '[A-Za-z]+\(\)'" | head -n 1 | sed -E "s/for macro '(.*)'/\1/" || true)"
+  say "app: Portico's source uses the SwiftUI macro ${name:-(unnamed)}, whose plugin ships only with Xcode."
+  say "app: This is a bug in Portico, not in your tools: please report it. The compiler errors:"
+  show_errors
+  exit 1
+fi
 say "app: update the Command Line Tools (softwareupdate, or: xcode-select --install), or set"
 say "app: PORTICO_SDKROOT to an SDK that builds it. The last attempt's compiler errors:"
 show_errors

@@ -67,7 +67,7 @@ final class TextScaleTests: XCTestCase {
         XCTAssertEqual(AppearanceSettingsPresentation.textSizeLabel, "Text size")
         XCTAssertEqual(AppearanceSettingsPresentation.textSizeNote,
                        "Conversation, sidebar and documents. Web pages in the viewer keep their own size.")
-        XCTAssertEqual(AppearanceSettingsPresentation.shortcutNote, "⌘+ and ⌘− change it anywhere in Portico.")
+        XCTAssertEqual(AppearanceSettingsPresentation.shortcutNote, "⌘+ and ⌘− change it anywhere in the app.")
     }
 
     // MARK: what scales

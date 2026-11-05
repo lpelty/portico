@@ -56,7 +56,7 @@ final class HomeFolderTests: XCTestCase {
             guard case .homeMissing(let path) = error else { return XCTFail("unexpected \(error)") }
             XCTAssertEqual(path, missing.path)
         }
-        XCTAssertEqual(supervisor.status, .failed("Portico's folder \(missing.path) is missing; reinstall"))
+        XCTAssertEqual(supervisor.status, .failed("the app's folder \(missing.path) is missing; reinstall"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
         XCTAssertNil(supervisor.pid, "nothing was started")
     }

@@ -862,7 +862,7 @@ struct ImagePane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
-            OtherPane(shown: shown, message: "Portico can't read this image. Open it in the app that can.")
+            OtherPane(shown: shown, message: "This image can't be read here. Open it in the app that can.")
         }
     }
 }
@@ -911,7 +911,7 @@ struct TextPane: View {
             switch phase {
             case .loading: LoadingPane()
             case .text(let read): TextBody(read: read, file: file)
-            case .unreadable: OtherPane(shown: shown, message: "Portico can't read this file as text. Open it in the app that can.")
+            case .unreadable: OtherPane(shown: shown, message: "This file can't be read as text. Open it in the app that can.")
             }
         }
         .task(id: file) {
@@ -1078,7 +1078,7 @@ struct OtherPane: View {
             Text(shown.title)
                 .scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.text)
-            Text(message ?? "Portico can't show \(shown.kindPhrase) here. Open it in the app that can.")
+            Text(message ?? "\(shown.kindPhrase.prefix(1).uppercased() + shown.kindPhrase.dropFirst()) can't be shown here. Open it in the app that can.")
                 .scaledFont(13)
                 .foregroundStyle(Theme.text2)
                 .multilineTextAlignment(.center)

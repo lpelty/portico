@@ -78,7 +78,7 @@ final class SpacesTests: XCTestCase {
 
     func test_empty_menu_and_too_old_copy() {
         XCTAssertEqual(SpacesPresentation.noSpacesText, "No spaces yet")
-        XCTAssertEqual(SpacesPresentation.tooOldHelp, "This Portico gateway is too old for spaces.")
+        XCTAssertEqual(SpacesPresentation.tooOldHelp, "This gateway is too old for spaces.")
         XCTAssertTrue(SpacesPresentation.showsEmptyNote(spaces: [], query: ""))
         XCTAssertFalse(SpacesPresentation.showsEmptyNote(spaces: [], query: "x"), "a typed filter shows No match, not the empty note")
         XCTAssertFalse(SpacesPresentation.showsEmptyNote(spaces: [space("brief")], query: ""))

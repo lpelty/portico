@@ -166,7 +166,8 @@ struct InputBar: View {
             if let completion = slashCompletion {
                 SlashCommandList(
                     completion: completion, selection: slash.selection,
-                    agentName: model.hello?.brand.agentName ?? model.brand.name
+                    agentName: model.hello?.brand.agentName ?? model.brand.name,
+                    appName: model.brand.name
                 ) { item in
                     pickSlash(item, send: item.group == .portico)
                 }

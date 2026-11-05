@@ -588,9 +588,8 @@ struct HeaderIcon: View {
 // MARK: - Bookmarks (F2, v0.4's words)
 
 /// The Files pane's Bookmarks tab: BOOKMARKS (from settings, by absolute
-/// path) then CHANGED THIS SESSION (the files the agent created or edited,
-/// newest change first, each with the time it last changed; no reads;
-/// hidden when there are none, v0.5). With no bookmarks it says so, left
+/// path) and nothing else; CHANGED THIS SESSION is the Folders tab's
+/// (v0.18.1, Larry: keep Bookmarks clean). With no bookmarks it says so, left
 /// at the pane's edge, without a BOOKMARKS heading under the Bookmarks tab
 /// (v0.11, item 62; AG6).
 struct BookmarksView: View {
@@ -615,18 +614,7 @@ struct BookmarksView: View {
                         BookmarkRow(chat: chat, path: path, at: nil)
                     }
                 }
-                let changed = model.changedThisSession(chat: chat)
-                if !changed.isEmpty {
-                    SidebarSectionLabel("Changed this session")
-                        .padding(.horizontal, 16)
-                        .padding(.top, 18)
-                        .padding(.bottom, 6)
-                    ForEach(changed, id: \.path) { file in
-                        // v0.12, item 2: the folder list's row style.
-                        ChangedFileRow(chat: chat, path: file.path, at: file.at)
-                            .padding(.horizontal, 8)
-                    }
-                }
+                // Changed this session lives in the Folders tab only (v0.18.1).
             }
             // The column spans the pane, so the words start at its edge
             // rather than in a narrow column centred in it.

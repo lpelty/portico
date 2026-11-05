@@ -41,7 +41,7 @@ final class GatewaySupervisor: ObservableObject {
             case .tokenUnreadable(let path):
                 "the gateway is up but its token file \(path) cannot be read"
             case .homeMissing(let path):
-                "Portico's folder \(path) is missing; reinstall"
+                "the app's folder \(path) is missing; reinstall"
             }
         }
     }

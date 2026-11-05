@@ -31,8 +31,8 @@ final class SettingsFooterTests: XCTestCase {
     func testQuitLabelsUseTheNewWording() {
         XCTAssertEqual(Settings.QuitBehaviour.keepRunning.label, "Keep the gateway and its services running")
         XCTAssertEqual(Settings.QuitBehaviour.stopEverything.label, "Stop the gateway and its services")
-        XCTAssertTrue(Settings.QuitBehaviour.caption.contains("battery"))
-        XCTAssertTrue(Settings.QuitBehaviour.caption.contains("stop command first"))
+        XCTAssertTrue(Settings.QuitBehaviour.caption(brand: "Portico").contains("battery"))
+        XCTAssertTrue(Settings.QuitBehaviour.caption(brand: "Portico").contains("stop command first"))
     }
 
     func testQuitRawValuesAreUnchangedSoSavedChoicesSurvive() {
