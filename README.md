@@ -576,6 +576,29 @@ dropped when the person removes it. `examples/spaces/meeting-prep.md` is a
 starting file. Spaces need an app that lists `spaces.v1`, and the
 viewer tools need `viewer.v1`; an older app is sent neither.
 
+## Editing and zoom in the viewer (v0.20)
+
+**Edit** (the pencil in the viewer header, or ⌘E) turns on editing for
+Markdown, plain text, code and HTML source on this Mac. Markdown is edited
+as the page: the marks show only on the line the cursor is on, and the file
+keeps exactly what was written. Changes save on their own a moment after
+typing stops, atomically, keeping line endings, permissions and extended
+attributes. If the agent changes the file while there are unsaved edits, a
+bar offers **Keep mine** or **Use the agent's**. A save that fails keeps the
+text and a copy in `<home>/unsaved/`; reopening the file offers to restore
+it. With a gateway that offers `files.edited.v1`, the agent hears which
+files were edited with the person's next message.
+
+Images and PDFs zoom with the control at the bottom right, a pinch, or
+⌥⌘= / ⌥⌘− / ⌥⌘0; ⌘+ and ⌘− stay text size.
+
+The editor is CodeMirror 6 with Portico's live preview, bundled into
+`app/Sources/Portico/Resources/editor.js`, which is committed: building the
+app needs no Node. To change the editor, edit `app/Editor/src`, then run
+`app/Editor/build.sh` (Node and npm from Homebrew); it runs the editor's
+tests and rewrites the bundle, whose first line carries a hash of its
+sources. `tests/test_distribution.py` fails if the bundle is out of date.
+
 ## Command line
 
 `bin/portico-gateway <command>`, each with `--state` (default
