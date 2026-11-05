@@ -2737,6 +2737,9 @@
           "$ref": "#/$defs/FilesRootsSet"
         },
         {
+          "$ref": "#/$defs/FilesEdited"
+        },
+        {
           "$ref": "#/$defs/ArtifactOpened"
         },
         {
@@ -3092,6 +3095,61 @@
         "message"
       ],
       "title": "Error",
+      "type": "object"
+    },
+    "FilesEdited": {
+      "additionalProperties": false,
+      "description": "v0.20 (``files.edited.v1``): the person saved ``path`` in the viewer's editor; no reply.\n\nThe agent hears of it in a note ahead of the person's next message.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "files.edited",
+          "default": "files.edited",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "path"
+      ],
+      "title": "FilesEdited",
       "type": "object"
     },
     "FilesList": {

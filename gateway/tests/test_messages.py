@@ -34,6 +34,7 @@ EXPECTED_KEYS = {
     "client.card.answer",
     "client.files.list",
     "client.files.roots.set",
+    "client.files.edited",
     "client.artifact.opened",
     "client.gateway.stop",
     "client.session.renew",
@@ -144,7 +145,7 @@ def test_every_type_has_schema_def_and_example():
     # plugins.update, plugins.marketplace_add, plugins.marketplace_update, plugins.details (both ways),
     # plugins.options (both ways), plugins.configure, plugins.state;
     # app.call_tool, app.message, app.context, app.reload, app.open, app.result, app.cancelled, app.call_result
-    assert len(ex) == 101
+    assert len(ex) == 102
     assert set(ex) == EXPECTED_KEYS
 
 

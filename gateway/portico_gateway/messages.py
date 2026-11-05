@@ -78,6 +78,10 @@ MESSAGES_ATTACHMENTS_CAPABILITY = "messages.attachments.v1"
 # with the folders a person added to the Files pane (``files.roots``).
 FILES_EXTRA_CAPABILITY = "files.extra.v1"
 
+# v0.20 (spec §2.7): a gateway lists it when it takes ``files.edited`` and tells
+# the agent, ahead of the person's next message, which files they edited.
+FILES_EDITED_CAPABILITY = "files.edited.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -642,6 +646,17 @@ class FilesRootsSet(Envelope):
 
     type: Literal["files.roots.set"] = "files.roots.set"
     paths: list[str] = []
+
+
+class FilesEdited(Envelope):
+    """v0.20 (``files.edited.v1``): the person saved ``path`` in the viewer's editor; no reply.
+
+    The agent hears of it in a note ahead of the person's next message.
+    """
+
+    type: Literal["files.edited"] = "files.edited"
+    chat: int
+    path: str
 
 
 class ArtifactOpened(Envelope):
@@ -1496,6 +1511,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     CardAnswer,
     FilesListRequest,
     FilesRootsSet,
+    FilesEdited,
     ArtifactOpened,
     GatewayStop,
     SessionRenew,
@@ -1705,6 +1721,7 @@ def example_messages() -> dict[str, BaseModel]:
         ),
         FilesListRequest(ts=_TS, chat=1, id="req-3", root="chat", path="src"),
         FilesRootsSet(ts=_TS, id="req-6", paths=["/Users/someone/papers"]),
+        FilesEdited(ts=_TS, chat=1, path=f"{_FOLDER}/notes.md"),
         ArtifactOpened(ts=_TS, chat=1, artifact_id="art-3"),
         GatewayStop(ts=_TS),
         SessionRenew(ts=_TS, id="req-4", chat=14, log=True),

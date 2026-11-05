@@ -232,6 +232,7 @@ from .messages import (
     FilesList,
     FilesListRequest,
     FilesRoots,
+    FilesEdited,
     FilesRootsSet,
     FilesResults,
     FilesSearch,
@@ -424,6 +425,23 @@ def _frame_type(raw: str | bytes) -> str | None:
 
 
 # --- turns: helpers ----------------------------------------------------------
+
+
+def edited_note(paths: list[str], folder: Path) -> str:
+    """The note ahead of the person's next message (v0.20 §2.7); empty for no paths.
+
+    Exactly ``(Edited in the viewer since your last message: a.md, b.md)`` and a blank line.
+    A path inside ``folder`` is shown relative to it, any other absolute.
+    """
+    if not paths:
+        return ""
+    names: list[str] = []
+    for raw in paths:
+        try:
+            names.append(str(Path(raw).relative_to(folder)))
+        except ValueError:
+            names.append(raw)
+    return f"(Edited in the viewer since your last message: {', '.join(names)})\n\n"
 
 
 def with_attachments(text: str, attachments: list[str]) -> str:
@@ -978,6 +996,9 @@ class GatewayServer:
         self._queues: dict[int, list[QueuedMessage]] = {}
         # v0.18: which held messages an MCP app sent, by (chat, queued id): their ``via``.
         self._queued_via: dict[tuple[int, str], str] = {}
+        # v0.20 (``files.edited.v1``): per chat, the files the person saved in the
+        # viewer since their last message (ordered, unique); noted to the engine, then cleared.
+        self._edited: dict[int, list[str]] = {}
         # v0.11 (item 66): the agent's commands, last list per folder (newest
         # last), kept in ``commands.json`` so an app hears one before any
         # engine of this launch has started.
@@ -1074,6 +1095,7 @@ class GatewayServer:
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
         self.register("files.roots.set", self.on_files_roots_set)
+        self.register("files.edited", self.on_files_edited)
         self.register("files.search", self.on_files_search)
         self.register("session.renew", self.on_session_renew)
         self.register("session.mode", self.on_session_mode)
@@ -2881,6 +2903,7 @@ class GatewayServer:
         await self.cards.cancel_all(chat, "chat removed", self.emit)
         await self._close_engine(chat)
         self._queues.pop(chat.number, None)
+        self._edited.pop(chat.number, None)
         self.registry.remove(chat.number)
         self._engine_locks.pop(chat.number, None)
         await self.send_chat_list()
@@ -2927,6 +2950,23 @@ class GatewayServer:
             extras.append(Root(name=name, path=str(path), extra=True, missing=not there))
         setattr(conn, _EXTRA_ROOTS_ATTR, extras)
         await self._send(conn, FilesRoots(ts=_now(), id=msg.id, roots=[*self.config.roots, *extras]))
+
+    async def on_files_edited(self, msg: FilesEdited, conn: ServerConnection) -> None:
+        """v0.20: remember that the person saved ``msg.path``; the agent is told with the next message. No reply."""
+        chat = self.registry.get(msg.chat)
+        path = Path(msg.path).expanduser()
+        if not path.is_absolute():
+            path = chat.folder / path
+        edited = self._edited.setdefault(chat.number, [])
+        if str(path) not in edited:
+            edited.append(str(path))
+
+    def _take_edited_note(self, chat: Chat, text: str) -> str:
+        """``text`` with the edits note first, and the chat's edits cleared; a slash command is left as it is."""
+        if slash_command(text) is not None:
+            return text
+        paths = self._edited.pop(chat.number, None)
+        return edited_note(paths or [], chat.folder) + text
 
     async def on_files_list(self, msg: FilesListRequest, conn: ServerConnection) -> None:
         root = self.root_path(msg.root, msg.chat, conn)
@@ -3477,7 +3517,9 @@ class GatewayServer:
         first = chat.title is None and not chat.sent_turn and not chat.restored
         if first:
             title = title_from(msg.text)
-        text = with_attachments(msg.text, attachments)
+        # v0.20: what goes to the engine is the note, the typed text, then the attachment
+        # block (the apps' context goes before all of it); the echo is only the typed text.
+        text = self._take_edited_note(chat, with_attachments(msg.text, attachments))
         # v0.19 (spec §8.4): the echo is what was typed, the attachments apart
         # (``for_app`` gives an app without ``messages.attachments.v1`` the full text).
         run = await self._echo_turn(chat, msg.text, via, attachments)
@@ -3655,7 +3697,7 @@ class GatewayServer:
                     continue  # taken back meanwhile: the next one, from the top
             else:
                 images, notices = [], []
-            text = with_attachments(item.text, item.attachments)
+            text = self._take_edited_note(chat, with_attachments(item.text, item.attachments))
             engine_text, context = self._with_app_context(chat, text)
             try:
                 await engine.inject(engine_text, images)

@@ -452,6 +452,16 @@ struct FilesRootsSet: Codable, Equatable, Sendable {
     var ts: String = ProtocolClock.now()
 }
 
+/// v0.20 (`files.edited.v1`): the person saved `path` in the viewer's editor;
+/// the gateway tells the agent with the next message. No reply.
+struct FilesEdited: Codable, Equatable, Sendable {
+    static let messageType = "files.edited"
+    static let capability = "files.edited.v1"
+    var chat: Int
+    var path: String
+    var ts: String = ProtocolClock.now()
+}
+
 struct FilesListRequest: Codable, Equatable, Sendable {
     static let messageType = "files.list"
     var root: String
@@ -2177,6 +2187,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case cardAnswer(CardAnswer)
     case filesList(FilesListRequest)
     case filesRootsSet(FilesRootsSet)
+    case filesEdited(FilesEdited)
     case artifactOpened(ArtifactOpened)
     case gatewayStop(GatewayStop)
     case sessionRenew(SessionRenew)
@@ -2232,6 +2243,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .cardAnswer: CardAnswer.messageType
         case .filesList: FilesListRequest.messageType
         case .filesRootsSet: FilesRootsSet.messageType
+        case .filesEdited: FilesEdited.messageType
         case .artifactOpened: ArtifactOpened.messageType
         case .gatewayStop: GatewayStop.messageType
         case .sessionRenew: SessionRenew.messageType
@@ -2290,6 +2302,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case CardAnswer.messageType: self = .cardAnswer(try CardAnswer(from: decoder))
         case FilesListRequest.messageType: self = .filesList(try FilesListRequest(from: decoder))
         case FilesRootsSet.messageType: self = .filesRootsSet(try FilesRootsSet(from: decoder))
+        case FilesEdited.messageType: self = .filesEdited(try FilesEdited(from: decoder))
         case ArtifactOpened.messageType: self = .artifactOpened(try ArtifactOpened(from: decoder))
         case GatewayStop.messageType: self = .gatewayStop(try GatewayStop(from: decoder))
         case SessionRenew.messageType: self = .sessionRenew(try SessionRenew(from: decoder))
@@ -2350,6 +2363,7 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .cardAnswer(let m): try m.encode(to: encoder)
         case .filesList(let m): try m.encode(to: encoder)
         case .filesRootsSet(let m): try m.encode(to: encoder)
+        case .filesEdited(let m): try m.encode(to: encoder)
         case .artifactOpened(let m): try m.encode(to: encoder)
         case .gatewayStop(let m): try m.encode(to: encoder)
         case .sessionRenew(let m): try m.encode(to: encoder)
