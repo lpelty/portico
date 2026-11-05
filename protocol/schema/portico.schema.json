@@ -1126,6 +1126,18 @@
     "Brand": {
       "additionalProperties": false,
       "properties": {
+        "about": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "About"
+        },
         "accent": {
           "anyOf": [
             {
@@ -1169,6 +1181,18 @@
         "name": {
           "title": "Name",
           "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
         }
       },
       "required": [

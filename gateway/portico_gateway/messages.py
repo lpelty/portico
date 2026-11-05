@@ -107,6 +107,10 @@ class Brand(Strict):
     # v0.7: an image (absolute path) the toolbar shows in place of the mark
     # and the name, e.g. the deployment's lockup.
     header_image: str | None = None
+    # v0.20.1: the deployment's version, which the About panel shows, and the
+    # panel's text under it ({app_version} and {built} are filled in by the app).
+    version: str | None = None
+    about: str | None = None
 
 
 class Action(Strict):
@@ -1697,7 +1701,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.20.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.20.1", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1"]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),

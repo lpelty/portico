@@ -123,6 +123,7 @@ struct PorticoApp: App {
                 // control (nil keeps the system accent), the icon in the Dock only
                 // for a build without one of its own (v0.5).
                 .tint(model.brand.accent)
+                .background(WindowTitleSetter(title: model.brand.name))
                 .onChange(of: model.hello?.brand, initial: true) { _, _ in
                     model.brand.applyApplicationIcon()
                 }

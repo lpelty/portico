@@ -486,6 +486,22 @@ def test_a_relative_header_image_stops_the_load(tmp_path: Path) -> None:
     assert load_config(path).brand.for_hello().header_image == str(Path("~/lockup.svg").expanduser())
 
 
+
+def test_the_about_box_keys_reach_hello(tmp_path: Path) -> None:
+    # v0.20.1: the deployment's version and the About panel's text go to the
+    # app as written; the placeholders are the app's to fill in.
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[brand]\nname = "Front Door"\nagent_name = "Helper"\nversion = "0.40.2"\n'
+        'about = """App {app_version} \u00b7 Built {built}\nQuestions: help@example.com"""\n'
+    )
+    brand = hello_for(load_config(path), epoch="e", gateway_version="0.20.1").brand
+    assert brand.version == "0.40.2"
+    assert brand.about == "App {app_version} \u00b7 Built {built}\nQuestions: help@example.com"
+    # Absent, they stay absent, so an app shows its own version as before.
+    assert hello_for(Config(), epoch="e", gateway_version="0.20.1").brand.version is None
+    assert hello_for(Config(), epoch="e", gateway_version="0.20.1").brand.about is None
+
 # --- v0.11: [files] -------------------------------------------------------------
 
 

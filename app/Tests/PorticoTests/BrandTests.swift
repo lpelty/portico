@@ -12,7 +12,7 @@ final class BrandTests: XCTestCase {
 
     func testDefaultsWithoutAHello() {
         let shown = BrandPresentation(brand: nil)
-        XCTAssertEqual(shown.name, "Portico")
+        XCTAssertEqual(shown.name, "Portico", "a test run has no app bundle")
         XCTAssertNil(shown.accent, "no accent means the system accent")
         XCTAssertNil(shown.iconImage)
     }
@@ -166,6 +166,66 @@ final class BrandTests: XCTestCase {
         XCTAssertEqual(
             AppModel.replacedText(brand: "Acme Agent"),
             "Another Acme Agent window is using this gateway. Agent › Start brings it back here.")
+    }
+
+    /// v0.20.1 (item 17): before hello, an installed app is called by its
+    /// bundle's name, never the code name; only a build with no bundle falls back.
+    func testTheNameBeforeHelloIsTheBundlesName() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("Front Door.app")
+        let contents = app.appendingPathComponent("Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let info: NSDictionary = ["CFBundleName": "Front Door", "CFBundleDisplayName": "Front Door", "CFBundleIdentifier": "dev.test.front-door-\(UUID().uuidString)"]
+        info.write(to: contents.appendingPathComponent("Info.plist"), atomically: true)
+        let bundle = try XCTUnwrap(Bundle(url: app))
+        XCTAssertEqual(BrandPresentation.fallbackName(bundle: bundle), "Front Door")
+
+        let folder = root.appendingPathComponent("plain")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        XCTAssertEqual(BrandPresentation.fallbackName(bundle: try XCTUnwrap(Bundle(url: folder))), "Portico")
+    }
+
+    /// v0.20.1 (item 16): the deployment's version in the About panel, the
+    /// app's own on a generic line, and the deployment's own text when it
+    /// gives one.
+    func testTheAboutPanelShowsTheDeploymentsVersionAndText() throws {
+        let built = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-05T15:30:00Z"))
+        let builtText = BrandPresentation.builtFormat(built)
+        func brand(version: String? = nil, about: String? = nil) -> BrandPresentation {
+            BrandPresentation(brand: Brand(name: "Front Door", agentName: "Helper", version: version, about: about))
+        }
+
+        // No keys: today's panel, the app's version, and when it was built.
+        XCTAssertEqual(brand().aboutVersion(appVersion: "0.20.1"), "0.20.1")
+        XCTAssertEqual(brand().aboutText(appVersion: "0.20.1", built: built), "Built \(builtText)")
+        XCTAssertEqual(brand().aboutText(appVersion: "0.20.1", built: nil), "")
+
+        // The deployment's version: the app's own moves to a generic line.
+        XCTAssertEqual(brand(version: "0.40.2").aboutVersion(appVersion: "0.20.1"), "0.40.2")
+        XCTAssertEqual(brand(version: "0.40.2").aboutText(appVersion: "0.20.1", built: built), "App 0.20.1 · Built \(builtText)")
+        XCTAssertEqual(brand(version: "0.40.2").aboutText(appVersion: "0.20.1", built: nil), "App 0.20.1")
+        XCTAssertEqual(brand(version: "  ").aboutVersion(appVersion: "0.20.1"), "0.20.1", "blank is no version")
+
+        // The deployment's own text, with the placeholders filled in.
+        let about = "UI {app_version}, built {built}\nQuestions: help@example.com · {other}"
+        XCTAssertEqual(
+            brand(version: "0.40.2", about: about).aboutText(appVersion: "0.20.1", built: built),
+            "UI 0.20.1, built \(builtText)\nQuestions: help@example.com · {other}")
+        XCTAssertEqual(brand(about: "").aboutText(appVersion: "0.20.1", built: built), "", "empty shows nothing")
+        XCTAssertNil(BrandPresentation.aboutCredits(""))
+
+        // Web and email addresses are links; nothing else is.
+        let credits = try XCTUnwrap(BrandPresentation.aboutCredits("Help: help@example.com or https://example.com/help, ftp://example.com"))
+        var links: [String] = []
+        credits.enumerateAttribute(.link, in: NSRange(location: 0, length: credits.length)) { value, _, _ in
+            if let url = value as? URL { links.append(url.absoluteString) }
+        }
+        XCTAssertEqual(links, ["mailto:help@example.com", "https://example.com/help"])
+
+        // The build time make-app.sh writes, and a bundle without one.
+        XCTAssertEqual(BrandPresentation.buildDate(info: ["PorticoBuildDate": "2026-11-05T15:30:00Z"]), built)
+        XCTAssertNil(BrandPresentation.buildDate(info: [:]))
     }
 
     /// No string the person reads spells "Portico": it comes from the brand.

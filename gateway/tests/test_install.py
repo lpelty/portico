@@ -8,6 +8,7 @@ stands in for the release binary. Nothing here runs a real build or opens an app
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 import plistlib
 import shutil
 import stat
@@ -229,6 +230,9 @@ def test_app_bundle_has_the_info_plist_keys(products: Path, tmp_path: Path) -> N
     assert info["CFBundleShortVersionString"] == "0.3.0"
     assert info["PorticoGatewayBin"] == "/opt/portico/bin/portico-gateway"
     assert "PorticoHome" not in info  # a generic install bakes no folder (v0.17 §5)
+    # v0.20.1: the build time, for the About panel's text; ISO 8601 in UTC, within the last hour.
+    built = datetime.fromisoformat(info["PorticoBuildDate"].replace("Z", "+00:00"))
+    assert built.tzinfo is not None and abs((datetime.now(timezone.utc) - built).total_seconds()) < 3600
     # Voice input (v0.9): the usage strings the microphone and speech prompts show.
     assert info["NSMicrophoneUsageDescription"].startswith("Acme Agent listens only while you hold or press the mic")
     assert "on this Mac" in info["NSSpeechRecognitionUsageDescription"]
