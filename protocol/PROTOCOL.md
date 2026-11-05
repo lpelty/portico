@@ -514,10 +514,11 @@ the mark beside the start screen's greeting, `header_image` (v0.7) an
 absolute path to an image the toolbar shows in place of the mark and the
 name, 28 points tall with its own proportions (an older app ignores it),
 `version` (v0.20.1) the deployment's version, which the About panel shows
-in place of the app's own, and `about` (v0.20.1) the About panel's text
+in place of the app's own (macOS adds "Version" before it only when it
+looks like a number), and `about` (v0.20.1) the About panel's text
 under it, in which the app fills in `{app_version}` and `{built}` (an
 older app ignores both);
-absent or unreadable values fall back to "Portico" and the system
+absent or unreadable values fall back to the app bundle's own name (else "Portico") and the system
 defaults), `actions: [{label, text}]`, `roots: [{name, path, extra?, missing?}]` (`path`
 absolute, as configured with any `~` expanded; v0.19: `extra` and `missing`
 are `false` in `hello` (the deployment's own roots) and are meaningful in

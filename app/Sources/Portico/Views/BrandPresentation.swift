@@ -332,6 +332,9 @@ struct WindowTitleSetter: NSViewRepresentable {
             apply()
         }
 
+        // Never takes a click meant for the content in front of it.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
         func apply() {
             guard let window, window.title != title else { return }
             window.title = title

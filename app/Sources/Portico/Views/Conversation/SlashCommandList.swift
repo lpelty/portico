@@ -75,7 +75,7 @@ struct SlashCommandList: View {
     let selection: Int
     let agentName: String
     /// The app's own commands are headed with its brand name (v0.18.1).
-    var appName: String = BrandPresentation.defaultName
+    var appName: String = BrandPresentation.fallbackName
     let pick: (SlashCompletion.Item) -> Void
 
     static let rowHeight: CGFloat = 29

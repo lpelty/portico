@@ -24,6 +24,9 @@ Field notes 16 and 17: the About panel is the deployment's, and nothing says
 
 - `brand` in `hello` gains optional `version` and `about`. An older app
   ignores them.
+- **Update the gateway before adding the keys.** An older gateway refuses a
+  config with keys it doesn't know, so `[brand] version` or `about` on a
+  0.20.0 gateway stops it loading.
 
 ### Packaging
 
