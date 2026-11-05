@@ -135,7 +135,7 @@ test("CRLF, CR and LF input round-trip unchanged", () => {
     assert.equal(editor.visibleText(), text, JSON.stringify(text));
     editor.load({ text, mode: "code", language: "json" });
     assert.equal(editor.visibleText(), text, JSON.stringify(text));
-    editor.replaceAll(text, true);
+    editor.replaceAll(text, { keepCursorLine: true });
     assert.equal(editor.visibleText(), text, JSON.stringify(text));
   }
   assert.equal(lineSeparatorOf("x\r\ny"), "\r\n");
@@ -223,18 +223,26 @@ test("headings, quotes, links, tables and front matter decorate without touching
   assert.equal(state.doc.toString(), SAMPLE);
 });
 
-test("edits are sent after 800 ms, and a blur after an edit asks for a save", async () => {
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("the first edit pings dirty at once; the text follows 800 ms later", async () => {
   const { editor, messages } = mount();
   editor.load({ text: "abc\n", mode: "code", language: "python" });
   const view = editor.view;
   view.dispatch({ changes: { from: 3, insert: "d" }, userEvent: "input.type" });
-  assert.deepEqual(messages, []);
-  await new Promise((r) => setTimeout(r, 850));
-  assert.deepEqual(messages, [{ type: "changed", text: "abcd\n", dirty: true }]);
-  view.focus();
-  view.contentDOM.blur();
-  (view as any).observer?.flush?.();
-  // jsdom may not report the focus change; the bridge contract is checked directly.
+  assert.deepEqual(messages, [{ type: "dirty" }]);
+  view.dispatch({ changes: { from: 4, insert: "e" }, userEvent: "input.type" });
+  assert.deepEqual(messages, [{ type: "dirty" }]);
+  await wait(850);
+  assert.deepEqual(messages, [{ type: "dirty" }, { type: "changed", text: "abcde\n", dirty: true }]);
+  // Once sent, the next edit is a new round with a new ping.
+  view.dispatch({ changes: { from: 0, insert: "z" }, userEvent: "input.type" });
+  assert.deepEqual(messages.at(-1), { type: "dirty" });
+  await wait(850);
+  assert.deepEqual(messages.at(-1), { type: "changed", text: "zabcde\n", dirty: true });
+});
+
+test("blur asks for a save only for an edit not yet sent", async () => {
   const { Bridge } = await import("../src/bridge.ts");
   const sent: Message[] = [];
   const bridge = new Bridge((m) => sent.push(m));
@@ -242,8 +250,17 @@ test("edits are sent after 800 ms, and a blur after an edit asks for a save", as
   assert.deepEqual(sent, []);
   bridge.edited(() => "y");
   bridge.blurred(() => "y");
-  assert.deepEqual(sent, [{ type: "saveNow", text: "y" }]);
+  assert.deepEqual(sent, [{ type: "dirty" }, { type: "saveNow", text: "y" }]);
   assert.equal(bridge.pending, false);
+  // Sent is saved: later blurs send nothing more.
+  bridge.blurred(() => "y");
+  bridge.blurred(() => "y");
+  assert.equal(sent.length, 2);
+  // Nor after the debounced send.
+  bridge.edited(() => "w");
+  await wait(850);
+  bridge.blurred(() => "w");
+  assert.deepEqual(sent.slice(2), [{ type: "dirty" }, { type: "changed", text: "w", dirty: true }]);
   bridge.ready();
   assert.deepEqual(sent.at(-1), { type: "ready" });
 });
@@ -252,9 +269,93 @@ test("a reload from disk is not an edit", async () => {
   const { editor, messages } = mount();
   editor.load({ text: "one\ntwo\nthree\n", mode: "markdown" });
   editor.view.dispatch({ selection: EditorSelection.cursor(editor.view.state.doc.line(3).from) });
-  editor.replaceAll("one\ntwo\nthree changed\nfour\n", true);
+  assert.equal(editor.replaceAll("one\ntwo\nthree changed\nfour\n", { keepCursorLine: true }), true);
   assert.equal(editor.visibleText(), "one\ntwo\nthree changed\nfour\n");
   assert.equal(editor.view.state.doc.lineAt(editor.view.state.selection.main.head).number, 3);
-  await new Promise((r) => setTimeout(r, 850));
+  assert.equal(editor.replaceAll("x\n", { keepUndo: true }), true);
+  assert.equal(editor.visibleText(), "x\n");
+  await wait(850);
   assert.deepEqual(messages, []);
+});
+
+test("replaceAll refuses while an edit is unsent, unless forced", async () => {
+  const { editor, messages } = mount();
+  editor.load({ text: "mine\n", mode: "markdown" });
+  editor.view.dispatch({ changes: { from: 4, insert: "!" }, userEvent: "input.type" });
+  assert.equal(editor.replaceAll("theirs\n"), false);
+  assert.equal(editor.replaceAll("theirs\n", { keepUndo: true }), false);
+  assert.equal(editor.visibleText(), "mine!\n");
+  assert.equal(editor.replaceAll("theirs\n", { force: true }), true);
+  assert.equal(editor.visibleText(), "theirs\n");
+  await wait(850);
+  // The forced replace dropped the pending send.
+  assert.deepEqual(messages, [{ type: "dirty" }]);
+  // Once sent, replacing is allowed again.
+  editor.view.dispatch({ changes: { from: 0, insert: "a" }, userEvent: "input.type" });
+  await wait(850);
+  assert.equal(editor.replaceAll("b\n"), true);
+});
+
+test("replaceAll with keepUndo: the person's text comes back with undo", async () => {
+  const { undo } = await import("@codemirror/commands");
+  const { editor, messages } = mount();
+  editor.load({ text: "base\r\nline\r\n", mode: "markdown" });
+  const view = editor.view;
+  view.dispatch({ changes: { from: 4, insert: " mine" }, userEvent: "input.type" });
+  await wait(850);
+  const sentCount = messages.length;
+  assert.equal(editor.replaceAll("theirs\r\nline\r\nmore\r\n", { keepUndo: true }), true);
+  assert.equal(editor.visibleText(), "theirs\r\nline\r\nmore\r\n");
+  assert.equal(messages.length, sentCount);
+  await wait(850);
+  assert.equal(messages.length, sentCount, "the replace is not sent back");
+  assert.ok(undo(view));
+  assert.equal(editor.visibleText(), "base mine\r\nline\r\n");
+  // The undo is the person's: it is sent.
+  assert.deepEqual(messages.at(-1), { type: "dirty" });
+});
+
+function paste(view: any, text: string) {
+  // As CodeMirror's own paste handler does: toText, then replaceSelection.
+  view.dispatch(view.state.replaceSelection(view.state.toText(text)), { userEvent: "input.paste", scrollIntoView: true });
+}
+
+test("pasted and dropped text takes the file's line breaks", () => {
+  const { editor } = mount();
+  editor.load({ text: "a\r\nb\r\n", mode: "markdown" });
+  const view = editor.view;
+  view.dispatch({ selection: EditorSelection.cursor(1) });
+  paste(view, "\none\ntwo\n");
+  assert.equal(editor.visibleText(), "a\r\none\r\ntwo\r\n\r\nb\r\n");
+  assert.equal(view.state.selection.main.head, view.state.doc.toString().indexOf("two") + 4);
+  editor.load({ text: "x\ny\n", mode: "code", language: "json" });
+  view.dispatch({ selection: EditorSelection.cursor(1) });
+  paste(editor.view, "\r\np\r\nq\rr");
+  assert.equal(editor.visibleText(), "x\np\nq\nr\ny\n");
+  assert.ok(!editor.visibleText().includes("\r"));
+  // A drop goes through the same filter.
+  editor.view.dispatch({ changes: { from: 0, insert: editor.view.state.toText("d1\r\nd2") }, userEvent: "input.drop" });
+  assert.equal(editor.visibleText(), "d1\nd2x\np\nq\nr\ny\n");
+  // A change from disk keeps its bytes (a mixed file stays mixed).
+  editor.load({ text: "m\r\n", mode: "markdown" });
+  editor.replaceAll("m\r\nlone\nend\r\n", { keepUndo: true });
+  assert.equal(editor.visibleText(), "m\r\nlone\nend\r\n");
+});
+
+test("a remote image draws as a placeholder, never fetched", async () => {
+  const { isRemote } = await import("../src/livePreview.ts");
+  assert.ok(isRemote("https://example.com/a.png"));
+  assert.ok(isRemote("//cdn.example.com/a.png"));
+  assert.ok(!isRemote("img/a.png"));
+  assert.ok(!isRemote("data:image/png;base64,AAAA"));
+  assert.ok(!isRemote("file:///tmp/a.png"));
+  const { editor } = mount();
+  editor.load({ text: "top\n\n![far](https://example.com/a.png)\n\n![near](a.png)\n", mode: "markdown" });
+  ensureSyntaxTree(editor.view.state, editor.view.state.doc.length, 5000);
+  editor.view.dispatch({ selection: EditorSelection.cursor(0) });
+  const dom = editor.view.contentDOM;
+  const imgs = [...dom.querySelectorAll(".cm-md-image img")].map((i: any) => i.getAttribute("src"));
+  assert.deepEqual(imgs, ["a.png"]);
+  const notes = [...dom.querySelectorAll(".cm-md-remote-image")].map((n: any) => n.textContent);
+  assert.deepEqual(notes, ["Remote image"]);
 });

@@ -2,7 +2,17 @@
 // Markdown as the page or for plain text and code. Swift drives it through
 // the `portico` global; it answers through the bridge.
 
-import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
+import {
+  Annotation,
+  ChangeSet,
+  Compartment,
+  EditorSelection,
+  EditorState,
+  type Extension,
+  type Text,
+  Transaction,
+  type TransactionSpec,
+} from "@codemirror/state";
 import { EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { HighlightStyle, type Language, LanguageSupport, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
@@ -92,6 +102,55 @@ export function languageFor(name: string | null | undefined): LanguageSupport | 
   }
 }
 
+// Marks the transaction replaceAll makes when it keeps undo: a change from
+// disk, not the person's, so it is neither sent back nor counted as an edit.
+export const fromDisk = Annotation.define<boolean>();
+
+const anyBreak = /\r\n?|\n/;
+
+// The line separator is pinned to the file's own (lineSeparatorOf), so
+// CodeMirror splits typed, pasted and dropped text only on that one break; a
+// pasted LF block in a CRLF file would keep raw \n inside its lines. For the
+// person's input, inserted text is re-split on any break and joined with the
+// file's. A change from disk (replaceAll) keeps its bytes as they are.
+export const normalizeInsertedBreaks = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || tr.annotation(fromDisk) || !tr.annotation(Transaction.userEvent)) return tr;
+  let raw = false;
+  tr.changes.iterChanges((_fa, _ta, _fb, _tb, inserted) => {
+    if (!raw) raw = hasRawBreak(inserted);
+  });
+  if (!raw) return tr;
+  const state = tr.startState;
+  const specs: { from: number; to: number; insert: Text }[] = [];
+  tr.changes.iterChanges((fromA, toA, _fb, _tb, inserted) => {
+    const text = inserted.sliceString(0, inserted.length, state.lineBreak);
+    specs.push({ from: fromA, to: toA, insert: state.toText(text.split(anyBreak).join(state.lineBreak)) });
+  });
+  const changes = ChangeSet.of(specs, state.doc.length, state.lineBreak);
+  const spec: TransactionSpec = {
+    changes,
+    selection: state.selection.map(changes, 1),
+    effects: tr.effects,
+    scrollIntoView: tr.scrollIntoView,
+    annotations: [Transaction.userEvent.of(tr.annotation(Transaction.userEvent)!)],
+  };
+  return spec;
+});
+
+function hasRawBreak(text: Text): boolean {
+  for (let i = 1; i <= text.lines; i++) if (anyBreak.test(text.line(i).text)) return true;
+  return false;
+}
+
+export interface ReplaceOptions {
+  // Put the cursor on the same line number (default true).
+  keepCursorLine?: boolean;
+  // Make the replacement one undoable change instead of a fresh document.
+  keepUndo?: boolean;
+  // Replace even though the person has edits not yet sent.
+  force?: boolean;
+}
+
 function fenceLanguage(info: string): Language | null {
   const found = languageFor(info.split(/\s/)[0]);
   if (!found) return null;
@@ -118,7 +177,7 @@ export interface PorticoEditor {
   load(options: LoadOptions): void;
   setTheme(vars: Record<string, string | null>): void;
   setReadOnly(readOnly: boolean): void;
-  replaceAll(text: string, keepCursorLine?: boolean): void;
+  replaceAll(text: string, options?: ReplaceOptions | boolean): boolean;
   visibleText(): string;
   scrollTopLine(): number;
   scrollToLine(line: number): void;
@@ -138,7 +197,8 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
 
   function extensions(text: string): Extension[] {
     const listeners = EditorView.updateListener.of((update) => {
-      if (update.docChanged) bridge.edited(() => update.view.state.sliceDoc());
+      const byPerson = update.transactions.some((tr) => tr.docChanged && !tr.annotation(fromDisk));
+      if (byPerson) bridge.edited(() => update.view.state.sliceDoc());
       if (update.focusChanged && !update.view.hasFocus) bridge.blurred(() => update.view.state.sliceDoc());
     });
     const shared: Extension[] = [
@@ -148,6 +208,7 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       highlightSpecialChars(),
       syntaxHighlighting(highlight),
       readOnlyCompartment.of(readOnlyExtension(readOnly)),
+      normalizeInsertedBreaks,
       listeners,
     ];
     if (current.mode === "markdown") {
@@ -206,18 +267,35 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       readOnly = on === true;
       view.dispatch({ effects: readOnlyCompartment.reconfigure(readOnlyExtension(readOnly)) });
     },
-    // The file changed on disk and nothing was pending: show the new text,
-    // the cursor on the same line number when asked, the same top line.
-    replaceAll(text, keepCursorLine = true) {
+    // The file changed on disk: show the new text, the cursor on the same
+    // line number when asked, the same top line. Refused (false) while the
+    // person has edits Swift has not been sent, unless forced. With keepUndo
+    // the replacement is one change the person can undo; it is not sent back.
+    replaceAll(text, options = {}) {
+      const opts: ReplaceOptions = typeof options === "boolean" ? { keepCursorLine: options } : options ?? {};
+      if (bridge.pending && !opts.force) return false;
+      const keepCursorLine = opts.keepCursorLine !== false;
       const top = api.scrollTopLine();
-      let cursor = 0;
-      if (keepCursorLine) {
-        const lineNumber = view.state.doc.lineAt(view.state.selection.main.head).number;
-        const fresh = EditorState.create({ doc: text, extensions: [EditorState.lineSeparator.of(lineSeparatorOf(text))] });
-        cursor = fresh.doc.line(Math.min(lineNumber, fresh.doc.lines)).from;
+      const lineNumber = view.state.doc.lineAt(view.state.selection.main.head).number;
+      if (opts.keepUndo) {
+        const insert = view.state.toText(text);
+        const line = keepCursorLine ? insert.line(Math.min(lineNumber, insert.lines)).from : 0;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert },
+          selection: EditorSelection.cursor(line),
+          annotations: fromDisk.of(true),
+        });
+      } else {
+        let cursor = 0;
+        if (keepCursorLine) {
+          const fresh = EditorState.create({ doc: text, extensions: [EditorState.lineSeparator.of(lineSeparatorOf(text))] });
+          cursor = fresh.doc.line(Math.min(lineNumber, fresh.doc.lines)).from;
+        }
+        setText(text, cursor);
       }
-      setText(text, cursor);
+      bridge.loaded();
       api.scrollToLine(top);
+      return true;
     },
     visibleText() {
       return view.state.sliceDoc();

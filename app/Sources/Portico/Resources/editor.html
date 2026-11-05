@@ -1,18 +1,22 @@
 <!doctype html>
 <!--
   The viewer's editor page (v0.20 §2.3–2.4). The app fills two placeholders,
-  as it does for viewer.html: {{CSS}} with viewer.css, so the editor has read
-  mode's fonts, sizes and colour tokens, and {{EDITOR}} with editor.js (the
+  as it does for viewer.html: the CSS placeholder with viewer.css, so the editor has read
+  mode's fonts, sizes and colour tokens, and the EDITOR placeholder with editor.js (the
   bundled CodeMirror; app/Editor/build.sh). Swift drives it through the
   `portico` global (load, setTheme, setReadOnly, replaceAll, visibleText,
   scrollTopLine, scrollToLine) and hears it on the `portico` message
-  handler (ready, changed, saveNow). Theme values set with portico.setTheme
+  handler (ready, dirty, changed, saveNow). Theme values set with portico.setTheme
   override the tokens below; the text scale is --portico-scale.
 -->
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Nothing is fetched: the page and its script are inline, images come
+     from the file's own folder (served as this page's origin, or file:) or
+     data:, and a remote image is drawn as a placeholder. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' file: data:">
 <style>
 {{CSS}}
 </style>
@@ -102,6 +106,14 @@ html, body { height: 100%; margin: 0; overflow: hidden; }
 .cm-md-checkbox { margin: 0 0.4em 0 0; vertical-align: middle; cursor: pointer; }
 .cm-md-image { padding: 4px 0; }
 .cm-md-image img { max-width: 100%; height: auto; border-radius: 4px; }
+.cm-md-remote-image {
+  display: inline-block;
+  font-size: 0.8em;
+  color: var(--fg-muted);
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  padding: 0.2em 0.6em;
+}
 .cm-md-table table { margin: 0; }
 .cm-md-tablesource { font-family: var(--mono); font-size: 0.92em; }
 .cm-editor.portico-markdown .cm-line.cm-md-frontmatter {

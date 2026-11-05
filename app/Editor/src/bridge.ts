@@ -1,12 +1,20 @@
 // The messages the editor sends Swift, through
 // `window.webkit.messageHandlers.portico` (v0.20 §5):
 //   {type: "ready"}                        once, when the editor exists;
+//   {type: "dirty"}                        at once, on the first edit after a
+//                                          load or a send (closes the 800 ms
+//                                          window in which Swift would think
+//                                          nothing is pending);
 //   {type: "changed", text, dirty: true}   800 ms after typing stops;
-//   {type: "saveNow", text}                on blur, when there was an edit.
-// Text always carries the file's own line endings.
+//   {type: "saveNow", text}                on blur, when there is an edit not
+//                                          yet sent.
+// Text always carries the file's own line endings. Sending `changed` or
+// `saveNow` hands the text to Swift to save: from then on the edit is
+// Swift's, and the next edit starts a new round with a new `dirty`.
 
 export type Message =
   | { type: "ready" }
+  | { type: "dirty" }
   | { type: "changed"; text: string; dirty: true }
   | { type: "saveNow"; text: string };
 
@@ -24,9 +32,10 @@ export function webkitPost(): Post {
 export class Bridge {
   private post: Post;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  // Set by the person's edits; cleared by a load, so a load or a reload from
-  // disk never comes back as a save.
-  private editedSinceLoad = false;
+  // An edit by the person that Swift has not been sent yet. Cleared by a
+  // load (a load or a reload from disk never comes back as a save) and by
+  // sending the text.
+  private unsent = false;
 
   constructor(post: Post = webkitPost()) {
     this.post = post;
@@ -39,26 +48,30 @@ export class Bridge {
   // A fresh document from Swift: whatever was pending belonged to the old one.
   loaded() {
     this.cancel();
-    this.editedSinceLoad = false;
+    this.unsent = false;
   }
 
   edited(text: () => string) {
-    this.editedSinceLoad = true;
+    if (!this.unsent) this.post({ type: "dirty" });
+    this.unsent = true;
     this.cancel();
     this.timer = setTimeout(() => {
       this.timer = null;
+      this.unsent = false;
       this.post({ type: "changed", text: text(), dirty: true });
     }, CHANGE_DELAY_MS);
   }
 
   blurred(text: () => string) {
-    if (!this.editedSinceLoad) return;
+    if (!this.unsent) return;
     this.cancel();
+    this.unsent = false;
     this.post({ type: "saveNow", text: text() });
   }
 
+  // True while the person has typed something Swift has not been sent.
   get pending(): boolean {
-    return this.timer !== null;
+    return this.unsent;
   }
 
   private cancel() {

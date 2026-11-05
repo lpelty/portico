@@ -70,6 +70,15 @@ class RuleWidget extends WidgetType {
   }
 }
 
+// An image the page would have to fetch from elsewhere: any URL with a
+// scheme other than file: or data:, or a protocol-relative one.
+export function isRemote(src: string): boolean {
+  const s = src.trim();
+  if (s.startsWith("//")) return true;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(s);
+  return scheme !== null && !["file", "data"].includes(scheme[1].toLowerCase());
+}
+
 class ImageWidget extends WidgetType {
   readonly src: string;
   readonly alt: string;
@@ -84,6 +93,15 @@ class ImageWidget extends WidgetType {
   toDOM() {
     const wrap = document.createElement("div");
     wrap.className = "cm-md-image";
+    if (isRemote(this.src)) {
+      // Never fetched from the editor (the page's CSP blocks it too).
+      const note = document.createElement("span");
+      note.className = "cm-md-remote-image";
+      note.textContent = "Remote image";
+      if (this.alt) note.title = this.alt;
+      wrap.appendChild(note);
+      return wrap;
+    }
     const img = document.createElement("img");
     img.src = this.src;
     img.alt = this.alt;

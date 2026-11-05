@@ -75,7 +75,17 @@ def test_editor_bundle_matches_its_sources():
     digest = hashlib.sha256()
     for f in sorted((editor / "src").glob("*.ts"), key=lambda p: p.name.encode()):
         digest.update(f.read_bytes())
-    digest.update((editor / "package-lock.json").read_bytes())
+    for name in ("build.sh", "bundle.mjs", "package-lock.json"):
+        digest.update((editor / name).read_bytes())
     bundle = REPO / "app" / "Sources" / "Portico" / "Resources" / "editor.js"
     first = bundle.read_text(encoding="utf-8").split("\n", 1)[0]
     assert first == f"/* portico-editor {digest.hexdigest()} */", "editor.js is stale: run app/Editor/build.sh"
+
+
+def test_editor_page_has_each_placeholder_once():
+    """The app replaces every occurrence; one in a comment would inline the bundle there."""
+    page = (REPO / "app" / "Sources" / "Portico" / "Resources" / "editor.html").read_text(encoding="utf-8")
+    for placeholder in ("{{CSS}}", "{{EDITOR}}"):
+        assert page.count(placeholder) == 1, placeholder
+    bundle = (REPO / "app" / "Sources" / "Portico" / "Resources" / "editor.js").read_text(encoding="utf-8")
+    assert "{{" + "CSS}}" not in bundle and "{{" + "EDITOR}}" not in bundle
