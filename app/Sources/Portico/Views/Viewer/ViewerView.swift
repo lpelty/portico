@@ -196,10 +196,23 @@ struct ViewerView: View {
                 .onChange(of: model.current[chat]?.location) { page.outside = nil }
         }
         .background(Theme.panel)
-        // Edit is off at every open; another file (or none) saves the old one.
+        // Edit is off at every open; another file (or none) saves the old
+        // one, and a file whose edits are still unsaved comes back in Edit.
         .onChange(of: model.current[chat]?.location) { _, location in edit.shown(location) }
-        .onAppear { ViewerEditing.shared.register(edit, chat: chat) }
-        .onChange(of: chat) { _, chat in ViewerEditing.shared.register(edit, chat: chat) }
+        .onAppear {
+            edit.chat = chat
+            ViewerEditing.shared.register(edit, chat: chat)
+            edit.shown(model.current[chat]?.location)
+        }
+        .onChange(of: chat) { _, chat in
+            edit.shown(nil)
+            edit.chat = chat
+            ViewerEditing.shared.register(edit, chat: chat)
+            edit.shown(model.current[chat]?.location)
+        }
+        // The viewer hidden or gone: the edit is ended (the registry keeps
+        // text that couldn't be saved).
+        .onDisappear { edit.shown(nil) }
     }
 
     /// The shown file's editability, for the toggle; `nil` with no file
@@ -422,12 +435,15 @@ struct ViewerView: View {
         if let current = model.current[chat], let session = edit.session, edit.location == current.location {
             // While editing, the pane is keyed on the file alone: its own
             // saves change the date and size, and must not reload it.
-            EditorPane(
-                session: session, wrap: model.settings.wrapCode, topLine: edit.topLine(for: session.url),
-                onEscape: { Task { await edit.turnOff() } },
-                onOpenFile: { [chat] path in model.reveal(file: path, in: chat) },
-                onCoordinator: { [edit] in edit.editor = $0 })
-                .id("edit|\(current.location)")
+            VStack(spacing: 0) {
+                EditRestoreBar(edit: edit)
+                EditorPaneHost(
+                    settings: model.settings, session: session, topLine: edit.topLine(for: session.url),
+                    onStop: { Task { await edit.turnOff() } },
+                    onOpenFile: { [chat] path in model.reveal(file: path, in: chat) },
+                    onCoordinator: { [edit] in edit.editor = $0 })
+                    .id("edit|\(current.location)|\(ObjectIdentifier(session).hashValue)")
+            }
         } else if let current = model.current[chat] {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)

@@ -1240,11 +1240,14 @@ final class AppModel: ObservableObject {
             openCards[chat] = []
             // Files the person opened from the Files pane are this app's
             // alone: the gateway never lists them, so they stay.
-            artifacts[chat] = (artifacts[chat] ?? []).filter { Self.isLocal($0) }
+            // A file being edited stays on screen (v0.20): a reconnect's
+            // replay must not throw the person out of Edit.
+            let editing = current[chat].map { EditSessions.shared.isEditing(location: $0.location) } ?? false
+            artifacts[chat] = (artifacts[chat] ?? []).filter { Self.isLocal($0) || (editing && $0.id == current[chat]?.id) }
             // The stored artifacts follow as open=false; the one on screen
             // comes back if it is still among them (`applyEvent`), and
             // nothing else pops open on a replay.
-            if let shown = current[chat], !Self.isLocal(shown) {
+            if let shown = current[chat], !Self.isLocal(shown), !editing {
                 restoreCurrent[chat] = shown.id
                 current[chat] = nil
             }
@@ -2708,6 +2711,18 @@ extension AppModel {
     /// no gateway round trip, the media from the extension the way the
     /// gateway maps it, listed once in the chat's history, and the viewer
     /// column brought back if it was collapsed.
+    /// A file whose edits couldn't be saved when quitting, brought where
+    /// the person sees it (v0.20): its chat, out of a space or the document
+    /// view, the viewer open on it (Edit comes back with its session).
+    func showEditedFile(path: String, chat: Int?) {
+        if documentMode { closeDocumentView() }
+        guard let target = chat ?? shownChat else { return }
+        if selected != target { selected = target }
+        leaveSpaceForFile()
+        viewerVisible[target] = true
+        if current[target]?.location != path { openArtifact(file: path, in: target) }
+    }
+
     func openArtifact(file path: String, in chat: Int) {
         let id = Self.localArtifactPrefix + path
         let artifact = Artifact(

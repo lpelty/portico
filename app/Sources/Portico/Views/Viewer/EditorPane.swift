@@ -72,8 +72,8 @@ struct EditorPane: NSViewRepresentable {
     /// The line to put at the top once the text is in (Edit turned on
     /// again in the same file); 1 is the top.
     var topLine: Int = 1
-    /// Esc in the editor: Edit goes off.
-    var onEscape: () -> Void
+    /// Esc or ⌘E in the editor: Edit goes off.
+    var onStop: () -> Void
     /// A file link in the folder, opened in the viewer.
     var onOpenFile: (String) -> Void
     /// The pane's coordinator, given to the viewer for the top line.
@@ -88,7 +88,7 @@ struct EditorPane: NSViewRepresentable {
         coordinator.wrap = wrap
         coordinator.scale = textScale
         coordinator.topLine = topLine
-        coordinator.onEscape = onEscape
+        coordinator.onStop = onStop
         coordinator.onOpenFile = onOpenFile
         let view = coordinator.makeWebView()
         coordinator.start(in: view)
@@ -98,11 +98,15 @@ struct EditorPane: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         let coordinator = context.coordinator
-        coordinator.onEscape = onEscape
+        coordinator.onStop = onStop
         coordinator.onOpenFile = onOpenFile
         if coordinator.scale != textScale {
             coordinator.scale = textScale
             coordinator.applyScale(in: view)
+        }
+        if coordinator.wrap != wrap {
+            coordinator.wrap = wrap
+            Task { await coordinator.reconfigure() }
         }
     }
 
@@ -118,14 +122,18 @@ struct EditorPane: NSViewRepresentable {
         var wrap = false
         var scale: CGFloat = 1
         var topLine = 1
-        var onEscape: () -> Void = {}
+        var onStop: () -> Void = {}
         var onOpenFile: (String) -> Void = { _ in }
         private(set) weak var webView: WKWebView?
+        /// The page said `ready`.
         private(set) var ready = false
+        /// The session's text is in the editor: only then is the editor's
+        /// text the person's (before it, it's an empty document).
+        private(set) var holdsText = false
         /// The page's own load is the one navigation allowed.
         private var pageLoading = false
         private var pageURL: URL?
-        private var escapeMonitor: Any?
+        private var keyMonitor: Any?
         /// Serves the page and the files in the edited file's folder.
         let handler = RenderedPageHandler()
 
@@ -140,12 +148,14 @@ struct EditorPane: NSViewRepresentable {
             // Read mode's Markdown lets the pane show through; so does this.
             view.setValue(false, forKey: "drawsBackground")
             webView = view
-            installEscape()
+            installKeys()
             return view
         }
 
         func start(in view: WKWebView) {
             guard let session else { return }
+            ready = false
+            holdsText = false
             do {
                 let page = try EditorPage.html()
                 let url = handler.register(page: page, root: session.url.deletingLastPathComponent())
@@ -156,14 +166,35 @@ struct EditorPane: NSViewRepresentable {
                 pageLoading = false
                 session.state = .failed("the editor couldn't load (\(error))")
             }
+            wireSession(to: view)
         }
 
+        /// The session asks this editor for its text and to replace it.
+        private func wireSession(to view: WKWebView) {
+            guard let session else { return }
+            session.currentText = { [weak self] in await self?.visibleText() }
+            session.editorReplace = { [weak self] text, options in
+                await self?.replaceAll(text, options) ?? false
+            }
+        }
+
+        /// The pane is going (another file, Edit off, the viewer closed or
+        /// hidden). The session may still need the editor's last text: the
+        /// web view is kept, by the session alone, until it has ended.
         func tearDown(_ view: WKWebView) {
-            if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
-            escapeMonitor = nil
-            view.configuration.userContentController.removeScriptMessageHandler(forName: Self.handlerName)
-            if session?.currentText != nil { session?.currentText = nil }
-            webView = nil
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
+            guard let session else { return }
+            if holdsText {
+                let retained = view
+                session.currentText = {
+                    try? await retained.callAsyncJavaScript(
+                        "return portico.visibleText();", arguments: [:], in: nil, contentWorld: .page) as? String
+                }
+            } else {
+                session.currentText = nil
+            }
+            session.editorReplace = nil
         }
 
         // MARK: the bridge
@@ -173,19 +204,17 @@ struct EditorPane: NSViewRepresentable {
             switch type {
             case "ready":
                 ready = true
-                load()
+                Task { await load() }
             case "dirty":
                 session?.markDirty()
-            case "changed":
-                if let text = message["text"] as? String { session?.textChanged(text) }
-            case "saveNow":
-                if let text = message["text"] as? String { session?.textChanged(text) }
+            case "changed", "saveNow":
+                if holdsText, let text = message["text"] as? String { session?.textChanged(text) }
             default:
                 break
             }
         }
 
-        private func load() {
+        private func load(keeping line: Int? = nil) async {
             guard let session, let view = webView else { return }
             let options: [String: Any] = [
                 "text": session.text,
@@ -194,11 +223,21 @@ struct EditorPane: NSViewRepresentable {
                 "wrap": wrap,
                 "scale": Double(scale),
             ]
-            let line = topLine
-            view.callAsyncJavaScript(
+            let line = line ?? topLine
+            _ = try? await view.callAsyncJavaScript(
                 "portico.load(options); if (line > 1) portico.scrollToLine(line); portico.view.focus(); return true;",
-                arguments: ["options": options, "line": line], in: nil, in: .page, completionHandler: nil)
-            session.currentText = { [weak self] in await self?.visibleText() }
+                arguments: ["options": options, "line": line], in: nil, contentWorld: .page)
+            holdsText = true
+        }
+
+        /// Settings' Wrap code changed: the editor is loaded again with the
+        /// session's newest text, at the same top line.
+        func reconfigure() async {
+            guard ready, holdsText, let session else { return }
+            if let latest = await visibleText(), latest != session.text { session.textChanged(latest) }
+            let line = await scrollTopLine()
+            holdsText = false
+            await load(keeping: line)
         }
 
         func applyScale(in view: WKWebView) {
@@ -208,34 +247,51 @@ struct EditorPane: NSViewRepresentable {
                 arguments: ["scale": Double(scale)], in: nil, in: .page, completionHandler: nil)
         }
 
-        /// The editor's text now; `nil` before it's ready.
+        /// The editor's text now; `nil` until it holds the session's text.
         func visibleText() async -> String? {
-            guard ready, let view = webView else { return nil }
+            guard holdsText, let view = webView else { return nil }
             return try? await view.callAsyncJavaScript(
                 "return portico.visibleText();", arguments: [:], in: nil, contentWorld: .page) as? String
         }
 
         /// The 1-based line at the top of the view; `nil` before it's ready.
         func scrollTopLine() async -> Int? {
-            guard ready, let view = webView else { return nil }
+            guard holdsText, let view = webView else { return nil }
             let value = try? await view.callAsyncJavaScript(
                 "return portico.scrollTopLine();", arguments: [:], in: nil, contentWorld: .page)
             return (value as? NSNumber)?.intValue
         }
 
-        // MARK: Esc
+        /// The page's `replaceAll`; false when it refused (unsent edits).
+        func replaceAll(_ text: String, _ options: EditSession.Replace) async -> Bool {
+            guard holdsText, let view = webView else { return false }
+            let value = try? await view.callAsyncJavaScript(
+                "return portico.replaceAll(text, options) !== false;",
+                arguments: ["text": text, "options": [
+                    "keepCursorLine": options.keepCursorLine, "keepUndo": options.keepUndo, "force": options.force,
+                ]], in: nil, contentWorld: .page)
+            return (value as? NSNumber)?.boolValue ?? false
+        }
 
-        /// Esc while the editor has the keyboard turns Edit off (§2.2).
-        private func installEscape() {
-            escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard event.keyCode == 53,
-                      event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty
-                else { return event }
-                guard let self, let view = self.webView, let window = view.window, event.window === window,
+        // MARK: keys
+
+        /// Esc (with no marked text from an input method) and ⌘E while the
+        /// editor has the keyboard turn Edit off (§2.2). ⌘E is taken here so
+        /// the system's "Use Selection for Find" can't swallow it.
+        private func installKeys() {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                let chord = event.modifierFlags.intersection([.command, .shift, .option, .control])
+                let escape = event.keyCode == 53 && chord.isEmpty
+                let commandE = chord == .command && event.charactersIgnoringModifiers?.lowercased() == "e"
+                guard escape || commandE,
+                      let self, let view = self.webView, let window = view.window, event.window === window,
                       let responder = window.firstResponder as? NSView,
                       responder === view || responder.isDescendant(of: view)
                 else { return event }
-                self.onEscape()
+                if escape, (responder as? NSTextInputClient)?.hasMarkedText() == true {
+                    return event
+                }
+                self.onStop()
                 return nil
             }
         }
@@ -266,6 +322,14 @@ struct EditorPane: NSViewRepresentable {
         ) -> WKWebView? {
             open(navigationAction.request.url)
             return nil
+        }
+
+        /// The page's process ended (a crash, memory pressure): load it
+        /// again with the session's text; what it hadn't sent is gone, and
+        /// the header says so.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            session?.editorRestarted()
+            start(in: webView)
         }
 
         private func open(_ url: URL?) {
@@ -301,18 +365,38 @@ private final class EditorMessages: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// The editor with Settings' Wrap code observed, so a change reconfigures it.
+struct EditorPaneHost: View {
+    @ObservedObject var settings: Settings
+    let session: EditSession
+    var topLine: Int
+    var onStop: () -> Void
+    var onOpenFile: (String) -> Void
+    var onCoordinator: (EditorPane.Coordinator?) -> Void
+
+    var body: some View {
+        EditorPane(session: session, wrap: settings.wrapCode, topLine: topLine,
+                   onStop: onStop, onOpenFile: onOpenFile, onCoordinator: onCoordinator)
+    }
+}
+
 // MARK: - ViewerEdit
 
-/// One viewer's Edit switch (v0.20 §2.2): off at every open; on, it holds
-/// the file's `EditSession`. Turning it off saves first, and stays on when
-/// the save fails, so the text is never dropped by a toggle.
+/// One viewer's Edit switch (v0.20 §2.2): off at every open; on, it shows
+/// the file's `EditSession`. The session itself is the registry's: turning
+/// Edit off, showing another file, closing or hiding the viewer all end it,
+/// and one whose text couldn't be saved stays registered (with a recovery
+/// copy) and comes back when its file is shown again.
 @MainActor
 final class ViewerEdit: ObservableObject {
     @Published private(set) var session: EditSession?
     /// Why Edit couldn't turn on ("Can't edit — it isn't UTF-8 text").
     @Published var note: String?
-    /// The artifact location the session belongs to.
-    private(set) var location: String?
+    /// A recovery copy newer than the file, offered back.
+    @Published private(set) var restore: URL?
+    /// The chat whose viewer this is.
+    var chat: Int?
+    let registry: EditSessions
     /// The shown editor, for its top line.
     weak var editor: EditorPane.Coordinator?
     /// The editor's top line when Edit last went off, per file, so turning
@@ -320,7 +404,12 @@ final class ViewerEdit: ObservableObject {
     private var topLines: [String: Int] = [:]
     private var turningOff = false
 
+    init(registry: EditSessions = EditSessions.shared) {
+        self.registry = registry
+    }
+
     var isEditing: Bool { session != nil }
+    var location: String? { session?.location }
 
     func topLine(for url: URL) -> Int { topLines[url.path] ?? 1 }
 
@@ -332,18 +421,44 @@ final class ViewerEdit: ObservableObject {
         }
     }
 
-    func turnOn(_ artifact: Artifact, registry: EditSessions? = EditSessions.shared) {
+    func turnOn(_ artifact: Artifact) {
         guard session == nil else { return }
+        if let waiting = registry.waiting(for: artifact.location) { return attach(waiting) }
         let shown = ArtifactPresentation(artifact: artifact)
-        guard case .editable(let mode, let language) = FileEditing.editability(for: shown), let url = shown.fileURL else { return }
-        do {
-            let text = try FileEditing.read(url)
-            session = EditSession(url: url, loaded: text, mode: mode, language: language, registry: registry)
-            location = artifact.location
-            note = nil
-        } catch {
-            note = "Can't edit — \(FileEditing.Failure.from(error).description)"
+        switch FileEditing.editability(for: shown) {
+        case .readOnly(let reason):
+            note = reason
+        case .editable(let mode, let language):
+            guard let url = shown.fileURL else { return }
+            do {
+                let text = try FileEditing.read(url)
+                let session = EditSession(
+                    url: url, location: artifact.location, loaded: text, mode: mode, language: language, registry: registry)
+                attach(session)
+                note = nil
+                restore = registry.recoveryFolder.flatMap {
+                    EditRecovery.newest(for: url.resolvingSymlinksInPath(), newerThan: text.stamp.modified, in: $0)
+                        ?? EditRecovery.newest(for: url, newerThan: text.stamp.modified, in: $0)
+                }
+            } catch {
+                note = "Can't edit — \(FileEditing.Failure.from(error).description)"
+            }
         }
+    }
+
+    private func attach(_ session: EditSession) {
+        session.attached = true
+        if let chat { session.chat = chat }
+        self.session = session
+    }
+
+    private func detach() -> EditSession? {
+        let session = self.session
+        session?.attached = false
+        self.session = nil
+        editor = nil
+        restore = nil
+        return session
     }
 
     /// Edit off: the top line noted, the text saved; on a failed save Edit
@@ -354,21 +469,34 @@ final class ViewerEdit: ObservableObject {
         defer { turningOff = false }
         if let top = await editor?.scrollTopLine() { topLines[session.url.path] = top }
         guard await session.end(), self.session === session else { return }
-        self.session = nil
-        location = nil
-        editor = nil
+        _ = detach()
     }
 
-    /// The viewer now shows `location` (another file, or none): Edit goes
-    /// off, and the old file's text is saved.
+    /// The viewer now shows `location` (another file, or none: closed,
+    /// hidden, its chat gone). The old file's session is ended in the
+    /// background; if it can't be saved it stays in the registry with a
+    /// recovery copy. A file with a waiting session comes back in Edit.
     func shown(_ location: String?) {
-        note = nil
-        guard let session, location != self.location else { return }
-        self.session = nil
-        self.location = nil
-        editor = nil
-        Task { _ = await session.end() }
+        if session?.location != location { note = nil }
+        if let current = session, current.location != location, let old = detach() {
+            Task { _ = await old.end() }
+        }
+        if session == nil, let location, let waiting = registry.waiting(for: location) {
+            attach(waiting)
+        }
     }
+
+    /// "Restore unsaved edits": the recovery copy's text replaces the
+    /// editor's (undoable) and is saved.
+    func restoreUnsaved() async {
+        guard let url = restore, let session, let data = try? Data(contentsOf: url) else { return }
+        let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
+        guard let text = String(data: bom ? data.dropFirst(3) : data, encoding: .utf8) else { return }
+        restore = nil
+        await session.restore(text)
+    }
+
+    func dismissRestore() { restore = nil }
 }
 
 /// The viewers' Edit switches by chat, for ⌘E.
@@ -429,31 +557,34 @@ struct ViewerEditToggle: View {
     }
 }
 
-/// "Editing · Saved", "Editing · Saving…", or "Not saved — <reason>" in
-/// deny red with Retry (§2.2).
+/// "Editing · Saved", "Editing · Saving…", "Editing · Not saved" (the
+/// agent changed the file), or "Not saved — <reason>" in deny red with
+/// Retry (§2.2). A notice (a recovery copy, a held quit) replaces the
+/// words in deny red, the state in its tip.
 struct ViewerEditStatus: View {
     @ObservedObject var session: EditSession
 
     var body: some View {
         HStack(spacing: 6) {
-            switch session.state {
-            case .failed(let reason):
-                Text(Self.words(for: session.state))
+            if let notice = session.notice {
+                Text(notice)
                     .scaledFont(12)
                     .foregroundStyle(Theme.deny)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .tip(Self.words(for: session.state) + " · " + notice)
+            } else {
+                Text(Self.words(for: session.state))
+                    .scaledFont(12)
+                    .foregroundStyle(session.isFailed ? Theme.deny : Theme.text3)
+                    .lineLimit(1)
                     .truncationMode(.tail)
-                    .tip(reason)
+            }
+            if session.isFailed {
                 Button("Retry") { Task { await session.saveNow() } }
                     .buttonStyle(.link)
                     .scaledFont(12, weight: .semibold)
                     .foregroundStyle(Theme.deny)
-                    .fixedSize()
-            default:
-                Text(Self.words(for: session.state))
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text3)
-                    .lineLimit(1)
                     .fixedSize()
             }
         }
@@ -465,7 +596,42 @@ struct ViewerEditStatus: View {
         case .saved: "Editing · Saved"
         case .saving: "Editing · Saving…"
         case .failed(let reason): "Not saved — \(reason)"
-        case .paused: "Editing · Paused"
+        case .paused: "Editing · Not saved"
+        }
+    }
+}
+
+/// "Restore unsaved edits" over the page, when a recovery copy newer than
+/// the file exists (fix round 1, ruling B).
+struct EditRestoreBar: View {
+    @ObservedObject var edit: ViewerEdit
+
+    var body: some View {
+        if let url = edit.restore {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(Theme.iconFont(12, weight: .medium))
+                    .foregroundStyle(Theme.text2)
+                Text("Unsaved edits from \(EditRecovery.display(url))")
+                    .scaledFont(12)
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Button("Restore unsaved edits") { Task { await edit.restoreUnsaved() } }
+                    .buttonStyle(.link)
+                    .scaledFont(12, weight: .semibold)
+                    .fixedSize()
+                Button("Dismiss") { edit.dismissRestore() }
+                    .buttonStyle(.link)
+                    .scaledFont(12)
+                    .foregroundStyle(Theme.text3)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 34)
+            .background(Theme.surface)
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
         }
     }
 }

@@ -78,6 +78,7 @@ enum FileEditing {
     static let tableReason = "Tables can't be edited here yet"
     static let kindReason = "This kind of file can't be edited here"
     static let missingReason = "This file isn't on this Mac"
+    static let permissionReason = "You don't have permission to change this file"
 
     /// Whether `shown` can be edited, and as what (§2.1): Markdown as the
     /// page; plain text, code and HTML as text. Spaces, sites, tables,
@@ -105,10 +106,16 @@ enum FileEditing {
         case .image, .pdf, .other:
             return .readOnly(reason: kindReason)
         }
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path) else {
+        // A link is judged by the file it points at.
+        let target = file.resolvingSymlinksInPath()
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: target.path) else {
             return .readOnly(reason: missingReason)
         }
         if FileStamp(attributes).size > sizeLimit { return .readOnly(reason: tooLarge) }
+        // A save writes a new file in the folder and renames it over this one.
+        guard access(target.path, W_OK) == 0, access(target.deletingLastPathComponent().path, W_OK) == 0 else {
+            return .readOnly(reason: permissionReason)
+        }
         return .editable(mode: mode, language: language)
     }
 
@@ -170,6 +177,7 @@ enum FileEditing {
         do { attributes = try FileManager.default.attributesOfItem(atPath: target.path) } catch { throw Failure.missing }
         let stamp = FileStamp(attributes)
         guard stamp.size <= sizeLimit else { throw Failure.tooLarge }
+        sweepStaleTemporaries(for: target)
         let data: Data
         do { data = try Data(contentsOf: target) } catch { throw Failure.from(error) }
         let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
@@ -180,6 +188,31 @@ enum FileEditing {
     }
 
     // MARK: writing (§2.5)
+
+    /// The temporary file a save writes before the rename:
+    /// `.<name>.<8 hex>.saving`, beside the file.
+    static func temporaryURL(for target: URL) -> URL {
+        let tag = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8).lowercased()
+        return target.deletingLastPathComponent().appendingPathComponent(".\(target.lastPathComponent).\(tag).saving")
+    }
+
+    /// Whether `name` is one of this file's own leftover temporaries.
+    static func isTemporary(_ name: String, for target: URL) -> Bool {
+        let prefix = ".\(target.lastPathComponent)."
+        guard name.hasPrefix(prefix), name.hasSuffix(".saving") else { return false }
+        let tag = name.dropFirst(prefix.count).dropLast(".saving".count)
+        return tag.count == 8 && tag.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+    }
+
+    /// Temporaries a crashed save left beside the file: removed at load
+    /// (only names matching the exact pattern above).
+    static func sweepStaleTemporaries(for target: URL) {
+        let folder = target.deletingLastPathComponent()
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
+        for name in names where isTemporary(name, for: target) {
+            unlink(folder.appendingPathComponent(name).path)
+        }
+    }
 
     /// Write `text` to `url` atomically: a temporary file in the same folder,
     /// then `rename(2)`, so the file is the old one or the new one and never
@@ -218,16 +251,20 @@ enum FileEditing {
         if byteOrderMark { data.append(contentsOf: [0xEF, 0xBB, 0xBF]) }
         data.append(Data(text.utf8))
 
-        let folder = target.deletingLastPathComponent()
-        let temporary = folder.appendingPathComponent(".\(target.lastPathComponent).\(UUID().uuidString.prefix(8)).saving")
+        let temporary = temporaryURL(for: target)
+        var created = false
         var moved = false
-        defer { if !moved { try? FileManager.default.removeItem(at: temporary) } }
+        defer { if created && !moved { unlink(temporary.path) } }
         do {
-            guard FileManager.default.createFile(atPath: temporary.path, contents: nil) else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno == 0 ? EACCES : errno))
-            }
-            let handle = try FileHandle(forWritingTo: temporary)
+            // Made with the file's own permissions from the start (never
+            // wider in between), then set exactly: the umask can't narrow them.
+            let mode = mode_t(permissions.map { UInt16(bitPattern: $0) } ?? 0o644) & 0o7777
+            let fd = open(temporary.path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, mode)
+            guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+            created = true
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
             do {
+                _ = fchmod(fd, mode)
                 try handle.write(contentsOf: data)
                 try handle.synchronize()
                 try handle.close()
@@ -235,8 +272,11 @@ enum FileEditing {
                 try? handle.close()
                 throw error
             }
+            // Extended attributes, ACLs and Finder tags come with it; the
+            // owner too where the system allows.
+            _ = copyfile(target.path, temporary.path, nil, copyfile_flags_t(COPYFILE_SECURITY | COPYFILE_XATTR))
             if let permissions {
-                try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: permissions)], ofItemAtPath: temporary.path)
+                _ = chmod(temporary.path, mode_t(UInt16(bitPattern: permissions)) & 0o7777)
             }
             try beforeRename()
             guard Darwin.rename(temporary.path, target.path) == 0 else {
@@ -250,26 +290,50 @@ enum FileEditing {
     }
 }
 
+
 // MARK: - EditSession
 
 /// One file being edited: the newest text, what was last saved, and the
 /// save state the header shows. The editor debounces typing (800 ms) and
-/// sends the text; every text that arrives is saved. Saves run one at a
-/// time, off the main thread.
+/// sends the text; every text that arrives is saved. Once sent, the edit is
+/// this session's: the editor never sends it again, so a failed save is
+/// retried from here (Retry, the next edit, Edit off, closing, quitting)
+/// and the text stays here until it is on disk. Saves run one at a time,
+/// off the main thread.
+///
+/// The session belongs to `EditSessions` (a strong registry), not to a
+/// view: closing, hiding or switching the viewer never drops typed text.
 @MainActor
 final class EditSession: ObservableObject, Identifiable {
     enum SaveState: Equatable {
         case saved
         case saving
         case failed(String)
-        /// Autosave held back (the agent changed the file; Task 3).
+        /// Autosave held back: the agent changed the file (§2.6).
         case paused
+    }
+
+    enum Conflict: Equatable {
+        case agentChanged
+    }
+
+    /// How the editor replaces its text (the page's `replaceAll` options).
+    struct Replace: Equatable {
+        var keepCursorLine = true
+        var keepUndo = false
+        var force = false
     }
 
     typealias Writer = @Sendable (_ text: String, _ url: URL, _ stamp: FileStamp, _ bom: Bool) throws -> FileStamp
 
     @Published var state: SaveState = .saved
+    @Published private(set) var conflict: Conflict?
+    /// What the header says beside the state: where a recovery copy went,
+    /// why a quit was held, that the editor restarted.
+    @Published var notice: String?
     let url: URL
+    /// The artifact location it was opened for (a path).
+    let location: String
     let mode: EditMode
     let language: String?
     let loaded: EditableText
@@ -281,19 +345,31 @@ final class EditSession: ObservableObject, Identifiable {
     private(set) var savedText: String
     /// The editor said there are edits it hasn't sent yet (`dirty`).
     private(set) var editorDirty = false
+    /// The chat whose viewer opened it (a held quit brings it forward).
+    var chat: Int?
+    /// Shown in a viewer now.
+    var attached = false
     /// Asks the editor for its text now (set by the editor pane), so an
-    /// end inside the 800 ms debounce saves the last keystrokes too.
+    /// end inside the 800 ms debounce saves the last keystrokes too. `nil`
+    /// (or returning `nil`) when the editor can't answer.
     var currentText: (() async -> String?)?
+    /// Replaces the editor's text (the page's `replaceAll`); false when the
+    /// editor refused (it has edits not yet sent).
+    var editorReplace: ((String, Replace) async -> Bool)?
+    /// Where this session's recovery copy is, once one was written.
+    private(set) var recoveryURL: URL?
     private let writer: Writer
     private weak var registry: EditSessions?
     private var inFlight: Task<Void, Never>?
+    private var recheckAfterSave = false
 
     init(
-        url: URL, loaded: EditableText, mode: EditMode, language: String?,
+        url: URL, location: String? = nil, loaded: EditableText, mode: EditMode, language: String?,
         writer: @escaping Writer = { try FileEditing.write($0, to: $1, preserving: $2, byteOrderMark: $3) },
         registry: EditSessions? = EditSessions.shared
     ) {
         self.url = url
+        self.location = location ?? url.path
         self.loaded = loaded
         self.mode = mode
         self.language = language
@@ -305,6 +381,8 @@ final class EditSession: ObservableObject, Identifiable {
         registry?.add(self)
     }
 
+    var name: String { url.lastPathComponent }
+
     /// Text that isn't on disk yet, sent or not.
     var hasUnsavedText: Bool { editorDirty || text != savedText }
 
@@ -313,21 +391,17 @@ final class EditSession: ObservableObject, Identifiable {
         return false
     }
 
-    /// Whether a change on disk may replace the editor's text (§2.6, Task 3).
-    /// The editor's own `pending` means only "not sent yet": once it has sent
-    /// the text, the edit is this session's. So never while a save is
-    /// running or failed, or while any text is unsaved.
+    /// A save is running.
+    var isSaving: Bool { inFlight != nil }
+
+    /// Whether a change on disk may replace the editor's text. The editor's
+    /// own `pending` means only "not sent yet": once sent, the edit is this
+    /// session's. So never while a save runs or failed, or text is unsaved.
     var mayReplaceFromDisk: Bool {
         inFlight == nil && state == .saved && !hasUnsavedText
     }
 
-    /// The editor's text was replaced with `force` (Task 3): that cancels
-    /// its unsent edit with no `changed` to follow, so the flag goes too.
-    func editorForceReplaced() {
-        editorDirty = false
-    }
-
-    /// The editor's first edit since a load or a save.
+    /// The editor's first edit since a load or a send.
     func markDirty() {
         editorDirty = true
     }
@@ -339,20 +413,42 @@ final class EditSession: ObservableObject, Identifiable {
         Task { await self.saveNow() }
     }
 
+    /// The editor's page restarted (its process ended) and was loaded again
+    /// with the text this session holds: what it hadn't sent is gone.
+    func editorRestarted() {
+        if editorDirty {
+            editorDirty = false
+            notice = "The editor restarted; your last few seconds of typing may be missing"
+        }
+    }
+
+    // MARK: saving
+
     /// Save the newest text now, after any save already running. One
-    /// attempt: a failure stays `.failed(reason)` with the text kept,
-    /// until the next edit or Retry.
+    /// attempt: a failure is `.failed(reason)` with the text kept (and a
+    /// recovery copy written), until the next edit or Retry. Paused: nothing.
     func saveNow() async {
-        if let running = inFlight { await running.value }
+        while let running = inFlight { await running.value }
         if state == .paused { return }
         guard text != savedText else {
             if isFailed || state == .saving { state = .saved }
             return
         }
-        let task = Task { await self.writeOnce() }
+        // Before every save: someone else wrote the file since (§2.6).
+        if let disk = FileStamp.of(url), disk != baseline {
+            enterConflict()
+            return
+        }
+        let task = Task { [weak self] in
+            await self?.writeOnce()
+            self?.inFlight = nil
+        }
         inFlight = task
         await task.value
-        if inFlight == task { inFlight = nil }
+        if recheckAfterSave {
+            recheckAfterSave = false
+            await recheckDisk()
+        }
     }
 
     private func writeOnce() async {
@@ -365,79 +461,313 @@ final class EditSession: ObservableObject, Identifiable {
         case .success(let stamp):
             baseline = stamp
             savedText = snapshot
-            if text == savedText { state = .saved }
+            if text == savedText {
+                state = .saved
+                if recoveryURL != nil || notice != nil { notice = nil }
+            }
+        case .failure(.changedOnDisk):
+            enterConflict()
         case .failure(let failure):
             state = .failed(failure.description)
+            writeRecovery()
         }
     }
 
-    /// Done editing (Edit off, another file, the viewer closed, quitting):
-    /// the editor's last text is fetched and saved. False when it couldn't
-    /// be saved; the text stays here and the session stays registered.
+    /// Done editing (Edit off, another file, the viewer closed or hidden,
+    /// quitting): the editor's last text is fetched and saved. False when
+    /// it couldn't be: the text stays here, a recovery copy is written, and
+    /// the session stays in the registry.
     func end() async -> Bool {
-        if let currentText, let latest = await currentText(), latest != text {
-            text = latest
+        if let currentText, let latest = await currentText() {
+            if latest != text { text = latest }
+            editorDirty = false
         }
-        editorDirty = false
+        if editorDirty {
+            // Typing the editor never sent, and it can't be asked now.
+            state = .failed("the last edits couldn't be read from the editor")
+            writeRecovery()
+            return false
+        }
         await saveNow()
-        if isFailed || state == .paused || text != savedText { return false }
+        if isFailed || state == .paused || text != savedText {
+            if isFailed || state == .paused { writeRecovery() }
+            return false
+        }
+        currentText = nil
+        editorReplace = nil
         registry?.remove(self)
         return true
     }
 
-    /// The quit was held because this couldn't be saved: the header says so.
-    func noteQuitHeld() {
-        if case .failed(let reason) = state, !reason.hasSuffix(EditSessions.quitAgain) {
-            state = .failed(reason + EditSessions.quitAgain)
+    // MARK: the agent changed the file (§2.6)
+
+    /// The file on disk may have changed (an artifact event, a redraw, a
+    /// save finishing). `stamp` is what's there now.
+    /// - Clean session: the editor reloads in place, keeping the cursor's
+    ///   line, and the baseline moves.
+    /// - Unsaved text (or a save running or failed): `.paused` with the bar.
+    func diskChanged(_ stamp: FileStamp, readText: () throws -> String) async {
+        guard stamp != baseline, state != .paused else { return }
+        if inFlight != nil {
+            // Our own save may be what changed it; look again after.
+            recheckAfterSave = true
+            return
         }
+        guard mayReplaceFromDisk else { return enterConflict() }
+        guard let disk = try? readText() else { return }
+        if let editorReplace {
+            guard await editorReplace(disk, Replace(keepCursorLine: true)) else { return enterConflict() }
+        }
+        text = disk
+        savedText = disk
+        baseline = stamp
+    }
+
+    /// `diskChanged` with the file as it is now.
+    func recheckDisk() async {
+        guard let stamp = FileStamp.of(url), stamp != baseline else { return }
+        let url = url
+        await diskChanged(stamp) { try FileEditing.read(url).text }
+    }
+
+    private func enterConflict() {
+        conflict = .agentChanged
+        state = .paused
+    }
+
+    /// Keep mine: the person's text overwrites the agent's.
+    func keepMine() async {
+        while let running = inFlight { await running.value }
+        if let currentText, let latest = await currentText() {
+            text = latest
+            editorDirty = false
+        }
+        let snapshot = text, url = url, bom = loaded.byteOrderMark, writer = writer
+        guard let disk = FileStamp.of(url) else {
+            state = .failed(FileEditing.Failure.missing.description)
+            conflict = nil
+            writeRecovery()
+            return
+        }
+        state = .saving
+        let result: Result<FileStamp, FileEditing.Failure> = await offMain {
+            do { return .success(try writer(snapshot, url, disk, bom)) } catch { return .failure(.from(error)) }
+        }
+        conflict = nil
+        switch result {
+        case .success(let stamp):
+            baseline = stamp
+            savedText = snapshot
+            state = .saved
+            notice = nil
+            if text != savedText { await saveNow() }
+        case .failure(let failure):
+            state = .failed(failure.description)
+            writeRecovery()
+        }
+    }
+
+    /// Use the agent's: the editor shows the file as it is on disk; the
+    /// person's edits stay in its undo until Edit goes off.
+    func useTheirs() async {
+        while let running = inFlight { await running.value }
+        let read: EditableText
+        do { read = try FileEditing.read(url) } catch {
+            state = .failed(FileEditing.Failure.from(error).description)
+            return
+        }
+        if let editorReplace {
+            _ = await editorReplace(read.text, Replace(keepCursorLine: true, keepUndo: true, force: true))
+        }
+        // A forced replace cancels the editor's unsent edit, with no `changed` after.
+        editorDirty = false
+        text = read.text
+        savedText = read.text
+        baseline = read.stamp
+        conflict = nil
+        state = .saved
+        notice = nil
+    }
+
+    /// Restore a recovery copy's text into the editor and save it.
+    func restore(_ restored: String) async {
+        if let editorReplace {
+            _ = await editorReplace(restored, Replace(keepCursorLine: true, keepUndo: true, force: true))
+        }
+        editorDirty = false
+        text = restored
+        await saveNow()
+    }
+
+    // MARK: recovery copies
+
+    /// Write the text to `<home>/unsaved/<yyyyMMdd-HHmmss>-<name>` (once per
+    /// session, then kept current) and say so. `nil` with no folder set.
+    @discardableResult
+    func writeRecovery() -> URL? {
+        guard let folder = registry?.recoveryFolder else { return nil }
+        guard hasUnsavedText || isFailed || state == .paused else { return recoveryURL }
+        do {
+            let target = try recoveryURL ?? EditRecovery.newURL(for: name, in: folder)
+            try EditRecovery.write(text, byteOrderMark: loaded.byteOrderMark, to: target, source: url)
+            recoveryURL = target
+            notice = "Couldn't save \(name); your edits are kept in \(EditRecovery.display(target))"
+            return target
+        } catch {
+            return nil
+        }
+    }
+
+    /// The quit was held because this couldn't be saved (Review Focus 4).
+    func noteQuitHeld() {
+        let folder = registry?.recoveryFolder.map { EditRecovery.display($0) + "/" } ?? "the unsaved folder"
+        notice = "Couldn't save \(name) — ⌘Q again quits and keeps your edits in \(folder)"
     }
 }
 
-/// Every edit session alive, so quitting can save each first.
+// MARK: - Recovery copies
+
+/// Recovery copies of text that couldn't be saved (fix round 1, ruling B):
+/// `<home>/unsaved/<yyyyMMdd-HHmmss>-<name>`, with the original path in an
+/// extended attribute, so reopening the file can offer them back.
+enum EditRecovery {
+    static let sourceAttribute = "com.untypedlabs.edit.source"
+
+    static func newURL(for name: String, in folder: URL, now: Date = Date()) throws -> URL {
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: Int16(0o700))])
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = formatter.string(from: now)
+        var candidate = folder.appendingPathComponent("\(stamp)-\(name)")
+        var n = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appendingPathComponent("\(stamp)-\(n)-\(name)")
+            n += 1
+        }
+        return candidate
+    }
+
+    static func write(_ text: String, byteOrderMark: Bool, to url: URL, source: URL) throws {
+        var data = Data()
+        if byteOrderMark { data.append(contentsOf: [0xEF, 0xBB, 0xBF]) }
+        data.append(Data(text.utf8))
+        try data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: url.path)
+        let path = Array(source.path.utf8)
+        _ = path.withUnsafeBytes { setxattr(url.path, sourceAttribute, $0.baseAddress, $0.count, 0, 0) }
+    }
+
+    /// The original path a recovery copy was made for.
+    static func source(of url: URL) -> String? {
+        let size = getxattr(url.path, sourceAttribute, nil, 0, 0, 0)
+        guard size > 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: size)
+        let read = bytes.withUnsafeMutableBytes { getxattr(url.path, sourceAttribute, $0.baseAddress, size, 0, 0) }
+        guard read == size else { return nil }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    /// The newest recovery copy for `file` written after `newerThan` (the
+    /// file's modification date), if any.
+    static func newest(for file: URL, newerThan: Date?, in folder: URL) -> URL? {
+        let path = file.path
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return nil }
+        var best: (URL, Date)?
+        for name in names where name.hasSuffix(file.lastPathComponent) {
+            let url = folder.appendingPathComponent(name)
+            guard source(of: url) == path,
+                  let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+                  newerThan.map({ date > $0 }) ?? true
+            else { continue }
+            if best.map({ date > $0.1 }) ?? true { best = (url, date) }
+        }
+        return best?.0
+    }
+
+    /// A path as people write it, `~` for the home folder.
+    static func display(_ url: URL) -> String {
+        (url.path as NSString).abbreviatingWithTildeInPath
+    }
+}
+
+// MARK: - EditSessions
+
+/// Every edit session alive, held strongly: a session leaves only when its
+/// text is saved (or the person discards it), never because a view went
+/// away. Quitting saves each first.
 @MainActor
 final class EditSessions {
     static let shared = EditSessions()
-    static let quitAgain = "; quit again to quit without saving"
 
-    private var sessions: [ObjectIdentifier: WeakSession] = [:]
+    /// `<home>/unsaved`, set at launch from the app's resolved home folder.
+    var recoveryFolder: URL?
+    /// A quit was held: bring this session's file forward (set by the app).
+    var onQuitHeld: ((EditSession) -> Void)?
+    private(set) var sessions: [EditSession] = []
 
-    private struct WeakSession {
-        weak var session: EditSession?
+    init(recoveryFolder: URL? = nil) {
+        self.recoveryFolder = recoveryFolder
     }
 
-    init() {}
-
-    var all: [EditSession] {
-        sessions = sessions.filter { $0.value.session != nil }
-        return sessions.values.compactMap(\.session)
-    }
+    var all: [EditSession] { sessions }
 
     func add(_ session: EditSession) {
-        sessions[ObjectIdentifier(session)] = WeakSession(session: session)
+        if !sessions.contains(where: { $0 === session }) { sessions.append(session) }
     }
 
     func remove(_ session: EditSession) {
-        sessions[ObjectIdentifier(session)] = nil
+        sessions.removeAll { $0 === session }
+    }
+
+    /// The person discards a session's text.
+    func discard(_ session: EditSession) {
+        remove(session)
+    }
+
+    /// A session for `location` not shown in any viewer (its text unsaved):
+    /// showing the file again picks it back up.
+    func waiting(for location: String) -> EditSession? {
+        sessions.first { !$0.attached && $0.location == location }
+    }
+
+    /// A viewer is editing `location` (a reconnect replay keeps it shown).
+    func isEditing(location: String) -> Bool {
+        sessions.contains { $0.attached && $0.location == location }
     }
 
     /// `end()` on every session; true when all saved.
     func endAll() async -> Bool {
         var saved = true
-        for session in all where !(await session.end()) {
+        for session in sessions where !(await session.end()) {
             saved = false
-            session.noteQuitHeld()
         }
         return saved
+    }
+
+    /// The first quit failed: each unsaved file says why, and the first is
+    /// brought forward.
+    func holdQuit() {
+        for session in sessions { session.noteQuitHeld() }
+        if let first = sessions.first { onQuitHeld?(first) }
+    }
+
+    /// The second quit: every unsaved text goes to a recovery copy.
+    func keepAllForQuit() {
+        for session in sessions { session.writeRecovery() }
     }
 }
 
 /// What a quit does once the edit sessions have been ended (Review Focus 4).
 /// No alert: an alert would block automation. A failed save cancels the
-/// first quit and the header says why; a second quit goes ahead anyway.
+/// first quit (the file is brought forward and its header says why); a
+/// second quit keeps every unsaved text in a recovery copy and quits.
 enum QuitGate {
-    enum Decision: Equatable { case quit, cancel }
+    enum Decision: Equatable { case quit, keepAndQuit, cancel }
 
     static func decide(saved: Bool, alreadyHeld: Bool) -> Decision {
-        saved || alreadyHeld ? .quit : .cancel
+        if saved { return .quit }
+        return alreadyHeld ? .keepAndQuit : .cancel
     }
 }

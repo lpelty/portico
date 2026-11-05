@@ -102,16 +102,14 @@ struct ZoomControl: View {
         HStack(spacing: 2) {
             if let page {
                 Text(page)
-                    .font(.system(size: 12, weight: .medium))
-                    .monospacedDigit()
+                    .scaledFont(12, weight: .medium, monospacedDigit: true)
                     .foregroundStyle(Theme.text2)
                     .padding(.horizontal, 8)
                 Divider().frame(height: 14)
             }
             button("minus", "Zoom Out", onOut)
             Text("\(percent)%")
-                .font(.system(size: 12, weight: .medium))
-                .monospacedDigit()
+                .scaledFont(12, weight: .medium, monospacedDigit: true)
                 .foregroundStyle(Theme.text)
                 .frame(minWidth: 44)
                 .accessibilityLabel("Zoom, \(percent) percent")
@@ -133,7 +131,7 @@ struct ZoomControl: View {
     private func button(_ symbol: String, _ label: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.iconFont(11, weight: .semibold))
                 .foregroundStyle(Theme.text)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())

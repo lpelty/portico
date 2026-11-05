@@ -127,6 +127,13 @@ struct PorticoApp: App {
                     model.brand.applyApplicationIcon()
                 }
                 .task {
+                    // Text that couldn't be saved is kept under the home folder (v0.20).
+                    EditSessions.shared.recoveryFolder = supervisor.home.url.appendingPathComponent("unsaved")
+                    EditSessions.shared.onQuitHeld = { [model] session in
+                        model.showEditedFile(path: session.location, chat: session.chat)
+                        NSApplication.shared.activate()
+                        NSApplication.shared.windows.first { $0.canBecomeMain && $0.isVisible }?.makeKeyAndOrderFront(nil)
+                    }
                     // ⌘= is Bigger Text too (v0.15 §3): the menu shows ⌘+.
                     delegate.biggerText = { [settings] in settings.biggerText() }
                     // Quit honours the setting (spec §5.5, D19): keep the
@@ -246,8 +253,9 @@ struct PorticoApp: App {
 ///
 /// v0.20 (Review Focus 4): every file being edited is saved first. When a
 /// save fails, the quit is cancelled with no alert (an alert would block
-/// automation): the viewer's header says "Not saved — <reason>; quit again
-/// to quit without saving", and a second quit goes ahead anyway.
+/// automation): the file is brought forward and its header says "Couldn't
+/// save <name> — ⌘Q again quits and keeps your edits in <home>/unsaved/".
+/// A second quit writes recovery copies of every unsaved text and quits.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var quitHandler: (() async -> Void)?
@@ -290,9 +298,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Save every edit, then the quit handler; false cancels the quit.
     func prepareToTerminate() async -> Bool {
         let saved = await editSessions.endAll()
-        if QuitGate.decide(saved: saved, alreadyHeld: quitHeld) == .cancel {
+        switch QuitGate.decide(saved: saved, alreadyHeld: quitHeld) {
+        case .cancel:
             quitHeld = true
+            editSessions.holdQuit()
             return false
+        case .keepAndQuit:
+            editSessions.keepAllForQuit()
+        case .quit:
+            quitHeld = false
         }
         await quitHandler?()
         return true
