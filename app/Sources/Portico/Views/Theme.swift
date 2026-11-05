@@ -82,7 +82,14 @@ extension NSColor {
 extension EnvironmentValues {
     /// The person's text scale (Settings › Appearance › Text size, ⌘+ and
     /// ⌘−), set at the window's root. 1 is 100%.
-    @Entry var textScale: CGFloat = 1
+    var textScale: CGFloat {
+        get { self[TextScaleKey.self] }
+        set { self[TextScaleKey.self] = newValue }
+    }
+}
+
+private struct TextScaleKey: EnvironmentKey {
+    static var defaultValue: CGFloat { 1 }
 }
 
 extension Theme {
@@ -130,7 +137,14 @@ extension View {
 extension EnvironmentValues {
     /// The view is drawn inside a Portico popover (set by `popoverSurface()`),
     /// so views shared with the window draw their faint text brighter.
-    @Entry var inPopover: Bool = false
+    var inPopover: Bool {
+        get { self[InPopoverKey.self] }
+        set { self[InPopoverKey.self] = newValue }
+    }
+}
+
+private struct InPopoverKey: EnvironmentKey {
+    static var defaultValue: Bool { false }
 }
 
 extension Theme {

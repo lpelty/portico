@@ -234,14 +234,39 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
 extension EnvironmentValues {
     /// Set by the open space's viewer: a new value re-reads the same file
     /// in place, keeping the scroll position (the file changed on disk).
-    @Entry var webPaneRevision: String? = nil
+    var webPaneRevision: String? {
+        get { self[WebPaneRevisionKey.self] }
+        set { self[WebPaneRevisionKey.self] = newValue }
+    }
     /// Where the file viewer's page has gone, for its header (v0.13).
-    @Entry var viewerPageAddress: ViewerPageAddress? = nil
+    var viewerPageAddress: ViewerPageAddress? {
+        get { self[ViewerPageAddressKey.self] }
+        set { self[ViewerPageAddressKey.self] = newValue }
+    }
     /// Whether a Properties block is drawn unfolded (v0.17 §3.7): what the
     /// next page drawn uses; a change does not draw the shown page again.
-    @Entry var propertiesOpen: Bool = false
+    var propertiesOpen: Bool {
+        get { self[PropertiesOpenKey.self] }
+        set { self[PropertiesOpenKey.self] = newValue }
+    }
     /// Remembers the person's toggle of a Properties block.
-    @Entry var setPropertiesOpen: ((Bool) -> Void)? = nil
+    var setPropertiesOpen: ((Bool) -> Void)? {
+        get { self[SetPropertiesOpenKey.self] }
+        set { self[SetPropertiesOpenKey.self] = newValue }
+    }
+}
+
+private struct WebPaneRevisionKey: EnvironmentKey {
+    static var defaultValue: String? { nil }
+}
+private struct ViewerPageAddressKey: EnvironmentKey {
+    static var defaultValue: ViewerPageAddress? { nil }
+}
+private struct PropertiesOpenKey: EnvironmentKey {
+    static var defaultValue: Bool { false }
+}
+private struct SetPropertiesOpenKey: EnvironmentKey {
+    static var defaultValue: ((Bool) -> Void)? { nil }
 }
 
 /// A `WKWebView` for the three web-rendered kinds: a markdown file (the

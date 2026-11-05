@@ -73,7 +73,14 @@ struct ColumnDivider: View {
 extension EnvironmentValues {
     /// How far the viewer divider's grip reaches over the conversation
     /// (fix I-1): its scrollers keep this far from the column's right edge.
-    @Entry var viewerGripClearance: CGFloat = 0
+    var viewerGripClearance: CGFloat {
+        get { self[ViewerGripClearanceKey.self] }
+        set { self[ViewerGripClearanceKey.self] = newValue }
+    }
+}
+
+private struct ViewerGripClearanceKey: EnvironmentKey {
+    static var defaultValue: CGFloat { 0 }
 }
 
 extension View {
