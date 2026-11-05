@@ -19,8 +19,7 @@ final class PDFZoomController: NSObject, ZoomTarget {
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
-        view.minScaleFactor = Zoom.minimum
-        view.maxScaleFactor = Zoom.maximum
+        setLimits(minimum: Zoom.minimum)
         NotificationCenter.default.addObserver(
             self, selector: #selector(scaleChanged), name: .PDFViewScaleChanged, object: view)
         NotificationCenter.default.addObserver(
@@ -40,22 +39,55 @@ final class PDFZoomController: NSObject, ZoomTarget {
     var scale: CGFloat { view.scaleFactor }
     var fitting: Bool { view.autoScales }
 
+    /// True while a file is being switched in: PDFKit's scale notifications
+    /// then belong to neither file and must not be remembered.
+    private var loading = false
+
     func load(url: URL) {
+        // Read the new file's level before anything can overwrite it.
+        let remembered = memory.scale(for: url.path)
+        loading = true
         path = url.path
         view.document = PDFDocument(url: url)
-        if let remembered = memory.scale(for: path) {
+        if let remembered {
             view.autoScales = false
+            setLimits(minimum: min(Zoom.minimum, remembered))
             view.scaleFactor = remembered
         } else {
             view.autoScales = true
         }
+        loading = false
+        updateMinimum()
         report()
+    }
+
+    /// PDFKit turns auto-scaling off when a limit is set; put it back.
+    private func setLimits(minimum: CGFloat) {
+        let was = view.autoScales
+        if view.minScaleFactor != minimum { view.minScaleFactor = minimum }
+        if view.maxScaleFactor != Zoom.maximum { view.maxScaleFactor = Zoom.maximum }
+        if was != view.autoScales { view.autoScales = was }
+    }
+
+    /// A Fit under the first step is not clamped.
+    private func updateMinimum() {
+        let fit = view.scaleFactorForSizeToFit
+        var minimum = min(Zoom.minimum, fit > 0 ? fit : Zoom.minimum)
+        if !view.autoScales { minimum = min(minimum, view.scaleFactor) }
+        setLimits(minimum: minimum)
     }
 
     private func report() { onChange?(view.scaleFactor, pageLabel) }
 
     @objc private func scaleChanged() {
-        // A pinch or a menu step turned auto-scaling off: remember where it stopped.
+        guard !loading else { return }
+        updateMinimum()
+        // A pinch or a menu step turned auto-scaling off: remember where it
+        // stopped, and a pinch that ends at Fit goes back to Fit.
+        let fit = view.scaleFactorForSizeToFit
+        if !view.autoScales, fit > 0, abs(view.scaleFactor - fit) <= fit * 0.005 {
+            view.autoScales = true
+        }
         memory.set(view.autoScales ? nil : view.scaleFactor, for: path)
         report()
     }

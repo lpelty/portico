@@ -222,4 +222,30 @@ final class ZoomTests: XCTestCase {
         }
         XCTAssertNil(weakController)
     }
+
+    func testPDFSwitchKeepsEachFilesLevel() throws {
+        let a = try pdfFile(), b = try pdfFile()
+        let memory = ZoomMemory()
+        memory.set(1.5, for: b.path)
+        let c = PDFZoomController()
+        c.memory = memory
+        c.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
+        c.load(url: a)
+        c.view.autoScales = false; c.view.scaleFactor = 2.0
+        XCTAssertEqual(memory.scale(for: a.path), 2.0)
+        c.load(url: b)
+        XCTAssertEqual(c.scale, 1.5, accuracy: 0.001)
+        XCTAssertEqual(memory.scale(for: b.path) ?? 0, 1.5, accuracy: 0.001)
+        XCTAssertEqual(memory.scale(for: a.path) ?? 0, 2.0, accuracy: 0.001)
+
+        // A at Fit, then B (remembered 1.5): still 1.5.
+        let c2 = PDFZoomController()
+        c2.memory = memory
+        c2.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
+        c2.load(url: try pdfFile())
+        XCTAssertTrue(c2.fitting)
+        c2.load(url: b)
+        XCTAssertEqual(c2.scale, 1.5, accuracy: 0.001)
+        XCTAssertEqual(memory.scale(for: b.path) ?? 0, 1.5, accuracy: 0.001)
+    }
 }
