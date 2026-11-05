@@ -19,7 +19,7 @@ enum Theme {
         .panel: ("#F5F5F7", "#1B1B1D"),
         .surface: ("#EEEEF1", "#242427"),
         .control: ("#FFFFFF", "#2D2D31"),
-        .border: ("#D9D9DE", "#45454B"),
+        .border: ("#CACAD0", "#45454B"),
         .borderStrong: ("#BDBDC4", "#5C5C63"),
         .text: ("#1C1C1E", "#F5F5F7"),
         .text2: ("#5E5E64", "#B6B6BC"),
@@ -183,16 +183,44 @@ extension Theme {
     }
 }
 
-/// A solid `Theme.panel` behind a popover's whole content, edge to edge, with
-/// a hairline border. `.presentationBackground` replaces the system glass,
-/// arrow area included; the fill underneath covers the content's own bounds.
+/// What a popover's presentation draws: a solid `Theme.panel`.
+enum PopoverPresentation {
+    static let background: Color = Theme.panel
+}
+
+/// A solid `Theme.panel` behind a popover's whole content, edge to edge.
+/// `.presentationBackground` replaces the system glass, arrow area included;
+/// the fill underneath covers the content's own bounds. The system's rim is kept.
 private struct PopoverSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .background { Theme.panel.ignoresSafeArea() }
-            .overlay { Rectangle().strokeBorder(Theme.border, lineWidth: 1).ignoresSafeArea() }
-            .presentationBackground(Theme.panel)
+            .background { PopoverPresentation.background.ignoresSafeArea() }
+            .presentationBackground(PopoverPresentation.background)
             .environment(\.inPopover, true)
+    }
+}
+
+extension View {
+    /// A plain, solid list on `Theme.sidebar` (v0.19: no system vibrancy).
+    /// Rows take `solidRow()`, section headers `solidHeader()`.
+    func solidList() -> some View {
+        listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Theme.sidebar)
+    }
+
+    /// A list row: the old sidebar insets, no separator, no row fill.
+    func solidRow() -> some View {
+        listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+    }
+
+    /// A section header with its own solid fill, so a pinned header never
+    /// shows rows through it.
+    func solidHeader() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.sidebar)
     }
 }
 

@@ -99,13 +99,10 @@ struct DocumentView: View {
             let search = model.fileSearch
             List {
                 ForEach(search?.hits ?? []) { hit in
-                    resultRow(name: hit.name, location: model.location(of: hit.absolutePath, chat: chat), snippet: hit.snippet, path: hit.absolutePath)
+                    resultRow(name: hit.name, location: model.location(of: hit.absolutePath, chat: chat), snippet: hit.snippet, path: hit.absolutePath).solidRow()
                 }
             }
-            .listStyle(.plain)
-            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-            .scrollContentBackground(.hidden)
-            .background(Theme.sidebar)
+            .solidList()
             .overlay {
                 if search?.isSearching == true && (search?.hits.isEmpty ?? true) {
                     ProgressView().controlSize(.small)
@@ -117,12 +114,9 @@ struct DocumentView: View {
             // A gateway without text search: names from what is listed.
             let items = model.quickOpenItems(chat: chat, query: query)
             List(items) { item in
-                resultRow(name: item.name, location: item.location, snippet: nil, path: item.path)
+                resultRow(name: item.name, location: item.location, snippet: nil, path: item.path).solidRow()
             }
-            .listStyle(.plain)
-            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-            .scrollContentBackground(.hidden)
-            .background(Theme.sidebar)
+            .solidList()
             .overlay {
                 if items.isEmpty { ContentUnavailableView.search(text: query) }
             }

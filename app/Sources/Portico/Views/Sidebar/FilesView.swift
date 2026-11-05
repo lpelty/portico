@@ -149,21 +149,19 @@ struct FilesView: View {
             if !changed.isEmpty {
                 Section {
                     ForEach(changed, id: \.path) { file in
-                        ChangedFileRow(chat: chat, path: file.path, at: file.at)
+                        ChangedFileRow(chat: chat, path: file.path, at: file.at).solidRow()
                     }
                 } header: {
                     Text("Changed this session")
                         .scaledFont(FileTree.headerSize, weight: .semibold)
+                        .solidHeader()
                 }
             }
             ForEach(nodes) { node in
-                FileRow(node: node, subtitle: "\(node.root)/\(node.path)")
+                FileRow(node: node, subtitle: "\(node.root)/\(node.path)").solidRow()
             }
         }
-        .listStyle(.plain)
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-        .scrollContentBackground(.hidden)
-        .background(Theme.sidebar)
+        .solidList()
         .overlay {
             if nodes.isEmpty && changed.isEmpty {
                 ContentUnavailableView.search(text: filter)
@@ -199,10 +197,11 @@ struct FileTree: View {
         var id: String { node.id }
     }
 
-    /// The sizes a `.sidebar` list draws by default, set explicitly because
-    /// the list's default font ignores the text scale (v0.15 §3.3, amended
-    /// 11-02): rows 13 pt, section headers 11 pt semibold. At 100% they draw
-    /// exactly as the defaults did (checked pixel for pixel, light and dark).
+    /// The sizes the lists draw, set explicitly because a list's default font
+    /// ignores the text scale (v0.15 §3.3, amended 11-02): rows 13 pt, section
+    /// headers 11 pt semibold. Since v0.19 the lists are plain, solid
+    /// `Theme.sidebar` lists (`solidList()`), not the system's `.sidebar`
+    /// style; the insets are set explicitly on the rows (`solidRow()`).
     static let rowSize: CGFloat = 13
     static let headerSize: CGFloat = 11
 
@@ -220,7 +219,7 @@ struct FileTree: View {
             ForEach(model.browsableRoots(for: chat), id: \.name) { root in
                 Section {
                     ForEach(lines(root: root.name, path: "", depth: 0)) { line in
-                        row(line)
+                        row(line).solidRow()
                     }
                 } header: {
                     Label {
@@ -232,13 +231,12 @@ struct FileTree: View {
                             .font(Theme.iconFont(Self.headerSize, weight: .semibold))
                     }
                     .tip(root.path)
+                    .solidHeader()
                 }
+                .listSectionSeparator(.hidden)
             }
         }
-        .listStyle(.plain)
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
-        .scrollContentBackground(.hidden)
-        .background(Theme.sidebar)
+        .solidList()
         .overlay {
             if model.browsableRoots(for: chat).isEmpty {
                 ContentUnavailableView("No folders", systemImage: "folder", description: Text("The chat's folder appears once the gateway lists the chat."))
@@ -258,7 +256,7 @@ struct FileTree: View {
             let shown = ChangedFiles.shown(count: changed.count, expanded: allChanged)
             Section {
                 ForEach(changed.prefix(shown), id: \.path) { file in
-                    ChangedFileRow(chat: chat, path: file.path, at: file.at)
+                    ChangedFileRow(chat: chat, path: file.path, at: file.at).solidRow()
                 }
                 if changed.count > ChangedFiles.collapsedCount {
                     Button {
@@ -272,10 +270,12 @@ struct FileTree: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .solidRow()
                 }
             } header: {
                 Text("Changed this session")
                     .scaledFont(Self.headerSize, weight: .semibold)
+                    .solidHeader()
             }
         }
     }

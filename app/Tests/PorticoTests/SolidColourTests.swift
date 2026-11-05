@@ -6,7 +6,7 @@ final class SolidColourTests: XCTestCase {
         let spec: [Theme.Token: (String, String)] = [
             .window: ("#FFFFFF", "#161618"), .sidebar: ("#EFEFF2", "#1C1C1F"),
             .panel: ("#F5F5F7", "#1B1B1D"), .surface: ("#EEEEF1", "#242427"),
-            .control: ("#FFFFFF", "#2D2D31"), .border: ("#D9D9DE", "#45454B"),
+            .control: ("#FFFFFF", "#2D2D31"), .border: ("#CACAD0", "#45454B"),
             .borderStrong: ("#BDBDC4", "#5C5C63"), .text: ("#1C1C1E", "#F5F5F7"),
             .text2: ("#5E5E64", "#B6B6BC"), .text3: ("#6C6C72", "#8A8A91"),
             .selected: ("#E0E0E5", "#34343A"),
@@ -27,20 +27,27 @@ final class SolidColourTests: XCTestCase {
                     XCTAssertGreaterThanOrEqual(ratio, 4.5, "\(fg) on \(bg) dark=\(dark): \(ratio)")
                 }
             }
-            // A 1.6:1 hairline is only reachable in light mode with borderStrong (#D9D9DE on
-            // #EEEEF1 is 1.2:1, the spec's own value); the plain border is held to it in dark.
-            let edge = dark ? Theme.Token.border : .borderStrong
+            let floor = dark ? 1.6 : 1.4
             for bg in [Theme.Token.surface, .panel] {
-                let ratio = Self.contrast(hex(edge), hex(bg))
-                XCTAssertGreaterThanOrEqual(ratio, 1.6, "border on \(bg) dark=\(dark): \(ratio)")
+                let ratio = Self.contrast(hex(.border), hex(bg))
+                XCTAssertGreaterThanOrEqual(ratio, floor, "border on \(bg) dark=\(dark): \(ratio)")
+            }
+            if !dark {
+                for bg in [Theme.Token.surface, .panel] {
+                    let ratio = Self.contrast(hex(.borderStrong), hex(bg))
+                    XCTAssertGreaterThanOrEqual(ratio, 1.6, "borderStrong on \(bg): \(ratio)")
+                }
             }
         }
     }
 
     func testNoTranslucentSurfaces() throws {
-        let banned = ["Material", ".ultraThinMaterial", ".thinMaterial", ".regularMaterial", ".thickMaterial",
-                      "NSVisualEffectView", ".listStyle(.sidebar)"]
-        let opacity = try NSRegularExpression(pattern: #"Theme\.(window|sidebar|panel|surface|control)\.opacity\("#)
+        let banned = [".ultraThinMaterial", ".thinMaterial", ".regularMaterial", ".thickMaterial",
+                      "NSVisualEffectView", "SidebarListStyle", ".background(.bar)", ".background(.regular",
+                      "Theme.borderStrong.opacity("]
+        let patterns = try [#"\.\w*Material\b|Material\."#, #"\.listStyle\(\s*\.sidebar"#,
+                            #"Theme\.(window|sidebar|panel|surface|control)\.opacity\("#]
+            .map { try NSRegularExpression(pattern: $0) }
         let files = try XCTUnwrap(FileManager.default.enumerator(at: ListFontSweepTests.sources, includingPropertiesForKeys: nil))
         var offenders: [String] = []
         var scanned = 0
@@ -48,12 +55,16 @@ final class SolidColourTests: XCTestCase {
             scanned += 1
             let text = ListFontSweepTests.withoutComments(try String(contentsOf: url, encoding: .utf8))
             for word in banned where text.contains(word) { offenders.append("\(url.lastPathComponent): \(word)") }
-            if opacity.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
-                offenders.append("\(url.lastPathComponent): surface opacity")
+            for pattern in patterns where pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
+                offenders.append("\(url.lastPathComponent): \(pattern.pattern)")
             }
         }
         XCTAssertGreaterThan(scanned, 20)
         XCTAssertEqual(offenders, [])
+    }
+
+    func testPopoverPresentationIsSolidPanel() {
+        XCTAssertEqual(PopoverPresentation.background, Theme.panel)
     }
 
     static func contrast(_ a: String, _ b: String) -> Double {
