@@ -419,6 +419,9 @@ final class AppModel: ObservableObject {
     /// Per `chat.new` request id, the first message to send once the
     /// gateway answers with the new chat (the start screen's Send).
     private var pendingStarts: [String: PendingStart] = [:]
+    /// Per `session.renew` request id, the words typed on the passed-by
+    /// welcome (spec §6), sent into the next session once it exists.
+    var passedByTexts: [String: String] = [:]
 
     struct PendingStart: Equatable {
         var text: String
@@ -1059,6 +1062,10 @@ final class AppModel: ObservableObject {
             }
             // A refused start: the chat was never made, so the words and
             // files go back on the start screen with the gateway's reason.
+            if let id = error.id, let text = passedByTexts.removeValue(forKey: id) {
+                startDraft = startDraft.isEmpty ? text : text + "\n" + startDraft
+                startError = error.message
+            }
             if let id = error.id, let start = pendingStarts.removeValue(forKey: id) {
                 pendingNewChats.remove(id)
                 startDraft = startDraft.isEmpty ? start.text : start.text + "\n" + startDraft

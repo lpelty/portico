@@ -35,6 +35,7 @@ struct StartView: View {
     private var continuing: ChatSummary? { model.continuingSession.flatMap { model.summary(of: $0) } }
     private var canSend: Bool {
         guard connected, !model.startDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if let passed = model.passedBy { return model.canRenew(chat: passed.live) && !model.isSessionCommandPending(chat: passed.live) }
         if let live = continuing?.chat { return !model.isSessionCommandPending(chat: live) }
         return model.startFolder != nil && !model.isStarting
     }
@@ -42,6 +43,7 @@ struct StartView: View {
     /// else to a new session in the start folder.
     private var canSuggest: Bool {
         guard connected else { return false }
+        if model.passedBy != nil { return false }
         if let live = continuing?.chat {
             return !model.isBusy(chat: live) && !model.isSending(chat: live) && !model.isSessionCommandPending(chat: live)
         }
@@ -63,7 +65,9 @@ struct StartView: View {
             if let actions = model.hello?.actions, !actions.isEmpty {
                 suggestions(actions)
             }
-            if let live = continuing {
+            if let passed = model.passedBy {
+                passedByLine(live: passed.live, next: passed.next)
+            } else if let live = continuing {
                 continuingLine(live)
             } else {
                 folderLine
@@ -120,7 +124,7 @@ struct StartView: View {
     private var greeting: some View {
         HStack(spacing: 16) {
             greetingMark
-            Text(Self.greeting())
+            Text(model.passedBy.map { "Start Session \($0.next)" } ?? Self.greeting())
                 .scaledFont(40, design: .serif)
                 .tracking(-0.6)
                 .foregroundStyle(Theme.text)
@@ -267,6 +271,9 @@ struct StartView: View {
 
     private var placeholder: String {
         if !connected { return "Not connected" }
+        if let passed = model.passedBy {
+            return model.isRenewing(chat: passed.live) ? "Starting the next session…" : "Start Session \(passed.next) — what's first?"
+        }
         if let live = continuing {
             // As the conversation's input bar says while a log or renewal is out.
             if model.isRenewing(chat: live.chat) { return "Starting the next session…" }
@@ -278,6 +285,7 @@ struct StartView: View {
     }
 
     private var sendHelp: String {
+        if let passed = model.passedBy { return "Start Session \(passed.next) and send (Enter)" }
         if let live = continuing { return "Send to Session \(live.chat) (Enter)" }
         return model.startFolder == nil ? "Choose a folder in Settings first" : "Start and send (Enter)"
     }
@@ -313,6 +321,18 @@ struct StartView: View {
                         .tip("End Session \(live.chat) and start the next")
                 }
             }
+        }
+    }
+
+    /// Spec §6: which sessions ran outside the app, and View for the live
+    /// one the app last had.
+    private func passedByLine(live: Int, next: Int) -> some View {
+        VStack(spacing: 12) {
+            Text(SessionsPresentation.passedByLine(live: live, next: next))
+                .scaledFont(12)
+                .foregroundStyle(Theme.text3)
+            SmallBorderedButton(title: "View Session \(live)") { model.open(chat: live) }
+                .tip("Show Session \(live)'s conversation")
         }
     }
 
@@ -397,7 +417,9 @@ struct StartView: View {
         guard canSend else { return }
         // A talk into this composer ends first: what is shown is what goes.
         dictation.willSend(from: voiceComposer.id)
-        if let live = continuing?.chat {
+        if model.passedBy != nil {
+            model.startPassedBy(text: model.startDraft)
+        } else if let live = continuing?.chat {
             model.continueSession(chat: live, text: model.startDraft)
         } else {
             model.startChat(text: model.startDraft)
@@ -419,7 +441,10 @@ struct StartView: View {
     static func sendSpoken(_ model: AppModel) {
         let text = model.startDraft
         guard model.connection == .connected, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if let live = model.continuingSession.flatMap({ model.summary(of: $0) })?.chat {
+        if model.passedBy != nil {
+            guard let live = model.passedBy?.live, model.canRenew(chat: live), !model.isSessionCommandPending(chat: live) else { return }
+            model.startPassedBy(text: text)
+        } else if let live = model.continuingSession.flatMap({ model.summary(of: $0) })?.chat {
             guard !model.isSessionCommandPending(chat: live) else { return }
             model.continueSession(chat: live, text: text)
         } else {

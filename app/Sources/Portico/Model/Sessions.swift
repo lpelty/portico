@@ -45,6 +45,7 @@ extension AppModel {
     /// `New chat` in multiple presentation.
     var startTitle: String {
         guard isSinglePresentation || hello == nil else { return "New chat" }
+        if let passed = passedBy { return "Session \(passed.next)" }
         return chats.isEmpty ? "Session \(nextChat ?? 1)" : "New session"
     }
 
@@ -101,7 +102,14 @@ extension AppModel {
     var mainScreen: MainScreen {
         MainScreen.decide(
             selected: selected, listed: chatsListed, gaveUp: gaveUpConnecting || gaveUpBeforeList,
-            single: isSinglePresentation, live: liveSession?.chat)
+            single: isSinglePresentation, live: liveSession?.chat, next: nextChat)
+    }
+
+    /// The passed-by welcome's numbers: the live session and the one
+    /// Send will start (spec §6).
+    var passedBy: (live: Int, next: Int)? {
+        if case .passedBy(let live, let next) = mainScreen { return (live, next) }
+        return nil
     }
 
     /// The live session the welcome continues (Y1), when it does.
@@ -227,11 +235,24 @@ extension AppModel {
 
     /// `session.renew` with `log` as given (a deployment without a log
     /// step never logs). One renewal or log at a time per session.
-    func renew(chat: Int, log: Bool) {
-        guard canRenew(chat: chat), !isSessionCommandPending(chat: chat) else { return }
+    @discardableResult
+    func renew(chat: Int, log: Bool) -> String? {
+        guard canRenew(chat: chat), !isSessionCommandPending(chat: chat) else { return nil }
         let id = Self.requestId()
         renewing[chat] = id
         send(.sessionRenew(SessionRenew(chat: chat, log: log && canLog, id: id)))
+        return id
+    }
+
+    /// Sending from the passed-by welcome (spec §6): the next session starts
+    /// the way New does with "Start without logging" (`renew(log: false)`,
+    /// no dialog), and the message goes into it when the gateway answers.
+    func startPassedBy(text: String) {
+        guard case .passedBy(let live, _) = mainScreen else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let id = renew(chat: live, log: false) else { return }
+        passedByTexts[id] = trimmed
+        startDraft = ""
     }
 
     /// The card's New and `/new` (W2): ask "Log Session N first?" only
@@ -292,6 +313,13 @@ extension AppModel {
         }
         if selected == nil || selected == renewed.ended.chat {
             open(chat: renewed.next.chat)
+        }
+        if let id = renewed.id, let text = passedByTexts.removeValue(forKey: id) {
+            open(chat: renewed.next.chat)
+            let files = startAttachments
+            attach(files, to: renewed.next.chat)
+            files.forEach(detachFromStart)
+            sendMessage(chat: renewed.next.chat, text: text)
         }
     }
 
@@ -575,6 +603,10 @@ enum MainScreen: Equatable {
     case start
     /// The welcome, whose composer continues this live session (Y1).
     case continuing(Int)
+    /// The welcome, when sessions ran outside the app after the live one
+    /// (the deployment's next number is past live + 1): it starts `next`
+    /// rather than continuing `live` (spec §6).
+    case passedBy(live: Int, next: Int)
     /// A conversation.
     case conversation(Int)
 
@@ -582,10 +614,13 @@ enum MainScreen: Equatable {
     /// `chat.list` unless the connection has given up (then the welcome
     /// says "Not connected"); in single presentation with a live session
     /// the welcome continues it; otherwise it starts one.
-    static func decide(selected: Int?, listed: Bool, gaveUp: Bool, single: Bool, live: Int?) -> MainScreen {
+    static func decide(selected: Int?, listed: Bool, gaveUp: Bool, single: Bool, live: Int?, next: Int? = nil) -> MainScreen {
         if let selected { return .conversation(selected) }
         if !listed && !gaveUp { return .waiting }
-        if single, let live { return .continuing(live) }
+        if single, let live {
+            if let next, next > live + 1 { return .passedBy(live: live, next: next) }
+            return .continuing(live)
+        }
         return .start
     }
 }
@@ -614,5 +649,19 @@ enum ViewerRestore {
     /// person never went into the conversation), what was remembered.
     static func toRemember(showing: SavedViewer?, saved: SavedViewer?, held: Bool) -> SavedViewer? {
         showing ?? (held ? saved : nil)
+    }
+}
+
+
+// MARK: - Sessions that ran outside the app (spec §6)
+
+enum SessionsPresentation {
+    /// The welcome's line under the headline: which sessions ran elsewhere
+    /// and where the live one went.
+    static func passedByLine(live: Int, next: Int) -> String {
+        let outside = next - live - 1 == 1
+            ? "Session \(live + 1) ran outside the app."
+            : "Sessions \(live + 1)\u{2013}\(next - 1) ran outside the app."
+        return "\(outside) Session \(live) is in History."
     }
 }
