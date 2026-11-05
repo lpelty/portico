@@ -297,7 +297,7 @@ struct ViewerView: View {
             chipCount: chip ? spaced(measured.chipCount) : 0,
             buttonsLabelled: spaced(measured.buttonsLabelled),
             buttonsIcons: spaced(measured.buttonsIcons),
-            fixed: 32 + 8 + 8 + (8 + 24) + (8 + 20),
+            fixed: 32 + 8 + 8 + (8 + ViewerHeader.buttonHeight) + (8 + ViewerHeader.buttonHeight),
             edit: editability != nil ? measured.edit + 8 : 0)
     }
 
@@ -499,6 +499,9 @@ enum ViewerHeader {
     static let iconWeight: Font.Weight = .medium
     /// The square each button's glyph is drawn in.
     static let glyphSide: CGFloat = 14
+    /// v0.22 item 23: every button in the row is this tall, icon-only
+    /// (a square) or icon and words alike.
+    static let buttonHeight: CGFloat = 24
 }
 
 /// A header button's glyph: an SF Symbol, or an app's own icon (Open in
@@ -528,8 +531,9 @@ struct ViewerHeaderButton: View {
                 }
             }
             .foregroundStyle(Theme.text2)
-            .padding(.vertical, labelled ? 4 : 5)
             .padding(.horizontal, labelled ? 9 : 5)
+            .frame(minWidth: ViewerHeader.buttonHeight, minHeight: ViewerHeader.buttonHeight,
+                   maxHeight: ViewerHeader.buttonHeight)
             .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
             .fixedSize()
@@ -573,7 +577,7 @@ struct ViewerFocusButton: View {
                 .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
                 .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(on ? accent : Theme.text2)
-                .frame(width: 24, height: 24)
+                .frame(width: ViewerHeader.buttonHeight, height: ViewerHeader.buttonHeight)
                 .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
                 .contentShape(Rectangle())
@@ -598,7 +602,7 @@ struct ViewerCloseButton: View {
                 .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
                 .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(Theme.text2)
-                .frame(width: 20, height: 20)
+                .frame(width: ViewerHeader.buttonHeight, height: ViewerHeader.buttonHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.hover)
@@ -666,6 +670,9 @@ struct SpaceViewer: View {
                     .environment(\.viewerAgent, model.viewerAgent)
                     .environment(\.viewerSlot, .space)
                     .environment(\.viewerPageAddress, page)
+                    // v0.22: the page's action links, and a notice's fragment.
+                    .environment(\.spaceActionLink, spaceActionLink)
+                    .environment(\.webPaneFragment, fragmentRequest)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if let chat {
@@ -689,7 +696,7 @@ struct SpaceViewer: View {
     }
 
     /// As `ViewerView.fitWidths`: the icon and title, "Updated" after 8,
-    /// padding 16 + 16, 8 either side of the Spacer and its 8, × 20 after
+    /// padding 16 + 16, 8 either side of the Spacer and its 8, × (24) after
     /// 8, Focus 24 after 8 with a chat, the chip and Refresh after 8 each.
     private var fitWidths: HeaderFit.Widths {
         let chip = chipChat != nil
@@ -702,7 +709,7 @@ struct SpaceViewer: View {
             chipCount: chip ? spaced(measured.chipCount) : 0,
             buttonsLabelled: action != nil ? spaced(measured.buttonsLabelled) : 0,
             buttonsIcons: action != nil ? spaced(measured.buttonsIcons) : 0,
-            fixed: 32 + 8 + 8 + (8 + 20) + (chat != nil ? 8 + 24 : 0))
+            fixed: 32 + 8 + 8 + (8 + ViewerHeader.buttonHeight) + (chat != nil ? 8 + ViewerHeader.buttonHeight : 0))
     }
 
     /// The space's title, or, when a link left the space, the outside
@@ -739,14 +746,37 @@ struct SpaceViewer: View {
         }
     }
 
-    /// "Updated <time>", or the outside note while the page is on another
-    /// site (the note slot gives way the same either way).
+    /// v0.22 (S1): a `space-action:` link clicked in the open space's page.
+    private var spaceActionLink: ((URL) -> Void)? {
+        guard let id = model.openSpace else { return nil }
+        return { [model] url in model.spaceActionLinkActivated(url, space: id) }
+    }
+
+    /// v0.22 (S2): the notice's fragment, for this space only.
+    private var fragmentRequest: WebPane.FragmentRequest? {
+        guard let request = model.spaceScrollRequest, request.space == model.openSpace else { return nil }
+        return WebPane.FragmentRequest(key: "\(request.serial)", fragment: request.fragment)
+    }
+
+    /// "Updated <time>", "Refreshing…" (v0.22) or the last failure, or the
+    /// outside note while the page is on another site (the note slot gives
+    /// way the same either way).
     private func updatedText(_ space: SpaceInfo) -> some View {
-        Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) }
-             ?? SpacesPresentation.updatedText(space.updatedDate))
+        let note = SpacesPresentation.headerNote(
+            refreshing: model.isRefreshing(space.id), error: model.spaceErrors[space.id], updated: space.updatedDate)
+        let text: String
+        var failed = false
+        switch note {
+        case .updated(let words): text = words
+        case .refreshing: text = SpacesPresentation.refreshingText
+        case .error(let words): text = words; failed = true
+        }
+        return Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) } ?? text)
             .scaledFont(12)
-            .foregroundStyle(Theme.text3)
+            .foregroundStyle(failed && page.outside == nil ? Theme.deny : Theme.text3)
             .lineLimit(1)
+            .truncationMode(.tail)
+            .tip(failed && page.outside == nil ? text : "")
     }
 
     /// The header's one button: Open externally while the page is on an

@@ -62,6 +62,15 @@ struct ConversationView: View {
             if !model.pinnedCards(for: chat).isEmpty {
                 pinnedCards
             }
+            // v0.22 (S3): the deployment's messages dock in the same place,
+            // above a question or permission card.
+            if !model.dockedDeploymentMessages.shown.isEmpty {
+                DeploymentMessageDock()
+                    .environment(\.dockMaxHeight, conversationHeight.map(DockedCardLayout.maxHeight))
+                    .padding(.horizontal, Self.sideInset)
+                    .padding(.bottom, 8)
+                    .inConversationColumn()
+            }
             // v0.16 (AO1): the docked question or permission card, at the
             // composer's width above it; the composer stays under it.
             if model.dockedCard(for: chat) != nil {
@@ -431,8 +440,14 @@ struct ConversationView: View {
         let calling = (model.callingCards(in: chat).map(\.id) + model.doneCards(in: chat).map(\.id))
             .joined(separator: ",")
         // A card docking or leaving changes the transcript's height (v0.16).
-        let docked = model.dockedCard(for: chat).map { ":d:" + $0.id } ?? ""
+        let docked = Self.dockKey(
+            card: model.dockedCard(for: chat)?.id, messages: model.dockedDeploymentMessages.shown.map(\.id))
         return itemsKey + working + (calling.isEmpty ? "" : ":c:" + calling) + docked
+    }
+
+    /// The docked card's id and the deployment's message cards, for the scroll key.
+    static func dockKey(card: String?, messages: [String]) -> String {
+        (card.map { ":d:" + $0 } ?? "") + messages.map { ":m:" + $0 }.joined()
     }
 
     private var itemsKey: String {

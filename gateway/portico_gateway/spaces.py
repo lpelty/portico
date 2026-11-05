@@ -4,12 +4,12 @@ A space is one Markdown or HTML file; its id is the file name without the
 extension. Its name, icon and order come from front matter (``---`` YAML-style
 lines) or, for any file, a leading ``<!-- key: value -->`` block. The gateway
 scans the folder (``scan``), watches it by modification time
-(``SpacesWatcher``), and carries out the app's rename, remove and refresh.
+(``SpacesWatcher``), and carries out the app's rename, remove, refresh and (v0.22) act.
 Portico schedules nothing: the deployment rewrites the files.
 
 Front matter is read with a small parser (``key: value`` lines, optional
 quotes, trailing `` # comment``) rather than a YAML library: the gateway has no
-YAML dependency and these three keys need none.
+YAML dependency and these keys need none.
 """
 
 from __future__ import annotations
@@ -33,10 +33,12 @@ EXTENSIONS = (".md", ".markdown", ".html", ".htm")
 DEFAULT_ICON = "doc.text"
 # How often the folder is looked at.
 SCAN_SECONDS = 5.0
-# ``[spaces] refresh`` / ``remove`` commands, like ``[deployment]``'s.
+# ``[spaces] refresh`` / ``remove`` / ``act`` commands, like ``[deployment]``'s.
 COMMAND_SECONDS = 30.0
 # Only the start of a file is read for its keys.
 HEAD_BYTES = 64 * 1024
+# v0.22: what ``space.act`` may name as its action and item (they reach a command's environment).
+ACT_NAME = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
 class SpaceError(Exception):
@@ -56,6 +58,11 @@ class Space:
     location: str
     media: str
     updated: str  # the file's modification time, UTC ISO 8601
+    # v0.22: the space's own notification wording (``notice``; "" = none), the
+    # fragment a click opens, and ``removable: false`` for a fixed space.
+    notice: str | None = None
+    notice_target: str | None = None
+    removable: bool = True
 
 
 # --- reading the keys -------------------------------------------------------------
@@ -147,17 +154,23 @@ def _space_for(path: Path) -> Space | None:
     except OSError:
         return None
     title, icon, order = path.stem, DEFAULT_ICON, None
+    notice, notice_target, removable = None, None, True
     try:
         keys = _parse(_decode_head(path))
         order = int(keys["order"]) if keys.get("order") else None
         title = keys.get("title") or path.stem
         icon = keys.get("icon") or DEFAULT_ICON
+        notice = keys.get("notice")  # "" is kept: it means no notification for an update
+        notice_target = keys.get("notice_target", "").lstrip("#").strip() or None
+        removable = keys.get("removable", "").strip().lower() not in ("false", "no")
     except (OSError, UnicodeDecodeError, ValueError) as e:
         if not isinstance(e, FileNotFoundError):
             log.debug("space %s: listed by its file name: %s", path.name, e)
         title, icon, order = path.stem, DEFAULT_ICON, None
+        notice, notice_target, removable = None, None, True
     return Space(
-        id=path.stem, title=title, icon=icon, order=order, location=str(resolved), media=media_for(path), updated=_updated(mtime)
+        id=path.stem, title=title, icon=icon, order=order, location=str(resolved), media=media_for(path), updated=_updated(mtime),
+        notice=notice, notice_target=notice_target, removable=removable,
     )
 
 
@@ -203,14 +216,24 @@ def scan(folder: Path, require_folder: bool = False) -> list[Space]:
     return sorted(out.values(), key=lambda s: (s.order is None, s.order or 0, s.title.lower()))
 
 
-def find(folder: Path, id: str, require_folder: bool = False) -> Path:
-    """The file for space ``id``; ``SpaceError`` (``space.not_found``) when there is none."""
+def lookup(folder: Path, id: str, require_folder: bool = False) -> Space:
+    """v0.22: space ``id`` as scanned; ``SpaceError`` (``space.not_found``) when there is none."""
     if not id or "/" in id or "\\" in id or id.startswith("."):
         raise SpaceError(f"there is no space {id!r}", "space.not_found")
     for space in scan(folder, require_folder):
         if space.id == id:
-            return Path(space.location)
+            return space
     raise SpaceError(f"there is no space {id!r}", "space.not_found")
+
+
+def find(folder: Path, id: str, require_folder: bool = False) -> Path:
+    """The file for space ``id``; ``SpaceError`` (``space.not_found``) when there is none."""
+    return Path(lookup(folder, id, require_folder).location)
+
+
+def fixed(space: Space) -> SpaceError:
+    """v0.22: the refusal for a rename or remove of a space whose front matter says ``removable: false``."""
+    return SpaceError(f"{space.title!r} is a fixed space; it cannot be removed or renamed", "space.fixed")
 
 
 def space_id_for(folder: Path, location: str | Path, require_folder: bool = False) -> str | None:
@@ -293,7 +316,10 @@ def rename(folder: Path, id: str, title: str, require_folder: bool = False) -> N
     title = " ".join(title.split())
     if not title:
         raise SpaceError("a space needs a title", "space.invalid")
-    path = find(folder, id, require_folder)
+    space = lookup(folder, id, require_folder)
+    if not space.removable:
+        raise fixed(space)
+    path = Path(space.location)
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -350,14 +376,14 @@ def _trash(path: Path) -> Path:
     return target
 
 
-async def _command(command: str, id: str, timeout: float, what: str) -> None:
+async def _command(command: str, id: str, timeout: float, what: str, extra: dict[str, str] | None = None) -> None:
     lines: list[str] = []
 
     async def seen(line: str) -> None:
         lines.append(line)
 
     try:
-        code = await run_command(command, seen, timeout, env={"PORTICO_SPACE": id})
+        code = await run_command(command, seen, timeout, env={"PORTICO_SPACE": id, **(extra or {})})
     except TimeoutError:
         raise SpaceError(f"the {what} command did not finish in {timeout:g} s and was stopped") from None
     except OSError as e:
@@ -375,8 +401,10 @@ async def remove(
 
     A failing command is reported (``SpaceError``) after the file has gone.
     """
-    path = await asyncio.to_thread(find, folder, id, require_folder)
-    target = await asyncio.to_thread(_trash, path)
+    space = await asyncio.to_thread(lookup, folder, id, require_folder)
+    if not space.removable:
+        raise fixed(space)  # v0.22: before anything is touched
+    target = await asyncio.to_thread(_trash, Path(space.location))
     log.info("spaces: %s moved to %s", id, target)
     if command:
         try:
@@ -390,12 +418,25 @@ async def refresh(id: str, command: str, timeout: float = COMMAND_SECONDS) -> No
     await _command(command, id, timeout, "refresh")
 
 
+async def act(id: str, action: str, item: str | None, command: str, timeout: float = COMMAND_SECONDS) -> None:
+    """v0.22: run the deployment's ``act`` command for space ``id``.
+
+    ``$PORTICO_SPACE``, ``$PORTICO_ACTION`` and ``$PORTICO_ITEM`` (empty with no item)
+    reach it through the environment, never the command string.
+    """
+    if not ACT_NAME.fullmatch(action) or (item is not None and not ACT_NAME.fullmatch(item)):
+        raise SpaceError("an action and an item are letters, digits and . _ : - (up to 128)", "protocol.invalid")
+    await _command(command, id, timeout, "act", {"PORTICO_ACTION": action, "PORTICO_ITEM": item or ""})
+
+
 __all__ = [
     "DEFAULT_ICON",
     "Space",
     "SpaceError",
     "SpacesWatcher",
+    "act",
     "find",
+    "lookup",
     "refresh",
     "remove",
     "rename",

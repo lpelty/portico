@@ -213,4 +213,12 @@ final class ConversationScrollTests: XCTestCase {
         XCTAssertEqual(model.place(of: 3), ConversationPlace(atBottom: false, topItem: "assistant:17", topOffset: -40))
         XCTAssertEqual(model.place(of: 5)?.atBottom, true)
     }
+
+    /// v0.22 review fix: the message cards join the key whether or not a card is docked.
+    func testTheDockKeyCarriesTheMessageCardsWithADockedCard() {
+        XCTAssertEqual(ConversationView.dockKey(card: "q1", messages: ["a", "b"]), ":d:q1:m:a:m:b")
+        XCTAssertEqual(ConversationView.dockKey(card: nil, messages: ["a"]), ":m:a")
+        XCTAssertEqual(ConversationView.dockKey(card: "q1", messages: []), ":d:q1")
+        XCTAssertEqual(ConversationView.dockKey(card: nil, messages: []), "")
+    }
 }

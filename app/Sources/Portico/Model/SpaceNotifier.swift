@@ -7,8 +7,12 @@ import Foundation
 @MainActor
 protocol SpaceNotifying: AnyObject {
     /// Post a notification for space `space`: `title` is the space's title,
-    /// `body` reads "Updated — <time>".
-    func post(space: String, title: String, body: String)
+    /// `body` reads "Updated — <time>" or the page's `notice` (v0.22).
+    /// `target`: the fragment a click scrolls the space to.
+    func post(space: String, title: String, body: String, target: String?)
+    /// v0.22 (S3): a deployment message's notification; a click only
+    /// brings the app forward.
+    func postMessage(id: String, title: String, body: String)
 }
 
 /// The real thing, on `UNUserNotificationCenter`. macOS asks to allow
@@ -16,9 +20,10 @@ protocol SpaceNotifying: AnyObject {
 /// brings Portico forward and opens the space.
 @MainActor
 final class SpaceNotifier: NSObject, SpaceNotifying, UNUserNotificationCenterDelegate {
-    /// What a click opens; set by the app.
-    var open: ((String) -> Void)?
+    /// What a click opens, and the fragment to scroll to; set by the app.
+    var open: ((String, String?) -> Void)?
     nonisolated static let spaceKey = "space"
+    nonisolated static let targetKey = "target"
 
     private var center: UNUserNotificationCenter { .current() }
 
@@ -28,16 +33,26 @@ final class SpaceNotifier: NSObject, SpaceNotifying, UNUserNotificationCenterDel
         center.delegate = self
     }
 
-    func post(space: String, title: String, body: String) {
+    func post(space: String, title: String, body: String, target: String?) {
+        var info: [String: String] = [Self.spaceKey: space]
+        if let target { info[Self.targetKey] = target }
+        // One notification per space: a newer one replaces the older.
+        add(identifier: "space.\(space)", title: title, body: body, info: info)
+    }
+
+    func postMessage(id: String, title: String, body: String) {
+        add(identifier: "message.\(id)", title: title, body: body, info: [:])
+    }
+
+    private func add(identifier: String, title: String, body: String, info: [String: String]) {
         let center = center
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.userInfo = [Self.spaceKey: space]
-            // One notification per space: a newer one replaces the older.
-            center.add(UNNotificationRequest(identifier: "space.\(space)", content: content, trigger: nil))
+            content.userInfo = info
+            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
         }
     }
 
@@ -45,11 +60,13 @@ final class SpaceNotifier: NSObject, SpaceNotifying, UNUserNotificationCenterDel
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let space = response.notification.request.content.userInfo[Self.spaceKey] as? String
+        let info = response.notification.request.content.userInfo
+        let space = info[Self.spaceKey] as? String
+        let target = info[Self.targetKey] as? String
         Task { @MainActor in
             NSApplication.shared.activate()
             NSApplication.shared.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
-            if let space { self.open?(space) }
+            if let space { self.open?(space, target) }
         }
         completionHandler()
     }

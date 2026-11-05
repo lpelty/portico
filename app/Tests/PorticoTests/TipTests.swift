@@ -38,6 +38,56 @@ final class TipTests: XCTestCase {
         XCTAssertEqual(shifted.maxY, 494)
     }
 
+    /// v0.22 item 7: a 1x display that is not the main one (its origin is not
+    /// (0, 0), here left of and below the main display, as a second screen
+    /// is), with the window away from that screen's origin. Everything is in
+    /// screen coordinates, so the tip is still centred 6 pt under its control.
+    func testOnASecondOneXScreenAwayFromTheOrigin() {
+        let screen = CGRect(x: -3440, y: -300, width: 3440, height: 1415)  // visible frame, 1x
+        let window = CGRect(x: -3100, y: -120, width: 1440, height: 900)
+        // A toolbar button 26 pt under the window's top, 330 pt in.
+        let toolbar = CGRect(x: window.minX + 330, y: window.maxY - 38, width: 24, height: 24)
+        let tip = TipPlacement.frame(for: toolbar, size: size, in: window, screen: screen)
+        XCTAssertEqual(tip.midX, toolbar.midX)
+        XCTAssertEqual(tip.maxY, toolbar.minY - 6)
+        // A row in the sidebar's lower half.
+        let row = CGRect(x: window.minX + 20, y: window.minY + 300, width: 240, height: 22)
+        let low = TipPlacement.frame(for: row, size: size, in: window, screen: screen)
+        XCTAssertEqual(low.midX, row.midX)
+        XCTAssertEqual(low.maxY, row.minY - 6)
+        // The panel is the bubble plus its shadow room, nothing else.
+        XCTAssertEqual(TipPlacement.panelFrame(bubble: tip), tip.insetBy(dx: -14, dy: -14))
+    }
+
+    /// A window hanging past its screen's edge: the tip stays on the screen.
+    func testKeptOnTheScreen() {
+        let screen = CGRect(x: 1512, y: 0, width: 3440, height: 1415)
+        let window = CGRect(x: 4500, y: 100, width: 960, height: 600)  // 508 pt past the right edge
+        let control = CGRect(x: 4920, y: 600, width: 24, height: 24)
+        let tip = TipPlacement.frame(for: control, size: size, in: window, screen: screen)
+        XCTAssertEqual(tip.maxX, screen.maxX - 8)
+        XCTAssertEqual(tip.maxY, control.minY - 6)
+    }
+
+    /// v0.22 item 7, the cause: the tip's window kept the size of its bubble.
+    /// Its hosting view used to constrain it to the SwiftUI content's minimum
+    /// (a wrapping text's: narrow and very tall), so once on screen AppKit
+    /// resized the panel from its top edge and the centred bubble showed far
+    /// below and left of its control.
+    func testThePanelKeepsItsPlacedFrameOnScreen() {
+        for text in ["Hide the sidebar", "/Users/someone/Documents/Archive/2026/Projects/a-long-file-name-here.md"] {
+            let panel = TipPanel()
+            defer { panel.orderOut(nil) }
+            panel.update(text: text, scale: 1)
+            let bubble = CGRect(x: 300, y: 300, width: panel.bubbleSize.width, height: panel.bubbleSize.height)
+            panel.place(bubble: bubble)
+            panel.orderFront(nil)
+            spin(0.4)
+            XCTAssertEqual(panel.frame, TipPlacement.panelFrame(bubble: bubble), text)
+            XCTAssertEqual(panel.bubbleFrame, bubble, text)
+        }
+    }
+
     func testDelayIsEightTenths() {
         XCTAssertEqual(Tip.delay, 0.8)
     }

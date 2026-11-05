@@ -35,16 +35,31 @@ enum Tip {
 /// Where a tip goes, in AppKit coordinates (y grows upward), the one place
 /// the flip is handled: "below" is a smaller y.
 enum TipPlacement {
-    static func frame(for control: CGRect, size: CGSize, in window: CGRect) -> CGRect {
+    /// `control`, `window` and `screen` are all in screen coordinates (the
+    /// window's content and the screen's visible frame). The tip stays
+    /// inside both; on a screen whose origin is not (0, 0), such as a second
+    /// display, nothing here assumes it is.
+    static func frame(for control: CGRect, size: CGSize, in window: CGRect, screen: CGRect? = nil) -> CGRect {
+        var area = window
+        if let screen, !screen.isEmpty {
+            let shared = window.intersection(screen)
+            if !shared.isNull, !shared.isEmpty { area = shared }
+        }
         var x = control.midX - size.width / 2
-        x = min(x, window.maxX - Tip.margin - size.width)
-        x = max(x, window.minX + Tip.margin)
+        x = min(x, area.maxX - Tip.margin - size.width)
+        x = max(x, area.minX + Tip.margin)
         var y = control.minY - Tip.gap - size.height
-        if y < window.minY + Tip.margin {
-            // Near the window's bottom: above the control.
+        if y < area.minY + Tip.margin {
+            // Near the window's (or screen's) bottom: above the control.
             y = control.maxY + Tip.gap
         }
         return CGRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    /// The panel's frame for a bubble: the bubble plus room for its shadow.
+    /// The panel never takes another size (see `TipPanel.init`).
+    static func panelFrame(bubble: CGRect) -> CGRect {
+        bubble.insetBy(dx: -Tip.shadowRoom, dy: -Tip.shadowRoom)
     }
 }
 
@@ -197,7 +212,9 @@ final class TipAnchorView: NSView {
     private func place() {
         guard let panel, let window else { return }
         let control = window.convertToScreen(convert(bounds, to: nil))
-        panel.place(bubble: TipPlacement.frame(for: control, size: panel.bubbleSize, in: Self.bounds(of: window)))
+        panel.place(bubble: TipPlacement.frame(
+            for: control, size: panel.bubbleSize, in: Self.bounds(of: window),
+            screen: (window.screen ?? NSScreen.main)?.visibleFrame))
     }
 
     /// The window's content in screen coordinates. A popover's window is
@@ -299,6 +316,14 @@ final class TipPanel: NSPanel {
         becomesKeyOnlyIfNeeded = true
         animationBehavior = .none
         collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+        // v0.22 item 7: the panel's frame is `place(bubble:)`'s alone. By
+        // default a hosting view that is a window's content constrains the
+        // window to its SwiftUI content's minimum and maximum sizes; a
+        // wrapping `Text`'s minimum is very tall and narrow, so once the
+        // panel was on screen AppKit resized it to that (keeping its top
+        // edge), and the bubble, centred in it, landed far below and left of
+        // its control (a long path: near the window's bottom).
+        host.sizingOptions = []
         contentView = host
     }
 
@@ -321,7 +346,7 @@ final class TipPanel: NSPanel {
     }
 
     func place(bubble: CGRect) {
-        setFrame(bubble.insetBy(dx: -Tip.shadowRoom, dy: -Tip.shadowRoom), display: true)
+        setFrame(TipPlacement.panelFrame(bubble: bubble), display: true)
     }
 }
 

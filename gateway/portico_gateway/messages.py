@@ -50,6 +50,11 @@ AGENTS_CAPABILITY = "agents.v1"
 # v0.21: the app can show background commands and Monitors (``agent.started.task``) in its tray.
 TASKS_CAPABILITY = "tasks.v1"
 
+# v0.22: the capability an app lists when it can dock a message from the
+# deployment (``deployment.message``) above the message box. Only such an app
+# is sent one; with none attached, the gateway keeps them for the next hello.
+DEPLOYMENT_MESSAGE_CAPABILITY = "messages.deployment.v1"
+
 # v0.11 (item 74): the capability, on both sides, for messages typed while
 # the agent works. A gateway that lists it queues a ``message.send`` that
 # arrives during a turn (``chat.queued``) instead of refusing it, but only
@@ -601,6 +606,20 @@ class SpaceRefresh(Envelope):
 
     type: Literal["space.refresh"] = "space.refresh"
     id: str
+
+
+class SpaceAct(Envelope):
+    """v0.22: run the deployment's ``[spaces] act`` for a space; ``id`` is the space's id.
+
+    ``action`` and ``item`` (optional) match ``[A-Za-z0-9._:-]{1,128}``. Answered by
+    ``spaces.list`` once the command has finished, or by ``error`` (``space.act_failed``,
+    ``space.no_act``, ``space.not_found``, ``protocol.invalid``).
+    """
+
+    type: Literal["space.act"] = "space.act"
+    id: str
+    action: str
+    item: str | None = None
 
 
 class SpaceRename(Envelope):
@@ -1482,6 +1501,29 @@ class SpaceInfo(Strict):
     location: str
     media: Media
     updated: str
+    # v0.22: the space's own wording for the notification its change raises
+    # (``notice``; "" means none) and the fragment a click opens (``notice_target``);
+    # left out when the page sets neither.
+    notice: str | None = None
+    notice_target: str | None = None
+    # v0.22: ``false`` for a space that cannot be removed or renamed; left out (true) otherwise.
+    removable: bool | None = None
+
+
+class DeploymentMessage(Envelope):
+    """v0.22: a message from the deployment for the open chat; ``id`` names it, ``ts`` is when it was written.
+
+    Sent only to an app with ``messages.deployment.v1``. ``text`` is Markdown, ``title`` a short
+    heading, ``notify`` asks for a system notification too, ``space`` is the id of a space the
+    app may offer to open. Not part of the chat's history and never sent to the agent.
+    """
+
+    type: Literal["deployment.message"] = "deployment.message"
+    id: str
+    text: str
+    title: str | None = None
+    notify: bool | None = None
+    space: str | None = None
 
 
 class SpacesList(Envelope):
@@ -1540,6 +1582,7 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     ViewerSettings,
     ViewerResult,
     SpaceRefresh,
+    SpaceAct,
     SpaceRename,
     SpaceRemove,
     ModelSet,
@@ -1609,6 +1652,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     ChatCommands,
     ViewerAct,
     SpacesList,
+    DeploymentMessage,
     Models,
     ThreadProposal,
     McpServers,
@@ -1712,7 +1756,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.21.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.22.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1779,6 +1823,7 @@ def example_messages() -> dict[str, BaseModel]:
         ChatUnqueue(ts=_TS, chat=1, id="req-10"),
         ViewerSettings(ts=_TS, can_see=True, check_html=True),
         SpaceRefresh(ts=_TS, id="meeting-prep"),
+        SpaceAct(ts=_TS, id="meeting-prep", action="mark-done", item="task-3"),
         SpaceRename(ts=_TS, id="meeting-prep", title="Prep for Priya"),
         SpaceRemove(ts=_TS, id="brief"),
         ViewerResult(
@@ -1798,7 +1843,7 @@ def example_messages() -> dict[str, BaseModel]:
             roots=[Root(name="projects", path="/Users/someone/projects")],
             commands=["log"],
             capabilities=[
-                "cards.form", "files", "producer", "sessions", "files.search", "context", "spaces.v1", "spaces.refresh",
+                "cards.form", "files", "producer", "sessions", "files.search", "context", "spaces.v1", "spaces.refresh", "spaces.act",
                 "threads.v1",
             ],
             presentation="single",
@@ -2005,6 +2050,8 @@ def example_messages() -> dict[str, BaseModel]:
                     location="/Users/sam/Spaces/meeting-prep.md",
                     media="markdown",
                     updated="2026-10-31T14:05:11.250000Z",
+                    notice="Prep for your 10:00 meeting is ready",
+                    notice_target="meeting-1000",
                 ),
                 SpaceInfo(
                     id="brief",
@@ -2013,8 +2060,17 @@ def example_messages() -> dict[str, BaseModel]:
                     location="/Users/sam/Spaces/brief.html",
                     media="html",
                     updated="2026-10-31T07:30:00.000000Z",
+                    removable=False,
                 ),
             ],
+        ),
+        DeploymentMessage(
+            ts=_TS,
+            id="msg-20261105-1",
+            title="Standup moved",
+            text="Today's standup is at **10:30**.",
+            notify=True,
+            space="meeting-prep",
         ),
         Models(
             ts=_TS,

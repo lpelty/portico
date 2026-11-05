@@ -28,6 +28,9 @@ final class ViewerAgent: ObservableObject {
         static let pageReloaded = "The page reloaded since your last look; look again."
         /// A click by a heading's words with nothing clickable around it (v0.14 §6b.5).
         static let heading = "That's a heading, not something to click; use its ref."
+        /// v0.22: a link that runs one of the deployment's actions is the person's to click.
+        static let spaceActionRefused =
+            "That link runs one of the deployment's actions; only the person can click it. Ask them to, if it should run."
         static let timedOut = "The viewer didn't answer in 10 s."
         /// A show answered: the file or page is in front and has loaded (v0.17).
         static let shown = "Shown in the viewer."
@@ -493,6 +496,7 @@ final class ViewerAgent: ObservableObject {
         if let host = answer?["outside"] as? String { return fail(act, Message.outsideSite(host)) }
         if answer?["notFound"] as? Bool == true { return await notFound(act, [target], in: view) }
         if answer?["heading"] as? Bool == true { return fail(act, Message.heading) }
+        if answer?["spaceAction"] as? Bool == true { return fail(act, Message.spaceActionRefused) }
         guard answer?["ok"] as? Bool == true else { return await answered(act, answer, otherwise: "", targets: [target], in: view) }
         let label = (answer?["label"] as? String) ?? target
         return ViewerResult(id: act.id, ok: true, text: "Clicked \(label)." + (await navigated(view, from: before)))

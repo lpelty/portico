@@ -2831,6 +2831,9 @@
           "$ref": "#/$defs/SpaceRefresh"
         },
         {
+          "$ref": "#/$defs/SpaceAct"
+        },
+        {
           "$ref": "#/$defs/SpaceRename"
         },
         {
@@ -3050,6 +3053,97 @@
         "percent"
       ],
       "title": "ContextUsage",
+      "type": "object"
+    },
+    "DeploymentMessage": {
+      "additionalProperties": false,
+      "description": "v0.22: a message from the deployment for the open chat; ``id`` names it, ``ts`` is when it was written.\n\nSent only to an app with ``messages.deployment.v1``. ``text`` is Markdown, ``title`` a short\nheading, ``notify`` asks for a system notification too, ``space`` is the id of a space the\napp may offer to open. Not part of the chat's history and never sent to the agent.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "notify": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notify"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "space": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Space"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "deployment.message",
+          "default": "deployment.message",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ts",
+        "text"
+      ],
+      "title": "DeploymentMessage",
       "type": "object"
     },
     "Entry": {
@@ -6293,6 +6387,9 @@
           "$ref": "#/$defs/SpacesList"
         },
         {
+          "$ref": "#/$defs/DeploymentMessage"
+        },
+        {
           "$ref": "#/$defs/Models"
         },
         {
@@ -6907,6 +7004,73 @@
       "title": "SessionsClear",
       "type": "object"
     },
+    "SpaceAct": {
+      "additionalProperties": false,
+      "description": "v0.22: run the deployment's ``[spaces] act`` for a space; ``id`` is the space's id.\n\n``action`` and ``item`` (optional) match ``[A-Za-z0-9._:-]{1,128}``. Answered by\n``spaces.list`` once the command has finished, or by ``error`` (``space.act_failed``,\n``space.no_act``, ``space.not_found``, ``protocol.invalid``).",
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "item": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Item"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "space.act",
+          "default": "space.act",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "ts",
+        "action"
+      ],
+      "title": "SpaceAct",
+      "type": "object"
+    },
     "SpaceInfo": {
       "additionalProperties": false,
       "description": "One space in ``spaces.list``: ``updated`` is the file's modification time (UTC ISO 8601).",
@@ -6936,6 +7100,30 @@
           "title": "Media",
           "type": "string"
         },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notice"
+        },
+        "notice_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notice Target"
+        },
         "order": {
           "anyOf": [
             {
@@ -6947,6 +7135,18 @@
           ],
           "default": null,
           "title": "Order"
+        },
+        "removable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Removable"
         },
         "title": {
           "title": "Title",

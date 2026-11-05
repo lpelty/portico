@@ -16,6 +16,8 @@ struct PorticoApp: App {
     init() {
         // v0.17: tooltips after 0.8 s, in this app's own defaults only.
         TooltipDelay.register()
+        // v0.22: thin overlay scroll bars everywhere, whatever the system setting.
+        OverlayScrollers.install()
         // The model reads the auto-open settings (spec §5.3), so it holds the
         // same `Settings` object the settings scene edits.
         let settings = Settings()
@@ -33,7 +35,7 @@ struct PorticoApp: App {
         // (`swift run`) has no notification centre to ask.
         if Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" {
             let notifier = SpaceNotifier()
-            notifier.open = { [weak model] id in model?.setOpenSpace(id) }
+            notifier.open = { [weak model] id, target in model?.openSpace(id, scrollTo: target) }
             notifier.install()
             model.spaceNotifier = notifier
         }

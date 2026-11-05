@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import os
 
 // MARK: - Transcript items
 
@@ -118,6 +119,7 @@ final class AppModel: ObservableObject {
             if selected != nil { conversationShown = true }
             if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
             if let selected { noteThreadSeen(chat: selected) }
+            releaseHeldDeploymentMessages()
         }
     }
     /// The first `chat.list` of this run has arrived (v0.6). Until then the
@@ -638,6 +640,7 @@ final class AppModel: ObservableObject {
     func setOpenSpace(_ id: String?) {
         openSpace = id
         pendingOpenSpace = nil
+        spaceScrollRequest = nil
         if id != nil { spaceViewerShown = true }
         // The file's own clock can run ahead of this one; opening it must still clear its dot.
         if let id { settings.spacesLastOpened[id] = max(now(), spaces.first { $0.id == id }?.updatedDate ?? .distantPast) }
@@ -679,7 +682,15 @@ final class AppModel: ObservableObject {
     /// notify for the ones that changed, drop an open space that is gone.
     private func applySpaces(_ list: [SpaceInfo]) {
         let before = Dictionary(spaces.map { ($0.id, $0.updatedDate) }, uniquingKeysWith: { first, _ in first })
+        let beforeUpdated = Dictionary(spaces.map { ($0.id, $0.updated) }, uniquingKeysWith: { first, _ in first })
         spaces = list
+        // v0.22 (S5): a space whose file changed is done refreshing; and a
+        // failure's words give way to the newer file (or go with the space).
+        spaceRefreshing.apply(list)
+        let latest = Dictionary(list.map { ($0.id, $0.updated) }, uniquingKeysWith: { first, _ in first })
+        for id in spaceErrors.keys where latest[id] == nil || latest[id] != beforeUpdated[id] {
+            spaceErrors[id] = nil
+        }
         for space in list where settings.spacesFirstSeen[space.id] == nil {
             settings.spacesFirstSeen[space.id] = now()
         }
@@ -695,8 +706,151 @@ final class AppModel: ObservableObject {
         guard settings.spacesNotify, let notifier = spaceNotifier, !isAppActive() else { return }
         for space in list {
             guard let known = before[space.id], let was = known, let updated = space.updatedDate, updated > was else { continue }
-            notifier.post(space: space.id, title: space.title, body: SpacesPresentation.notificationBody(updated))
+            // v0.22 (S2): the page's `notice` words it; an empty one posts nothing.
+            guard let notification = SpacesPresentation.notification(for: space) else { continue }
+            notifier.post(space: space.id, title: space.title, body: notification.body, target: notification.target)
         }
+    }
+
+    // MARK: - v0.22: space actions, notices, fixed spaces, refreshing
+
+    nonisolated static let spacesLog = Logger(subsystem: "Portico", category: "spaces")
+
+    /// The open space's pane scrolls to `fragment` once (S2: a click on a
+    /// worded notice). `serial` makes a second click a new request.
+    struct SpaceScrollRequest: Equatable {
+        let space: String
+        let fragment: String
+        let serial: Int
+    }
+
+    /// Set by `openSpace(_:scrollTo:)`; any other opening clears it, so the
+    /// space does not jump on its next visit.
+    @Published private(set) var spaceScrollRequest: SpaceScrollRequest?
+    private var spaceScrollSerial = 0
+
+    /// Open space `id` and, with a fragment, scroll its page there.
+    func openSpace(_ id: String, scrollTo fragment: String?) {
+        setOpenSpace(id)
+        guard let fragment, !fragment.isEmpty else { return }
+        spaceScrollSerial += 1
+        spaceScrollRequest = SpaceScrollRequest(space: id, fragment: fragment, serial: spaceScrollSerial)
+    }
+
+    /// S5: the spaces reading as refreshing.
+    @Published private(set) var spaceRefreshing = SpaceRefreshing()
+    private var refreshingExpiry: Task<Void, Never>?
+
+    /// The spinner and "Refreshing…": from a refresh sent until the file
+    /// changes, it fails, or five minutes pass (read on `now`).
+    func isRefreshing(_ id: String) -> Bool { spaceRefreshing.isRefreshing(id, now: now()) }
+
+    /// The last refresh or action that failed, per space, in the gateway's
+    /// words; the space's header shows it until the next request or a newer file.
+    @Published private(set) var spaceErrors: [String: String] = [:]
+
+    /// Refreshes and actions sent per space and not yet refused: an `error`
+    /// echoing the space's id is theirs. (Rename and remove echo it too.)
+    private var spaceRequestsInFlight: [String: Int] = [:]
+
+    nonisolated static let noActCode = "space.no_act"
+
+    /// The gateway names `spaces.act`: only then are `space-action:` links taken.
+    var spacesCanAct: Bool { hello?.capabilities.contains(SpacesList.actCapability) == true }
+
+    private func beginSpaceRequest(_ id: String) {
+        spaceErrors[id] = nil
+        spaceRequestsInFlight[id, default: 0] += 1
+    }
+
+    /// A refused or failed refresh or action: it ends the refreshing at once
+    /// (an action's failure leaves a refresh alone), and its words show in
+    /// the header. `space.no_act` is not shown: such links are ignored.
+    /// Codes only `space.rename` and `space.remove` answer: not a refresh's or an action's.
+    nonisolated static let renameOrRemoveCodes: Set<String> = [
+        "space.invalid", "space.rename_failed", "space.remove_failed", "space.fixed",
+    ]
+
+    private func applySpaceError(_ error: ErrorMessage) {
+        guard !Self.renameOrRemoveCodes.contains(error.code) else { return }
+        guard let id = error.id, let count = spaceRequestsInFlight[id] else { return }
+        spaceRequestsInFlight[id] = count > 1 ? count - 1 : nil
+        // `protocol.invalid` on a space's id is a bad action or item: only `space.act` carries those.
+        let fromAction = error.code == Self.noActCode || error.code.hasPrefix("space.act") || error.code == "protocol.invalid"
+        if !fromAction { spaceRefreshing.end(id) }
+        if error.code == Self.noActCode {
+            Self.spacesLog.notice("space \(id, privacy: .public): the gateway has no act command; the link is ignored")
+            return
+        }
+        spaceErrors[id] = error.message
+    }
+
+    /// S1: a `space-action:` link activated in space `space`'s page. Sent
+    /// as `space.act` only to a gateway that names `spaces.act`, for a link
+    /// that parses and a space still listed; anything else is a log line.
+    func spaceActionLinkActivated(_ url: URL, space: String) {
+        switch SpaceActionLink.parse(url) {
+        case .notSpaceAction:
+            return
+        case .invalid(let why):
+            Self.spacesLog.notice("space \(space, privacy: .public): action link ignored (\(why, privacy: .public))")
+        case .action(let request):
+            guard spacesCanAct else {
+                Self.spacesLog.notice("space \(space, privacy: .public): action link ignored (the gateway has no spaces.act)")
+                return
+            }
+            guard spaces.contains(where: { $0.id == space }) else {
+                Self.spacesLog.notice("space \(space, privacy: .public): action link ignored (the space is not listed)")
+                return
+            }
+            beginSpaceRequest(space)
+            send(.spaceAct(SpaceAct(id: space, action: request.action, item: request.item)))
+        }
+    }
+
+    // MARK: - v0.22 (S3): messages from the deployment
+
+    /// Waiting above the open chat's message box; window-wide.
+    @Published private(set) var deploymentMessages = DeploymentMessageQueue()
+
+    /// A reply is streaming in the open chat: new messages wait for it.
+    var replyStreaming: Bool {
+        guard let chat = shownChat else { return false }
+        return state(of: chat) == .working
+    }
+
+    /// The cards the dock draws, oldest first, and how many more wait.
+    var dockedDeploymentMessages: (shown: [DeploymentMessage], more: Int) {
+        deploymentMessages.visible(streaming: replyStreaming)
+    }
+
+    private func receiveDeploymentMessage(_ message: DeploymentMessage) {
+        // A message not taken (its id already seen this run) posts nothing either.
+        guard deploymentMessages.receive(message, streaming: replyStreaming),
+              message.notify == true, let notifier = spaceNotifier else { return }
+        let title = message.title.flatMap { $0.isEmpty ? nil : $0 } ?? brand.name
+        notifier.postMessage(id: message.id, title: title, body: message.text)
+    }
+
+    /// Dock what was held once nothing streams in the open chat. Touches
+    /// the published queue only when something is held.
+    private func releaseHeldDeploymentMessages() {
+        guard !deploymentMessages.held.isEmpty, !replyStreaming else { return }
+        deploymentMessages.release()
+    }
+
+    /// Dismiss: the card is gone (spec §4 ruling); nobody is told.
+    func dismissDeploymentMessage(_ id: String) {
+        deploymentMessages.dismiss(id)
+    }
+
+    /// Open: the card's space, and the card is done. A space not listed
+    /// (yet) leaves the card where it is.
+    func openDeploymentMessage(_ id: String) {
+        guard let message = deploymentMessages.message(id), let space = message.space,
+              spaces.contains(where: { $0.id == space }) else { return }
+        deploymentMessages.dismiss(id)
+        setOpenSpace(space)
     }
 
     /// A pick of an ordinary file takes the viewer back to Work.
@@ -762,9 +916,43 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshSpace(_ id: String) { send(.spaceRefresh(SpaceRefresh(id: id))) }
-    func renameSpace(_ id: String, to title: String) { send(.spaceRename(SpaceRename(id: id, title: title))) }
-    func removeSpace(_ id: String) { send(.spaceRemove(SpaceRemove(id: id))) }
+    /// v0.22 (S5): the space reads as refreshing from here (see `isRefreshing`).
+    func refreshSpace(_ id: String) {
+        beginSpaceRequest(id)
+        send(.spaceRefresh(SpaceRefresh(id: id)))
+        guard let space = spaces.first(where: { $0.id == id }) else { return }
+        spaceRefreshing.begin(id, updated: space.updated, at: now())
+        scheduleRefreshingExpiry()
+    }
+
+    /// Seconds from `now` until the earliest refreshing space's five minutes
+    /// are up (0 when overdue); `nil` with nothing refreshing.
+    var refreshingExpiryDelay: TimeInterval? {
+        spaceRefreshing.nextDeadline.map { max(0, $0.timeIntervalSince(now())) }
+    }
+
+    /// Redraw when the earliest refreshing space's five minutes are up.
+    private func scheduleRefreshingExpiry() {
+        refreshingExpiry?.cancel()
+        guard let delay = refreshingExpiryDelay else { return }
+        refreshingExpiry = Task { [weak self] in
+            // A moment past the deadline, so `expire` sees it as up.
+            try? await Task.sleep(for: .seconds(delay + 0.5))
+            guard !Task.isCancelled, let self else { return }
+            self.spaceRefreshing.expire(now: self.now())
+            if !self.spaceRefreshing.ids.isEmpty { self.scheduleRefreshingExpiry() }
+        }
+    }
+
+    // A rename or remove echoes the space's id too; its own error codes are
+    // told apart in `applySpaceError`, so a refresh in flight keeps its count.
+    func renameSpace(_ id: String, to title: String) {
+        send(.spaceRename(SpaceRename(id: id, title: title)))
+    }
+
+    func removeSpace(_ id: String) {
+        send(.spaceRemove(SpaceRemove(id: id)))
+    }
 
     // MARK: - hello and reattach
 
@@ -847,6 +1035,8 @@ final class AppModel: ObservableObject {
 
     /// Apply one frame from the gateway.
     func apply(_ message: ServerMessage) {
+        // v0.22 (S3): a reply that ended (or a chat that stopped) lets held messages dock.
+        defer { releaseHeldDeploymentMessages() }
         switch message {
         case .hello(let hello):
             // Each gateway says afresh: a restarted one has read the config.
@@ -908,6 +1098,9 @@ final class AppModel: ObservableObject {
 
         case .spacesList(let list):
             applySpaces(list.spaces)
+
+        case .deploymentMessage(let message):
+            receiveDeploymentMessage(message)
 
         case .chatList(let list):
             let wasLiveThread = selected.flatMap { shown in chats.first { $0.chat == shown } }
@@ -1070,6 +1263,7 @@ final class AppModel: ObservableObject {
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
             if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
+            applySpaceError(error)
             applyAppRefusal(error)
             applyMcpError(error)
             applyPluginsError(error)
@@ -1511,7 +1705,7 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
-            .pluginsState, .pluginsDetails, .pluginsOptions:
+            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage:
             break
         }
     }

@@ -83,6 +83,8 @@ EXPECTED_KEYS = {
     # v0.12 spaces
     "server.spaces.list",
     "client.space.refresh",
+    "client.space.act",
+    "server.deployment.message",
     "client.space.rename",
     "client.space.remove",
     # v0.15 models
@@ -145,7 +147,8 @@ def test_every_type_has_schema_def_and_example():
     # plugins.update, plugins.marketplace_add, plugins.marketplace_update, plugins.details (both ways),
     # plugins.options (both ways), plugins.configure, plugins.state;
     # app.call_tool, app.message, app.context, app.reload, app.open, app.result, app.cancelled, app.call_result
-    assert len(ex) == 102
+    # v0.22's space.act, deployment.message
+    assert len(ex) == 104
     assert set(ex) == EXPECTED_KEYS
 
 

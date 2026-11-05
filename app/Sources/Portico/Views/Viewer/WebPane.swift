@@ -256,6 +256,26 @@ extension EnvironmentValues {
         get { self[SetPropertiesOpenKey.self] }
         set { self[SetPropertiesOpenKey.self] = newValue }
     }
+    /// v0.22 (S1): told of a `space-action:` link the person activated in
+    /// the pane; set only by the open space's viewer. Elsewhere such a link
+    /// goes nowhere.
+    var spaceActionLink: ((URL) -> Void)? {
+        get { self[SpaceActionLinkKey.self] }
+        set { self[SpaceActionLinkKey.self] = newValue }
+    }
+    /// v0.22 (S2): a fragment to scroll the page to once, keyed so a new
+    /// request is told apart from one already done; set by the open space's viewer.
+    var webPaneFragment: WebPane.FragmentRequest? {
+        get { self[WebPaneFragmentKey.self] }
+        set { self[WebPaneFragmentKey.self] = newValue }
+    }
+}
+
+private struct SpaceActionLinkKey: EnvironmentKey {
+    static var defaultValue: ((URL) -> Void)? { nil }
+}
+private struct WebPaneFragmentKey: EnvironmentKey {
+    static var defaultValue: WebPane.FragmentRequest? { nil }
 }
 
 private struct WebPaneRevisionKey: EnvironmentKey {
@@ -344,6 +364,12 @@ struct WebPane: NSViewRepresentable {
 
     let load: Load
 
+    /// v0.22 (S2): scroll to `fragment` once; `key` tells requests apart.
+    struct FragmentRequest: Equatable {
+        let key: String
+        let fragment: String
+    }
+
     /// The page the pane renders for `load` at a text scale: a Markdown
     /// file's page, scaled (v0.15 §3). An HTML file and a site are shown
     /// as they are, at their true size (`nil`: nothing is rendered).
@@ -363,16 +389,20 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.scale = context.environment.textScale
         context.coordinator.propertiesOpen = context.environment.propertiesOpen
         context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
+        context.coordinator.onSpaceAction = context.environment.spaceActionLink
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
+        context.coordinator.scroll(to: context.environment.webPaneFragment, in: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.propertiesOpen = context.environment.propertiesOpen
         context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
+        context.coordinator.onSpaceAction = context.environment.spaceActionLink
         context.coordinator.apply(
             load, revision: context.environment.webPaneRevision, scale: context.environment.textScale, to: view)
+        context.coordinator.scroll(to: context.environment.webPaneFragment, in: view)
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
@@ -424,6 +454,12 @@ struct WebPane: NSViewRepresentable {
         var propertiesOpen = false
         /// Told the person's toggle of a Properties block on the page.
         var onPropertiesToggle: ((Bool) -> Void)?
+        /// v0.22 (S1): told of a `space-action:` link activated in the page.
+        var onSpaceAction: ((URL) -> Void)?
+        /// v0.22 (S2): the last fragment request carried out, and one waiting
+        /// for the page to finish loading.
+        private var doneFragmentKey: String?
+        private var pendingFragment: String?
         let handler = RenderedPageHandler()
 
         /// The link on the failure page that asks for the load again. It
@@ -587,6 +623,13 @@ struct WebPane: NSViewRepresentable {
             // Back too, from its back-forward cache or not (v0.14).
             agent?.pageLoaded(webView)
             rereadIfDrawnForOlder(in: webView)
+            if let fragment = pendingFragment, isPage(webView.url) {
+                // The fragment wins over a re-read's old scroll position.
+                pendingFragment = nil
+                pendingScroll = nil
+                webView.evaluateJavaScript(Self.scrollToFragment(fragment))
+                return
+            }
             guard let y = pendingScroll else { return }
             pendingScroll = nil
             webView.evaluateJavaScript(Self.restoreScroll(y))
@@ -739,7 +782,74 @@ struct WebPane: NSViewRepresentable {
                 retry(in: webView)
                 return
             }
+            // v0.22 (S1): a space-action link never loads; a click on one in
+            // a space's page goes to the model, which checks it and the
+            // gateway's `spaces.act`. One a script follows is not a click,
+            // nor is one in a frame, on a site a link went to, or while the
+            // viewer agent acts (its clicks never run the deployment's actions).
+            if let url = navigationAction.request.url, url.scheme?.lowercased() == SpaceActionLink.scheme {
+                decisionHandler(.cancel)
+                let taken = Self.takesSpaceAction(
+                    linkActivated: navigationAction.navigationType == .linkActivated,
+                    targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
+                    sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
+                    showingOwnPage: Self.isSpaceFile(loaded, away: isAway(in: webView)),
+                    agentActing: agent?.actingChat != nil)
+                if taken, let onSpaceAction {
+                    onSpaceAction(url)
+                } else {
+                    AppModel.spacesLog.notice("action link ignored: not the person's click in a space's own page")
+                }
+                return
+            }
             decisionHandler(.allow)
+        }
+
+        /// v0.22: whether a `space-action:` navigation runs: a link click,
+        /// from and into the main frame, while the pane shows the space's own
+        /// page, and not while the viewer agent acts.
+        static func takesSpaceAction(
+            linkActivated: Bool, targetIsMainFrame: Bool?, sourceIsMainFrame: Bool, showingOwnPage: Bool, agentActing: Bool
+        ) -> Bool {
+            linkActivated && targetIsMainFrame == true && sourceIsMainFrame && showingOwnPage && !agentActing
+        }
+
+        /// The pane shows the file it was asked to (a space is a Markdown
+        /// or HTML file), not a site, another file or its failure page.
+        static func isSpaceFile(_ loaded: Load?, away: Bool) -> Bool {
+            switch loaded {
+            case .markdown, .html: return !away
+            case .url, nil: return false
+            }
+        }
+
+        /// v0.22 (S2): carry out `request` once: now when the page is in, else
+        /// when it finishes loading.
+        func scroll(to request: WebPane.FragmentRequest?, in view: WKWebView) {
+            guard let request, request.key != doneFragmentKey else { return }
+            doneFragmentKey = request.key
+            if view.isLoading || !isPage(view.url) {
+                pendingFragment = request.fragment
+            } else {
+                view.evaluateJavaScript(Self.scrollToFragment(request.fragment))
+            }
+        }
+
+        /// A page has loaded (not the blank view a pane starts with).
+        private func isPage(_ url: URL?) -> Bool {
+            guard let url else { return false }
+            return url.absoluteString != "about:blank"
+        }
+
+        /// Scroll the element with that id (or, failing that, that name) to
+        /// the top. The fragment goes in as a JSON string literal.
+        static func scrollToFragment(_ fragment: String) -> String {
+            """
+            (function (id) {
+              var e = document.getElementById(id) || document.getElementsByName(id)[0];
+              if (e) e.scrollIntoView({ block: 'start' });
+            })(\(MarkdownPage.jsString(fragment))); true
+            """
         }
 
         /// The person folded or unfolded a Properties block (`{open}`).
