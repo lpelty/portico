@@ -1995,6 +1995,8 @@ final class AppModel: ObservableObject {
     func remove(chat: Int) {
         send(.chatRemove(ChatRemove(chat: chat, id: Self.requestId())))
         forget(chat: chat)
+        // Its history is gone, so are the images pasted into it (v0.19 §8.2).
+        if let home = attachmentsHome { PastedImages.remove(chat: chat, home: home) }
     }
 
     /// Set or clear (empty or `nil`) a chat's alias.
@@ -2241,6 +2243,43 @@ final class AppModel: ObservableObject {
 
     func detach(_ path: String, from chat: Int) {
         draftAttachments[chat] = (draftAttachments[chat] ?? []).filter { $0 != path }
+    }
+
+    /// The folder pasted images are written under (`PastedImages`, v0.19
+    /// §8.2): the app's home, as the supervisor resolved it. Tests set it.
+    var attachmentsHome: URL? {
+        get { attachmentsHomeOverride ?? supervisor?.home.url }
+        set { attachmentsHomeOverride = newValue }
+    }
+    private var attachmentsHomeOverride: URL?
+
+    /// Write pasted image data for `chat` and return the file's path.
+    func savePastedImage(_ data: Data, chat: Int) throws -> String {
+        let home = attachmentsHome ?? GatewaySupervisor.resolveHome().url
+        return try PastedImages.save(data, chat: chat, home: home, now: Date())
+    }
+
+    /// The composer's intake for a chat (v0.19 §8.1): files dropped or
+    /// pasted onto its text become attachments; pasted image data is saved first.
+    func composerIntake(chat: Int) -> ComposerIntake {
+        ComposerIntake(
+            attach: { [weak self] in self?.attach($0, to: chat) },
+            saveImage: { [weak self] data in
+                guard let self else { throw PastedImages.Failure.notAnImage }
+                return try self.savePastedImage(data, chat: chat)
+            })
+    }
+
+    /// The start screen's intake: attachments for the first message. Pasted
+    /// images go under the session the start will make (the gateway's
+    /// `next_chat`), or the continued one.
+    func startIntake(continuing: Int?) -> ComposerIntake {
+        ComposerIntake(
+            attach: { [weak self] in self?.attachToStart($0) },
+            saveImage: { [weak self] data in
+                guard let self else { throw PastedImages.Failure.notAnImage }
+                return try self.savePastedImage(data, chat: continuing ?? self.nextChat ?? 0)
+            })
     }
 
     /// The chat's state word as the sidebar last heard it.

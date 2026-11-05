@@ -11,8 +11,9 @@ import UniformTypeIdentifiers
 /// agent works: Stop alone while nothing is typed, Stop (quiet) and Send
 /// once something is; a send then waits above the composer
 /// (`QueuedMessages`) for the agent's next step. File URLs
-/// dropped anywhere on the bar become chips; the Files pane adds chips
-/// through `AppModel.attach`.
+/// dropped anywhere on the bar, the text included, become chips; the
+/// Files pane adds chips through `AppModel.attach`. v0.19: images show as
+/// thumbnails, and ⌘V of image data or files attaches them.
 ///
 /// v0.11 (item 66, AG4): `/` at the start opens the slash list above the
 /// box — Portico's own commands, then the agent's — filtered as one types;
@@ -208,6 +209,9 @@ struct InputBar: View {
                 .frame(minHeight: 20 * textScale, maxHeight: 160 * textScale)
                 .fixedSize(horizontal: false, vertical: true)
                 .focused($editorFocused)
+                // v0.19 (§8.1): a file dropped or pasted onto the text, or
+                // pasted image data, becomes an attachment, never path text.
+                .background(ComposerTextViewFinder(intake: model.composerIntake(chat: chat)))
                 .disabled(renewing && !queues)
                 .onKeyPress(.return, phases: .down) { press in
                     if slashCompletion != nil,
@@ -268,30 +272,12 @@ struct InputBar: View {
         return "Ask \(agentName), or drop a file here"
     }
 
+    /// v0.19 (§8.1): images as 64-pt thumbnails (× on hover), other files as chips.
     private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(attachments, id: \.self) { path in
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc")
-                        Text(URL(fileURLWithPath: path).lastPathComponent)
-                            .lineLimit(1)
-                        Button(action: { model.detach(path, from: chat) }) {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.hover)
-                        .foregroundStyle(.secondary)
-                        .tip("Remove \(path)")
-                    }
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Theme.surface, in: Capsule())
-                    .tip(path)
-                }
-            }
-        }
+        AttachmentStrip(
+            paths: attachments,
+            onOpen: { model.reveal(file: $0, in: chat) },
+            onRemove: { model.detach($0, from: chat) })
     }
 
     /// The deployment's actions as the frame's chips: a capsule in the

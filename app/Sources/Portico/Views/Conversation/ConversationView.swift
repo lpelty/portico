@@ -467,7 +467,9 @@ struct TranscriptItemView: View {
     var body: some View {
         switch item {
         case .userText(let user):
-            UserBubble(text: user.text, maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth, via: user.via)
+            UserBubble(
+                content: BubbleContent(user), maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth,
+                via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) })
         case .assistantText(let id, let text):
             MarkdownText(text: text, id: id)
                 .frame(maxWidth: replyWidth, alignment: .leading)
@@ -532,30 +534,54 @@ enum TranscriptSpacing {
 }
 
 /// What the person sent, right-aligned on a tinted background. The text
-/// is the gateway's `user.text`: what the engine received, attachments
-/// listed under it. v0.11 (58, AG1): the replies' 15-point text (v0.12), 10 by 16
-/// padding, at most 70% of the reading column; a short message hugs.
+/// is the gateway's `user.text`. v0.19 (spec §8.1): with a gateway that
+/// sends `attachments` apart, images show as thumbnails at the top (up to
+/// 160 pt wide, wrapping), the typed text under them, then other files as
+/// chips; clicking one opens it in the viewer. An older gateway's text,
+/// attachments listed in it, shows as it came. v0.11 (58, AG1): the
+/// replies' 15-point text (v0.12), 10 by 16 padding, at most 70% of the
+/// reading column; a short message hugs.
 struct UserBubble: View {
-    let text: String
+    let content: BubbleContent
     /// The bubble's widest (`ConversationColumn.bubbleMaxWidth`).
     var maxWidth: CGFloat = fallbackMaxWidth
     /// v0.18: the app that sent this message (`user.text`'s `via`), named under the bubble.
     var via: String? = nil
+    /// Open an attachment where the person is looking (`AppModel.reveal`).
+    var onOpen: (String) -> Void = { _ in }
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(text)
-                .scaledFont(MarkdownText.bodySize)
-                .lineSpacing(MarkdownText.lineSpacing)
-                .foregroundStyle(Theme.text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .frame(maxWidth: maxWidth, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 8) {
+                if !content.images.isEmpty {
+                    WrappingRows(spacing: 6, trailing: false) {
+                        ForEach(content.images, id: \.self) { path in
+                            AttachmentThumbnail(path: path, size: .bubble, onOpen: onOpen)
+                        }
+                    }
+                }
+                if !content.text.isEmpty {
+                    Text(content.text)
+                        .scaledFont(MarkdownText.bodySize)
+                        .lineSpacing(MarkdownText.lineSpacing)
+                        .foregroundStyle(Theme.text)
+                        .textSelection(.enabled)
+                }
+                if !content.files.isEmpty {
+                    WrappingRows(spacing: 6, trailing: false) {
+                        ForEach(content.files, id: \.self) { path in
+                            AttachmentChip(path: path, onOpen: onOpen)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, content.images.isEmpty ? 16 : 10)
+            .padding(.vertical, 10)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(maxWidth: maxWidth, alignment: .trailing)
             if let via {
                 Text("via \(via)")
                     .scaledFont(11)

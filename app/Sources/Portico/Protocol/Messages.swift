@@ -348,7 +348,7 @@ struct HelloClient: Codable, Equatable, Sendable {
     static let appCapabilities = [
         AgentActivity.capability, ChatQueue.capability, ViewerSettings.capability, SpacesList.capability,
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
-        Service.stuckCapability, AppOpen.capability,
+        Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
     ]
 }
 
@@ -962,9 +962,16 @@ struct UserText: Codable, Equatable, Sendable {
     /// v0.18: a message an MCP app sent (`app.message`) carries the app's
     /// server title; the transcript shows "via <title>" under the bubble.
     var via: String? = nil
+    /// v0.19 (`messages.attachments.v1`, spec §8.4): the attached files'
+    /// paths, and `text` is only what the person typed. `nil` from an older
+    /// gateway, whose `text` still ends with the "Attached files:" block.
+    var attachments: [String]? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    /// Named in the app's `hello.capabilities`: send `attachments` apart from the text.
+    static let attachmentsCapability = "messages.attachments.v1"
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }

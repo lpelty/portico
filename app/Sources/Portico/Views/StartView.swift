@@ -165,6 +165,8 @@ struct StartView: View {
                     .frame(minHeight: 44, maxHeight: 200)
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($focused)
+                    // v0.19 (§8.1): drops and pastes of files or images attach.
+                    .background(ComposerTextViewFinder(intake: model.startIntake(continuing: continuing?.chat)))
                     .onKeyPress(.return, phases: .down) { press in
                         if slashCompletion != nil,
                             let key = SlashCompletion.Key(press.key, modifiers: press.modifiers, composing: InputBar.isComposing())
@@ -350,29 +352,14 @@ struct StartView: View {
             : model.startFolder?.path ?? "Settings › General › Folder")
     }
 
+    /// v0.19 (§8.1): images as thumbnails, other files as chips.
     private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(model.startAttachments, id: \.self) { path in
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc")
-                        Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1)
-                        Button { model.detachFromStart(path) } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.hover)
-                        .foregroundStyle(Theme.text3)
-                        .tip("Remove \(path)")
-                    }
-                    .scaledFont(12)
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Theme.surface, in: Capsule())
-                    .tip(path)
-                }
-            }
-        }
+        AttachmentStrip(
+            paths: model.startAttachments,
+            onOpen: { path in
+                if let live = continuing { model.reveal(file: path, in: live.chat) } else { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+            },
+            onRemove: { model.detachFromStart($0) })
     }
 
     // MARK: suggestions
