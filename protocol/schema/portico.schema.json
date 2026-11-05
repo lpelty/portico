@@ -3782,6 +3782,14 @@
           "default": null,
           "title": "Id"
         },
+        "link_sites": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Link Sites",
+          "type": "object"
+        },
         "lock_folder": {
           "default": false,
           "title": "Lock Folder",

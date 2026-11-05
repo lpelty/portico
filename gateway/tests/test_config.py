@@ -702,3 +702,24 @@ def test_a_non_bool_lock_folder_is_refused_naming_the_key(tmp_path: Path) -> Non
     with pytest.raises(ConfigError) as e:
         load_config(path)
     assert "lock_folder" in str(e.value)
+
+
+# --- v0.19: [links] sites --------------------------------------------------------
+
+
+def test_links_sites_reach_hello(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[links]\nsites = {"acme.example" = "Acme"}\n')
+    config = load_config(path)
+    hello = hello_for(config, epoch="e", gateway_version="0.19.0")
+    assert hello.link_sites == {"acme.example": "Acme"}
+    assert parse_server(dump(hello)) == hello
+    assert hello_for(Config(), epoch="e", gateway_version="0.19.0").link_sites == {}
+
+
+def test_a_non_string_link_site_is_a_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[links]\nsites = {"acme.example" = 3}\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert "sites" in str(e.value)

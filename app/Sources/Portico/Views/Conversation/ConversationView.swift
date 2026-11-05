@@ -469,7 +469,8 @@ struct TranscriptItemView: View {
         case .userText(let user):
             UserBubble(
                 content: BubbleContent(user), maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth,
-                via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) })
+                via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) },
+                linkSites: model.hello?.linkSites ?? [:])
         case .assistantText(let id, let text):
             MarkdownText(text: text, id: id)
                 .frame(maxWidth: replyWidth, alignment: .leading)
@@ -549,6 +550,8 @@ struct UserBubble: View {
     var via: String? = nil
     /// Open an attachment where the person is looking (`AppModel.reveal`).
     var onOpen: (String) -> Void = { _ in }
+    /// The deployment's names for link chips (hello `link_sites`).
+    var linkSites: [String: String] = [:]
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
@@ -564,11 +567,23 @@ struct UserBubble: View {
                     }
                 }
                 if !content.text.isEmpty {
-                    Text(content.text)
-                        .scaledFont(MarkdownText.bodySize)
-                        .lineSpacing(MarkdownText.lineSpacing)
-                        .foregroundStyle(Theme.text)
-                        .textSelection(.enabled)
+                    let parts = BubbleLinks.split(content.text, extra: linkSites)
+                    if !parts.text.isEmpty {
+                        Text(BubbleLinks.attributed(parts.text))
+                            .scaledFont(MarkdownText.bodySize)
+                            .lineSpacing(MarkdownText.lineSpacing)
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                    }
+                    if !parts.chips.isEmpty {
+                        WrappingRows(spacing: 6, trailing: false) {
+                            ForEach(parts.chips, id: \.self) { url in
+                                if let chip = LinkSites.chip(for: url, extra: linkSites) {
+                                    LinkChip(url: url, site: chip.site, path: chip.path)
+                                }
+                            }
+                        }
+                    }
                 }
                 if !content.files.isEmpty {
                     WrappingRows(spacing: 6, trailing: false) {
@@ -590,6 +605,37 @@ struct UserBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// A link to a known site in the person's message (v0.19 §10): the site's
+/// name semibold, the start of its path in the second text colour, a link
+/// symbol; it opens the URL.
+struct LinkChip: View {
+    let url: URL
+    let site: String
+    let path: String
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button { openURL(url) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "link").font(Theme.iconFont(11))
+                Text(site).scaledFont(12, weight: .semibold)
+                if !path.isEmpty {
+                    Text("·").scaledFont(12)
+                    Text(path).scaledFont(12).foregroundStyle(Theme.text2).lineLimit(1)
+                }
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .tip(url.absoluteString)
     }
 }
 

@@ -766,6 +766,8 @@ class HelloServer(Envelope):
     hide_session_folder: bool = False
     # v0.19: the deployment fixes "Works in" (config ``[sessions] lock_folder``).
     lock_folder: bool = False
+    # v0.19: host suffix to site name for link chips (config ``[links] sites``).
+    link_sites: dict[str, str] = {}
     # v0.12: the deployment's viewer defaults; the app uses them until the
     # person changes a switch. Absent from an older gateway.
     viewer_defaults: ViewerDefaults | None = None
@@ -1775,6 +1777,7 @@ def example_messages() -> dict[str, BaseModel]:
             permission_mode="auto",
             hide_session_folder=False,
             lock_folder=False,
+            link_sites={"acme.example": "Acme"},
             viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
             threads_max=2,
         ),

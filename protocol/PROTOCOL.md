@@ -545,6 +545,11 @@ the deployment fixes "Works in". The app shows the folder with a lock, offers
 no picker, and ignores a folder saved earlier; sessions start in
 `default_folder`, else the first root.
 
+v0.19: `link_sites: {host suffix: name}` (default `{}`; config `[links] sites`):
+the name a link chip shows for a site, added to the app's built-in names
+(Slack, Google Docs, Sheets and Slides, GitHub, Figma, Notion); a deployment's
+entry wins. The app matches the URL's host by suffix.
+
 ### `chat.list` — `ChatList`
 `chats: [ChatSummary]`, each `{chat, folder, alias?, state, created}`
 plus the session facts (v0.2: `title?`, `ended?`, `logged?`, `parent?`,

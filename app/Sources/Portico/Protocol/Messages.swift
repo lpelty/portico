@@ -708,6 +708,8 @@ struct HelloServer: Codable, Equatable, Sendable {
     var hideSessionFolder: Bool? = nil
     /// The deployment fixes "Works in" (v0.19, config `[sessions] lock_folder`).
     var lockFolder: Bool? = nil
+    /// Host suffix to site name for link chips (v0.19, config `[links] sites`).
+    var linkSites: [String: String]? = nil
     /// The deployment's defaults for the viewer switches (v0.12, config
     /// `[viewer]`); absent from an older gateway.
     var viewerDefaults: ViewerDefaults? = nil
@@ -731,6 +733,7 @@ struct HelloServer: Codable, Equatable, Sendable {
         case permissionMode = "permission_mode"
         case hideSessionFolder = "hide_session_folder"
         case lockFolder = "lock_folder"
+        case linkSites = "link_sites"
     }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }

@@ -377,6 +377,14 @@ def host_allowed(host: str, act_hosts: list[str]) -> bool:
     return any(h == e.lower() or h.endswith("." + e.lower()) for e in act_hosts)
 
 
+class LinksConfig(BaseModel):
+    """v0.19 (spec 10): ``[links] sites``, host suffix to the name a link chip shows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sites: dict[str, str] = {}
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -443,6 +451,8 @@ class Config(BaseModel):
     spaces: SpacesConfig = SpacesConfig()
     # v0.16: threads beside Main (``[threads] max``).
     threads: ThreadsConfig = ThreadsConfig()
+    # v0.19: names for the sites a link points at (``[links] sites``).
+    links: LinksConfig = LinksConfig()
     # v0.18: MCP servers (``[mcp] core``).
     mcp: McpConfig = McpConfig()
     # v0.18: MCP Apps (``[apps] enabled``).
@@ -622,6 +632,7 @@ def hello_for(
         permission_mode=config.permission_mode,
         hide_session_folder=config.files.hide_session_folder,
         lock_folder=config.sessions.lock_folder,
+        link_sites=dict(config.links.sites),
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
     )

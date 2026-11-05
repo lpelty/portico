@@ -109,6 +109,7 @@ final class Settings: ObservableObject {
         static let sendWhenStopTalking = "voice.sendWhenStopTalking"
         static let holdToTalk = "voice.holdToTalk"
         static let readAloudEnabled = "voice.readAloudEnabled"
+        static let wrapCode = "conversation.wrapCode"
         static let readAloudAvailable = "voice.readAloudAvailable"
         static let voiceIdentifier = "voice.identifier"
         static let speechRate = "voice.speechRate"
@@ -241,6 +242,12 @@ final class Settings: ObservableObject {
     /// The code stays for a better voice later. Turn it on with
     /// `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`.
     let readAloudAvailable: Bool
+    /// Code blocks with a language wrap long lines when true (v0.19 §9);
+    /// prose in a fence always wraps. The code block header's toggle flips it.
+    @Published var wrapCode: Bool {
+        didSet { defaults.set(wrapCode, forKey: Key.wrapCode) }
+    }
+
     /// Read aloud is offered: the hidden flag, then the person's setting.
     var readAloudShown: Bool { readAloudAvailable && readAloudEnabled }
     /// The voice's identifier (`AVSpeechSynthesisVoice.identifier`); `nil` is the system default.
@@ -353,6 +360,7 @@ final class Settings: ObservableObject {
         sendWhenStopTalking = defaults.object(forKey: Key.sendWhenStopTalking) as? Bool ?? false
         holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none
         readAloudEnabled = defaults.object(forKey: Key.readAloudEnabled) as? Bool ?? true
+        wrapCode = defaults.object(forKey: Key.wrapCode) as? Bool ?? false
         readAloudAvailable = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal

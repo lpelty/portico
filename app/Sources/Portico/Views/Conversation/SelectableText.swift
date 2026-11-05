@@ -134,6 +134,10 @@ enum MarkdownAttributed {
             if let link = run.link { attributes[.link] = link }
             out.append(NSAttributedString(string: string, attributes: attributes))
         }
+        // v0.19 (§9): a bare URL is a link too.
+        for (range, url) in Linkify.ranges(in: text) where range.location + range.length <= out.length {
+            out.addAttribute(.link, value: url, range: range)
+        }
         return out
     }
 
