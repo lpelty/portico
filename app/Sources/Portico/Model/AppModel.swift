@@ -42,6 +42,15 @@ struct TurnMarker: Equatable, Sendable {
 }
 
 /// What the conversation pane renders, oldest first.
+extension UserText {
+    /// What tells one sent message from another in a transcript: its words,
+    /// its files, and where it came in (two image-only messages, or the same
+    /// words with different files, are different rows).
+    var userKey: String {
+        "\(text)\u{1F}\((attachments ?? []).joined(separator: "\u{1E}"))\u{1F}\(seq.map(String.init) ?? "")\u{1F}\(ts)"
+    }
+}
+
 enum TranscriptItem: Equatable, Sendable, Identifiable {
     case userText(UserText)
     case assistantText(id: String, text: String)
@@ -58,7 +67,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
 
     var id: String {
         switch self {
-        case .userText(let u): "user:\(u.turn):\(u.text.hashValue)"
+        case .userText(let u): "user:\(u.turn):\(u.userKey.hashValue)"
         case .assistantText(let id, _): "assistant:\(id)"
         case .tool(let row): "tool:\(row.toolUseId)"
         case .card(let card): "card:\(card.id)"
@@ -205,6 +214,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
     /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
     @Published private(set) var extraRoots: [Root] = []
+    /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
+    @Published var extraFolderChecks: [String: Bool] = [:]
     /// Per directory, the gateway's refusal of its last `files.list`
     /// (`files.outside_root` for a link that leaves the root, say), shown
     /// in the directory's row instead of a listing; cleared when it is asked for again.
@@ -788,6 +799,10 @@ final class AppModel: ObservableObject {
         var frames: [ClientMessage] = openedChats.sorted().map { chat in
             .chatOpen(ChatOpen(chat: chat, since: lastSeq[chat], id: Self.requestId()))
         }
+        // The extra folders go before any listing is asked again: a listing of one of them is
+        // refused until the gateway has the list.
+        frames += extraFoldersFrames()
+        refreshExtraFolderChecks()
         // A listing in flight when the socket went away was never answered
         // (or its answer was lost with the socket): ask for each directory
         // again, under a new id, so its row does not say "Listing…" until
@@ -797,7 +812,6 @@ final class AppModel: ObservableObject {
         for key in unanswered.sorted(by: { ($0.chat, $0.root, $0.path) < ($1.chat, $1.root, $1.path) }) {
             frames.append(filesListRequest(for: key))
         }
-        frames += extraFoldersFrames()
         return frames
     }
 
@@ -976,7 +990,16 @@ final class AppModel: ObservableObject {
             noteSeq(of: message)
 
         case .filesRoots(let roots):
-            extraRoots = roots.roots.filter(\.isExtra)
+            let now = roots.roots.filter(\.isExtra)
+            // A name that now points elsewhere, or is gone, must not keep the old folder's listing.
+            let kept = Dictionary(now.map { ($0.name, $0.path) }, uniquingKeysWith: { _, last in last })
+            let stale = Set(extraRoots.filter { kept[$0.name] != $0.path }.map(\.name))
+            if !stale.isEmpty {
+                fileTree = fileTree.filter { !stale.contains($0.key.root) }
+                fileListErrors = fileListErrors.filter { !stale.contains($0.key.root) }
+                pendingFileLists = pendingFileLists.filter { !stale.contains($0.value.root) }
+            }
+            extraRoots = now
 
         case .filesList(let list):
             // A direct answer (`id`, no seq) to the Files pane's request,
@@ -2014,7 +2037,8 @@ final class AppModel: ObservableObject {
     private func confirmRemovals(listed: [ChatSummary]) {
         for (id, chat) in pendingRemovals where !listed.contains(where: { $0.chat == chat }) {
             pendingRemovals[id] = nil
-            if let home = attachmentsHome { PastedImages.remove(chat: chat, home: home) }
+            // Off the main thread: a chat's folder can hold many images.
+            if let home = attachmentsHome { Task.detached(priority: .utility) { PastedImages.remove(chat: chat, home: home) } }
         }
     }
 
@@ -2287,12 +2311,21 @@ final class AppModel: ObservableObject {
     /// text become attachments (`attach`); pasted image data is saved first.
     /// The composer keeps the one it makes.
     func makeIntake(attach: @escaping ([String]) -> Void) -> ComposerIntake {
-        ComposerIntake(
+        let intake = ComposerIntake(
             attach: attach,
             saveImage: { [weak self] data in
                 guard let self else { throw PastedImages.Failure.noHome }
                 return try self.savePastedImage(data)
             })
+        // The transcode and the write happen off the main thread; the thumbnail
+        // appears once the file is on disk, so a send never names a file not yet there.
+        intake.saveImageTask = { [weak self] data in
+            guard let home = self?.attachmentsHome else {
+                return Task { throw PastedImages.Failure.noHome }
+            }
+            return Task.detached(priority: .userInitiated) { try PastedImages.save(data, home: home, now: Date()) }
+        }
+        return intake
     }
 
     /// The chat's state word as the sidebar last heard it.
@@ -2545,6 +2578,7 @@ extension AppModel {
     func browsableRoots(for chat: Int) -> [Root] {
         let roots = fileRoots(for: chat)
         guard let own = roots.first(where: { $0.name == Self.chatRoot }) else { return roots }
+        // The deployment's own roots and the person's extra folders both count as "others".
         let others = roots.filter { $0.name != Self.chatRoot }
         if hello?.hideSessionFolder == true, !others.isEmpty { return others }
         let ownPath = URL(fileURLWithPath: own.path).standardizedFileURL.path

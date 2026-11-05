@@ -263,6 +263,16 @@ async def test_relative_path_is_invalid_root(server: GatewayServer) -> None:
         await conn.close()
 
 
+async def test_a_tilde_user_that_does_not_exist_is_invalid_root(server: GatewayServer) -> None:
+    conn = await attach(server)
+    try:
+        reply = await set_roots(conn, ["~no-such-user-portico/work"])
+        assert isinstance(reply, Error), reply
+        assert reply.code == "files.invalid_root"
+    finally:
+        await conn.close()
+
+
 async def test_resending_replaces_and_clashing_names_get_a_number(server: GatewayServer, projects: Path, tmp_path: Path) -> None:
     one = tmp_path / "a" / "work"
     two = tmp_path / "b" / "work"

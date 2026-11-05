@@ -27,7 +27,13 @@ enum LinkSites {
             .filter { host == $0.key.lowercased() || host.hasSuffix("." + $0.key.lowercased()) }
             .max { $0.key.count < $1.key.count }
             .map { ($0.key, $0.value) }
-        guard let (_, site) = match else { return nil }
+        guard let (key, name) = match else { return nil }
+        var site = name
+        // Google's one host serves three apps; the path says which (a deployment's own entry for it wins).
+        if key == "docs.google.com", extra[key] == nil {
+            if url.path.hasPrefix("/spreadsheets") { site = "Google Sheets" }
+            else if url.path.hasPrefix("/presentation") { site = "Google Slides" }
+        }
         var path = url.path
         if path.count > pathLimit { path = String(path.prefix(pathLimit - 1)) + "…" }
         return (site, path)
@@ -67,9 +73,12 @@ enum Linkify {
         return detect(in: shown, skipping: skip)
     }
 
+    /// Built once: making a detector is not cheap, and bubbles ask on every redraw. Used on the main thread only.
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     /// Every http(s) URL in text taken as written, outside `skipping`.
     static func detect(in text: String, skipping: [NSRange] = []) -> [(NSRange, URL)] {
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return [] }
+        guard let detector = linkDetector else { return [] }
         let whole = NSRange(location: 0, length: (text as NSString).length)
         return detector.matches(in: text, range: whole).compactMap { match in
             guard let url = match.url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",

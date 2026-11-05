@@ -162,6 +162,11 @@ final class ImageAttachmentTests: XCTestCase {
         model.apply(listed([3]))
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path), "a list still holding it confirms nothing")
         model.apply(listed([]))
+        // The removal runs off the main thread.
+        let deadline = Date().addingTimeInterval(5)
+        while FileManager.default.fileExists(atPath: folder.path), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
     }
 
@@ -172,6 +177,15 @@ final class ImageAttachmentTests: XCTestCase {
         model.apply(.error(ErrorMessage(code: "chat.unknown", message: "no chat 3", id: request.id)))
         model.apply(listed([]))
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    func testTwoImageOnlyMessagesOrSameWordsWithDifferentFilesAreDistinctRows() {
+        let a = TranscriptItem.userText(UserText(chat: 1, turn: 1, text: "", attachments: ["/x/a.png"], seq: 4))
+        let b = TranscriptItem.userText(UserText(chat: 1, turn: 1, text: "", attachments: ["/x/b.png"], seq: 5))
+        let c = TranscriptItem.userText(UserText(chat: 1, turn: 1, text: "look", attachments: ["/x/a.png"], seq: 4))
+        let d = TranscriptItem.userText(UserText(chat: 1, turn: 1, text: "look", attachments: ["/x/b.png"], seq: 4))
+        XCTAssertEqual(Set([a.id, b.id, c.id, d.id]).count, 4)
+        
     }
 
     func testNoHomeWritesNothing() {

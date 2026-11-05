@@ -12,6 +12,9 @@ final class ComposerIntake: NSObject {
     var attach: ([String]) -> Void
     /// Write pasted image data to a file and return its path.
     var saveImage: (Data) throws -> String
+    /// When set, pasted image data is saved by the task this returns (off the main thread) and
+    /// attached once it has been written; `saveImage` is the synchronous way (tests).
+    var saveImageTask: ((Data) -> Task<String, Error>)?
     /// Where ⌘V reads: the general pasteboard, or one a test hands in.
     let pasteboard: NSPasteboard
 
@@ -74,6 +77,13 @@ final class ComposerIntake: NSObject {
             attach(paths)
             return true
         case .image(let data):
+            if let make = saveImageTask {
+                let saving = make(data)
+                Task { [weak self] in
+                    if let path = try? await saving.value { self?.attach([path]) }
+                }
+                return true
+            }
             guard let path = try? saveImage(data) else { return false }
             attach([path])
             return true
@@ -212,8 +222,7 @@ enum ComposerTextViewHook {
             let imp = imp_implementationWithBlock(make { saved! })
             saved = method_setImplementation(own, imp)
         } else {
-            let superclass: AnyClass? = class_getSuperclass(cls)
-            nonisolated(unsafe) let parent = superclass
+            let parent: AnyClass? = class_getSuperclass(cls)
             let imp = imp_implementationWithBlock(make { class_getMethodImplementation(parent, selector)! })
             class_addMethod(cls, selector, imp, types)
         }
@@ -242,14 +251,21 @@ enum ComposerTextViewHook {
 
     /// Types only: asked on every move of a drag.
     private nonisolated static func takes(_ info: AnyObject, view: NSTextView) -> Bool {
-        guard let info = info as? NSDraggingInfo, intake(of: view) != nil else { return false }
-        return ComposerIntake.offers(types: info.draggingPasteboard.types ?? [])
+        guard intake(of: view) != nil else { return false }
+        nonisolated(unsafe) let dragging = info
+        return MainActor.assumeIsolated {
+            guard let info = dragging as? NSDraggingInfo else { return false }
+            return ComposerIntake.offers(types: info.draggingPasteboard.types ?? [])
+        }
     }
 
     private nonisolated static func drop(_ info: AnyObject, view: NSTextView) -> Bool {
-        guard let info = info as? NSDraggingInfo, let intake = intake(of: view) else { return false }
-        nonisolated(unsafe) let board = info.draggingPasteboard
-        return MainActor.assumeIsolated { intake.take(from: board, dropping: true) }
+        guard let intake = intake(of: view) else { return false }
+        nonisolated(unsafe) let dragging = info
+        return MainActor.assumeIsolated {
+            guard let info = dragging as? NSDraggingInfo else { return false }
+            return intake.take(from: info.draggingPasteboard, dropping: true)
+        }
     }
 }
 

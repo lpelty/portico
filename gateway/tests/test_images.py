@@ -14,6 +14,8 @@ import os
 import struct
 import zlib
 from pathlib import Path
+
+import pytest
 from typing import Any
 
 from portico_gateway.config import hello_for
@@ -158,7 +160,21 @@ def test_image_blocks_names_only_the_images_it_could_not_send(tmp_path: Path) ->
     note.write_text("notes")
     blocks, notices = image_blocks([str(small), str(large), str(heic), str(note)])
     assert [b["source"]["media_type"] for b in blocks] == ["image/png"]
-    assert notices == ["b.png is too large to show the agent as an image; it can still open the file."]
+    assert notices == [
+        "b.png is too large to show the agent as an image; it can still open the file.",
+        "c.heic can't be shown to the agent as an image; it can still open the file.",
+    ]
+
+
+def test_tiff_heif_and_bmp_get_the_notice_and_a_sniffed_png_named_heic_is_sent(tmp_path: Path) -> None:
+    names = ["a.tiff", "b.tif", "c.heif", "d.BMP"]
+    for name in names:
+        (tmp_path / name).write_bytes(b"II*\x00junk-bytes")
+    disguised = tmp_path / "e.heic"
+    disguised.write_bytes(png())
+    blocks, notices = image_blocks([str(tmp_path / n) for n in names] + [str(disguised)])
+    assert [b["source"]["media_type"] for b in blocks] == ["image/png"]
+    assert notices == [f"{n} can't be shown to the agent as an image; it can still open the file." for n in names]
 
 
 def test_the_raw_cap_is_three_megabytes() -> None:
@@ -178,6 +194,7 @@ def test_an_unreadable_or_vanished_image_says_so(tmp_path: Path) -> None:
     assert notices == [
         "gone.png can't be read as an image; it can still open the file.",
         "locked.jpg can't be read as an image; it can still open the file.",
+        "gone.heic can't be shown to the agent as an image; it can still open the file.",
     ]
 
 
@@ -318,6 +335,45 @@ async def test_an_oversized_image_goes_as_a_path_with_a_notice(
         # The notice follows the person's message in the turn.
         kinds = [type(f) for f in frames]
         assert kinds[:4] == [TurnStarted, UserText, ChatState, ChatNotice]
+    finally:
+        await conn.close()
+
+
+async def test_a_heic_goes_as_a_path_with_the_cannot_be_shown_notice(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    photo = folder / "IMG_1.heic"
+    photo.write_bytes(HEIC_HEAD)
+    conn = await attach_as(server, NEW_APP)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="Look", attachments=[str(photo)])))
+        frames = await recv_until(conn, TurnFinished)
+        assert factory.last.sent_images[-1] == []
+        assert [(n.kind, n.text) for n in frames if isinstance(n, ChatNotice)] == [
+            ("attachment.not_image", "IMG_1.heic can't be shown to the agent as an image; it can still open the file.")
+        ]
+    finally:
+        await conn.close()
+
+
+async def test_a_failing_notice_ends_the_turn_instead_of_leaving_it_begun(
+    server: GatewayServer, factory: EngineFactory, folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    photo = folder / "IMG_2.heic"
+    photo.write_bytes(HEIC_HEAD)
+
+    async def boom(chat: object, notices: list[str]) -> None:
+        raise RuntimeError("emit failed")
+
+    monkeypatch.setattr(server, "_not_image_notices", boom)
+    conn = await attach_as(server, NEW_APP)
+    try:
+        number = await new_chat(conn, folder)
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="Look", attachments=[str(photo)])))
+        frames = await recv_until(conn, TurnFinished)
+        assert any(isinstance(f, TurnFinished) for f in frames)
+        assert server._runs.get(number) is None
     finally:
         await conn.close()
 

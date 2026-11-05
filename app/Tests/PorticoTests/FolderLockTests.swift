@@ -103,3 +103,13 @@ final class FolderLockTests: XCTestCase {
         XCTAssertEqual(model.settings.lastFolder, home.path)
     }
 }
+
+final class WorksInTextTests: XCTestCase {
+    func testALockedFolderShowsItsPathWithTheHomeAsTilde() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let folder = home.appendingPathComponent("work/notes")
+        XCTAssertEqual(GeneralSettingsPresentation.worksInText(folder: folder, locked: true), "~/work/notes")
+        XCTAssertEqual(GeneralSettingsPresentation.worksInText(folder: folder, locked: false), "notes")
+        XCTAssertEqual(GeneralSettingsPresentation.worksInText(folder: nil, locked: true), "None chosen")
+    }
+}

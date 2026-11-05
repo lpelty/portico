@@ -37,10 +37,16 @@ NOT_IMAGE_NOTICE_KIND = "attachment.not_image"
 TOO_LARGE = "too_large"
 UNREADABLE = "unreadable"
 PAST_MESSAGE_CAP = "past_message_cap"
+UNSUPPORTED = "unsupported_format"
 
 # Names that read as an image the agent could have been shown; one that
 # cannot be read or sniffed is still the person's image, and they hear why.
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+
+# Image types the app shows as thumbnails but the engine cannot be sent
+# (read from the name when the bytes are not one of the four sendable
+# formats): the person is told the agent has only the path.
+_UNSENDABLE_SUFFIXES = frozenset({".heic", ".heif", ".tiff", ".tif", ".bmp"})
 
 
 def media_type(head: bytes) -> str | None:
@@ -57,7 +63,7 @@ def media_type(head: bytes) -> str | None:
 
 
 def read_image(path: Path) -> tuple[dict[str, Any] | None, str | None]:
-    """``path``'s ``image`` block, or ``None`` and why: ``TOO_LARGE``, ``UNREADABLE``, or ``None`` for not an image.
+    """``path``'s ``image`` block, or ``None`` and why: ``TOO_LARGE``, ``UNREADABLE``, ``UNSUPPORTED``, or ``None`` for not an image.
 
     A file that can't be opened or read (gone since it was checked, no
     permission) is ``UNREADABLE`` when its name says image, else not one.
@@ -67,12 +73,13 @@ def read_image(path: Path) -> tuple[dict[str, Any] | None, str | None]:
             head = f.read(12)
             kind = media_type(head)
             if kind is None:
-                return None, None
+                return None, (UNSUPPORTED if path.suffix.lower() in _UNSENDABLE_SUFFIXES else None)
             if os.fstat(f.fileno()).st_size > MAX_IMAGE_BYTES:
                 return None, TOO_LARGE
             data = head + f.read(MAX_IMAGE_BYTES + 1 - len(head))
     except OSError:
-        return None, (UNREADABLE if path.suffix.lower() in _IMAGE_SUFFIXES else None)
+        suffix = path.suffix.lower()
+        return None, (UNREADABLE if suffix in _IMAGE_SUFFIXES else UNSUPPORTED if suffix in _UNSENDABLE_SUFFIXES else None)
     if len(data) > MAX_IMAGE_BYTES:
         return None, TOO_LARGE  # grew since the stat
     return {"type": "image", "source": {"type": "base64", "media_type": kind, "data": base64.b64encode(data).decode("ascii")}}, None
@@ -86,8 +93,8 @@ def image_block(path: Path) -> dict[str, Any] | None:
 def image_blocks(paths: Iterable[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """The image blocks for one message's ``paths``, in order, and a notice for each image that goes as a path only.
 
-    A file that is not a supported image (HEIC, a PDF, text) is neither: it
-    goes as a path, as any file does. Past ``MAX_IMAGES`` images or
+    A HEIC, TIFF or BMP is an image the agent cannot be shown: a path and a
+    notice. A file that is not an image (a PDF, text) goes as a path, as any file does. Past ``MAX_IMAGES`` images or
     ``MAX_ENCODED_TOTAL`` encoded bytes, a further image goes as a path only.
     """
     blocks: list[dict[str, Any]] = []
@@ -112,6 +119,8 @@ def not_image_notice(name: str, why: str = TOO_LARGE) -> str:
     """What the person sees for an image the agent is not shown."""
     if why == UNREADABLE:
         return f"{name} can't be read as an image; it can still open the file."
+    if why == UNSUPPORTED:
+        return f"{name} can't be shown to the agent as an image; it can still open the file."
     if why == PAST_MESSAGE_CAP:
         return f"{name} is past what one message can show the agent as images; it can still open the file."
     return f"{name} is too large to show the agent as an image; it can still open the file."

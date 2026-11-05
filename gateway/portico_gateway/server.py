@@ -2905,18 +2905,26 @@ class GatewayServer:
     async def on_files_roots_set(self, msg: FilesRootsSet, conn: ServerConnection) -> None:
         """v0.19: this connection's added folders, replacing the last list; answered with every root it now has."""
         taken = {CHAT_ROOT, *(root.name for root in self.config.roots)}
-        extras: list[Root] = []
+        paths: list[Path] = []
         for raw in msg.paths:
-            path = Path(raw).expanduser()
+            try:
+                path = Path(raw).expanduser()
+            except RuntimeError:  # "~nouser": no such home folder
+                raise ProtocolError("files.invalid_root", f"a folder must be an absolute path: {raw}") from None
             if not path.is_absolute():
                 raise ProtocolError("files.invalid_root", f"a folder must be an absolute path: {raw}")
+            paths.append(path)
+        # Looking at the disk can be slow (a network volume): off the event loop.
+        found = await asyncio.to_thread(lambda: [path.is_dir() for path in paths])
+        extras: list[Root] = []
+        for path, there in zip(paths, found, strict=True):
             base = path.name or "folder"
             name, n = base, 1
             while name in taken:
                 n += 1
                 name = f"{base} {n}"
             taken.add(name)
-            extras.append(Root(name=name, path=str(path), extra=True, missing=not path.is_dir()))
+            extras.append(Root(name=name, path=str(path), extra=True, missing=not there))
         setattr(conn, _EXTRA_ROOTS_ATTR, extras)
         await self._send(conn, FilesRoots(ts=_now(), id=msg.id, roots=[*self.config.roots, *extras]))
 
@@ -3530,10 +3538,10 @@ class GatewayServer:
         v0.19: ``image_paths`` are read here, after the echo (the echo goes first, v0.7), and
         each image that goes as a path only gets its notice while the turn is still this one.
         """
-        images, notices = await self._image_blocks(list(image_paths or []))
-        if notices and self._runs.get(chat.number) is run:
-            await self._not_image_notices(chat, notices)
         try:
+            images, notices = await self._image_blocks(list(image_paths or []))
+            if notices and self._runs.get(chat.number) is run:
+                await self._not_image_notices(chat, notices)
             await self._begin_turn(chat, run, text, images)
         except ProtocolError as e:
             self.apps.put_back(chat, context or {})

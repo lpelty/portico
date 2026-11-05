@@ -93,7 +93,10 @@ workflows): without it the gateway sends none of those frames; v0.11:
 can draw the agent's marks; see The viewer and spaces); v0.17:
 `viewer.show.v1` (it answers `viewer.act` `show` once the page has
 loaded; see The viewer and spaces); v0.18: `apps.v1` (it shows
-`app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)). Absent
+`app.*` frames as cards; see [MCP Apps](#mcp-apps-v018)); v0.19:
+`messages.attachments.v1` (it sends `attachments` apart from the text and
+reads them in `user.text`) and `files.extra.v1` (it sends
+`files.roots.set` and shows the added folders). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -482,8 +485,11 @@ the mark beside the start screen's greeting, `header_image` (v0.7) an
 absolute path to an image the toolbar shows in place of the mark and the
 name, 28 points tall with its own proportions (an older app ignores it);
 absent or unreadable values fall back to "Portico" and the system
-defaults), `actions: [{label, text}]`, `roots: [{name, path}]` (`path`
-absolute, as configured with any `~` expanded), `commands: [string]`
+defaults), `actions: [{label, text}]`, `roots: [{name, path, extra?, missing?}]` (`path`
+absolute, as configured with any `~` expanded; v0.19: `extra` and `missing`
+are `false` in `hello` (the deployment's own roots) and are meaningful in
+`files.roots`, where an added folder is `extra: true` and a path that is not a
+directory is `missing: true`), `commands: [string]`
 (Portico's own commands the deployment offers, without the `/`; empty in
 v0.1–v0.3; v0.4: `["log"]` when the deployment can log, i.e. `can_log`),
 `capabilities: [string]` (v0.1: `cards.form`,
@@ -500,7 +506,10 @@ see [Models](#models-v015); v0.16: `threads.v1` in single presentation with
 `[threads] max` above 0, see [Threads](#threads-v016); v0.18: `mcp.v1`
 always, see [MCP servers](#mcp-servers-v018), `plugins.v1` always, see
 [Plugins](#plugins-v018), and `apps.v1` when `[apps] enabled` (the
-default), see [MCP Apps](#mcp-apps-v018)). Always followed by `chat.list`, so the app has the
+default), see [MCP Apps](#mcp-apps-v018); v0.19: `messages.attachments.v1`
+always, so the app may send `attachments` on `message.send` and reads them in
+`user.text`, and `files.extra.v1` always, so the app may send
+`files.roots.set`). Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
 
@@ -1002,7 +1011,7 @@ message that has gone to the agent, or was never queued), `attachment.missing`, 
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),
 `card.stale`, `card.invalid_answer`, `files.unknown_root`, `files.outside_root`,
-`files.not_found`, `files.search_failed` (Spotlight failed or timed out),
+`files.not_found`, `files.invalid_root` (v0.19: `files.roots.set` with a path that is not absolute, or a `~user` that does not exist), `files.search_failed` (Spotlight failed or timed out),
 `session.ended` (`session.renew`, `session.log` or `message.send` on a
 session that has ended), `session.cannot_log` (v0.4: `session.log` and the
 deployment has no log step), `service.unknown` (v0.4: `service.restart`

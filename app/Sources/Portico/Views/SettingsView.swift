@@ -28,6 +28,12 @@ enum GeneralSettingsPresentation {
     }
 
     /// The Works in row while the deployment fixes the folder (v0.19 §4.1).
+    /// The Works in value: the folder's name, or while the deployment fixes it, its path with the home folder as `~`.
+    static func worksInText(folder: URL?, locked: Bool) -> String {
+        guard let folder else { return "None chosen" }
+        return locked ? (folder.path as NSString).abbreviatingWithTildeInPath : folder.lastPathComponent
+    }
+
     static func folderLockedNote(brand: String) -> String { "Set by \(brand)" }
 
     /// The same note inside a sentence (the start screen's line): only the first word drops its capital, the brand keeps its case.
@@ -132,7 +138,7 @@ struct GeneralSettingsTab: View {
             SettingsSection("Folder") {
                 SettingsRow("Works in", help: "The folder new sessions work in. A session that is already going keeps its folder.") {
                     HStack(spacing: 10) {
-                        Text(model.startFolder?.lastPathComponent ?? "None chosen")
+                        Text(GeneralSettingsPresentation.worksInText(folder: model.startFolder, locked: model.isFolderLocked))
                             .scaledFont(12)
                             .foregroundStyle(Theme.text2)
                             .lineLimit(1)
@@ -482,6 +488,7 @@ struct ExtraFoldersSection: View {
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .onAppear { model.refreshExtraFolderChecks() }
     }
 
     private func folderRow(_ row: ExtraFolderRow) -> some View {

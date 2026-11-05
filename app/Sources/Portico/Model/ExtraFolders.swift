@@ -18,21 +18,31 @@ extension AppModel {
 
     /// What sits under the list: the explanation, or why Add is off.
     var extraFoldersNote: String {
-        offersExtraFolders
-            ? GeneralSettingsPresentation.extraFoldersFootnote(brand: brand.name)
-            : GeneralSettingsPresentation.extraFoldersNeedsNewerGateway
+        // Not said before a gateway has spoken: "needs a newer one" is for a hello that lacks it.
+        hello != nil && !offersExtraFolders
+            ? GeneralSettingsPresentation.extraFoldersNeedsNewerGateway
+            : GeneralSettingsPresentation.extraFoldersFootnote(brand: brand.name)
+    }
+
+    /// Look at the disk for each folder in the list. Done when the list changes, a gateway
+    /// connects, or Settings opens, never from a view body.
+    func refreshExtraFolderChecks() {
+        var checks: [String: Bool] = [:]
+        for path in settings.extraFolders {
+            var isDir: ObjCBool = false
+            checks[path] = FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+        }
+        if checks != extraFolderChecks { extraFolderChecks = checks }
     }
 
     /// The list as Settings draws it; a folder is "Not found" by the gateway's word once it has given
-    /// one, else by a look at the disk.
+    /// one, else by the last look at the disk (none yet: not missing).
     var extraFolderRows: [ExtraFolderRow] {
         settings.extraFolders.map { path in
             if let root = extraRoots.first(where: { $0.path == path }) {
                 return ExtraFolderRow(path: path, missing: root.isMissing)
             }
-            var isDir: ObjCBool = false
-            let there = FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
-            return ExtraFolderRow(path: path, missing: !there)
+            return ExtraFolderRow(path: path, missing: extraFolderChecks[path] == false)
         }
     }
 
@@ -47,13 +57,16 @@ extension AppModel {
         let path = folder.standardizedFileURL.path
         guard !settings.extraFolders.contains(path) else { return }
         settings.extraFolders.append(path)
+        refreshExtraFolderChecks()
         sendExtraFolders()
     }
 
     func removeExtraFolder(_ path: String) {
-        guard offersExtraFolders, settings.extraFolders.contains(path) else { return }
+        guard settings.extraFolders.contains(path) else { return }
         settings.extraFolders.removeAll { $0 == path }
-        sendExtraFolders()
+        refreshExtraFolderChecks()
+        // Gone from the list whatever the gateway; only a gateway that keeps the list hears of it.
+        if offersExtraFolders { sendExtraFolders() }
     }
 
     private func sendExtraFolders() {

@@ -17,6 +17,15 @@ final class LinkSitesTests: XCTestCase {
         XCTAssertTrue(chip.path.hasSuffix("…"))
     }
 
+    func testSheetsAndSlidesAreNamedByPath() throws {
+        let sheet = try XCTUnwrap(LinkSites.chip(for: URL(string: "https://docs.google.com/spreadsheets/d/1abc/edit")!))
+        XCTAssertEqual(sheet.site, "Google Sheets")
+        let slides = try XCTUnwrap(LinkSites.chip(for: URL(string: "https://docs.google.com/presentation/d/1abc/edit")!))
+        XCTAssertEqual(slides.site, "Google Slides")
+        let doc = try XCTUnwrap(LinkSites.chip(for: URL(string: "https://docs.google.com/document/d/1abc/edit")!))
+        XCTAssertEqual(doc.site, "Google Docs")
+    }
+
     func testAnUnknownHostIsNoChip() {
         XCTAssertNil(LinkSites.chip(for: URL(string: "https://acme.example/x")!))
         XCTAssertNil(LinkSites.chip(for: URL(string: "https://notslack.com/x")!))

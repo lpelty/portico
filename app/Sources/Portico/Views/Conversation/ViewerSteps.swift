@@ -283,7 +283,7 @@ struct ToolRunView: View {
                     if kind == .any, running, !shown, !latest.isEmpty {
                         Text(latest)
                             .scaledFont(13)
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(Theme.text2)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .padding(.leading, 22)
