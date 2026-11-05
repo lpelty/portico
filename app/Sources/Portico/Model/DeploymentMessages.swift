@@ -9,20 +9,34 @@ struct DeploymentMessageQueue: Equatable {
     /// At most this many cards show; the rest are "N more".
     static let shownMax = 3
 
+    /// How many ids this run remembers, so a dismissed one sent again does not dock again.
+    static let seenMax = 200
+
     private(set) var docked: [DeploymentMessage] = []
     private(set) var held: [DeploymentMessage] = []
+    /// The ids taken this run, oldest first, at most `seenMax`.
+    private var seenOrder: [String] = []
+    private var seen: Set<String> = []
 
     var isEmpty: Bool { docked.isEmpty && held.isEmpty }
 
-    /// Take a new message. The same `id` again is the same card.
-    mutating func receive(_ message: DeploymentMessage, streaming: Bool) {
-        guard !docked.contains(where: { $0.id == message.id }), !held.contains(where: { $0.id == message.id }) else { return }
+    /// Take a new message; whether it was taken. An `id` already taken this
+    /// run (docked, held or dismissed) is not taken again.
+    @discardableResult
+    mutating func receive(_ message: DeploymentMessage, streaming: Bool) -> Bool {
+        guard !seen.contains(message.id), self.message(message.id) == nil else { return false }
+        seen.insert(message.id)
+        seenOrder.append(message.id)
+        if seenOrder.count > Self.seenMax {
+            seen.remove(seenOrder.removeFirst())
+        }
         if streaming {
             held.append(message)
         } else {
             release()
             docked.append(message)
         }
+        return true
     }
 
     /// Nothing streams now: the held messages dock, in the order they came.

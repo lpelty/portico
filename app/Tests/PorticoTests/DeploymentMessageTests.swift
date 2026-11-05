@@ -177,4 +177,46 @@ final class DeploymentMessageTests: XCTestCase {
         model.apply(.deploymentMessage(message("c", text: "Untitled", notify: true)))
         XCTAssertEqual(notifier.messages.last?.title, "Acme", "no title: the brand's name")
     }
+
+    // MARK: - a reused id (review fix)
+
+    func test_receive_says_whether_it_took_the_message() {
+        var queue = DeploymentMessageQueue()
+        XCTAssertTrue(queue.receive(message("a"), streaming: false))
+        XCTAssertFalse(queue.receive(message("a"), streaming: false), "already docked")
+        XCTAssertTrue(queue.receive(message("b"), streaming: true))
+        XCTAssertFalse(queue.receive(message("b"), streaming: true), "already held")
+    }
+
+    func test_a_dismissed_id_sent_again_does_not_dock_again() {
+        var queue = DeploymentMessageQueue()
+        queue.receive(message("a"), streaming: false)
+        queue.dismiss("a")
+        XCTAssertFalse(queue.receive(message("a"), streaming: false))
+        XCTAssertTrue(queue.visible(streaming: false).shown.isEmpty)
+    }
+
+    func test_the_ids_seen_are_bounded() {
+        XCTAssertEqual(DeploymentMessageQueue.seenMax, 200)
+        var queue = DeploymentMessageQueue()
+        for n in 0...DeploymentMessageQueue.seenMax {
+            queue.receive(message("m\(n)"), streaming: false)
+            queue.dismiss("m\(n)")
+        }
+        XCTAssertTrue(queue.receive(message("m0"), streaming: false), "the oldest id is forgotten past the bound")
+        XCTAssertFalse(queue.receive(message("m\(DeploymentMessageQueue.seenMax)"), streaming: false))
+    }
+
+    func test_no_notification_for_a_message_not_taken() {
+        let (model, _) = model()
+        let notifier = SpaceActionsTests.FakeNotifier()
+        model.spaceNotifier = notifier
+        model.apply(.deploymentMessage(message("a", notify: true)))
+        model.apply(.deploymentMessage(message("a", notify: true)))
+        XCTAssertEqual(notifier.messages.count, 1, "the same id docked: no second notification")
+        model.dismissDeploymentMessage("a")
+        model.apply(.deploymentMessage(message("a", notify: true)))
+        XCTAssertEqual(notifier.messages.count, 1, "dismissed and sent again: neither docked nor notified")
+        XCTAssertTrue(model.dockedDeploymentMessages.shown.isEmpty)
+    }
 }

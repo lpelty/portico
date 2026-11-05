@@ -819,8 +819,9 @@ final class AppModel: ObservableObject {
     }
 
     private func receiveDeploymentMessage(_ message: DeploymentMessage) {
-        deploymentMessages.receive(message, streaming: replyStreaming)
-        guard message.notify == true, let notifier = spaceNotifier else { return }
+        // A message not taken (its id already seen this run) posts nothing either.
+        guard deploymentMessages.receive(message, streaming: replyStreaming),
+              message.notify == true, let notifier = spaceNotifier else { return }
         let title = message.title.flatMap { $0.isEmpty ? nil : $0 } ?? brand.name
         notifier.postMessage(id: message.id, title: title, body: message.text)
     }
