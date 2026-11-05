@@ -124,31 +124,54 @@ final class ImageAttachmentTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: PastedImages.folder(chat: 4, home: home).path))
     }
 
-    func testAChatDroppingOutOfTheListRemovesItsImages() throws {
-        let model = AppModel()
-        var frames: [ClientMessage] = []
-        model.outbound = { frames.append($0) }
-        model.attachmentsHome = home
-        model.apply(.chatList(ChatList(chats: [ChatSummary(chat: 3, folder: home.path, alias: nil, state: .idle, created: "2026-11-04T12:00:00Z")])))
-        model.open(chat: 3)
-        model.attach([try model.savePastedImage(tiff())], to: 3)
-        model.sendMessage(chat: 3, text: "")
-        guard case .messageSend(let message)? = frames.last else { return XCTFail("expected message.send, got \(frames)") }
-        let sentPath = try XCTUnwrap(message.attachments.first)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: sentPath))
-
-        model.apply(.chatList(ChatList(chats: [])))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: PastedImages.folder(chat: 3, home: home).path))
+    private func listed(_ chats: [Int]) -> ServerMessage {
+        .chatList(ChatList(chats: chats.map {
+            ChatSummary(chat: $0, folder: home.path, alias: nil, state: .idle, created: "2026-11-04T12:00:00Z")
+        }))
     }
 
-    func testRemovingASessionRemovesItsPastedImages() throws {
+    private final class Frames {
+        var all: [ClientMessage] = []
+    }
+
+    private func modelWithImages(in chat: Int) throws -> (AppModel, URL, Frames) {
         let model = AppModel()
-        model.outbound = { _ in }
+        let frames = Frames()
+        model.outbound = { frames.all.append($0) }
         model.attachmentsHome = home
-        let folder = PastedImages.folder(chat: 3, home: home)
+        model.apply(listed([chat]))
+        let folder = PastedImages.folder(chat: chat, home: home)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("png".utf8).write(to: folder.appendingPathComponent("a.png"))
+        return (model, folder, frames)
+    }
+
+    /// A list that leaves a chat out (a partial list during a restart) never deletes its images.
+    func testAChatListThatOmitsAChatLeavesItsImages() throws {
+        let (model, folder, _) = try modelWithImages(in: 3)
+        model.open(chat: 3)
+        model.apply(listed([]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    func testAConfirmedRemovalDeletesTheImages() throws {
+        let (model, folder, frames) = try modelWithImages(in: 3)
         model.remove(chat: 3)
+        guard case .chatRemove? = frames.all.last else { return XCTFail("expected chat.remove") }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path), "not before the gateway answers")
+        model.apply(listed([3]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path), "a list still holding it confirms nothing")
+        model.apply(listed([]))
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    func testARefusedRemovalKeepsTheImages() throws {
+        let (model, folder, frames) = try modelWithImages(in: 3)
+        model.remove(chat: 3)
+        guard case .chatRemove(let request)? = frames.all.last else { return XCTFail("expected chat.remove") }
+        model.apply(.error(ErrorMessage(code: "chat.unknown", message: "no chat 3", id: request.id)))
+        model.apply(listed([]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
     }
 
     func testNoHomeWritesNothing() {

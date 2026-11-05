@@ -782,6 +782,8 @@ final class AppModel: ObservableObject {
         // replays may hold it (or the old connection lost it).
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
+        // A `chat.remove` out on the lost connection is unconfirmed: its images stay.
+        pendingRemovals = [:]
         extraRoots = []
         var frames: [ClientMessage] = openedChats.sorted().map { chat in
             .chatOpen(ChatOpen(chat: chat, since: lastSeq[chat], id: Self.requestId()))
@@ -893,6 +895,7 @@ final class AppModel: ObservableObject {
         case .chatList(let list):
             let wasLiveThread = selected.flatMap { shown in chats.first { $0.chat == shown } }
                 .map { $0.thread != nil && $0.ended == nil } ?? false
+            confirmRemovals(listed: list.chats)
             chats = list.chats
             nextChat = list.nextChat
             chatsListed = true
@@ -1038,6 +1041,8 @@ final class AppModel: ObservableObject {
             updateVersion = update.version
 
         case .error(let error):
+            // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
+            if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
             applyAppRefusal(error)
             applyMcpError(error)
@@ -1994,8 +1999,23 @@ final class AppModel: ObservableObject {
 
     /// Remove a chat: the gateway forgets it and the app drops its state.
     func remove(chat: Int) {
-        send(.chatRemove(ChatRemove(chat: chat, id: Self.requestId())))
+        let id = Self.requestId()
+        pendingRemovals[id] = chat
+        send(.chatRemove(ChatRemove(chat: chat, id: id)))
         forget(chat: chat)
+    }
+
+    /// `chat.remove`s sent and not yet answered, by request id (v0.19 §8.2).
+    private var pendingRemovals: [String: Int] = [:]
+
+    /// The gateway answers a `chat.remove` with a `chat.list` without the
+    /// chat: only then do its pasted images go. A chat merely missing from
+    /// a list (a partial list while the gateway restarts) keeps them.
+    private func confirmRemovals(listed: [ChatSummary]) {
+        for (id, chat) in pendingRemovals where !listed.contains(where: { $0.chat == chat }) {
+            pendingRemovals[id] = nil
+            if let home = attachmentsHome { PastedImages.remove(chat: chat, home: home) }
+        }
     }
 
     /// Set or clear (empty or `nil`) a chat's alias.
@@ -2295,9 +2315,9 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Drop a chat's state in memory. Its pasted images on disk stay
+    /// unless the gateway confirms a `chat.remove` (`confirmRemovals`).
     private func forget(chat: Int) {
-        // Its history is gone, so are the images pasted into it (v0.19 §8.2).
-        if let home = attachmentsHome { PastedImages.remove(chat: chat, home: home) }
         noteClosed(chat: chat)
         forgetApps(chat: chat)
         draftAttachments[chat] = nil
