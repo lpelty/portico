@@ -81,6 +81,24 @@ struct PorticoApp: App {
         ZoomMenu.isEnabled(media: shownMedia?.media, missing: shownMedia?.missing ?? false)
     }
 
+    /// The shown viewer's Edit switch, when a file viewer is on screen.
+    private var shownEdit: ViewerEdit? {
+        guard viewerShown, model.openSpace == nil, let chat = model.shownChat else { return nil }
+        return ViewerEditing.shared.controller(for: chat)
+    }
+
+    private var editing: Bool { shownEdit?.isEditing ?? false }
+
+    private var editAvailable: Bool {
+        guard viewerShown, let chat = model.shownChat else { return false }
+        return ViewerEditing.canToggle(artifact: model.shownArtifact(for: chat), spaceOpen: model.openSpace != nil)
+    }
+
+    private func toggleEdit() {
+        guard let chat = model.shownChat, let edit = shownEdit else { return }
+        edit.toggle(model.current[chat])
+    }
+
     private var zoomTarget: (any ZoomTarget)? {
         ZoomHub.shared.target(space: model.openSpace != nil)
     }
@@ -169,6 +187,11 @@ struct PorticoApp: App {
                 Button("Zoom to Fit") { zoomTarget?.zoomToFit() }
                     .keyboardShortcut("0", modifiers: [.command, .option])
                     .disabled(!zoomOn)
+                Divider()
+                // The viewer's Edit switch (v0.20 §2.2): only for a file it can edit.
+                Button(editing ? "Stop Editing" : "Edit File") { toggleEdit() }
+                    .keyboardShortcut("e", modifiers: .command)
+                    .disabled(!editing && !editAvailable)
             }
             CommandGroup(after: .toolbar) {
                 Divider()
@@ -220,9 +243,18 @@ struct PorticoApp: App {
 /// says. With "keep the agent running" the handler returns at once; with
 /// "stop everything" it sends `gateway.stop` and waits up to ten seconds
 /// for the socket to close, then the app terminates either way.
+///
+/// v0.20 (Review Focus 4): every file being edited is saved first. When a
+/// save fails, the quit is cancelled with no alert (an alert would block
+/// automation): the viewer's header says "Not saved — <reason>; quit again
+/// to quit without saving", and a second quit goes ahead anyway.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var quitHandler: (() async -> Void)?
+    /// The edit sessions a quit saves first.
+    var editSessions = EditSessions.shared
+    /// A quit was already held once for a failed save.
+    private var quitHeld = false
     /// Bigger Text, for ⌘= (the menu item shows ⌘+).
     var biggerText: (() -> Void)?
     private var textKeyMonitor: Any?
@@ -247,12 +279,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let quitHandler else { return .terminateNow }
+        if quitHandler == nil && editSessions.all.isEmpty { return .terminateNow }
         Task { @MainActor in
-            await quitHandler()
-            sender.reply(toApplicationShouldTerminate: true)
+            let proceed = await self.prepareToTerminate()
+            sender.reply(toApplicationShouldTerminate: proceed)
         }
         return .terminateLater
+    }
+
+    /// Save every edit, then the quit handler; false cancels the quit.
+    func prepareToTerminate() async -> Bool {
+        let saved = await editSessions.endAll()
+        if QuitGate.decide(saved: saved, alreadyHeld: quitHeld) == .cancel {
+            quitHeld = true
+            return false
+        }
+        await quitHandler?()
+        return true
     }
 }
 

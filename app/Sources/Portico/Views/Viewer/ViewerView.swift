@@ -167,6 +167,8 @@ struct ViewerView: View {
     @State private var vault: String?
     /// Where the page has gone when a link left the file (v0.13, AL4).
     @StateObject private var page = ViewerPageAddress()
+    /// The Edit switch and the file being edited (v0.20 §2.2).
+    @StateObject private var edit = ViewerEdit()
 
     var body: some View {
         let app = model.viewerApp[chat].flatMap { model.app(forToolUse: $0) }
@@ -194,6 +196,40 @@ struct ViewerView: View {
                 .onChange(of: model.current[chat]?.location) { page.outside = nil }
         }
         .background(Theme.panel)
+        // Edit is off at every open; another file (or none) saves the old one.
+        .onChange(of: model.current[chat]?.location) { _, location in edit.shown(location) }
+        .onAppear { ViewerEditing.shared.register(edit, chat: chat) }
+        .onChange(of: chat) { _, chat in ViewerEditing.shared.register(edit, chat: chat) }
+    }
+
+    /// The shown file's editability, for the toggle; `nil` with no file
+    /// on disk (or a page a link went to).
+    private var editability: Editability? {
+        guard page.outside == nil, let current = model.current[chat] else { return nil }
+        let shown = ArtifactPresentation(artifact: current)
+        guard !shown.isMissing else { return nil }
+        return FileEditing.editability(for: shown)
+    }
+
+    /// The Edit toggle and the save state, while there is a file to edit.
+    @ViewBuilder
+    private var editControls: some View {
+        if let editability {
+            HStack(spacing: 8) {
+                if let session = edit.session {
+                    ViewerEditStatus(session: session)
+                } else if let note = edit.note {
+                    Text(note)
+                        .scaledFont(12)
+                        .foregroundStyle(Theme.deny)
+                        .lineLimit(1)
+                }
+                ViewerEditToggle(on: edit.isEditing, editability: editability,
+                                 accent: model.brand.accent ?? Theme.accent) {
+                    edit.toggle(model.current[chat])
+                }
+            }
+        }
     }
 
     private var made: [Artifact] { model.history(for: chat) }
@@ -217,7 +253,8 @@ struct ViewerView: View {
             chipCount: chip ? spaced(measured.chipCount) : 0,
             buttonsLabelled: spaced(measured.buttonsLabelled),
             buttonsIcons: spaced(measured.buttonsIcons),
-            fixed: 32 + 8 + 8 + (8 + 24) + (8 + 20))
+            fixed: 32 + 8 + 8 + (8 + 24) + (8 + 20),
+            edit: editability != nil ? measured.edit + 8 : 0)
     }
 
     private var fileHeader: some View {
@@ -229,6 +266,7 @@ struct ViewerView: View {
                 MarksChip(chat: chat, store: marks, agent: model.viewerAgent, form: fit.chipForm,
                           accent: model.brand.accent ?? Theme.accent)
             }
+            editControls
             openButtons(labelled: fit.labelled)
             focusButton
             ViewerCloseButton(help: "Close the viewer", label: "Close the viewer") {
@@ -257,6 +295,8 @@ struct ViewerView: View {
                     measured.setChip(form, width)
                 }
             }
+            editControls
+                .headerMeasure { measured.edit = $0 }
             HStack(spacing: 8) { openButtons(labelled: true) }
                 .headerMeasure { measured.buttonsLabelled = $0 }
             HStack(spacing: 8) { openButtons(labelled: false) }
@@ -379,7 +419,16 @@ struct ViewerView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let current = model.current[chat] {
+        if let current = model.current[chat], let session = edit.session, edit.location == current.location {
+            // While editing, the pane is keyed on the file alone: its own
+            // saves change the date and size, and must not reload it.
+            EditorPane(
+                session: session, wrap: model.settings.wrapCode, topLine: edit.topLine(for: session.url),
+                onEscape: { Task { await edit.turnOff() } },
+                onOpenFile: { [chat] path in model.reveal(file: path, in: chat) },
+                onCoordinator: { [edit] in edit.editor = $0 })
+                .id("edit|\(current.location)")
+        } else if let current = model.current[chat] {
             ArtifactContent(artifact: current)
                 .id(ArtifactPresentation(artifact: current).contentIdentity)
                 .environment(\.viewerAgent, model.viewerAgent)
@@ -736,6 +785,9 @@ struct SpaceViewer: View {
 enum HeaderFit {
     struct Widths: Equatable {
         var title, note, chipFull, chipShort, chipCount, buttonsLabelled, buttonsIcons, fixed: CGFloat
+        /// The Edit toggle with the save state beside it (v0.20 §2.2); it
+        /// keeps its room at every step.
+        var edit: CGFloat = 0
 
         static let zero = Widths(title: 0, note: 0, chipFull: 0, chipShort: 0, chipCount: 0,
                                  buttonsLabelled: 0, buttonsIcons: 0, fixed: 0)
@@ -775,7 +827,7 @@ enum HeaderFit {
             (.chipShort, 0, w.chipShort, w.buttonsIcons),
             (.chipCount, 0, w.chipCount, w.buttonsIcons),
         ]
-        for (step, note, chip, buttons) in tries where w.title + note + chip + buttons + w.fixed <= available {
+        for (step, note, chip, buttons) in tries where w.title + note + chip + buttons + w.fixed + w.edit <= available {
             return step
         }
         return .titleShrinks
