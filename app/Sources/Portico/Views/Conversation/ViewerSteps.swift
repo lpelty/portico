@@ -98,13 +98,21 @@ enum TranscriptEntry: Identifiable, Equatable {
 
 /// Which folded runs the person opened, kept for the session by the chat
 /// and the run's id (the first row's), on the conversation, not the row.
-enum ToolRunOpen {
-    static func key(chat: Int?, id: String) -> String { "\(chat.map(String.init) ?? "main")|\(id)" }
+@MainActor
+final class ToolRunFolds: ObservableObject {
+    static let shared = ToolRunFolds()
+    @Published private(set) var open: Set<String> = []
 
-    static func binding(_ set: Binding<Set<String>>, key: String) -> Binding<Bool> {
-        Binding(
-            get: { set.wrappedValue.contains(key) },
-            set: { if $0 { set.wrappedValue.insert(key) } else { set.wrappedValue.remove(key) } })
+    nonisolated static func key(chat: Int?, id: String) -> String { "\(chat.map(String.init) ?? "main")|\(id)" }
+
+    func isOpen(_ key: String) -> Bool { open.contains(key) }
+
+    func toggle(_ key: String) {
+        if open.contains(key) { open.remove(key) } else { open.insert(key) }
+    }
+
+    func binding(_ key: String) -> Binding<Bool> {
+        Binding(get: { self.open.contains(key) }, set: { if $0 { self.open.insert(key) } else { self.open.remove(key) } })
     }
 }
 
@@ -198,7 +206,7 @@ struct TranscriptEntryView: View {
     let entry: TranscriptEntry
     var folder: String? = nil
     var chat: Int? = nil
-    @Binding var openRuns: Set<String>
+    @ObservedObject private var folds = ToolRunFolds.shared
     @Environment(\.conversationColumn) private var column
 
     var body: some View {
@@ -208,7 +216,7 @@ struct TranscriptEntryView: View {
         case .toolRun(let kind, let rows):
             ToolRunView(
                 kind: kind, rows: rows, folder: folder, chat: chat,
-                open: ToolRunOpen.binding($openRuns, key: ToolRunOpen.key(chat: chat, id: entry.id)))
+                open: folds.binding(ToolRunFolds.key(chat: chat, id: entry.id)))
                 .frame(maxWidth: column.map(ConversationColumn.replyWidth) ?? .infinity, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

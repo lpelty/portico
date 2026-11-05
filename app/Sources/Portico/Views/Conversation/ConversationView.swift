@@ -23,8 +23,6 @@ struct ConversationView: View {
     @State private var scrollMemory = ConversationScrollMemory()
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
-    /// The folded runs the person opened, "<chat>|<run id>": kept for the session, per chat.
-    @State private var openRuns: Set<String> = []
     @State private var personScrolling = false
     /// The scroll view's phase, named, for the blank-space diagnostic's line.
     @State private var scrollPhaseName = "idle"
@@ -147,7 +145,7 @@ struct ConversationView: View {
                             BriefBlock(info: info)
                                 .atReplyWidth()
                         } else {
-                            TranscriptEntryView(entry: entry, folder: folder, chat: chat, openRuns: $openRuns)
+                            TranscriptEntryView(entry: entry, folder: folder, chat: chat)
                         }
                     }
                         .padding(.top, gap)
@@ -322,12 +320,6 @@ struct ConversationView: View {
             // A proposal's card and an app's page stand apart; they split a run.
             model.proposal(forToolUse: row.toolUseId) != nil || model.app(forToolUse: row.toolUseId) != nil
         }
-    }
-
-    /// The drawn rows' ids: a place whose top row is gone (the transcript
-    /// read again) opens at the bottom instead.
-    private var drawnIDs: Set<String> {
-        Set(drawn.map(\.id))
     }
 
     /// A thread's first message, drawn as its brief (AM3).

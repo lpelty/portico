@@ -107,16 +107,17 @@ final class ToolRunFixRoundTests: XCTestCase {
         XCTAssertEqual(ToolRunPresentation.latest([row("a"), b], kind: .any), "Bash")
     }
 
-    func test_open_state_is_kept_per_chat_and_run() {
-        var set: Set<String> = []
-        let binding = Binding(get: { set }, set: { set = $0 })
-        let main = ToolRunOpen.binding(binding, key: ToolRunOpen.key(chat: nil, id: "tool-run:a"))
-        let other = ToolRunOpen.binding(binding, key: ToolRunOpen.key(chat: 2, id: "tool-run:a"))
-        main.wrappedValue = true
-        XCTAssertTrue(main.wrappedValue)
-        XCTAssertFalse(other.wrappedValue)
-        main.wrappedValue = false
-        XCTAssertTrue(set.isEmpty)
+    @MainActor
+    func test_open_state_lives_outside_the_view_per_chat_and_run() {
+        let folds = ToolRunFolds.shared
+        let main = ToolRunFolds.key(chat: nil, id: "tool-run:fold-test")
+        let other = ToolRunFolds.key(chat: 2, id: "tool-run:fold-test")
+        folds.binding(main).wrappedValue = true
+        // A rebuilt conversation reads the same store.
+        XCTAssertTrue(ToolRunFolds.shared.isOpen(main))
+        XCTAssertFalse(ToolRunFolds.shared.isOpen(other))
+        ToolRunFolds.shared.toggle(main)
+        XCTAssertFalse(folds.isOpen(main))
     }
 
     func test_a_saved_anchor_on_a_folded_row_maps_to_its_run() {
