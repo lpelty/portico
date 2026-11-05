@@ -23,7 +23,10 @@ things a deployment's spaces and routines asked for (S1–S5).
 - **Space actions (S1).** A link `space-action:<action>?item=<item>` on a
   space's page (HTML or Markdown) runs the deployment's `[spaces] act`
   with the space, the action and the item. A failure shows in the space's
-  header, in red, until the next refresh or action.
+  header, in red, until the next refresh or action. Only the person's own
+  click runs one: the viewer agent can't click such a link (it can ask the
+  person to), and a link in a frame, on another site or in another file
+  is ignored.
 - **Worded notices (S2).** A page's `notice` key is the notification's
   text ("Prep for your 10:00 is ready"), and `notice_target` the place in
   the page a click scrolls to; `notice: ""` means no notification.

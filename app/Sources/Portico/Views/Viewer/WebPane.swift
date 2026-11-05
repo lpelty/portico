@@ -784,17 +784,43 @@ struct WebPane: NSViewRepresentable {
             }
             // v0.22 (S1): a space-action link never loads; a click on one in
             // a space's page goes to the model, which checks it and the
-            // gateway's `spaces.act`. One a script follows is not a click.
+            // gateway's `spaces.act`. One a script follows is not a click,
+            // nor is one in a frame, on a site a link went to, or while the
+            // viewer agent acts (its clicks never run the deployment's actions).
             if let url = navigationAction.request.url, url.scheme?.lowercased() == SpaceActionLink.scheme {
                 decisionHandler(.cancel)
-                if navigationAction.navigationType == .linkActivated, let onSpaceAction {
+                let taken = Self.takesSpaceAction(
+                    linkActivated: navigationAction.navigationType == .linkActivated,
+                    targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
+                    sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
+                    showingOwnPage: Self.isSpaceFile(loaded, away: isAway(in: webView)),
+                    agentActing: agent?.actingChat != nil)
+                if taken, let onSpaceAction {
                     onSpaceAction(url)
                 } else {
-                    AppModel.spacesLog.notice("action link ignored: not a click in a space's page")
+                    AppModel.spacesLog.notice("action link ignored: not the person's click in a space's own page")
                 }
                 return
             }
             decisionHandler(.allow)
+        }
+
+        /// v0.22: whether a `space-action:` navigation runs: a link click,
+        /// from and into the main frame, while the pane shows the space's own
+        /// page, and not while the viewer agent acts.
+        static func takesSpaceAction(
+            linkActivated: Bool, targetIsMainFrame: Bool?, sourceIsMainFrame: Bool, showingOwnPage: Bool, agentActing: Bool
+        ) -> Bool {
+            linkActivated && targetIsMainFrame == true && sourceIsMainFrame && showingOwnPage && !agentActing
+        }
+
+        /// The pane shows the file it was asked to (a space is a Markdown
+        /// or HTML file), not a site, another file or its failure page.
+        static func isSpaceFile(_ loaded: Load?, away: Bool) -> Bool {
+            switch loaded {
+            case .markdown, .html: return !away
+            case .url, nil: return false
+            }
         }
 
         /// v0.22 (S2): carry out `request` once: now when the page is in, else

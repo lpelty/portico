@@ -391,6 +391,35 @@ final class SpaceActionsTests: XCTestCase {
         XCTAssertFalse(model.isRefreshing("a"))
     }
 
+    // MARK: - S1 review fix: only the person's click in the space's own page
+
+    private func takes(
+        click: Bool = true, targetMain: Bool? = true, sourceMain: Bool = true, ownPage: Bool = true, agentActing: Bool = false
+    ) -> Bool {
+        WebPane.Coordinator.takesSpaceAction(
+            linkActivated: click, targetIsMainFrame: targetMain, sourceIsMainFrame: sourceMain,
+            showingOwnPage: ownPage, agentActing: agentActing)
+    }
+
+    func test_a_space_action_is_taken_only_from_the_persons_click_in_the_main_frame_of_its_own_page() {
+        XCTAssertTrue(takes())
+        XCTAssertFalse(takes(click: false), "a script's navigation is not a click")
+        XCTAssertFalse(takes(targetMain: false), "a link in an iframe")
+        XCTAssertFalse(takes(targetMain: nil), "a new window")
+        XCTAssertFalse(takes(sourceMain: false), "a frame aiming at the top")
+        XCTAssertFalse(takes(ownPage: false), "an outside site or another file")
+        XCTAssertFalse(takes(agentActing: true), "the viewer agent is acting")
+    }
+
+    func test_the_own_page_is_the_space_file_itself() {
+        let file = URL(fileURLWithPath: "/tmp/spaces/brief.md")
+        XCTAssertTrue(WebPane.Coordinator.isSpaceFile(.markdown(file), away: false))
+        XCTAssertTrue(WebPane.Coordinator.isSpaceFile(.html(file), away: false))
+        XCTAssertFalse(WebPane.Coordinator.isSpaceFile(.markdown(file), away: true))
+        XCTAssertFalse(WebPane.Coordinator.isSpaceFile(.url(URL(string: "https://example.com")!), away: false))
+        XCTAssertFalse(WebPane.Coordinator.isSpaceFile(nil, away: false))
+    }
+
     func test_header_note_prefers_refreshing_then_the_error() {
         let date = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertEqual(SpacesPresentation.headerNote(refreshing: true, error: "x", updated: date), .refreshing)

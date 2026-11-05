@@ -381,6 +381,11 @@
     el.dispatchEvent(new Ctor(type, init));
   }
 
+  function isSpaceAction(el) {
+    var link = el && el.closest ? el.closest("a[href]") : null;
+    return !!link && /^\s*space-action:/i.test(link.getAttribute("href") || "");
+  }
+
   agent.click = function (target, page, place) {
     var away = moved(place);
     if (away) return away;
@@ -389,6 +394,8 @@
     if (picked.heading) return { ok: false, heading: true };
     var found = picked.found;
     var el = picked.el;
+    // v0.22: a link that runs one of the deployment's actions is the person's to click.
+    if (isSpaceAction(el) || isSpaceAction(found)) return { ok: false, spaceAction: true };
     var label = describeElement(found) || cut(name(el));
     mouse(el, "pointerdown");
     mouse(el, "mousedown");

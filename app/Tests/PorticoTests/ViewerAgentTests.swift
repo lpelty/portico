@@ -217,6 +217,24 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertNil(byRef.image, "only a look carries an image")
     }
 
+    /// v0.22 review fix: the agent's click never runs one of the deployment's actions.
+    func test_the_agent_cannot_click_a_space_action_link() async throws {
+        let rig = try rig("""
+            <a href="space-action:mark-done?item=t1">Mark done</a>
+            <a href="SPACE-ACTION:archive"><span>Archive it</span></a>
+            """)
+        var activated: [URL] = []
+        rig.coordinator?.onSpaceAction = { activated.append($0) }
+        _ = await rig.agent.perform(act(.look))
+        for target in ["Mark done", "Archive it"] {
+            let result = await rig.agent.perform(act(.click, ["target": .string(target)]))
+            XCTAssertFalse(result.ok, result.text)
+            XCTAssertEqual(result.text, ViewerAgent.Message.spaceActionRefused)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(activated, [], "no action link reached the model")
+    }
+
     func test_type_sets_value_fires_input_change_and_submit() async throws {
         let rig = try rig("""
             <script>window.events = []</script>
