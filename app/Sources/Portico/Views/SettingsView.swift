@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 /// The settings window (spec §5.6, v0.12 §6): General (Folder, Viewer, Spaces),
-/// Appearance, Gateway (address and token overrides, Start / Stop, Doctor,
-/// and what quitting does, v0.9 decision 7).
+/// Appearance, Gateway (Start / Stop, Doctor, what quitting does, v0.9
+/// decision 7, and the address and token overrides under Advanced, v0.19 §5).
+/// Every tab is drawn with `SettingsKit` (v0.19 §3).
 /// Brand, actions and roots are the gateway's, not here.
 /// One fixed window, the same on every tab (v0.12 spec section 6; v0.13 decision 7: 20% shorter, a taller tab scrolls).
 enum SettingsWindow {
@@ -32,6 +33,22 @@ enum GeneralSettingsPresentation {
 
 enum GatewayConnectionPresentation {
     static let caption = "Leave these empty: the app finds the gateway and reads its token itself. A change is used the next time it connects."
+}
+
+/// Settings › Gateway's Advanced disclosure (v0.19 §5): Address and Token
+/// file sit under it, closed by default and remembered; a value in either
+/// opens it by itself, so a support case is never hidden.
+enum GatewaySettingsPresentation {
+    static let advancedTitle = "Advanced"
+    static let customConnectionNote = "Custom connection in use"
+
+    static func isCustom(address: String, tokenFile: String) -> Bool {
+        !address.isEmpty || !tokenFile.isEmpty
+    }
+
+    static func advancedOpen(stored: Bool, address: String, tokenFile: String) -> Bool {
+        isCustom(address: address, tokenFile: tokenFile) ? true : stored
+    }
 }
 
 /// The tabs in `SettingsTab` order; the selection is the model's, so
@@ -85,51 +102,56 @@ struct GeneralSettingsTab: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
         let titles = GeneralSettingsPresentation.sectionTitles(capabilities: model.hello?.capabilities ?? [])
-        Form {
-            Section("Folder") {
-                LabeledContent("Works in") {
-                    HStack {
+        SettingsPage {
+            SettingsSection("Folder") {
+                SettingsRow("Works in", help: "The folder new sessions work in. A session that is already going keeps its folder.") {
+                    HStack(spacing: 10) {
                         Text(model.startFolder?.lastPathComponent ?? "None chosen")
+                            .scaledFont(12)
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(1)
                             .tip(model.startFolder?.path ?? "")
                         Button("Choose…", action: chooseFolder)
+                            .buttonStyle(SettingsButtonStyle(kind: .quiet))
                     }
                 }
-                Text("The folder new sessions work in. A session that is already going keeps its folder.")
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
             }
-            Section("Viewer") {
-                Toggle("Open files in the viewer automatically", isOn: $settings.autoOpen)
-                Text("When the agent creates or changes a file of these kinds. Anything else is listed in the chat and opens only when clicked.")
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 16) {
+            SettingsSection("Viewer") {
+                SettingsRow(
+                    "Open files in the viewer automatically",
+                    help: "When the agent creates or changes a file of these kinds. Anything else is listed in the chat and opens only when clicked."
+                ) {
+                    SettingsSwitch(isOn: $settings.autoOpen)
+                        .accessibilityLabel("Open files in the viewer automatically")
+                }
+                HStack(spacing: 10) {
                     ForEach(AutoOpenKindPresentation.all) { kind in
-                        Toggle(kind.label, isOn: binding(for: kind.kind))
-                            .toggleStyle(.checkbox)
+                        SettingsCheckbox(kind.label, isOn: binding(for: kind.kind))
                     }
                 }
                 .disabled(!settings.autoOpen)
-                Toggle("Agent can see the viewer", isOn: canSeeBinding)
-                Text(GeneralSettingsPresentation.canSeeNote)
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
-                Toggle("Agent checks HTML it creates", isOn: checksHTMLBinding)
-                    .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
-                Text(GeneralSettingsPresentation.checksHTMLNote)
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
+                .padding(.horizontal, SettingsKit.rowHorizontal - 6)
+                .padding(.vertical, SettingsKit.rowVertical - 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                SettingsRow("Agent can see the viewer", help: GeneralSettingsPresentation.canSeeNote) {
+                    SettingsSwitch(isOn: canSeeBinding)
+                        .accessibilityLabel("Agent can see the viewer")
+                }
+                SettingsRow("Agent checks HTML it creates", help: GeneralSettingsPresentation.checksHTMLNote) {
+                    SettingsSwitch(isOn: checksHTMLBinding)
+                        .accessibilityLabel("Agent checks HTML it creates")
+                }
+                .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
             }
             if titles.contains("Spaces") {
-                Section("Spaces") {
-                    Toggle("Notify when a space is updated", isOn: $settings.spacesNotify)
-                    Text(GeneralSettingsPresentation.spacesNote(brand: model.brand.name))
-                        .scaledFont(10)
-                        .foregroundStyle(.secondary)
+                SettingsSection("Spaces") {
+                    SettingsRow("Notify when a space is updated", help: GeneralSettingsPresentation.spacesNote(brand: model.brand.name)) {
+                        SettingsSwitch(isOn: $settings.spacesNotify)
+                            .accessibilityLabel("Notify when a space is updated")
+                    }
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     private var canSeeBinding: Binding<Bool> {
@@ -173,67 +195,31 @@ enum AppearanceSettingsPresentation {
     static let shortcutNote = "⌘+ and ⌘− change it anywhere in the app."
 }
 
-/// AN3: one grouped panel of two rows, no heading above it. Appearance is
-/// a pop-up menu (Match the system / Light / Dark, the radio rows before
+/// AN3: one panel of two rows, no heading above it. Appearance is a
+/// pop-up menu (Match the system / Light / Dark, the radio rows before
 /// v0.15); Text size is a − / percent / + stepper. Under the panel, the
-/// keys that do the same anywhere.
+/// keys that do the same anywhere. Drawn with the kit (v0.19 §3).
 struct AppearanceSettingsTab: View {
     @EnvironmentObject private var settings: Settings
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                VStack(spacing: 0) {
-                    appearanceRow
-                    Rectangle().fill(Theme.border).frame(height: 1)
-                    textSizeRow
+        SettingsPage {
+            SettingsSection("", footnote: AppearanceSettingsPresentation.shortcutNote) {
+                SettingsRow(AppearanceSettingsPresentation.appearanceLabel) {
+                    Picker(AppearanceSettingsPresentation.appearanceLabel, selection: $settings.appearance) {
+                        ForEach(Settings.Appearance.allCases, id: \.self) { appearance in
+                            Text(appearance.label).tag(appearance)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Theme.border, lineWidth: 1))
-                Text(AppearanceSettingsPresentation.shortcutNote)
-                    .scaledFont(11)
-                    .foregroundStyle(Theme.text3)
-                    .padding(.leading, 2)
-            }
-            .padding(20)
-        }
-    }
-
-    private var appearanceRow: some View {
-        HStack {
-            Text(AppearanceSettingsPresentation.appearanceLabel)
-                .scaledFont(13)
-                .foregroundStyle(Theme.text)
-            Spacer(minLength: 12)
-            Picker(AppearanceSettingsPresentation.appearanceLabel, selection: $settings.appearance) {
-                ForEach(Settings.Appearance.allCases, id: \.self) { appearance in
-                    Text(appearance.label).tag(appearance)
+                SettingsRow(AppearanceSettingsPresentation.textSizeLabel, help: AppearanceSettingsPresentation.textSizeNote) {
+                    TextScaleStepper()
                 }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .fixedSize()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private var textSizeRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(AppearanceSettingsPresentation.textSizeLabel)
-                    .scaledFont(13)
-                    .foregroundStyle(Theme.text)
-                Text(AppearanceSettingsPresentation.textSizeNote)
-                    .scaledFont(11)
-                    .foregroundStyle(Theme.text3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            TextScaleStepper()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 }
 
@@ -273,7 +259,7 @@ struct TextScaleStepper: View {
                 .frame(minHeight: 24)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverButtonStyle(shape: AnyShape(Rectangle())))
         .disabled(!enabled)
         .tip(help)
         .accessibilityLabel(help)
@@ -287,81 +273,126 @@ struct GatewaySettingsTab: View {
     @State private var doctorLines: [String] = []
     @State private var doctorRunning = false
 
+    /// Open because a custom value was there when the tab appeared: it
+    /// stays open while that value is edited away.
+    @State private var openedForCustom = false
+
     var body: some View {
-        Form {
-            Section("Gateway") {
-                LabeledContent("State", value: model.statusStrip(gateway: supervisor.status).gatewayText)
+        SettingsPage {
+            SettingsSection(
+                "Gateway",
+                footnote: "Stop interrupts every running turn, runs the deployment's stop command, and exits the gateway. Restart stops it and starts it again, reading the config afresh. Doctor checks this machine, the state directory and the config, one line per check."
+            ) {
+                SettingsRow("State") {
+                    Text(model.statusStrip(gateway: supervisor.status).gatewayText)
+                        .scaledFont(12)
+                        .foregroundStyle(Theme.text2)
+                }
                 if model.configStale {
                     HStack {
                         Label(StatusStripPresentation.restartText, systemImage: "exclamationmark.triangle")
+                            .scaledFont(13)
                             .foregroundStyle(Theme.wait)
                         Spacer()
                         Button(model.restarting ? "Restarting…" : "Restart") {
                             model.request(.restart, from: .settings)
                         }
+                        .buttonStyle(SettingsButtonStyle(kind: .accent))
                         .disabled(model.restarting)
                     }
+                    .settingsRowInsets()
                 }
-                HStack {
+                HStack(spacing: 8) {
                     Button("Start") { model.startGateway() }
+                        .buttonStyle(SettingsButtonStyle(kind: .quiet))
                         .disabled(model.connection == .connected || supervisor.status == .starting)
                     // Stop and Restart ask first while a turn runs (v0.8 decision 3).
                     Button("Stop") { model.request(.stop, from: .settings) }
+                        .buttonStyle(SettingsButtonStyle(kind: .quiet))
                         .disabled(model.connection != .connected)
                     // Always offered (v0.8 decision 3); with the config
                     // stale it is the one beside the warning above.
                     if !model.configStale {
                         Button(model.restarting ? "Restarting…" : "Restart") { model.request(.restart, from: .settings) }
+                            .buttonStyle(SettingsButtonStyle(kind: .quiet))
                             .disabled(model.restarting)
                     }
                     Spacer()
                     Button(doctorRunning ? "Checking…" : "Doctor") { runDoctor() }
+                        .buttonStyle(SettingsButtonStyle(kind: .quiet))
                         .disabled(doctorRunning)
                 }
-                Text("Stop interrupts every running turn, runs the deployment's stop command, and exits the gateway. Restart stops it and starts it again, reading the config afresh. Doctor checks this machine, the state directory and the config, one line per check.")
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
+                .settingsRowInsets()
             }
             if !doctorLines.isEmpty {
-                Section("Doctor") {
+                SettingsSection("Doctor") {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(doctorLines.enumerated()), id: \.offset) { _, line in
                                 Text(line)
                                     .scaledFont(10, design: .monospaced)
+                                    .foregroundStyle(Theme.text)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
+                        .settingsRowInsets()
                     }
                     .frame(minHeight: 80, maxHeight: 220)
                 }
             }
             // Moved here from General with clearer wording (v0.9 decision 7, AE2).
-            Section("When \(model.brand.name) quits") {
-                Picker("When \(model.brand.name) quits", selection: $settings.quitBehaviour) {
-                    ForEach(Settings.QuitBehaviour.allCases, id: \.self) { behaviour in
-                        Text(behaviour.label).tag(behaviour)
+            SettingsSection(
+                "When \(model.brand.name) quits", footnote: Settings.QuitBehaviour.caption(brand: model.brand.name)
+            ) {
+                SettingsRadioGroup(
+                    selection: $settings.quitBehaviour,
+                    options: Settings.QuitBehaviour.allCases.map { ($0, $0.label) })
+                    .accessibilityLabel("When \(model.brand.name) quits")
+                    .padding(.horizontal, SettingsKit.rowHorizontal - 6)
+                    .padding(.vertical, SettingsKit.rowVertical - 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            SettingsDisclosure(GatewaySettingsPresentation.advancedTitle, isOpen: advancedOpen) {
+                SettingsSection("", footnote: GatewayConnectionPresentation.caption) {
+                    SettingsRow("Address") {
+                        SettingsTextField("Address", text: optional($settings.gatewayURL), prompt: "discovered from the ledger")
+                            .frame(width: 340)
+                    }
+                    SettingsRow("Token file") {
+                        SettingsTextField(
+                            "Token file", text: optional($settings.tokenFile),
+                            prompt: supervisor.stateDir.appendingPathComponent("token").path)
+                            .frame(width: 340)
                     }
                 }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                Text(Settings.QuitBehaviour.caption(brand: model.brand.name))
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Connection") {
-                TextField("Address", text: optional($settings.gatewayURL), prompt: Text("discovered from the ledger"))
-                    .textFieldStyle(.roundedBorder)
-                TextField("Token file", text: optional($settings.tokenFile), prompt: Text(supervisor.stateDir.appendingPathComponent("token").path))
-                    .textFieldStyle(.roundedBorder)
-                Text(GatewayConnectionPresentation.caption)
-                    .scaledFont(10)
-                    .foregroundStyle(.secondary)
+                if isCustom {
+                    Label(GatewaySettingsPresentation.customConnectionNote, systemImage: "info.circle")
+                        .scaledFont(11.5)
+                        .foregroundStyle(Theme.text2)
+                }
             }
         }
-        .formStyle(.grouped)
+        .onAppear { openedForCustom = isCustom }
         .gatewayConfirmDialog(model, place: .settings)
+    }
+
+    private var isCustom: Bool {
+        GatewaySettingsPresentation.isCustom(address: settings.gatewayURL ?? "", tokenFile: settings.tokenFile ?? "")
+    }
+
+    private var advancedOpen: Binding<Bool> {
+        Binding(
+            get: {
+                openedForCustom
+                    || GatewaySettingsPresentation.advancedOpen(
+                        stored: settings.gatewayAdvancedOpen,
+                        address: settings.gatewayURL ?? "", tokenFile: settings.tokenFile ?? "")
+            },
+            set: { open in
+                settings.gatewayAdvancedOpen = open
+                if !open { openedForCustom = false }
+            })
     }
 
     private func runDoctor() {

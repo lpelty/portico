@@ -115,6 +115,7 @@ final class Settings: ObservableObject {
         static let viewerAgentChecksHTML = "viewer.agentChecksHTML"
         static let propertiesOpen = "viewer.propertiesOpen"
         static let spacesNotify = "spaces.notify"
+        static let gatewayAdvancedOpen = "gateway.advancedOpen"
         static let spacesLastOpened = "spaces.lastOpened"
         static let spacesFirstSeen = "spaces.firstSeen"
     }
@@ -260,6 +261,11 @@ final class Settings: ObservableObject {
     @Published var propertiesOpen: Bool? {
         didSet { Self.store(propertiesOpen, forKey: Key.propertiesOpen, in: defaults) }
     }
+    /// Whether Settings › Gateway's Advanced disclosure is open (v0.19 §5);
+    /// closed until the person opens it.
+    @Published var gatewayAdvancedOpen: Bool {
+        didSet { defaults.set(gatewayAdvancedOpen, forKey: Key.gatewayAdvancedOpen) }
+    }
     /// "Notify when a space is updated": the dot and the notification.
     @Published var spacesNotify: Bool {
         didSet { defaults.set(spacesNotify, forKey: Key.spacesNotify) }
@@ -346,6 +352,7 @@ final class Settings: ObservableObject {
         viewerAgentChecksHTML = defaults.object(forKey: Key.viewerAgentChecksHTML) as? Bool
         propertiesOpen = defaults.object(forKey: Key.propertiesOpen) as? Bool
         spacesNotify = defaults.object(forKey: Key.spacesNotify) as? Bool ?? true
+        gatewayAdvancedOpen = defaults.bool(forKey: Key.gatewayAdvancedOpen)
         let opened = defaults.dictionary(forKey: Key.spacesLastOpened) as? [String: Double] ?? [:]
         spacesLastOpened = opened.mapValues { Date(timeIntervalSince1970: $0) }
         let seen = defaults.dictionary(forKey: Key.spacesFirstSeen) as? [String: Double] ?? [:]
