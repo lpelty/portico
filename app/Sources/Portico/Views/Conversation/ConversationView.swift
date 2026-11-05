@@ -23,6 +23,8 @@ struct ConversationView: View {
     @State private var scrollMemory = ConversationScrollMemory()
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
+    /// The folded runs the person opened, "<chat>|<run id>": kept for the session, per chat.
+    @State private var openRuns: Set<String> = []
     @State private var personScrolling = false
     /// The scroll view's phase, named, for the blank-space diagnostic's line.
     @State private var scrollPhaseName = "idle"
@@ -145,7 +147,7 @@ struct ConversationView: View {
                             BriefBlock(info: info)
                                 .atReplyWidth()
                         } else {
-                            TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                            TranscriptEntryView(entry: entry, folder: folder, chat: chat, openRuns: $openRuns)
                         }
                     }
                         .padding(.top, gap)
@@ -264,7 +266,9 @@ struct ConversationView: View {
         .accessibilityScrollAction { edge in personInput.page(toward: edge) }
         .onAppear {
             personInput.install()
-            if let place = model.place(of: chat), !place.atBottom, let top = place.topItem, drawnIDs.contains(top) {
+            if let place = model.place(of: chat), !place.atBottom, let saved = place.topItem,
+                let top = TranscriptEntry.anchor(saved, in: drawn)
+            {
                 restore(top: top, at: place.topOffset)
             } else {
                 scrollToBottom()

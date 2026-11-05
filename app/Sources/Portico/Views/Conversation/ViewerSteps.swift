@@ -45,7 +45,14 @@ enum TranscriptEntry: Identifiable, Equatable {
     static func entries(_ items: [TranscriptItem], apart: (ToolRow) -> Bool = { _ in false }) -> [TranscriptEntry] {
         var out: [TranscriptEntry] = []
         var run: [ToolRow] = []
-        func flush() {
+        func flush(next: Int) {
+            // A turn that ended or moved on leaves no step running (a stopped
+            // turn never finishes its rows): the run reads as done.
+            if let last = run.last, run.contains(where: { !$0.finished }),
+                items[next...].contains(where: { later(than: last.turn, $0) })
+            {
+                run = run.map { var r = $0; r.finished = true; return r }
+            }
             let viewer = !run.isEmpty && run.allSatisfy(ViewerSteps.isStep)
             if viewer && run.count >= ToolRun.viewerThreshold {
                 out.append(.toolRun(.viewer, run))
@@ -56,16 +63,48 @@ enum TranscriptEntry: Identifiable, Equatable {
             }
             run = []
         }
-        for item in items {
+        for (index, item) in items.enumerated() {
             if case .tool(let row) = item, !standsApart(row), !apart(row) {
                 run.append(row)
             } else {
-                flush()
+                flush(next: index)
                 out.append(.item(item))
             }
         }
-        flush()
+        flush(next: items.count)
         return out
+    }
+
+    /// Whether `item` closes or follows the turn `turn`: its marker, or a
+    /// message of a later turn.
+    private static func later(than turn: Int, _ item: TranscriptItem) -> Bool {
+        switch item {
+        case .turnMarker(let marker): marker.turn >= turn
+        case .userText(let user): user.turn > turn
+        case .tool(let row): row.turn > turn
+        default: false
+        }
+    }
+
+    /// An anchor saved on a row now folded into a run restores at the run.
+    static func anchor(_ id: String, in entries: [TranscriptEntry]) -> String? {
+        if entries.contains(where: { $0.id == id }) { return id }
+        return entries.first { entry in
+            if case .toolRun(_, let rows) = entry { return rows.contains { "tool:\($0.toolUseId)" == id } }
+            return false
+        }?.id
+    }
+}
+
+/// Which folded runs the person opened, kept for the session by the chat
+/// and the run's id (the first row's), on the conversation, not the row.
+enum ToolRunOpen {
+    static func key(chat: Int?, id: String) -> String { "\(chat.map(String.init) ?? "main")|\(id)" }
+
+    static func binding(_ set: Binding<Set<String>>, key: String) -> Binding<Bool> {
+        Binding(
+            get: { set.wrappedValue.contains(key) },
+            set: { if $0 { set.wrappedValue.insert(key) } else { set.wrappedValue.remove(key) } })
     }
 }
 
@@ -110,8 +149,9 @@ enum ToolRunPresentation {
 
     /// The newest row's line while a group runs: "Read · src/app.ts".
     static func latest(_ rows: [ToolRow], kind: ToolRunKind) -> String {
-        if kind == .viewer { return ViewerSteps.latest(rows) }
-        guard let last = rows.last else { return "" }
+        // The newest step that is still going (tools run in parallel), else the last.
+        guard let last = rows.last(where: { !$0.finished }) ?? rows.last else { return "" }
+        if kind == .viewer { return ViewerSteps.latest([last]) }
         let name = ToolRowPresentation.title(for: last.tool)
         return ToolRowPresentation(row: last).summaryText.map { "\(name) \u{B7} \($0)" } ?? name
     }
@@ -158,6 +198,7 @@ struct TranscriptEntryView: View {
     let entry: TranscriptEntry
     var folder: String? = nil
     var chat: Int? = nil
+    @Binding var openRuns: Set<String>
     @Environment(\.conversationColumn) private var column
 
     var body: some View {
@@ -165,7 +206,9 @@ struct TranscriptEntryView: View {
         case .item(let item):
             TranscriptItemView(item: item, folder: folder, chat: chat)
         case .toolRun(let kind, let rows):
-            ToolRunView(kind: kind, rows: rows, folder: folder, chat: chat)
+            ToolRunView(
+                kind: kind, rows: rows, folder: folder, chat: chat,
+                open: ToolRunOpen.binding($openRuns, key: ToolRunOpen.key(chat: chat, id: entry.id)))
                 .frame(maxWidth: column.map(ConversationColumn.replyWidth) ?? .infinity, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -181,7 +224,7 @@ struct ToolRunView: View {
     var folder: String? = nil
     var chat: Int? = nil
     @EnvironmentObject private var model: AppModel
-    @State private var open = false
+    @Binding var open: Bool
 
     private func waiting(_ row: ToolRow) -> Bool {
         chat.map { model.permissionCard(chat: $0, toolUseId: row.toolUseId) != nil } ?? false

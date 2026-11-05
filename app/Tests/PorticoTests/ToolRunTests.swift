@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import Portico
@@ -74,5 +75,55 @@ final class ToolRunTests: XCTestCase {
         let rows = [row("a"), row("b"), row("c", "Read", summary: "src/app.ts", finished: false, ok: nil)]
         XCTAssertTrue(ToolRunPresentation.running(rows))
         XCTAssertEqual(ToolRunPresentation.latest(rows, kind: .any), "Read \u{B7} src/app.ts")
+    }
+}
+
+/// Fix round 1.
+final class ToolRunFixRoundTests: XCTestCase {
+    private func row(_ id: String, turn: Int = 1, finished: Bool = true) -> ToolRow {
+        var r = ToolRow(toolUseId: id, turn: turn, tool: "Bash", summary: "", input: [:])
+        r.finished = finished
+        return r
+    }
+
+    func test_a_run_whose_turn_ended_is_not_running() {
+        let rows = [row("a"), row("b"), row("c", finished: false)]
+        let live = TranscriptEntry.entries(rows.map { .tool($0) })
+        guard case .toolRun(_, let liveRows) = live[0] else { return XCTFail() }
+        XCTAssertTrue(ToolRunPresentation.running(liveRows))
+        let stopped = TranscriptEntry.entries(rows.map { .tool($0) } + [.turnMarker(TurnMarker(turn: 1, outcome: .stopped))])
+        guard case .toolRun(_, let doneRows) = stopped[0] else { return XCTFail() }
+        XCTAssertFalse(ToolRunPresentation.running(doneRows))
+        XCTAssertEqual(ToolRunPresentation.title(kind: .any, running: false, count: 3), "Ran 3 steps")
+        let later = TranscriptEntry.entries(rows.map { .tool($0) } + [.userText(UserText(chat: 1, turn: 2, text: "next")), .tool(row("z", turn: 2, finished: false))])
+        guard case .toolRun(_, let laterRows) = later[0] else { return XCTFail() }
+        XCTAssertFalse(ToolRunPresentation.running(laterRows))
+    }
+
+    func test_latest_is_the_last_unfinished_row_else_the_last() {
+        var a = row("a", finished: false); a.tool = "Read"; a.summary = "x.ts"
+        let b = row("b", finished: true)
+        XCTAssertEqual(ToolRunPresentation.latest([a, b], kind: .any), "Read \u{B7} x.ts")
+        XCTAssertEqual(ToolRunPresentation.latest([row("a"), b], kind: .any), "Bash")
+    }
+
+    func test_open_state_is_kept_per_chat_and_run() {
+        var set: Set<String> = []
+        let binding = Binding(get: { set }, set: { set = $0 })
+        let main = ToolRunOpen.binding(binding, key: ToolRunOpen.key(chat: nil, id: "tool-run:a"))
+        let other = ToolRunOpen.binding(binding, key: ToolRunOpen.key(chat: 2, id: "tool-run:a"))
+        main.wrappedValue = true
+        XCTAssertTrue(main.wrappedValue)
+        XCTAssertFalse(other.wrappedValue)
+        main.wrappedValue = false
+        XCTAssertTrue(set.isEmpty)
+    }
+
+    func test_a_saved_anchor_on_a_folded_row_maps_to_its_run() {
+        let items: [TranscriptItem] = [.tool(row("a")), .tool(row("b")), .tool(row("c")), .assistantText(id: "r", text: "x")]
+        let entries = TranscriptEntry.entries(items)
+        XCTAssertEqual(TranscriptEntry.anchor("tool:b", in: entries), "tool-run:a")
+        XCTAssertEqual(TranscriptEntry.anchor("assistant:r", in: entries), "assistant:r")
+        XCTAssertNil(TranscriptEntry.anchor("tool:zz", in: entries))
     }
 }
