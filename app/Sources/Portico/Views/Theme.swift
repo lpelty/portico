@@ -32,8 +32,14 @@ enum Theme {
     }
 
     private static func color(_ token: Token) -> Color {
+        Color(nsColor: nsColor(token))
+    }
+
+    /// A token as an AppKit colour that follows the appearance, for what
+    /// AppKit draws itself (a window's background and title bar).
+    static func nsColor(_ token: Token) -> NSColor {
         let pair = hex(token)
-        return dynamic(pair.light, pair.dark)
+        return dynamicNSColor(pair.light, pair.dark)
     }
 
     static let window = color(.window)
@@ -83,10 +89,14 @@ enum Theme {
 
     /// A colour with one value in light appearance and another in dark.
     static func dynamic(_ light: String, _ dark: String) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+        Color(nsColor: dynamicNSColor(light, dark))
+    }
+
+    static func dynamicNSColor(_ light: String, _ dark: String) -> NSColor {
+        NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             return NSColor(hex: isDark ? dark : light)
-        })
+        }
     }
 }
 
