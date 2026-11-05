@@ -17,6 +17,8 @@ import logging
 import os
 import secrets
 import shutil
+import stat
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,10 @@ POLL_SECONDS = 2.0
 HOLD_MAX = 50
 # A drop file larger than this is not a message.
 MAX_BYTES = 256 * 1024
+# A file changed more recently than this may still be being written in place; it waits.
+SETTLE_SECONDS = 1.0
+# How many unusable files ``failed/`` keeps; the oldest beyond this are deleted.
+FAILED_MAX = 200
 
 
 class DropError(Exception):
@@ -64,25 +70,49 @@ def write_message(
         body["space"] = space
     path = folder / f"{ident}.json"
     aside = folder / f".{ident}.tmp"
-    aside.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
-    os.replace(aside, path)
+    try:
+        aside.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        os.replace(aside, path)
+    except BaseException:
+        try:
+            aside.unlink()
+        except OSError:
+            pass
+        raise
     return path
 
 
 def _age(path: Path) -> tuple[int, str]:
     try:
-        return path.stat().st_mtime_ns, path.name
+        return path.lstat().st_mtime_ns, path.name
     except OSError:
         return 0, path.name
 
 
 def pending(folder: Path) -> list[Path]:
-    """The ``.json`` files waiting in ``folder`` (not looking inside folders), oldest first."""
+    """The ``.json`` files waiting in ``folder``, oldest first.
+
+    Not looking inside folders, never following a symlink, and leaving a file
+    changed in the last ``SETTLE_SECONDS`` for the next look (it may still be
+    being written in place).
+    """
+    settled = time.time_ns() - int(SETTLE_SECONDS * 1_000_000_000)
+    found: list[tuple[int, str, Path]] = []
     try:
-        found = [p for p in Path(folder).iterdir() if p.suffix == ".json" and p.name[0] != "." and p.is_file()]
+        entries = list(Path(folder).iterdir())
     except OSError:
         return []
-    return sorted(found, key=_age)
+    for p in entries:
+        if p.suffix != ".json" or p.name[0] == ".":
+            continue
+        try:
+            info = p.lstat()
+        except OSError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or info.st_mtime_ns > settled:
+            continue
+        found.append((info.st_mtime_ns, p.name, p))
+    return [p for _, _, p in sorted(found)]
 
 
 def _optional(raw: dict[str, Any], key: str, kind: type) -> Any:
@@ -93,11 +123,19 @@ def _optional(raw: dict[str, Any], key: str, kind: type) -> Any:
 
 
 def read_message(path: Path) -> DeploymentMessage:
-    """The frame a drop file makes; ``DropError`` when it cannot be one. ``id`` defaults to the file's stem, ``ts`` to now."""
+    """The frame a drop file makes; ``DropError`` when it cannot be one.
+
+    ``id`` defaults to the file's stem and its modification time in milliseconds
+    (a script that reuses one file name still sends a new message each time);
+    ``ts`` defaults to now. A symlink is not followed.
+    """
     try:
-        if path.stat().st_size > MAX_BYTES:
-            raise DropError(f"larger than {MAX_BYTES // 1024} KB")
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as f:
+            info = os.fstat(f.fileno())
+            if info.st_size > MAX_BYTES:
+                raise DropError(f"larger than {MAX_BYTES // 1024} KB")
+            raw = json.loads(f.read(MAX_BYTES + 1).decode("utf-8"))
     except OSError as e:
         raise DropError(f"could not be read: {e}") from None
     except (UnicodeDecodeError, ValueError) as e:
@@ -107,7 +145,7 @@ def read_message(path: Path) -> DeploymentMessage:
     text = raw.get("text")
     if not isinstance(text, str) or not text.strip():
         raise DropError("has no text")
-    ident = _optional(raw, "id", str) or path.stem
+    ident = _optional(raw, "id", str) or f"{path.stem}-{info.st_mtime_ns // 1_000_000}"
     return DeploymentMessage(
         ts=_optional(raw, "ts", str) or _now(),
         id=ident,
@@ -130,6 +168,22 @@ def quarantine(path: Path) -> None:
         shutil.move(str(path), str(target))
     except OSError as e:
         log.error("messages: %s could not be moved to failed/: %s", path.name, e)
+        return
+    _trim_failed(failed)
+
+
+def _trim_failed(failed: Path, keep: int | None = None) -> None:
+    """Delete all but the newest ``keep`` (``FAILED_MAX``) files in ``failed/``."""
+    keep = FAILED_MAX if keep is None else keep
+    try:
+        files = sorted((p for p in failed.iterdir() if not p.is_dir()), key=_age)
+    except OSError:
+        return
+    for p in files[: max(0, len(files) - keep)]:
+        try:
+            p.unlink()
+        except OSError:
+            pass
 
 
 def trim(files: list[Path], keep: int = HOLD_MAX) -> list[Path]:
@@ -145,8 +199,10 @@ def trim(files: list[Path], keep: int = HOLD_MAX) -> list[Path]:
 
 
 __all__ = [
+    "FAILED_MAX",
     "HOLD_MAX",
     "POLL_SECONDS",
+    "SETTLE_SECONDS",
     "DropError",
     "messages_dir",
     "pending",

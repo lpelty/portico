@@ -1987,7 +1987,11 @@ ignores them):
 (optional) each match `[A-Za-z0-9._:-]{1,128}`; anything else is refused
 with `error code=protocol.invalid` and nothing runs. The app sends it for a
 link `space-action:<action>?item=<item>` in a space's page, and only when
-the gateway lists `spaces.act`. The gateway runs `[spaces] act` with
+the gateway lists `spaces.act`, and only for the person's own click: the
+link must be in the page's main frame (not an iframe) while the viewer is
+showing that space's own page, and a click made by the viewer agent
+(`viewer.act`) never sends it (the agent can
+ask the person to click). The gateway runs `[spaces] act` with
 `/bin/sh -c` for up to 30 s, with `$PORTICO_SPACE`, `$PORTICO_ACTION` and
 `$PORTICO_ITEM` (empty with no item) set in the environment, never in the
 command string, and answers with a new `spaces.list` (the deployment
@@ -2042,21 +2046,30 @@ and rename), at most 256 KB:
 
 `text` (Markdown, not blank) is required. `title`, `space` (a space's
 id), `id` and `ts` are strings and `notify` is true or false, all
-optional; `id` defaults to the file name without `.json` and `ts` to the
-time of sending. Other keys are ignored. A file that is not valid in this
-way is moved to `messages/failed/` with a log line; the rest still go.
+optional; `id` defaults to the file name without `.json`, a `-`, and the
+file's modification time in whole milliseconds (`status-1762336800123`),
+so a script that reuses one file name sends a new message each time; an
+`id` in the file is kept as given. `ts` defaults to the time of sending.
+Other keys are ignored. A file that is not valid in this way is moved to
+`messages/failed/` with a log line; the rest still go. `failed/` keeps at
+most 200 files (the oldest are deleted). A file changed less than 1 s ago
+waits for a later look (it may still be being written in place), and a
+symbolic link is never followed or sent.
 
 #### `deployment.message` — `DeploymentMessage` *(gateway → app)*
 `{id, text, title?, notify?, space?, ts}` as above (`notify` is sent only
 when true). The gateway looks at the folder every 2 s and when an app
-attaches, sends each file in order of its modification time, oldest first,
+attaches (only after that connection has been sent its `hello`, so a
+message is never an app's first frame), sends each file in order of its modification time, oldest first,
 then deletes it. Only an app that listed `messages.deployment.v1` is
 sent one. With no such app attached, files wait in the folder, at most 50
 (beyond that the oldest are deleted, with a log line), and go out on the
 next `hello`. The message is not chat history: it is not sent to the agent
 and not kept in `chat.history`. The app docks it above the message box
 until the person dismisses it (**Open** opens `space`); a dismissed message
-is gone. With `notify` the app also posts a system notification.
+is gone, and the same `id` sent again in that run of the app is not docked
+again. With `notify` the app also posts a system notification, only for a
+message it docked.
 
 ## Services *(v0.4)*
 

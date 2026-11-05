@@ -53,9 +53,19 @@ def test_write_message_makes_one_atomic_json_file(tmp_path: Path) -> None:
 def test_read_message_fills_id_and_ts_and_ignores_unknown_keys(tmp_path: Path) -> None:
     path = drop(tmp_path, "from-a-script.json", {"text": "Hello", "extra": 1})
     msg = dm.read_message(path)
-    assert isinstance(msg, DeploymentMessage) and msg.id == "from-a-script" and msg.text == "Hello" and msg.ts.endswith("Z")
+    stamp = path.stat().st_mtime_ns // 1_000_000
+    assert isinstance(msg, DeploymentMessage) and msg.id == f"from-a-script-{stamp}" and msg.text == "Hello" and msg.ts.endswith("Z")
     full = dm.read_message(drop(tmp_path, "b.json", {"id": "x1", "ts": "2026-11-05T10:00:00Z", "text": "T", "title": "H", "notify": True, "space": "s"}))
     assert (full.id, full.ts, full.title, full.notify, full.space) == ("x1", "2026-11-05T10:00:00Z", "H", True, "s")
+
+
+def test_a_reused_file_name_gets_a_new_default_id(tmp_path: Path) -> None:
+    """A script that writes ``status.json`` again and again: each one is a new message to the app."""
+    path = drop(tmp_path, "status.json", {"text": "one"}, age=20)
+    first = dm.read_message(path).id
+    drop(tmp_path, "status.json", {"text": "two"}, age=10)
+    assert dm.read_message(path).id != first
+    assert dm.read_message(drop(tmp_path, "c.json", {"id": "given", "text": "t"})).id == "given", "an id in the file is kept"
 
 
 @pytest.mark.parametrize(
@@ -76,12 +86,49 @@ def test_pending_is_oldest_first_and_skips_temporary_and_other_files(tmp_path: P
     assert [p.name for p in dm.pending(tmp_path)] == ["b.json", "a.json"]
 
 
+def test_pending_skips_a_file_still_being_written(tmp_path: Path) -> None:
+    drop(tmp_path, "old.json", {"text": "a"}, age=5)
+    drop(tmp_path, "fresh.json", {"text": "b"})  # written in place a moment ago
+    assert [p.name for p in dm.pending(tmp_path)] == ["old.json"]
+
+
+def test_pending_does_not_follow_symlinks(tmp_path: Path) -> None:
+    outside = drop(tmp_path / "elsewhere", "secret.json", {"text": "not for the app"}, age=5)
+    folder = tmp_path / "messages"
+    drop(folder, "real.json", {"text": "a"}, age=5)
+    (folder / "link.json").symlink_to(outside)
+    os.utime(folder / "link.json", (1, 1), follow_symlinks=False)
+    assert [p.name for p in dm.pending(folder)] == ["real.json"]
+
+
+def test_a_failed_write_leaves_no_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(self: Path, *a: Any, **k: Any) -> int:
+        self.open("w").write("{half")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", broken)
+    with pytest.raises(OSError):
+        dm.write_message(tmp_path / "state", "Hi")
+    assert list((tmp_path / "state" / "messages").iterdir()) == []
+
+
+def test_failed_keeps_at_most_two_hundred_and_drops_the_oldest(tmp_path: Path) -> None:
+    folder = tmp_path / "messages"
+    failed = folder / "failed"
+    for n in range(dm.FAILED_MAX):
+        drop(failed, f"f{n:03d}.json", "x", age=10_000 - n)
+    dm.quarantine(drop(folder, "new-bad.json", "{nope", age=5))
+    names = sorted(p.name for p in failed.iterdir())
+    assert len(names) == dm.FAILED_MAX == 200 and "f000.json" not in names and "new-bad.json" in names
+
+
 # --- through the gateway -----------------------------------------------------------
 
 
 @pytest.fixture
 async def server(state_dir: StateDir, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[GatewayServer]:
     monkeypatch.setattr(dm, "POLL_SECONDS", 0.05)
+    monkeypatch.setattr(dm, "SETTLE_SECONDS", 0.0)  # pending's own test pins the wait for a fresh file
     config = make_config(setting_sources=["project"])
     registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
     srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=EngineFactory(), version=__version__)
@@ -145,6 +192,32 @@ async def test_an_unparseable_file_goes_to_failed_and_the_rest_still_arrive(serv
         assert not bad.exists() and (folder_of(server) / "failed" / "a-bad.json").read_text() == "{nope"
     finally:
         await conn.close()
+
+
+class _Fake:
+    """A connection that records what it is sent."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, raw: str) -> None:
+        self.sent.append(raw)
+
+
+async def test_nothing_is_delivered_to_a_connection_before_its_hello_is_sent(server: GatewayServer) -> None:
+    """Between attaching and sending ``hello``, the poll must not make a message the first frame."""
+    from portico_gateway import server as srv_mod
+
+    early = _Fake()
+    srv_mod._set_capabilities(early, [CAP])  # type: ignore[arg-type]
+    server._app = early  # type: ignore[assignment]  # attached; hello not yet sent
+    path = drop(folder_of(server), "early.json", {"text": "wait for hello"}, age=5)
+    await server._deliver_messages()
+    assert early.sent == [] and path.exists(), "the file waits for the hello"
+    srv_mod._mark_hello_sent(early)  # type: ignore[arg-type]
+    await server._deliver_messages()
+    assert [parse_server(f).type for f in early.sent] == ["deployment.message"] and not path.exists()
+    server._app = None
 
 
 async def test_files_wait_without_an_app_and_come_on_the_next_hello_oldest_first(server: GatewayServer) -> None:

@@ -564,6 +564,18 @@ def _extra_roots(conn: ServerConnection) -> list[Root]:
     return getattr(conn, _EXTRA_ROOTS_ATTR, [])
 
 
+_HELLO_SENT_ATTR = "portico_hello_sent"
+
+
+def _mark_hello_sent(conn: ServerConnection) -> None:
+    """v0.22: this connection has been sent its ``hello``; other frames may follow it now."""
+    setattr(conn, _HELLO_SENT_ATTR, True)
+
+
+def _hello_sent(conn: ServerConnection) -> bool:
+    return bool(getattr(conn, _HELLO_SENT_ATTR, False))
+
+
 def _capabilities(conn: ServerConnection) -> frozenset[str]:
     return getattr(conn, _CAPABILITIES_ATTR, frozenset())
 
@@ -1535,6 +1547,9 @@ class GatewayServer:
         await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
         if self.spaces_watcher is not None:
             await self._send(conn, self._spaces_frame(self.spaces_watcher.spaces))
+        # v0.22: from here the poll may send this connection messages; before, one
+        # could have gone out ahead of ``hello`` and been refused by the app.
+        _mark_hello_sent(conn)
         await self._deliver_messages()  # v0.22: what waited for an app, oldest first
         if self.update_version is not None:
             # Found before this app attached: it hears it now.
@@ -2682,6 +2697,8 @@ class GatewayServer:
             if conn is None or DEPLOYMENT_MESSAGE_CAPABILITY not in _capabilities(conn):
                 await asyncio.to_thread(dmsg.trim, [path for path, _ in ready])
                 return
+            if not _hello_sent(conn):
+                return  # attached, ``hello`` not out yet: the hello sequence delivers them
             for path, msg in ready:
                 try:
                     await conn.send(dump(msg))
