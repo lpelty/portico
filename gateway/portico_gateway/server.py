@@ -1101,7 +1101,9 @@ class GatewayServer:
         )
         # v0.12: spaces. The watcher tells every attached app when the folder's list changes.
         self.spaces_watcher: SpacesWatcher | None = (
-            SpacesWatcher(Path(config.spaces.folder), self._spaces_changed) if config.spaces.folder else None
+            SpacesWatcher(Path(config.spaces.folder), self._spaces_changed, require_folder=config.spaces.require_folder)
+            if config.spaces.folder
+            else None
         )
         self.register("space.refresh", self.on_space_refresh)
         self.register("space.rename", self.on_space_rename)
@@ -1233,7 +1235,7 @@ class GatewayServer:
         if self.services.active:
             self._spawn(self.services.run(), name="portico-services")
         if self.spaces_watcher is not None:
-            self.spaces_watcher.spaces = await asyncio.to_thread(spaces_mod.scan, self.spaces_watcher.folder)
+            self.spaces_watcher.spaces = await asyncio.to_thread(self.spaces_watcher.scan)
             self._spawn(self.spaces_watcher.run(), name="portico-spaces")
         if callable(getattr(self.engine_factory, "probe_models", None)):
             self._probe_task = self._spawn(self._probe_models(), name="portico-model-probe")
@@ -2285,7 +2287,9 @@ class GatewayServer:
         """The id of the space an artifact's file is, else ``None``."""
         if artifact.kind != "file" or not self.config.spaces.folder:
             return None
-        return spaces_mod.space_id_for(Path(self.config.spaces.folder), artifact.location)
+        return spaces_mod.space_id_for(
+            Path(self.config.spaces.folder), artifact.location, self.config.spaces.require_folder
+        )
 
     def _shown_folders(self, chat: Chat, spaces: bool = True) -> list[Path]:
         """Where a file may be shown from: the chat's folder, the deployment's roots, and the spaces folder."""
@@ -2699,7 +2703,7 @@ class GatewayServer:
         if not command:
             raise ProtocolError("space.no_refresh", "this deployment has no refresh for spaces")
         try:
-            await asyncio.to_thread(spaces_mod.find, folder, msg.id)  # not_found before anything runs
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id, self.config.spaces.require_folder)  # not_found first
         except SpaceError as e:
             raise ProtocolError(e.code, str(e)) from None
         self._spawn_space_action(msg, conn, lambda: spaces_mod.refresh(msg.id, command), "space.refresh_failed")
@@ -2708,18 +2712,22 @@ class GatewayServer:
         folder = self._space_folder()
 
         async def do() -> None:
-            await asyncio.to_thread(spaces_mod.rename, folder, msg.id, msg.title)
+            await asyncio.to_thread(spaces_mod.rename, folder, msg.id, msg.title, self.config.spaces.require_folder)
 
         await self._space_action(msg.id, do, "space.rename_failed")
 
     async def on_space_remove(self, msg: SpaceRemove, conn: ServerConnection) -> None:
         folder = self._space_folder()
+        require_folder = self.config.spaces.require_folder
         try:
-            await asyncio.to_thread(spaces_mod.find, folder, msg.id)  # not_found before anything runs
+            await asyncio.to_thread(spaces_mod.find, folder, msg.id, require_folder)  # not_found before anything runs
         except SpaceError as e:
             raise ProtocolError(e.code, str(e)) from None
         self._spawn_space_action(
-            msg, conn, lambda: spaces_mod.remove(folder, msg.id, self.config.spaces.remove), "space.remove_failed"
+            msg,
+            conn,
+            lambda: spaces_mod.remove(folder, msg.id, self.config.spaces.remove, require_folder=require_folder),
+            "space.remove_failed",
         )
 
     async def on_viewer_settings(self, msg: ViewerSettings, conn: ServerConnection) -> None:

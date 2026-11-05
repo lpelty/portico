@@ -2,7 +2,8 @@
 
 ## v0.21.0 (2026-11-05)
 
-Field note 19: background work you can see. A command or Monitor running
+Field notes 19 and 18: background work you can see, and only real
+spaces in the switcher. A command or Monitor running
 in the background showed nothing once the turn ended, so the app looked
 idle while work ran; an agent resumed with SendMessage didn't show as
 running again.
@@ -31,11 +32,18 @@ running again.
 - A subagent the engine starts again under the same task id with a later
   `run_id` is a new run: `agent.started` again, with `run` 2, 3, ….
   Frames naming an earlier run are dropped.
+- **Field note 18: `[spaces] require_folder = true`** lists a page as a
+  space only when a folder of the same name sits beside it (`brief.html`
+  and `brief/`). Other files in the spaces folder, such as a README with
+  instructions for the agent, stay where they are and are not listed; the
+  switcher can't rename or remove them. Off by default. As with any new
+  key, update the gateway before adding it.
 
 ### Owed
 
 - On screen: a background build in the tray after the turn ends, its end,
-  and a resumed agent, in a live chat.
+  and a resumed agent, in a live chat; the switcher without the README on a
+  deployment with `require_folder`.
 
 ## v0.20.1 (2026-11-05)
 

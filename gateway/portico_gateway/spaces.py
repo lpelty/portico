@@ -161,12 +161,22 @@ def _space_for(path: Path) -> Space | None:
     )
 
 
-def scan(folder: Path) -> list[Space]:
+def _has_folder(path: Path) -> bool:
+    """v0.21: a folder of the page's name sits beside it (``brief.html`` and ``brief/``)."""
+    try:
+        return (path.parent / path.stem).is_dir()
+    except OSError:
+        return False
+
+
+def scan(folder: Path, require_folder: bool = False) -> list[Space]:
     """The spaces in ``folder`` (not looking inside folders), in the order the switcher shows them.
 
     ``.md``, ``.markdown``, ``.html`` and ``.htm`` files whose names do not
     start with ``.`` or ``_``; symbolic links are left out. Order by ``order`` (those without one last),
     then title. Two files with one stem: the first by name is the space.
+    ``require_folder`` (v0.21, ``[spaces] require_folder``): only a page with
+    a folder of its name beside it, so a README there for the agent is not a space.
     """
     try:
         names = sorted(p for p in Path(folder).iterdir() if p.suffix.lower() in EXTENSIONS and p.name[0] not in "._")
@@ -185,23 +195,25 @@ def scan(folder: Path) -> list[Space]:
                 continue
         except (OSError, RuntimeError):
             continue
+        if require_folder and not _has_folder(path):
+            continue
         space = _space_for(path)
         if space is not None and space.id not in out:
             out[space.id] = space
     return sorted(out.values(), key=lambda s: (s.order is None, s.order or 0, s.title.lower()))
 
 
-def find(folder: Path, id: str) -> Path:
+def find(folder: Path, id: str, require_folder: bool = False) -> Path:
     """The file for space ``id``; ``SpaceError`` (``space.not_found``) when there is none."""
     if not id or "/" in id or "\\" in id or id.startswith("."):
         raise SpaceError(f"there is no space {id!r}", "space.not_found")
-    for space in scan(folder):
+    for space in scan(folder, require_folder):
         if space.id == id:
             return Path(space.location)
     raise SpaceError(f"there is no space {id!r}", "space.not_found")
 
 
-def space_id_for(folder: Path, location: str | Path) -> str | None:
+def space_id_for(folder: Path, location: str | Path, require_folder: bool = False) -> str | None:
     """The id of the space ``location`` is, else ``None``: a file directly in ``folder`` of a space's kind."""
     path = Path(location)
     try:
@@ -210,6 +222,8 @@ def space_id_for(folder: Path, location: str | Path) -> str | None:
     except OSError:
         return None
     if path.suffix.lower() not in EXTENSIONS or path.name[0] in "._":
+        return None
+    if require_folder and not _has_folder(path):
         return None
     return path.stem
 
@@ -222,15 +236,21 @@ OnChange = Callable[[list[Space]], Awaitable[None]]
 class SpacesWatcher:
     """Looks at the folder every ``interval`` seconds and calls ``on_change`` only when the list differs."""
 
-    def __init__(self, folder: Path, on_change: OnChange, interval: float = SCAN_SECONDS) -> None:
+    def __init__(
+        self, folder: Path, on_change: OnChange, interval: float = SCAN_SECONDS, require_folder: bool = False
+    ) -> None:
         self.folder = Path(folder)
         self.on_change = on_change
         self.interval = interval
-        self.spaces: list[Space] = scan(self.folder)
+        self.require_folder = require_folder
+        self.spaces: list[Space] = self.scan()
+
+    def scan(self) -> list[Space]:
+        return scan(self.folder, self.require_folder)
 
     async def poll(self) -> list[Space]:
         """Scan once; tell ``on_change`` if anything is different from last time."""
-        current = await asyncio.to_thread(scan, self.folder)
+        current = await asyncio.to_thread(self.scan)
         if current != self.spaces:
             self.spaces = current
             await self.on_change(current)
@@ -268,12 +288,12 @@ def _quote_if_needed(title: str) -> str:
     return title
 
 
-def rename(folder: Path, id: str, title: str) -> None:
+def rename(folder: Path, id: str, title: str, require_folder: bool = False) -> None:
     """Write ``title`` as space ``id``'s title; every other key and the body stay as they are."""
     title = " ".join(title.split())
     if not title:
         raise SpaceError("a space needs a title", "space.invalid")
-    path = find(folder, id)
+    path = find(folder, id, require_folder)
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
@@ -348,12 +368,14 @@ async def _command(command: str, id: str, timeout: float, what: str) -> None:
         raise SpaceError(f"the {what} command exited {code}" + (f": {last}" if last else ""))
 
 
-async def remove(folder: Path, id: str, command: str | None, timeout: float = COMMAND_SECONDS) -> None:
+async def remove(
+    folder: Path, id: str, command: str | None, timeout: float = COMMAND_SECONDS, require_folder: bool = False
+) -> None:
     """Move space ``id``'s file to the Trash, then run ``command`` (``$PORTICO_SPACE`` = id) so the deployment can drop it.
 
     A failing command is reported (``SpaceError``) after the file has gone.
     """
-    path = await asyncio.to_thread(find, folder, id)
+    path = await asyncio.to_thread(find, folder, id, require_folder)
     target = await asyncio.to_thread(_trash, path)
     log.info("spaces: %s moved to %s", id, target)
     if command:

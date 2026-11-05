@@ -43,6 +43,7 @@ from portico_gateway.spaces import (
     remove,
     rename,
     scan,
+    space_id_for,
 )
 from portico_gateway.state import StateDir
 from tests.conftest import RecordingCallbacks, make_config
@@ -635,3 +636,68 @@ async def test_default_folder_works_across_restarts(state_dir: StateDir, factory
             assert [s.id for s in srv.spaces_watcher.spaces] == ["kept"]  # type: ignore[union-attr]
         finally:
             await srv.shutdown()
+
+
+# --- v0.21: only a page with its own folder (field note 18) ---------------------------
+
+
+def test_require_folder_lists_only_pages_with_a_folder_of_their_name(spaces_dir: Path) -> None:
+    put(spaces_dir, "README.md", "# How spaces are laid out\n")
+    put(spaces_dir, "brief.html", "<!-- title: Brief -->\n<p>x</p>\n")
+    (spaces_dir / "brief").mkdir()
+    put(spaces_dir, "meeting-prep.md", "---\ntitle: Meeting prep\n---\n")
+    (spaces_dir / "meeting-prep").mkdir()
+    put(spaces_dir, "notes.md")
+    put(spaces_dir, "notes")  # a file of the name is not a folder
+    assert ids(scan(spaces_dir)) == ["brief", "meeting-prep", "notes", "README"], "off by default"
+    assert ids(scan(spaces_dir, require_folder=True)) == ["brief", "meeting-prep"]
+
+
+def test_require_folder_also_holds_for_actions_and_the_viewer(spaces_dir: Path) -> None:
+    readme = put(spaces_dir, "README.md", "# How spaces are laid out\n")
+    with pytest.raises(SpaceError) as e:
+        rename(spaces_dir, "README", "Readme", require_folder=True)
+    assert e.value.code == "space.not_found"
+    assert readme.read_text(encoding="utf-8") == "# How spaces are laid out\n", "left as it was, for the agent"
+    assert space_id_for(spaces_dir, readme, require_folder=True) is None
+    assert space_id_for(spaces_dir, readme) == "README"
+    (spaces_dir / "README").mkdir()
+    assert space_id_for(spaces_dir, readme, require_folder=True) == "README"
+
+
+async def test_require_folder_watcher_and_config(spaces_dir: Path) -> None:
+    assert SpacesConfig().require_folder is False
+    assert SpacesConfig(folder=str(spaces_dir), require_folder=True).require_folder is True
+    put(spaces_dir, "README.md")
+    put(spaces_dir, "brief.md")
+    seen: list[list[str]] = []
+
+    async def changed(spaces: list[Space]) -> None:
+        seen.append(ids(spaces))
+
+    watcher = SpacesWatcher(spaces_dir, changed, require_folder=True)
+    assert watcher.spaces == []
+    (spaces_dir / "brief").mkdir()
+    await watcher.poll()
+    assert seen == [["brief"]]
+
+
+async def test_require_folder_reaches_the_apps_list(state_dir: StateDir, factory: EngineFactory, spaces_dir: Path) -> None:
+    put(spaces_dir, "README.md")
+    put(spaces_dir, "brief.md", "---\ntitle: Brief\n---\n")
+    (spaces_dir / "brief").mkdir()
+    config: Config = make_config(
+        setting_sources=["project"], spaces=SpacesConfig(folder=str(spaces_dir), require_folder=True)
+    )
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    srv = GatewayServer(config=config, state=state_dir, registry=registry, engine_factory=factory, version=__version__)
+    await srv.serve(0)
+    try:
+        conn = await hello(srv)
+        try:
+            listed = await frames_until(conn, "spaces.list")
+            assert [s.id for s in listed.spaces] == ["brief"]
+        finally:
+            await conn.close()
+    finally:
+        await srv.shutdown()

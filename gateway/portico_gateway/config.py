@@ -285,7 +285,10 @@ class SpacesConfig(BaseModel):
     """``[spaces]`` (v0.12): a folder of files the agent keeps current, shown in the app's switcher.
 
     ``refresh`` and ``remove`` are commands (``/bin/sh -c``, 30 s, with
-    ``$PORTICO_SPACE`` set to the space's id).
+    ``$PORTICO_SPACE`` set to the space's id). ``require_folder`` (v0.21): a
+    page is a space only with a folder of its name beside it (``brief.html``
+    and ``brief/``), so other files there, such as a README for the agent,
+    are not listed.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -293,6 +296,7 @@ class SpacesConfig(BaseModel):
     folder: str | None = None
     refresh: str | None = None
     remove: str | None = None
+    require_folder: bool = False
 
     @field_validator("folder")
     @classmethod
