@@ -51,4 +51,41 @@ final class LinkSitesTests: XCTestCase {
         let linked = text.runs.compactMap(\.link)
         XCTAssertEqual(linked.map(\.absoluteString), ["https://acme.example/x"])
     }
+
+    func testOnlyHttpHttpsAndMailtoMayBeLinked() {
+        XCTAssertTrue(Linkify.allowed(URL(string: "https://acme.example/x")!))
+        XCTAssertTrue(Linkify.allowed(URL(string: "mailto:a@acme.example")!))
+        XCTAssertFalse(Linkify.allowed(URL(string: "javascript:alert(1)")!))
+        XCTAssertFalse(Linkify.allowed(URL(string: "file:///etc/passwd")!))
+    }
+
+    @MainActor
+    func testAReplyNeverLinksJavascriptOrFile() {
+        let out = MarkdownAttributed.inline("[x](javascript:alert(1)) [y](file:///etc/passwd) [ok](https://acme.example)", color: .labelColor)
+        var links: [String] = []
+        out.enumerateAttribute(.link, in: NSRange(location: 0, length: out.length)) { value, _, _ in
+            if let url = value as? URL { links.append(url.absoluteString) }
+        }
+        XCTAssertEqual(links, ["https://acme.example"])
+        XCTAssertTrue(out.string.contains("x") && out.string.contains("y"))
+    }
+
+    func testTrailingPunctuationIsNotPartOfTheLink() {
+        for text in ["https://x.example/a.", "(https://x.example/a)", "https://x.example/a,"] {
+            let found = Linkify.detect(in: text)
+            XCTAssertEqual(found.map(\.1.absoluteString), ["https://x.example/a"], text)
+        }
+    }
+
+    func testPullingAChipOutLeavesNoDoubleSpace() {
+        let split = BubbleLinks.split("see https://acme.slack.com/archives/C01 now")
+        XCTAssertEqual(split.text, "see now")
+    }
+
+    func testBubbleLinksAreColouredAndUnderlined() {
+        let text = BubbleLinks.attributed("go https://acme.example/x")
+        let run = text.runs.first { $0.link != nil }
+        XCTAssertNotNil(run?.foregroundColor)
+        XCTAssertEqual(run?.underlineStyle, .single)
+    }
 }

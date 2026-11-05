@@ -469,6 +469,7 @@ struct MarkdownText: View {
         let shown = SpeakableText.displayed(text)
         VStack(alignment: .leading, spacing: 4) {
             MarkdownBlocksView(blocks: MarkdownCache.blocks(for: shown))
+                .environment(\.codeWrapControl, CodeWrapControl(on: settings.wrapCode, toggle: { settings.wrapCode.toggle() }))
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
             HStack(spacing: 2) {
@@ -574,10 +575,28 @@ struct CodeBlockLayout: Equatable {
     let showsWrapToggle: Bool
     var scrolls: Bool { !wraps }
 
-    init(language: String?, wrapCode: Bool) {
+    init(language: String?, wrapCode: Bool, canToggle: Bool = true) {
         let prose = CodeBlockWrap.wraps(language: language)
         wraps = prose || wrapCode
-        showsWrapToggle = !prose
+        showsWrapToggle = !prose && canToggle
+    }
+}
+
+/// The Wrap switch for the code blocks below it. Absent (a view drawn
+/// without it) the blocks scroll and show no toggle.
+struct CodeWrapControl: @unchecked Sendable {
+    var on: Bool
+    var toggle: () -> Void
+}
+
+private struct CodeWrapControlKey: EnvironmentKey {
+    static let defaultValue: CodeWrapControl? = nil
+}
+
+extension EnvironmentValues {
+    var codeWrapControl: CodeWrapControl? {
+        get { self[CodeWrapControlKey.self] }
+        set { self[CodeWrapControlKey.self] = newValue }
     }
 }
 
@@ -585,7 +604,7 @@ struct MarkdownBlockView: View {
     let block: MarkdownBlock
     let first: Bool
     var secondary = false
-    @EnvironmentObject private var settings: Settings
+    @Environment(\.codeWrapControl) private var wrapControl
 
     private static let bodySize = MarkdownText.bodySize
     @Environment(\.textScale) private var textScale
@@ -648,7 +667,7 @@ struct MarkdownBlockView: View {
     /// language, Wrap and Copy, which copies the code alone: no fence, no
     /// wrapping, no trailing blank lines.
     private func codeBlock(_ text: String, language: String?) -> some View {
-        let layout = CodeBlockLayout(language: language, wrapCode: settings.wrapCode)
+        let layout = CodeBlockLayout(language: language, wrapCode: wrapControl?.on ?? false, canToggle: wrapControl != nil)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(language ?? "")
@@ -656,15 +675,15 @@ struct MarkdownBlockView: View {
                     .foregroundStyle(Theme.text3)
                 Spacer(minLength: 0)
                 if layout.showsWrapToggle {
-                    Button { settings.wrapCode.toggle() } label: {
+                    Button { wrapControl?.toggle() } label: {
                         Image(systemName: "text.wrap")
                             .scaledFont(11)
-                            .foregroundStyle(settings.wrapCode ? Theme.accent : Theme.text3)
+                            .foregroundStyle(wrapControl?.on == true ? Theme.accent : Theme.text3)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                     }
                     .buttonStyle(.hover)
-                    .tip(settings.wrapCode ? "Don't wrap long lines" : "Wrap long lines")
+                    .tip(wrapControl?.on == true ? "Don't wrap long lines" : "Wrap long lines")
                 }
                 CopyButton(help: "Copy the code") { MarkdownCopy.code(text) }
             }
