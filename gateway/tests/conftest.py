@@ -173,6 +173,8 @@ class FakeEngine:
         self.callbacks: EngineCallbacks | None = None
         self.scripts: deque[list[Any]] = deque()
         self.calls: list[tuple[str, Any]] = []
+        # v0.19: the image blocks each ``send`` / ``inject`` carried, in call order (not in ``calls``).
+        self.sent_images: list[list[dict[str, Any]]] = []
         self.decisions: list[PermissionDecision] = []
         self.answers: list[dict[str, str | list[str]] | tuple[str, str]] = []
         # What each ``Show`` item's ``on_show`` answered (``None``: shown).
@@ -253,8 +255,9 @@ class FakeEngine:
         self.session_id = resume or (None if self.late_session else self._session_id)
         return self.session_id or ""
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         self.calls.append(("send", text))
+        self.sent_images.append(list(images or []))
         if self.callbacks is None:
             raise RuntimeError("FakeEngine.send before start")
         self.turn += 1
@@ -303,9 +306,10 @@ class FakeEngine:
                         self.finished_turn = ev.turn
                     await cb.on_event(ev)
 
-    async def inject(self, text: str) -> None:
+    async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """A message written into the turn in flight (v0.11): recorded; the script goes on as it was."""
         self.calls.append(("inject", text))
+        self.sent_images.append(list(images or []))
         if self.callbacks is None:
             raise RuntimeError("FakeEngine.inject before start")
 

@@ -238,6 +238,14 @@ Attached files:
 - /abs/other
 ```
 
+v0.19 (`messages.attachments.v1` in the gateway's `hello.capabilities`): an
+attachment that is a png, jpeg, gif or webp (by its bytes, not its name) of
+at most 3,750,000 bytes also goes to the engine as a base64 `image` content
+block after the text; its path stays in the block above. An image too large
+or unreadable goes as a path only, with a `chat.notice` of `kind:
+"attachment.not_image"` in the turn: "<name> is too large to show the agent
+as an image; it can still open the file." Other files are paths only.
+
 ### `turn.stop` — `TurnStop`
 `chat`. Interrupts the running turn; it finishes with `outcome: stopped`
 (the engine's own finish is reported as `stopped`; if none arrives within
@@ -650,7 +658,12 @@ running turn is a further `user.text` in that turn, at the point it went
 start of a turn of its own. v0.18: `via?: string` — the message came from an
 MCP app's page (`app.message`); it is the app's server title, and the app
 shows "via <title>" under the bubble. Absent for what the person typed, and
-in a transcript replay. An older app ignores it.
+in a transcript replay. An older app ignores it. v0.19
+(`messages.attachments.v1`): `attachments: [string]` (default empty), the
+attached files' paths, and `text` is what the person typed, without the
+"Attached files:" block, live and in a transcript replay (which recovers the
+paths from the block's trailing form). An older gateway sends no
+`attachments`, with the block inside `text`.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
@@ -855,7 +868,8 @@ earlier conversation to make room. Stamped and replayed with the history;
 counted in the chat's `compactions`.
 
 ### `chat.notice` — `ChatNotice` *(v0.3)*
-`chat`, `seq`, `text`. A quiet line from the gateway in the conversation,
+`chat`, `seq`, `text`, v0.19 `kind?: string` (`attachment.not_image`; absent
+for a plain line). A quiet line from the gateway in the conversation,
 e.g. `No command /foo here` for a slash command that neither the
 deployment nor the engine knows (the message is not sent to the agent).
 v0.7: also the session commands' lines (`session.log`, `session.renew`).

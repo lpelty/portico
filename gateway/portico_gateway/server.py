@@ -181,6 +181,7 @@ from .engine import (
     history_events,
     read_history,
 )
+from .images import ATTACHMENT_HEADER, NOT_IMAGE_NOTICE_KIND, image_blocks, not_image_notice
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
 from .mcp_settings import McpSettings, ToolPolicy, strip_url_queries
@@ -347,10 +348,6 @@ CONFIG_CHECK_SECONDS = 10.0
 # ``turn.finished``; then the gateway ends the turn itself, and closes the
 # engine, so the app is never left on a turn that cannot finish.
 STOP_GRACE_SECONDS = 15.0
-
-# The exact form attachments take in the text the engine receives
-# (PROTOCOL.md, ``message.send``).
-ATTACHMENT_HEADER = "Attached files:"
 
 # A message that starts with a slash command: ``/word`` (``plugin:word``
 # too) followed by a blank or the end. ``/Users/...`` is a path, not one.
@@ -3411,10 +3408,10 @@ class GatewayServer:
         # ``chat.list`` (renew, new, alias, reattach) carries the title.
         command = slash_command(msg.text)
         if command in SETTINGS_COMMANDS:
-            await self._unknown_command(chat, command, with_attachments(msg.text, attachments), notice=SETTINGS_NOTICE)
+            await self._unknown_command(chat, command, msg.text, attachments, notice=SETTINGS_NOTICE)
             return
         if command is not None and not await self._knows_command(chat, command):
-            await self._unknown_command(chat, command, with_attachments(msg.text, attachments))
+            await self._unknown_command(chat, command, msg.text, attachments)
             return
         title = None
         # First: no message.send has started an agent turn on this chat yet
@@ -3423,7 +3420,11 @@ class GatewayServer:
         if first:
             title = title_from(msg.text)
         text = with_attachments(msg.text, attachments)
-        run = await self._echo_turn(chat, text, via)
+        # v0.19 (spec §8.3): images go as images too; their paths stay in the text.
+        images, refused = await asyncio.to_thread(image_blocks, attachments)
+        # v0.19 (spec §8.4): the echo is what was typed, the attachments apart.
+        run = await self._echo_turn(chat, msg.text, via, attachments)
+        await self._not_image_notices(chat, refused)
         chat.sent_turn = True
         if first and msg.text.strip():
             # v0.8: this turn may name the session once it finishes cleanly.
@@ -3433,8 +3434,13 @@ class GatewayServer:
         # The engine start and the send run from a task (v0.7): a cold engine
         # takes seconds, and the frames that stop the turn must be read meanwhile.
         self._spawn(
-            self._send_task(chat, run, engine_text, title, msg, conn, context), name=f"portico-send-{chat.number}"
+            self._send_task(chat, run, engine_text, title, msg, conn, context, images), name=f"portico-send-{chat.number}"
         )
+
+    async def _not_image_notices(self, chat: Chat, names: list[str]) -> None:
+        """One ``chat.notice`` per image that goes to the agent as a path only (v0.19, spec §8.3)."""
+        for name in names:
+            await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=not_image_notice(name), kind=NOT_IMAGE_NOTICE_KIND))
 
     def _with_app_context(self, chat: Chat, text: str) -> tuple[str, dict[str, tuple[str, str]]]:
         """``text`` as the engine gets it, MCP apps' kept context first unless it is a command (v0.18),
@@ -3454,13 +3460,14 @@ class GatewayServer:
         msg: MessageSend,
         conn: ServerConnection | None,
         context: dict[str, tuple[str, str]] | None = None,
+        images: list[dict[str, Any]] | None = None,
     ) -> None:
         """``_begin_turn`` for a ``message.send``; a refusal goes to the sender with the request's ``id``.
 
         v0.18 (R-c17): when the text never reached the engine, the apps' context taken for it is kept.
         """
         try:
-            await self._begin_turn(chat, run, text)
+            await self._begin_turn(chat, run, text, images)
         except ProtocolError as e:
             self.apps.put_back(chat, context or {})
             await self._reply(conn, self.error(e.code, e.message, chat=chat.number, id=msg.id))
@@ -3563,8 +3570,9 @@ class GatewayServer:
             item = held[0]
             text = with_attachments(item.text, item.attachments)
             engine_text, context = self._with_app_context(chat, text)
+            images, refused = await asyncio.to_thread(image_blocks, item.attachments)
             try:
-                await engine.inject(engine_text)
+                await engine.inject(engine_text, images)
             except Exception:
                 self.apps.put_back(chat, context)
                 log.exception("chat %d: writing a queued message into turn %d failed; it waits", chat.number, run.turn)
@@ -3575,7 +3583,13 @@ class GatewayServer:
                 self._queues.pop(chat.number, None)
             await self.broadcast(self._queue_frame(chat))
             via = self._queued_via.pop((chat.number, item.id), None)
-            await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=run.turn, text=text, via=via))
+            await self.emit(
+                chat,
+                UserText(
+                    ts=_now(), chat=chat.number, turn=run.turn, text=item.text, via=via, attachments=list(item.attachments)
+                ),
+            )
+            await self._not_image_notices(chat, refused)
 
     async def _send_queued(self, chat: Chat) -> None:
         """No turn running and something held: the oldest goes as the next turn.
@@ -3633,7 +3647,9 @@ class GatewayServer:
         known = engine.slash_commands()
         return known is None or command in known
 
-    async def _unknown_command(self, chat: Chat, command: str, text: str, notice: str | None = None) -> None:
+    async def _unknown_command(
+        self, chat: Chat, command: str, text: str, attachments: list[str] | None = None, notice: str | None = None
+    ) -> None:
         """An empty turn: what was typed, one ``chat.notice`` (``notice``, else "No command /x here"), done. Nothing reaches the agent."""
         if notice is None:
             log.info("chat %d: no command /%s here; not sent to the agent", chat.number, command)
@@ -3642,7 +3658,7 @@ class GatewayServer:
         chat.turn += 1
         turn = chat.turn
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=turn))
-        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=turn, text=text))
+        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=turn, text=text, attachments=list(attachments or [])))
         await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=notice or f"No command /{command} here"))
         await self.emit(chat, TurnFinished(ts=_now(), chat=chat.number, turn=turn, outcome="done"))
         await self.set_state(chat, "idle")
@@ -3693,7 +3709,9 @@ class GatewayServer:
         await self._begin_turn(chat, run, text)
         return run
 
-    async def _echo_turn(self, chat: Chat, text: str, via: str | None = None) -> TurnRun:
+    async def _echo_turn(
+        self, chat: Chat, text: str, via: str | None = None, attachments: list[str] | None = None
+    ) -> TurnRun:
         """Register the next turn and send its echo: ``turn.started``, ``user.text``, ``chat.state working``."""
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
@@ -3702,11 +3720,13 @@ class GatewayServer:
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
         # The person's words go in the ring too, as the engine receives them,
         # so a replay from this launch reads as a conversation, not a monologue.
-        await self.emit(chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text, via=via))
+        await self.emit(
+            chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text, via=via, attachments=list(attachments or []))
+        )
         await self.set_state(chat, "working")
         return run
 
-    async def _begin_turn(self, chat: Chat, run: TurnRun, text: str) -> None:
+    async def _begin_turn(self, chat: Chat, run: TurnRun, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """Start or resume the engine for an echoed ``run`` and send ``text``, unless the turn ended meanwhile."""
         try:
             engine = await self._ensure_engine(chat)
@@ -3738,7 +3758,7 @@ class GatewayServer:
         # the engine may have taken part of it.
         run.sent = True
         try:
-            await engine.send(text)
+            await engine.send(text, images)
         except Exception as e:
             log.exception("chat %d: engine send failed", chat.number)
             await self._fail_turn(chat, run)

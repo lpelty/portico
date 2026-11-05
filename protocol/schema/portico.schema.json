@@ -2077,6 +2077,18 @@
           "default": null,
           "title": "Id"
         },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
         "seq": {
           "anyOf": [
             {
@@ -3625,11 +3637,6 @@
           "title": "Hide Session Folder",
           "type": "boolean"
         },
-        "lock_folder": {
-          "default": false,
-          "title": "Lock Folder",
-          "type": "boolean"
-        },
         "id": {
           "anyOf": [
             {
@@ -3641,6 +3648,11 @@
           ],
           "default": null,
           "title": "Id"
+        },
+        "lock_folder": {
+          "default": false,
+          "title": "Lock Folder",
+          "type": "boolean"
         },
         "permission_mode": {
           "anyOf": [
@@ -7811,8 +7823,16 @@
     },
     "UserText": {
       "additionalProperties": false,
-      "description": "What the person sent to start a turn, as the engine received it.\n\nLive, right after ``turn.started`` (stamped, in the ring), and in a\ntranscript replay (``chat.history``, unstamped): one rendering path\nfor the person's words whichever way the conversation arrives.",
+      "description": "What the person sent to start a turn (v0.19: as typed, with ``attachments`` apart).\n\nLive, right after ``turn.started`` (stamped, in the ring), and in a\ntranscript replay (``chat.history``, unstamped): one rendering path\nfor the person's words whichever way the conversation arrives.",
       "properties": {
+        "attachments": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
         "chat": {
           "title": "Chat",
           "type": "integer"

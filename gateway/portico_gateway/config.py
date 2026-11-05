@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import APPS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -42,7 +42,7 @@ MCP_CAPABILITY = "mcp.v1"
 PLUGINS_CAPABILITY = "plugins.v1"
 CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
-    MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY,
+    MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once

@@ -1,6 +1,10 @@
 {
+  "attachments": [
+    "/Users/someone/projects/demo/before.png",
+    "/Users/someone/projects/demo/after.png"
+  ],
   "chat": 1,
-  "text": "Say hello.",
+  "text": "Compare these",
   "ts": "2026-10-27T12:00:00Z",
   "turn": 1,
   "type": "user.text"

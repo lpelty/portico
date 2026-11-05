@@ -525,8 +525,9 @@ async def test_same_launch_replay_carries_user_text(server: GatewayServer, facto
     assert kinds == [TurnStarted, UserText, ChatState, TextDelta, TurnFinished]
     live_text = frames[1]
     assert isinstance(live_text, UserText) and live_text.turn == 1 and live_text.seq is not None
-    # The text as the engine received it, attachments included, like the transcript keeps it.
-    assert live_text.text == f"Summarise this.\n\nAttached files:\n- {note}"
+    # v0.19 (spec §8.4): the text as typed, the attachments apart (the engine still gets the block).
+    assert live_text.text == "Summarise this." and live_text.attachments == [str(note)]
+    assert factory.last.calls[-1] == ("send", f"Summarise this.\n\nAttached files:\n- {note}")
     await conn.close()
 
     again = await attach(server)
@@ -535,7 +536,7 @@ async def test_same_launch_replay_carries_user_text(server: GatewayServer, facto
         history = await recv(again)
         assert isinstance(history, ChatHistory) and not history.truncated
         replayed = [m for m in history.events if isinstance(m, UserText)]
-        assert [m.text for m in replayed] == [live_text.text]
+        assert [(m.text, m.attachments) for m in replayed] == [(live_text.text, live_text.attachments)]
         assert replayed[0].seq == live_text.seq
         assert isinstance(await recv(again), ChatLive)
         assert isinstance(await recv(again), ChatState)  # v0.3: state and mode after live

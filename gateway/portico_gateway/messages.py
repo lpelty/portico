@@ -68,6 +68,12 @@ APPS_CAPABILITY = "apps.v1"
 # the whole ``services.status`` for a state it does not know).
 SERVICES_STUCK_CAPABILITY = "services.stuck.v1"
 
+# v0.19 (spec §8.3-8.4): a gateway lists it when an image attachment goes to
+# the agent as an image, and ``user.text`` carries the typed ``text`` with the
+# ``attachments`` apart. An older gateway's ``user.text`` has the attachment
+# block inside ``text`` and no ``attachments``.
+MESSAGES_ATTACHMENTS_CAPABILITY = "messages.attachments.v1"
+
 
 class ProtocolError(Exception):
     """A frame the gateway cannot accept; ``code`` goes out as ``error.code``."""
@@ -785,7 +791,7 @@ class TurnStarted(Envelope):
 
 
 class UserText(Envelope):
-    """What the person sent to start a turn, as the engine received it.
+    """What the person sent to start a turn (v0.19: as typed, with ``attachments`` apart).
 
     Live, right after ``turn.started`` (stamped, in the ring), and in a
     transcript replay (``chat.history``, unstamped): one rendering path
@@ -799,6 +805,9 @@ class UserText(Envelope):
     # v0.18 (ruling 27): a message an MCP app sent (``app.message``) carries the
     # app's server title; the transcript shows "via <title>". Absent otherwise.
     via: str | None = None
+    # v0.19 (spec §8.4, ``messages.attachments.v1``): the attached files' paths;
+    # ``text`` is then what the person typed, without the "Attached files:" block.
+    attachments: list[str] = []
 
 
 class TextDelta(Envelope):
@@ -964,6 +973,9 @@ class ChatNotice(Envelope):
     type: Literal["chat.notice"] = "chat.notice"
     chat: int
     text: str
+    # v0.19: what the notice is about, when the app may treat it apart
+    # (``attachment.not_image``); absent for a plain line.
+    kind: str | None = None
 
 
 class ChatQueued(Envelope):
@@ -1771,7 +1783,7 @@ def example_messages() -> dict[str, BaseModel]:
             truncated=False,
         ),
         ChatLive(ts=_TS, chat=1, seq=42),
-        UserText(ts=_TS, chat=1, turn=1, text="Say hello."),
+        UserText(ts=_TS, chat=1, turn=1, text="Compare these", attachments=[f"{_FOLDER}/before.png", f"{_FOLDER}/after.png"]),
         TurnStarted(ts=_TS, chat=1, seq=43, turn=2),
         TextDelta(ts=_TS, chat=1, seq=44, turn=2, text="Looking at the notes now."),
         ToolStarted(
