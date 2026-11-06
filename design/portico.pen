@@ -201972,6 +201972,1325 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "gvP3t",
+      "x": 0,
+      "y": 43592,
+      "name": "DS · Design system · Colours",
+      "theme": {
+        "mode": "dark"
+      },
+      "width": 1480,
+      "fill": "$window",
+      "layout": "vertical",
+      "gap": 36,
+      "padding": 48,
+      "children": [
+        {
+          "type": "text",
+          "id": "ZdxxA",
+          "name": "Title",
+          "fill": "$text",
+          "content": "Design system · Colours",
+          "fontFamily": "Inter",
+          "fontSize": 28,
+          "fontWeight": "700"
+        },
+        {
+          "type": "text",
+          "id": "Eyl3X",
+          "name": "Intro",
+          "fill": "$text-2",
+          "textGrowth": "fixed-width",
+          "width": 1384,
+          "content": "Source of truth: app/Sources/Portico/Views/Theme.swift (palette) and this file's variables. Dark value first, then light. Change a value in both, never one.",
+          "fontFamily": "Inter",
+          "fontSize": 12
+        },
+        {
+          "type": "frame",
+          "id": "lthE5",
+          "name": "Group Surfaces",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "children": [
+            {
+              "type": "text",
+              "id": "rDOXp",
+              "name": "Group title",
+              "fill": "$text",
+              "content": "Surfaces",
+              "fontFamily": "Inter",
+              "fontSize": 15,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "Lll5n",
+              "name": "Swatches",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "EbT48",
+                  "name": "window",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "rDKrI",
+                      "name": "Swatch",
+                      "fill": "$window",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "eLmLT",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "window",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "AouU9",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#161618  ·  light #FFFFFF",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "RR1sY",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Main page, Settings page",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "aqXxl",
+                  "name": "sidebar",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "Y8dScK",
+                      "name": "Swatch",
+                      "fill": "$sidebar",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "lSab3",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "sidebar",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "v9xs6j",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#1C1C1F  ·  light #EFEFF2",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "prl7I",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Sidebar, Settings tab header",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "zypcB",
+                  "name": "panel",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "ZiqqH",
+                      "name": "Swatch",
+                      "fill": "$panel",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "MpIka",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "panel",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Z0cmfH",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#1B1B1D  ·  light #F5F5F7",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "q6gMEV",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Status strip, Settings boxes, popovers",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lsbbR",
+                  "name": "surface",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "O6dvcv",
+                      "name": "Swatch",
+                      "fill": "$surface",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "L7QJ7P",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "surface",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "S1HwQV",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#242427  ·  light #EEEEF1",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "FsNzj",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Your message bubble, code, inline chips",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "W4jiI",
+                  "name": "control",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "ZldEj",
+                      "name": "Swatch",
+                      "fill": "$control",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "B1QtN",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "control",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "VgBQM",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#2D2D31  ·  light #FFFFFF",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "bngKQ",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Buttons, fields, the composer",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "NZXK2",
+                  "name": "selected",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "Aq6RP",
+                      "name": "Swatch",
+                      "fill": "$selected",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "yGrby",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "selected",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "E26n0n",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#34343A  ·  light #E0E0E5",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "ylhNG",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Selected row or tab",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "SRHmL",
+          "name": "Group Borders · three levels, quiet to strong",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "children": [
+            {
+              "type": "text",
+              "id": "ZaJcM",
+              "name": "Group title",
+              "fill": "$text",
+              "content": "Borders · three levels, quiet to strong",
+              "fontFamily": "Inter",
+              "fontSize": 15,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "RCiUl",
+              "name": "Swatches",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "RBIn7",
+                  "name": "border-subtle",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "PCaoN",
+                      "name": "Swatch",
+                      "width": 150,
+                      "height": 72,
+                      "fill": "$panel",
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "D9UQ9T",
+                          "name": "Line",
+                          "fill": "$border-subtle",
+                          "width": "fill_container",
+                          "height": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "r6eIF",
+                      "name": "Outline sample",
+                      "width": 150,
+                      "height": 28,
+                      "fill": "$control",
+                      "cornerRadius": 6,
+                      "stroke": "$border-subtle",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "OEju8",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "border-subtle",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Erwfq",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#333337  ·  light #D6D6DC",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "tSvkn",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Lines between whole areas (status strip)",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HDlKW",
+                  "name": "border",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "e2s7I",
+                      "name": "Swatch",
+                      "width": 150,
+                      "height": 72,
+                      "fill": "$panel",
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "UmgK2",
+                          "name": "Line",
+                          "fill": "$border",
+                          "width": "fill_container",
+                          "height": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Q9FDTt",
+                      "name": "Outline sample",
+                      "width": 150,
+                      "height": 28,
+                      "fill": "$control",
+                      "cornerRadius": 6,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "I9uzYD",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "border",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "oC5WU",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#45454B  ·  light #CACAD0",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "w9s6Dw",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Default outline: cards, buttons, fields, sidebar edge",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fmbI6",
+                  "name": "border-strong",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "lmrwl",
+                      "name": "Swatch",
+                      "width": 150,
+                      "height": 72,
+                      "fill": "$panel",
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "s8wjH",
+                          "name": "Line",
+                          "fill": "$border-strong",
+                          "width": "fill_container",
+                          "height": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "o4oOWP",
+                      "name": "Outline sample",
+                      "width": 150,
+                      "height": 28,
+                      "fill": "$control",
+                      "cornerRadius": 6,
+                      "stroke": "$border-strong",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "kjIdZ",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "border-strong",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "McZ1F",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#5C5C63  ·  light #BDBDC4",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "EWnqs",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Emphasis: composer outline, focused field",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KRfXu",
+          "name": "Group Text",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "children": [
+            {
+              "type": "text",
+              "id": "gxoge",
+              "name": "Group title",
+              "fill": "$text",
+              "content": "Text",
+              "fontFamily": "Inter",
+              "fontSize": 15,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "fP0az",
+              "name": "Swatches",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Qa0qE",
+                  "name": "text",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "e4WE8",
+                      "name": "Swatch",
+                      "width": 150,
+                      "height": 72,
+                      "fill": "$sidebar",
+                      "cornerRadius": 8,
+                      "stroke": "$border-subtle",
+                      "strokeWidth": 1,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Fbwtp",
+                          "name": "Sample",
+                          "fill": "$text",
+                          "content": "Aa Text",
+                          "fontFamily": "Inter",
+                          "fontSize": 20,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "oeTrs",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "text",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "TKRDI",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#F5F5F7  ·  light #1C1C1E",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "kgOGV",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Primary text",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xkXYA",
+                  "name": "text-2",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "n0clg",
+                      "name": "Swatch",
+                      "width": 150,
+                      "height": 72,
+                      "fill": "$sidebar",
+                      "cornerRadius": 8,
+                      "stroke": "$border-subtle",
+                      "strokeWidth": 1,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xpbnD",
+                          "name": "Sample",
+                          "fill": "$text-2",
+                          "content": "Aa Text",
+                          "fontFamily": "Inter",
+                          "fontSize": 20,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "WTtCc",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "text-2",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "DflGd",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#B6B6BC  ·  light #5E5E64",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "X56365",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Secondary: descriptions, headings in lists",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "P47Mkp",
+                  "name": "text-3",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "XcqfT",
+                      "name": "Swatch",
+                      "width": 150,
+                      "height": 72,
+                      "fill": "$sidebar",
+                      "cornerRadius": 8,
+                      "stroke": "$border-subtle",
+                      "strokeWidth": 1,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "R3SWnv",
+                          "name": "Sample",
+                          "fill": "$text-3",
+                          "content": "Aa Text",
+                          "fontFamily": "Inter",
+                          "fontSize": 20,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "KhSrf",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "text-3",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "UdX5X",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#8A8A91  ·  light #6C6C72",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "hndtc",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Tertiary: hints, timestamps",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "w8Q0O",
+          "name": "Group Accent and status",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "children": [
+            {
+              "type": "text",
+              "id": "t9jfR",
+              "name": "Group title",
+              "fill": "$text",
+              "content": "Accent and status",
+              "fontFamily": "Inter",
+              "fontSize": 15,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "t1aoy",
+              "name": "Swatches",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "bUcWI",
+                  "name": "accent",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "N6lIOa",
+                      "name": "Swatch",
+                      "fill": "$accent",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "p5SN1",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "accent",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "e2mXj",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#6B8FF2  ·  light #3B6BE0",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "wvDHM",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Send, links, toggles on",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QMBoP",
+                  "name": "accent-soft",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "G0JP7",
+                      "name": "Swatch",
+                      "fill": "$accent-soft",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "v6wPAl",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "accent-soft",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "RwaVh",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#26304A  ·  light #EBF0FC",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "ZtKaO",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Accent backgrounds",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "OlUBd",
+                  "name": "working",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "DcPzt",
+                      "name": "Swatch",
+                      "fill": "$working",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "d9r0uy",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "working",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "zUvg0",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#4CC86A  ·  light #2DA44E",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "YnDO9",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Running, all services up",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "o4CWTo",
+                  "name": "wait",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "aJEWf",
+                      "name": "Swatch",
+                      "fill": "$wait",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "ss3yX",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "wait",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "y8b6L",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#F0B24A  ·  light #B86E00",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "MpJOq",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Waiting on you",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "EJQNY",
+                  "name": "wait-soft",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "KaaXC",
+                      "name": "Swatch",
+                      "fill": "$wait-soft",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "pbmf5",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "wait-soft",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "o6C3xg",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#3B2E16  ·  light #FFF3DE",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "HgKuD",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Waiting backgrounds",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "g1yT2",
+                  "name": "idle",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "Qf8zc",
+                      "name": "Swatch",
+                      "fill": "$idle",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "J6H2QE",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "idle",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "X7Yz0",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#6A6A70  ·  light #B5B5BB",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "tGBxi",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Idle",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QFA5H",
+                  "name": "stopped",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "wLAHN",
+                      "name": "Swatch",
+                      "fill": "$stopped",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "yo3It",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "stopped",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "zlZxx",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#8E8E93  ·  light #8E8E93",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "WWbNw",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Stopped",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "yIw6y",
+                  "name": "deny",
+                  "width": 150,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 8,
+                      "id": "wV9AT",
+                      "name": "Swatch",
+                      "fill": "$deny",
+                      "width": 150,
+                      "height": 72,
+                      "stroke": "$border",
+                      "strokeWidth": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "P3uOF6",
+                      "name": "Name",
+                      "fill": "$text",
+                      "content": "deny",
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "esWXf",
+                      "name": "Values",
+                      "fill": "$text-3",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "#F0706A  ·  light #C93C37",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    },
+                    {
+                      "type": "text",
+                      "id": "Q8UgC",
+                      "name": "Use",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": 150,
+                      "content": "Errors, deny",
+                      "fontFamily": "Inter",
+                      "fontSize": 11
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {
@@ -202323,6 +203642,23 @@
         },
         {
           "value": "#F0706A",
+          "theme": {
+            "mode": "dark"
+          }
+        }
+      ]
+    },
+    "border-subtle": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#D6D6DC",
+          "theme": {
+            "mode": "light"
+          }
+        },
+        {
+          "value": "#333337",
           "theme": {
             "mode": "dark"
           }
