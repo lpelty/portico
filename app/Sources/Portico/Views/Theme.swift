@@ -212,7 +212,7 @@ private struct PopoverSurface: ViewModifier {
 
 extension View {
     /// A plain, solid list on `Theme.sidebar` (v0.19: no system vibrancy).
-    /// Rows take `solidRow()`, section headers `solidHeader()`.
+    /// Rows take `solidRow()`; a folder's name is a row too (v0.22.1).
     func solidList() -> some View {
         listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -224,13 +224,6 @@ extension View {
         listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
-    }
-
-    /// A section header with its own solid fill, so a pinned header never
-    /// shows rows through it.
-    func solidHeader() -> some View {
-        frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.sidebar)
     }
 }
 

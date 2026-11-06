@@ -215,11 +215,11 @@ struct FileTree: View {
                 changedSection
             }
             ForEach(model.browsableRoots(for: chat), id: \.name) { root in
+                // The folder's name is an ordinary first row, not a section
+                // header (v0.22.1): a plain list draws its own lighter fill
+                // around a header and a line under it, whatever the header
+                // asks for.
                 Section {
-                    ForEach(lines(root: root.name, path: "", depth: 0)) { line in
-                        row(line).solidRow()
-                    }
-                } header: {
                     Label {
                         Text(root.name)
                             .scaledFont(Self.headerSize, weight: .semibold)
@@ -228,8 +228,14 @@ struct FileTree: View {
                         Image(systemName: root.name == AppModel.chatRoot ? "folder.badge.person.crop" : "folder")
                             .font(Theme.iconFont(Self.headerSize, weight: .semibold))
                     }
+                    .foregroundStyle(Theme.text2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
                     .tip(root.path)
-                    .solidHeader()
+                    .solidRow()
+                    ForEach(lines(root: root.name, path: "", depth: 0)) { line in
+                        row(line).solidRow()
+                    }
                 }
                 .listSectionSeparator(.hidden)
             }
