@@ -88,6 +88,34 @@ final class TipTests: XCTestCase {
         }
     }
 
+    /// v0.22.1, the crash on widening the viewer: in the running app (the
+    /// SwiftUI App lifecycle, which XCTest does not have) a hosting view that
+    /// is a window's content view gets SwiftUI's window-size bridge whatever
+    /// its sizingOptions, and fits the window to its content's minimum and
+    /// maximum on every layout. Against `place(bubble:)` a wrapping tip never
+    /// settled and AppKit raised in the panel's Update Constraints pass. So
+    /// the bubble's hosting view sits inside a plain content view and fills it.
+    func testTheBubblesHostingViewIsInsideThePanelsContentNotIt() throws {
+        let panel = TipPanel()
+        defer { panel.orderOut(nil) }
+        panel.update(text: "Back to the usual layout (⌘⇧↩)", scale: 1)
+        let bubble = CGRect(x: 300, y: 300, width: panel.bubbleSize.width, height: panel.bubbleSize.height)
+        panel.place(bubble: bubble)
+        panel.orderFront(nil)
+        spin(0.2)
+        let content = try XCTUnwrap(panel.contentView)
+        XCTAssertFalse(Self.isHostingView(content), "a hosting view as the panel's content gets SwiftUI's window sizing")
+        let hosts = content.subviews.filter(Self.isHostingView)
+        XCTAssertEqual(hosts.count, 1, "the bubble's hosting view, inside the content")
+        let host = try XCTUnwrap(hosts.first)
+        XCTAssertEqual(host.frame, content.bounds, "it fills the panel")
+        XCTAssertEqual(content.bounds.size, TipPlacement.panelFrame(bubble: bubble).size)
+    }
+
+    private static func isHostingView(_ view: NSView) -> Bool {
+        String(describing: type(of: view)).hasPrefix("NSHostingView")
+    }
+
     func testDelayIsEightTenths() {
         XCTAssertEqual(Tip.delay, 0.8)
     }

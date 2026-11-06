@@ -324,7 +324,23 @@ final class TipPanel: NSPanel {
         // edge), and the bubble, centred in it, landed far below and left of
         // its control (a long path: near the window's bottom).
         host.sizingOptions = []
-        contentView = host
+        // v0.22.1: and the hosting view is not the window's content, only
+        // inside it. In the running app (the SwiftUI App lifecycle, never in
+        // XCTest) a hosting view that is a window's content view also gets
+        // SwiftUI's window-size bridge, whatever its sizingOptions: on every
+        // layout it fits the window to the content's minimum and maximum
+        // sizes. A wrapping `Text`'s minimum depends on its width, so that
+        // fit and `place(bubble:)` never agreed: tips showed resized, and
+        // some panels never settled, each pass asking for another until
+        // AppKit raised (more Update Constraints passes than views) and the
+        // app quit, widening the viewer being the usual way to meet one.
+        // A plain view as the content has no bridge; the hosting view just
+        // fills it.
+        let content = NSView(frame: .zero)
+        host.frame = content.bounds
+        host.autoresizingMask = [.width, .height]
+        content.addSubview(host)
+        contentView = content
     }
 
     override var canBecomeKey: Bool { false }
