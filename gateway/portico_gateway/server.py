@@ -973,6 +973,11 @@ Handler = Callable[[Any, ServerConnection], Awaitable[None]]
 MODEL_PROBE_TIMEOUT = 30.0
 
 
+def folder_missing_message(folder: Path | str) -> str:
+    """v0.22.1: ``chat.folder_missing``'s message, which the app shows as it is."""
+    return f"This conversation's folder no longer exists: {folder}. Start a new conversation in another folder."
+
+
 class GatewayServer:
     """The WebSocket server, the HTTP routes, and the attached app."""
 
@@ -3959,7 +3964,14 @@ class GatewayServer:
             return await self._start_or_refuse(chat)
 
     async def _start_or_refuse(self, chat: Chat) -> Engine:
-        """Start ``chat``'s engine; a failure is ``engine.start_failed`` unless the preflight refused."""
+        """Start ``chat``'s engine; a failure is ``engine.start_failed`` unless the preflight refused.
+
+        v0.22.1: a chat whose folder is gone (deleted, moved, or a file now) is
+        ``chat.folder_missing``, in words for the person, and no engine starts.
+        """
+        if not chat.folder.is_dir():
+            log.warning("chat %d: its folder %s no longer exists; the engine is not started", chat.number, chat.folder)
+            raise ProtocolError("chat.folder_missing", folder_missing_message(chat.folder))
         try:
             return await self._start_engine(chat)
         except ProtocolError:

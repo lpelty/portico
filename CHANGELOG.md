@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.22.1 (2026-11-06)
+
+A crash fix, field notes 24–26 from using v0.22.0, and three small visual
+tweaks.
+
+### What a person gets (app)
+
+- **No more crash on a tooltip (the widen button's, among others).** The
+  tip's panel had a SwiftUI view as its window content, and SwiftUI kept
+  resizing that window to the text's limits while the app placed it; for
+  some tips the two never settled and AppKit stopped the app. The panel's
+  content is now a plain view holding the tip, which SwiftUI doesn't size.
+- **One tooltip at a time (24).** Scrolling hides it, and the next waits
+  the usual moment after scrolling stops; a tip shows only while the
+  pointer is still on its control. Tips no longer pile up down a list.
+- **The Folders tab keeps the folders you opened (25)**, per session,
+  when you switch to Bookmarks, another session, and back.
+- **A space's header shows the full date and time (26)**: "Brief ·
+  Friday, November 6, 7:23 AM", in your locale, in place of "Updated
+  7:23 AM". A page can drop its own date bar.
+- **A conversation whose folder was deleted says so**: "This conversation's
+  folder no longer exists: <path>. Start a new conversation in another
+  folder.", in place of "This turn ended with an error".
+- **Settings: the tab header stands apart from the page**, on the
+  sidebar's colour with a line under it.
+- **Files: the folder's name is an ordinary row**, without the band and
+  the line under it.
+- **Three border tones, further apart.** The lines above and below the
+  status strip use a new, quieter `borderSubtle` (#2C2C30 dark, #DDDDE2
+  light), so the strip and the conversation read as separate pieces;
+  `borderStrong` is a step stronger (#68686F dark, #B2B2BA light);
+  `border` is unchanged.
+
+### The gateway
+
+- New error code `chat.folder_missing`: a send, or anything else that
+  starts a conversation's engine, when the conversation's folder is gone
+  (or is now a file). Nothing starts; it works again once the folder is
+  back. An older app shows the message in its status line.
+
+### Owed
+
+- On screen: the widen button and its tooltip, several times; scrolling a
+  long Folders list with the pointer still; opening folders, switching
+  to Bookmarks and back; a space's header date; the Settings header.
+
 ## v0.22.0 (2026-11-05)
 
 Five visual fixes from using v0.20.1 (field notes 7 and 20–23), and five

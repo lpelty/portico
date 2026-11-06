@@ -176,9 +176,9 @@ struct MainColumn: View {
     var body: some View {
         VStack(spacing: 0) {
             MainToolbar()
-            Rectangle().fill(Theme.border).frame(height: 1)
+            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
             StatusStrip()
-            Rectangle().fill(Theme.border).frame(height: 1)
+            Rectangle().fill(Theme.borderSubtle).frame(height: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

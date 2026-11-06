@@ -13,19 +13,53 @@ enum SettingsWindow {
     /// The main window's background (v0.22 item 22), not the lighter panel.
     static let background: Theme.Token = .window
 
-    /// The window and its tab header on `background`, solid.
+    /// The tab header's own colour, a step lighter than the page, with a
+    /// `Theme.border` hairline under it (v0.22.1, Pen AT2): on the page's
+    /// colour alone the header and the page ran together.
+    static let header: Theme.Token = .sidebar
+
+    /// The window on `background` and its tab header on `header`, solid.
     @MainActor
     static func style(_ window: NSWindow) {
         window.backgroundColor = Theme.nsColor(background)
         window.isOpaque = true
         window.titlebarAppearsTransparent = true
+        installHeader(in: window)
+    }
+
+    /// The title bar view holds the traffic lights and the tab toolbar; the
+    /// backdrop goes behind both, filling it, once per window.
+    @MainActor
+    static func installHeader(in window: NSWindow) {
+        guard let titlebar = window.standardWindowButton(.closeButton)?.superview,
+              !titlebar.subviews.contains(where: { $0 is HeaderBackdrop }) else { return }
+        let backdrop = HeaderBackdrop(frame: titlebar.bounds)
+        backdrop.autoresizingMask = [.width, .height]
+        titlebar.addSubview(backdrop, positioned: .below, relativeTo: nil)
+    }
+
+    /// `header`, solid, with a one-point `Theme.border` line along its bottom.
+    final class HeaderBackdrop: NSView {
+        override func draw(_ dirtyRect: NSRect) {
+            Theme.nsColor(SettingsWindow.header).setFill()
+            bounds.fill()
+            Theme.nsColor(.border).setFill()
+            NSRect(x: 0, y: isFlipped ? bounds.maxY - 1 : 0, width: bounds.width, height: 1).fill()
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            needsDisplay = true
+        }
+
+        // Never takes a click meant for the tabs or the traffic lights.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
 /// v0.22 item 22: the settings window is drawn on `SettingsWindow.background`
-/// (the main window's solid colour), its title bar and tab header too: the
-/// header is the window's toolbar, which shows the window's own background
-/// once the title bar is transparent.
+/// (the main window's solid colour); v0.22.1: the tab header (the window's
+/// toolbar, in the transparent title bar) on `SettingsWindow.header`.
 struct SettingsWindowBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> BackgroundView { BackgroundView() }
     func updateNSView(_ view: BackgroundView, context: Context) { view.apply() }

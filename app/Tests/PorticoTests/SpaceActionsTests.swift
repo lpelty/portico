@@ -424,7 +424,30 @@ final class SpaceActionsTests: XCTestCase {
         let date = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertEqual(SpacesPresentation.headerNote(refreshing: true, error: "x", updated: date), .refreshing)
         XCTAssertEqual(SpacesPresentation.headerNote(refreshing: false, error: "exit 1", updated: date), .error("exit 1"))
-        XCTAssertEqual(SpacesPresentation.headerNote(refreshing: false, error: nil, updated: date), .updated(SpacesPresentation.updatedText(date)))
+        XCTAssertEqual(SpacesPresentation.headerNote(refreshing: false, error: nil, updated: date), .updated(SpacesPresentation.headerDateText(date)))
         XCTAssertEqual(SpacesPresentation.refreshingText, "Refreshing…")
+    }
+
+    /// v0.22.1 item 26: the open space's header carries the full date and
+    /// time after its title ("Brief · Friday, November 6, 7:23 AM"), in the
+    /// person's locale; with no date, just the title.
+    func test_header_note_is_the_full_date_and_time() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func at(_ iso: String) -> Date { try! Date(iso, strategy: .iso8601) }
+        let now = at("2026-11-06T15:00:00Z")
+        func text(_ iso: String, _ locale: String = "en_US") -> String {
+            SpacesPresentation.headerDateText(at(iso), now: now, calendar: calendar, locale: Locale(identifier: locale))
+        }
+        XCTAssertEqual(text("2026-11-06T07:23:00Z"), "· Friday, November 6, 7:23\u{202F}AM", "today: no \"Updated\", no relative form")
+        XCTAssertEqual(text("2026-11-05T17:40:00Z"), "· Thursday, November 5, 5:40\u{202F}PM", "yesterday: the date, not \"yesterday\"")
+        XCTAssertEqual(text("2025-12-02T09:00:00Z"), "· Tuesday, December 2, 2025, 9:00\u{202F}AM", "another year: with the year")
+        XCTAssertEqual(text("2026-11-06T07:23:00Z", "en_GB"), "· Friday 6 November, 07:23", "the locale orders the date and picks the clock")
+        XCTAssertEqual(SpacesPresentation.headerDateText(nil, now: now, calendar: calendar), "", "unknown: just the title")
+        XCTAssertEqual(
+            SpacesPresentation.headerNote(refreshing: false, error: nil, updated: nil), .updated(""))
+        XCTAssertEqual(
+            SpacesPresentation.headerNote(refreshing: true, error: nil, updated: at("2026-11-06T07:23:00Z")), .refreshing,
+            "Refreshing… as in v0.22")
     }
 }

@@ -758,9 +758,13 @@ struct SpaceViewer: View {
         return WebPane.FragmentRequest(key: "\(request.serial)", fragment: request.fragment)
     }
 
-    /// "Updated <time>", "Refreshing…" (v0.22) or the last failure, or the
-    /// outside note while the page is on another site (the note slot gives
-    /// way the same either way).
+    /// "· <full date and time>" (v0.22.1 item 26), "Refreshing…" (v0.22) or
+    /// the last failure, or the outside note while the page is on another
+    /// site (the note slot gives way the same either way).
+    /// Pulls "· <date>" toward the title so the gap before the dot matches
+    /// the space after it (v0.22.1).
+    static let datedNoteNudge: CGFloat = -5
+
     private func updatedText(_ space: SpaceInfo) -> some View {
         let note = SpacesPresentation.headerNote(
             refreshing: model.isRefreshing(space.id), error: model.spaceErrors[space.id], updated: space.updatedDate)
@@ -771,8 +775,12 @@ struct SpaceViewer: View {
         case .refreshing: text = SpacesPresentation.refreshingText
         case .error(let words): text = words; failed = true
         }
+        let dated = page.outside == nil && note != .refreshing && !failed && !text.isEmpty
         return Text(page.outside.map { ViewerPageAddress.note(for: $0, actHosts: model.hello?.viewerDefaults?.actHosts ?? []) } ?? text)
             .scaledFont(12)
+            // v0.22.1: the date's dot sits a space from the title, as it does
+            // from the date, not the row's 8 pt.
+            .padding(.leading, dated ? Self.datedNoteNudge : 0)
             .foregroundStyle(failed && page.outside == nil ? Theme.deny : Theme.text3)
             .lineLimit(1)
             .truncationMode(.tail)

@@ -40,6 +40,14 @@ struct ToolRow: Equatable, Sendable, Identifiable {
 struct TurnMarker: Equatable, Sendable {
     var turn: Int
     var outcome: Outcome
+    /// v0.22.1: why a failed turn failed, in words for the person, when the
+    /// gateway's refusal is one that says so (`explainingCodes`); the line
+    /// shows it instead of the generic one.
+    var reason: String? = nil
+
+    /// The refusals whose message is for the person and belongs on the
+    /// failed turn (v0.22.1: the chat's folder no longer exists).
+    static let explainingCodes: Set<String> = ["chat.folder_missing"]
 }
 
 /// What the conversation pane renders, oldest first.
@@ -214,6 +222,11 @@ final class AppModel: ObservableObject {
     /// normalised relative path), the entries the last `files.list` gave.
     /// A directory is fetched when it is expanded, once, until a refresh.
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
+    /// v0.22.1 item 25: per chat (a session, or a thread), the Files
+    /// tree's open folders as `root|path`. Kept here, like the session's own
+    /// "Changed this session", so switching tabs or chats and back shows the
+    /// tree as it was left; not kept across a relaunch.
+    @Published var openFolders: [Int: Set<String>] = [:]
     /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
     @Published private(set) var extraRoots: [Root] = []
     /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
@@ -1310,7 +1323,11 @@ final class AppModel: ObservableObject {
                 startError = error.message
             }
             if let chat = error.chat {
-                setStatus(error.message, for: chat)
+                // v0.22.1: a refusal that explains a failed turn goes on that
+                // turn's line; anything else, or with no such turn, to the status line.
+                if !explainFailedTurn(error, chat: chat) {
+                    setStatus(error.message, for: chat)
+                }
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
                     restore(pending, to: chat)
                 }
@@ -2596,6 +2613,21 @@ final class AppModel: ObservableObject {
         dismissedDone.remove(chat)
         nudgeDismissed.remove(chat)
         if selected == chat { selected = nil }
+    }
+
+    /// v0.22.1: puts an explaining refusal (`TurnMarker.explainingCodes`)
+    /// on the chat's last turn when that turn failed and has no reason yet
+    /// (the gateway ends the turn, then sends the refusal); whether it did.
+    private func explainFailedTurn(_ error: ErrorMessage, chat: Int) -> Bool {
+        guard TurnMarker.explainingCodes.contains(error.code), !error.message.isEmpty,
+            var items = transcripts[chat],
+            let index = items.lastIndex(where: { if case .turnMarker = $0 { true } else { false } }),
+            case .turnMarker(var marker) = items[index], marker.outcome == .error, marker.reason == nil
+        else { return false }
+        marker.reason = error.message
+        items[index] = .turnMarker(marker)
+        transcripts[chat] = items
+        return true
     }
 
     private func setStatus(_ text: String, for chat: Int) {

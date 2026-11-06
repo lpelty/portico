@@ -71,6 +71,26 @@ final class VisualFixesTests: XCTestCase {
         }
     }
 
+    func testSettingsTabHeaderStandsApartFromThePage() throws {
+        XCTAssertEqual(SettingsWindow.header, .sidebar)
+        XCTAssertNotEqual(Theme.hex(SettingsWindow.header).dark, Theme.hex(SettingsWindow.background).dark)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        SettingsWindow.style(window)
+        SettingsWindow.style(window)
+        let titlebar = try XCTUnwrap(window.standardWindowButton(.closeButton)?.superview)
+        let backdrops = titlebar.subviews.filter { $0 is SettingsWindow.HeaderBackdrop }
+        XCTAssertEqual(backdrops.count, 1, "installed once, however often the window is styled")
+        XCTAssertTrue(titlebar.subviews.first is SettingsWindow.HeaderBackdrop, "behind the tabs and the traffic lights")
+        XCTAssertNil(backdrops[0].hitTest(NSPoint(x: 5, y: 5)), "never takes a click")
+    }
+
+    func testFolderNameIsARowNotASectionHeader() throws {
+        let files = try source("Views/Sidebar/FilesView.swift")
+        XCTAssertFalse(files.contains("} header: {"), "a plain list frames a section header in its own lighter fill, with a line under it")
+    }
+
     func testSettingsSectionBoxesKeepThePanel() throws {
         XCTAssertTrue(try source("Views/Settings/SettingsKit.swift").contains(".background(Theme.panel, in: RoundedRectangle(cornerRadius: SettingsKit.panelRadius"))
         XCTAssertTrue(try source("Views/SettingsView.swift").contains(".background(SettingsWindowBackground())"))

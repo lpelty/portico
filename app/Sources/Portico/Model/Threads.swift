@@ -144,9 +144,10 @@ struct CloseFailure: Equatable {
     /// The codes of a log step that could not start (its turn's engine
     /// could not start, or refused the message; Ruling 8).
     /// The preflight refusing the log step's engine reaches the app as
-    /// `lifecycle.before_first_chat_failed`, as on `chat.new`.
+    /// `lifecycle.before_first_chat_failed`, as on `chat.new`; v0.22.1: a
+    /// thread whose folder is gone, `chat.folder_missing`.
     static let logStepCannotStart: Set<String> = [
-        "engine.start_failed", "engine.send_failed", "lifecycle.before_first_chat_failed",
+        "engine.start_failed", "engine.send_failed", "lifecycle.before_first_chat_failed", "chat.folder_missing",
     ]
 
     let code: String

@@ -6,6 +6,8 @@ import SwiftUI
 /// 0.8 s of hover, hides on hover end, on any click and when the window
 /// stops being key, stays 8 pt inside the window, flips above the control
 /// near the window's bottom, and still gives VoiceOver the text as a hint.
+/// v0.22.1 item 24: one tip at a time in the whole app, hidden by a scroll
+/// (`TipStage`).
 ///
 /// This is the only file that may use SwiftUI's `.help(`: the menu fallback
 /// below, where a hover panel cannot attach (an `NSMenu` item).
@@ -30,6 +32,101 @@ enum Tip {
     static let shadowY: CGFloat = 3
     /// Room around the bubble in the panel for its shadow.
     static let shadowRoom: CGFloat = 14
+}
+
+/// Something that can show a tip: an anchor, as `TipStage` sees it.
+@MainActor
+protocol TipTarget: AnyObject {
+    /// Show the tip now, if the pointer is still over the control; whether it showed.
+    func tipShow() -> Bool
+    /// Hide the tip (the stage already forgot it).
+    func tipHide()
+}
+
+/// v0.22.1 item 24: one tip at a time, app-wide. Content scrolling under a
+/// still pointer gave each row that passed under it a mouse-entered but no
+/// mouse-exited, so every one of them showed its tip and none closed. The
+/// stage holds the one control waiting for its tip (`armed`) and the one
+/// showing it (`shown`): arming another hides the shown tip, a scroll hides
+/// it and starts the wait again, so the next tip comes `delay` after the
+/// scrolling stops, and only if the pointer is over its control then.
+@MainActor
+final class TipStage {
+    static let shared = TipStage()
+
+    var delay: TimeInterval
+    private(set) weak var armed: TipTarget?
+    private(set) weak var shown: TipTarget?
+    private var timer: Timer?
+    private var scrollMonitor: Any?
+
+    init(delay: TimeInterval = Tip.delay) {
+        self.delay = delay
+    }
+
+    var isWaiting: Bool { timer != nil }
+
+    /// The pointer came over `target`: its tip shows after the delay; any
+    /// other tip hides now.
+    func arm(_ target: TipTarget) {
+        if let shown, shown !== target { hideShown() }
+        armed = target
+        restart()
+        watchScrolling()
+    }
+
+    /// `target` is done (the pointer left, a click, its view went away).
+    func forget(_ target: TipTarget) {
+        if armed === target {
+            armed = nil
+            cancel()
+        }
+        if shown === target { shown = nil }
+    }
+
+    /// Something scrolled: the tip hides and the wait starts again.
+    func scrolled() {
+        hideShown()
+        if armed != nil { restart() } else { cancel() }
+    }
+
+    /// The wait is over: the armed control shows its tip, if it still can.
+    func fire() {
+        timer = nil
+        guard let armed else { return }
+        if let shown, shown !== armed { hideShown() }
+        if armed.tipShow() { shown = armed }
+    }
+
+    private func hideShown() {
+        let target = shown
+        shown = nil
+        target?.tipHide()
+    }
+
+    private func restart() {
+        cancel()
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fire() }
+        }
+        // `.common`, so it also runs while a scroll or a menu tracks.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func cancel() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// Any scroll wheel or trackpad scroll in the app, momentum included.
+    private func watchScrolling() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            self?.scrolled()
+            return event
+        }
+    }
 }
 
 /// Where a tip goes, in AppKit coordinates (y grows upward), the one place
@@ -141,7 +238,7 @@ private struct TipAnchor: NSViewRepresentable {
     }
 }
 
-final class TipAnchorView: NSView {
+final class TipAnchorView: NSView, TipTarget {
     var text = "" {
         didSet {
             guard text != oldValue else { return }
@@ -150,7 +247,10 @@ final class TipAnchorView: NSView {
     }
     var scale: CGFloat = 1
 
-    private var timer: Timer?
+    /// v0.22.1 item 24: where the pointer is, in screen coordinates (a seam
+    /// for tests, which cannot move the pointer).
+    static var pointerLocation: () -> CGPoint = { NSEvent.mouseLocation }
+
     private var panel: TipPanel?
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
@@ -181,12 +281,8 @@ final class TipAnchorView: NSView {
         suppressed = false
         guard !text.isEmpty, window != nil else { return }
         startWatching()
-        timer?.invalidate()
-        let timer = Timer(timeInterval: Tip.delay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.show() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        // v0.22.1 item 24: the app's one tip; the stage times it.
+        TipStage.shared.arm(self)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -194,9 +290,21 @@ final class TipAnchorView: NSView {
         hide()
     }
 
-    private func show() {
-        timer = nil
-        guard hovering, !suppressed, !text.isEmpty, let window, window.isVisible else { return }
+    /// The control in screen coordinates.
+    private var controlFrame: CGRect? {
+        guard let window else { return nil }
+        return window.convertToScreen(convert(bounds, to: nil))
+    }
+
+    func tipShow() -> Bool {
+        guard hovering, !suppressed, !text.isEmpty, let window, window.isVisible else { return false }
+        // v0.22.1 item 24: content that scrolled under a still pointer
+        // leaves no mouse-exited; the pointer must really be here.
+        guard let control = controlFrame, control.contains(Self.pointerLocation()) else {
+            hovering = false
+            stopWatching()
+            return false
+        }
         let panel = self.panel ?? TipPanel()
         self.panel = panel
         panel.update(text: text, scale: scale)
@@ -206,12 +314,12 @@ final class TipAnchorView: NSView {
             window.addChildWindow(panel, ordered: .above)
         }
         panel.orderFront(nil)
+        return true
     }
 
     /// Puts the panel under the control, in screen coordinates.
     private func place() {
-        guard let panel, let window else { return }
-        let control = window.convertToScreen(convert(bounds, to: nil))
+        guard let panel, let window, let control = controlFrame else { return }
         panel.place(bubble: TipPlacement.frame(
             for: control, size: panel.bubbleSize, in: Self.bounds(of: window),
             screen: (window.screen ?? NSScreen.main)?.visibleFrame))
@@ -225,14 +333,22 @@ final class TipAnchorView: NSView {
         return own.union(parent.convertToScreen(parent.contentLayoutRect))
     }
 
+    /// The stage hid this tip for another, or for a scroll.
+    func tipHide() {
+        orderOutPanel()
+    }
+
     func hide() {
-        timer?.invalidate()
-        timer = nil
+        TipStage.shared.forget(self)
+        orderOutPanel()
+        if !hovering { stopWatching() }
+    }
+
+    private func orderOutPanel() {
         if let panel {
             panel.parent?.removeChildWindow(panel)
             panel.orderOut(nil)
         }
-        if !hovering { stopWatching() }
     }
 
     /// While the pointer is over the control: any click, or the window
@@ -276,7 +392,6 @@ final class TipAnchorView: NSView {
 
     deinit {
         MainActor.assumeIsolated {
-            timer?.invalidate()
             if let monitor { NSEvent.removeMonitor(monitor) }
             if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
             if let deactivateObserver { NotificationCenter.default.removeObserver(deactivateObserver) }
@@ -324,7 +439,23 @@ final class TipPanel: NSPanel {
         // edge), and the bubble, centred in it, landed far below and left of
         // its control (a long path: near the window's bottom).
         host.sizingOptions = []
-        contentView = host
+        // v0.22.1: and the hosting view is not the window's content, only
+        // inside it. In the running app (the SwiftUI App lifecycle, never in
+        // XCTest) a hosting view that is a window's content view also gets
+        // SwiftUI's window-size bridge, whatever its sizingOptions: on every
+        // layout it fits the window to the content's minimum and maximum
+        // sizes. A wrapping `Text`'s minimum depends on its width, so that
+        // fit and `place(bubble:)` never agreed: tips showed resized, and
+        // some panels never settled, each pass asking for another until
+        // AppKit raised (more Update Constraints passes than views) and the
+        // app quit, widening the viewer being the usual way to meet one.
+        // A plain view as the content has no bridge; the hosting view just
+        // fills it.
+        let content = NSView(frame: .zero)
+        host.frame = content.bounds
+        host.autoresizingMask = [.width, .height]
+        content.addSubview(host)
+        contentView = content
     }
 
     override var canBecomeKey: Bool { false }
