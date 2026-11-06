@@ -154,6 +154,23 @@ extension AppModel {
         }
     }
 
+    // MARK: open folders (v0.22.1 item 25)
+
+    private static func folderKey(_ root: String, _ path: String) -> String { "\(root)|\(path)" }
+
+    /// Whether the folder is open in this chat's Files tree.
+    func isFolderOpen(chat: Int, root: String, path: String) -> Bool {
+        openFolders[chat]?.contains(Self.folderKey(root, path)) ?? false
+    }
+
+    /// Open the folder in this chat's Files tree, or close it.
+    func toggleFolder(chat: Int, root: String, path: String) {
+        let key = Self.folderKey(root, path)
+        var open = openFolders[chat] ?? []
+        if open.contains(key) { open.remove(key) } else { open.insert(key) }
+        openFolders[chat] = open
+    }
+
     // MARK: bookmarks
 
     /// Bookmarked, by absolute path. Stored as `pinnedFiles` (v0.2's word)

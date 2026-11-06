@@ -692,9 +692,17 @@ struct TurnMarkerView: View {
         }
     }
 
+    /// v0.22.1: a failed turn's own reason when the gateway gave one
+    /// ("This conversation's folder no longer exists: …"), else the outcome's line.
+    static func label(_ marker: TurnMarker) -> String? {
+        if marker.outcome == .error, let reason = marker.reason, !reason.isEmpty { return reason }
+        return label(marker.outcome)
+    }
+
     var body: some View {
-        if let label = Self.label(marker.outcome) {
-            HStack(spacing: 6) {
+        if let label = Self.label(marker) {
+            // A reason may wrap: the icon stays by its first line.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle")
                     .font(Theme.iconFont(11))
                 Text(label)

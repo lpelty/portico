@@ -202,7 +202,8 @@ closed, starts it with its next send), so the person's message shows at
 once. An engine that cannot start then ends the turn: `turn.finished
 outcome=error`, `chat.state idle`, and the refusal (`error
 code=engine.start_failed`, or `lifecycle.before_first_chat_failed` when the
-deployment's preflight refuses). The engine start and the send run after
+deployment's preflight refuses, or v0.22.1's `chat.folder_missing` when the
+chat's folder no longer exists). The engine start and the send run after
 the echo, while the gateway goes on reading frames, so a refusal from
 them (`engine.start_failed`, `lifecycle.before_first_chat_failed`,
 `engine.send_failed`) arrives later than the echo, still carrying the
@@ -1047,7 +1048,12 @@ the socket is closed),
 `protocol.unsupported` (a known type this gateway has no handler for),
 `session.replaced`, `chat.unknown` (no chat with that number),
 `chat.folder_invalid` (`chat.new` on a path that is not an existing
-directory), `chat.busy`, `chat.not_queued` (v0.11: `chat.unqueue` for a
+directory), `chat.folder_missing` (v0.22.1: the chat's folder no longer
+exists, so its engine is not started; the message is for the person as it
+is, "This conversation's folder no longer exists: <path>. Start a new
+conversation in another folder."; it ends a turn as `engine.start_failed`
+does, and an app that does not know the code shows it like any other
+error), `chat.busy`, `chat.not_queued` (v0.11: `chat.unqueue` for a
 message that has gone to the agent, or was never queued), `attachment.missing`, `engine.start_failed`
 (the engine could not start in the folder), `engine.send_failed` (the
 engine refused the message; the turn is finished with `outcome: error`),

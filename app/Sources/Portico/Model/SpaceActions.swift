@@ -145,10 +145,31 @@ extension SpacesPresentation {
         case error(String)
     }
 
-    /// Refreshing first, then a failure, else "Updated <time>".
+    /// Refreshing first, then a failure, else the full date and time
+    /// (v0.22.1 item 26; it was "Updated <relative time>").
     static func headerNote(refreshing: Bool, error: String?, updated: Date?, now: Date = Date()) -> HeaderNote {
         if refreshing { return .refreshing }
         if let error, !error.isEmpty { return .error(error) }
-        return .updated(updatedText(updated, now: now))
+        return .updated(headerDateText(updated, now: now))
+    }
+
+    /// v0.22.1 item 26: what follows the open space's title in its header,
+    /// "· Friday, November 6, 7:23 AM": a middle dot, the weekday, month and
+    /// day (and the year when it is not this one) in the locale's order, then
+    /// the time in the locale's clock. Joined with a comma rather than one
+    /// template, whose English form reads "… November 6 at 7:23 AM". Empty
+    /// when the date is unknown, so the header shows just the title.
+    static func headerDateText(_ date: Date?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        guard let date else { return "" }
+        func format(_ template: String) -> String {
+            let f = DateFormatter()
+            f.locale = locale
+            f.calendar = calendar
+            f.timeZone = calendar.timeZone
+            f.setLocalizedDateFormatFromTemplate(template)
+            return f.string(from: date)
+        }
+        let day = calendar.isDate(date, equalTo: now, toGranularity: .year) ? format("EEEEMMMMd") : format("EEEEMMMMdy")
+        return "· " + day + ", " + format("jmm")
     }
 }

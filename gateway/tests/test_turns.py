@@ -1007,6 +1007,74 @@ async def test_chat_stop_while_the_engine_starts_closes_the_fresh_engine(
         await conn.close()
 
 
+async def test_a_conversation_whose_folder_was_deleted_says_so(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    """v0.22.1: the chat's folder is gone; the turn ends with ``chat.folder_missing``
+    and words for the person, and no engine is started for it."""
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        engines = len(factory.engines)
+        folder.rmdir()
+        factory.gate.set()
+        await conn.send(dump(MessageSend(ts=TS, id="req-gone", chat=number, text="hello again")))
+        frames = await recv_until(conn, Error)
+        assert [type(m) for m in frames] == [TurnStarted, UserText, ChatState, TurnFinished, ChatState, Error]
+        assert isinstance(frames[3], TurnFinished) and frames[3].outcome == "error"
+        err = frames[-1]
+        assert isinstance(err, Error) and err.code == "chat.folder_missing" and err.id == "req-gone" and err.chat == number
+        assert err.message == (
+            f"This conversation's folder no longer exists: {folder}. Start a new conversation in another folder."
+        )
+        assert len(factory.engines) == engines, "no engine was started"
+        assert server.registry.get(number).engine is None
+
+        # The folder is back: the next send works.
+        folder.mkdir()
+        await conn.send(dump(MessageSend(ts=TS, chat=number, text="and again")))
+        frames = await recv_until(conn, TurnFinished)
+        assert isinstance(frames[-1], TurnFinished) and frames[-1].outcome == "done"
+    finally:
+        await conn.close()
+
+
+async def test_a_folder_replaced_by_a_file_is_missing_too(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        folder.rmdir()
+        folder.write_text("not a folder")
+        factory.gate.set()
+        await conn.send(dump(MessageSend(ts=TS, id="req-file", chat=number, text="hello")))
+        err = (await recv_until(conn, Error))[-1]
+        assert isinstance(err, Error) and err.code == "chat.folder_missing"
+    finally:
+        await conn.close()
+
+
+async def test_a_log_step_in_a_deleted_folder_says_the_folder_is_gone(
+    gated: tuple[GatewayServer, GatedFactory], folder: Path
+) -> None:
+    server, factory = gated
+    conn = await attach(server)
+    try:
+        number = await cold_chat(conn, factory, folder)
+        folder.rmdir()
+        factory.gate.set()
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=number)))
+        frames = await recv_until(conn, Error)
+        assert [m.outcome for m in frames if isinstance(m, TurnFinished)] == ["error"]
+        err = frames[-1]
+        assert isinstance(err, Error) and err.code == "chat.folder_missing" and err.id == "req-l"
+    finally:
+        await conn.close()
+
+
 async def test_a_log_step_whose_engine_cannot_start_says_so(
     gated: tuple[GatewayServer, GatedFactory], folder: Path
 ) -> None:

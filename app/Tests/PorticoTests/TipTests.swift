@@ -138,10 +138,22 @@ final class TipTests: XCTestCase {
         (window.childWindows ?? []).compactMap { $0 as? TipPanel }.first { $0.isVisible }
     }
 
+    /// The tests cannot move the pointer: it is where they say.
+    private static func pointer(over view: NSView) {
+        let control = view.window!.convertToScreen(view.convert(view.bounds, to: nil))
+        TipAnchorView.pointerLocation = { CGPoint(x: control.midX, y: control.midY) }
+    }
+
+    override func tearDown() {
+        TipAnchorView.pointerLocation = { NSEvent.mouseLocation }
+        super.tearDown()
+    }
+
     func testDelayAndHide() throws {
         let window = hostedWindow(Probe())
         defer { window.close() }
         let anchor = try XCTUnwrap(Self.anchor(in: try XCTUnwrap(window.contentView)), "the tip's anchor view")
+        Self.pointer(over: anchor)
         anchor.mouseEntered(with: try XCTUnwrap(Self.event(.mouseEntered, in: window, at: anchor)))
         spin(0.5)
         XCTAssertNil(Self.shownTip(window), "nothing at 0.5 s")
@@ -169,6 +181,7 @@ final class TipTests: XCTestCase {
         let window = hostedWindow(Probe())
         defer { window.close() }
         let anchor = try XCTUnwrap(Self.anchor(in: try XCTUnwrap(window.contentView)))
+        Self.pointer(over: anchor)
         anchor.mouseEntered(with: try XCTUnwrap(Self.event(.mouseEntered, in: window, at: anchor)))
         spin(0.3)
         anchor.mouseExited(with: try XCTUnwrap(Self.event(.mouseExited, in: window, at: anchor)))
@@ -186,12 +199,150 @@ final class TipTests: XCTestCase {
         let window = hostedWindow(Probe())
         defer { window.close() }
         let anchor = try XCTUnwrap(Self.anchor(in: try XCTUnwrap(window.contentView)))
+        Self.pointer(over: anchor)
         anchor.mouseEntered(with: try XCTUnwrap(Self.event(.mouseEntered, in: window, at: anchor)))
         spin(0.9)
         XCTAssertNotNil(Self.shownTip(window))
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
         spin(0.1)
         XCTAssertNil(Self.shownTip(window), "the window stopped being key")
+    }
+
+    // MARK: - v0.22.1 item 24: one tip at a time; scrolling hides it
+
+    @MainActor
+    private final class FakeTarget: TipTarget {
+        var pointerInside = true
+        var showing = false
+        var shows = 0
+        func tipShow() -> Bool {
+            guard pointerInside else { return false }
+            showing = true
+            shows += 1
+            return true
+        }
+        func tipHide() { showing = false }
+    }
+
+    func testTheStageShowsOneTipAtATime() {
+        let stage = TipStage(delay: 0.1)
+        let a = FakeTarget(), b = FakeTarget()
+        stage.arm(a)
+        spin(0.05)
+        XCTAssertFalse(a.showing, "not before the delay")
+        spin(0.1)
+        XCTAssertTrue(a.showing)
+        XCTAssertTrue(stage.shown === a)
+        stage.arm(b)
+        XCTAssertFalse(a.showing, "arming another hides the shown tip at once")
+        XCTAssertFalse(b.showing, "and the next one waits the delay")
+        spin(0.15)
+        XCTAssertTrue(b.showing)
+        XCTAssertFalse(a.showing)
+        XCTAssertTrue(stage.shown === b)
+    }
+
+    func testAScrollHidesTheTipAndTheNextWaitsUntilScrollingStops() {
+        let stage = TipStage(delay: 0.2)
+        let a = FakeTarget(), b = FakeTarget()
+        stage.arm(a)
+        spin(0.25)
+        XCTAssertTrue(a.showing)
+        // Rows pass under the still pointer while the list scrolls.
+        stage.scrolled()
+        XCTAssertFalse(a.showing, "a scroll hides it")
+        a.pointerInside = false
+        stage.arm(b)
+        for _ in 0..<4 {
+            spin(0.1)
+            stage.scrolled()
+        }
+        XCTAssertFalse(a.showing)
+        XCTAssertFalse(b.showing, "nothing shows while scrolling goes on")
+        spin(0.1)
+        XCTAssertFalse(b.showing, "0.1 s after the last scroll is too soon")
+        spin(0.15)
+        XCTAssertTrue(b.showing, "the delay after scrolling stopped")
+        XCTAssertEqual(a.shows, 1)
+    }
+
+    func testNoTipWhenThePointerIsNoLongerOverTheControl() {
+        let stage = TipStage(delay: 0.05)
+        let a = FakeTarget()
+        a.pointerInside = false
+        stage.arm(a)
+        spin(0.1)
+        XCTAssertFalse(a.showing)
+        XCTAssertNil(stage.shown)
+        XCTAssertFalse(stage.isWaiting)
+    }
+
+    func testForgettingCancelsTheWait() {
+        let stage = TipStage(delay: 0.05)
+        let a = FakeTarget()
+        stage.arm(a)
+        stage.forget(a)
+        XCTAssertFalse(stage.isWaiting)
+        spin(0.1)
+        XCTAssertFalse(a.showing)
+    }
+
+    private struct TwoRows: View {
+        var body: some View {
+            VStack(spacing: 0) {
+                Text("/Users/someone/one.md").frame(width: 300, height: 22).tip("/Users/someone/one.md")
+                Text("/Users/someone/two.md").frame(width: 300, height: 22).tip("/Users/someone/two.md")
+            }
+            .frame(width: 400, height: 300)
+        }
+    }
+
+    private static func anchors(in view: NSView) -> [TipAnchorView] {
+        if let found = view as? TipAnchorView { return [found] }
+        return view.subviews.flatMap { anchors(in: $0) }
+    }
+
+    private static func shownTips(_ window: NSWindow) -> [TipPanel] {
+        (window.childWindows ?? []).compactMap { $0 as? TipPanel }.filter { $0.isVisible }
+    }
+
+    /// The field note: rows entered without leaving (content scrolled under
+    /// the pointer) each left a tip, and none closed.
+    func testRowsEnteredWithoutLeavingShowOneTip() throws {
+        let window = hostedWindow(TwoRows())
+        defer { window.close() }
+        let rows = Self.anchors(in: try XCTUnwrap(window.contentView))
+        XCTAssertEqual(rows.count, 2)
+        Self.pointer(over: rows[0])
+        rows[0].mouseEntered(with: try XCTUnwrap(Self.event(.mouseEntered, in: window, at: rows[0])))
+        spin(0.9)
+        XCTAssertEqual(Self.shownTips(window).map(\.tipText), ["/Users/someone/one.md"])
+        // The second row now under the pointer; the first never got its exit.
+        Self.pointer(over: rows[1])
+        rows[1].mouseEntered(with: try XCTUnwrap(Self.event(.mouseEntered, in: window, at: rows[1])))
+        spin(0.1)
+        XCTAssertEqual(Self.shownTips(window), [], "the first row's tip closed")
+        spin(0.8)
+        XCTAssertEqual(Self.shownTips(window).map(\.tipText), ["/Users/someone/two.md"])
+    }
+
+    func testAScrollWheelEventHidesTheTip() throws {
+        let window = hostedWindow(Probe())
+        defer { window.close() }
+        let anchor = try XCTUnwrap(Self.anchor(in: try XCTUnwrap(window.contentView)))
+        Self.pointer(over: anchor)
+        anchor.mouseEntered(with: try XCTUnwrap(Self.event(.mouseEntered, in: window, at: anchor)))
+        spin(0.9)
+        XCTAssertNotNil(Self.shownTip(window))
+        let cg = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -5, wheel2: 0, wheel3: 0))
+        let scroll = try XCTUnwrap(NSEvent(cgEvent: cg))
+        NSApp.postEvent(scroll, atStart: true)
+        Self.deliverEvents()
+        XCTAssertNil(Self.shownTip(window), "scrolling hides it")
+        // The content moved: the pointer is no longer over the control.
+        TipAnchorView.pointerLocation = { CGPoint(x: -10_000, y: -10_000) }
+        spin(1.0)
+        XCTAssertNil(Self.shownTip(window), "and it does not come back over the wrong row")
     }
 
     /// Hands the queued events to the app, as its event loop would (local
