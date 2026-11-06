@@ -202437,7 +202437,7 @@
                       "fill": "$text-3",
                       "textGrowth": "fixed-width",
                       "width": 150,
-                      "content": "#333337  ·  light #D6D6DC",
+                      "content": "#2C2C30  ·  light #DDDDE2",
                       "fontFamily": "Inter",
                       "fontSize": 11
                     },
@@ -202583,7 +202583,7 @@
                       "fill": "$text-3",
                       "textGrowth": "fixed-width",
                       "width": 150,
-                      "content": "#5C5C63  ·  light #BDBDC4",
+                      "content": "#68686F  ·  light #B2B2BA",
                       "fontFamily": "Inter",
                       "fontSize": 11
                     },
@@ -203448,13 +203448,13 @@
       "type": "color",
       "value": [
         {
-          "value": "#BDBDC4",
+          "value": "#B2B2BA",
           "theme": {
             "mode": "light"
           }
         },
         {
-          "value": "#5C5C63",
+          "value": "#68686F",
           "theme": {
             "mode": "dark"
           }
@@ -203652,13 +203652,13 @@
       "type": "color",
       "value": [
         {
-          "value": "#D6D6DC",
+          "value": "#DDDDE2",
           "theme": {
             "mode": "light"
           }
         },
         {
-          "value": "#333337",
+          "value": "#2C2C30",
           "theme": {
             "mode": "dark"
           }
