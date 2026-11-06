@@ -10,7 +10,7 @@ enum Theme {
 
     /// The solid palette (v0.19 spec §2.2): one table, read by the code and the tests.
     enum Token: CaseIterable {
-        case window, sidebar, panel, surface, control, border, borderStrong, text, text2, text3, selected
+        case window, sidebar, panel, surface, control, borderSubtle, border, borderStrong, text, text2, text3, selected
     }
 
     static let palette: [Token: (light: String, dark: String)] = [
@@ -21,6 +21,9 @@ enum Theme {
         .control: ("#FFFFFF", "#2D2D31"),
         .border: ("#CACAD0", "#45454B"),
         .borderStrong: ("#BDBDC4", "#5C5C63"),
+        // A quieter line than `border`, for lines that separate whole
+        // regions rather than outline a control (v0.22.1: the status strip).
+        .borderSubtle: ("#D6D6DC", "#333337"),
         .text: ("#1C1C1E", "#F5F5F7"),
         .text2: ("#5E5E64", "#B6B6BC"),
         .text3: ("#6C6C72", "#8A8A91"),
@@ -49,6 +52,7 @@ enum Theme {
     static let control = color(.control)
     static let border = color(.border)
     static let borderStrong = color(.borderStrong)
+    static let borderSubtle = color(.borderSubtle)
     static let text = color(.text)
     static let text2 = color(.text2)
     static let text3 = color(.text3)
