@@ -183,8 +183,6 @@ struct FileTree: View {
     /// Folders tab (v0.11, item 70); not in the document view's tree.
     var showsChanged: Bool = false
     @EnvironmentObject private var model: AppModel
-    /// Open directories, as `root|path`.
-    @State private var expanded: Set<String> = []
     /// Whether CHANGED THIS SESSION shows all its files.
     @State private var allChanged = false
 
@@ -282,8 +280,6 @@ struct FileTree: View {
         }
     }
 
-    private func key(_ root: String, _ path: String) -> String { "\(root)|\(path)" }
-
     /// The entries of one directory, followed by the contents of each open
     /// directory; a directory not listed yet gets one placeholder whose
     /// appearance asks for it.
@@ -295,16 +291,17 @@ struct FileTree: View {
         for entry in entries {
             let childPath = AppModel.childPath(path, entry.name)
             out.append(Line(node: FileNode(chat: chat, root: root, path: childPath, name: entry.name, dir: entry.dir, size: entry.size), depth: depth))
-            if entry.dir, expanded.contains(key(root, childPath)) {
+            if entry.dir, model.isFolderOpen(chat: chat, root: root, path: childPath) {
                 out += lines(root: root, path: childPath, depth: depth + 1)
             }
         }
         return out
     }
 
+    /// v0.22.1 item 25: the open folders are the chat's, in the model, so
+    /// they outlast this view (a tab switch tears it down).
     private func toggle(_ node: FileNode) {
-        let k = key(node.root, node.path)
-        if expanded.contains(k) { expanded.remove(k) } else { expanded.insert(k) }
+        model.toggleFolder(chat: chat, root: node.root, path: node.path)
     }
 
     @ViewBuilder
@@ -318,7 +315,7 @@ struct FileTree: View {
         } else {
             FileRow(
                 node: node, subtitle: nil, depth: line.depth,
-                expanded: node.dir ? expanded.contains(key(node.root, node.path)) : nil,
+                expanded: node.dir ? model.isFolderOpen(chat: chat, root: node.root, path: node.path) : nil,
                 toggle: { toggle(node) })
         }
     }

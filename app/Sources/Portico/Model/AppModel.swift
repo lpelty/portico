@@ -214,6 +214,11 @@ final class AppModel: ObservableObject {
     /// normalised relative path), the entries the last `files.list` gave.
     /// A directory is fetched when it is expanded, once, until a refresh.
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
+    /// v0.22.1 item 25: per chat (a session, or a thread), the Files
+    /// tree's open folders as `root|path`. Kept here, like the session's own
+    /// "Changed this session", so switching tabs or chats and back shows the
+    /// tree as it was left; not kept across a relaunch.
+    @Published var openFolders: [Int: Set<String>] = [:]
     /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
     @Published private(set) var extraRoots: [Root] = []
     /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
