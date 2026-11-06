@@ -20,10 +20,10 @@ enum Theme {
         .surface: ("#EEEEF1", "#242427"),
         .control: ("#FFFFFF", "#2D2D31"),
         .border: ("#CACAD0", "#45454B"),
-        .borderStrong: ("#BDBDC4", "#5C5C63"),
+        .borderStrong: ("#B2B2BA", "#68686F"),
         // A quieter line than `border`, for lines that separate whole
         // regions rather than outline a control (v0.22.1: the status strip).
-        .borderSubtle: ("#D6D6DC", "#333337"),
+        .borderSubtle: ("#DDDDE2", "#2C2C30"),
         .text: ("#1C1C1E", "#F5F5F7"),
         .text2: ("#5E5E64", "#B6B6BC"),
         .text3: ("#6C6C72", "#8A8A91"),

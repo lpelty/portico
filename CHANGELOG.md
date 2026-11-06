@@ -27,8 +27,11 @@ tweaks.
   sidebar's colour with a line under it.
 - **Files: the folder's name is an ordinary row**, without the band and
   the line under it.
-- **The lines above and below the status strip are subtler** (new
-  `borderSubtle` colour), so the conversation reads as one piece.
+- **Three border tones, further apart.** The lines above and below the
+  status strip use a new, quieter `borderSubtle` (#2C2C30 dark, #DDDDE2
+  light), so the strip and the conversation read as separate pieces;
+  `borderStrong` is a step stronger (#68686F dark, #B2B2BA light);
+  `border` is unchanged.
 
 ### The gateway
 

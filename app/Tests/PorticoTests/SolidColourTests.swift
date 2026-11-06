@@ -7,7 +7,7 @@ final class SolidColourTests: XCTestCase {
             .window: ("#FFFFFF", "#161618"), .sidebar: ("#EFEFF2", "#1C1C1F"),
             .panel: ("#F5F5F7", "#1B1B1D"), .surface: ("#EEEEF1", "#242427"),
             .control: ("#FFFFFF", "#2D2D31"), .border: ("#CACAD0", "#45454B"),
-            .borderSubtle: ("#D6D6DC", "#333337"), .borderStrong: ("#BDBDC4", "#5C5C63"),
+            .borderSubtle: ("#DDDDE2", "#2C2C30"), .borderStrong: ("#B2B2BA", "#68686F"),
             .text: ("#1C1C1E", "#F5F5F7"),
             .text2: ("#5E5E64", "#B6B6BC"), .text3: ("#6C6C72", "#8A8A91"),
             .selected: ("#E0E0E5", "#34343A"),
