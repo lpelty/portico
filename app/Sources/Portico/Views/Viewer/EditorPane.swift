@@ -419,7 +419,20 @@ private final class EditorCommentMessages: NSObject, WKScriptMessageHandler {
 }
 
 extension EditorPane.Coordinator: CommentsBuffer {
-    func currentText() async -> String? { await visibleText() }
+    func currentText() async -> String? {
+        guard holdsText, let view = webView else { return nil }
+        return try? await view.callAsyncJavaScript(
+            "return portico.commentText();", arguments: [:], in: nil, contentWorld: .page) as? String
+    }
+
+    func draftRange() async -> Range<Int>? {
+        guard holdsText, let view = webView,
+            let value = try? await view.callAsyncJavaScript(
+                "var d = portico.draftRange(); return d ? [d.from, d.to] : null;", arguments: [:], in: nil,
+                contentWorld: .page) as? [NSNumber], value.count == 2, value[0].intValue <= value[1].intValue
+        else { return nil }
+        return value[0].intValue..<value[1].intValue
+    }
 
     func applyChange(from: Int, to: Int, insert: String, expectedLength: Int) async -> Bool {
         guard holdsText, let view = webView else { return false }

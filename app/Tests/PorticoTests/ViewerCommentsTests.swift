@@ -207,7 +207,9 @@ final class ViewerCommentsTests: XCTestCase {
         var changes: [(Int, Int, String, Int)] = []
         var refuseFirst = false
         init(_ text: String) { self.text = text }
+        var draft: Range<Int>?
         func currentText() async -> String? { text }
+        func draftRange() async -> Range<Int>? { draft }
         func applyChange(from: Int, to: Int, insert: String, expectedLength: Int) async -> Bool {
             changes.append((from, to, insert, expectedLength))
             if refuseFirst { refuseFirst = false; text += "typed\n"; return false }
@@ -270,5 +272,70 @@ final class ViewerCommentsTests: XCTestCase {
         let e = TextSplice.minimal("🙂", "🙃")
         XCTAssertEqual(e.from, 0)
         XCTAssertEqual(e.to, 2)
+    }
+
+    // MARK: - fix round: stale drafts, non-UTF-8 (review items 6, 10b)
+
+    func testStaleDraftFindsItsTextAgainByQuote() throws {
+        let c = ViewerComments(defaults: defaults())
+        let url = try file("para.md")
+        c.show(file: url)
+        c.beginDraft(.init(text: "writes files", lines: 2...2, occurrence: 0), chat: 1, focus: FakeFocus())
+        let moved = "New intro paragraph.\n\n" + (try String(contentsOf: url, encoding: .utf8))
+        try moved.write(to: url, atomically: false, encoding: .utf8)
+        c.received(["type": "post", "text": "Still mine."], chat: 1, focus: FakeFocus())
+        XCTAssertNil(c.error)
+        let out = try String(contentsOf: url, encoding: .utf8)
+        let t = try XCTUnwrap(CommentFormat.parse(out).threads.first)
+        XCTAssertEqual(CommentFormat.anchoredText(out, t), "writes files")
+        XCTAssertTrue(out.hasPrefix("New intro paragraph.\n\n"))
+    }
+
+    func testStaleDraftWithItsTextGoneOrDoubledRefusesAndKeepsTheText() throws {
+        for change in ["gone", "doubled"] {
+            let c = ViewerComments(defaults: defaults())
+            let url = try file("para.md")
+            c.show(file: url)
+            c.beginDraft(.init(text: "writes files", lines: 2...2, occurrence: 0), chat: 1, focus: FakeFocus())
+            var text = try String(contentsOf: url, encoding: .utf8)
+            text = change == "gone"
+                ? text.replacingOccurrences(of: "writes files", with: "saves documents")
+                : "It writes files too.\n\n" + text
+            try text.write(to: url, atomically: false, encoding: .utf8)
+            let before = try Data(contentsOf: url)
+            c.received(["type": "post", "text": "Mine."], chat: 1, focus: FakeFocus())
+            XCTAssertEqual(c.error, ViewerComments.staleWords, change)
+            XCTAssertEqual(c.draft?.text, "Mine.", change)
+            XCTAssertEqual(try Data(contentsOf: url), before, change)
+        }
+    }
+
+    func testNonUTF8FileSaysSo() throws {
+        let c = ViewerComments(defaults: defaults())
+        let url = try file("plugin-basic.md")
+        c.show(file: url)
+        try Data("caf\u{e9} word\n".utf8).write(to: url)
+        var latin = try Data(contentsOf: url)
+        latin[3] = 0xE9
+        latin.remove(at: 4)
+        try latin.write(to: url)
+        c.received(["type": "reply", "id": "k3x9a", "text": "x"], chat: 1, focus: FakeFocus())
+        XCTAssertEqual(c.error, "This file isn't UTF-8 text; comments can't be added.")
+    }
+
+    func testEditModePostUsesTheEditorsMappedDraftRange() async throws {
+        let url = try file("para.md")
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        let text = "Moved down.\n\n" + (try String(contentsOf: url, encoding: .utf8))
+        let buffer = FakeBuffer(text)
+        c.editBuffer = buffer
+        let at = Array(text.utf16).count - "Second paragraph.\n".utf16.count
+        buffer.draft = at..<(at + 6)
+        c.beginDraft(nil, range: 0..<4, chat: 1, focus: FakeFocus())  // stale: where the selection was
+        let made = CommentWriter.Made()
+        let ok = await c.applyInBuffer(.addRange(0..<4, body: "Mapped."), made: made)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(buffer.text.contains("<!--c:\(made.id!)-->Second<!--/c:\(made.id!)-->"), buffer.text)
     }
 }

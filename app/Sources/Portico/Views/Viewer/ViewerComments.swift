@@ -107,7 +107,11 @@ enum CommentTime {
 /// saved by the editor's usual path; the file underneath is never written.
 @MainActor
 protocol CommentsBuffer: AnyObject {
+    /// The editor's text in its own LF space (a CRLF file's breaks count as one);
+    /// the save path writes the file's line endings.
     func currentText() async -> String?
+    /// The draft's range in that space, mapped through edits since Comment was chosen.
+    func draftRange() async -> Range<Int>?
     func applyChange(from: Int, to: Int, insert: String, expectedLength: Int) async -> Bool
 }
 
@@ -126,8 +130,14 @@ extension AppModel: CommentsFocus {}
 /// it and posts the person's actions back.
 @MainActor
 final class ViewerComments: ObservableObject {
+    static let staleWords = "Not saved — the text you chose changed; select it again and choose Comment."
+    static let notUTF8Words = "This file isn't UTF-8 text; comments can't be added."
+
     struct Draft: Equatable {
         var selection: CommentAnchoring.Selection?
+        /// Reading mode: where the selection was in the file, and its text then.
+        var anchor: Range<Int>?
+        var quote: String?
         /// Edit mode: the selection's UTF-16 range in the buffer.
         var range: Range<Int>?
         var text: String = ""
@@ -297,6 +307,8 @@ final class ViewerComments: ObservableObject {
             error = readOnly
             return false
         }
+        var op = op
+        if case .addRange(_, let body) = op, let mapped = await buffer.draftRange() { op = .addRange(mapped, body: body) }
         let edit = CommentWriter.edit(for: op, author: personName, now: Date(), made: made)
         for _ in 0..<2 {
             guard let old = await buffer.currentText() else { break }
@@ -359,7 +371,15 @@ final class ViewerComments: ObservableObject {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             let made = CommentWriter.Made()
             let op: CommentWriter.Op
-            if let range = d.range { op = .addRange(range, body: text) } else if let s = d.selection { op = .add(s, body: text) } else { return }
+            if editBuffer != nil {
+                op = .addRange(d.range ?? 0..<0, body: text)
+            } else if let anchor = d.anchor, let quote = d.quote {
+                op = .addAt(anchor, quote: quote, body: text)
+            } else if let s = d.selection {
+                op = .add(s, body: text)
+            } else {
+                return
+            }
             perform(op, made: made) { [weak self] ok in
                 guard let self, ok else { return }
                 self.draft = nil
@@ -431,8 +451,14 @@ final class ViewerComments: ObservableObject {
         }
         do {
             try CommentWriter.apply(CommentWriter.edit(for: op, author: personName, now: Date(), made: made), to: file)
+        } catch FileEditing.Failure.notText {
+            error = Self.notUTF8Words
+            return false
         } catch let failure as FileEditing.Failure {
             error = "Not saved — \(failure.description)"
+            return false
+        } catch is CommentWriter.Stale {
+            error = Self.staleWords
             return false
         } catch let refusal as CommentFormat.Refusal {
             error = "Not saved — \(CommentAnchoring.reason(refusal))"
@@ -486,7 +512,14 @@ final class ViewerComments: ObservableObject {
     /// Choose Comment: comments on (widening if needed), a draft card at the
     /// selection, the selected text in the active highlight.
     func beginDraft(_ selection: CommentAnchoring.Selection?, range: Range<Int>? = nil, chat: Int, focus: CommentsFocus) {
-        draft = Draft(selection: selection, range: range)
+        var d = Draft(selection: selection, range: range)
+        if let selection, range == nil, let file, let source = try? String(contentsOf: file, encoding: .utf8),
+            case .success(let found) = CommentAnchoring.locate(selection, in: source)
+        {
+            d.anchor = found
+            d.quote = CommentFormat.quoteText(String(decoding: Array(source.utf16)[found], as: UTF16.self))
+        }
+        draft = d
         activeID = nil
         error = nil
         evaluate?("window.__porticoComments && __porticoComments.markDraft()")

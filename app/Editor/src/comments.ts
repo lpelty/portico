@@ -9,8 +9,12 @@
 // Offsets are JavaScript string offsets: UTF-16, as Swift's.
 
 import { EditorState, type Extension, RangeSet, StateEffect, StateField, Transaction, type TransactionSpec } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
+import { Prec } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import type { Language } from "@codemirror/language";
+import type { MarkdownConfig } from "@lezer/markdown";
 
 export interface Anchor {
   id: string;
@@ -453,8 +457,153 @@ export const draftField = StateField.define<{ from: number; to: number } | null>
     EditorView.decorations.from(f, (v) => (v && v.to > v.from ? Decoration.set([draftMark.range(v.from, v.to)]) : Decoration.none)),
 });
 
+// Thread blocks are the comments' own: a person's edit that removes or
+// changes part of one is refused (comment actions, "input.comment", may). An
+// edit that covers whole blocks keeps them, each still on its own lines.
+export const protectBlocks = EditorState.transactionFilter.of((tr: Transaction) => {
+  if (!tr.docChanged || tr.isUserEvent("input.comment") || !tr.annotation(Transaction.userEvent)) return tr;
+  const text = tr.startState.doc.toString();
+  const blocks = scanComments(text).blocks;
+  if (!blocks.length) return tr;
+  let refused = false;
+  let touches = false;
+  tr.changes.iterChanges((fromA, toA, _fb, _tb, inserted) => {
+    const ins = inserted.toString();
+    for (const b of blocks) {
+      // Never leave `<!--co:` after text on its line.
+      if (toA === b.from && (toA > fromA || ins)) {
+        const before = ins ? ins[ins.length - 1] : fromA > 0 ? text[fromA - 1] : "\n";
+        if (before !== "\n") refused = true;
+      }
+      if (toA > fromA) {
+        if (fromA < b.to && toA > b.from) {
+          touches = true;
+          if (fromA > b.from || toA < b.to) refused = true;
+        }
+      } else if (fromA > b.from && fromA < b.to) {
+        refused = true;
+      }
+    }
+  });
+  if (refused) return [];
+  if (!touches) return tr;
+  // Rebuild the change so every covered block stays, starting a line.
+  const specs: Array<{ from: number; to: number; insert: string }> = [];
+  tr.changes.iterChanges((fromA, toA, _fb, _tb, inserted) => {
+    const ins = inserted.toString();
+    const covered = blocks.filter((b) => fromA <= b.from && b.to <= toA && toA > fromA);
+    if (!covered.length) {
+      specs.push({ from: fromA, to: toA, insert: ins });
+      return;
+    }
+    let cur = fromA;
+    let first = true;
+    for (const b of covered) {
+      let keep = first ? ins : "";
+      const lastChar = keep ? keep[keep.length - 1] : cur > 0 ? text[cur - 1] : "\n";
+      if (b.from > cur || keep) {
+        if (lastChar !== "\n" && (cur > 0 || keep)) keep += "\n";
+        specs.push({ from: cur, to: b.from, insert: keep });
+      }
+      first = false;
+      cur = b.to;
+    }
+    if (toA > cur) specs.push({ from: cur, to: toA, insert: "" });
+  });
+  return [{ changes: specs, selection: tr.selection, userEvent: tr.annotation(Transaction.userEvent), scrollIntoView: tr.scrollIntoView }];
+});
+
+// Hidden markup the cursor steps over: markers and thread blocks.
+function hiddenAt(text: string) {
+  const scan = scanComments(text);
+  return {
+    blocks: scan.blocks,
+    ranges: [...scan.markers.map(([from, to]) => ({ from, to, block: false })), ...scan.blocks.map((b) => ({ from: b.from, to: b.to, block: true }))],
+  };
+}
+
+function charBefore(text: string, p: number): number {
+  return p >= 2 && /[\uDC00-\uDFFF]/.test(text[p - 1]) && /[\uD800-\uDBFF]/.test(text[p - 2]) ? 2 : 1;
+}
+
+// Backspace right after hidden markup deletes the visible character before
+// it: after a thread block, the character before the block (not the line
+// break, which would put `<!--co:` on a text line); after an anchor marker,
+// the character before the marker.
+export function deleteBackwardSkippingComments(view: EditorView): boolean {
+  const sel = view.state.selection.main;
+  if (!sel.empty) return false;
+  const text = view.state.doc.toString();
+  const { ranges } = hiddenAt(text);
+  let p = sel.head;
+  for (;;) {
+    const r = ranges.find((x) => x.to === p && x.from < p);
+    if (!r) break;
+    p = r.from;
+    if (r.block && p > 0 && text[p - 1] === "\n") p -= 1;
+  }
+  if (p === sel.head) return false;
+  if (p <= 0) return true;
+  const from = p - charBefore(text, p);
+  view.dispatch({ changes: { from, to: p }, selection: { anchor: from }, userEvent: "delete.backward", scrollIntoView: true });
+  return true;
+}
+
+// Delete at the end of a line followed by a thread block deletes the first
+// visible character after the block; before an anchor marker, after it.
+export function deleteForwardSkippingComments(view: EditorView): boolean {
+  const sel = view.state.selection.main;
+  if (!sel.empty) return false;
+  const text = view.state.doc.toString();
+  const { ranges, blocks } = hiddenAt(text);
+  let p = sel.head;
+  for (;;) {
+    const r = ranges.find((x) => x.from === p && x.to > p);
+    if (r) { p = r.to; continue; }
+    const b = text[p] === "\n" ? blocks.find((x) => x.from === p + 1) : undefined;
+    if (b) { p = b.to; continue; }
+    break;
+  }
+  if (p === sel.head) return false;
+  if (p >= text.length) return true;
+  const len = /[\uD800-\uDBFF]/.test(text[p]) && p + 1 < text.length ? 2 : 1;
+  view.dispatch({ changes: { from: p, to: p + len }, userEvent: "delete.forward", scrollIntoView: true });
+  return true;
+}
+
+const commentKeys = Prec.high(
+  keymap.of([
+    { key: "Backspace", run: deleteBackwardSkippingComments },
+    { key: "Delete", run: deleteForwardSkippingComments },
+  ]),
+);
+
 export function commentsExtension(): Extension {
-  return [decorations, keepAnchors, draftField];
+  return [decorations, keepAnchors, protectBlocks, draftField, commentKeys];
+}
+
+// A line that starts with an anchor marker is text, not an HTML block
+// (comment format v1 writes anchors at a line's start when the selection
+// starts there); the rest of the line is parsed as Markdown.
+const ANCHOR_AT = /^<!--\/?c:[a-z0-9]{5,8}-->/;
+export function anchorLines(): MarkdownConfig {
+  const base: any = markdownLanguage.parser;
+  const html = base.blockParsers[base.blockNames.indexOf("HTMLBlock")];
+  return {
+    parseBlock: [
+      {
+        name: "HTMLBlock",
+        parse(cx, line) {
+          if (ANCHOR_AT.test(line.text.slice(line.pos))) return false;
+          return html ? html(cx, line) : false;
+        },
+      },
+    ],
+  };
+}
+
+export function anchorAwareMarkdown(codeLanguages?: (info: string) => Language | null) {
+  return markdown({ base: markdownLanguage, codeLanguages: codeLanguages ?? undefined, extensions: [anchorLines()] });
 }
 
 // Why a selection can't be anchored: "ignored" (code, a table, front

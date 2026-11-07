@@ -13,7 +13,13 @@ enum CommentWriter {
         case setStatus(id: String, resolved: Bool)
         /// Edit mode: a new thread on a UTF-16 range of the buffer.
         case addRange(Range<Int>, body: String)
+        /// Reading mode: a new thread where the draft was made (`range`, whose text was `quote`);
+        /// if the text there changed, found again by its quote, once and only once, else `Stale`.
+        case addAt(Range<Int>, quote: String, body: String)
     }
+
+    /// The text a draft was made on is no longer where it was, and isn't in the file exactly once.
+    struct Stale: Error, Equatable {}
 
     /// The ID a new thread was given.
     final class Made {
@@ -55,6 +61,22 @@ enum CommentWriter {
                 return try CommentFormat.addReply(text, threadID: id, author: author, at: at, body: body)
             case .setStatus(let id, let resolved):
                 return try CommentFormat.setStatus(text, threadID: id, resolved ? .resolved : .open)
+            case .addAt(let stored, let quote, let body):
+                let units = Array(text.utf16)
+                var range: Range<Int>? = nil
+                if stored.upperBound <= units.count,
+                    CommentFormat.quoteText(String(decoding: units[stored], as: UTF16.self)) == quote
+                {
+                    range = stored
+                } else if case .success(let found) = CommentFormat.findQuote(text, quote, occurrence: 1),
+                    case .failure = CommentFormat.findQuote(text, quote, occurrence: 2)
+                {
+                    range = found
+                }
+                guard let range else { throw Stale() }
+                let id = newID(text)
+                made?.id = id
+                return CommentFormat.addThread(text, range: range, id: id, author: author, at: at, body: body)
             case .addRange(let raw, let body):
                 let length = text.utf16.count
                 guard raw.lowerBound >= 0, raw.upperBound <= length, !raw.isEmpty else { throw CommentFormat.Refusal.notFound }

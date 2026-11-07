@@ -9,7 +9,7 @@ import {
   EditorSelection,
   EditorState,
   type Extension,
-  type Text,
+  Text,
   Transaction,
   type TransactionSpec,
 } from "@codemirror/state";
@@ -29,7 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
-import { commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
+import { anchorLines, commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -186,7 +186,13 @@ export interface PorticoEditor {
   // v0.23: a comment action from Swift, as one change on the buffer; refused
   // (false) when the document isn't the length Swift computed it for. It is
   // a normal edit: sent back and saved like typing.
+  // Offsets, lengths and text are in the editor's own LF space (a CRLF file's
+  // line breaks count as one); the save path writes the file's line endings.
   applyChange(from: number, to: number, insert: string, expectedLength: number): boolean;
+  // v0.23: the text in that LF space, for comment actions.
+  commentText(): string;
+  // v0.23: the draft's range, mapped through edits since it was marked.
+  draftRange(): { from: number; to: number } | null;
   // v0.23: the selection, with why it can't be anchored (or null).
   selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | null };
   // v0.23: what the comments margin (viewer-comments.js) needs from the editor.
@@ -236,7 +242,7 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
     if (current.mode === "markdown") {
       return [
         ...shared,
-        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }) }),
+        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage, extensions: [anchorLines()] }) }),
         livePreview(openLink),
         commentsExtension(),
         EditorView.lineWrapping,
@@ -348,10 +354,16 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       const length = view.state.doc.length;
       if (length !== expectedLength || from < 0 || to < from || to > length) return false;
       view.dispatch({
-        changes: { from, to, insert: view.state.toText(insert) },
+        changes: { from, to, insert: Text.of(insert.split(/\r\n?|\n/)) },
         annotations: Transaction.userEvent.of("input.comment"),
       });
       return true;
+    },
+    commentText() {
+      return view.state.doc.toString();
+    },
+    draftRange() {
+      return view.state.field(draftField, false) ?? null;
     },
     commentHooks: {
       contentElement: () => view.contentDOM,
@@ -359,7 +371,7 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       // Tops in the scroller's own coordinates (the margin scrolls inside it).
       anchorTop(id) {
         if (current.mode !== "markdown") return null;
-        const a = scanComments(view.state.sliceDoc()).anchors.find((x) => x.id === id);
+        const a = scanComments(view.state.doc.toString()).anchors.find((x) => x.id === id);
         return a ? topInScroller(a.openTo) : null;
       },
       draftTop() {

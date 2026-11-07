@@ -168,3 +168,111 @@ test("emoji offsets", () => {
   assert.equal(text.slice(a.openTo, a.closeFrom), "first draft");
   assert.equal(a.openFrom, text.indexOf("<!--c:em001-->"));
 });
+
+// --- fix round (review items 1, 3, 5, 6) ------------------------------------------
+
+const { EditorView, runScopeHandlers } = await import("@codemirror/view");
+const press = (view: any, key: string) => runScopeHandlers(view, new dom.window.KeyboardEvent("keydown", { key }) as any, "editor");
+const cmds = await import("@codemirror/commands");
+const { syntaxTree } = await import("@codemirror/language");
+const { anchorAwareMarkdown } = await import("../src/comments.ts");
+
+const PROTECTED = 'Some <!--c:aaaaa-->text<!--/c:aaaaa--> here.\n<!--co:aaaaa by:Sam at:T status:open quote:"text"\nSam (T): important\n-->\nNext para.\n';
+
+function viewAt(doc: string, pos: number) {
+  const { editor } = mount();
+  editor.load({ text: doc, mode: "markdown" });
+  editor.view.dispatch({ selection: EditorSelection.cursor(pos) });
+  return editor;
+}
+
+test("backspace at the start of the line after a thread block deletes the visible character before the block", () => {
+  const editor = viewAt(PROTECTED, PROTECTED.indexOf("Next"));
+  assert.equal(press(editor.view, "Backspace"), true);
+  assert.equal(editor.visibleText(), PROTECTED.replace("here.\n", "here\n"));
+});
+
+test("delete at the end of the anchored block's last line deletes after the block", () => {
+  const editor = viewAt(PROTECTED, PROTECTED.indexOf("\n<!--co"));
+  assert.equal(press(editor.view, "Delete"), true);
+  assert.equal(editor.visibleText(), PROTECTED.replace("Next para.", "ext para."));
+});
+
+test("backspace right after an anchor deletes the visible character before the anchor", () => {
+  const editor = viewAt(PROTECTED, PROTECTED.indexOf("text<"));
+  assert.equal(press(editor.view, "Backspace"), true);
+  assert.equal(editor.visibleText(), PROTECTED.replace("Some <!--c", "Some<!--c"));
+});
+
+test("a person's edit never cuts into a thread block, and never joins <!--co: onto a text line", () => {
+  const { editor } = mount();
+  editor.load({ text: PROTECTED, mode: "markdown" });
+  const view = editor.view;
+  const inBlock = PROTECTED.indexOf("important");
+  view.dispatch({ changes: { from: inBlock - 3, to: inBlock + 4 }, userEvent: "delete.selection" });
+  assert.equal(editor.visibleText(), PROTECTED, "cutting into the block is refused");
+  view.dispatch({ changes: { from: PROTECTED.indexOf("here") , to: PROTECTED.indexOf("para.") }, userEvent: "delete.selection" });
+  const out = editor.visibleText();
+  assert.ok(out.includes("\n<!--co:aaaaa"), out);
+  assert.ok(out.includes("Sam (T): important\n-->\n"), out);
+  assert.ok(!/[^\n]<!--co:/.test(out), out);
+});
+
+test("the plain delete commands never remove a thread block either", () => {
+  for (const [pos, cmd] of [[PROTECTED.indexOf("Next"), cmds.deleteCharBackward], [PROTECTED.indexOf("\n<!--co"), cmds.deleteCharForward]] as const) {
+    const editor = viewAt(PROTECTED, pos);
+    (cmd as any)(editor.view);
+    assert.ok(editor.visibleText().includes("Sam (T): important\n-->\n"), editor.visibleText());
+    assert.ok(!/[^\n]<!--co:/.test(editor.visibleText()), JSON.stringify(editor.visibleText()));
+  }
+});
+
+test("comment actions may change a thread block", () => {
+  const { editor } = mount();
+  editor.load({ text: PROTECTED, mode: "markdown" });
+  const at = PROTECTED.indexOf("-->\nNext");
+  assert.equal(editor.applyChange(at, at, "Agent (T): ok\n", editor.view.state.doc.length), true);
+  assert.ok(editor.visibleText().includes("Agent (T): ok\n-->"));
+});
+
+test("an anchor at column 0 is a paragraph, not an HTML block", () => {
+  const text = read("anchor-col0.md");
+  const s = EditorState.create({ doc: text, extensions: [anchorAwareMarkdown()] });
+  ensureSyntaxTree(s, s.doc.length, 5000);
+  const names: string[] = [];
+  for (let n: any = syntaxTree(s).resolveInner(text.indexOf("Hello") + 1, 1); n; n = n.parent) names.push(n.name);
+  assert.ok(names.includes("Paragraph"), names.join(" "));
+  assert.ok(!names.includes("HTMLBlock") && !names.includes("CommentBlock"), names.join(" "));
+  let strong = false;
+  syntaxTree(s).iterate({ enter: (n) => { if (n.name === "StrongEmphasis") strong = true; } });
+  assert.ok(strong, "the rest of the line is Markdown");
+});
+
+test("CRLF: comment offsets and texts are in the editor's LF space", () => {
+  const { editor } = mount();
+  const text = "Line one\r\nTwo words here\r\n\r\nThird\r\n";
+  editor.load({ text, mode: "markdown" });
+  const lf = editor.commentText();
+  assert.equal(lf, text.replace(/\r\n/g, "\n"));
+  const at = lf.indexOf("words");
+  const blockAt = lf.indexOf("\n\nThird") + 1;
+  const insert = "<!--co:zzzzz by:S at:T status:open quote:\"words\"\nS (T): hi\n-->\n";
+  assert.equal(editor.applyChange(blockAt, blockAt, insert, lf.length), true);
+  assert.equal(editor.applyChange(at, at, "<!--c:zzzzz-->", editor.commentText().length), true);
+  const saved = editor.visibleText();
+  assert.ok(!/[^\r]\n/.test(saved), JSON.stringify(saved));
+  assert.ok(saved.includes("S (T): hi\r\n-->\r\n"), JSON.stringify(saved));
+  assert.ok(saved.includes("<!--c:zzzzz-->words"));
+});
+
+test("a draft's range follows edits made before it", () => {
+  const { editor } = mount();
+  const text = "Alpha beta gamma.\n";
+  editor.load({ text, mode: "markdown" });
+  const view = editor.view;
+  view.dispatch({ selection: EditorSelection.range(6, 10) });
+  editor.commentHooks.markDraft();
+  view.dispatch({ changes: { from: 0, insert: "New " }, userEvent: "input.type" });
+  assert.deepEqual(editor.draftRange(), { from: 10, to: 14 });
+  assert.equal(editor.commentText().slice(10, 14), "beta");
+});
