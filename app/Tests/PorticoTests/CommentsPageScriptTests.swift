@@ -263,4 +263,34 @@ final class CommentsPageScriptTests: XCTestCase {
         XCTAssertEqual(out?[1] as? Bool, true)
         XCTAssertEqual(out?[2] as? String, "The file is read-only.")
     }
+
+    // MARK: - the context menu (Task 6)
+
+    func testContextMenuPostsTheSelectionAndPreventsWebKitsMenu() async throws {
+        let view = try await page("Intro.\n\nthe permission prompt stays\n")
+        try await select("the permission", 5, 18, in: view)
+        let out = try await js("""
+            var sent = [];
+            window.__porticoComments.post = function (m) { sent.push(m); };
+            var e = new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 30, clientY: 40});
+            var kept = document.querySelector('#body p:last-child').dispatchEvent(e);
+            return { prevented: !kept, sent: sent };
+            """, in: view) as? [String: Any]
+        XCTAssertEqual(out?["prevented"] as? Bool, true)
+        let sent = try XCTUnwrap((out?["sent"] as? [[String: Any]])?.last)
+        XCTAssertEqual(sent["type"] as? String, "menu")
+        XCTAssertEqual(sent["x"] as? Double, 30)
+        XCTAssertEqual((sent["selection"] as? [String: Any])?["text"] as? String, "permission prompt")
+    }
+
+    func testMarkDraftWrapsTheSnappedSelection() async throws {
+        let view = try await page("Intro.\n\nthe permission prompt stays\n")
+        try await select("the permission", 5, 18, in: view)
+        let text = try await js("""
+            window.__porticoComments.selectionInfo();
+            window.__porticoComments.markDraft();
+            return document.querySelector('mark.pc-draft').textContent;
+            """, in: view) as? String
+        XCTAssertEqual(text, "permission prompt")
+    }
 }

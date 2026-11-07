@@ -242,6 +242,7 @@ struct ViewerView: View {
     }
 
     private func syncComments() {
+        comments.onWritten = { [weak model, chat] url in model?.fileEdited(path: url.path, chat: chat) }
         comments.chat = chat
         comments.focus = model
         comments.helloPersonName = model.hello?.person?.name
@@ -516,10 +517,12 @@ struct ViewerView: View {
             .environment(\.viewerSlot, .work)
         } else if let current = model.current[chat] {
             ArtifactContent(artifact: current)
-                .id(ArtifactPresentation(artifact: current).contentIdentity)
+                // v0.23: a comment written here re-reads the page in place (paneRevision), keeping the reader's place.
+                .id(comments.paneKey(ArtifactPresentation(artifact: current).contentIdentity))
                 .environment(\.viewerAgent, model.viewerAgent)
                 .environment(\.viewerSlot, .work)
                 .environment(\.viewerComments, comments)
+                .environment(\.webPaneRevision, comments.paneRevision)
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",

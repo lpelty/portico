@@ -492,6 +492,13 @@
   });
   window.addEventListener("resize", function () { if (state) render(state); });
 
+  // The viewer's own menu (Comment, Cut, Copy, Paste, Select All) replaces WebKit's.
+  document.addEventListener("contextmenu", function (e) {
+    if (api.ownMenu === false) return;
+    e.preventDefault();
+    post({ type: "menu", x: e.clientX, y: e.clientY, selection: selectionInfo() });
+  });
+
   var api = {
     highlight: highlight,
     selectionInfo: selectionInfo,

@@ -277,8 +277,190 @@ final class ViewerComments: ObservableObject {
         }
     }
 
-    /// The writing actions (Task 6 and 7); none in this build of the page.
-    func handleAction(_ type: String, _ message: [String: Any], chat: Int, focus: CommentsFocus) {}
+    /// Told after a comment action wrote the file (reading mode): the app
+    /// tells the gateway (`files.edited`) and the pane re-reads in place.
+    var onWritten: ((URL) -> Void)?
+    /// Bumped by each write, so the page re-reads keeping its scroll.
+    @Published private(set) var paneRevision: String?
+    private var writes = 0
+    private var keptKey: String?
+    private var writtenStamp: String?
+
+    /// The key the viewer's pane is identified by: the file's identity,
+    /// except that this controller's own writes keep the old key (the pane
+    /// re-reads in place through `paneRevision`, keeping the reader's place).
+    func paneKey(_ identity: String) -> String {
+        if let stamp = writtenStamp, identity.hasSuffix(stamp), let keptKey { return keptKey }
+        writtenStamp = nil
+        keptKey = identity
+        return identity
+    }
+
+    static func diskStamp(_ url: URL) -> String? {
+        guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
+        let date = (a[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0
+        let size = (a[.size] as? NSNumber)?.int64Value ?? 0
+        return "|\(date)|\(size)"
+    }
+
+    // MARK: writing
+
+    func handleAction(_ type: String, _ message: [String: Any], chat: Int, focus: CommentsFocus) {
+        let id = message["id"] as? String
+        let text = message["text"] as? String ?? ""
+        switch type {
+        case "post":
+            guard var d = draft else { return }
+            d.text = text
+            draft = d
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let made = CommentWriter.Made()
+            if let selection = d.selection, write(.add(selection, body: text), made: made) {
+                draft = nil
+                activeID = made.id
+                error = nil
+            }
+            push()
+        case "cancelDraft":
+            draft = nil
+            error = nil
+            evaluate?("window.__porticoComments && __porticoComments.clearDraft()")
+            push()
+        case "reply":
+            guard let id, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            if write(.reply(id: id, body: text)) { error = nil }
+            push()
+        case "resolve", "reopen":
+            guard let id else { return }
+            if write(.setStatus(id: id, resolved: type == "resolve")) {
+                error = nil
+                if type == "resolve", activeID == id { activeID = nil }
+            }
+            push()
+        case "menu":
+            let selection = message["selection"] as? [String: Any]
+            let x = (message["x"] as? NSNumber)?.doubleValue ?? 0
+            let y = (message["y"] as? NSNumber)?.doubleValue ?? 0
+            showMenu(selection: selection, at: CGPoint(x: x, y: y), editMode: false, chat: chat, focus: focus)
+        default:
+            break
+        }
+    }
+
+    /// Write one comment action to the file; false (and `error` set) when it couldn't.
+    @discardableResult
+    func write(_ op: CommentWriter.Op, made: CommentWriter.Made? = nil) -> Bool {
+        guard let file else { return false }
+        if let readOnly {
+            error = readOnly
+            return false
+        }
+        do {
+            try CommentWriter.apply(CommentWriter.edit(for: op, author: personName, now: Date(), made: made), to: file)
+        } catch let failure as FileEditing.Failure {
+            error = "Not saved — \(failure.description)"
+            return false
+        } catch let refusal as CommentFormat.Refusal {
+            error = "Not saved — \(CommentAnchoring.reason(refusal))"
+            return false
+        } catch {
+            self.error = "Not saved — the comment's thread is gone"
+            return false
+        }
+        reload()
+        writes += 1
+        writtenStamp = Self.diskStamp(file)
+        paneRevision = "comments-\(writes)"
+        onWritten?(file)
+        return true
+    }
+
+    // MARK: the menu and the draft
+
+    /// What the menu shows for the page's selection (`selectionInfo()`, or nil for none).
+    func menuContext(selection: [String: Any]?, editMode: Bool) -> CommentMenu.Context {
+        guard let selection, let text = selection["text"] as? String, !text.isEmpty else {
+            return .init(editMode: editMode, hasSelection: false, readOnly: readOnly, refusal: nil)
+        }
+        var refusal: String?
+        switch selection["refusal"] as? String {
+        case "ignored": refusal = CommentAnchoring.reason(.insideIgnored)
+        case .some: refusal = CommentAnchoring.reason(.crossesBlocks)
+        case nil:
+            if let sel = Self.selection(selection), let file,
+                let source = try? String(contentsOf: file, encoding: .utf8)
+            {
+                if case .failure(let r) = CommentAnchoring.locate(sel, in: source) { refusal = CommentAnchoring.reason(r) }
+            } else {
+                refusal = CommentAnchoring.reason(.crossesBlocks)
+            }
+        }
+        return .init(editMode: editMode, hasSelection: true, readOnly: readOnly, refusal: refusal)
+    }
+
+    static func selection(_ info: [String: Any]) -> CommentAnchoring.Selection? {
+        guard let text = info["text"] as? String, let lines = info["lines"] as? [NSNumber], lines.count == 2 else {
+            return nil
+        }
+        let a = lines[0].intValue, b = lines[1].intValue
+        guard a <= b else { return nil }
+        return .init(text: text, lines: a...b, occurrence: (info["occurrence"] as? NSNumber)?.intValue ?? 0)
+    }
+
+    /// Choose Comment: comments on (widening if needed), a draft card at the
+    /// selection, the selected text in the active highlight.
+    func beginDraft(_ selection: CommentAnchoring.Selection?, range: Range<Int>? = nil, chat: Int, focus: CommentsFocus) {
+        draft = Draft(selection: selection, range: range)
+        activeID = nil
+        error = nil
+        evaluate?("window.__porticoComments && __porticoComments.markDraft()")
+        if !shown { setShown(true, chat: chat, focus: focus) } else { push() }
+    }
+
+    private var menuTargets: [MenuAction] = []
+
+    /// The viewer's own context menu at the page point.
+    func showMenu(selection: [String: Any]?, at point: CGPoint, editMode: Bool, chat: Int, focus: CommentsFocus,
+                  comment: (() -> Void)? = nil) {
+        guard let view = webView as? NSView else { return }
+        let context = menuContext(selection: selection, editMode: editMode)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menuTargets = []
+        for item in CommentMenu.items(context) {
+            if item.isDivider { menu.addItem(.separator()); continue }
+            let action: () -> Void
+            switch item.title {
+            case "Comment":
+                action = { [weak self] in
+                    if let comment { comment(); return }
+                    guard let self, let selection, let sel = Self.selection(selection) else { return }
+                    self.beginDraft(sel, chat: chat, focus: focus)
+                }
+            case "Cut": action = { [weak view] in NSApp.sendAction(#selector(NSText.cut(_:)), to: view, from: nil) }
+            case "Copy": action = { [weak view] in NSApp.sendAction(#selector(NSText.copy(_:)), to: view, from: nil) }
+            case "Paste": action = { [weak view] in NSApp.sendAction(#selector(NSText.paste(_:)), to: view, from: nil) }
+            default: action = { [weak view] in NSApp.sendAction(#selector(NSText.selectAll(_:)), to: view, from: nil) }
+            }
+            let target = MenuAction(action)
+            menuTargets.append(target)
+            let entry = NSMenuItem(title: item.title, action: #selector(MenuAction.fire(_:)), keyEquivalent: item.key ?? "")
+            entry.target = target
+            entry.isEnabled = item.enabled
+            entry.toolTip = item.tip
+            if let symbol = item.symbol { entry.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+            menu.addItem(entry)
+        }
+        let flipped = view.isFlipped ? point : CGPoint(x: point.x, y: view.bounds.height - point.y)
+        menu.popUp(positioning: nil, at: flipped, in: view)
+    }
+}
+
+/// A menu item's action, held while the menu is up.
+private final class MenuAction: NSObject {
+    let run: () -> Void
+    init(_ run: @escaping () -> Void) { self.run = run }
+    @objc func fire(_ sender: Any?) { run() }
 }
 
 // MARK: - ViewerCommentsToggle

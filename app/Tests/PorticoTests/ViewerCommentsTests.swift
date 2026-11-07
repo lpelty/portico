@@ -137,4 +137,66 @@ final class ViewerCommentsTests: XCTestCase {
         XCTAssertEqual(replies[0]["agent"] as? Bool, false)
         XCTAssertEqual(state["on"] as? Bool, false)
     }
+
+    // MARK: - writing in reading mode (Task 6)
+
+    func testMenuContextRefusesUnanchorable() throws {
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: try file("para.md"))
+        let ok = c.menuContext(selection: ["text": "writes files", "lines": [2, 2], "occurrence": 0], editMode: false)
+        XCTAssertTrue(ok.hasSelection)
+        XCTAssertNil(ok.refusal)
+        let across = c.menuContext(selection: ["text": "endings. Second", "lines": [2, 2], "occurrence": 0], editMode: false)
+        XCTAssertEqual(across.refusal, "Select text within one paragraph, outside links and formatting.")
+        let code = c.menuContext(selection: ["text": "x", "lines": NSNull(), "occurrence": 0, "refusal": "ignored"], editMode: false)
+        XCTAssertEqual(code.refusal, "Comments can't go in code, tables or front matter.")
+        let none = c.menuContext(selection: nil, editMode: false)
+        XCTAssertFalse(none.hasSelection)
+    }
+
+    func testDraftPostWritesTheFile() throws {
+        let d = defaults()
+        let c = ViewerComments(defaults: d)
+        let url = try file("para.md")
+        c.show(file: url)
+        c.helloPersonName = "Sam Rivera"
+        let focus = FakeFocus()
+        c.beginDraft(.init(text: "writes files", lines: 2...2, occurrence: 0), chat: 1, focus: focus)
+        XCTAssertTrue(c.shown)
+        XCTAssertNotNil(c.draft)
+        XCTAssertEqual(focus.toggles, 1, "comment widens the viewer")
+        c.received(["type": "post", "text": "Which files?"], chat: 1, focus: focus)
+        XCTAssertNil(c.draft)
+        XCTAssertNil(c.error)
+        let t = try XCTUnwrap(CommentFormat.parse(try String(contentsOf: url, encoding: .utf8)).threads.first)
+        XCTAssertEqual(t.by, "Sam Rivera")
+        XCTAssertEqual(c.activeID, t.id)
+        c.received(["type": "reply", "id": t.id, "text": "Also these."], chat: 1, focus: focus)
+        c.received(["type": "resolve", "id": t.id], chat: 1, focus: focus)
+        let after = try XCTUnwrap(CommentFormat.parse(try String(contentsOf: url, encoding: .utf8)).threads.first)
+        XCTAssertEqual(after.replies.count, 2)
+        XCTAssertEqual(after.status, .resolved)
+        XCTAssertNil(c.activeID)
+    }
+
+    func testWriteFailureKeepsDraftAndSaysWhy() throws {
+        let c = ViewerComments(defaults: defaults())
+        let url = try file("para.md")
+        c.show(file: url)
+        c.beginDraft(.init(text: "writes files", lines: 2...2, occurrence: 0), chat: 1, focus: FakeFocus())
+        try FileManager.default.removeItem(at: url)
+        c.received(["type": "post", "text": "Still here?"], chat: 1, focus: FakeFocus())
+        XCTAssertEqual(c.draft?.text, "Still here?")
+        XCTAssertEqual(c.error, "Not saved — the file is gone")
+    }
+
+    func testReadOnlyWritesNothing() throws {
+        let c = ViewerComments(defaults: defaults())
+        let url = try file("plugin-basic.md")
+        c.show(file: url)
+        c.readOnly = "Read-only."
+        let before = try Data(contentsOf: url)
+        c.received(["type": "resolve", "id": "k3x9a"], chat: 1, focus: FakeFocus())
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
 }
