@@ -360,8 +360,12 @@ struct HelloClient: Codable, Equatable, Sendable {
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
         FilesRootsSet.capability, FilesEdited.capability, AgentActivity.tasksCapability,
-        DeploymentMessage.capability,
+        DeploymentMessage.capability, commentsCapability,
     ]
+
+    /// v0.23: this app shows and writes comments in Markdown files (comment
+    /// format v1). Declared for future use; comment edits are file writes.
+    static let commentsCapability = "comments.v1"
 }
 
 struct ChatNew: Codable, Equatable, Sendable {
@@ -745,13 +749,16 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// How many threads may be open beside Main (v0.16, config `[threads]
     /// max`), sent with `threads.v1`; absent from an older gateway (2).
     var threadsMax: Int? = nil
+    /// The person's real name for their comments (v0.23, config `[person]
+    /// name` or a plug-in); absent: the computer's full user name.
+    var person: Person? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts
+        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person
         case viewerDefaults = "viewer_defaults"
         case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
@@ -769,6 +776,11 @@ struct HelloServer: Codable, Equatable, Sendable {
 
     /// One live session at a time (S1), rather than the chat list.
     var isSingle: Bool { presentation == "single" }
+}
+
+/// `hello.person` (v0.23): the person using the app, by real name.
+struct Person: Codable, Equatable, Sendable {
+    var name: String
 }
 
 // MARK: - Viewer vision and spaces, gateway -> app (v0.12)

@@ -100,7 +100,9 @@ reads them in `user.text`) and `files.extra.v1` (it sends
 (it sends `files.edited` after each save in the viewer's editor); v0.21:
 `tasks.v1` (it shows background commands and Monitors, `agent.started`
 with `task`; see Subagents and workflows); v0.22: `messages.deployment.v1`
-(it docks `deployment.message`; see Messages from the deployment). Absent
+(it docks `deployment.message`; see Messages from the deployment); v0.23:
+`comments.v1` (it shows and writes comments in Markdown files; see
+[Comments](#comments-v023)), declared for future use. Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -585,6 +587,10 @@ v0.16: `threads_max?: int` (config `[threads] max`, 1 or 2): how many
 threads may be open beside Main, sent with `threads.v1` and absent
 otherwise. The app's proposal card asks to close a thread at this limit;
 an app that gets none (an older v0.16 gateway) assumes 2.
+
+v0.23: `person?: {name}` (config `[person] name`, or a plug-in's
+`on_hello`): the person's real name, which the app writes as the author of
+their comments. Absent: the app uses the computer's full user name.
 
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
@@ -2076,6 +2082,32 @@ until the person dismisses it (**Open** opens `space`); a dismissed message
 is gone, and the same `id` sent again in that run of the app is not docked
 again. With `notify` the app also posts a system notification, only for a
 message it docked.
+
+## Comments *(v0.23)*
+
+Comments live in Markdown (`.md`) files, in [comment format v1](COMMENTS.md):
+anchors around the commented text and a thread block after its paragraph,
+all HTML comments. The app sends no new message kinds for them: a comment
+the person makes, replies to or resolves is a file write through the
+viewer's usual save path (and `files.edited` with `files.edited.v1`).
+
+The agent reads comments as part of the file's text, and has three tools on
+the same in-process server as the viewer tools, available whenever those are,
+and allowed with no permission card:
+
+| Tool | Input | Effect |
+|---|---|---|
+| `comments_list` | `path`, `include_resolved?` | Each thread: id, status, quote, anchored text (or "not found"), and its replies with author and time. Resolved threads only with `include_resolved`. |
+| `comment_reply` | `path`, `id`, `text` | Adds a reply by the agent (the `brand.agent_name` the app received in `hello`), with the time now. A resolved thread stays resolved. |
+| `comment_add` | `path`, `quote`, `text`, `occurrence?` | Anchors a new thread on the `occurrence`-th (default first) match of `quote`, within one paragraph and outside code, by the agent. |
+
+Agents can't resolve threads; resolving is the person's. A path must be
+inside the chat's folders (a relative path resolves against the chat's
+folder). A path outside them, a file that isn't `.md`, an unknown id, or a
+quote that can't be anchored returns a plain error and changes nothing.
+Writes are atomic, keep the file's line endings and byte-order mark, and
+touch only the thread's anchors and block. A write is reported like the
+agent's `Write`/`Edit` of that file, so the app reloads it.
 
 ## Services *(v0.4)*
 

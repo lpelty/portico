@@ -423,7 +423,10 @@ def test_tools_registered_with_show_in_viewer(tmp_path: Path) -> None:
     options = build_options(tmp_path, None, ["project"], WithBridge(bridge))
     server = (options.mcp_servers or {})[SHOW_SERVER]  # type: ignore[index]
     assert server["type"] == "sdk" and server["name"] == SHOW_SERVER
-    assert options.allowed_tools == [SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES]
+    # v0.23: the comment tools sit beside the viewer tools.
+    from portico_gateway.comment_tools import COMMENT_TOOL_NAMES
+
+    assert options.allowed_tools == [SHOW_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES]
     assert VIEWER_TOOL_NAMES[0] == "mcp__portico__viewer_look"
 
 
