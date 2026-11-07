@@ -224047,6 +224047,968 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "J9yuU",
+      "x": 12760,
+      "y": 46300,
+      "name": "ZC · Edit icon comparison",
+      "theme": {
+        "mode": "dark"
+      },
+      "fill": "$panel",
+      "cornerRadius": 12,
+      "stroke": "$border",
+      "strokeWidth": 1,
+      "layout": "vertical",
+      "gap": 36,
+      "padding": 40,
+      "children": [
+        {
+          "type": "text",
+          "id": "JAugA",
+          "name": "Title",
+          "fill": "$text",
+          "content": "Edit button: current pencil vs square pen (1x, then 4x)",
+          "fontFamily": "$font",
+          "fontSize": 16,
+          "fontWeight": "600"
+        },
+        {
+          "type": "frame",
+          "id": "l15NH",
+          "name": "Variants",
+          "gap": 48,
+          "children": [
+            {
+              "type": "frame",
+              "id": "TAqpF",
+              "name": "Variant 1",
+              "layout": "vertical",
+              "gap": 14,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "AXEQr",
+                  "name": "Pencil, icon only",
+                  "width": 28,
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "LlBCI",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "pencil",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "oVWvn",
+                  "name": "Caption 1x",
+                  "fill": "$text-3",
+                  "content": "Now: pencil, icon only · 1x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "P3tMup",
+                  "name": "Gap",
+                  "width": 1,
+                  "height": 10
+                },
+                {
+                  "type": "frame",
+                  "id": "t12igo",
+                  "name": "Pencil, icon only",
+                  "width": 112,
+                  "height": 96,
+                  "fill": "$control",
+                  "cornerRadius": 24,
+                  "stroke": "$border",
+                  "strokeWidth": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "q4B4c",
+                      "name": "Icon",
+                      "width": 52,
+                      "height": 52,
+                      "icon": "pencil",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "Li0Bt",
+                  "name": "Caption 4x",
+                  "fill": "$text-3",
+                  "content": "Now: pencil, icon only · 4x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "xxYFp",
+              "name": "Variant 2",
+              "layout": "vertical",
+              "gap": 14,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mxmhZ",
+                  "name": "Square pen, icon only",
+                  "width": 28,
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "t7UG1",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "DF2Om",
+                  "name": "Caption 1x",
+                  "fill": "$text-3",
+                  "content": "Square pen, icon only · 1x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "o015b",
+                  "name": "Gap",
+                  "width": 1,
+                  "height": 10
+                },
+                {
+                  "type": "frame",
+                  "id": "tPPzW",
+                  "name": "Square pen, icon only",
+                  "width": 112,
+                  "height": 96,
+                  "fill": "$control",
+                  "cornerRadius": 24,
+                  "stroke": "$border",
+                  "strokeWidth": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mSsgD",
+                      "name": "Icon",
+                      "width": 52,
+                      "height": 52,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "ra1CO",
+                  "name": "Caption 4x",
+                  "fill": "$text-3",
+                  "content": "Square pen, icon only · 4x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SDkG7",
+              "name": "Variant 3",
+              "layout": "vertical",
+              "gap": 14,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "VgteJ",
+                  "name": "Square pen + Edit",
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    9
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "iECgr",
+                      "name": "Icon",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "text",
+                      "id": "iTeKG",
+                      "name": "T",
+                      "fill": "$text-2",
+                      "content": "Edit",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "S70Jf",
+                  "name": "Caption 1x",
+                  "fill": "$text-3",
+                  "content": "Square pen + Edit · 1x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "YFhWq",
+                  "name": "Gap",
+                  "width": 1,
+                  "height": 10
+                },
+                {
+                  "type": "frame",
+                  "id": "v2eDd",
+                  "name": "Square pen + Edit",
+                  "height": 96,
+                  "fill": "$control",
+                  "cornerRadius": 24,
+                  "stroke": "$border",
+                  "strokeWidth": 4,
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    36
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ognYb",
+                      "name": "Icon",
+                      "width": 48,
+                      "height": 48,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "text",
+                      "id": "M015ip",
+                      "name": "T",
+                      "fill": "$text-2",
+                      "content": "Edit",
+                      "fontFamily": "$font",
+                      "fontSize": 48,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "i61jU6",
+                  "name": "Caption 4x",
+                  "fill": "$text-3",
+                  "content": "Square pen + Edit · 4x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "WdvHg",
+              "name": "Variant 4",
+              "layout": "vertical",
+              "gap": 14,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "D26y0M",
+                  "name": "Square pen + Done",
+                  "height": 24,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 6,
+                  "stroke": "$accent",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    9
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "tPLKt",
+                      "name": "Icon",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "text",
+                      "id": "p45hG",
+                      "name": "T",
+                      "fill": "$accent",
+                      "content": "Done",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "HrHSn",
+                  "name": "Caption 1x",
+                  "fill": "$text-3",
+                  "content": "Square pen + Done, while editing · 1x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "AM5WT",
+                  "name": "Gap",
+                  "width": 1,
+                  "height": 10
+                },
+                {
+                  "type": "frame",
+                  "id": "M00CU",
+                  "name": "Square pen + Done",
+                  "height": 96,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 4,
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    36
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "obOAz",
+                      "name": "Icon",
+                      "width": 48,
+                      "height": 48,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "text",
+                      "id": "GNCTH",
+                      "name": "T",
+                      "fill": "$accent",
+                      "content": "Done",
+                      "fontFamily": "$font",
+                      "fontSize": 48,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "E0AhS",
+                  "name": "Caption 4x",
+                  "fill": "$text-3",
+                  "content": "Square pen + Done, while editing · 4x",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "U2KMX",
+          "name": "In context 1",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "frame",
+              "id": "CsrA5",
+              "name": "Viewer header · Now: pencil, icon only",
+              "width": 1040,
+              "height": 52,
+              "fill": "$panel",
+              "stroke": "$border",
+              "strokeWidth": {
+                "top": 1,
+                "bottom": 1
+              },
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "iChEv",
+                  "name": "Icon",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$text-2"
+                },
+                {
+                  "type": "text",
+                  "id": "F149E9",
+                  "name": "Name",
+                  "fill": "$text",
+                  "content": "saved-trails-spec.md",
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "tpdiK",
+                  "name": "Versions",
+                  "gap": 4,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "kvBv6",
+                      "name": "Count",
+                      "fill": "$control",
+                      "cornerRadius": 8,
+                      "padding": [
+                        1,
+                        6
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "d45KG",
+                          "name": "N",
+                          "fill": "$text-2",
+                          "content": "2",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "zyGgW",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "chevron-down",
+                      "library": "lucide",
+                      "fill": "$text-3"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "kdKfK",
+                  "name": "Spacer",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "Yob8Y",
+                  "name": "Show comments · off",
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    7
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "gOfn4",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "message-square",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Ugpq9",
+                      "name": "Count",
+                      "fill": "$wait-soft",
+                      "cornerRadius": 8,
+                      "padding": [
+                        0,
+                        5
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "NiJJc",
+                          "name": "N",
+                          "fill": "$wait",
+                          "content": "3",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pu4yV",
+                  "name": "Edit toggle",
+                  "width": 28,
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "WYafD",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "pencil",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "hQS4g",
+                  "name": "Open externally",
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    9
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mIYFY",
+                      "name": "Icon",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "arrow-up-right",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "text",
+                      "id": "AEpLy",
+                      "name": "T",
+                      "fill": "$text-2",
+                      "content": "Open externally",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "nne74",
+                  "name": "Narrow viewer · active",
+                  "width": 28,
+                  "height": 24,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 6,
+                  "stroke": "$accent",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "h8yqVH",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "minimize-2",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "icon",
+                  "id": "G2naw8",
+                  "name": "Close",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "x",
+                  "library": "lucide",
+                  "fill": "$text-2"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "p2S1h",
+              "name": "Caption",
+              "fill": "$text-3",
+              "content": "In the widened header: Now: pencil, icon only",
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pCeIY",
+          "name": "In context 3",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "frame",
+              "id": "ue6dT",
+              "name": "Viewer header · Square pen + Edit",
+              "width": 1040,
+              "height": 52,
+              "fill": "$panel",
+              "stroke": "$border",
+              "strokeWidth": {
+                "top": 1,
+                "bottom": 1
+              },
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "WfhL4",
+                  "name": "Icon",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$text-2"
+                },
+                {
+                  "type": "text",
+                  "id": "gw7WP",
+                  "name": "Name",
+                  "fill": "$text",
+                  "content": "saved-trails-spec.md",
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "zf79f",
+                  "name": "Versions",
+                  "gap": 4,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "rYUcz",
+                      "name": "Count",
+                      "fill": "$control",
+                      "cornerRadius": 8,
+                      "padding": [
+                        1,
+                        6
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "wyPGM",
+                          "name": "N",
+                          "fill": "$text-2",
+                          "content": "2",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "yeOoA",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "chevron-down",
+                      "library": "lucide",
+                      "fill": "$text-3"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QIoLb",
+                  "name": "Spacer",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "d26Pzn",
+                  "name": "Show comments · off",
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    7
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "GilCW",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "message-square",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bjPyD",
+                      "name": "Count",
+                      "fill": "$wait-soft",
+                      "cornerRadius": 8,
+                      "padding": [
+                        0,
+                        5
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "VvO7L",
+                          "name": "N",
+                          "fill": "$wait",
+                          "content": "3",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "s0vJE",
+                  "name": "Square pen + Edit",
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    9
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "HxEUf",
+                      "name": "Icon",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "square-pen",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "text",
+                      "id": "QeRl0",
+                      "name": "T",
+                      "fill": "$text-2",
+                      "content": "Edit",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DUuFz",
+                  "name": "Open externally",
+                  "height": 24,
+                  "fill": "$control",
+                  "cornerRadius": 6,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "gap": 5,
+                  "padding": [
+                    0,
+                    9
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "VQg19",
+                      "name": "Icon",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "arrow-up-right",
+                      "library": "lucide",
+                      "fill": "$text-2"
+                    },
+                    {
+                      "type": "text",
+                      "id": "HGzLS",
+                      "name": "T",
+                      "fill": "$text-2",
+                      "content": "Open externally",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "vtrxk",
+                  "name": "Narrow viewer · active",
+                  "width": 28,
+                  "height": 24,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 6,
+                  "stroke": "$accent",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ZSKA5",
+                      "name": "Icon",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "minimize-2",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "icon",
+                  "id": "UeTbq",
+                  "name": "Close",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "x",
+                  "library": "lucide",
+                  "fill": "$text-2"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "sXAVG",
+              "name": "Caption",
+              "fill": "$text-3",
+              "content": "In the widened header: Square pen + Edit",
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {
