@@ -740,6 +740,53 @@ enum CommentFormat {
     /// Widen each end outward to a word boundary; never narrows, never crosses a marker.
     static func snapToWords(_ text: String, _ range: Range<Int>) -> Range<Int> { snap(u(text), range) }
 
+    // A person's selection (the page and Edit mode) snaps more carefully than a
+    // quote: in scripts written without spaces between words (Chinese, Japanese,
+    // Thai, Lao, Khmer, Myanmar) it is anchored exactly as selected, and an end
+    // never splits a base character from its combining marks.
+
+    fileprivate static func noSpaceScript(_ v: UInt32) -> Bool {
+        (0x0E00...0x0EFF).contains(v) || (0x1000...0x109F).contains(v) || (0x1780...0x17FF).contains(v)
+            || (0x3040...0x30FF).contains(v) || (0x31F0...0x31FF).contains(v) || (0x3400...0x4DBF).contains(v)
+            || (0x4E00...0x9FFF).contains(v) || (0xF900...0xFAFF).contains(v) || (0xFF66...0xFF9F).contains(v)
+            || (0x20000...0x2FFFF).contains(v)
+    }
+
+    fileprivate static func isMarkScalar(_ sc: Unicode.Scalar) -> Bool {
+        switch sc.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark: return true
+        default: return sc.value == 0x200D || (0xFE00...0xFE0F).contains(sc.value)
+        }
+    }
+
+    fileprivate static func isMark(_ t: U, _ i: Int) -> Bool {
+        guard i >= 0, i < t.count, let sc = scalar(t, i) else { return false }
+        return isMarkScalar(sc)
+    }
+
+    fileprivate static func isNoSpace(_ t: U, _ i: Int) -> Bool {
+        guard i >= 0, i < t.count, let sc = scalar(t, i) else { return false }
+        return noSpaceScript(sc.value)
+    }
+
+    fileprivate static func selectionWord(_ t: U, _ i: Int) -> Bool {
+        (isWord(t, i) || isMark(t, i)) && !isNoSpace(t, i)
+    }
+
+    fileprivate static func snapSelection(_ t: U, _ r: Range<Int>) -> Range<Int> {
+        var a = r.lowerBound, b = r.upperBound
+        while a > 0, isMark(t, a) { a -= 1 }
+        while b < t.count, isMark(t, b) { b += 1 }
+        while a > 0, selectionWord(t, a - 1), selectionWord(t, a) { a -= 1 }
+        while b < t.count, selectionWord(t, b), selectionWord(t, b - 1) { b += 1 }
+        while a > 0, isMark(t, a) { a -= 1 }
+        while b < t.count, isMark(t, b) { b += 1 }
+        return a..<b
+    }
+
+    /// A person's selection snapped (see above).
+    static func snapSelection(_ text: String, _ range: Range<Int>) -> Range<Int> { snapSelection(u(text), range) }
+
     // MARK: blocks
 
     /// Where a new thread block goes for an anchor at `offset`: after the top-level block.
@@ -968,8 +1015,8 @@ enum CommentFormat {
         return matches(t, v, normalise(quote), occurrence: occurrence, within: nil)
     }
 
-    fileprivate static func matches(_ t: U, _ v: Visible, _ q: U, occurrence: Int, within: Range<Int>?)
-        -> Result<Range<Int>, Refusal>
+    fileprivate static func matches(_ t: U, _ v: Visible, _ q: U, occurrence: Int, within: Range<Int>?,
+                                    selection: Bool = false) -> Result<Range<Int>, Refusal>
     {
         guard !q.isEmpty else { return .failure(.notFound) }
         var good: [Range<Int>] = []
@@ -989,7 +1036,10 @@ enum CommentFormat {
             }
             i = find(v.chars, q, from: b)
         }
-        if occurrence >= 1, occurrence <= good.count { return .success(snap(t, good[occurrence - 1])) }
+        if occurrence >= 1, occurrence <= good.count {
+            let r = good[occurrence - 1]
+            return .success(selection ? snapSelection(t, r) : snap(t, r))
+        }
         if !good.isEmpty { return .failure(.occurs(good.count)) }
         if inCode { return .failure(.insideIgnored) }
         if crosses { return .failure(.crossesBlocks) }
@@ -1002,7 +1052,7 @@ enum CommentFormat {
         -> Result<Range<Int>, Refusal>
     {
         let t = u(text)
-        return matches(t, visible(t), normalise(quote), occurrence: occurrence, within: range)
+        return matches(t, visible(t), normalise(quote), occurrence: occurrence, within: range, selection: true)
     }
 
     // MARK: IDs and time

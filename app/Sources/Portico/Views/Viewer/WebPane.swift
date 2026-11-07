@@ -56,16 +56,35 @@ enum MarkdownPage {
     /// blocks' source lines stay right.
     static func sentinelMarkers(_ source: String, body: String) -> String {
         let shift = source.utf16.count - body.utf16.count
-        let markers = CommentFormat.liveMarkers(source).filter { $0.range.lowerBound >= shift }
-        guard !markers.isEmpty else { return body }
-        var units = Array(body.utf16)
-        for m in markers.reversed() {
-            let open: UInt16 = m.closing ? 0xE002 : 0xE000
-            let replacement = [open] + Array(m.id.utf16) + [0xE001]
-            units.replaceSubrange((m.range.lowerBound - shift)..<(m.range.upperBound - shift), with: replacement)
+        var starts: [Int: (end: Int, id: String, closing: Bool)] = [:]
+        for m in CommentFormat.liveMarkers(source) where m.range.lowerBound >= shift {
+            starts[m.range.lowerBound - shift] = (m.range.upperBound - shift, m.id, m.closing)
         }
-        return String(decoding: units, as: UTF16.self)
+        // The file's own private-use sentinels are escaped first (U+E003 and a
+        // digit), so its text always survives; the page puts them back.
+        let units = Array(body.utf16)
+        var out: [UInt16] = []
+        out.reserveCapacity(units.count)
+        var i = 0
+        while i < units.count {
+            if let m = starts[i] {
+                out.append(m.closing ? 0xE002 : 0xE000)
+                out += Array(m.id.utf16)
+                out.append(0xE001)
+                i = m.end
+                continue
+            }
+            let c = units[i]
+            if c >= 0xE000, c <= 0xE003 {
+                out += [0xE003, 0x30 + (c - 0xE000)]
+            } else {
+                out.append(c)
+            }
+            i += 1
+        }
+        return String(decoding: out, as: UTF16.self)
     }
+
 
     /// How many source lines come before the body the renderer gets (the
     /// front matter's), so the page's block line numbers are the file's (v0.23).

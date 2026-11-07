@@ -80,7 +80,7 @@ enum CommentWriter {
             case .addRange(let raw, let body):
                 let length = text.utf16.count
                 guard raw.lowerBound >= 0, raw.upperBound <= length, !raw.isEmpty else { throw CommentFormat.Refusal.notFound }
-                let range = CommentFormat.snapToWords(text, raw)
+                let range = CommentFormat.snapSelection(text, raw)
                 if CommentFormat.ignoredRegions(text).contains(where: { $0.overlaps(range) }) {
                     throw CommentFormat.Refusal.insideIgnored
                 }

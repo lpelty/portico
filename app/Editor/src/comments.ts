@@ -8,7 +8,7 @@
 //
 // Offsets are JavaScript string offsets: UTF-16, as Swift's.
 
-import { EditorState, type Extension, RangeSet, StateEffect, StateField, Transaction, type TransactionSpec } from "@codemirror/state";
+import { ChangeSet, EditorState, type Extension, RangeSet, StateEffect, StateField, Transaction, type TransactionSpec } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
@@ -457,60 +457,54 @@ export const draftField = StateField.define<{ from: number; to: number } | null>
     EditorView.decorations.from(f, (v) => (v && v.to > v.from ? Decoration.set([draftMark.range(v.from, v.to)]) : Decoration.none)),
 });
 
-// Thread blocks are the comments' own: a person's edit that removes or
-// changes part of one is refused (comment actions, "input.comment", may). An
-// edit that covers whole blocks keeps them, each still on its own lines.
+// Thread blocks are the comments' own: a person's edit never removes or
+// changes part of one (comment actions, "input.comment", may), and never
+// leaves `<!--co:` after text on its line. The person's input is never
+// dropped: a deletion skips the blocks inside it, text typed inside a block
+// lands after it, and a line break is put before a block that would follow
+// text.
 export const protectBlocks = EditorState.transactionFilter.of((tr: Transaction) => {
   if (!tr.docChanged || tr.isUserEvent("input.comment") || !tr.annotation(Transaction.userEvent)) return tr;
-  const text = tr.startState.doc.toString();
+  const start = tr.startState;
+  const text = start.doc.toString();
   const blocks = scanComments(text).blocks;
   if (!blocks.length) return tr;
-  let refused = false;
-  let touches = false;
-  tr.changes.iterChanges((fromA, toA, _fb, _tb, inserted) => {
-    const ins = inserted.toString();
-    for (const b of blocks) {
-      // Never leave `<!--co:` after text on its line.
-      if (toA === b.from && (toA > fromA || ins)) {
-        const before = ins ? ins[ins.length - 1] : fromA > 0 ? text[fromA - 1] : "\n";
-        if (before !== "\n") refused = true;
-      }
-      if (toA > fromA) {
-        if (fromA < b.to && toA > b.from) {
-          touches = true;
-          if (fromA > b.from || toA < b.to) refused = true;
-        }
-      } else if (fromA > b.from && fromA < b.to) {
-        refused = true;
-      }
-    }
-  });
-  if (refused) return [];
-  if (!touches) return tr;
-  // Rebuild the change so every covered block stays, starting a line.
   const specs: Array<{ from: number; to: number; insert: string }> = [];
+  let changed = false;
   tr.changes.iterChanges((fromA, toA, _fb, _tb, inserted) => {
-    const ins = inserted.toString();
-    const covered = blocks.filter((b) => fromA <= b.from && b.to <= toA && toA > fromA);
-    if (!covered.length) {
-      specs.push({ from: fromA, to: toA, insert: ins });
-      return;
+    const ins = inserted.sliceString(0, inserted.length, start.lineBreak);
+    let at = fromA;
+    const inside = blocks.find((b) => b.from < fromA && fromA < b.to);
+    if (inside) { at = inside.to; changed = true; }
+    // The deletion, less every block it touches.
+    const pieces: Array<[number, number]> = [];
+    let cur = at;
+    const end = Math.max(toA, at);
+    for (const b of blocks) {
+      if (b.to <= cur || b.from >= end) continue;
+      changed = true;
+      if (b.from > cur) pieces.push([cur, b.from]);
+      cur = Math.max(cur, b.to);
     }
-    let cur = fromA;
-    let first = true;
-    for (const b of covered) {
-      let keep = first ? ins : "";
-      const lastChar = keep ? keep[keep.length - 1] : cur > 0 ? text[cur - 1] : "\n";
-      if (b.from > cur || keep) {
-        if (lastChar !== "\n" && (cur > 0 || keep)) keep += "\n";
-        specs.push({ from: cur, to: b.from, insert: keep });
-      }
-      first = false;
-      cur = b.to;
-    }
-    if (toA > cur) specs.push({ from: cur, to: toA, insert: "" });
+    if (end > cur) pieces.push([cur, end]);
+    if (!pieces.length) pieces.push([at, at]);
+    pieces.forEach(([f, t], i) => specs.push({ from: f, to: t, insert: i === 0 ? ins : "" }));
   });
-  return [{ changes: specs, selection: tr.selection, userEvent: tr.annotation(Transaction.userEvent), scrollIntoView: tr.scrollIntoView }];
+  const first = changed ? ChangeSet.of(specs, text.length, start.lineBreak) : tr.changes;
+  // Every block still starts a line.
+  const after = first.apply(start.doc).toString();
+  const fixes: Array<{ from: number; insert: string }> = [];
+  for (const b of blocks) {
+    const at = first.mapPos(b.from, 1);
+    if (at > 0 && after.startsWith("<!--co:", at) && after[at - 1] !== "\n") fixes.push({ from: at, insert: start.lineBreak });
+  }
+  if (!changed && !fixes.length) return tr;
+  const userEvent = tr.annotation(Transaction.userEvent);
+  const out: TransactionSpec[] = [
+    { changes: first, selection: start.selection.map(first, 1), userEvent, scrollIntoView: tr.scrollIntoView },
+  ];
+  if (fixes.length) out.push({ changes: fixes, sequential: true });
+  return out;
 });
 
 // Hidden markup the cursor steps over: markers and thread blocks.

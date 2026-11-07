@@ -375,4 +375,41 @@ final class CommentsPageScriptTests: XCTestCase {
             """, in: view) as? [Bool]
         XCTAssertEqual(open, [true, false, true])
     }
+
+    // MARK: - re-review items 2, 3, 4
+
+    func testLinesAreNotFoundInsideADroppedDefinition() async throws {
+        let view = try await page("See [x].\n\n[x]: http://a.com/flow\n\nflow\n")
+        let lines = try await js("return [...document.querySelectorAll('#body > p')].map(p => p.getAttribute('data-lines'));", in: view) as? [String?]
+        XCTAssertEqual(lines?.last ?? nil, "4-4")
+    }
+
+    func testTheFilesOwnPrivateUseTextSurvives() async throws {
+        let own = "Keep \u{E000}abcde\u{E001} and \u{E002}x\u{E003}y as written.\n"
+        let view = try await page(own)
+        let out = try await js("""
+            return { text: document.querySelector('#body p').textContent,
+                     comments: document.createTreeWalker(document.getElementById('body'), NodeFilter.SHOW_COMMENT).nextNode() !== null };
+            """, in: view) as? [String: Any]
+        XCTAssertEqual(out?["text"] as? String, "Keep \u{E000}abcde\u{E001} and \u{E002}x\u{E003}y as written.")
+        XCTAssertEqual(out?["comments"] as? Bool, false)
+    }
+
+    func testSnapLeavesCJKAndThaiAsSelected() async throws {
+        let view = try await page("前文。\n\n日本語の文章です\n\nภาษาไทยไม่มีช่องว่าง\n")
+        try await select("日本語の文章です", 4, 6, in: view)
+        var info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(info?["text"] as? String, "文章")
+        try await select("ภาษาไทย", 2, 5, in: view)
+        info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(info?["text"] as? String, "ษาไ")
+    }
+
+    func testSnapNeverSplitsACombiningMark() async throws {
+        let view = try await page("Intro.\n\nan e\u{301}tude here\n")
+        // Select from the combining accent (after the base e) to the end of "tude".
+        try await select("e\u{301}tude", 1, 6, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(info?["text"] as? String, "e\u{301}tude")
+    }
 }

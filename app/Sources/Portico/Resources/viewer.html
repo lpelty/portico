@@ -43,9 +43,15 @@
   var cursor = 0;
   var line = bodyLine;
   var count = function (s) { return (s.match(/\n/g) || []).length; };
+  var definitions = [];
+  norm.replace(/^ {0,3}\[[^\]\n]+\]:[^\n]*(?:\n|$)/gm, function (m, offset) { definitions.push([offset, offset + m.length]); return m; });
+  var inDefinition = function (i) { return definitions.some(function (d) { return d[0] <= i && i < d[1]; }); };
   tokens.forEach(function (t) {
     if (t.type === "space") return;
+    // A block's text starts a line, and never inside a link definition (the
+    // lexer drops those, so their text must not be taken for the next block's).
     var at = t.raw ? norm.indexOf(t.raw, cursor) : -1;
+    while (at >= 0 && ((at > 0 && norm[at - 1] !== "\n") || inDefinition(at))) at = norm.indexOf(t.raw, at + 1);
     var start = -1, end = -1;
     if (at >= 0) {
       line += count(norm.slice(cursor, at));

@@ -61,4 +61,18 @@ final class CommentAnchoringTests: XCTestCase {
         XCTAssertEqual(
             CommentAnchoring.locate(.init(text: "Alpha", lines: 2...2, occurrence: 0), in: source), .failure(.notFound))
     }
+
+    func testCJKSelectionIsAnchoredExactly() throws {
+        let source = "日本語の文章です\n"
+        let r = try CommentAnchoring.locate(.init(text: "文章", lines: 0...0, occurrence: 0), in: source).get()
+        XCTAssertEqual(slice(source, r), "文章")
+    }
+
+    func testCombiningMarksStayWithTheirBase() throws {
+        let source = "an e\u{301}tude here\n"
+        // "\u{301}tude": the selection began after the base letter.
+        let r = try CommentAnchoring.locate(.init(text: "\u{301}tude", lines: 0...0, occurrence: 0), in: source).get()
+        XCTAssertEqual(slice(source, r), "e\u{301}tude")
+        XCTAssertEqual(CommentFormat.snapSelection(source, 4..<5), 3..<9)
+    }
 }

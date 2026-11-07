@@ -136,6 +136,14 @@
       if (last < data.length) frag.appendChild(document.createTextNode(data.slice(last)));
       node.parentNode.replaceChild(frag, node);
     });
+    // The file's own private-use characters were escaped (U+E003 and a digit): put them back.
+    var w2 = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var t2;
+    while ((t2 = w2.nextNode())) {
+      if (t2.data.indexOf("\uE003") >= 0) {
+        t2.data = t2.data.replace(/\uE003([0-3])/g, function (_, d) { return String.fromCharCode(0xE000 + Number(d)); });
+      }
+    }
   }
 
   function highlight(root) {
@@ -165,17 +173,48 @@
 
   // --- the selection ---------------------------------------------------------
 
+  // Scripts written without spaces between words: a selection there is
+  // anchored exactly as made (the same ranges as CommentFormat.swift).
+  function noSpaceAt(text, i) {
+    var c = text.codePointAt(i);
+    if (c === undefined) return false;
+    if (c >= 0xDC00 && c <= 0xDFFF && i > 0) c = text.codePointAt(i - 1);
+    return (c >= 0x0E00 && c <= 0x0EFF) || (c >= 0x1000 && c <= 0x109F) || (c >= 0x1780 && c <= 0x17FF) ||
+      (c >= 0x3040 && c <= 0x30FF) || (c >= 0x31F0 && c <= 0x31FF) || (c >= 0x3400 && c <= 0x4DBF) ||
+      (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF66 && c <= 0xFF9F) ||
+      (c >= 0x20000 && c <= 0x2FFFF);
+  }
+
+  function markAt(text, i) {
+    var ch = text[i];
+    return !!ch && (/\p{M}/u.test(ch) || ch === "\u200D" || (ch >= "\uFE00" && ch <= "\uFE0F"));
+  }
+
+  function selWordAt(text, i) {
+    return (wordAt(text, i) || markAt(text, i)) && !noSpaceAt(text, i);
+  }
+
+  // A selection snaps to whole words, except in scripts without word spaces,
+  // and an end never splits a base character from its combining marks.
+  function snapEdges(t, s, e) {
+    while (s > 0 && markAt(t, s)) s--;
+    while (e < t.length && markAt(t, e)) e++;
+    while (s > 0 && selWordAt(t, s - 1) && selWordAt(t, s)) s--;
+    while (e < t.length && selWordAt(t, e) && selWordAt(t, e - 1)) e++;
+    while (s > 0 && markAt(t, s)) s--;
+    while (e < t.length && markAt(t, e)) e++;
+    return [s, e];
+  }
+
   function snapRange(range) {
     var r = range.cloneRange();
     if (r.startContainer.nodeType === Node.TEXT_NODE) {
-      var t = r.startContainer.data, s = r.startOffset;
-      while (s > 0 && wordAt(t, s - 1) && wordAt(t, s)) s--;
-      r.setStart(r.startContainer, s);
+      var t = r.startContainer.data;
+      r.setStart(r.startContainer, snapEdges(t, r.startOffset, r.startOffset)[0]);
     }
     if (r.endContainer.nodeType === Node.TEXT_NODE) {
-      var u = r.endContainer.data, e = r.endOffset;
-      while (e < u.length && wordAt(u, e) && wordAt(u, e - 1)) e++;
-      r.setEnd(r.endContainer, e);
+      var u = r.endContainer.data;
+      r.setEnd(r.endContainer, snapEdges(u, r.endOffset, r.endOffset)[1]);
     }
     return r;
   }

@@ -338,4 +338,17 @@ final class ViewerCommentsTests: XCTestCase {
         XCTAssertTrue(ok)
         XCTAssertTrue(buffer.text.contains("<!--c:\(made.id!)-->Second<!--/c:\(made.id!)-->"), buffer.text)
     }
+
+    func testEditModeCJKSelectionIsAnchoredExactly() async throws {
+        let url = try file("para.md")
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        let text = "日本語の文章です\n"
+        let buffer = FakeBuffer(text)
+        c.editBuffer = buffer
+        let made = CommentWriter.Made()
+        let ok = await c.applyInBuffer(.addRange(4..<6, body: "Exact."), made: made)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(buffer.text.hasPrefix("日本語の<!--c:\(made.id!)-->文章<!--/c:\(made.id!)-->です"), buffer.text)
+    }
 }

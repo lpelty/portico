@@ -276,3 +276,53 @@ test("a draft's range follows edits made before it", () => {
   assert.deepEqual(editor.draftRange(), { from: 10, to: 14 });
   assert.equal(editor.commentText().slice(10, 14), "beta");
 });
+
+// --- re-review item 1: a person's input is never dropped next to a thread block ------
+
+const DOC2 = 'Intro.\n\nSome <!--c:aaaaa-->text<!--/c:aaaaa--> here.\n<!--co:aaaaa by:Sam at:T status:open quote:"text"\nSam (T): important\n-->\nNext para.\n';
+const BLOCK2 = '<!--co:aaaaa by:Sam at:T status:open quote:"text"\nSam (T): important\n-->\n';
+
+function typed(sel: any, insert: string, userEvent: string) {
+  const { editor } = mount();
+  editor.load({ text: DOC2, mode: "markdown" });
+  const view = editor.view;
+  view.dispatch({ selection: sel });
+  view.dispatch({ ...view.state.replaceSelection(insert), userEvent });
+  return { editor, view };
+}
+
+function blockIntact(out: string) {
+  assert.ok(out.includes("\n" + BLOCK2) || out.startsWith(BLOCK2), JSON.stringify(out));
+  assert.ok(!/[^\n]<!--co:/.test(out), JSON.stringify(out));
+}
+
+for (const [label, sel, insert, ev] of [
+  ["triple-click a commented paragraph (with its line break) and type", EditorSelection.single(DOC2.indexOf("Some"), DOC2.indexOf("<!--co")), "N", "input.type"],
+  ["type at the thread block's start", EditorSelection.cursor(DOC2.indexOf("<!--co")), "x", "input.type"],
+  ["IME composition at the thread block's start", EditorSelection.cursor(DOC2.indexOf("<!--co")), "あ", "input.type.compose"],
+  ["paste over the paragraph and its line break", EditorSelection.single(DOC2.indexOf("Some"), DOC2.indexOf("<!--co")), "Pasted line", "input.paste"],
+  ["select everything and type", EditorSelection.single(0, DOC2.length), "Z", "input.type"],
+] as const) {
+  test(`${label}: the text lands, the block stays on its own lines, undo and redo work`, () => {
+    const { editor, view } = typed(sel, insert, ev);
+    const out = editor.visibleText();
+    assert.ok(out.includes(insert), `input dropped: ${JSON.stringify(out)}`);
+    blockIntact(out);
+    cmds.undo(view);
+    assert.equal(editor.visibleText(), DOC2, "undo restores");
+    cmds.redo(view);
+    assert.equal(editor.visibleText(), out, "redo repeats");
+  });
+}
+
+test("CRLF: typing at a thread block's start keeps CRLF line breaks", () => {
+  const { editor } = mount();
+  const crlf = DOC2.replace(/\n/g, "\r\n");
+  editor.load({ text: crlf, mode: "markdown" });
+  const view = editor.view;
+  view.dispatch({ selection: EditorSelection.single(view.state.doc.toString().indexOf("Some"), view.state.doc.toString().indexOf("<!--co")) });
+  view.dispatch({ ...view.state.replaceSelection("N"), userEvent: "input.type" });
+  const out = editor.visibleText();
+  assert.ok(out.includes("N\r\n<!--co:aaaaa"), JSON.stringify(out));
+  assert.ok(!/[^\r]\n/.test(out), JSON.stringify(out));
+});
