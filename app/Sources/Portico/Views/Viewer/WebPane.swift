@@ -36,12 +36,25 @@ enum MarkdownPage {
         // Present but unreadable: the words in its place (v0.20 §2.3), even with nothing to show.
         let drawn = shownProperties.flatMap { $0.unreadable || !$0.properties.isEmpty ? $0.html(open: propertiesOpen) : nil }
         let properties = (drawn ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        let comments = try resource("viewer-comments.js")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
+            .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
+            .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
+            .replacingOccurrences(of: "{{COMMENTS_JS}}", with: comments)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(split.body))
+    }
+
+    /// How many source lines come before the body the renderer gets (the
+    /// front matter's), so the page's block line numbers are the file's (v0.23).
+    static func bodyLine(_ source: String) -> Int {
+        let body = FrontMatter.split(source).body
+        let prefix = source.utf16.count - body.utf16.count
+        guard prefix > 0 else { return 0 }
+        return source.utf16.prefix(prefix).reduce(0) { $0 + ($1 == 10 ? 1 : 0) }
     }
 
     /// The rule that scales the page's text, after the stylesheet so it
