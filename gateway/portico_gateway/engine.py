@@ -64,6 +64,7 @@ from .artifacts import paths_in
 from .images import split_attachments, split_edited_note, user_message
 from .agents import AgentTracker
 from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
+from .comment_tools import COMMENT_TOOL_NAMES, build_comment_tools
 from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
     AgentCommand,
@@ -154,8 +155,11 @@ _READ_ONLY_ENGINE_TOOLS: frozenset[str] = frozenset(
 # ``show_in_viewer`` only shows a file; the viewer tools include ones that act
 # (click, type) but the person watches each action and has Stop; (v0.16)
 # ``open_thread`` only proposes, and the person decides. Not read-only, yet
-# auto mode has nothing to decide for them either.
-ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset({SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES})
+# auto mode has nothing to decide for them either. (v0.23) The comment tools
+# only touch comment markup in .md files inside the session's folders.
+ALLOWED_OUTRIGHT_TOOLS: frozenset[str] = frozenset(
+    {SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES}
+)
 
 # What the permission row treats as "nothing to decide" (see server.py).
 READ_ONLY_TOOLS: frozenset[str] = _READ_ONLY_ENGINE_TOOLS | ALLOWED_OUTRIGHT_TOOLS
@@ -833,7 +837,7 @@ def build_thread_hook(callbacks: Any):
 # (v0.16) for ``open_thread``, which only proposes.
 warnings.filterwarnings(
     "ignore",
-    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES))})(?:, )?)+\.",
+    message=rf"can_use_tool will not be invoked for: (?:(?:{'|'.join(re.escape(n) for n in (SHOW_TOOL_NAME, OPEN_THREAD_TOOL_NAME, *VIEWER_TOOL_NAMES, *COMMENT_TOOL_NAMES))})(?:, )?)+\.",
     category=CanUseToolShadowedWarning,
 )
 
@@ -901,6 +905,9 @@ def build_options(
             # v0.12: the agent sees and uses the viewer; the tools answer "not available" when no app can.
             tools += build_viewer_tools(bridge, callbacks.viewer_chat)  # type: ignore[attr-defined]
             allowed += VIEWER_TOOL_NAMES
+            # v0.23: the comment tools sit beside the viewer tools, available whenever they are.
+            tools += build_comment_tools(callbacks)
+            allowed += COMMENT_TOOL_NAMES
             pre_tool_use.append(
                 HookMatcher(matcher="mcp__portico__viewer_mark", hooks=[build_mark_hook(bridge, callbacks.viewer_chat)])  # type: ignore[attr-defined]
             )

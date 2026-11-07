@@ -218,3 +218,10 @@ details.fm:not([open]) .fm-summary {
   min-height: 24px;
 }
 ::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: var(--fg-muted); }
+
+/* v0.23: comments. Open threads' anchored text is highlighted whether the
+   margin is shown or not; resolved-only anchors are not. Solid colours from
+   the app's variables (CommentsTheme). */
+mark.pc-anchor { background: transparent; color: inherit; }
+mark.pc-anchor.pc-open { background: var(--pc-wait-soft); color: inherit; border-radius: 3px; }
+mark.pc-anchor.pc-hot, mark.pc-draft { background: var(--pc-wait); color: var(--pc-on-wait); border-radius: 3px; }

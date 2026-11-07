@@ -223,6 +223,15 @@ final class ProtocolExamplesTests: XCTestCase {
         XCTAssertEqual(ViewerAct.showCapability, "viewer.show.v1")
     }
 
+    func testHelloCarriesThePersonAndTheAppSaysComments() throws {
+        let json = #"{"type":"hello","protocol":1,"gateway_version":"0.23.0","epoch":"e","brand":{"name":"Front","agent_name":"Agent"},"actions":[],"roots":[],"commands":[],"capabilities":[],"ts":"2026-11-07T12:00:00Z","person":{"name":"Sam Rivera"}}"#
+        guard case .hello(let hello) = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8)) else {
+            return XCTFail("hello")
+        }
+        XCTAssertEqual(hello.person?.name, "Sam Rivera")
+        XCTAssertTrue(HelloClient.appCapabilities.contains("comments.v1"))
+    }
+
     func testViewerDefaultsPropertiesIsOptional() throws {
         func defaults(_ viewer: String) throws -> ViewerDefaults? {
             let json = #"{"type":"hello","protocol":1,"gateway_version":"0.17.0","epoch":"e","brand":{"name":"Portico","agent_name":"Agent"},"actions":[],"roots":[],"commands":[],"capabilities":[],"ts":"2026-11-02T12:00:00Z","viewer_defaults":"# + viewer + "}"

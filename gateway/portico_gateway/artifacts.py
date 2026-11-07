@@ -103,6 +103,9 @@ FILE_TOOLS: dict[str, str] = {
     "Edit": "file_path",
     "MultiEdit": "file_path",
     "NotebookEdit": "notebook_path",
+    # v0.23: the agent's comment writes, so the turn reports the file and the viewer reloads.
+    "mcp__portico__comment_reply": "path",
+    "mcp__portico__comment_add": "path",
 }
 
 _VIEWABLE_EXTENSIONS: frozenset[str] = frozenset(

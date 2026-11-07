@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -393,6 +393,17 @@ class LinksConfig(BaseModel):
     sites: dict[str, str] = {}
 
 
+class PersonConfig(BaseModel):
+    """v0.23: ``[person] name``, the person's real name for comments, sent in ``hello``.
+
+    Optional: without it the app uses the computer's full user name. A
+    deployment's plug-in may fill ``hello.person`` itself (``on_hello``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -465,6 +476,8 @@ class Config(BaseModel):
     mcp: McpConfig = McpConfig()
     # v0.18: MCP Apps (``[apps] enabled``).
     apps: AppsConfig = AppsConfig()
+    # v0.23: the person's name for comments (``[person] name``).
+    person: PersonConfig = PersonConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -646,6 +659,7 @@ def hello_for(
         link_sites=dict(config.links.sites),
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
+        person=Person(name=config.person.name) if config.person.name else None,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

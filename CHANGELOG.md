@@ -1,5 +1,68 @@
 # Changelog
 
+## v0.23.0 (2026-11-07)
+
+Comments in Markdown files, shown and written in the viewer and by the
+agent, and the Edit icon fix.
+
+### What a person gets (app)
+
+- **Comments in Markdown files.** Comments live in the file itself, as
+  HTML comments, in comment format v1 (`protocol/COMMENTS.md`): the same
+  format as the Obsidian Document Comments plugin today, so a comment made
+  in Obsidian shows here and the reverse. Any Markdown viewer shows nothing;
+  an agent reads them as plain text.
+- **Highlights are always on.** Text anchored by an open thread has the
+  amber highlight whether comments are shown or not; resolved-only text
+  isn't highlighted.
+- **The Show comments toggle**, a speech bubble just left of Edit, for a
+  Markdown file. Off, it shows the count of open threads in amber; on, the
+  text column moves left and the comments margin fills the right, each card
+  beside the first line of its text. Turning comments on in the narrow
+  viewer also widens it. The choice is remembered per file.
+- **Cards** show each comment's author (a real name, never "me"), a
+  relative time and the text, with replies under it. Hovering a card
+  brightens its text; clicking highlighted text opens its card. The active
+  card has a Reply field (Return posts, Shift+Return for a new line, Esc
+  cancels) and Resolve; a resolved thread folds to one dimmed line that
+  opens to show it and Reopen. A thread whose text is gone says "Text no
+  longer found". A read-only file shows its comments but can't take new
+  ones.
+- **Commenting from the context menu.** Right-click a selection, in
+  reading or Edit mode, for the viewer's own menu: Comment, Cut, Copy,
+  Paste and Select All. Comment snaps the selection to whole words, opens a
+  draft card beside it, and posting writes the comment into the file. When
+  the selection can't be anchored (across paragraphs, in code or a table,
+  across formatting), Comment is disabled and says why.
+- **Edit mode** hides the comment markup the way reading mode does,
+  keeps the anchors around text you edit inside them, and removes them when
+  you delete all of their text. The margin works there too: a comment action
+  is a change to the editor's text, saved the usual way.
+- **The Edit toggle uses a square and pencil** (`square.and.pencil`) in
+  place of the bare pencil, which read as a slash at the header's size. Its
+  "on" fill is now a solid colour, like the rest of the window.
+
+### The gateway
+
+- Three tools beside the viewer tools, available whenever they are and
+  allowed with no permission card: `comments_list` (each thread with its
+  quote, anchored text and replies), `comment_reply` and `comment_add`
+  (anchors a new thread on a quote's match). They write in the agent's
+  name with the time now, only inside the chat's folders and only in `.md`
+  files, atomically, keeping line endings. Agents can't resolve threads;
+  resolving is the person's. The app reloads the file as it does for any
+  agent write.
+- New optional config `[person] name`, sent in `hello` as `person: {name}`;
+  a deployment's plug-in may fill it (`on_hello`). Without it the app uses
+  the computer's full user name.
+- The app's `hello` lists `comments.v1`. No new message kinds.
+
+### Owed
+
+- On screen: the toggle on and off in the widened and the narrow viewer;
+  commenting from reading mode and from Edit mode; the Obsidian round trip,
+  both ways; an agent replying in a thread.
+
 ## v0.22.1 (2026-11-06)
 
 A crash fix, field notes 24–26 from using v0.22.0, and three small visual

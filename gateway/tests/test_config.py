@@ -740,3 +740,38 @@ def test_a_non_string_link_site_is_a_config_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as e:
         load_config(path)
     assert "sites" in str(e.value)
+
+
+# --- v0.23: the person's name ----------------------------------------------------
+
+
+def test_person_name_reaches_hello(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[person]\nname = "Sam Rivera"\n')
+    hello = hello_for(load_config(path), epoch="e", gateway_version="0.23.0")
+    assert hello.person is not None and hello.person.name == "Sam Rivera"
+    assert parse_server(dump(hello)) == hello
+
+
+def test_no_person_section_sends_no_person() -> None:
+    hello = hello_for(Config(), epoch="e", gateway_version="0.23.0")
+    assert hello.person is None
+    assert '"person"' not in dump(hello)
+
+
+def test_on_hello_plugin_may_fill_person(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from portico_gateway.plugins import load_plugins
+
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    (tmp_path / "pp_person.py").write_text(
+        "from portico_gateway.messages import Person\n"
+        "PORTICO_PLUGIN_API = 1\n"
+        "def on_hello(hello):\n"
+        "    return hello.model_copy(update={'person': Person(name='Sam')})\n"
+    )
+    plugins = load_plugins(["pp_person"], [str(tmp_path)])
+    hello = hello_for(Config(), epoch="e", gateway_version="0.23.0", plugins=plugins)
+    assert hello.person is not None and hello.person.name == "Sam"
+    sys.modules.pop("pp_person", None)

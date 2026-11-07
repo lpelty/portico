@@ -7,7 +7,9 @@
   `portico` global (load, setTheme, setReadOnly, replaceAll, visibleText,
   scrollTopLine, scrollToLine) and hears it on the `portico` message
   handler (ready, dirty, changed, saveNow). Theme values set with portico.setTheme
-  override the tokens below; the text scale is --portico-scale.
+  override the tokens below; the text scale is --portico-scale. v0.23: the
+  COMMENTS_CSS and COMMENTS_JS placeholders carry the comments margin, the same
+  script and styles as the read view's.
 -->
 <html>
 <head>
@@ -19,6 +21,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:">
 <style>
 {{CSS}}
+{{COMMENTS_CSS}}
 </style>
 <style>
 :root {
@@ -69,6 +72,8 @@ html, body { height: 100%; margin: 0; overflow: hidden; }
   padding: 28px 32px 48px;
 }
 .cm-editor.portico-markdown .cm-line { padding: 0; }
+/* v0.23: the comments margin scrolls with the text, inside the scroller. */
+.cm-editor.portico-markdown .cm-scroller { position: relative; }
 
 .cm-md-h { font-weight: 600; line-height: 1.25; }
 .cm-md-h1 { font-size: 1.9em; }
@@ -140,6 +145,9 @@ html, body { height: 100%; margin: 0; overflow: hidden; }
 <div id="editor"></div>
 <script>
 {{EDITOR}}
+</script>
+<script>
+{{COMMENTS_JS}}
 </script>
 </body>
 </html>

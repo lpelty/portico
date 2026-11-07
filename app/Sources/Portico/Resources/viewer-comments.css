@@ -1,0 +1,23 @@
+/* v0.23: the comments margin (viewer-comments.js), in the rendered page and
+   the editor. Solid colours only, from CommentsTheme's variables. */
+#pc-margin { position: absolute; top: 0; z-index: 5; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }
+#pc-margin .pc-card, #pc-margin .pc-empty { position: absolute; left: 0; right: 0; box-sizing: border-box; }
+.pc-card { background: var(--pc-card); border: 1px solid var(--pc-border); border-radius: 8px; padding: 10px 12px; color: var(--pc-text); cursor: default; }
+.pc-card.pc-active { border-color: var(--pc-accent); }
+.pc-empty { color: var(--pc-text3); }
+.pc-reply + .pc-reply { margin-top: 10px; }
+.pc-head { display: flex; align-items: center; gap: 6px; }
+.pc-avatar { width: 20px; height: 20px; border-radius: 10px; background: var(--pc-accent); color: #FFFFFF; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.pc-avatar.pc-agent { background: var(--pc-agent); }
+.pc-name { font-weight: 600; }
+.pc-time { color: var(--pc-text3); font-size: 12px; }
+.pc-text { margin: 4px 0 0 26px; white-space: pre-wrap; word-wrap: break-word; }
+.pc-orphan-note { color: var(--pc-text3); font-size: 12px; margin-bottom: 6px; }
+.pc-field { display: block; width: 100%; box-sizing: border-box; margin-top: 10px; resize: none; font: inherit; color: var(--pc-text); background: var(--pc-panel); border: 1px solid var(--pc-border); border-radius: 6px; padding: 5px 8px; }
+.pc-field:focus { outline: none; border-color: var(--pc-accent); }
+.pc-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.pc-actions button { font: inherit; font-size: 12px; color: var(--pc-text); background: var(--pc-card); border: 1px solid var(--pc-border); border-radius: 5px; padding: 2px 9px; }
+.pc-actions button:disabled { color: var(--pc-text3); }
+.pc-resolved { background: var(--pc-surface); color: var(--pc-text3); padding: 6px 12px; }
+.pc-resolved-line { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-error { color: #C93C37; font-size: 12px; margin-top: 6px; }

@@ -36,12 +36,63 @@ enum MarkdownPage {
         // Present but unreadable: the words in its place (v0.20 §2.3), even with nothing to show.
         let drawn = shownProperties.flatMap { $0.unreadable || !$0.properties.isEmpty ? $0.html(open: propertiesOpen) : nil }
         let properties = (drawn ?? "").replacingOccurrences(of: "{", with: "&#123;")
+        let comments = try resource("viewer-comments.js")
         return template
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
+            .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
+            .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
+            .replacingOccurrences(of: "{{COMMENTS_JS}}", with: comments)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
-            .replacingOccurrences(of: "{{SOURCE}}", with: jsString(split.body))
+            .replacingOccurrences(of: "{{SOURCE}}", with: jsString(sentinelMarkers(source, body: split.body)))
+    }
+
+    /// v0.23: the body with each comment marker (outside code and thread
+    /// blocks) as private-use sentinels — open `U+E000 id U+E001`, close
+    /// `U+E002 id U+E001` — so the renderer sees plain text (a marker at a
+    /// line's start would otherwise open an HTML block). The page turns them
+    /// back into markers after rendering. No line breaks change, so the
+    /// blocks' source lines stay right.
+    static func sentinelMarkers(_ source: String, body: String) -> String {
+        let shift = source.utf16.count - body.utf16.count
+        var starts: [Int: (end: Int, id: String, closing: Bool)] = [:]
+        for m in CommentFormat.liveMarkers(source) where m.range.lowerBound >= shift {
+            starts[m.range.lowerBound - shift] = (m.range.upperBound - shift, m.id, m.closing)
+        }
+        // The file's own private-use sentinels are escaped first (U+E003 and a
+        // digit), so its text always survives; the page puts them back.
+        let units = Array(body.utf16)
+        var out: [UInt16] = []
+        out.reserveCapacity(units.count)
+        var i = 0
+        while i < units.count {
+            if let m = starts[i] {
+                out.append(m.closing ? 0xE002 : 0xE000)
+                out += Array(m.id.utf16)
+                out.append(0xE001)
+                i = m.end
+                continue
+            }
+            let c = units[i]
+            if c >= 0xE000, c <= 0xE003 {
+                out += [0xE003, 0x30 + (c - 0xE000)]
+            } else {
+                out.append(c)
+            }
+            i += 1
+        }
+        return String(decoding: out, as: UTF16.self)
+    }
+
+
+    /// How many source lines come before the body the renderer gets (the
+    /// front matter's), so the page's block line numbers are the file's (v0.23).
+    static func bodyLine(_ source: String) -> Int {
+        let body = FrontMatter.split(source).body
+        let prefix = source.utf16.count - body.utf16.count
+        guard prefix > 0 else { return 0 }
+        return source.utf16.prefix(prefix).reduce(0) { $0 + ($1 == 10 ? 1 : 0) }
     }
 
     /// The rule that scales the page's text, after the stylesheet so it
@@ -390,6 +441,7 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.propertiesOpen = context.environment.propertiesOpen
         context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         context.coordinator.onSpaceAction = context.environment.spaceActionLink
+        context.coordinator.comments = context.environment.viewerComments
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         context.coordinator.scroll(to: context.environment.webPaneFragment, in: view)
@@ -397,6 +449,7 @@ struct WebPane: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.comments = context.environment.viewerComments
         context.coordinator.propertiesOpen = context.environment.propertiesOpen
         context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         context.coordinator.onSpaceAction = context.environment.spaceActionLink
@@ -456,6 +509,8 @@ struct WebPane: NSViewRepresentable {
         var onPropertiesToggle: ((Bool) -> Void)?
         /// v0.22 (S1): told of a `space-action:` link activated in the page.
         var onSpaceAction: ((URL) -> Void)?
+        /// v0.23: the file viewer's comments; the page's `comments` messages go to it.
+        weak var comments: ViewerComments?
         /// v0.22 (S2): the last fragment request carried out, and one waiting
         /// for the page to finish loading.
         private var doneFragmentKey: String?
@@ -479,6 +534,7 @@ struct WebPane: NSViewRepresentable {
                 configuration.userContentController.addUserScript(script)
             }
             configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
+            configuration.userContentController.add(CommentsMessages(self), name: CommentsMessages.name)
             return configuration
         }
 
@@ -892,6 +948,27 @@ private final class PropertiesToggle: NSObject, WKScriptMessageHandler {
         MainActor.assumeIsolated {
             coordinator?.propertiesToggled(
                 message.body, isMainFrame: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url)
+        }
+    }
+}
+
+/// The page's `comments` handler (v0.23): the comments script's messages,
+/// from the main frame of the rendered Markdown page only. Holds its pane weakly.
+private final class CommentsMessages: NSObject, WKScriptMessageHandler {
+    static let name = "comments"
+    weak var coordinator: WebPane.Coordinator?
+
+    init(_ coordinator: WebPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.scheme == RenderedPageHandler.scheme,
+                let comments = coordinator?.comments, let view = message.webView
+            else { return }
+            comments.attach(view)
+            comments.received(message.body)
         }
     }
 }

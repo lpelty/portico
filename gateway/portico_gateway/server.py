@@ -716,6 +716,17 @@ class ChatCallbacks:
         return self.chat.number
 
     @property
+    def comment_folders(self) -> list[Path]:
+        """v0.23: where the comment tools may read and write: the chat's folder first, then the roots and spaces."""
+        return self.server._shown_folders(self.chat)
+
+    @property
+    def agent_name(self) -> str:
+        """v0.23: the comment tools' author, the agent name in the hello the app receives (after plug-ins)."""
+        s = self.server
+        return hello_for(s.config, s.epoch, s.version, s.plugins).brand.agent_name
+
+    @property
     def viewer_roots(self) -> list[Path]:
         """The deployment's roots (and the spaces folder), where a file may be shown from beside the chat's folder."""
         roots = [Path(root.path) for root in self.server.config.roots]

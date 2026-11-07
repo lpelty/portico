@@ -4016,6 +4016,17 @@
           "default": null,
           "title": "Permission Mode"
         },
+        "person": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Person"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "presentation": {
           "default": "single",
           "enum": [
@@ -5179,6 +5190,21 @@
         "input"
       ],
       "title": "Permission",
+      "type": "object"
+    },
+    "Person": {
+      "additionalProperties": false,
+      "description": "v0.23: the person using the app, by real name (config ``[person] name``, or a plug-in).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Person",
       "type": "object"
     },
     "PluginMarketplace": {
