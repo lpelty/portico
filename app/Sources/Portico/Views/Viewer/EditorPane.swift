@@ -583,7 +583,8 @@ final class ViewerEditing {
 
 // MARK: - Header parts
 
-/// The header's Edit toggle: a pencil, accent while on (as Focus is).
+/// The header's Edit toggle: a square and pencil (a bare pencil reads as
+/// a slash at this size), accent while on (as Focus is).
 struct ViewerEditToggle: View {
     let on: Bool
     let editability: Editability
@@ -593,7 +594,7 @@ struct ViewerEditToggle: View {
     var body: some View {
         let enabled = editability.canEdit || on
         Button(action: action) {
-            Image(systemName: "pencil")
+            Image(systemName: "square.and.pencil")
                 .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
                 .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(on ? accent : (enabled ? Theme.text2 : Theme.text3))

@@ -214670,7 +214670,7 @@
                       "name": "Icon",
                       "width": 13,
                       "height": 13,
-                      "icon": "pencil",
+                      "icon": "square-pen",
                       "library": "lucide",
                       "fill": "$text-2"
                     }
@@ -216281,7 +216281,7 @@
                       "name": "Icon",
                       "width": 13,
                       "height": 13,
-                      "icon": "pencil",
+                      "icon": "square-pen",
                       "library": "lucide",
                       "fill": "$text-2"
                     }
@@ -218349,7 +218349,7 @@
                       "name": "Icon",
                       "width": 13,
                       "height": 13,
-                      "icon": "pencil",
+                      "icon": "square-pen",
                       "library": "lucide",
                       "fill": "$text-2"
                     }
@@ -220012,7 +220012,7 @@
                       "name": "Icon",
                       "width": 13,
                       "height": 13,
-                      "icon": "pencil",
+                      "icon": "square-pen",
                       "library": "lucide",
                       "fill": "$text-2"
                     }
@@ -222343,7 +222343,7 @@
                       "name": "Icon",
                       "width": 13,
                       "height": 13,
-                      "icon": "pencil",
+                      "icon": "square-pen",
                       "library": "lucide",
                       "fill": "$accent"
                     }
