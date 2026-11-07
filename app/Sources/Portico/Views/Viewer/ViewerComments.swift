@@ -103,6 +103,14 @@ enum CommentTime {
 
 // MARK: - ViewerComments
 
+/// The editor's buffer, in Edit mode: comment actions are changes to it,
+/// saved by the editor's usual path; the file underneath is never written.
+@MainActor
+protocol CommentsBuffer: AnyObject {
+    func currentText() async -> String?
+    func applyChange(from: Int, to: Int, insert: String, expectedLength: Int) async -> Bool
+}
+
 /// The app's half of focusing the viewer, for turning comments on.
 @MainActor
 protocol CommentsFocus: AnyObject {
@@ -277,6 +285,41 @@ final class ViewerComments: ObservableObject {
         }
     }
 
+    /// Edit mode's buffer, while the editor shows the file.
+    weak var editBuffer: (any CommentsBuffer)?
+
+    /// Apply a comment action to the editor's buffer as one change; if the
+    /// buffer moved under it, fetch the text again and retry once.
+    @discardableResult
+    func applyInBuffer(_ op: CommentWriter.Op, made: CommentWriter.Made? = nil) async -> Bool {
+        guard let buffer = editBuffer else { return false }
+        if let readOnly {
+            error = readOnly
+            return false
+        }
+        let edit = CommentWriter.edit(for: op, author: personName, now: Date(), made: made)
+        for _ in 0..<2 {
+            guard let old = await buffer.currentText() else { break }
+            let new: String
+            do {
+                new = try edit(old)
+            } catch let refusal as CommentFormat.Refusal {
+                error = "Not saved — \(CommentAnchoring.reason(refusal))"
+                return false
+            } catch {
+                self.error = "Not saved — the comment's thread is gone"
+                return false
+            }
+            let splice = TextSplice.minimal(old, new)
+            if await buffer.applyChange(from: splice.from, to: splice.to, insert: splice.insert, expectedLength: old.utf16.count) {
+                reload(text: new)
+                return true
+            }
+        }
+        error = "Not saved — the text changed while the comment was being added; try again"
+        return false
+    }
+
     /// Told after a comment action wrote the file (reading mode): the app
     /// tells the gateway (`files.edited`) and the pane re-reads in place.
     var onWritten: ((URL) -> Void)?
@@ -315,12 +358,15 @@ final class ViewerComments: ObservableObject {
             draft = d
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             let made = CommentWriter.Made()
-            if let selection = d.selection, write(.add(selection, body: text), made: made) {
-                draft = nil
-                activeID = made.id
-                error = nil
+            let op: CommentWriter.Op
+            if let range = d.range { op = .addRange(range, body: text) } else if let s = d.selection { op = .add(s, body: text) } else { return }
+            perform(op, made: made) { [weak self] ok in
+                guard let self, ok else { return }
+                self.draft = nil
+                self.activeID = made.id
+                self.error = nil
+                self.evaluate?("window.__porticoComments && __porticoComments.clearDraft()")
             }
-            push()
         case "cancelDraft":
             draft = nil
             error = nil
@@ -328,15 +374,28 @@ final class ViewerComments: ObservableObject {
             push()
         case "reply":
             guard let id, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            if write(.reply(id: id, body: text)) { error = nil }
-            push()
+            perform(.reply(id: id, body: text)) { [weak self] ok in if ok { self?.error = nil } }
         case "resolve", "reopen":
             guard let id else { return }
-            if write(.setStatus(id: id, resolved: type == "resolve")) {
-                error = nil
-                if type == "resolve", activeID == id { activeID = nil }
+            perform(.setStatus(id: id, resolved: type == "resolve")) { [weak self] ok in
+                guard let self, ok else { return }
+                self.error = nil
+                if type == "resolve", self.activeID == id { self.activeID = nil }
             }
-            push()
+        case "commentMenu":
+            let from = (message["from"] as? NSNumber)?.intValue ?? 0
+            let to = (message["to"] as? NSNumber)?.intValue ?? 0
+            let x = (message["x"] as? NSNumber)?.doubleValue ?? 0
+            let y = (message["y"] as? NSNumber)?.doubleValue ?? 0
+            var info: [String: Any]? = nil
+            if to > from {
+                info = ["text": "selection", "lines": [0, 0], "occurrence": 0]
+                if let refusal = message["refusal"] as? String { info?["refusal"] = refusal }
+            }
+            showMenu(selection: info, at: CGPoint(x: x, y: y), editMode: true, chat: chat, focus: focus,
+                     trustSelection: true) { [weak self] in
+                self?.beginDraft(nil, range: from..<to, chat: chat, focus: focus)
+            }
         case "menu":
             let selection = message["selection"] as? [String: Any]
             let x = (message["x"] as? NSNumber)?.doubleValue ?? 0
@@ -344,6 +403,21 @@ final class ViewerComments: ObservableObject {
             showMenu(selection: selection, at: CGPoint(x: x, y: y), editMode: false, chat: chat, focus: focus)
         default:
             break
+        }
+    }
+
+    /// A comment action: through the editor's buffer in Edit mode, else written to the file.
+    private func perform(_ op: CommentWriter.Op, made: CommentWriter.Made? = nil, then: @escaping (Bool) -> Void) {
+        if editBuffer != nil {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let ok = await self.applyInBuffer(op, made: made)
+                then(ok)
+                self.push()
+            }
+        } else {
+            then(write(op, made: made))
+            push()
         }
     }
 
@@ -378,7 +452,7 @@ final class ViewerComments: ObservableObject {
     // MARK: the menu and the draft
 
     /// What the menu shows for the page's selection (`selectionInfo()`, or nil for none).
-    func menuContext(selection: [String: Any]?, editMode: Bool) -> CommentMenu.Context {
+    func menuContext(selection: [String: Any]?, editMode: Bool, trustSelection: Bool = false) -> CommentMenu.Context {
         guard let selection, let text = selection["text"] as? String, !text.isEmpty else {
             return .init(editMode: editMode, hasSelection: false, readOnly: readOnly, refusal: nil)
         }
@@ -387,7 +461,9 @@ final class ViewerComments: ObservableObject {
         case "ignored": refusal = CommentAnchoring.reason(.insideIgnored)
         case .some: refusal = CommentAnchoring.reason(.crossesBlocks)
         case nil:
-            if let sel = Self.selection(selection), let file,
+            if trustSelection {
+                refusal = nil
+            } else if let sel = Self.selection(selection), let file,
                 let source = try? String(contentsOf: file, encoding: .utf8)
             {
                 if case .failure(let r) = CommentAnchoring.locate(sel, in: source) { refusal = CommentAnchoring.reason(r) }
@@ -421,9 +497,9 @@ final class ViewerComments: ObservableObject {
 
     /// The viewer's own context menu at the page point.
     func showMenu(selection: [String: Any]?, at point: CGPoint, editMode: Bool, chat: Int, focus: CommentsFocus,
-                  comment: (() -> Void)? = nil) {
+                  trustSelection: Bool = false, comment: (() -> Void)? = nil) {
         guard let view = webView as? NSView else { return }
-        let context = menuContext(selection: selection, editMode: editMode)
+        let context = menuContext(selection: selection, editMode: editMode, trustSelection: trustSelection)
         let menu = NSMenu()
         menu.autoenablesItems = false
         menuTargets = []

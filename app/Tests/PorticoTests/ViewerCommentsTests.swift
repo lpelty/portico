@@ -199,4 +199,76 @@ final class ViewerCommentsTests: XCTestCase {
         c.received(["type": "resolve", "id": "k3x9a"], chat: 1, focus: FakeFocus())
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
+
+    // MARK: - Edit mode (Task 7)
+
+    final class FakeBuffer: CommentsBuffer {
+        var text: String
+        var changes: [(Int, Int, String, Int)] = []
+        var refuseFirst = false
+        init(_ text: String) { self.text = text }
+        func currentText() async -> String? { text }
+        func applyChange(from: Int, to: Int, insert: String, expectedLength: Int) async -> Bool {
+            changes.append((from, to, insert, expectedLength))
+            if refuseFirst { refuseFirst = false; text += "typed\n"; return false }
+            guard expectedLength == text.utf16.count else { return false }
+            var units = Array(text.utf16)
+            units.replaceSubrange(from..<to, with: Array(insert.utf16))
+            text = String(decoding: units, as: UTF16.self)
+            return true
+        }
+    }
+
+    func testEditModeReplyGoesThroughBuffer() async throws {
+        let url = try file("plugin-basic.md")
+        let before = try Data(contentsOf: url)
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        let buffer = FakeBuffer(try String(contentsOf: url, encoding: .utf8))
+        buffer.refuseFirst = true
+        c.editBuffer = buffer
+        let ok = await c.applyInBuffer(.reply(id: "k3x9a", body: "Through the buffer."))
+        XCTAssertTrue(ok)
+        XCTAssertEqual(buffer.changes.count, 2, "refused once (the text moved), fetched again, applied")
+        XCTAssertTrue(buffer.text.contains("): Through the buffer.\n-->"))
+        XCTAssertTrue(buffer.text.hasSuffix("typed\n"), "the person's typing is kept")
+        XCTAssertEqual(try Data(contentsOf: url), before, "the file underneath is never written")
+        let change = try XCTUnwrap(buffer.changes.last)
+        XCTAssertEqual(change.0, change.1, "a pure insertion: the minimal splice")
+    }
+
+    func testEditModeAddByRange() async throws {
+        let url = try file("para.md")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        c.helloPersonName = "Sam"
+        let buffer = FakeBuffer(text)
+        c.editBuffer = buffer
+        let start = Array(text.utf16).count - "Second paragraph.\n".utf16.count
+        let made = CommentWriter.Made()
+        let ok = await c.applyInBuffer(.addRange(start..<(start + 6), body: "Edit mode."), made: made)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(buffer.text.contains("<!--c:\(made.id!)-->Second<!--/c:\(made.id!)-->"))
+        let refused = await c.applyInBuffer(.addRange(0..<0, body: "x"))
+        XCTAssertFalse(refused)
+    }
+
+    func testTextSpliceMinimalUTF16() {
+        let s = TextSplice.minimal("a🙂b\nend", "a🙂XYb\nend")
+        XCTAssertEqual(s.from, 3)
+        XCTAssertEqual(s.to, 3)
+        XCTAssertEqual(s.insert, "XY")
+        let d = TextSplice.minimal("abcdef", "abef")
+        XCTAssertEqual(d.from, 2)
+        XCTAssertEqual(d.to, 4)
+        XCTAssertEqual(d.insert, "")
+        let same = TextSplice.minimal("x", "x")
+        XCTAssertEqual(same.from, same.to)
+        XCTAssertEqual(same.insert, "")
+        // Never splits a surrogate pair.
+        let e = TextSplice.minimal("🙂", "🙃")
+        XCTAssertEqual(e.from, 0)
+        XCTAssertEqual(e.to, 2)
+    }
 }

@@ -293,4 +293,38 @@ final class CommentsPageScriptTests: XCTestCase {
             """, in: view) as? String
         XCTAssertEqual(text, "permission prompt")
     }
+
+    // MARK: - the editor's page (Task 7)
+
+    func testEditorPageHidesMarkupAndDrawsTheMargin() async throws {
+        let view = webView(size: NSSize(width: 1400, height: 800))
+        view.loadHTMLString(try EditorPage.html(), baseURL: URL(string: "https://acme.example/"))
+        let deadline = ContinuousClock.now + .seconds(15)
+        while true {
+            let ready = try? await view.callAsyncJavaScript(
+                "return document.readyState === 'complete' && !!window.portico && !!window.__porticoComments",
+                arguments: [:], in: nil, contentWorld: .page) as? Bool
+            if ready == true { break }
+            if ContinuousClock.now >= deadline { throw Timeout() }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let source = try CommentFormatTests.read("resolved.md")
+        _ = try await js("portico.load({text: text, mode: 'markdown'}); return true;", ["text": source], in: view)
+        try await render(Self.state, in: view)
+        let out = try await js("""
+            var content = document.querySelector('.cm-content');
+            var card = document.querySelector('.cm-scroller #pc-margin .pc-card[data-id="rs001"]');
+            return { shown: content.textContent, cards: document.querySelectorAll('#pc-margin .pc-card').length,
+                     open: !!document.querySelector('mark.pc-anchor.pc-open[data-c="rs001"]'),
+                     left: Math.round(content.getBoundingClientRect().left + parseFloat(getComputedStyle(content).paddingLeft)),
+                     cardWidth: card ? Math.round(card.getBoundingClientRect().width) : 0 };
+            """, in: view) as? [String: Any]
+        let shown = try XCTUnwrap(out?["shown"] as? String)
+        XCTAssertFalse(shown.contains("<!--"), "comment markup is hidden: \(shown)")
+        XCTAssertTrue(shown.contains("open point"))
+        XCTAssertEqual(out?["cards"] as? Int, 2)
+        XCTAssertEqual(out?["open"] as? Bool, true)
+        XCTAssertEqual(out?["left"] as? Int, 44)
+        XCTAssertEqual(out?["cardWidth"] as? Int, 300)
+    }
 }

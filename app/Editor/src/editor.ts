@@ -29,6 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
+import { commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -182,7 +183,25 @@ export interface PorticoEditor {
   visibleText(): string;
   scrollTopLine(): number;
   scrollToLine(line: number): void;
+  // v0.23: a comment action from Swift, as one change on the buffer; refused
+  // (false) when the document isn't the length Swift computed it for. It is
+  // a normal edit: sent back and saved like typing.
+  applyChange(from: number, to: number, insert: string, expectedLength: number): boolean;
+  // v0.23: the selection, with why it can't be anchored (or null).
+  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | null };
+  // v0.23: what the comments margin (viewer-comments.js) needs from the editor.
+  commentHooks: CommentHooks;
   readonly view: EditorView;
+}
+
+export interface CommentHooks {
+  contentElement(): HTMLElement;
+  marginParent(): HTMLElement;
+  anchorTop(id: string): number | null;
+  draftTop(): number | null;
+  onLayout(layout: { column: number; card: number } | null): void;
+  markDraft(): number;
+  clearDraft(): void;
 }
 
 export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOpener): PorticoEditor {
@@ -219,6 +238,7 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
         ...shared,
         yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }) }),
         livePreview(openLink),
+        commentsExtension(),
         EditorView.lineWrapping,
         EditorView.editorAttributes.of({ class: "portico-markdown" }),
       ];
@@ -240,6 +260,12 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
     const anchor = Math.min(cursor, state.doc.length);
     view.setState(state.update({ selection: EditorSelection.cursor(anchor) }).state);
     bridge.loaded();
+  }
+
+  function topInScroller(pos: number): number {
+    const scroller = view.scrollDOM;
+    const offset = view.documentTop - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    return view.lineBlockAt(pos).top + offset;
   }
 
   function setScale(scale: number) {
@@ -318,6 +344,52 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       const n = Math.max(1, Math.min(Math.floor(line) || 1, view.state.doc.lines));
       view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "start" }) });
     },
+    applyChange(from, to, insert, expectedLength) {
+      const length = view.state.doc.length;
+      if (length !== expectedLength || from < 0 || to < from || to > length) return false;
+      view.dispatch({
+        changes: { from, to, insert: view.state.toText(insert) },
+        annotations: Transaction.userEvent.of("input.comment"),
+      });
+      return true;
+    },
+    commentHooks: {
+      contentElement: () => view.contentDOM,
+      marginParent: () => view.scrollDOM,
+      // Tops in the scroller's own coordinates (the margin scrolls inside it).
+      anchorTop(id) {
+        if (current.mode !== "markdown") return null;
+        const a = scanComments(view.state.sliceDoc()).anchors.find((x) => x.id === id);
+        return a ? topInScroller(a.openTo) : null;
+      },
+      draftTop() {
+        const d = view.state.field(draftField, false);
+        return d ? topInScroller(d.from) : null;
+      },
+      onLayout(layout) {
+        const c = view.contentDOM.style;
+        if (layout) {
+          c.marginLeft = "12px";
+          c.marginRight = "0";
+          c.maxWidth = `${layout.column + 64}px`;
+        } else {
+          c.marginLeft = c.marginRight = c.maxWidth = "";
+        }
+        view.requestMeasure();
+      },
+      markDraft() {
+        const { from, to } = view.state.selection.main;
+        view.dispatch({ effects: setDraft.of(to > from ? { from, to } : null) });
+        return to > from ? 1 : 0;
+      },
+      clearDraft() {
+        view.dispatch({ effects: setDraft.of(null) });
+      },
+    },
+    selectionRange() {
+      const { from, to } = view.state.selection.main;
+      return { from, to, refusal: to > from ? selectionRefusal(view.state, from, to) : null };
+    },
   };
   return api;
 }
@@ -328,5 +400,15 @@ const mount = doc?.getElementById("editor");
 if (mount && !(globalThis as any).portico) {
   const editor = createEditor(mount);
   (globalThis as any).portico = editor;
+  // v0.23: the viewer's own context menu, with the selection's offsets and
+  // why it can't be anchored; Swift draws the menu (comments handler).
+  editor.view.contentDOM.addEventListener("contextmenu", (e: MouseEvent) => {
+    e.preventDefault();
+    const sel = editor.selectionRange();
+    const handler = (globalThis as any).webkit?.messageHandlers?.comments;
+    const message: Record<string, unknown> = { type: "commentMenu", x: e.clientX, y: e.clientY, from: sel.from, to: sel.to };
+    if (sel.refusal) message.refusal = sel.refusal;
+    if (handler) handler.postMessage(message);
+  });
   new Bridge().ready();
 }

@@ -509,7 +509,8 @@ struct ViewerView: View {
                     settings: model.settings, session: session, topLine: edit.topLine(for: session.url),
                     onStop: { Task { await edit.turnOff() } },
                     onOpenFile: { [chat] path in model.reveal(file: path, in: chat) },
-                    onCoordinator: { [edit] in edit.editor = $0 })
+                    onCoordinator: { [edit] in edit.editor = $0 },
+                    comments: comments)
                     .id("edit|\(current.location)|\(ObjectIdentifier(session).hashValue)")
             }
             // The editor's view, for the agent's look (v0.20 §4).

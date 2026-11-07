@@ -195,12 +195,14 @@
   }
 
   function markDraft() {
+    if (api.hooks) return api.hooks.markDraft();
     clearDraft();
     if (!lastRange) return 0;
     return wrapRange(lastRange, "pc-draft").length;
   }
 
   function clearDraft() {
+    if (api.hooks) return api.hooks.clearDraft();
     document.querySelectorAll("mark.pc-draft").forEach(function (m) {
       var parent = m.parentNode;
       while (m.firstChild) parent.insertBefore(m.firstChild, m);
@@ -426,7 +428,7 @@
     if (!margin) {
       margin = el("aside", "");
       margin.id = "pc-margin";
-      document.body.appendChild(margin);
+      (api.marginParent ? api.marginParent() : document.body).appendChild(margin);
     }
     margin.style.left = (44 + L.column + 24) + "px";
     margin.style.width = L.card + "px";
@@ -444,7 +446,7 @@
     var items = anchored.concat(loose);
     if (!items.length) {
       margin.appendChild(el("div", "pc-empty", "No comments. Select text and choose Comment."));
-      margin.firstChild.style.top = (box ? docTop(box) + 28 : 28) + "px";
+      margin.firstChild.style.top = (box && !api.marginParent ? docTop(box) + 28 : 28) + "px";
       return;
     }
     var nodes = items.map(function (it) {
@@ -452,7 +454,7 @@
       margin.appendChild(n);
       return n;
     });
-    var lastAnchored = anchored.length ? anchored[anchored.length - 1].top : (box ? docTop(box) + 28 : 28);
+    var lastAnchored = anchored.length ? anchored[anchored.length - 1].top : (box && !api.marginParent ? docTop(box) + 28 : 28);
     var tops = items.map(function (it) { return it.top == null ? lastAnchored : it.top; });
     var placed = stack(tops, nodes.map(function (n) { return n.getBoundingClientRect().height; }));
     nodes.forEach(function (n, i) { n.style.top = placed[i] + "px"; });
@@ -511,6 +513,19 @@
     post: null
   };
   window.__porticoComments = api;
+
+  // In the editor's page: the editor answers where things are, and draws
+  // its own menu and highlights.
+  var hooks = window.portico && window.portico.commentHooks;
+  if (hooks) {
+    api.hooks = hooks;
+    api.contentElement = hooks.contentElement;
+    api.marginParent = hooks.marginParent;
+    api.anchorTop = hooks.anchorTop;
+    api.draftTop = hooks.draftTop;
+    api.onLayout = hooks.onLayout;
+    api.ownMenu = false;
+  }
 
   if (document.getElementById("body")) {
     highlight(document.getElementById("body"));

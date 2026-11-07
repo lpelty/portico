@@ -11,6 +11,8 @@ enum CommentWriter {
         case add(CommentAnchoring.Selection, body: String)
         case reply(id: String, body: String)
         case setStatus(id: String, resolved: Bool)
+        /// Edit mode: a new thread on a UTF-16 range of the buffer.
+        case addRange(Range<Int>, body: String)
     }
 
     /// The ID a new thread was given.
@@ -53,7 +55,39 @@ enum CommentWriter {
                 return try CommentFormat.addReply(text, threadID: id, author: author, at: at, body: body)
             case .setStatus(let id, let resolved):
                 return try CommentFormat.setStatus(text, threadID: id, resolved ? .resolved : .open)
+            case .addRange(let raw, let body):
+                let length = text.utf16.count
+                guard raw.lowerBound >= 0, raw.upperBound <= length, !raw.isEmpty else { throw CommentFormat.Refusal.notFound }
+                let range = CommentFormat.snapToWords(text, raw)
+                if CommentFormat.ignoredRegions(text).contains(where: { $0.overlaps(range) }) {
+                    throw CommentFormat.Refusal.insideIgnored
+                }
+                let units = Array(text.utf16)[range]
+                if String(decoding: units, as: UTF16.self).range(of: #"\n[ \t>]*\r?\n"#, options: .regularExpression) != nil {
+                    throw CommentFormat.Refusal.crossesBlocks
+                }
+                let id = newID(text)
+                made?.id = id
+                return CommentFormat.addThread(text, range: range, id: id, author: author, at: at, body: body)
             }
         }
+    }
+}
+
+// MARK: - TextSplice
+
+/// The smallest change from one text to another: the common prefix and
+/// suffix kept, in UTF-16 offsets, never splitting a surrogate pair.
+enum TextSplice {
+    static func minimal(_ old: String, _ new: String) -> (from: Int, to: Int, insert: String) {
+        let a = Array(old.utf16), b = Array(new.utf16)
+        var p = 0
+        while p < a.count, p < b.count, a[p] == b[p] { p += 1 }
+        if p > 0, p < a.count || p < b.count, UTF16.isLeadSurrogate(a[min(p, a.count) - 1]) { p -= 1 }
+        var s = 0
+        while s < a.count - p, s < b.count - p, a[a.count - 1 - s] == b[b.count - 1 - s] { s += 1 }
+        if s > 0, a.count - s < a.count, UTF16.isTrailSurrogate(a[a.count - s]) { s -= 1 }
+        let insert = String(decoding: b[p..<(b.count - s)], as: UTF16.self)
+        return (p, a.count - s, insert)
     }
 }
