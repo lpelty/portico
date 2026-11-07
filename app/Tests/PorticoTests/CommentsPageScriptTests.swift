@@ -157,4 +157,110 @@ final class CommentsPageScriptTests: XCTestCase {
         let lines = try await js("return [...document.querySelectorAll('#body p')].map(p => p.getAttribute('data-lines'));", in: view) as? [String]
         XCTAssertEqual(lines, ["0-0", "2-3"])
     }
+
+    // MARK: - the margin (Task 5)
+
+    static let state: [String: Any] = [
+        "on": true, "activeID": NSNull(), "readOnly": NSNull(), "draft": NSNull(), "error": NSNull(),
+        "theme": [String: String](),
+        "threads": [
+            ["id": "rs001", "status": "open", "quote": "open point", "orphan": false,
+             "replies": [["author": "Sam", "initial": "S", "agent": false, "time": "2 h ago", "text": "First."]]],
+            ["id": "rs002", "status": "resolved", "quote": "settled point", "orphan": false,
+             "replies": [["author": "Agent", "initial": "A", "agent": true, "time": "1 h ago", "text": "Done."]]],
+        ],
+    ]
+
+    func render(_ state: [String: Any], in view: WKWebView) async throws {
+        _ = try await js("window.__porticoComments.render(state); return true;", ["state": state], in: view)
+    }
+
+    func testLayoutWideNarrowAndBelowMinimum() async throws {
+        let view = try await page("Text.\n")
+        let out = try await js("""
+            var L = window.__porticoComments.layout;
+            return [L(1400, 630), L(900, 630), L(780, 630), L(700, 630), L(500, 630)];
+            """, in: view) as? [[String: Double]]
+        XCTAssertEqual(out?[0], ["column": 630, "card": 300])
+        XCTAssertEqual(out?[1], ["column": 516, "card": 300])
+        XCTAssertEqual(out?[2], ["column": 420, "card": 276])
+        XCTAssertEqual(out?[3], ["column": 340, "card": 276], "below the floor the cards keep 276")
+        XCTAssertEqual(out?[4]["card"], 276)
+    }
+
+    func testStackPushesDown8() async throws {
+        let view = try await page("Text.\n")
+        let out = try await js("return window.__porticoComments.stack([0, 10, 200], [100, 50, 20]);", in: view) as? [Double]
+        XCTAssertEqual(out, [0, 108, 200])
+    }
+
+    func testCommentsOnMovesTheColumnLeftAndDrawsCards() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"), size: NSSize(width: 1400, height: 800))
+        try await render(Self.state, in: view)
+        let geo = try await js("""
+            var p = document.querySelector('#body p');
+            var card = document.querySelector('.pc-card[data-id="rs001"]');
+            var mark = document.querySelector('mark[data-c="rs001"]');
+            return { left: p.getBoundingClientRect().left, cards: document.querySelectorAll('.pc-card').length,
+                     cardTop: Math.round(card.getBoundingClientRect().top), markTop: Math.round(mark.getClientRects()[0].top),
+                     width: Math.round(card.getBoundingClientRect().width), resolved: !!document.querySelector('.pc-card[data-id="rs002"] .pc-resolved-line'),
+                     scroll: document.documentElement.scrollWidth <= window.innerWidth };
+            """, in: view) as? [String: Any]
+        XCTAssertEqual(geo?["left"] as? Double, 44)
+        XCTAssertEqual(geo?["cards"] as? Int, 2)
+        XCTAssertEqual(geo?["width"] as? Int, 300)
+        XCTAssertEqual(geo?["cardTop"] as? Int, geo?["markTop"] as? Int)
+        XCTAssertEqual(geo?["resolved"] as? Bool, true)
+        XCTAssertEqual(geo?["scroll"] as? Bool, true, "no horizontal scroll")
+    }
+
+    func testHoverCardBrightensAnchor() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        try await render(Self.state, in: view)
+        let hot = try await js("""
+            var card = document.querySelector('.pc-card[data-id="rs001"]');
+            card.dispatchEvent(new MouseEvent('mouseenter'));
+            var on = document.querySelector('mark[data-c="rs001"]').classList.contains('pc-hot');
+            card.dispatchEvent(new MouseEvent('mouseleave'));
+            var off = document.querySelector('mark[data-c="rs001"]').classList.contains('pc-hot');
+            return [on, off];
+            """, in: view) as? [Bool]
+        XCTAssertEqual(hot, [true, false])
+    }
+
+    func testClickAnchorActivatesCard() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        let sent = try await js("""
+            var sent = [];
+            window.__porticoComments.post = function (m) { sent.push(m); };
+            document.querySelector('mark[data-c="rs001"]').dispatchEvent(new MouseEvent('click', {bubbles: true}));
+            return sent;
+            """, in: view) as? [[String: String]]
+        XCTAssertEqual(sent?.last, ["type": "anchorClicked", "id": "rs001"])
+    }
+
+    func testEmptyStateCopy() async throws {
+        let view = try await page("Nothing here.\n")
+        var state = Self.state
+        state["threads"] = [[String: Any]]()
+        try await render(state, in: view)
+        let text = try await js("return document.querySelector('#pc-margin').textContent.trim();", in: view) as? String
+        XCTAssertEqual(text, "No comments. Select text and choose Comment.")
+    }
+
+    func testReadOnlyDisablesActions() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        var state = Self.state
+        state["activeID"] = "rs001"
+        state["readOnly"] = "The file is read-only."
+        try await render(state, in: view)
+        let out = try await js("""
+            var field = document.querySelector('.pc-card[data-id="rs001"] textarea');
+            var resolve = document.querySelector('.pc-card[data-id="rs001"] .pc-resolve');
+            return [field.disabled, resolve.disabled, resolve.title];
+            """, in: view) as? [Any]
+        XCTAssertEqual(out?[0] as? Bool, true)
+        XCTAssertEqual(out?[1] as? Bool, true)
+        XCTAssertEqual(out?[2] as? String, "The file is read-only.")
+    }
 }

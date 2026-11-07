@@ -403,6 +403,7 @@ struct WebPane: NSViewRepresentable {
         context.coordinator.propertiesOpen = context.environment.propertiesOpen
         context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         context.coordinator.onSpaceAction = context.environment.spaceActionLink
+        context.coordinator.comments = context.environment.viewerComments
         let view = context.coordinator.makeWebView()
         context.coordinator.apply(load, revision: context.environment.webPaneRevision, to: view)
         context.coordinator.scroll(to: context.environment.webPaneFragment, in: view)
@@ -410,6 +411,7 @@ struct WebPane: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.comments = context.environment.viewerComments
         context.coordinator.propertiesOpen = context.environment.propertiesOpen
         context.coordinator.onPropertiesToggle = context.environment.setPropertiesOpen
         context.coordinator.onSpaceAction = context.environment.spaceActionLink
@@ -469,6 +471,8 @@ struct WebPane: NSViewRepresentable {
         var onPropertiesToggle: ((Bool) -> Void)?
         /// v0.22 (S1): told of a `space-action:` link activated in the page.
         var onSpaceAction: ((URL) -> Void)?
+        /// v0.23: the file viewer's comments; the page's `comments` messages go to it.
+        weak var comments: ViewerComments?
         /// v0.22 (S2): the last fragment request carried out, and one waiting
         /// for the page to finish loading.
         private var doneFragmentKey: String?
@@ -492,6 +496,7 @@ struct WebPane: NSViewRepresentable {
                 configuration.userContentController.addUserScript(script)
             }
             configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
+            configuration.userContentController.add(CommentsMessages(self), name: CommentsMessages.name)
             return configuration
         }
 
@@ -905,6 +910,27 @@ private final class PropertiesToggle: NSObject, WKScriptMessageHandler {
         MainActor.assumeIsolated {
             coordinator?.propertiesToggled(
                 message.body, isMainFrame: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url)
+        }
+    }
+}
+
+/// The page's `comments` handler (v0.23): the comments script's messages,
+/// from the main frame of the rendered Markdown page only. Holds its pane weakly.
+private final class CommentsMessages: NSObject, WKScriptMessageHandler {
+    static let name = "comments"
+    weak var coordinator: WebPane.Coordinator?
+
+    init(_ coordinator: WebPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.scheme == RenderedPageHandler.scheme,
+                let comments = coordinator?.comments, let view = message.webView
+            else { return }
+            comments.attach(view)
+            comments.received(message.body)
         }
     }
 }

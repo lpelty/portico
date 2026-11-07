@@ -599,7 +599,7 @@ struct ViewerEditToggle: View {
                 .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(on ? accent : (enabled ? Theme.text2 : Theme.text3))
                 .frame(width: ViewerHeader.buttonHeight, height: ViewerHeader.buttonHeight)
-                .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(on ? Theme.accentSoft : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
                 .contentShape(Rectangle())
         }

@@ -11,6 +11,7 @@ final class SolidColourTests: XCTestCase {
             .text: ("#1C1C1E", "#F5F5F7"),
             .text2: ("#5E5E64", "#B6B6BC"), .text3: ("#6C6C72", "#8A8A91"),
             .selected: ("#E0E0E5", "#34343A"),
+            .agentAvatar: ("#2F7A6B", "#3E8E7E"),
         ]
         XCTAssertEqual(spec.count, Theme.Token.allCases.count)
         for (token, want) in spec {
@@ -62,6 +63,16 @@ final class SolidColourTests: XCTestCase {
         }
         XCTAssertGreaterThan(scanned, 20)
         XCTAssertEqual(offenders, [])
+    }
+
+    /// v0.23 (spec §12.5): the comments toggle and the Edit toggle fill with
+    /// the solid `accentSoft` when on, never a translucent accent.
+    func testCommentsAndEditTogglesAreSolid() throws {
+        for name in ["Views/Viewer/EditorPane.swift", "Views/Viewer/ViewerComments.swift"] {
+            let url = ListFontSweepTests.sources.appendingPathComponent(name)
+            let text = ListFontSweepTests.withoutComments(try String(contentsOf: url, encoding: .utf8))
+            XCTAssertFalse(text.contains(".opacity("), "\(name) uses .opacity(")
+        }
     }
 
     func testPopoverPresentationIsSolidPanel() {
