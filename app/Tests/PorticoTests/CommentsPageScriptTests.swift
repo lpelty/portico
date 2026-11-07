@@ -327,4 +327,52 @@ final class CommentsPageScriptTests: XCTestCase {
         XCTAssertEqual(out?["left"] as? Int, 44)
         XCTAssertEqual(out?["cardWidth"] as? Int, 300)
     }
+
+    // MARK: - fix round (review items 3, 4, 7, 9)
+
+    func testAnchorAtColumnZeroRendersAsMarkdown() async throws {
+        let view = try await page(try CommentFormatTests.read("anchor-col0.md"))
+        let out = try await js("""
+            var p = document.querySelector('#body p');
+            return { strong: p && p.querySelector('strong') ? p.querySelector('strong').textContent : null,
+                     mark: (document.querySelector('mark.pc-anchor.pc-open[data-c="ca001"]') || {}).textContent || null,
+                     lines: p ? p.getAttribute('data-lines') : null,
+                     sentinels: /[\\uE000-\\uE002]/.test(document.querySelector("#body").textContent) };
+            """, in: view) as? [String: Any]
+        XCTAssertEqual(out?["strong"] as? String, "world", "the paragraph is Markdown, not raw HTML")
+        XCTAssertEqual(out?["mark"] as? String, "Hello")
+        XCTAssertEqual(out?["lines"] as? String, "0-0")
+        XCTAssertEqual(out?["sentinels"] as? Bool, false)
+    }
+
+    func testDefinitionsAndTabsKeepSourceLines() async throws {
+        let view = try await page("See [x] here.\n\n[x]: http://a.example\n\nAfter para.\n\n- item\n\tnested\n")
+        let lines = try await js("""
+            return [...document.querySelectorAll('#body > p, #body > ul')].map(e => e.getAttribute('data-lines'));
+            """, in: view) as? [String?]
+        XCTAssertEqual(lines?.first ?? nil, "0-0")
+        XCTAssertEqual(lines?.count, 3)
+        XCTAssertEqual(lines?[1] ?? nil, "4-4", "a link definition doesn't stop the lines after it")
+    }
+
+    func testOccurrenceCountsVisibleTextOutsideCode() async throws {
+        let view = try await page("Use `cat` and cat here.\n")
+        _ = try await js("""
+            var p = document.querySelector('#body p');
+            var n = p.lastChild; // " and cat here."
+            var r = document.createRange(); r.setStart(n, 5); r.setEnd(n, 8);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(info?["text"] as? String, "cat")
+        XCTAssertEqual(info?["occurrence"] as? Int, 0, "the cat in code isn't counted")
+    }
+
+    func testQuotedAndDuplicateStatusesHighlightAsTheFormatSays() async throws {
+        let view = try await page(try CommentFormatTests.read("header-keys.md"))
+        let open = try await js("""
+            return ['hq001','hq002','hq003'].map(id => document.querySelector('mark[data-c="' + id + '"]').classList.contains('pc-open'));
+            """, in: view) as? [Bool]
+        XCTAssertEqual(open, [true, false, true])
+    }
 }

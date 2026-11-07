@@ -35,20 +35,30 @@
   // own numbering); a new comment is anchored in that block's source. When
   // the tokens don't add up to the source, no lines are set and anchoring
   // is refused.
+  // Each token's lines come from where its text is in the source, so a
+  // token the lexer drops or changes (a link definition, expanded tabs)
+  // leaves the others right; a token not found carries no lines.
   var tokens = marked.lexer(source, options);
-  var whole = tokens.map(function (t) { return t.raw; }).join("");
-  var tagged = whole === source.replace(/\r\n?/g, "\n");
+  var norm = source.replace(/\r\n?/g, "\n");
+  var cursor = 0;
   var line = bodyLine;
+  var count = function (s) { return (s.match(/\n/g) || []).length; };
   tokens.forEach(function (t) {
-    var start = line;
-    line += (t.raw.match(/\n/g) || []).length;
     if (t.type === "space") return;
-    var end = start + (t.raw.replace(/\n+$/, "").match(/\n/g) || []).length;
+    var at = t.raw ? norm.indexOf(t.raw, cursor) : -1;
+    var start = -1, end = -1;
+    if (at >= 0) {
+      line += count(norm.slice(cursor, at));
+      start = line;
+      end = start + count(t.raw.replace(/\n+$/, ""));
+      line += count(t.raw);
+      cursor = at + t.raw.length;
+    }
     var list = Object.assign([t], { links: tokens.links });
     var holder = document.createElement("template");
     holder.innerHTML = marked.parser(list, options);
     Array.prototype.forEach.call(holder.content.children, function (el) {
-      if (tagged) el.setAttribute("data-lines", start + "-" + end);
+      if (start >= 0) el.setAttribute("data-lines", start + "-" + end);
     });
     body.appendChild(holder.content);
   });

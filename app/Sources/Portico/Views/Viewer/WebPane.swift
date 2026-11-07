@@ -45,7 +45,26 @@ enum MarkdownPage {
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
-            .replacingOccurrences(of: "{{SOURCE}}", with: jsString(split.body))
+            .replacingOccurrences(of: "{{SOURCE}}", with: jsString(sentinelMarkers(source, body: split.body)))
+    }
+
+    /// v0.23: the body with each comment marker (outside code and thread
+    /// blocks) as private-use sentinels — open `U+E000 id U+E001`, close
+    /// `U+E002 id U+E001` — so the renderer sees plain text (a marker at a
+    /// line's start would otherwise open an HTML block). The page turns them
+    /// back into markers after rendering. No line breaks change, so the
+    /// blocks' source lines stay right.
+    static func sentinelMarkers(_ source: String, body: String) -> String {
+        let shift = source.utf16.count - body.utf16.count
+        let markers = CommentFormat.liveMarkers(source).filter { $0.range.lowerBound >= shift }
+        guard !markers.isEmpty else { return body }
+        var units = Array(body.utf16)
+        for m in markers.reversed() {
+            let open: UInt16 = m.closing ? 0xE002 : 0xE000
+            let replacement = [open] + Array(m.id.utf16) + [0xE001]
+            units.replaceSubrange((m.range.lowerBound - shift)..<(m.range.upperBound - shift), with: replacement)
+        }
+        return String(decoding: units, as: UTF16.self)
     }
 
     /// How many source lines come before the body the renderer gets (the

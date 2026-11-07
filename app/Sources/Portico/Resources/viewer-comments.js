@@ -79,15 +79,63 @@
     return marks;
   }
 
+  // A thread header's fields (key:value or key:"…"); the first of a duplicated key wins.
+  function headerFields(header) {
+    var out = {};
+    var i = 0, b = header.length;
+    var unq = function (v) { return v.replace(/\\([\\">])/g, "$1"); };
+    while (i < b) {
+      while (i < b && (header[i] === " " || header[i] === "\t")) i++;
+      if (i >= b) break;
+      var m = /^([A-Za-z_][A-Za-z0-9_-]*):/.exec(header.slice(i));
+      if (!m) { while (i < b && header[i] !== " " && header[i] !== "\t") i++; continue; }
+      var key = m[1], value;
+      i += m[0].length;
+      if (header[i] === '"') {
+        var j = i + 1;
+        while (j < b && header[j] !== '"') j += header[j] === "\\" && j + 1 < b ? 2 : 1;
+        value = unq(header.slice(i + 1, Math.min(j, b)));
+        i = j + 1;
+      } else {
+        var k = i;
+        while (k < b && header[k] !== " " && header[k] !== "\t") k++;
+        value = unq(header.slice(i, k));
+        i = k;
+      }
+      if (!(key in out)) out[key] = value;
+    }
+    return out;
+  }
+
   function threadStatuses(root) {
     var status = {};
     comments(root).forEach(function (c) {
       var m = BLOCK.exec(c.data);
       if (!m) return;
-      var s = /(?:^|\s)status:(\S+)/.exec(c.data);
-      status[m[1]] = s && s[1] === "resolved" ? "resolved" : "open";
+      var header = c.data.slice(m[0].length).split("\n")[0].replace(/\r$/, "");
+      status[m[1]] = headerFields(header).status === "resolved" ? "resolved" : "open";
     });
     return status;
+  }
+
+  // The renderer saw comment markers as private-use sentinels (MarkdownPage):
+  // U+E000 id U+E001 opens, U+E002 id U+E001 closes. Back to markers.
+  function restoreMarkers(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    var n;
+    while ((n = walker.nextNode())) if (/[\uE000\uE002]/.test(n.data)) nodes.push(n);
+    nodes.forEach(function (node) {
+      var re = /([\uE000\uE002])([a-z0-9]{5,8})\uE001/g;
+      var data = node.data, last = 0, m, frag = document.createDocumentFragment();
+      while ((m = re.exec(data))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(data.slice(last, m.index)));
+        frag.appendChild(document.createComment((m[1] === "\uE002" ? "/c:" : "c:") + m[2]));
+        last = m.index + m[0].length;
+      }
+      if (last < data.length) frag.appendChild(document.createTextNode(data.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    });
   }
 
   function highlight(root) {
@@ -186,11 +234,25 @@
     }
     var lines = a.getAttribute("data-lines").split("-").map(Number);
     info.lines = lines;
-    var before = document.createRange();
-    before.setStart(a, 0);
-    before.setEnd(range.startContainer, range.startOffset);
-    var prefix = norm(before.toString());
-    info.occurrence = countBefore(norm(a.textContent), text, prefix.length);
+    // Occurrences count visible text only, as the source search does: text in code isn't counted.
+    var whole = "", prefix = "", reached = false;
+    var walker = document.createTreeWalker(a, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      var inCode = node.parentElement && node.parentElement.closest("code, pre");
+      if (!reached && node === range.startContainer) {
+        if (!inCode) prefix = whole + node.data.slice(0, range.startOffset);
+        else prefix = whole;
+        reached = true;
+      } else if (!reached && range.startContainer.nodeType !== Node.TEXT_NODE &&
+                 (range.comparePoint(node, 0) >= 0)) {
+        prefix = whole;
+        reached = true;
+      }
+      if (!inCode) whole += node.data;
+    }
+    if (!reached) prefix = whole;
+    info.occurrence = countBefore(norm(whole), text, norm(prefix).length);
     return info;
   }
 
@@ -528,6 +590,7 @@
   }
 
   if (document.getElementById("body")) {
+    restoreMarkers(document.getElementById("body"));
     highlight(document.getElementById("body"));
     post({ type: "ready" });
   }
