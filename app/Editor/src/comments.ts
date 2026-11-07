@@ -89,6 +89,174 @@ function fences(text: string, ls: Line[], skipUntil: number): Array<[number, num
   return out;
 }
 
+// Block starts (CommonMark, as far as comments need it), the same rules as
+// comments.py and CommentFormat.swift.
+const TOP_FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+const HR = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const SETEXT = /^ {0,3}(?:=+|-+)[ \t]*$/;
+const QUOTE = /^ {0,3}>/;
+const HTML = /^ {0,3}<(?:[A-Za-z/?]|!)/;
+const ANCHOR_LINE = /^ {0,3}<!--\/?c:[a-z0-9]{5,8}-->/;
+const BULLET = /^ {0,3}[-*+][ \t]+\S/;
+const ORDERED_ONE = /^ {0,3}1[.)][ \t]+\S/;
+const LIST = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const INDENTED = /^(?: {4}| {0,3}\t)/;
+const BLOCK_START = /^[ \t]*<!--co:([a-z0-9]{5,8})(?=[ \t\r\n\f\v]|-->|$)/;
+
+function interrupts(t: string, inQuote = false): boolean {
+  if (BLOCK_START.test(t)) return true;
+  if (TOP_FENCE.test(t) || HEADING.test(t) || HR.test(t)) return true;
+  if (!inQuote && QUOTE.test(t)) return true;
+  if (HTML.test(t) && !ANCHOR_LINE.test(t)) return true;
+  return BULLET.test(t) || ORDERED_ONE.test(t);
+}
+
+export interface Segment {
+  kind: string;
+  first: number;
+  last: number;
+}
+
+// Top-level blocks: para, list, quote, heading, hr, fence, icode, html, thread, fm.
+export function segments(text: string, ls: Line[], blocks: Block[], fm: [number, number] | null): Segment[] {
+  const segs: Segment[] = [];
+  const n = ls.length;
+  const t = (k: number) => text.slice(ls[k].start, ls[k].end);
+  const isBlank = (x: string) => /^[ \t\r\f\v]*$/.test(x);
+  const lead = (x: string) => x.startsWith(" ") || x.startsWith("\t");
+  const byStart = new Map(blocks.map((b) => [b.from, b]));
+  let i = 0;
+  if (fm) {
+    let j = 0;
+    while (ls[j].full < fm[1]) j++;
+    segs.push({ kind: "fm", first: 0, last: j });
+    i = j + 1;
+  }
+  while (i < n) {
+    const line = t(i);
+    if (isBlank(line)) { i++; continue; }
+    const b = byStart.get(ls[i].start);
+    if (b) {
+      let j = i;
+      while (ls[j].full < b.to) j++;
+      segs.push({ kind: "thread", first: i, last: j });
+      i = j + 1;
+      continue;
+    }
+    const m = TOP_FENCE.exec(line);
+    if (m) {
+      const fence = m[1];
+      let j = i + 1;
+      for (; j < n; j++) {
+        const mm = TOP_FENCE.exec(t(j));
+        if (mm && mm[1][0] === fence[0] && mm[1].length >= fence.length && isBlank(t(j).slice(mm[0].length))) break;
+      }
+      j = Math.min(j, n - 1);
+      segs.push({ kind: "fence", first: i, last: j });
+      i = j + 1;
+      continue;
+    }
+    if (INDENTED.test(line)) {
+      let j = i;
+      while (j + 1 < n && (INDENTED.test(t(j + 1)) || isBlank(t(j + 1)))) j++;
+      while (isBlank(t(j))) j--;
+      segs.push({ kind: "icode", first: i, last: j });
+      i = j + 1;
+      continue;
+    }
+    if (HEADING.test(line)) { segs.push({ kind: "heading", first: i, last: i }); i++; continue; }
+    if (HR.test(line)) { segs.push({ kind: "hr", first: i, last: i }); i++; continue; }
+    if (HTML.test(line) && !ANCHOR_LINE.test(line)) {
+      let j = i;
+      if (line.replace(/^ +/, "").startsWith("<!--")) {
+        while (j < n && !t(j).includes("-->")) j++;
+        j = Math.min(j, n - 1);
+      } else {
+        while (j + 1 < n && !isBlank(t(j + 1))) j++;
+      }
+      segs.push({ kind: "html", first: i, last: j });
+      i = j + 1;
+      continue;
+    }
+    if (QUOTE.test(line)) {
+      let j = i;
+      while (j + 1 < n && !isBlank(t(j + 1)) && (QUOTE.test(t(j + 1)) || !interrupts(t(j + 1), true))) j++;
+      segs.push({ kind: "quote", first: i, last: j });
+      i = j + 1;
+      continue;
+    }
+    if (LIST.test(line)) {
+      let j = i;
+      for (;;) {
+        if (j + 1 < n && !isBlank(t(j + 1))) {
+          const next = t(j + 1);
+          if (lead(next) || LIST.test(next) || !interrupts(next)) {
+            if (BLOCK_START.test(next)) break;
+            j++;
+            continue;
+          }
+          break;
+        }
+        let k = j + 1;
+        while (k < n && isBlank(t(k))) k++;
+        if (k > j + 1 && k < n && !BLOCK_START.test(t(k)) && (lead(t(k)) || LIST.test(t(k)))) {
+          j = k;
+          continue;
+        }
+        break;
+      }
+      segs.push({ kind: "list", first: i, last: j });
+      i = j + 1;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < n) {
+      const next = t(j + 1);
+      if (isBlank(next)) break;
+      if (SETEXT.test(next)) { j++; break; }
+      if (interrupts(next)) break;
+      j++;
+    }
+    segs.push({ kind: "para", first: i, last: j });
+    i = j + 1;
+  }
+  return segs;
+}
+
+// A thread header's fields (`key:value` or `key:"…"`); the first of a duplicated key wins.
+export function headerFields(header: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let i = 0;
+  const b = header.length;
+  const unq = (v: string) => v.replace(/\\([\\">])/g, "$1");
+  while (i < b) {
+    while (i < b && (header[i] === " " || header[i] === "\t")) i++;
+    if (i >= b) break;
+    const m = /^([A-Za-z_][A-Za-z0-9_-]*):/.exec(header.slice(i));
+    if (!m) {
+      while (i < b && header[i] !== " " && header[i] !== "\t") i++;
+      continue;
+    }
+    const key = m[1];
+    i += m[0].length;
+    let value: string;
+    if (header[i] === '"') {
+      let j = i + 1;
+      while (j < b && header[j] !== '"') j += header[j] === "\\" && j + 1 < b ? 2 : 1;
+      value = unq(header.slice(i + 1, Math.min(j, b)));
+      i = j + 1;
+    } else {
+      let j = i;
+      while (j < b && header[j] !== " " && header[j] !== "\t") j++;
+      value = unq(header.slice(i, j));
+      i = j;
+    }
+    if (!out.has(key)) out.set(key, value);
+  }
+  return out;
+}
+
 function codeSpans(text: string, segments: Array<[number, number]>): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const [a, b] of segments) {
@@ -130,26 +298,29 @@ export function scanComments(text: string): Scan {
   const blocks: Block[] = [];
   for (let k = 0; k < ls.length; k++) {
     const l = ls[k];
-    const m = /^[ \t]*<!--co:([a-z0-9]{5,8})(?=\s|-->)/.exec(text.slice(l.start, l.end));
+    const m = BLOCK_START.exec(text.slice(l.start, l.end));
     if (!m || inside(coarse, l.start)) continue;
     const close = text.indexOf("-->", l.start + m[0].length);
     if (close < 0) continue;
     let j = k;
     while (ls[j].full <= close) j++;
-    const header = text.slice(l.start, Math.min(close, l.end));
-    const status = /(?:^|\s)status:(\S+)/.exec(header);
-    blocks.push({ id: m[1], from: l.start, to: ls[j].full, status: status && status[1] === "resolved" ? "resolved" : "open" });
+    const header = text.slice(l.start + m[0].length, Math.min(close, l.end)).replace(/\r$/, "");
+    const status = headerFields(header).get("status");
+    blocks.push({ id: m[1], from: l.start, to: ls[j].full, status: status === "resolved" ? "resolved" : "open" });
     k = j;
   }
+  const segs = segments(text, ls, blocks, fm);
+  for (const sg of segs) if (sg.kind === "icode") coarse.push([ls[sg.first].start, ls[sg.last].full]);
+  coarse.sort((x, y) => x[0] - y[0]);
   const walls = [...coarse, ...blocks.map((b) => [b.from, b.to] as [number, number])].sort((x, y) => x[0] - y[0]);
-  const segments: Array<[number, number]> = [];
+  const textSegs: Array<[number, number]> = [];
   let pos = 0;
   for (const [a, b] of walls) {
-    if (a > pos) segments.push([pos, a]);
+    if (a > pos) textSegs.push([pos, a]);
     pos = Math.max(pos, b);
   }
-  if (pos < text.length) segments.push([pos, text.length]);
-  const ignored = [...coarse, ...codeSpans(text, segments)].sort((x, y) => x[0] - y[0]);
+  if (pos < text.length) textSegs.push([pos, text.length]);
+  const ignored = [...coarse, ...codeSpans(text, textSegs)].sort((x, y) => x[0] - y[0]);
   const live = [...ignored, ...blocks.map((b) => [b.from, b.to] as [number, number])];
   const opens = new Map<string, [number, number]>();
   const closes = new Map<string, Array<[number, number]>>();

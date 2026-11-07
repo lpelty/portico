@@ -184,3 +184,27 @@ def test_descriptions_never_name_the_product() -> None:
         assert "portico" not in t.description.lower()
     reply = {t.name: t for t in build_comment_tools(Owner(Path(".")))}["comment_reply"]
     assert "resolving is the person's" in reply.description.lower()
+
+
+NOT_UTF8 = "This file isn't UTF-8 text; comments can't be added."
+
+
+@pytest.mark.parametrize("tool,args", [
+    ("comments_list", {"path": "latin.md"}),
+    ("comment_reply", {"path": "latin.md", "id": "k3x9a", "text": "x"}),
+    ("comment_add", {"path": "latin.md", "quote": "word", "text": "x"}),
+])
+async def test_non_utf8_file_is_a_plain_error(folder: Path, tool: str, args: dict) -> None:
+    p = folder / "latin.md"
+    p.write_bytes("caf\xe9 word\n".encode("latin-1"))
+    before = p.read_bytes()
+    out = await tools(folder)[tool].handler(args)
+    assert out.get("is_error") is True
+    assert text_of(out) == NOT_UTF8
+    assert p.read_bytes() == before
+
+
+async def test_add_refuses_indented_code_and_counts_visible_matches(folder: Path) -> None:
+    put(folder, "a.md", text="    word in code\n\n[word](word) word\n")
+    out = await tools(folder)["comment_add"].handler({"path": "a.md", "quote": "word", "text": "x", "occurrence": 3})
+    assert text_of(out) == '"word" occurs 2 times in a.md; there is no occurrence 3.'

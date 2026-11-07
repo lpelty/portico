@@ -35,6 +35,9 @@ _BOM = "﻿"
 _rng = random.SystemRandom()
 
 
+NOT_UTF8 = "This file isn't UTF-8 text; comments can't be added."
+
+
 class ChangedWhileWriting(Exception):
     """The file changed on disk twice while a comment edit was being written."""
 
@@ -138,7 +141,10 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
         path = resolve(args.get("path"))
         if isinstance(path, dict):
             return path
-        text, _ = _read(path)
+        try:
+            text, _ = _read(path)
+        except UnicodeDecodeError:
+            return _error(NOT_UTF8)
         include = args.get("include_resolved") is True
         threads = []
         for t in cm.parse(text).threads:
@@ -169,7 +175,10 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
             return path
         tid = str(args.get("id") or "")
         body = str(args.get("text") or "")
-        text, _ = _read(path)
+        try:
+            text, _ = _read(path)
+        except UnicodeDecodeError:
+            return _error(NOT_UTF8)
         if not any(t.id == tid for t in cm.parse(text).threads):
             return _error(f"No comment thread {tid} in {raw}.")
         if not body.strip():
@@ -220,7 +229,10 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
                 return _error(f'"{quote}" occurs {n} times in {raw}; there is no occurrence {occurrence}.')
             return _error(f'"{quote}" isn\'t in {raw} as text in one paragraph, outside code.')
 
-        text, _ = _read(path)
+        try:
+            text, _ = _read(path)
+        except UnicodeDecodeError:
+            return _error(NOT_UTF8)
         refused = refusal(cm.find_quote(text, quote, occurrence))
         if refused:
             return refused

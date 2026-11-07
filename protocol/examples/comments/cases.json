@@ -519,6 +519,391 @@
     "id": "or002"
    },
    "expect": "orphan-anchor.resolve.after.md"
+  },
+  {
+   "name": "anchor-col0",
+   "file": "anchor-col0.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ca001",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "Hello",
+      "anchored_text": "Hello",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T09:00:00.000Z",
+        "text": "Column zero."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "header-keys",
+   "file": "header-keys.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "hq001",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "First wins."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "hq002",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "resolved",
+      "quote": "beta",
+      "anchored_text": "beta",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "Quoted status."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "hq003",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "gamma status:resolved",
+      "anchored_text": "gamma",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "Not a status."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "resolve-first-status-wins",
+   "file": "header-keys.md",
+   "op": "resolve",
+   "args": {
+    "id": "hq001"
+   },
+   "expect": "header-keys.resolve.after.md"
+  },
+  {
+   "name": "indented-code",
+   "file": "indented-code.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ic002",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "real",
+      "anchored_text": "real",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T09:00:00.000Z",
+        "text": "Only this."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "add-heading-body",
+   "file": "heading-body.md",
+   "op": "add",
+   "args": {
+    "quote": "word",
+    "id": "bk001",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "heading-body.add.after.md"
+  },
+  {
+   "name": "add-lazy-quote",
+   "file": "lazy-quote.md",
+   "op": "add",
+   "args": {
+    "quote": "quoted",
+    "id": "bk002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "lazy-quote.add.after.md"
+  },
+  {
+   "name": "add-para-fence",
+   "file": "para-fence.md",
+   "op": "add",
+   "args": {
+    "quote": "Intro",
+    "id": "bk003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-fence.add.after.md"
+  },
+  {
+   "name": "add-list-fence",
+   "file": "list-fence.md",
+   "op": "add",
+   "args": {
+    "quote": "one",
+    "id": "bk004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "list-fence.add.after.md"
+  },
+  {
+   "name": "add-para-html",
+   "file": "para-html.md",
+   "op": "add",
+   "args": {
+    "quote": "one",
+    "id": "bk005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-html.add.after.md"
+  },
+  {
+   "name": "add-setext",
+   "file": "setext.md",
+   "op": "add",
+   "args": {
+    "quote": "Setext",
+    "id": "bk006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "setext.add.after.md"
+  },
+  {
+   "name": "add-para-dashes",
+   "file": "para-dashes.md",
+   "op": "add",
+   "args": {
+    "quote": "Para",
+    "id": "bk007",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-dashes.add.after.md"
+  },
+  {
+   "name": "add-para-heading",
+   "file": "para-heading.md",
+   "op": "add",
+   "args": {
+    "quote": "text",
+    "id": "bk008",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-heading.add.after.md"
+  },
+  {
+   "name": "add-col0",
+   "file": "col0.md",
+   "op": "add",
+   "args": {
+    "quote": "Hello",
+    "id": "bk009",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "col0.add.after.md"
+  },
+  {
+   "name": "find-link-destination",
+   "text": "See [the docs](https://example.com/word) and word here.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "See [the docs](https://example.com/word) and "
+  },
+  {
+   "name": "find-link-title",
+   "text": "See [x](u \"a word\") then word.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "See [x](u \"a word\") then "
+  },
+  {
+   "name": "find-image",
+   "text": "![a word](img/word.png) then word.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "![a word](img/word.png) then "
+  },
+  {
+   "name": "find-html-attribute",
+   "text": "A <span title=\"word\">x</span> word\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "A <span title=\"word\">x</span> "
+  },
+  {
+   "name": "find-autolink-url-visible",
+   "text": "Go <https://word.example> or word.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 2
+   },
+   "expect_prefix": "Go <https://word.example> or "
+  },
+  {
+   "name": "find-autolink-brackets",
+   "text": "Go <https://word.example> now.\n",
+   "find": {
+    "quote": "<https",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-indented-code",
+   "text": "    indented code word\n\nPara\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside code or front matter"
+  },
+  {
+   "name": "find-refdef",
+   "text": "See [x][r] word.\n\n[r]: http://word.example\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 2
+   },
+   "expect_refusal": "occurs 1 times"
+  },
+  {
+   "name": "find-occurrence-skips-destination",
+   "text": "[cat](cat) cat\n",
+   "find": {
+    "quote": "cat",
+    "occurrence": 2
+   },
+   "expect_prefix": "[cat](cat) "
+  },
+  {
+   "name": "find-across-link-refused",
+   "text": "See [the docs](u) now.\n",
+   "find": {
+    "quote": "See the docs",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-heading-body-refused",
+   "text": "# Heading\nBody\n",
+   "find": {
+    "quote": "Heading Body",
+    "occurrence": 1
+   },
+   "expect_refusal": "crosses paragraphs"
+  },
+  {
+   "name": "find-col0-anchor",
+   "text": "<!--c:ca001-->Hello<!--/c:ca001--> world\n<!--co:ca001 by:S at:T status:open quote:\"Hello\"\nS: a\n-->\n",
+   "find": {
+    "quote": "world",
+    "occurrence": 1
+   },
+   "expect_prefix": "<!--c:ca001-->Hello<!--/c:ca001--> "
+  },
+  {
+   "name": "escape-roundtrip",
+   "roundtrip": [
+    "a\\b",
+    "say \"hi\"",
+    "a --> b",
+    "a --\\> b",
+    "--\\\\>",
+    "x\\",
+    "\\leading",
+    "end \\",
+    "C:\\path\\to",
+    "quote \" and \\\" both",
+    "---->",
+    "Note: y",
+    "+1 then",
+    "two\nlines: x\n\\back\n+plus\n\nafter blank"
+   ]
+  },
+  {
+   "name": "header-bare",
+   "file": "header-bare.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "hb001",
+      "by": "",
+      "at": "",
+      "status": "open",
+      "quote": "",
+      "anchored_text": "x",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "hi"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
   }
  ]
 }

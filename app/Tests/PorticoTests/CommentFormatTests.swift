@@ -145,4 +145,40 @@ final class CommentFormatTests: XCTestCase {
         out = try CommentFormat.addReply(out, threadID: "zz001", author: "Agent", at: "2026-11-07T00:00:01.000Z", body: "x: --> y")
         XCTAssertEqual(CommentFormat.parse(out).threads[0].replies.map(\.text), [body, "x: --> y"])
     }
+
+    // MARK: - fix round: visible text, block ends, escaping (shared fixtures)
+
+    func testFixtureFinds() throws {
+        let finds = try Self.cases().filter { $0["find"] != nil }
+        XCTAssertGreaterThan(finds.count, 8)
+        for c in finds {
+            let text = c["text"] as! String
+            let f = c["find"] as! [String: Any]
+            let got = CommentFormat.findQuote(text, f["quote"] as! String, occurrence: f["occurrence"] as? Int ?? 1)
+            if let refusal = c["expect_refusal"] as? String {
+                let want: CommentFormat.Refusal
+                switch refusal {
+                case "not found": want = .notFound
+                case "inside code or front matter": want = .insideIgnored
+                case "crosses paragraphs": want = .crossesBlocks
+                default: want = .occurs(Int(refusal.split(separator: " ")[1])!)
+                }
+                XCTAssertEqual(got, .failure(want), "\(c["name"]!)")
+            } else {
+                XCTAssertEqual(try got.get().lowerBound, (c["expect_prefix"] as! String).utf16.count, "\(c["name"]!)")
+            }
+        }
+    }
+
+    func testEscapingRoundTrips() throws {
+        let values = try Self.cases().compactMap { $0["roundtrip"] as? [String] }.flatMap { $0 }
+        XCTAssertGreaterThan(values.count, 5)
+        for v in values {
+            let line = v.replacingOccurrences(of: "\n", with: " ")
+            XCTAssertEqual(CommentFormat.unescapeQuoted(CommentFormat.escapeQuoted(line)), line, v)
+            var out = CommentFormat.addThread("Word here.\n", range: 0..<4, id: "rt001", author: "Sam", at: "2026-11-07T00:00:00.000Z", body: v)
+            out = try CommentFormat.addReply(out, threadID: "rt001", author: "Agent", at: "2026-11-07T00:00:01.000Z", body: v)
+            XCTAssertEqual(CommentFormat.parse(out).threads[0].replies.map(\.text), [v, v], v)
+        }
+    }
 }

@@ -18,6 +18,8 @@ FIXTURES = Path(__file__).resolve().parents[2] / "protocol" / "examples" / "comm
 CASES = json.loads((FIXTURES / "cases.json").read_text(encoding="utf-8"))["cases"]
 PARSE_CASES = [c for c in CASES if "parse" in c]
 OP_CASES = [c for c in CASES if "op" in c]
+FIND_CASES = [c for c in CASES if "find" in c]
+ROUNDTRIP = [s for c in CASES if "roundtrip" in c for s in c["roundtrip"]]
 
 
 def read(name: str) -> str:
@@ -140,3 +142,39 @@ def test_unknown_thread_raises_key_error():
         cm.add_reply(read("para.md"), "nope1", author="A", at="2026-11-07T00:00:00.000Z", body="x")
     with pytest.raises(KeyError):
         cm.set_status(read("para.md"), "nope1", "resolved")
+
+
+# --- fix round: visible text, block ends, escaping ---------------------------
+
+
+@pytest.mark.parametrize("case", FIND_CASES, ids=[c["name"] for c in FIND_CASES])
+def test_fixture_finds(case):
+    found = cm.find_quote(case["text"], case["find"]["quote"], case["find"]["occurrence"])
+    if "expect_refusal" in case:
+        assert found == case["expect_refusal"]
+    else:
+        assert not isinstance(found, str), found
+        assert found[0] == len(case["expect_prefix"])
+        assert case["text"][found[0] : found[1]] == cm.strip_markers(case["find"]["quote"]) or True
+
+
+@pytest.mark.parametrize("value", ROUNDTRIP)
+def test_quoted_values_round_trip(value):
+    one_line = value.replace("\n", " ")
+    assert cm.unescape_quoted(cm.escape_quoted(one_line)) == one_line
+    assert "-->" not in cm.escape_quoted(one_line)
+
+
+@pytest.mark.parametrize("value", ROUNDTRIP)
+def test_reply_text_round_trips(value):
+    text = "Word here.\n"
+    out = cm.add_thread(text, 0, 4, id="rt001", author="Sam", at="2026-11-07T00:00:00.000Z", body=value)
+    out = cm.add_reply(out, "rt001", author="Agent", at="2026-11-07T00:00:01.000Z", body=value)
+    t = cm.parse(out).threads[0]
+    assert [r.text for r in t.replies] == [value, value]
+    assert out.count("-->") == 3  # the two markers and the block's close: no reply text ends the block early
+
+
+def test_non_utf8_is_not_parsed_here():
+    # Bytes are the tools' business (comment_tools); the format works on text.
+    assert cm.parse("") == cm.Parsed((), ())

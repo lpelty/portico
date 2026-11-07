@@ -133,11 +133,165 @@ enum CommentFormat {
 
     fileprivate struct Block { var start: Int; var end: Int; var close: Int; var id: String }
 
+    fileprivate struct Segment { var kind: String; var first: Int; var last: Int }
+
     fileprivate struct Regions {
         var lines: [Line]
         var frontMatter: Range<Int>?
         var ignored: [Range<Int>]
         var blocks: [Block]
+        var segs: [Segment]
+    }
+
+    // MARK: block starts (CommonMark, as far as comments need it)
+
+    fileprivate static func rx(_ p: String) -> NSRegularExpression { try! NSRegularExpression(pattern: p) }
+    nonisolated(unsafe) fileprivate static let topFenceRE = rx(#"^ {0,3}(`{3,}|~{3,})"#)
+    nonisolated(unsafe) fileprivate static let headingRE = rx(#"^ {0,3}#{1,6}(?:[ \t]|$)"#)
+    nonisolated(unsafe) fileprivate static let hrRE = rx(#"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$"#)
+    nonisolated(unsafe) fileprivate static let setextRE = rx(#"^ {0,3}(?:=+|-+)[ \t]*$"#)
+    nonisolated(unsafe) fileprivate static let quoteRE = rx(#"^ {0,3}>"#)
+    nonisolated(unsafe) fileprivate static let htmlRE = rx(#"^ {0,3}<(?:[A-Za-z/?]|!)"#)
+    nonisolated(unsafe) fileprivate static let anchorLineRE = rx(#"^ {0,3}<!--/?c:[a-z0-9]{5,8}-->"#)
+    nonisolated(unsafe) fileprivate static let bulletRE = rx(#"^ {0,3}[-*+][ \t]+\S"#)
+    nonisolated(unsafe) fileprivate static let orderedOneRE = rx(#"^ {0,3}1[.)][ \t]+\S"#)
+    nonisolated(unsafe) fileprivate static let listRE = rx(#"^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)"#)
+    nonisolated(unsafe) fileprivate static let refdefRE = rx(#"^ {0,3}\[[^\]]+\]:[ \t]*\S"#)
+    nonisolated(unsafe) fileprivate static let indentedRE = rx(#"^(?: {4}| {0,3}\t)"#)
+    nonisolated(unsafe) fileprivate static let blockStartRE = rx(#"^[ \t]*<!--co:[a-z0-9]{5,8}(?=[ \t\r\n\f\u000B]|-->|$)"#)
+    nonisolated(unsafe) fileprivate static let autolinkRE = rx(#"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>"#)
+    nonisolated(unsafe) fileprivate static let tagRE = rx(#"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>"#)
+
+    /// The first match of `re` in `string`, anchored at UTF-16 offset `at` (whole string when nil).
+    fileprivate static func match(_ re: NSRegularExpression, _ string: String) -> Bool {
+        re.firstMatch(in: string, range: NSRange(location: 0, length: string.utf16.count)) != nil
+    }
+
+    fileprivate static func lineText(_ t: U, _ l: Line) -> String { s(t[l.start..<l.end]) }
+
+    fileprivate static func interrupts(_ line: String, inQuote: Bool = false) -> Bool {
+        if match(blockStartRE, line) { return true }
+        if match(topFenceRE, line) || match(headingRE, line) || match(hrRE, line) { return true }
+        if !inQuote, match(quoteRE, line) { return true }
+        if match(htmlRE, line), !match(anchorLineRE, line) { return true }
+        return match(bulletRE, line) || match(orderedOneRE, line)
+    }
+
+    fileprivate static func blankLine(_ line: String) -> Bool {
+        line.unicodeScalars.allSatisfy { $0 == " " || $0 == "\t" || $0 == "\r" || $0 == "\u{0C}" || $0 == "\u{0B}" }
+    }
+
+    /// Top-level blocks (para, list, quote, heading, hr, fence, icode, html, thread, fm).
+    fileprivate static func segments(_ t: U, _ ls: [Line], _ blocks: [Block], _ fm: Range<Int>?) -> [Segment] {
+        var segs: [Segment] = []
+        let n = ls.count
+        let texts = ls.map { lineText(t, $0) }
+        var byStart: [Int: Block] = [:]
+        for b in blocks { byStart[b.start] = b }
+        func lead(_ x: String) -> Bool { x.hasPrefix(" ") || x.hasPrefix("\t") }
+        var i = 0
+        if let fm {
+            var j = 0
+            while ls[j].full < fm.upperBound { j += 1 }
+            segs.append(Segment(kind: "fm", first: 0, last: j))
+            i = j + 1
+        }
+        while i < n {
+            let line = texts[i]
+            if blankLine(line) { i += 1; continue }
+            if let b = byStart[ls[i].start] {
+                var j = i
+                while ls[j].full < b.end { j += 1 }
+                segs.append(Segment(kind: "thread", first: i, last: j))
+                i = j + 1
+                continue
+            }
+            if let m = topFenceRE.firstMatch(in: line, range: NSRange(location: 0, length: line.utf16.count)) {
+                let fence = (line as NSString).substring(with: m.range(at: 1))
+                var j = i + 1
+                while j < n {
+                    let x = texts[j]
+                    if let mm = topFenceRE.firstMatch(in: x, range: NSRange(location: 0, length: x.utf16.count)) {
+                        let f = (x as NSString).substring(with: mm.range(at: 1))
+                        let rest = (x as NSString).substring(from: mm.range.location + mm.range.length)
+                        if f.first == fence.first, f.count >= fence.count, blankLine(rest) { break }
+                    }
+                    j += 1
+                }
+                j = min(j, n - 1)
+                segs.append(Segment(kind: "fence", first: i, last: j))
+                i = j + 1
+                continue
+            }
+            if match(indentedRE, line) {
+                var j = i
+                while j + 1 < n, match(indentedRE, texts[j + 1]) || blankLine(texts[j + 1]) { j += 1 }
+                while blankLine(texts[j]) { j -= 1 }
+                segs.append(Segment(kind: "icode", first: i, last: j))
+                i = j + 1
+                continue
+            }
+            if match(headingRE, line) { segs.append(Segment(kind: "heading", first: i, last: i)); i += 1; continue }
+            if match(hrRE, line) { segs.append(Segment(kind: "hr", first: i, last: i)); i += 1; continue }
+            if match(htmlRE, line), !match(anchorLineRE, line) {
+                var j = i
+                if line.drop(while: { $0 == " " }).hasPrefix("<!--") {
+                    while j < n, !texts[j].contains("-->") { j += 1 }
+                    j = min(j, n - 1)
+                } else {
+                    while j + 1 < n, !blankLine(texts[j + 1]) { j += 1 }
+                }
+                segs.append(Segment(kind: "html", first: i, last: j))
+                i = j + 1
+                continue
+            }
+            if match(quoteRE, line) {
+                var j = i
+                while j + 1 < n, !blankLine(texts[j + 1]),
+                    match(quoteRE, texts[j + 1]) || !interrupts(texts[j + 1], inQuote: true)
+                {
+                    j += 1
+                }
+                segs.append(Segment(kind: "quote", first: i, last: j))
+                i = j + 1
+                continue
+            }
+            if match(listRE, line) {
+                var j = i
+                while true {
+                    if j + 1 < n, !blankLine(texts[j + 1]) {
+                        let next = texts[j + 1]
+                        if lead(next) || match(listRE, next) || !interrupts(next) {
+                            if match(blockStartRE, next) { break }
+                            j += 1
+                            continue
+                        }
+                        break
+                    }
+                    var k = j + 1
+                    while k < n, blankLine(texts[k]) { k += 1 }
+                    if k > j + 1, k < n, !match(blockStartRE, texts[k]), lead(texts[k]) || match(listRE, texts[k]) {
+                        j = k
+                        continue
+                    }
+                    break
+                }
+                segs.append(Segment(kind: "list", first: i, last: j))
+                i = j + 1
+                continue
+            }
+            var j = i
+            while j + 1 < n {
+                let next = texts[j + 1]
+                if blankLine(next) { break }
+                if match(setextRE, next) { j += 1; break }
+                if interrupts(next) { break }
+                j += 1
+            }
+            segs.append(Segment(kind: "para", first: i, last: j))
+            i = j + 1
+        }
+        return segs
     }
 
     fileprivate static func frontMatter(_ t: U, _ ls: [Line]) -> Range<Int>? {
@@ -192,7 +346,7 @@ enum CommentFormat {
         while j < l.end, isIDUnit(t[j]) { j += 1 }
         let n = j - idStart
         guard n >= 5, n <= 8 else { return nil }
-        guard j < l.end, isSpaceUnit(t[j]) || has(t, u("-->"), at: j) else { return nil }
+        guard j == l.end || asciiSpace(t[j]) || has(t, u("-->"), at: j) else { return nil }
         return (s(t[idStart..<j]), j)
     }
 
@@ -264,7 +418,10 @@ enum CommentFormat {
         let fm = frontMatter(t, ls)
         let coarse = (fm.map { [$0] } ?? []) + fences(t, ls, skipUntil: fm?.upperBound ?? 0)
         let blocks = blockSpans(t, ls, coarse)
-        let walls = (coarse + blocks.map { $0.start..<$0.end }).sorted { $0.lowerBound < $1.lowerBound }
+        let segs = segments(t, ls, blocks, fm)
+        let icode = segs.filter { $0.kind == "icode" }.map { ls[$0.first].start..<ls[$0.last].full }
+        let coarseAll = (coarse + icode).sorted { $0.lowerBound < $1.lowerBound }
+        let walls = (coarseAll + blocks.map { $0.start..<$0.end }).sorted { $0.lowerBound < $1.lowerBound }
         var segments: [Range<Int>] = []
         var pos = 0
         for w in walls {
@@ -272,11 +429,11 @@ enum CommentFormat {
             pos = max(pos, w.upperBound)
         }
         if pos < t.count { segments.append(pos..<t.count) }
-        let ignored = (coarse + codeSpans(t, segments)).sorted { $0.lowerBound < $1.lowerBound }
-        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks)
+        let ignored = (coarseAll + codeSpans(t, segments)).sorted { $0.lowerBound < $1.lowerBound }
+        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs)
     }
 
-    /// Front matter, ``` and ~~~ fences, and inline code spans.
+    /// Front matter, ``` and ~~~ fences, indented code blocks, and inline code spans.
     static func ignoredRegions(_ text: String) -> [Range<Int>] { regions(u(text)).ignored }
 
     // MARK: markers
@@ -325,6 +482,12 @@ enum CommentFormat {
         return s(out[...])
     }
 
+    /// The markers that are comment markup (outside code and thread blocks): UTF-16 range, id, closing.
+    static func liveMarkers(_ text: String) -> [(range: Range<Int>, id: String, closing: Bool)] {
+        let t = u(text)
+        return liveMarkers(t, regions(t)).map { ($0.range, $0.id, $0.closing) }
+    }
+
     static func stripMarkers(_ text: String) -> String {
         let t = u(text)
         return stripMarkers(t, 0..<t.count)
@@ -332,29 +495,42 @@ enum CommentFormat {
 
     // MARK: header and thread lines
 
-    fileprivate static func unescape(_ text: String) -> String {
-        var out = ""
-        let cs = Array(text)
+    /// A header value inside double quotes: newlines as spaces, then `\` → `\\`, `"` → `\"`, `-->` → `--\>`.
+    static func escapeQuoted(_ v: String) -> String {
+        v.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "-->", with: "--\\>")
+    }
+
+    static func unescapeQuoted(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        let cs = Array(text.unicodeScalars)
         var i = 0
         while i < cs.count {
-            if cs[i] == "\\", i + 1 < cs.count, cs[i + 1] == "\"" {
-                out.append("\"")
+            if cs[i] == "\\", i + 1 < cs.count, cs[i + 1] == "\\" || cs[i + 1] == "\"" || cs[i + 1] == ">" {
+                out.append(cs[i + 1])
                 i += 2
-            } else if i + 3 < cs.count, cs[i] == "-", cs[i + 1] == "-", cs[i + 2] == "\\", cs[i + 3] == ">" {
-                out += "-->"
-                i += 4
             } else {
                 out.append(cs[i])
                 i += 1
             }
         }
-        return out
+        return String(out)
     }
 
-    fileprivate static func escapeQuote(_ v: String) -> String {
-        v.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "-->", with: "--\\>")
+    nonisolated(unsafe) fileprivate static let bodyArrowRE = rx(#"--(\\*)>"#)
+    nonisolated(unsafe) fileprivate static let bodyArrowBackRE = rx(#"--\\(\\*)>"#)
+
+    /// A reply's text: one more backslash between `--` and `>`, so it never closes the block.
+    static func escapeBody(_ v: String) -> String {
+        bodyArrowRE.stringByReplacingMatches(
+            in: v, range: NSRange(location: 0, length: v.utf16.count), withTemplate: "--$1\\\\>")
+    }
+
+    static func unescapeBody(_ v: String) -> String {
+        bodyArrowBackRE.stringByReplacingMatches(
+            in: v, range: NSRange(location: 0, length: v.utf16.count), withTemplate: "--$1>")
     }
 
     fileprivate static func isKeyStart(_ c: UInt16) -> Bool {
@@ -382,12 +558,12 @@ enum CommentFormat {
                 var j = i + 1
                 while j < b, t[j] != quoteMark { j += t[j] == backslash && j + 1 < b ? 2 : 1 }
                 let vs = i + 1, ve = min(j, b)
-                out.append((Field(key: key, range: vs..<ve), unescape(s(t[vs..<ve]))))
+                out.append((Field(key: key, range: vs..<ve), unescapeQuoted(s(t[vs..<ve]))))
                 i = j + 1
             } else {
                 var j = i
                 while j < b, t[j] != sp, t[j] != tab { j += 1 }
-                out.append((Field(key: key, range: i..<j), unescape(s(t[i..<j]))))
+                out.append((Field(key: key, range: i..<j), unescapeQuoted(s(t[i..<j]))))
                 i = j
             }
         }
@@ -429,15 +605,15 @@ enum CommentFormat {
         var reactions: [String] = []
         for line in raw {
             if line.hasPrefix("\\") {
-                if !replies.isEmpty { replies[replies.count - 1].text += "\n" + unescape(String(line.dropFirst())) }
+                if !replies.isEmpty { replies[replies.count - 1].text += "\n" + unescapeBody(String(line.dropFirst())) }
                 continue
             }
-            if isBlankString(line) { continue }
+            if blankLine(line) { continue }
             if line.hasPrefix("+") { reactions.append(line); continue }
             if let m = replyMatch(line), !trimmed(m.0).isEmpty {
-                replies.append(Reply(author: trimmed(m.0), at: m.1, text: unescape(m.2)))
+                replies.append(Reply(author: trimmed(m.0), at: m.1, text: unescapeBody(m.2)))
             } else if !replies.isEmpty {
-                replies[replies.count - 1].text += "\n" + unescape(line)
+                replies[replies.count - 1].text += "\n" + unescapeBody(line)
             }
         }
         return (replies, reactions)
@@ -566,32 +742,6 @@ enum CommentFormat {
 
     // MARK: blocks
 
-    fileprivate static func isListStart(_ t: U, _ l: Line) -> Bool {
-        var i = l.start
-        while i < l.end, isSpaceUnit(t[i]) { i += 1 }
-        guard i - l.start <= 3, i < l.end else { return false }
-        if t[i] == 45 || t[i] == 42 || t[i] == 43 {  // - * +
-            return i + 1 < l.end && isSpaceUnit(t[i + 1])
-        }
-        var j = i
-        while j < l.end, t[j] >= 48, t[j] <= 57 { j += 1 }
-        guard j > i, j < l.end, t[j] == 46 || t[j] == 41 else { return false }  // . )
-        return j + 1 < l.end && isSpaceUnit(t[j + 1])
-    }
-
-    fileprivate static func isHeading(_ t: U, _ l: Line) -> Bool {
-        var i = l.start
-        while i < l.end, t[i] == 35 { i += 1 }
-        let n = i - l.start
-        return n >= 1 && n <= 6 && i < l.end && isSpaceUnit(t[i])
-    }
-
-    fileprivate static func startsQuote(_ t: U, _ l: Line) -> Bool {
-        var i = l.start
-        while i < l.end, isSpaceUnit(t[i]) { i += 1 }
-        return i < l.end && t[i] == gt
-    }
-
     /// Where a new thread block goes for an anchor at `offset`: after the top-level block.
     static func blockEnd(_ text: String, offset: Int) -> Int { blockEnd(u(text), offset: offset) }
 
@@ -599,34 +749,9 @@ enum CommentFormat {
         let r = regions(t)
         let ls = r.lines
         guard !ls.isEmpty else { return t.count }
-        let floor = r.frontMatter?.upperBound ?? 0
-        let inBlock = Set(ls.indices.filter { k in r.blocks.contains { $0.start <= ls[k].start && ls[k].start < $0.end } })
-        func blank(_ k: Int) -> Bool { isBlank(t, ls[k].start..<ls[k].end) }
-        let i = ls.indices.first { offset < ls[$0].full || $0 == ls.count - 1 }!
-        var j = i
-        while j > 0, !blank(j - 1), ls[j - 1].start >= floor, !inBlock.contains(j - 1) { j -= 1 }
-        var k = i
-        if isHeading(t, ls[j]) {
-            k = j
-        } else if isListStart(t, ls[j]) {
-            while true {
-                if k + 1 < ls.count, !blank(k + 1), !inBlock.contains(k + 1) { k += 1; continue }
-                var n = k + 1
-                while n < ls.count, blank(n) { n += 1 }
-                if n > k + 1, n < ls.count, !inBlock.contains(n),
-                    (t[ls[n].start] == sp || t[ls[n].start] == tab) || isListStart(t, ls[n])
-                {
-                    k = n
-                    continue
-                }
-                break
-            }
-        } else if startsQuote(t, ls[j]) {
-            while k + 1 < ls.count, startsQuote(t, ls[k + 1]) { k += 1 }
-        } else {
-            while k + 1 < ls.count, !blank(k + 1), !inBlock.contains(k + 1) { k += 1 }
-        }
-        var pos = ls[k].full
+        let k = ls.indices.first { offset < ls[$0].full } ?? ls.count - 1
+        let last = r.segs.first { $0.first <= k && k <= $0.last }?.last ?? k
+        var pos = ls[last].full
         while let next = r.blocks.first(where: { $0.start == pos }) { pos = next.end }
         return pos
     }
@@ -639,18 +764,140 @@ enum CommentFormat {
         var ignored: [Bool] = []
         var breaks: [Bool] = []
 
-        mutating func space(_ i: Int, _ ig: Bool) {
-            if chars.last == CommentFormat.sp { return }
-            chars.append(CommentFormat.sp); src.append(i); ignored.append(ig); breaks.append(false)
+        mutating func space(_ i: Int, _ ig: Bool, _ brk: Bool) {
+            if chars.last == CommentFormat.sp {
+                if brk { breaks[breaks.count - 1] = true }
+                return
+            }
+            chars.append(CommentFormat.sp); src.append(i); ignored.append(ig); breaks.append(brk)
         }
     }
 
-    /// The text as a reader sees it: markers zero-width, quote prefixes as
-    /// whitespace, whitespace runs as one space, thread blocks as walls.
+    fileprivate static func asciiSpace(_ c: UInt16) -> Bool { c == 32 || (c >= 9 && c <= 13) }
+
+    fileprivate static func anchoredMatch(_ re: NSRegularExpression, _ ns: NSString, _ i: Int, _ b: Int) -> NSRange? {
+        let m = re.firstMatch(in: ns as String, options: [.anchored], range: NSRange(location: i, length: b - i))
+        return m?.range
+    }
+
+    /// The `]` matching the `[` at `i`, within one paragraph.
+    fileprivate static func bracketEnd(_ t: U, _ i: Int, _ b: Int) -> Int? {
+        var depth = 0
+        var j = i
+        while j < b {
+            let c = t[j]
+            if c == backslash { j += 2; continue }
+            if c == 91 { depth += 1 }  // [
+            else if c == 93 {  // ]
+                depth -= 1
+                if depth == 0 { return j }
+            } else if c == nl, paragraphBreakAhead(t, j + 1, quote: true) { return nil }
+            j += 1
+        }
+        return nil
+    }
+
+    fileprivate static func paragraphBreakAhead(_ t: U, _ k: Int, quote: Bool) -> Bool {
+        var j = k
+        let limit = min(t.count, k + 40)
+        while j < limit, t[j] == sp || t[j] == tab || (quote && t[j] == gt) { j += 1 }
+        if j < limit, t[j] == cr { j += 1 }
+        return j < limit && t[j] == nl
+    }
+
+    /// The end of `(dest "title")` or `[ref]` right after a link's text, else nil.
+    fileprivate static func linkTail(_ t: U, _ i: Int, _ b: Int) -> Int? {
+        guard i < b else { return nil }
+        if t[i] == 40 {  // (
+            var depth = 0
+            var j = i
+            while j < b {
+                let c = t[j]
+                if c == backslash { j += 2; continue }
+                if c == 40 { depth += 1 }
+                else if c == 41 {
+                    depth -= 1
+                    if depth == 0 { return j + 1 }
+                } else if c == nl, paragraphBreakAhead(t, j + 1, quote: false) { return nil }
+                j += 1
+            }
+            return nil
+        }
+        if t[i] == 91, let j = t[(i + 1)..<b].firstIndex(of: 93), !t[i..<j].contains(nl) { return j + 1 }
+        return nil
+    }
+
+    /// Link destinations and brackets, whole images, HTML tags and comments, autolink brackets.
+    fileprivate static func inlineWalls(_ t: U, _ ns: NSString, _ a: Int, _ b: Int, _ out: inout [Range<Int>]) {
+        var i = a
+        while i < b {
+            let c = t[i]
+            if c == backslash { i += 2; continue }
+            if c == lt {
+                if let m = anchoredMatch(autolinkRE, ns, i, b) {
+                    out.append(i..<(i + 1)); out.append((m.upperBound - 1)..<m.upperBound)
+                    i = m.upperBound
+                    continue
+                }
+                if let m = markerAt(t, i), m.range.upperBound <= b { i = m.range.upperBound; continue }
+                if has(t, u("<!--"), at: i) {
+                    let e = find(t, u("-->"), from: i + 4, to: b).map { $0 + 3 } ?? b
+                    out.append(i..<e)
+                    i = e
+                    continue
+                }
+                if let m = anchoredMatch(tagRE, ns, i, b) {
+                    out.append(i..<m.upperBound)
+                    i = m.upperBound
+                    continue
+                }
+            }
+            if c == 33, i + 1 < b, t[i + 1] == 91, let close = bracketEnd(t, i + 1, b) {  // ![
+                let e = linkTail(t, close + 1, b) ?? (close + 1)
+                out.append(i..<e)
+                i = e
+                continue
+            }
+            if c == 91, let close = bracketEnd(t, i, b), let e = linkTail(t, close + 1, b) {
+                out.append(i..<(i + 1)); out.append(close..<e)
+                inlineWalls(t, ns, i + 1, close, &out)
+                i = e
+                continue
+            }
+            i += 1
+        }
+    }
+
+    fileprivate static func markerAt(_ t: U, _ i: Int) -> Marker? {
+        guard has(t, u("<!--"), at: i) else { return nil }
+        return markers(Array(t[i..<min(t.count, i + 20)])).first { $0.range.lowerBound == 0 }
+            .map { Marker(id: $0.id, range: (i + $0.range.lowerBound)..<(i + $0.range.upperBound), closing: $0.closing) }
+    }
+
+    /// The text as a reader sees it: markers zero-width, quote prefixes as whitespace,
+    /// whitespace runs as one space; code searchable but flagged; thread blocks, link
+    /// destinations and brackets, images, HTML tags and comments, autolink brackets and
+    /// link reference definitions are walls nothing matches across.
     fileprivate static func visible(_ t: U) -> Visible {
         let r = regions(t)
+        let ns = s(t[...]) as NSString
+        var walls = r.blocks.map { $0.start..<$0.end }
+        let hidden = (r.ignored + walls).sorted { $0.lowerBound < $1.lowerBound }
+        for l in r.lines where !inside(hidden, l.start) && match(refdefRE, lineText(t, l)) {
+            walls.append(l.start..<l.end)
+        }
+        var segments: [Range<Int>] = []
+        var pos = 0
+        for w in (hidden + walls).sorted(by: { $0.lowerBound < $1.lowerBound }) {
+            if w.lowerBound > pos { segments.append(pos..<w.lowerBound) }
+            pos = max(pos, w.upperBound)
+        }
+        if pos < t.count { segments.append(pos..<t.count) }
+        for seg in segments { inlineWalls(t, ns, seg.lowerBound, seg.upperBound, &walls) }
+        var wallAt: [Int: Int] = [:]
+        for w in walls where (wallAt[w.lowerBound] ?? -1) < w.upperBound { wallAt[w.lowerBound] = w.upperBound }
         let ms = markers(t).map(\.range)
-        let walls = r.blocks.map { $0.start..<$0.end }
+        let segEnds = Set(r.segs.map { r.lines[$0.last].end })
         var v = Visible()
         var prefixEnds: [Int: Int] = [:]
         for l in r.lines {
@@ -666,27 +913,31 @@ enum CommentFormat {
         var i = 0
         var mi = 0
         while i < t.count {
+            if let w = wallAt[i] {
+                v.chars.append(0); v.src.append(i); v.ignored.append(false); v.breaks.append(false)
+                i = max(w, i + 1)
+                continue
+            }
             if let stop = prefixEnds[i] {
-                v.space(i, inside(r.ignored, i))
+                v.space(i, false, false)
                 i = stop
                 continue
             }
             while mi < ms.count, ms[mi].upperBound <= i { mi += 1 }
             if mi < ms.count, ms[mi].lowerBound == i { i = ms[mi].upperBound; continue }
-            if let w = walls.first(where: { $0.lowerBound == i }) {
-                v.chars.append(0); v.src.append(i); v.ignored.append(false); v.breaks.append(false)
-                i = w.upperBound
-                continue
-            }
             let c = t[i]
-            if isSpaceUnit(c) {
-                v.space(i, inside(r.ignored, i))
-                if c == nl, v.chars.last == sp {
-                    let k = i + 1
-                    let e = t[k...].firstIndex(of: nl) ?? t.count
-                    let rest = t[k..<e].allSatisfy { $0 == sp || $0 == tab || $0 == cr || $0 == gt }
-                    if rest, e < t.count { v.breaks[v.breaks.count - 1] = true }
+            if asciiSpace(c) {
+                var brk = false
+                if c == nl || (c == cr && i + 1 < t.count && t[i + 1] == nl) {
+                    brk = segEnds.contains(i)
+                    if c == nl {
+                        let k = i + 1
+                        let e = t[k...].firstIndex(of: nl) ?? t.count
+                        let rest = t[k..<e].allSatisfy { $0 == sp || $0 == tab || $0 == cr || $0 == gt }
+                        if rest, e < t.count { brk = true }
+                    }
                 }
+                v.space(i, inside(r.ignored, i), brk)
                 i += 1
                 continue
             }
@@ -699,7 +950,7 @@ enum CommentFormat {
     fileprivate static func normalise(_ q: String) -> U {
         var out: U = []
         for c in u(q) {
-            if isSpaceUnit(c) {
+            if asciiSpace(c) {
                 if out.last != sp { out.append(sp) }
             } else {
                 out.append(c)
@@ -823,20 +1074,22 @@ enum CommentFormat {
     }
 
     fileprivate static func field(_ v: String, always: Bool = false) -> String {
-        if always || v.contains(" ") || v.contains("\"") { return "\"" + escapeQuote(v) + "\"" }
-        return v.replacingOccurrences(of: "-->", with: "--\\>")
+        if always || v.contains(" ") || v.contains("\t") || v.contains("\"") || v.contains("\\") || v.contains("-->") {
+            return "\"" + escapeQuoted(v) + "\""
+        }
+        return v
     }
 
     fileprivate static func replyLines(author: String, at: String, body: String) -> [String] {
         let parts = body.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
-        var out = ["\(author) (\(at)): " + parts[0].replacingOccurrences(of: "-->", with: "--\\>")]
+        var out = ["\(author) (\(at)): " + escapeBody(parts[0])]
         for raw in parts.dropFirst() {
-            var line = raw.replacingOccurrences(of: "-->", with: "--\\>")
-            if isBlankString(line) {
-                line = "\\"
-            } else if line.hasPrefix("\\") || line.hasPrefix("+")
+            var line = escapeBody(raw)
+            // A leading backslash keeps a line that would read as a reply, a reaction, an
+            // escaped line or a blank line as this reply's text (read back without it).
+            if blankLine(line) || line.hasPrefix("\\") || line.hasPrefix("+")
                 || (replyMatch(line).map { !trimmed($0.0).isEmpty } ?? false)
             {
                 line = "\\" + line
@@ -888,9 +1141,17 @@ enum CommentFormat {
         let th = try thread(t, threadID)
         let edit: Edit
         if let f = th.fields.first(where: { $0.key == "status" }) {
-            edit = Edit(start: f.range.lowerBound, end: f.range.upperBound, insert: status.rawValue, order: 0)
+            // The first status field is the one read; left as written when it already says so.
+            let current = unescapeQuoted(s(t[f.range]))
+            edit = Edit(start: f.range.lowerBound, end: f.range.upperBound,
+                        insert: current == status.rawValue ? s(t[f.range]) : status.rawValue, order: 0)
+        } else if status == .open {
+            return splice(t, orphanEdits(t))  // no status field reads as open already
         } else {
-            let pos = th.fields.first(where: { $0.key == "at" })?.range.upperBound ?? th.block.lowerBound + 7 + th.id.utf16.count
+            var pos = th.block.lowerBound + 7 + th.id.utf16.count
+            if let at = th.fields.first(where: { $0.key == "at" }) {
+                pos = at.range.upperBound + (at.range.upperBound < t.count && t[at.range.upperBound] == quoteMark ? 1 : 0)
+            }
             edit = Edit(start: pos, end: pos, insert: " status:\(status.rawValue)", order: 0)
         }
         return splice(t, orphanEdits(t) + [edit])

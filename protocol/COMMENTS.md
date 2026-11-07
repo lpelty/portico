@@ -25,10 +25,15 @@ Agent (2026-11-07T18:40:00.000Z): The ones in this folder.
 -->
 ```
 
-- **Where it goes.** On its own lines, after the top-level block that contains the anchor: after the whole paragraph, list or blockquote (not between two list items, which would split the list), and after any thread blocks already there. Readers accept a block anywhere outside code.
+- **Where it goes.** On its own lines, after the top-level block that contains the anchor: after the whole paragraph, list or blockquote (not between two list items, which would split the list), and after any thread blocks already there. Never inside a fenced or indented code block. Readers accept a block anywhere outside code.
+  - The block ends as CommonMark ends a paragraph: at a blank line, or before a line that starts a fence, an ATX heading (`# …`), a thematic break, a blockquote (when not inside one), an HTML block (a line starting with an anchor marker is text, not HTML), a thread block, or a list item that may interrupt a paragraph. A setext underline (`===`, `---`) belongs to the paragraph above it.
+  - Lazy continuation lines (`> a` then `lazy`) belong to the quote; a list continues past blank lines while the next line is indented or another item.
+  - For `# Heading` followed directly by `Body`, an anchor in `Body` belongs to the body paragraph, and its block goes after it.
 - **The header** is `<!--co:ID` followed by `key:value` fields:
   - `by` — the first comment's author; `at` — when it was made, UTC, ISO 8601 with milliseconds and `Z`; `status` — `open` or `resolved`; `quote` — the anchored text when the comment was made, as a reader saw it (no markers; a line break and the next line's indent or `>` prefix become one space).
-  - A value is written in double quotes when it contains a space; `quote` is always quoted. Inside quotes, `"` is written `\"`, and a newline as a space.
+  - Any value may be written in double quotes; readers accept quotes on every field (`status:"resolved"` is resolved). Writers quote a value that contains a space, a tab, `"`, `\` or `-->`; `quote` is always quoted.
+  - Inside quotes, a newline is written as a space, then `\` as `\\`, `"` as `\"`, and `-->` as `--\>`. Reading, `\\`, `\"` and `\>` stand for `\`, `"` and `>`; any other backslash is itself.
+  - When a key appears twice, the first one counts, for reading and for changing the status. A header with no `status` is open.
   - Writers use the order `by`, `at`, `status`, `quote`. Unknown fields are kept.
   - A header that ends with `-->` is a thread with no replies.
 - **Thread lines**, up to the closing `-->`:
@@ -39,12 +44,13 @@ Agent (2026-11-07T18:40:00.000Z): The ones in this folder.
 
 ## Text that would break the format
 
-- `-->` inside a `quote` or a reply is written `--\>`, and read back as `-->`.
+- In a `quote` (and any quoted value), see the header rules above.
+- In a reply, one backslash is added between `--` and `>` wherever `--`, any number of backslashes and `>` occur, and one is removed when reading: `-->` is written `--\>`, and a literal `--\>` is written `--\\>`. So reading what was written always gives the text back.
 - A continuation line starting with `\` is never a reply: the `\` is dropped and the rest is text. Writers put a leading `\` on any continuation line that would otherwise read as a reply (it contains a colon after a name, as in `Note: …` or a URL), that starts with `+` or `\`, or that is blank (a lone `\`).
 
 ## Ignored regions
 
-Markup inside front matter, fenced code blocks (```` ``` ```` and `~~~`) and inline code spans is not a comment.
+Markup inside front matter, fenced code blocks (```` ``` ```` and `~~~`), indented code blocks and inline code spans is not a comment.
 
 ## Orphans
 
@@ -57,9 +63,12 @@ Every write is a splice of the touched anchors and block. Reading a file and wri
 
 ## Finding text to anchor
 
-A quote (from the agent's `comment_add`, or the person's selection) is matched against the file as a reader sees it:
+A quote (from the agent's `comment_add`, or the person's selection) is matched against the file as a reader sees it, and only against text a reader sees:
 
 - existing comment markers are invisible;
+- link destinations and titles, the brackets around link text, whole images (alt text and address), HTML tags and comments, the angle brackets of autolinks, link reference definitions and thread blocks are not searched, and no match runs across them;
+- text in code (inline, fenced or indented) and front matter can't be anchored;
+- the `occurrence` of a match counts visible matches only;
 - `>` prefixes on wrapped lines, and indentation, count as whitespace;
 - whitespace runs compare equal;
 - the match must lie in one paragraph (no blank line inside it), outside ignored regions and thread blocks.
