@@ -412,4 +412,13 @@ final class CommentsPageScriptTests: XCTestCase {
         let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
         XCTAssertEqual(info?["text"] as? String, "e\u{301}tude")
     }
+
+    func testSnapTakesWholeGraphemeClusters() async throws {
+        let view = try await page("Intro.\n\nok 👍🏽 and 👨‍👩‍👧 and 🇯🇵 end\n")
+        for (needle, length, want) in [("👍🏽", 2, "👍🏽"), ("👨‍👩‍👧", 2, "👨‍👩‍👧"), ("🇯🇵", 2, "🇯🇵")] {
+            try await select(needle, 0, length, in: view)
+            let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+            XCTAssertEqual(info?["text"] as? String, want)
+        }
+    }
 }

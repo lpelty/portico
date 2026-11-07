@@ -326,3 +326,56 @@ test("CRLF: typing at a thread block's start keeps CRLF line breaks", () => {
   assert.ok(out.includes("N\r\n<!--co:aaaaa"), JSON.stringify(out));
   assert.ok(!/[^\r]\n/.test(out), JSON.stringify(out));
 });
+
+// --- re-re-review item 1: real typing, one transaction per character ----------------
+
+const blk3 = (id: string) => `<!--co:${id} by:S at:T status:open quote:"t"\nS (T): r\n-->\n`;
+const DOC3 = "Some <!--c:aaaaa-->text<!--/c:aaaaa--> here.\n" + blk3("aaaaa") + blk3("bbbbb") + "Next para.\n";
+
+function typeChars(sel: any, chars: string, userEvent = "input.type") {
+  const { editor } = mount();
+  editor.load({ text: DOC3, mode: "markdown" });
+  const view = editor.view;
+  view.dispatch({ selection: sel });
+  for (const ch of chars) view.dispatch({ ...view.state.replaceSelection(ch), userEvent });
+  return { editor, view };
+}
+
+const B3 = blk3("aaaaa") + blk3("bbbbb");
+for (const [label, sel, chars, want] of [
+  ["over a paragraph and two threads, typing ZY", () => EditorSelection.single(DOC3.indexOf("here"), DOC3.indexOf("Next") + 4), "ZY",
+    "Some <!--c:aaaaa-->text<!--/c:aaaaa--> ZY\n" + B3 + " para.\n"],
+  ["triple-click retype AB", () => EditorSelection.single(0, DOC3.indexOf("<!--co")), "AB", "AB\n" + B3 + "Next para.\n"],
+  ["select all, type AB", () => EditorSelection.single(0, DOC3.length), "AB", "AB\n" + B3],
+  ["typing QR inside a hidden thread", () => EditorSelection.cursor(DOC3.indexOf("<!--co") + 10), "QR",
+    "Some <!--c:aaaaa-->text<!--/c:aaaaa--> here.\n" + blk3("aaaaa") + "QR\n" + blk3("bbbbb") + "Next para.\n"],
+] as const) {
+  test(`${label}: every character lands in order, the cursor follows, undo and redo`, () => {
+    const { editor, view } = typeChars(sel(), chars);
+    assert.equal(editor.visibleText(), want);
+    const head = view.state.selection.main;
+    assert.ok(head.empty, "a cursor, not a selection");
+    assert.equal(editor.visibleText().slice(head.head - chars.length, head.head), chars, "the cursor is after the typed text");
+    for (let i = 0; i < chars.length; i++) cmds.undo(view);
+    assert.equal(editor.visibleText(), DOC3);
+    for (let i = 0; i < chars.length; i++) cmds.redo(view);
+    assert.equal(editor.visibleText(), want);
+  });
+}
+
+test("IME composing several characters at a thread's start lands them in order", () => {
+  const { editor } = typeChars(EditorSelection.cursor(DOC3.indexOf("<!--co")), "日本語", "input.type.compose");
+  assert.ok(editor.visibleText().includes("here.\n日本語\n<!--co:aaaaa"), JSON.stringify(editor.visibleText()));
+});
+
+test("a deletion from inside one thread to inside the next moves the cursor instead of vanishing", () => {
+  const { editor } = mount();
+  editor.load({ text: DOC3, mode: "markdown" });
+  const view = editor.view;
+  const a = DOC3.indexOf("S (T): r"), b = DOC3.lastIndexOf("S (T): r");
+  view.dispatch({ selection: EditorSelection.single(a, b) });
+  view.dispatch({ changes: { from: a, to: b }, userEvent: "delete.selection" });
+  assert.equal(editor.visibleText(), DOC3);
+  assert.ok(view.state.selection.main.empty);
+  assert.equal(view.state.selection.main.head, DOC3.indexOf("<!--co:bbbbb"));
+});

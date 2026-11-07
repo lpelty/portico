@@ -773,15 +773,36 @@ enum CommentFormat {
         (isWord(t, i) || isMark(t, i)) && !isNoSpace(t, i)
     }
 
+    /// The UTF-16 offsets where grapheme clusters (Swift's `Character`) begin, and the end.
+    fileprivate static func graphemeBoundaries(_ t: U) -> [Int] {
+        var out: [Int] = [0]
+        var offset = 0
+        for ch in s(t[...]) {
+            offset += ch.utf16.count
+            out.append(offset)
+        }
+        return out
+    }
+
+    fileprivate static func snapGraphemes(_ t: U, _ r: Range<Int>, _ bounds: [Int]) -> Range<Int> {
+        let a = bounds.last { $0 <= r.lowerBound } ?? 0
+        let b = bounds.first { $0 >= r.upperBound } ?? t.count
+        return a..<max(a, b)
+    }
+
+    /// A match's ends widened to grapheme cluster boundaries (never split, never widened to words).
+    fileprivate static func snapGraphemes(_ t: U, _ r: Range<Int>) -> Range<Int> {
+        snapGraphemes(t, r, graphemeBoundaries(t))
+    }
+
     fileprivate static func snapSelection(_ t: U, _ r: Range<Int>) -> Range<Int> {
-        var a = r.lowerBound, b = r.upperBound
-        while a > 0, isMark(t, a) { a -= 1 }
-        while b < t.count, isMark(t, b) { b += 1 }
+        let bounds = graphemeBoundaries(t)
+        var g = snapGraphemes(t, r, bounds)
+        var a = g.lowerBound, b = g.upperBound
         while a > 0, selectionWord(t, a - 1), selectionWord(t, a) { a -= 1 }
         while b < t.count, selectionWord(t, b), selectionWord(t, b - 1) { b += 1 }
-        while a > 0, isMark(t, a) { a -= 1 }
-        while b < t.count, isMark(t, b) { b += 1 }
-        return a..<b
+        g = snapGraphemes(t, a..<b, bounds)
+        return g
     }
 
     /// A person's selection snapped (see above).
@@ -1038,7 +1059,7 @@ enum CommentFormat {
         }
         if occurrence >= 1, occurrence <= good.count {
             let r = good[occurrence - 1]
-            return .success(selection ? snapSelection(t, r) : snap(t, r))
+            return .success(selection ? snapSelection(t, r) : snapGraphemes(t, r))
         }
         if !good.isEmpty { return .failure(.occurs(good.count)) }
         if inCode { return .failure(.insideIgnored) }

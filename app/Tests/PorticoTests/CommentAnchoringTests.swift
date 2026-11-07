@@ -75,4 +75,17 @@ final class CommentAnchoringTests: XCTestCase {
         XCTAssertEqual(slice(source, r), "e\u{301}tude")
         XCTAssertEqual(CommentFormat.snapSelection(source, 4..<5), 3..<9)
     }
+
+    func testSelectionSnapTakesWholeGraphemeClusters() {
+        let text = "ok 👍🏽 and 👨‍👩‍👧 and 🇯🇵 end"
+        func range(_ needle: String, _ length: Int) -> Range<Int> {
+            let start = text.utf16.distance(from: text.utf16.startIndex, to: text.range(of: needle)!.lowerBound.samePosition(in: text.utf16)!)
+            return start..<(start + length)
+        }
+        for needle in ["👍🏽", "👨‍👩‍👧", "🇯🇵"] {
+            let r = range(needle, 2)
+            let snapped = CommentFormat.snapSelection(text, r)
+            XCTAssertEqual(String(decoding: Array(text.utf16)[snapped], as: UTF16.self), needle)
+        }
+    }
 }

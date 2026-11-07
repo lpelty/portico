@@ -166,6 +166,10 @@ final class CommentFormatTests: XCTestCase {
                 XCTAssertEqual(got, .failure(want), "\(c["name"]!)")
             } else {
                 XCTAssertEqual(try got.get().lowerBound, (c["expect_prefix"] as! String).utf16.count, "\(c["name"]!)")
+                if let want = c["expect_text"] as? String {
+                    let r = try got.get()
+                    XCTAssertEqual(String(decoding: Array(text.utf16)[r], as: UTF16.self), want, "\(c["name"]!)")
+                }
             }
         }
     }

@@ -904,6 +904,56 @@
     ],
     "orphan_anchors": []
    }
+  },
+  {
+   "name": "find-grapheme-skin-tone",
+   "text": "Great 👍🏽 work\n",
+   "find": {
+    "quote": "👍",
+    "occurrence": 1
+   },
+   "expect_prefix": "Great ",
+   "expect_text": "👍🏽"
+  },
+  {
+   "name": "find-grapheme-family",
+   "text": "Family 👨‍👩‍👧 here\n",
+   "find": {
+    "quote": "👨",
+    "occurrence": 1
+   },
+   "expect_prefix": "Family ",
+   "expect_text": "👨‍👩‍👧"
+  },
+  {
+   "name": "find-grapheme-flag",
+   "text": "Flag 🇯🇵 here\n",
+   "find": {
+    "quote": "🇯",
+    "occurrence": 1
+   },
+   "expect_prefix": "Flag ",
+   "expect_text": "🇯🇵"
+  },
+  {
+   "name": "find-grapheme-combining",
+   "text": "an étude\n",
+   "find": {
+    "quote": "e",
+    "occurrence": 1
+   },
+   "expect_prefix": "an ",
+   "expect_text": "é"
+  },
+  {
+   "name": "find-ends-not-widened-to-words",
+   "text": "the permission prompt\n",
+   "find": {
+    "quote": "ermission pro",
+    "occurrence": 1
+   },
+   "expect_prefix": "the p",
+   "expect_text": "ermission pro"
   }
  ]
 }

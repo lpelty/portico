@@ -13,7 +13,8 @@ The gateway <!--c:k3x9a-->writes files<!--/c:k3x9a--> atomically.
 - `<!--c:ID-->` and `<!--/c:ID-->` go around the commented text, in the same paragraph or list item.
 - `ID` is 5 characters from `[a-z0-9]`, unique in the file (against every `c:`, `/c:` and `co:` ID, even inside code). If 1,000 random draws all collide, use 8 characters. Readers accept 5 to 8.
 - Anchors may nest: text already commented on can be commented on again.
-- Anchored text is snapped to whole words at both ends. A word character is a Unicode letter, digit or `_`, plus `'` or `’` between two of them.
+- A person's selection is snapped to whole words at both ends (a word character is a Unicode letter, digit or `_`, plus `'` or `’` between two of them), except in scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Myanmar), where it is anchored as selected.
+- An anchor never splits a grapheme cluster (a letter and its combining marks, an emoji with its skin tone or joined family, a flag). An agent's quote is anchored where it matches, its ends widened only to whole grapheme clusters.
 
 ## The thread block
 

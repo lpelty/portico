@@ -155,6 +155,8 @@ def test_fixture_finds(case):
     else:
         assert not isinstance(found, str), found
         assert found[0] == len(case["expect_prefix"])
+        if "expect_text" in case:
+            assert case["text"][found[0] : found[1]] == case["expect_text"]
         assert case["text"][found[0] : found[1]] == cm.strip_markers(case["find"]["quote"]) or True
 
 

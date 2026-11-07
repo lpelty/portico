@@ -8,7 +8,7 @@
 //
 // Offsets are JavaScript string offsets: UTF-16, as Swift's.
 
-import { ChangeSet, EditorState, type Extension, RangeSet, StateEffect, StateField, Transaction, type TransactionSpec } from "@codemirror/state";
+import { ChangeSet, EditorSelection, EditorState, type Extension, RangeSet, StateEffect, StateField, Transaction, type TransactionSpec } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
@@ -470,6 +470,9 @@ export const protectBlocks = EditorState.transactionFilter.of((tr: Transaction) 
   const blocks = scanComments(text).blocks;
   if (!blocks.length) return tr;
   const specs: Array<{ from: number; to: number; insert: string }> = [];
+  // Where each change's text goes (start-doc position) and whether it has text,
+  // so the cursor can be put after the person's text in the rebuilt change.
+  const landings: Array<{ fromA: number; at: number; length: number }> = [];
   let changed = false;
   tr.changes.iterChanges((fromA, toA, _fb, _tb, inserted) => {
     const ins = inserted.sliceString(0, inserted.length, start.lineBreak);
@@ -488,22 +491,40 @@ export const protectBlocks = EditorState.transactionFilter.of((tr: Transaction) 
     }
     if (end > cur) pieces.push([cur, end]);
     if (!pieces.length) pieces.push([at, at]);
+    landings.push({ fromA, at: pieces[0][0], length: inserted.length });
     pieces.forEach(([f, t], i) => specs.push({ from: f, to: t, insert: i === 0 ? ins : "" }));
   });
-  const first = changed ? ChangeSet.of(specs, text.length, start.lineBreak) : tr.changes;
-  // Every block still starts a line.
+  let first = changed ? ChangeSet.of(specs, text.length, start.lineBreak) : tr.changes;
+  // Every block still starts a line: a line break goes before one that would
+  // follow text, in the same change (after any text typed at the same place).
   const after = first.apply(start.doc).toString();
-  const fixes: Array<{ from: number; insert: string }> = [];
+  const fixes: Array<{ from: number; to: number; insert: string }> = [];
   for (const b of blocks) {
     const at = first.mapPos(b.from, 1);
-    if (at > 0 && after.startsWith("<!--co:", at) && after[at - 1] !== "\n") fixes.push({ from: at, insert: start.lineBreak });
+    if (at > 0 && after.startsWith("<!--co:", at) && after[at - 1] !== "\n") fixes.push({ from: b.from, to: b.from, insert: start.lineBreak });
   }
   if (!changed && !fixes.length) return tr;
+  if (fixes.length) {
+    // `specs` already holds every change (rebuilt or as typed).
+    changed = true;
+    first = ChangeSet.of([...specs, ...fixes], text.length, start.lineBreak);
+  }
   const userEvent = tr.annotation(Transaction.userEvent);
+  // The cursor goes after the text the person typed (or where the deletion
+  // was), in the rebuilt change: never the old selection mapped, which would
+  // leave the typed text selected for the next keystroke to replace.
+  let selection = tr.selection;
+  if (changed) {
+    const main = start.selection.main;
+    const land = landings.find((l) => l.fromA === main.from) ?? landings[landings.length - 1];
+    if (land) {
+      const head = first.mapPos(land.at, -1) + land.length;
+      selection = EditorSelection.cursor(head);
+    }
+  }
   const out: TransactionSpec[] = [
-    { changes: first, selection: start.selection.map(first, 1), userEvent, scrollIntoView: tr.scrollIntoView },
+    { changes: first, selection, userEvent, scrollIntoView: tr.scrollIntoView },
   ];
-  if (fixes.length) out.push({ changes: fixes, sequential: true });
   return out;
 });
 

@@ -196,14 +196,32 @@
 
   // A selection snaps to whole words, except in scripts without word spaces,
   // and an end never splits a base character from its combining marks.
+  // Grapheme cluster boundaries of a text (a skin-toned emoji, a family, a
+  // flag, a letter with its accents are one each).
+  var segmenter = typeof Intl !== "undefined" && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  function graphemeSnap(t, s, e) {
+    if (!segmenter) {
+      while (s > 0 && markAt(t, s)) s--;
+      while (e < t.length && markAt(t, e)) e++;
+      return [s, e];
+    }
+    var bounds = [];
+    for (var seg of segmenter.segment(t)) bounds.push(seg.index);
+    bounds.push(t.length);
+    var a = 0, b = t.length;
+    for (var i = 0; i < bounds.length; i++) {
+      if (bounds[i] <= s) a = bounds[i];
+      if (bounds[i] >= e) { b = bounds[i]; break; }
+    }
+    return [a, Math.max(a, b)];
+  }
+
   function snapEdges(t, s, e) {
-    while (s > 0 && markAt(t, s)) s--;
-    while (e < t.length && markAt(t, e)) e++;
+    var g = graphemeSnap(t, s, e);
+    s = g[0]; e = g[1];
     while (s > 0 && selWordAt(t, s - 1) && selWordAt(t, s)) s--;
     while (e < t.length && selWordAt(t, e) && selWordAt(t, e - 1)) e++;
-    while (s > 0 && markAt(t, s)) s--;
-    while (e < t.length && markAt(t, e)) e++;
-    return [s, e];
+    return graphemeSnap(t, s, e);
   }
 
   function snapRange(range) {

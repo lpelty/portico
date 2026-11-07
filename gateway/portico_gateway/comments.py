@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import random
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
@@ -564,6 +565,49 @@ def snap_to_words(text: str, start: int, end: int) -> tuple[int, int]:
     return start, end
 
 
+def _extend(c: str) -> bool:
+    o = ord(c)
+    return (
+        unicodedata.category(c) in ("Mn", "Me", "Mc")
+        or o == 0x200D
+        or 0xFE00 <= o <= 0xFE0F
+        or 0xE0100 <= o <= 0xE01EF
+        or 0x1F3FB <= o <= 0x1F3FF
+        or 0xE0020 <= o <= 0xE007F
+    )
+
+
+def _regional(c: str) -> bool:
+    return 0x1F1E6 <= ord(c) <= 0x1F1FF
+
+
+def _grapheme_boundary(text: str, i: int) -> bool:
+    """Whether a grapheme cluster may end before ``text[i]`` (the rules that matter for
+    comments: CR LF, combining marks and other extenders, emoji ZWJ sequences, flags)."""
+    if i <= 0 or i >= len(text):
+        return True
+    a, b = text[i - 1], text[i]
+    if a == "\r" and b == "\n":
+        return False
+    if _extend(b) or a == "\u200d":
+        return False
+    if _regional(a) and _regional(b):
+        k = i - 1
+        while k >= 0 and _regional(text[k]):
+            k -= 1
+        return (i - 1 - k) % 2 == 0
+    return True
+
+
+def snap_to_graphemes(text: str, start: int, end: int) -> tuple[int, int]:
+    """Widen each end to a grapheme cluster boundary, so a match never splits one."""
+    while not _grapheme_boundary(text, start):
+        start -= 1
+    while not _grapheme_boundary(text, end):
+        end += 1
+    return start, end
+
+
 def block_end(text: str, offset: int) -> int:
     """Where a new thread block goes for an anchor at ``offset``: after the top-level
     block that holds it (CommonMark's paragraph interruption), after any thread blocks there."""
@@ -812,11 +856,12 @@ def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
 
 
 def find_quote(text: str, quote: str, occurrence: int = 1) -> tuple[int, int] | str:
-    """The ``occurrence``-th (1-based) visible match of ``quote``, snapped to words, or a refusal reason."""
+    """The ``occurrence``-th (1-based) visible match of ``quote``, its ends snapped to grapheme
+    clusters (never split, never widened to words), or a refusal reason."""
     good, in_code, crosses = _matches(text, quote)
     if 1 <= occurrence <= len(good):
         a, b = good[occurrence - 1]
-        return snap_to_words(text, a, b)
+        return snap_to_graphemes(text, a, b)
     if good:
         return f"occurs {len(good)} times"
     if in_code:
