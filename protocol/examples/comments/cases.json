@@ -1,0 +1,524 @@
+{
+ "format": "comments v1",
+ "cases": [
+  {
+   "name": "plugin-basic",
+   "file": "plugin-basic.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "k3x9a",
+      "by": "me",
+      "at": "2026-11-02T10:15:00.000Z",
+      "status": "open",
+      "quote": "permis",
+      "anchored_text": "permis",
+      "replies": [
+       {
+        "author": "me",
+        "at": "2026-11-02T10:15:00.000Z",
+        "text": "Is this still true for MCP tools?"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "list-after",
+   "file": "list-after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ab12c",
+      "by": "Sam",
+      "at": "2026-10-17T09:00:00.000Z",
+      "status": "open",
+      "quote": "round trip",
+      "anchored_text": "round trip",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "Byte for byte?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-10-18",
+        "text": "Yes, every fixture."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "quoted-fields",
+   "file": "quoted-fields.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "qf001",
+      "by": "Sam Rivera",
+      "at": "2026-11-01T08:00:00.000Z",
+      "status": "open",
+      "quote": "\"quiet\" mode",
+      "anchored_text": "\"quiet\" mode",
+      "replies": [
+       {
+        "author": "Sam Rivera",
+        "at": "2026-11-01T08:00:00.000Z",
+        "text": "Should this be in quotes?"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "continuation",
+   "file": "continuation.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cn001",
+      "by": "Sam",
+      "at": "2026-11-03T12:00:00.000Z",
+      "status": "open",
+      "quote": "after an agent write",
+      "anchored_text": "after an agent write",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-03T12:00:00.000Z",
+        "text": "Does it keep the scroll position?\nAnd the selection too?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-11-03T12:01:00.000Z",
+        "text": "It keeps the scroll position."
+       }
+      ],
+      "reactions": [
+       "+👍 Sam, Agent"
+      ]
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "code-ignored",
+   "file": "code-ignored.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "rl001",
+      "by": "Sam",
+      "at": "2026-11-04T09:30:00.000Z",
+      "status": "open",
+      "quote": "real one",
+      "anchored_text": "real one",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T09:30:00.000Z",
+        "text": "Only this is a comment."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "front-matter",
+   "file": "front-matter.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "fm002",
+      "by": "Sam",
+      "at": "2026-11-04T10:00:00.000Z",
+      "status": "open",
+      "quote": "text here",
+      "anchored_text": "text here",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T10:00:00.000Z",
+        "text": "Front matter is skipped."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "resolved",
+   "file": "resolved.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "rs001",
+      "by": "Sam",
+      "at": "2026-11-04T11:00:00.000Z",
+      "status": "open",
+      "quote": "open point",
+      "anchored_text": "open point",
+      "replies": [],
+      "reactions": []
+     },
+     {
+      "id": "rs002",
+      "by": "Sam",
+      "at": "2026-11-04T11:05:00.000Z",
+      "status": "resolved",
+      "quote": "settled point",
+      "anchored_text": "settled point",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T11:05:00.000Z",
+        "text": "Done."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "orphan-anchor",
+   "file": "orphan-anchor.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "or002",
+      "by": "Sam",
+      "at": "2026-11-04T12:00:00.000Z",
+      "status": "open",
+      "quote": "a real thread",
+      "anchored_text": "a real thread",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T12:00:00.000Z",
+        "text": "Kept."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": [
+     "or001"
+    ]
+   }
+  },
+  {
+   "name": "escapes",
+   "file": "escapes.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "es001",
+      "by": "Sam",
+      "at": "2026-11-04T13:00:00.000Z",
+      "status": "open",
+      "quote": "a --> b",
+      "anchored_text": "a --> b",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T13:00:00.000Z",
+        "text": "Is --> safe here?\nNote: see the spec.\nhttps://example.com/a\n\n+1 from me"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "crlf-no-final-newline",
+   "file": "crlf-no-final-newline.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cr001",
+      "by": "Sam",
+      "at": "2026-11-04T16:00:00.000Z",
+      "status": "open",
+      "quote": "line endings",
+      "anchored_text": "line endings",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T16:00:00.000Z",
+        "text": "Kept as CRLF."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "emoji",
+   "file": "emoji.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "em001",
+      "by": "Sam",
+      "at": "2026-11-04T15:00:00.000Z",
+      "status": "open",
+      "quote": "first draft",
+      "anchored_text": "first draft",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T15:00:00.000Z",
+        "text": "👍 looks good."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "quote-wrap",
+   "file": "quote-wrap.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "qw001",
+      "by": "Sam",
+      "at": "2026-11-04T14:00:00.000Z",
+      "status": "open",
+      "quote": "when the point is settled",
+      "anchored_text": "when the\n> point is settled",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T14:00:00.000Z",
+        "text": "Wraps across lines."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "para",
+   "file": "para.md",
+   "parse": {
+    "threads": [],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "add-paragraph",
+   "file": "para.md",
+   "op": "add",
+   "args": {
+    "quote": "writes files",
+    "id": "nw001",
+    "author": "Sam Rivera",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Which files?"
+   },
+   "expect": "para.add.after.md"
+  },
+  {
+   "name": "add-tight-list",
+   "file": "list-after.md",
+   "op": "add",
+   "args": {
+    "quote": "Read the file",
+    "id": "nw002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "First?"
+   },
+   "expect": "list-after.add.after.md"
+  },
+  {
+   "name": "add-loose-list",
+   "file": "loose-list.md",
+   "op": "add",
+   "args": {
+    "quote": "two lines",
+    "id": "nw003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Loose list."
+   },
+   "expect": "loose-list.add.after.md"
+  },
+  {
+   "name": "add-eof-no-newline",
+   "file": "no-newline.md",
+   "op": "add",
+   "args": {
+    "quote": "without",
+    "id": "nw004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "End of file."
+   },
+   "expect": "no-newline.add.after.md"
+  },
+  {
+   "name": "add-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "add",
+   "args": {
+    "quote": "second paragraph",
+    "id": "nw005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Line endings stay CRLF."
+   },
+   "expect": "crlf-no-final-newline.add.after.md"
+  },
+  {
+   "name": "add-nested",
+   "file": "continuation.md",
+   "op": "add",
+   "args": {
+    "quote": "agent write",
+    "id": "nw006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Which agent?"
+   },
+   "expect": "continuation.add.after.md"
+  },
+  {
+   "name": "add-quote-wrap",
+   "file": "quote-wrap.md",
+   "op": "add",
+   "args": {
+    "quote": "thread, and the person",
+    "id": "nw007",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Across two quote lines."
+   },
+   "expect": "quote-wrap.add.after.md"
+  },
+  {
+   "name": "add-after-emoji",
+   "file": "emoji.md",
+   "op": "add",
+   "args": {
+    "quote": "is ready",
+    "id": "nw008",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Ready 🎉"
+   },
+   "expect": "emoji.add.after.md"
+  },
+  {
+   "name": "reply",
+   "file": "plugin-basic.md",
+   "op": "reply",
+   "args": {
+    "id": "k3x9a",
+    "author": "Agent",
+    "at": "2026-11-07T18:40:00.000Z",
+    "body": "Yes, MCP tools too."
+   },
+   "expect": "plugin-basic.reply.after.md"
+  },
+  {
+   "name": "reply-colon-line",
+   "file": "resolved.md",
+   "op": "reply",
+   "args": {
+    "id": "rs001",
+    "author": "Agent",
+    "at": "2026-11-07T18:40:00.000Z",
+    "body": "Two lines:\nNote: second line"
+   },
+   "expect": "resolved.reply.after.md"
+  },
+  {
+   "name": "resolve",
+   "file": "plugin-basic.md",
+   "op": "resolve",
+   "args": {
+    "id": "k3x9a"
+   },
+   "expect": "plugin-basic.resolve.after.md"
+  },
+  {
+   "name": "reopen",
+   "file": "resolved.md",
+   "op": "reopen",
+   "args": {
+    "id": "rs002"
+   },
+   "expect": "resolved.reopen.after.md"
+  },
+  {
+   "name": "write-drops-orphan-anchor",
+   "file": "orphan-anchor.md",
+   "op": "resolve",
+   "args": {
+    "id": "or002"
+   },
+   "expect": "orphan-anchor.resolve.after.md"
+  }
+ ]
+}
