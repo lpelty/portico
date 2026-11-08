@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -405,6 +405,18 @@ class PersonConfig(BaseModel):
     name: str | None = None
 
 
+class VoiceConfig(BaseModel):
+    """v0.24: ``[voice] read_aloud``, Read aloud on each reply, shown in Settings when true (sent in ``hello``).
+
+    The person's on/off choice stays in the app. False keeps the app's own
+    hidden flag, so a machine that already turned it on keeps it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    read_aloud: bool = False
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -481,6 +493,8 @@ class Config(BaseModel):
     apps: AppsConfig = AppsConfig()
     # v0.23: the person's name for comments (``[person] name``).
     person: PersonConfig = PersonConfig()
+    # v0.24: voice (``[voice] read_aloud``).
+    voice: VoiceConfig = VoiceConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -782,6 +796,7 @@ def hello_for(
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
         person=Person(name=config.person.name) if config.person.name else None,
+        voice=Voice(read_aloud=config.voice.read_aloud),
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

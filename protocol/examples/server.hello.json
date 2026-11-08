@@ -60,5 +60,8 @@
     "agent_can_see": true,
     "agent_checks_html": true,
     "properties": "folded"
+  },
+  "voice": {
+    "read_aloud": true
   }
 }

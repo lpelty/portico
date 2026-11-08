@@ -160,6 +160,39 @@ final class VoiceSettingsTests: XCTestCase {
         XCTAssertFalse(on.readAloudShown)
     }
 
+    func testDeploymentReadAloudShowsTheSwitch() {
+        // v0.24 §4: config `[voice] read_aloud = true` shows the switch; the person's choice stays theirs.
+        let settings = Settings(defaults: defaults())
+        XCTAssertFalse(settings.readAloudAvailable)
+        settings.deploymentReadAloud = true
+        XCTAssertTrue(settings.readAloudAvailable)
+        XCTAssertTrue(settings.readAloudShown)
+        settings.readAloudEnabled = false
+        XCTAssertFalse(settings.readAloudShown)
+    }
+
+    func testFlagStillWorksWithoutDeployment() {
+        let store = defaults()
+        store.set(true, forKey: "voice.readAloudAvailable")
+        let settings = Settings(defaults: store)
+        settings.deploymentReadAloud = false
+        XCTAssertTrue(settings.readAloudAvailable, "a machine that already turned it on keeps it")
+    }
+
+    func testHelloSetsTheDeploymentReadAloud() {
+        let settings = Settings(defaults: defaults())
+        let model = AppModel(settings: settings)
+        var hello = HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.24.0", epoch: "e",
+            brand: Brand(name: "Front", agentName: "Agent"), actions: [], roots: [], commands: [], capabilities: [])
+        hello.voice = HelloVoice(readAloud: true)
+        model.apply(.hello(hello))
+        XCTAssertTrue(settings.deploymentReadAloud)
+        hello.voice = nil
+        model.apply(.hello(hello))
+        XCTAssertFalse(settings.deploymentReadAloud, "an older gateway, or the key off, falls back to the app's flag")
+    }
+
     private func defaults() -> UserDefaults {
         let name = "VoiceSettingsTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!

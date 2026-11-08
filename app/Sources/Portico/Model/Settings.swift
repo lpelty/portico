@@ -237,11 +237,14 @@ final class Settings: ObservableObject {
     @Published var readAloudEnabled: Bool {
         didSet { defaults.set(readAloudEnabled, forKey: Key.readAloudEnabled) }
     }
-    /// The Read aloud feature at all (v0.9, Larry 10-29): off by default and
-    /// not in Settings, because the voices the Mac lets apps use sound dated.
-    /// The code stays for a better voice later. Turn it on with
+    /// The machine's own flag for Read aloud (v0.9, Larry 10-29): off by default
+    /// and not in Settings, because the voices the Mac lets apps use sound dated.
     /// `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`.
-    let readAloudAvailable: Bool
+    let readAloudFlag: Bool
+    /// v0.24: the deployment's `[voice] read_aloud`, from `hello` (false from an older gateway).
+    @Published var deploymentReadAloud = false
+    /// The Read aloud feature at all: the deployment's config turns it on, or the machine's flag.
+    var readAloudAvailable: Bool { deploymentReadAloud || readAloudFlag }
     /// Code blocks with a language wrap long lines when true (v0.19 §9);
     /// prose in a fence always wraps. The code block header's toggle flips it.
     @Published var wrapCode: Bool {
@@ -361,7 +364,7 @@ final class Settings: ObservableObject {
         holdToTalk = defaults.string(forKey: Key.holdToTalk).flatMap(HoldToTalk.init(rawValue:)) ?? .none
         readAloudEnabled = defaults.object(forKey: Key.readAloudEnabled) as? Bool ?? true
         wrapCode = defaults.object(forKey: Key.wrapCode) as? Bool ?? false
-        readAloudAvailable = defaults.bool(forKey: Key.readAloudAvailable)
+        readAloudFlag = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
         viewerAgentCanSee = defaults.object(forKey: Key.viewerAgentCanSee) as? Bool

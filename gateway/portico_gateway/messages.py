@@ -791,6 +791,13 @@ class Person(Strict):
     name: str
 
 
+class Voice(Strict):
+    """v0.24: the deployment's voice settings for the app (config ``[voice]``)."""
+
+    # Settings shows the Read aloud switch when true; the person's on/off stays in the app.
+    read_aloud: bool = False
+
+
 class HelloServer(Envelope):
     type: Literal["hello"] = "hello"
     protocol: Literal[1] = PROTOCOL_VERSION
@@ -830,6 +837,8 @@ class HelloServer(Envelope):
     # v0.23: the person's real name, written as the author of their comments.
     # Absent: the app uses the computer's full user name.
     person: Person | None = None
+    # v0.24: config ``[voice]``; absent from an older gateway.
+    voice: Voice | None = None
 
 
 class ChatList(Envelope):
@@ -1872,6 +1881,7 @@ def example_messages() -> dict[str, BaseModel]:
             viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
             threads_max=2,
             person=Person(name="Sam Rivera"),
+            voice=Voice(read_aloud=True),
         ),
         ChatList(
             ts=_TS,

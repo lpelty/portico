@@ -4094,6 +4094,17 @@
             }
           ],
           "default": null
+        },
+        "voice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Voice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -8661,6 +8672,19 @@
         "check_html"
       ],
       "title": "ViewerSettings",
+      "type": "object"
+    },
+    "Voice": {
+      "additionalProperties": false,
+      "description": "v0.24: the deployment's voice settings for the app (config ``[voice]``).",
+      "properties": {
+        "read_aloud": {
+          "default": false,
+          "title": "Read Aloud",
+          "type": "boolean"
+        }
+      },
+      "title": "Voice",
       "type": "object"
     },
     "WorkflowFinished": {

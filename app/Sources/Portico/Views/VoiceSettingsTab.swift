@@ -35,7 +35,7 @@ struct VoiceSettingsTab: View {
                 }
                 .disabled(!settings.voiceInputEnabled)
             }
-            // Hidden behind a flag for now (Settings.readAloudAvailable).
+            // Shown when the deployment turns it on or the machine flag is set (Settings.readAloudAvailable).
             if settings.readAloudAvailable {
                 SettingsSection(
                     "Listen",

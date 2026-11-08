@@ -1054,6 +1054,8 @@ final class AppModel: ObservableObject {
         case .hello(let hello):
             // Each gateway says afresh: a restarted one has read the config.
             configStale = hello.configStale ?? false
+            // v0.24: `[voice] read_aloud` shows Read aloud in Settings; absent falls back to the app's flag.
+            settings.deploymentReadAloud = hello.voice?.readAloud ?? false
             // Services are checked afresh too: "Checking…" until it says.
             // A gateway older than v0.4 never will: the Gateway row alone.
             services = Self.gatewaySendsServices(hello.gatewayVersion) ? nil : []
