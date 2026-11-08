@@ -16,7 +16,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
+import signal
 import shlex
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -33,6 +35,7 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "SIGNIN_EXPIRED",
+    "SigninCommand",
     "SigninKind",
     "claude_status_current",
     "cli_path",
@@ -254,3 +257,119 @@ def parse_signin_link(lines: Sequence[str]) -> tuple[str | None, str | None]:
             if found_code:
                 code = found_code.group(0)
     return url, code
+
+
+# --- the sign-in command ------------------------------------------------------------
+
+LinkCallback = Callable[[str | None, str | None], Awaitable[None]]
+
+
+class SigninCommand:
+    """The card's Open sign-in page command, running under the gateway (§4.6).
+
+    Its standard output and error are read line by line for a URL and a code
+    (``on_link`` is called once a URL is found, and again when a code turns
+    up later); a pasted code goes to its standard input. Nothing it prints
+    is logged: only that it started and how it exited.
+    """
+
+    def __init__(self) -> None:
+        self._proc: asyncio.subprocess.Process | None = None
+        self._readers: list[asyncio.Task[None]] = []
+        self._lines: list[str] = []
+        self._sent: tuple[str | None, str | None] = (None, None)
+        self._on_link: LinkCallback | None = None
+
+    @property
+    def running(self) -> bool:
+        return self._proc is not None and self._proc.returncode is None
+
+    async def start(self, command: str, on_link: LinkCallback) -> None:
+        """Start ``command`` in a shell with every pipe open; the gateway's own environment."""
+        await self.close()
+        self._lines = []
+        self._sent = (None, None)
+        self._on_link = on_link
+        self._proc = await asyncio.create_subprocess_shell(
+            command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        log.info("sign-in command started")
+        assert self._proc.stdout is not None and self._proc.stderr is not None
+        self._readers = [
+            asyncio.create_task(self._read(self._proc.stdout), name="signin-stdout"),
+            asyncio.create_task(self._read(self._proc.stderr), name="signin-stderr"),
+        ]
+        asyncio.create_task(self._report_exit(self._proc), name="signin-exit")
+
+    async def _read(self, stream: asyncio.StreamReader) -> None:
+        while True:
+            try:
+                raw = await stream.readline()
+            except (ValueError, asyncio.LimitOverrunError):
+                continue
+            except Exception:
+                return
+            if not raw:
+                return
+            self._lines.append(raw.decode("utf-8", "replace"))
+            found = parse_signin_link(self._lines)
+            if found[0] is not None and found != self._sent and self._on_link is not None:
+                self._sent = found
+                try:
+                    await self._on_link(*found)
+                except Exception:
+                    log.exception("sign-in command: passing on its link failed")
+
+    @staticmethod
+    async def _report_exit(proc: asyncio.subprocess.Process) -> None:
+        code = await proc.wait()
+        log.info("sign-in command exited %s", code)
+
+    async def write_code(self, code: str) -> bool:
+        """Write a pasted code and a newline to the command's input; False when no command is running."""
+        proc = self._proc
+        if proc is None or proc.returncode is not None or proc.stdin is None:
+            return False
+        try:
+            proc.stdin.write(code.encode("utf-8") + b"\n")
+            await proc.stdin.drain()
+        except (ConnectionError, OSError):
+            return False
+        return True
+
+    async def close(self) -> None:
+        """End the command: terminate, then kill after 2 s; its readers stop."""
+        proc, self._proc = self._proc, None
+        readers, self._readers = self._readers, []
+        if proc is not None and proc.returncode is None:
+            # The shell and whatever it started share a process group of their own.
+            _signal_group(proc, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(proc.wait(), 2.0)
+            except TimeoutError:
+                _signal_group(proc, signal.SIGKILL)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(proc.wait(), 2.0)
+        if proc is not None:
+            # Anything the shell left behind in its group goes too.
+            _signal_group(proc, signal.SIGKILL)
+        for task in readers:
+            task.cancel()
+        for task in readers:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+
+def _signal_group(proc: asyncio.subprocess.Process, sig: int) -> None:
+    """Send ``sig`` to the command's process group (it started a session of its own); the process alone if that fails."""
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        return
+    except OSError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.send_signal(sig)

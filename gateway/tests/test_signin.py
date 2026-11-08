@@ -224,3 +224,126 @@ def test_parse_signin_link() -> None:
         "https://claude.example/oauth/authorize?code=true",
         None,
     )
+
+
+# --- the sign-in command (Task 6) ---------------------------------------------------------
+
+
+def _script(tmp_path: Path, name: str, body: str) -> str:
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o755)
+    return shlex.quote(str(path))
+
+
+async def _until(predicate, timeout: float = 3.0) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError("timed out")
+        await asyncio.sleep(0.01)
+
+
+async def test_open_reports_the_link_and_code(tmp_path: Path) -> None:
+    from portico_gateway.signin import SigninCommand
+
+    command = _script(
+        tmp_path, "aws_login",
+        "echo 'Attempting to open the SSO authorization page in your browser.'\n"
+        "echo 'If the browser does not open, open the following URL:'\n"
+        "echo 'https://device.sso.us-east-1.amazonaws.com/'\n"
+        "sleep 0.2\n"
+        "echo 'Then enter the code:'\n"
+        "echo 'QKXW-RTBN'\n"
+        "sleep 5\n",
+    )
+    seen: list[tuple[str | None, str | None]] = []
+
+    async def on_link(url: str | None, code: str | None) -> None:
+        seen.append((url, code))
+
+    cmd = SigninCommand()
+    await cmd.start(command, on_link)
+    try:
+        await _until(lambda: any(code for _, code in seen))
+        assert seen[0] == ("https://device.sso.us-east-1.amazonaws.com/", None)
+        assert seen[-1] == ("https://device.sso.us-east-1.amazonaws.com/", "QKXW-RTBN")
+        assert cmd.running
+    finally:
+        await cmd.close()
+
+
+async def test_a_pasted_code_reaches_the_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from portico_gateway.signin import SigninCommand
+
+    got = tmp_path / "pasted"
+    monkeypatch.setenv("FAKE_CLAUDE_CODE_FILE", str(got))
+    monkeypatch.setattr(signin, "cli_path", lambda: str(FAKE_CLAUDE))
+    _, claude = kinds_for(Config())
+    links: list[tuple[str | None, str | None]] = []
+
+    async def on_link(url: str | None, code: str | None) -> None:
+        links.append((url, code))
+
+    cmd = SigninCommand()
+    assert not await cmd.write_code("too early")
+    assert claude.open is not None
+    await cmd.start(claude.open, on_link)
+    try:
+        await _until(lambda: bool(links))
+        assert links[0][0] == "https://claude.example/oauth/authorize?code=true"
+        assert await cmd.write_code("abc")
+        await _until(lambda: got.exists() and got.read_text() == "abc")
+    finally:
+        await cmd.close()
+    assert not cmd.running
+
+
+async def test_open_output_is_never_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    from portico_gateway.signin import SigninCommand
+
+    caplog.set_level(logging.DEBUG)
+    command = _script(
+        tmp_path, "chatty",
+        "echo 'secret-token-123'\necho 'https://device.example/start' 1>&2\necho 'ABCD-EFGH'\nread line\n",
+    )
+    links: list[tuple[str | None, str | None]] = []
+
+    async def on_link(url: str | None, code: str | None) -> None:
+        links.append((url, code))
+
+    cmd = SigninCommand()
+    await cmd.start(command, on_link)
+    try:
+        await _until(lambda: any(code for _, code in links))
+        await cmd.write_code("pasted-ZZZZ-9999")
+    finally:
+        await cmd.close()
+    text = caplog.text
+    for secret in ("secret-token-123", "https://device.example/start", "ABCD-EFGH", "pasted-ZZZZ-9999", str(tmp_path)):
+        assert secret not in text
+    assert "sign-in command started" in text
+
+
+async def test_close_kills_a_hung_command(tmp_path: Path) -> None:
+    from portico_gateway.signin import SigninCommand
+
+    ready = tmp_path / "ready"
+    command = _script(tmp_path, "hang", f"trap '' TERM\ntouch {shlex.quote(str(ready))}\nsleep 60\n")
+
+    async def on_link(url: str | None, code: str | None) -> None:
+        pass
+
+    cmd = SigninCommand()
+    await cmd.start(command, on_link)
+    await _until(ready.exists)
+    assert cmd.running
+    began = time.monotonic()
+    await cmd.close()
+    took = time.monotonic() - began
+    assert 1.5 < took < 3.0, "it ignores a terminate, so it is killed after 2 s"
+    assert not cmd.running
