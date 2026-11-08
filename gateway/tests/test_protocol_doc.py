@@ -17,7 +17,7 @@ def _section(heading: str) -> str:
     text = PROTOCOL.read_text(encoding="utf-8")
     match = re.search(rf"^### {re.escape(heading)}.*?$(.*?)(?=^#{{1,4}} )", text, re.M | re.S)
     assert match, f"no section {heading!r} in PROTOCOL.md"
-    return match.group(1)
+    return " ".join(match.group(1).split())
 
 
 def test_config_stale_names_both_config_files() -> None:
@@ -26,7 +26,7 @@ def test_config_stale_names_both_config_files() -> None:
 
 
 def test_the_cli_watch_names_both_config_files() -> None:
-    text = PROTOCOL.read_text(encoding="utf-8")
+    text = " ".join(PROTOCOL.read_text(encoding="utf-8").split())
     watch = text[text.index("The running gateway also checks for updates itself") :][:900]
     assert "config.local.toml" in watch, watch
 
@@ -41,3 +41,12 @@ def test_hello_documents_voice() -> None:
     section = _section("`hello` — `HelloServer`")
     assert "`voice?: {read_aloud: bool}`" in section, "hello's v0.24 voice field"
     assert "[voice] read_aloud" in section
+
+
+def test_config_toml_appearing_is_named_too() -> None:
+    # Review N2: ``_stale_file`` also fires when config.toml appears after being absent at start.
+    assert "or it appeared" in _section("`config.stale`")
+    hello = _section("`hello` — `HelloServer`")
+    assert "or appeared" in hello[hello.index("`config_stale: bool`") :][:400]
+    text = " ".join(PROTOCOL.read_text(encoding="utf-8").split())
+    assert "or appeared" in text[text.index("The running gateway also checks for updates itself") :][:900]

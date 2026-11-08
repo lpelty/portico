@@ -560,8 +560,8 @@ sidebar before anything else arrives, and then (v0.4) `services.status`,
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
 changed after the gateway started, so a restart is needed to apply it; v0.24:
-`config.toml` is newer than at start, or the `config.local.toml` beside it
-was created, changed or deleted);
+`config.toml` is newer than at start (or appeared), or the
+`config.local.toml` beside it was created, changed or deleted);
 `can_update: bool` (the deployment configured an update command, which
 `portico-gateway update` runs); `default_folder?` (config `default_folder`,
 `~` expanded: where a new session works when the person has not chosen a
@@ -971,8 +971,8 @@ the turn each followed and without `seq`; only notices from before the
 restart are lost.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
-No fields. `config.toml` is newer than when the gateway started, or
-(v0.24) the `config.local.toml` beside it was created, changed or deleted;
+No fields. `config.toml` is newer than when the gateway started (or it
+appeared), or (v0.24) the `config.local.toml` beside it was created, changed or deleted;
 the app says "restart the gateway to apply". Sent once when the gateway
 notices; `hello.config_stale` carries the same fact on connect.
 
@@ -2234,6 +2234,6 @@ The running gateway also checks for updates itself: `update.check` at
 start and every 6 hours, in the background; a version found goes to the
 attached app as `update.available`, and again to an app that attaches
 later. It watches the config files every ~10 seconds and sends `config.stale`
-once when `config.toml` is newer than at start or (v0.24) the
+once when `config.toml` is newer than at start (or appeared) or (v0.24) the
 `config.local.toml` beside it was created, changed or deleted.
 
