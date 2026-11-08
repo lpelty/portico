@@ -63,25 +63,38 @@ reference for every key.
   `<svg onload>`), write, resolve or delete comments in the file as the
   person, and send data out. The rendered page now carries a
   Content-Security-Policy with a fresh nonce on every render: only the
-  page's own script blocks run (no inline handlers, no injected
-  `<script>`, no `eval`), and nothing can be fetched, framed or submitted
-  outside the page's own scheme. Before a rendered block is inserted, the
-  page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`, `<base>`
-  and `<meta>`, every `on*` attribute, and `javascript:`, `vbscript:` and
-  `data:` URLs (except `data:image/`). Ordinary raw HTML (`<details>`,
-  `<kbd>`, `<br>`, tables, images, links) renders as before. The
-  Properties block's fold is now wired by the page's script rather than an
-  inline handler.
-- **Comments are written only for the page rendered for the file.** The
-  comments handler ignores, and logs, a message from any other page: an
-  HTML file or site in the viewer, another Markdown page, or a frame.
+  page's own script and style blocks apply (no inline handlers, no
+  injected `<script>`, no `eval`, no styles from the file). No script,
+  fetch, frame or form can reach outside the page's own scheme; images,
+  fonts and media load as before. Before a rendered block is inserted,
+  the page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`,
+  `<base>`, `<meta>`, `<style>`, `<link>` and SVG animation (`<set>`,
+  `<animate>`, `<animateMotion>`, `<animateTransform>`), every `on*` and
+  `style` attribute, and `javascript:`, `vbscript:` and `data:` URLs
+  (`data:image/` stays, in `src` only). Ordinary raw HTML (`<details>`,
+  `<kbd>`, `<br>`, tables, images, links) renders as before, without
+  inline styles. The Properties block's fold is now wired by the page's
+  script rather than an inline handler.
+- **Comments are written only by the viewer's own comments script, for
+  the page rendered for the file.** The comments script and its handler
+  run in a content world of their own, so no page script in any document
+  can post to it; and the handler still ignores, and logs, a message from
+  any page but the one rendered for the file. A document beside a
+  rendered Markdown page (an HTML file, an SVG, XML) that a link opens is
+  loaded under an address of its own, so it can neither take on the
+  rendered page's address nor read it.
 - **Space actions only on a real click (behaviour change).** A
   `space-action:` link now runs only when the person really clicked that
-  link (a trusted click within the last second, used once). A script's
-  `a.click()`, a dispatched event, a timer or a redirect runs nothing and
-  is logged, in Markdown and HTML spaces alike. **A space that triggered
-  actions from script must now have the person click the link.**
-  PROTOCOL.md (`space.act`) says so.
+  link (a trusted click within the last second, used once), the click
+  landed on the link itself, and the link can be seen (not hidden, not
+  nearly transparent). A script's `a.click()`, a dispatched event, a
+  timer or a redirect runs nothing and is logged, in Markdown and HTML
+  spaces alike. **A space that triggered actions from script must now
+  have the person click the link.** What the rule does not do: it stops
+  actions with no real click, but a page that runs script the deployment
+  does not control can still steer a real click (for example by changing
+  a link as the mouse goes down). Keep third-party script out of HTML
+  spaces. PROTOCOL.md (`space.act`) says so.
 - HTML files and sites shown in the viewer are unchanged: they run their
   scripts as before. The Markdown editor shows no untrusted HTML and is
   unchanged.
@@ -92,8 +105,10 @@ reference for every key.
   (a session's composed custom prompt) is deleted when its chat is removed
   or cleared (in the app or with `sessions clear`), and at gateway start
   for any chat no longer in the index. A renewal overwrites it as before.
+  Only regular files inside the state directory are touched, and a
+  failure is logged, never fatal.
 - **PROTOCOL.md**: `config.stale` (and `hello.config_stale`) name both
-  `config.toml` and `config.local.toml`; `hello` documents
+  `config.toml` (newer, or appeared) and `config.local.toml`; `hello` documents
   `voice?: {read_aloud: bool}`.
 
 ### For deployments

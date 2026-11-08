@@ -513,8 +513,10 @@ commands you provide, so a space can be re-run on demand or its source
 dropped when the person removes it. `act` (v0.22) runs for a link
 `space-action:<action>?item=<item>` in a page, with the action and item
 in `$PORTICO_ACTION` and `$PORTICO_ITEM`; the deployment rewrites the
-page. Only the person's real click on the link runs it (v0.24): a page's
-script following or clicking the link runs nothing. A page can word the notification its change raises (`notice`, and
+page. Only the person's real click on a visible link runs it (v0.24): a
+page's script following or clicking the link runs nothing (though a page
+running script you don't control can still steer a real click; see
+PROTOCOL.md `space.act`). A page can word the notification its change raises (`notice`, and
 `notice_target`, a fragment in the page; `notice: ""` for none) and can be
 fixed (`removable: false`: no Remove, no Rename). `examples/spaces/meeting-prep.md` is a
 starting file. Spaces need an app that lists `spaces.v1`, and the

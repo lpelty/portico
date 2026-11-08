@@ -2012,11 +2012,18 @@ link must be in the page's main frame (not an iframe) while the viewer is
 showing that space's own page, and a click made by the viewer agent
 (`viewer.act`) never sends it (the agent can
 ask the person to click). v0.24: "the person's own click" means a real,
-trusted click (`event.isTrusted`) on that same link within the last second,
-used once; a script's `a.click()`, a dispatched event, a timer or a redirect
-to a `space-action:` URL runs nothing (the app logs and ignores it), in
-Markdown and HTML spaces alike. A space that triggered actions from script
-must have the person click the link instead. The gateway runs `[spaces] act` with
+trusted click (`event.isTrusted`) on that link within the last second, used
+once, that landed on the link itself and on a link that can be seen (not
+`visibility: hidden`, opacity above 0.1); a keyboard activation counts on the
+focused link. A script's `a.click()`, a dispatched event, a timer or a
+redirect to a `space-action:` URL runs nothing (the app logs and ignores
+it), in Markdown and HTML spaces alike. A space that triggered actions from
+script must have the person click the link instead. What it does not do:
+the rule stops actions with no real click, but a page that runs script the
+deployment does not control can still steer a real click (for example by
+changing the link as the mouse goes down); keep such script out of HTML
+spaces. In a Markdown space the file's own styles and scripts never apply,
+so it cannot hide a link or move one under the pointer. The gateway runs `[spaces] act` with
 `/bin/sh -c` for up to 30 s, with `$PORTICO_SPACE`, `$PORTICO_ACTION` and
 `$PORTICO_ITEM` (empty with no item) set in the environment, never in the
 command string, and answers with a new `spaces.list` (the deployment
