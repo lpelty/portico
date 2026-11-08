@@ -7,7 +7,7 @@
 .pc-empty { color: var(--pc-text3); }
 .pc-reply + .pc-reply { margin-top: 10px; }
 .pc-head { display: flex; align-items: center; gap: 6px; }
-.pc-avatar { width: 20px; height: 20px; border-radius: 10px; background: var(--pc-accent); color: #FFFFFF; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.pc-avatar { width: 20px; height: 20px; border-radius: 10px; background: var(--pc-accent); color: var(--pc-on-accent); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .pc-avatar.pc-agent { background: var(--pc-agent); }
 .pc-name { font-weight: 600; }
 .pc-time { color: var(--pc-text3); font-size: 12px; }
@@ -20,7 +20,7 @@
 .pc-actions button:disabled { color: var(--pc-text3); }
 .pc-resolved { background: var(--pc-surface); color: var(--pc-text3); padding: 6px 12px; }
 .pc-resolved-line { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-error { color: #C93C37; font-size: 12px; margin-top: 6px; }
+.pc-error { color: var(--pc-deny); font-size: 12px; margin-top: 6px; }
 .pc-head { position: relative; }
 /* The … button is drawn in the card's own colour until the comment is hovered or it has focus (solid colours, no fade). */
 .pc-more { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 26px; height: 22px; font: inherit; line-height: 1; color: var(--pc-card); background: var(--pc-card); border: 1px solid var(--pc-card); border-radius: 5px; padding: 0 0 4px; }
@@ -33,5 +33,5 @@
 .pc-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; }
 .pc-show-more { margin: 2px 0 0 26px; padding: 0; font: inherit; font-size: 12px; color: var(--pc-accent); background: var(--pc-card); border: 0; }
 .pc-confirm { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--pc-border); border-radius: 6px; background: var(--pc-panel); }
-.pc-actions button.pc-danger { background: var(--pc-danger); color: #FFFFFF; border-color: var(--pc-danger); }
+.pc-actions button.pc-danger { background: var(--pc-danger); color: var(--pc-on-accent); border-color: var(--pc-danger); }
 .pc-show-resolved { position: fixed; bottom: 10px; z-index: 5; display: flex; align-items: center; justify-content: space-between; font: 12px -apple-system, BlinkMacSystemFont, sans-serif; color: var(--pc-text3); background: var(--pc-panel); }

@@ -17,6 +17,7 @@ enum CommentsTheme {
               --pc-agent: \(token(.agentAvatar)); --pc-card: \(token(.control)); --pc-border: \(token(.border));
               --pc-text: \(token(.text)); --pc-text2: \(token(.text2)); --pc-text3: \(token(.text3));
               --pc-surface: \(token(.surface)); --pc-panel: \(token(.panel)); --pc-danger: \(token(.dangerStrong));
+              --pc-on-accent: \(token(.onAccent)); --pc-deny: \(token(.deny));
             """
         }
         let light = block { Theme.hex($0).light }
@@ -227,7 +228,10 @@ final class ViewerComments: ObservableObject {
 
     func pageState(now: Date = Date()) -> [String: Any] {
         var theme: [String: String] = [:]
-        if let accentHex { theme["--pc-accent"] = accentHex }
+        if let accentHex {
+            theme["--pc-accent"] = accentHex
+            theme["--link"] = accentHex  // v0.26: the brand accent is the viewer's link (ViewerTheme)
+        }
         return [
             "on": shown,
             "activeID": activeID as Any? ?? NSNull(),

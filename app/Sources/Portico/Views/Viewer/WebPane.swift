@@ -28,7 +28,7 @@ enum MarkdownPage {
     /// Properties block opens unfolded only when `propertiesOpen` (v0.17 §3.7).
     static func html(source: String, title: String, hiding: Set<String> = [], scale: CGFloat = 1, propertiesOpen: Bool = false) throws -> String {
         let template = try resource("viewer.html")
-        let css = try resource("viewer.css")
+        let css = ViewerTheme.css() + (try resource("viewer.css"))
         let marked = try resource("marked.min.js")
         let split = FrontMatter.split(source)
         // The block goes in first, its braces as entities, so a value that
