@@ -195587,7 +195587,7 @@
                   "layoutPosition": "absolute",
                   "x": -180,
                   "y": -110,
-                  "name": "Image at 200%",
+                  "name": "Content · Image at 200%",
                   "metadata": {
                     "type": "unsplash",
                     "username": "behy_studio",
@@ -196081,7 +196081,7 @@
                   "layoutPosition": "absolute",
                   "x": 420,
                   "y": 560,
-                  "name": "Hand cursor",
+                  "name": "Content · Hand cursor",
                   "width": 24,
                   "height": 24,
                   "icon": "hand",
@@ -198051,7 +198051,7 @@
                   "layoutPosition": "absolute",
                   "x": 40,
                   "y": -120,
-                  "name": "PDF page 3",
+                  "name": "Content · PDF page 3",
                   "width": 820,
                   "height": 1060,
                   "fill": "#FFFFFF",
@@ -205608,7 +205608,7 @@
                 {
                   "type": "frame",
                   "id": "wFQjm",
-                  "name": "Phone",
+                  "name": "Content · Phone",
                   "width": 330,
                   "height": 716,
                   "fill": "#111111",
@@ -205628,7 +205628,7 @@
                     {
                       "type": "frame",
                       "id": "rexE6",
-                      "name": "Screen",
+                      "name": "Content · Phone screen",
                       "clip": true,
                       "width": "fill_container",
                       "height": "fill_container",
@@ -210046,7 +210046,7 @@
             {
               "type": "frame",
               "id": "VpWEE",
-              "name": "Web page",
+              "name": "Content · Web page",
               "clip": true,
               "width": "fill_container",
               "height": "fill_container",
