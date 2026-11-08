@@ -44,6 +44,11 @@ struct TurnMarker: Equatable, Sendable {
     /// gateway's refusal is one that says so (`explainingCodes`); the line
     /// shows it instead of the generic one.
     var reason: String? = nil
+    /// v0.25: `turn.finished.reason` (`signin.expired`), the gateway's word for why the turn ended.
+    var finishReason: String? = nil
+    /// v0.25: the turn is paused on an expired sign-in (`signin.wait`); it stays
+    /// so after the turn carries on (ruling 15), until Don't wait or `stopped`.
+    var signinPaused: Bool = false
 
     /// The refusals whose message is for the person and belongs on the
     /// failed turn (v0.22.1: the chat's folder no longer exists).
@@ -74,6 +79,8 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     /// Where the agent started subagents or a workflow (v0.10 decisions 1
     /// and 3): "Started 3 agents" while the turn runs, then the folded record.
     case agents(AgentGroup)
+    /// v0.25: "Continued after sign-in", at the time the turn carried on (`signin.wait` `current`).
+    case signinContinued(id: String, at: String)
 
     var id: String {
         switch self {
@@ -85,6 +92,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
         case .compacted(let id, _): "compacted:\(id)"
         case .notice(let id, _): "notice:\(id)"
         case .agents(let group): "agents:\(group.id)"
+        case .signinContinued(let id, _): "signin:\(id)"
         }
     }
 }
@@ -197,6 +205,8 @@ final class AppModel: ObservableObject {
             case .disconnected, .failed:
                 endMcpRequests()
                 endPluginRequests()
+                // v0.25: a wait the gateway may no longer have; it re-sends a running one on attach.
+                clearSigninCards()
             case .connecting, .connected: break
             }
         }
@@ -388,6 +398,11 @@ final class AppModel: ObservableObject {
     @Published var settingsTab: SettingsTab = .general
     /// Settings › Labs's items from the gateway's hello (v0.25); `[]` when it sent none.
     @Published var labs: [LabItem] = []
+    /// v0.25 §4: each chat's sign-in card, as the gateway's last `signin.wait` left it
+    /// (`waiting`, or `current` for the moment "Signed in. Continuing…" shows).
+    @Published var signinWaits: [Int: SigninWait] = [:]
+    /// v0.25: when each chat's "Signed in. Continuing…" began; the card closes 1.5 s later.
+    @Published var signinContinuing: [Int: Date] = [:]
     /// A save failed for a file no viewer shows (v0.20 fix round 2): the
     /// status line says so until it's opened or saved.
     @Published var editNotice: EditNotice?
@@ -1123,6 +1138,9 @@ final class AppModel: ObservableObject {
         case .deploymentMessage(let message):
             receiveDeploymentMessage(message)
 
+        case .signinWait(let wait):
+            receiveSigninWait(wait)
+
         case .chatList(let list):
             let wasLiveThread = selected.flatMap { shown in chats.first { $0.chat == shown } }
                 .map { $0.thread != nil && $0.ended == nil } ?? false
@@ -1417,7 +1435,7 @@ final class AppModel: ObservableObject {
             case .tool(let row): if row.turn == turn { return true }
             case .userText(let user): if user.turn == turn { return false }
             case .turnMarker: return false
-            case .compacted, .notice: continue
+            case .compacted, .notice, .signinContinued: continue
             }
         }
         return false
@@ -1607,7 +1625,11 @@ final class AppModel: ObservableObject {
             }
 
         case .turnFinished(let finished):
-            items.append(.turnMarker(TurnMarker(turn: finished.turn, outcome: finished.outcome)))
+            // v0.25: a wait already running for this turn (re-sent before its history) keeps it paused.
+            let paused = finished.reason == SigninPresentation.expiredReason
+                && signinWaits[chat].map { $0.turn == finished.turn && $0.state == .waiting } == true
+            items.append(.turnMarker(TurnMarker(
+                turn: finished.turn, outcome: finished.outcome, finishReason: finished.reason, signinPaused: paused)))
             if currentTurn[chat] == finished.turn { currentTurn[chat] = nil }
             turnStartedAt[chat] = nil
 
@@ -1745,7 +1767,7 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
-            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage:
+            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait:
             break
         }
     }
@@ -3312,4 +3334,85 @@ struct EditNotice: Equatable, Sendable {
     let chat: Int?
 
     var text: String { "Couldn't save \(name) — open it to fix" }
+}
+
+// MARK: - v0.25 sign-in (PORT-3); in this file for `transcripts`' private setter.
+
+extension AppModel {
+    /// Apply a `signin.wait`.
+    func receiveSigninWait(_ wait: SigninWait) {
+        let chat = wait.chat
+        switch wait.state {
+        case .waiting:
+            signinContinuing[chat] = nil
+            signinWaits[chat] = wait
+            setSigninPaused(chat: chat, turn: wait.turn, paused: true)
+        case .current:
+            // "Signed in. Continuing…" for a moment, then the card closes;
+            // the marker stays paused (ruling 15), and the note marks where it carried on.
+            signinWaits[chat] = wait
+            let began = Date()
+            signinContinuing[chat] = began
+            appendSigninNote(chat: chat, at: wait.ts)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(SigninPresentation.continuingSeconds))
+                guard let self, self.signinContinuing[chat] == began else { return }
+                self.signinContinuing[chat] = nil
+                if self.signinWaits[chat]?.state == .current { self.signinWaits[chat] = nil }
+            }
+        case .stopped:
+            endSigninCard(chat: chat, turn: wait.turn)
+        }
+    }
+
+    /// Don't wait (and the card's ×, ruling 12): the gateway stops waiting; the turn stays ended.
+    func stopSignin(chat: Int) {
+        guard let wait = signinWaits[chat] else { return }
+        if signsIn { send(.signinStop(SigninStop(chat: chat))) }
+        endSigninCard(chat: chat, turn: wait.turn)
+    }
+
+    /// Open sign-in page: the gateway runs the deployment's sign-in command.
+    func openSignin(chat: Int) {
+        guard signsIn, signinWaits[chat]?.state == .waiting else { return }
+        send(.signinOpen(SigninOpen(chat: chat)))
+    }
+
+    /// A code pasted from the browser goes to the gateway's sign-in command.
+    func sendSigninCode(chat: Int, code: String) {
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard signsIn, !trimmed.isEmpty, signinWaits[chat] != nil else { return }
+        send(.signinCode(SigninCode(chat: chat, code: trimmed)))
+    }
+
+    /// The connection closed: no card outlives it (the gateway re-sends a running wait on attach).
+    func clearSigninCards() {
+        signinWaits = [:]
+        signinContinuing = [:]
+    }
+
+    /// The gateway listed `signin.v1`: it reads `signin.open`, `signin.stop` and `signin.code`.
+    private var signsIn: Bool { hello?.capabilities.contains(SigninWait.capability) == true }
+
+    private func endSigninCard(chat: Int, turn: Int) {
+        signinWaits[chat] = nil
+        signinContinuing[chat] = nil
+        setSigninPaused(chat: chat, turn: turn, paused: false)
+    }
+
+    private func setSigninPaused(chat: Int, turn: Int, paused: Bool) {
+        guard var items = transcripts[chat] else { return }
+        guard let index = items.lastIndex(where: { if case .turnMarker(let m) = $0 { m.turn == turn } else { false } }),
+            case .turnMarker(var marker) = items[index], marker.signinPaused != paused
+        else { return }
+        marker.signinPaused = paused
+        items[index] = .turnMarker(marker)
+        transcripts[chat] = items
+    }
+
+    private func appendSigninNote(chat: Int, at: String) {
+        var items = transcripts[chat] ?? []
+        items.append(.signinContinued(id: "\(chat):\(at):\(items.count)", at: at))
+        transcripts[chat] = items
+    }
 }

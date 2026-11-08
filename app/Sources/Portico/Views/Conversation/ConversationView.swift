@@ -71,6 +71,14 @@ struct ConversationView: View {
                     .padding(.bottom, 8)
                     .inConversationColumn()
             }
+            // v0.25 (ZE3): the sign-in card, docked like a permission card.
+            if model.signinWaits[chat] != nil {
+                SigninDock(chat: chat)
+                    .environment(\.dockMaxHeight, conversationHeight.map(DockedCardLayout.maxHeight))
+                    .padding(.horizontal, Self.sideInset)
+                    .padding(.bottom, 8)
+                    .inConversationColumn()
+            }
             // v0.16 (AO1): the docked question or permission card, at the
             // composer's width above it; the composer stays under it.
             if model.dockedCard(for: chat) != nil {
@@ -546,6 +554,8 @@ struct TranscriptItemView: View {
             if let chat {
                 AgentGroupView(group: group, chat: chat, folder: folder)
             }
+        case .signinContinued(_, let at):
+            SigninContinuedLine(at: SessionTime.parse(at))
         }
     }
 }
@@ -693,7 +703,7 @@ struct TurnMarkerView: View {
 
     /// Whether an item is drawn at all: a finished turn's marker is not.
     static func isDrawn(_ item: TranscriptItem) -> Bool {
-        if case .turnMarker(let marker) = item { return label(marker.outcome) != nil }
+        if case .turnMarker(let marker) = item { return label(marker) != nil }
         return true
     }
 
@@ -708,7 +718,14 @@ struct TurnMarkerView: View {
 
     /// v0.22.1: a failed turn's own reason when the gateway gave one
     /// ("This conversation's folder no longer exists: …"), else the outcome's line.
+    /// v0.25 (ZE3): a turn paused on an expired sign-in reads "Paused: sign-in
+    /// ran out" (still after it carried on, ruling 15); one that ended on it,
+    /// "Sign-in ran out".
     static func label(_ marker: TurnMarker) -> String? {
+        if marker.signinPaused { return SigninPresentation.pausedLabel }
+        if marker.outcome == .error, marker.finishReason == SigninPresentation.expiredReason {
+            return SigninPresentation.endedLabel
+        }
         if marker.outcome == .error, let reason = marker.reason, !reason.isEmpty { return reason }
         return label(marker.outcome)
     }
@@ -717,14 +734,24 @@ struct TurnMarkerView: View {
         if let label = Self.label(marker) {
             // A reason may wrap: the icon stays by its first line.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle")
+                Image(systemName: icon)
                     .font(Theme.iconFont(11))
                 Text(label)
                     .scaledFont(12)
             }
-            .foregroundStyle(marker.outcome == .error ? Theme.deny : Theme.text3)
+            .foregroundStyle(colour)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    private var icon: String {
+        if marker.signinPaused { return "pause" }
+        return marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle"
+    }
+
+    private var colour: Color {
+        if marker.signinPaused { return Theme.wait }
+        return marker.outcome == .error ? Theme.deny : Theme.text3
     }
 }
 
