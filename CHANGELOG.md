@@ -56,6 +56,46 @@ reference for every key.
 - `hello` gains `voice: {read_aloud}` (additive). Nothing else changes on
   the wire.
 
+### Security fixes before release (sweep)
+
+- **A viewed Markdown file runs only the page's own scripts.** Raw HTML in
+  a Markdown file could run script in the viewer (`<img onerror>`,
+  `<svg onload>`), write, resolve or delete comments in the file as the
+  person, and send data out. The rendered page now carries a
+  Content-Security-Policy with a fresh nonce on every render: only the
+  page's own script blocks run (no inline handlers, no injected
+  `<script>`, no `eval`), and nothing can be fetched, framed or submitted
+  outside the page's own scheme. Before a rendered block is inserted, the
+  page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`, `<base>`
+  and `<meta>`, every `on*` attribute, and `javascript:`, `vbscript:` and
+  `data:` URLs (except `data:image/`). Ordinary raw HTML (`<details>`,
+  `<kbd>`, `<br>`, tables, images, links) renders as before. The
+  Properties block's fold is now wired by the page's script rather than an
+  inline handler.
+- **Comments are written only for the page rendered for the file.** The
+  comments handler ignores, and logs, a message from any other page: an
+  HTML file or site in the viewer, another Markdown page, or a frame.
+- **Space actions only on a real click (behaviour change).** A
+  `space-action:` link now runs only when the person really clicked that
+  link (a trusted click within the last second, used once). A script's
+  `a.click()`, a dispatched event, a timer or a redirect runs nothing and
+  is logged, in Markdown and HTML spaces alike. **A space that triggered
+  actions from script must now have the person click the link.**
+  PROTOCOL.md (`space.act`) says so.
+- HTML files and sites shown in the viewer are unchanged: they run their
+  scripts as before. The Markdown editor shows no untrusted HTML and is
+  unchanged.
+
+### Loose ends
+
+- **Running prompt files are cleaned up.** `<state>/prompts/running/chat-<n>.md`
+  (a session's composed custom prompt) is deleted when its chat is removed
+  or cleared (in the app or with `sessions clear`), and at gateway start
+  for any chat no longer in the index. A renewal overwrites it as before.
+- **PROTOCOL.md**: `config.stale` (and `hello.config_stale`) name both
+  `config.toml` and `config.local.toml`; `hello` documents
+  `voice?: {read_aloud: bool}`.
+
 ### For deployments
 
 - Keep `config.toml` the deployment's; a person's preferences go in
