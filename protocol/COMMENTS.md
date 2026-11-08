@@ -42,7 +42,7 @@ Agent (2026-11-07T18:40:00.000Z): The ones in this folder.
   - A line starting with `+` is a reaction (`+EMOJI Name, Name`). v1 readers keep reactions; showing them is optional.
   - Any other non-blank line continues the previous reply's text, after a line break.
 - **Authors are real names.** Writers never write `me`; a `by:me` already in a file is shown as written.
-- **A colon in a name** (v0.25): on a reply line, writers write each `:` in the author as `∶` (U+2236 RATIO), so `Dr: Who` replies as `Dr∶ Who (time): text` and reads back whole; the header's `by:` keeps the name as given (quoted). Readers compare authors (whose comment is the person's own, the edit guard) after the same mapping on both sides.
+- **A colon in a name** (v0.25): on a reply line, writers write each `:` in the author as `∶` (U+2236 RATIO), so `Dr: Who` replies as `Dr∶ Who (time): text` and reads back whole; the header's `by:` keeps the name as given (quoted). Readers compare authors (whose comment is the person's own, the edit guard) after the same mapping on both sides. The `∶` is not turned back into `:` for display (v0.26, review N6, closed by design): reversing it would make a real `∶` and a `:` the same name in stored files.
 
 ## Text that would break the format
 
@@ -86,4 +86,4 @@ A quote (from the agent's `comment_add`, or the person's selection) is matched a
 - `>` prefixes on wrapped lines, and indentation, count as whitespace;
 - whitespace runs compare equal;
 - the match must lie in one paragraph (no blank line inside it), outside ignored regions and thread blocks;
-- (v0.25) a match may not start or end inside an atom: an autolink with its angle brackets (`<https://…>`, `<name@host>`), a bare URL (`https://` or `http://` or `www.`, up to whitespace or `<`) or an HTML entity (`&name;`, `&#123;`, `&#x1F;`). Markers there would break the link or the entity. Such a match is refused ("inside a link or entity"), never widened, and it still counts as an occurrence. A match that covers a whole atom (a whole bare URL) is fine.
+- (v0.25) a match may not start or end inside an atom: an autolink with its angle brackets (`<https://…>`, `<name@host>`), a bare URL (`https://` or `http://` or `www.`, up to whitespace, `<` or `]`; v0.26: trailing `.,:;!?)]'"` left out, as GFM does) or an HTML entity (`&name;`, `&#123;`, `&#x1F;`). Whitespace here is exactly space, tab, line feed, carriage return, form feed and vertical tab, in every reader. Markers there would break the link or the entity. Such a match is refused ("inside a link or entity"), never widened, and it still counts as an occurrence. A match that covers a whole atom (a whole bare URL) is fine, and so is one that covers an autolink's address (v0.26: its brackets aren't shown, so they can't be quoted).

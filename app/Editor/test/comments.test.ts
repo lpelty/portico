@@ -176,6 +176,28 @@ test("a selection inside a link or an entity is refused (v0.25 #3)", () => {
   assert.equal(selectionRefusal(s, at("Jerry"), at("Jerry") + 5), null);
 });
 
+// v0.26 (review L4): the shared find-* fixtures, through Edit mode's selection check, so
+// the editor's atoms agree with the gateway's and the app's.
+test("find fixtures agree on links and entities", () => {
+  let checked = 0;
+  for (const c of cases.filter((c: any) => c.find)) {
+    const text: string = c.text ?? read(c.file);
+    const s = state(text);
+    if (c.expect_prefix !== undefined) {
+      const target: string = c.expect_text ?? c.find.quote;
+      const from = c.expect_prefix.length;
+      if (text.slice(from, from + target.length) !== target) continue; // quoted as rendered: no one source span
+      assert.notEqual(selectionRefusal(s, from, from + target.length), "atom", c.name);
+      checked++;
+    } else if (c.expect_refusal === "inside a link or entity") {
+      const from = text.indexOf(c.find.quote);
+      assert.equal(selectionRefusal(s, from, from + c.find.quote.length), "atom", c.name);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 20, `checked ${checked}`);
+});
+
 test("emoji offsets", () => {
   const text = read("emoji.md");
   const a = scanComments(text).anchors[0];

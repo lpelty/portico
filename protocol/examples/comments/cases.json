@@ -1205,6 +1205,60 @@
    "expect_text": "c"
   },
   {
+   "name": "find-url-before-comma",
+   "text": "Visit https://alpha.com/x, today.\n",
+   "find": {
+    "quote": "https://alpha.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "Visit "
+  },
+  {
+   "name": "find-url-in-parens",
+   "text": "(see https://a.com/x)\n",
+   "find": {
+    "quote": "https://a.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "(see "
+  },
+  {
+   "name": "find-autolink-inner",
+   "text": "<https://alpha.example/x>\n",
+   "find": {
+    "quote": "https://alpha.example/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "<"
+  },
+  {
+   "name": "find-link-text-url",
+   "text": "[https://a.com/x](https://a.com/x)\n",
+   "find": {
+    "quote": "https://a.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "["
+  },
+  {
+   "name": "find-email-autolink-inner",
+   "text": "<me@x.com>\n",
+   "find": {
+    "quote": "me@x.com",
+    "occurrence": 1
+   },
+   "expect_prefix": "<"
+  },
+  {
+   "name": "find-url-vertical-tab",
+   "text": "Visit https://alpha.com/x\u000bnow.\n",
+   "find": {
+    "quote": "https://alpha.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "Visit "
+  },
+  {
    "name": "table-pipe-code",
    "file": "table-pipe-code.md",
    "parse": {

@@ -1227,27 +1227,46 @@ enum CommentFormat {
         return .failure(.notFound)
     }
 
-    /// v0.25 (#3): an autolink with its brackets, a bare URL (up to whitespace or `<`) and
-    /// an HTML entity, as UTF-16 source ranges: the atoms a comment's markers never split.
-    private static let atomPatterns: [NSRegularExpression] = [
-        #"<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*>"#,
-        #"<[^\s<>@]+@[^\s<>@]+>"#,
-        #"(?:https?://|www\.)[^\s<]*"#,
-        #"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});"#,
+    /// v0.25 (#3): an autolink with its brackets, a bare URL and an HTML entity, as UTF-16
+    /// source ranges: the atoms a comment's markers never split. v0.26 (review L4, N5): one
+    /// whitespace class in all three scanners (space, tab, LF, CR, FF, VT); a bare URL stops
+    /// at `]` too and leaves trailing punctuation out; an autolink's address can be quoted.
+    private static let autolinkPatterns: [NSRegularExpression] = [
+        #"<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^ \t\n\r\f\u000B<>]*>"#,
+        #"<[^ \t\n\r\f\u000B<>@]+@[^ \t\n\r\f\u000B<>@]+>"#,
     ].map { try! NSRegularExpression(pattern: $0) }
+    private static let bareURLPattern = try! NSRegularExpression(pattern: #"(?:https?://|www\.)[^ \t\n\r\f\u000B<\]]*"#)
+    private static let entityPattern = try! NSRegularExpression(
+        pattern: #"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});"#)
+    private static let urlTrailing: Set<UInt16> = Set(".,:;!?)]'\"".utf16)
 
-    fileprivate static func atoms(_ t: U) -> [Range<Int>] {
+    /// An atom's source range and the part a quote may cover in its place (an autolink's address).
+    fileprivate struct Atom { let range: Range<Int>; let inner: Range<Int> }
+
+    fileprivate static func atoms(_ t: U) -> [Atom] {
         let text = s(t[...]) as NSString
         let whole = NSRange(location: 0, length: text.length)
-        return atomPatterns.flatMap { pattern in
+        func ranges(_ pattern: NSRegularExpression) -> [Range<Int>] {
             pattern.matches(in: text as String, range: whole).map { $0.range.location..<($0.range.location + $0.range.length) }
         }
+        var out = autolinkPatterns.flatMap(ranges).map { Atom(range: $0, inner: ($0.lowerBound + 1)..<($0.upperBound - 1)) }
+        let autolinks = out.map(\.range)
+        for r in ranges(bareURLPattern) where !autolinks.contains(where: { $0.contains(r.lowerBound) }) {
+            var end = r.upperBound
+            while end > r.lowerBound, urlTrailing.contains(t[end - 1]) { end -= 1 }
+            if end > r.lowerBound { out.append(Atom(range: r.lowerBound..<end, inner: r.lowerBound..<end)) }
+        }
+        out += ranges(entityPattern).map { Atom(range: $0, inner: $0) }
+        return out
     }
 
-    /// Whether `span` starts or ends strictly inside `atom` (covering a whole one is fine).
-    fileprivate static func splits(_ span: Range<Int>, _ atom: Range<Int>) -> Bool {
-        (atom.lowerBound < span.lowerBound && span.lowerBound < atom.upperBound)
-            || (atom.lowerBound < span.upperBound && span.upperBound < atom.upperBound)
+    /// Whether `span` starts or ends strictly inside `atom` (covering a whole one, or an
+    /// autolink's address, is fine).
+    fileprivate static func splits(_ span: Range<Int>, _ atom: Atom) -> Bool {
+        let a = atom.range
+        let inside = (a.lowerBound < span.lowerBound && span.lowerBound < a.upperBound)
+            || (a.lowerBound < span.upperBound && span.upperBound < a.upperBound)
+        return inside && !(span.lowerBound <= atom.inner.lowerBound && atom.inner.upperBound <= span.upperBound)
     }
 
     /// Like `findQuote`, but only matches whose source lies inside `range`

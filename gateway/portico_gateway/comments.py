@@ -926,24 +926,44 @@ def _visible(text: str):
 
 # v0.25 (#3, ruling 22): spans a comment's markers must never split. An autolink with its
 # brackets, a bare URL (up to whitespace or "<"), an HTML entity.
-_ATOM_RES = (
-    re.compile(r"<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*>"),
-    re.compile(r"<[^\s<>@]+@[^\s<>@]+>"),
-    re.compile(r"(?:https?://|www\.)[^\s<]*"),
-    re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});"),
-)
+# v0.26 (review L4, N5): one whitespace class in all three scanners (this, the app's
+# CommentFormat.swift, the editor's comments.ts): space, tab, LF, CR, FF and VT.
+_AUTOLINK_RE = re.compile(r"<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^ \t\n\r\f\x0b<>]*>")
+_EMAIL_AUTOLINK_RE = re.compile(r"<[^ \t\n\r\f\x0b<>@]+@[^ \t\n\r\f\x0b<>@]+>")
+# A bare URL stops at whitespace, ``<`` or ``]``, and leaves trailing punctuation out (as GFM does).
+_BARE_URL_RE = re.compile(r"(?:https?://|www\.)[^ \t\n\r\f\x0b<\]]*")
+_URL_TRAILING = ".,:;!?)]'\""
+_ENTITY_RE = re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});")
 INSIDE_ATOM = "inside a link or entity"
 
 
-def _atoms(text: str) -> list[tuple[int, int]]:
-    """Autolinks (brackets included), bare URLs and HTML entities, as source spans."""
-    return sorted((m.start(), m.end()) for pattern in _ATOM_RES for m in pattern.finditer(text))
+def _atoms(text: str) -> list[tuple[int, int, int, int]]:
+    """Autolinks (brackets included), bare URLs and HTML entities, as source spans: ``(start, end,
+    inner start, inner end)``. An autolink's inner span is its address, without the brackets."""
+    out: list[tuple[int, int, int, int]] = []
+    for pattern in (_AUTOLINK_RE, _EMAIL_AUTOLINK_RE):
+        out += [(m.start(), m.end(), m.start() + 1, m.end() - 1) for m in pattern.finditer(text)]
+    autolinks = list(out)
+    for m in _BARE_URL_RE.finditer(text):
+        if any(a <= m.start() < b for a, b, _, _ in autolinks):
+            continue  # the address inside an autolink is the autolink's
+        end = m.end()
+        while end > m.start() and text[end - 1] in _URL_TRAILING:
+            end -= 1
+        if end > m.start():
+            out.append((m.start(), end, m.start(), end))
+    out += [(m.start(), m.end(), m.start(), m.end()) for m in _ENTITY_RE.finditer(text)]
+    return sorted(out)
 
 
-def _splits_atom(atoms: list[tuple[int, int]], span: tuple[int, int]) -> bool:
-    """Whether ``span`` starts or ends strictly inside an atom (covering one whole is fine)."""
+def _splits_atom(atoms: list[tuple[int, int, int, int]], span: tuple[int, int]) -> bool:
+    """Whether ``span`` starts or ends strictly inside an atom. Covering a whole one is fine, and so
+    is covering an autolink's address (the brackets aren't shown, so they can't be quoted)."""
     start, end = span
-    return any(a < start < b or a < end < b for a, b in atoms)
+    return any(
+        (a < start < b or a < end < b) and not (start <= ia and ib <= end)
+        for a, b, ia, ib in atoms
+    )
 
 
 def _normalise(q: str) -> str:
