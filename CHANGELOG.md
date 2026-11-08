@@ -68,8 +68,8 @@ the person signs in again. Plus the sweep's 26 smaller fixes.
 - #3 A comment can't be anchored inside a link or an HTML entity any more
   (its markers would break the link or the text); the selection is refused.
 - #4 Edit mode no longer offers a recovery copy older than the saved file.
-- #5 "Exited before it was ready" names this run's exit code, not an
-  earlier run's last log line.
+- #5 "Exited before it was ready" shows this run's last log line when it
+  wrote one, else its exit code; never an earlier run's last log line.
 - #6 Renaming a space keeps the file's line endings and a leading BOM.
 - #7 Deleting (or replacing) `config.toml` while the gateway runs says
   "Settings changed", as the README says.

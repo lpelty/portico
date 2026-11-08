@@ -24,8 +24,22 @@ struct LabsSettingsTab: View {
     }
 }
 
+/// What a Labs item's box holds (v0.26, review L12): Read aloud's controls only
+/// when Read aloud is available here; any other key, what the plug-in said.
+enum LabItemContent: Equatable {
+    case readAloudControls, unavailable, info
+
+    static let unavailableLine = "Read aloud isn't available here."
+
+    static func `for`(_ item: LabItem, readAloudAvailable: Bool) -> LabItemContent {
+        guard item.key == LabItem.readAloudKey else { return .info }
+        return readAloudAvailable ? .readAloudControls : .unavailable
+    }
+}
+
 /// One Labs item: the header row, the note, the box.
 private struct LabItemBlock: View {
+    @EnvironmentObject private var settings: Settings
     let item: LabItem
     /// v0.26: the ElevenLabs voices item, folded into Read aloud's note.
     var elevenLabs: LabItem? = nil
@@ -43,9 +57,18 @@ private struct LabItemBlock: View {
                 .foregroundStyle(Theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 4)
-            if item.key == LabItem.readAloudKey {
+            switch LabItemContent.for(item, readAloudAvailable: settings.readAloudAvailable) {
+            case .readAloudControls:
                 ReadAloudControls()
-            } else {
+            case .unavailable:
+                SettingsPanel {
+                    Text(LabItemContent.unavailableLine)
+                        .scaledFont(13)
+                        .foregroundStyle(Theme.text2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .settingsRowInsets()
+                }
+            case .info:
                 SettingsPanel {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -69,12 +92,27 @@ private struct LabItemBlock: View {
     }
 }
 
-/// Preview (accent on accentSoft) or Local (text2 on control), solid.
-private struct LabTagPill: View {
+/// Preview (accent on accentSoft) or Local (text2 on control), solid; an
+/// unknown tag (review L11) draws no pill.
+struct LabTagPill: View {
     let tag: LabItem.Tag
 
+    static func label(for tag: LabItem.Tag) -> String? {
+        switch tag {
+        case .preview: "Preview"
+        case .local: "Local"
+        default: nil
+        }
+    }
+
     var body: some View {
-        Text(tag == .preview ? "Preview" : "Local")
+        if let label = Self.label(for: tag) {
+            pill(label)
+        }
+    }
+
+    private func pill(_ label: String) -> some View {
+        Text(label)
             .scaledFont(11, weight: .semibold)
             .foregroundStyle(tag == .preview ? Theme.accent : Theme.text2)
             .padding(.horizontal, 7)

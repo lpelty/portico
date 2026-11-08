@@ -14,7 +14,7 @@ extension AppModel {
         if settings.deploymentReadAloud {
             // A v0.24 gateway turns Read aloud on in its config but sends no `labs`.
             var row = LabItem.readAloudFlag
-            row.source = "config.toml"
+            row.source = LabItem.olderGatewaySource
             items.insert(row, at: 0)
         } else if settings.readAloudFlag {
             items.insert(.readAloudFlag, at: 0)
@@ -50,7 +50,8 @@ enum LabPresentation {
         if let elevenLabs {
             note += " · ElevenLabs voices turned on in \(elevenLabs.source)"
         }
-        if let home = item.home, let tab = homes[home] {
+        // Review N7: only a Preview feature moves anywhere when released.
+        if item.tag == .preview, let home = item.home, let tab = homes[home] {
             note += " · Moves to \(tab.title) when released"
         }
         return note
