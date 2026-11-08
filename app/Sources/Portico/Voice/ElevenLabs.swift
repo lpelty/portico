@@ -101,7 +101,21 @@ struct ElevenLabsClient: Sendable {
     private let key: String
     let session: URLSession
 
-    init(baseURL: URL = api, key: String, session: URLSession = .shared) {
+    /// Review H1: the client's own session. Ephemeral, with no URL cache and no
+    /// cookies, so a request (and its `xi-api-key` header) is never written to
+    /// the app's `Cache.db`. Never `.shared`.
+    static let privateSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.urlCredentialStorage = nil
+        return URLSession(configuration: configuration)
+    }()
+
+    init(baseURL: URL = api, key: String, session: URLSession = ElevenLabsClient.privateSession) {
         self.baseURL = baseURL
         self.key = key
         self.session = session
@@ -166,7 +180,7 @@ struct ElevenLabsClient: Sendable {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.percentEncodedPath = path
         components.queryItems = query.isEmpty ? nil : query
-        var request = URLRequest(url: components.url!, timeoutInterval: Self.timeout)
+        var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: Self.timeout)
         request.setValue(key, forHTTPHeaderField: "xi-api-key")
         request.setValue(accept, forHTTPHeaderField: "Accept")
         return request

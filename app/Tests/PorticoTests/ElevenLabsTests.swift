@@ -135,4 +135,26 @@ final class ElevenLabsTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - v0.26 review H1: the key never reaches an HTTP cache
+
+    func testNothingIsCachedAndTheSessionIsPrivate() async throws {
+        let configuration = ElevenLabsClient.privateSession.configuration
+        XCTAssertNil(configuration.urlCache)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertEqual(configuration.requestCachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertTrue(ElevenLabsClient(key: Self.key).session === ElevenLabsClient.privateSession, "never .shared")
+
+        var cacheable = StubHTTPServer.Response.json(200, #"[{"model_id":"eleven_v4","can_do_text_to_speech":true}]"#)
+        cacheable.headers["Cache-Control"] = "max-age=3600"
+        stub.route("/v1/models", cacheable)
+        let client = ElevenLabsClient(baseURL: stub.baseURL, key: Self.key)
+        _ = try await client.models()
+        _ = try await client.models()
+        XCTAssertEqual(stub.requests.filter { $0.path == "/v1/models" }.count, 2, "the second GET isn't served from a cache")
+        var request = URLRequest(url: stub.baseURL.appendingPathComponent("v1/models"))
+        request.setValue(Self.key, forHTTPHeaderField: "xi-api-key")
+        XCTAssertNil(URLCache.shared.cachedResponse(for: request), "nothing in the shared cache")
+    }
 }
