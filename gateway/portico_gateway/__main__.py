@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``sessions clear``, ``message``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``sessions`` (list, clear), ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -350,6 +350,28 @@ def cmd_message(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capture_prompt(args: argparse.Namespace) -> int:
+    """v0.24: copy Claude Code's own system prompt to a file, the start of a custom prompt (one small model request)."""
+    from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.prompt_capture import CaptureError, capture_prompt
+
+    state, config_path = _state_and_config_path(args)
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    out = Path(args.out).expanduser() if args.out else None
+    try:
+        path = asyncio.run(capture_prompt(state.path, list(config.setting_sources), out))
+    except CaptureError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    print(f"wrote {path}")
+    print('Use it with system_prompt = "custom" and system_prompt_file in config.local.toml; it applies to the next new or renewed session.')
+    return 0
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -435,6 +457,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.set_defaults(func=cmd_message)
 
+    p = sub.add_parser("capture-prompt", help="copy Claude Code's own system prompt to a file, to start a custom prompt (one small model request)")
+    p.add_argument("--out", help="the file to write (default: <state>/prompts/claude-code-<version>.md); never inside the checkout")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    p.add_argument("--config", help="config file (default: <state>/config.toml)")
+    p.set_defaults(func=cmd_capture_prompt)
+
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")
     p.set_defaults(func=cmd_export_schema)
@@ -486,7 +514,7 @@ def _env_file_path_first(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command in ("run", "doctor"):
+    if args.command in ("run", "doctor", "capture-prompt"):
         _load_env_file(args)
     return int(args.func(args))
 
