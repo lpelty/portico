@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Portico
 
@@ -109,5 +110,32 @@ final class MessageTimeTests: XCTestCase {
             return XCTFail("text.delta")
         }
         XCTAssertEqual(d.noTime, true)
+    }
+
+    // MARK: - review M2: the person's hover row has its own reserved space
+
+    private func height<V: View>(_ view: V, scale: CGFloat) -> CGFloat {
+        let host = NSHostingView(rootView: view.environment(\.textScale, scale).frame(width: 600))
+        return host.fittingSize.height
+    }
+
+    func testThePersonsHoverRowFitsItsReservedSpace() {
+        // The row lies inside the bubble's own frame at every text scale, so it can't overlap the next item.
+        for scale in [CGFloat(1), 1.25, 1.5, 2] {
+            let row = height(MessageHoverRow(at: Date(), help: "Copy this message") { "hi" }, scale: scale)
+            XCTAssertLessThanOrEqual(row, UserBubble.hoverRowHeight(scale: scale), "scale \(scale)")
+        }
+    }
+
+    func testABubbleIsTheSameHeightWhateverItsRowShows() {
+        // The space is always there: a bubble's height doesn't depend on its time or hover.
+        let user = UserText(chat: 1, turn: 1, text: "Hello there", ts: "2026-11-08T21:40:00Z")
+        for scale in [CGFloat(1), 1.5] {
+            let timed = height(UserBubble(content: BubbleContent(user), at: Date(), copyText: "Hello there"), scale: scale)
+            let untimed = height(UserBubble(content: BubbleContent(user), at: nil, copyText: "Hello there"), scale: scale)
+            let bare = height(UserBubble(content: BubbleContent(user)), scale: scale)
+            XCTAssertEqual(timed, untimed, accuracy: 0.5)
+            XCTAssertEqual(timed, bare, accuracy: 0.5, "the row's space is reserved even with no row")
+        }
     }
 }

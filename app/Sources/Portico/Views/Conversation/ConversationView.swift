@@ -601,7 +601,13 @@ struct UserBubble: View {
     var copyText: String? = nil
 
     @State private var hovering = false
-    @State private var rowHovering = false
+    @Environment(\.textScale) private var textScale
+
+    /// The space under every person bubble for its hover row (review M2): the row's
+    /// height at `scale` (measured 22 pt at 100%, 38 at 200%), rounded up.
+    static func hoverRowHeight(scale: CGFloat) -> CGFloat {
+        (16 * scale + 6).rounded(.up)
+    }
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
@@ -653,21 +659,20 @@ struct UserBubble: View {
                     .foregroundStyle(Theme.text3)
                     .padding(.trailing, 4)
             }
+            // v0.25 §3.1 (review M2): the time and Copy under the bubble, trailing, in a
+            // space every person bubble reserves, so its height never depends on the row
+            // and nothing overlaps the next item. Bubble, gap and row are one hover zone.
+            ZStack(alignment: .trailing) {
+                if let copyText {
+                    MessageHoverRow(at: at, help: "Copy this message") { copyText }
+                        .opacity(hovering ? 1 : 0)
+                        .offset(x: 6)
+                }
+            }
+            .frame(height: Self.hoverRowHeight(scale: textScale))
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        // v0.25 §3.1: the time and Copy under the bubble, trailing, while the pointer is on it.
-        // Hung below the message in the gap before the next item rather than in the layout:
-        // a row in the flow changed every bubble's height and moved the places conversations
-        // keep (ConversationRoundTripTests.testEachConversationKeepsItsPlace).
-        .overlay(alignment: .bottomTrailing) {
-            if let copyText {
-                MessageHoverRow(at: at, help: "Copy this message") { copyText }
-                    .opacity(hovering || rowHovering ? 1 : 0)
-                    .onHover { rowHovering = $0 }
-                    .offset(x: 6)
-                    .alignmentGuide(.bottom) { $0[.top] - 2 }
-            }
-        }
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
 }
