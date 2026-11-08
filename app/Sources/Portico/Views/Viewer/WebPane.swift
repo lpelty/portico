@@ -46,7 +46,8 @@ enum MarkdownPage {
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
             .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
-            .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
+            // Its braces as entities too (sweep #13), so a file named `{{SOURCE}}.md` is not filled in.
+            .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title).replacingOccurrences(of: "{", with: "&#123;"))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(sentinelMarkers(source, body: split.body)))

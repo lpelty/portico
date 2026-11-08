@@ -457,6 +457,24 @@ final class GatewayClientTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         return script
     }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testExitBeforeReadyNamesThisRunsExitCode() async throws {
+        // #5: an earlier run's last log line is not this run's reason.
+        let dir = try tempStateDir()
+        try "INFO portico_gateway.server: stopped cleanly\n".write(
+            to: dir.appendingPathComponent("gateway.log"), atomically: true, encoding: .utf8)
+        let script = try fakeGatewayScript(in: dir, "#!/bin/sh\nexit 3\n")
+        let supervisor = await GatewaySupervisor(stateDir: dir, gatewayCommand: script)
+        do {
+            _ = try await supervisor.start()
+            XCTFail("start should fail when the command exits before the ready line")
+        } catch {
+            XCTAssertEqual("\(error)", "the gateway exited before it was ready: exit code 3")
+            XCTAssertFalse("\(error)".contains("stopped cleanly"))
+        }
+    }
 }
 
 /// Run `body` with a deadline; a test that would hang fails instead.

@@ -540,7 +540,8 @@ final class ViewerEdit: ObservableObject {
                     url: url, location: artifact.location, loaded: text, mode: mode, language: language, registry: registry)
                 attach(session)
                 note = nil
-                restore = registry.recoveryFolder.flatMap { EditRecovery.offer(for: url, differingFrom: text.text, in: $0) }
+                // Only a copy newer than the file, as read mode offers (sweep #4): an older one would save over newer work.
+                restore = recoveryOffer(for: url.path)
             } catch {
                 note = "Can't edit — \(FileEditing.Failure.from(error).description)"
             }
@@ -812,7 +813,8 @@ struct EditConflictBar: View {
 }
 
 /// "Restore unsaved edits" over the page, when a recovery copy newer than
-/// the file exists (fix round 1, ruling B).
+/// the file, with other text, exists (fix round 1, ruling B; v0.25 sweep #4:
+/// `ViewerEdit.turnOn` and read mode both ask `recoveryOffer(for:)`).
 struct EditRestoreBar: View {
     @ObservedObject var edit: ViewerEdit
 

@@ -206,13 +206,22 @@ enum FileEditing {
         return tag.count == 8 && tag.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
 
+    /// How old a temporary must be before a read takes it for a crashed
+    /// save's (ruling 25): a save in progress is milliseconds old.
+    static let staleTemporaryAge: TimeInterval = 10
+
     /// Temporaries a crashed save left beside the file: removed at load
-    /// (only names matching the exact pattern above).
-    static func sweepStaleTemporaries(for target: URL) {
+    /// (only names matching the exact pattern above, and only those more than
+    /// `staleTemporaryAge` old, so a save running now keeps its file; sweep #10).
+    static func sweepStaleTemporaries(for target: URL, now: Date = Date()) {
         let folder = target.deletingLastPathComponent()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
         for name in names where isTemporary(name, for: target) {
-            unlink(folder.appendingPathComponent(name).path)
+            let path = folder.appendingPathComponent(name).path
+            guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                now.timeIntervalSince(modified) > staleTemporaryAge
+            else { continue }
+            unlink(path)
         }
     }
 

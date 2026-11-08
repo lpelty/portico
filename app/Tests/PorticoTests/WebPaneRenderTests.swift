@@ -533,4 +533,16 @@ final class WebPaneRenderTests: XCTestCase {
         for byte in data { crc = table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8) }
         return crc ^ 0xFFFF_FFFF
     }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testATitleWithAPlaceholderIsNotFilled() throws {
+        // #13: the title's braces are entities, so `{{SOURCE}}` in a name is not taken for the placeholder.
+        let page = try MarkdownPage.html(source: "secret body line\n", title: "{{SOURCE}}.md")
+        let title = try XCTUnwrap(page.range(of: "<title>").flatMap { start in
+            page.range(of: "</title>", range: start.upperBound..<page.endIndex).map { String(page[start.upperBound..<$0.lowerBound]) }
+        })
+        XCTAssertTrue(title.contains("&#123;&#123;SOURCE}}.md"), title)
+        XCTAssertFalse(title.contains("secret body line"), title)
+    }
 }
