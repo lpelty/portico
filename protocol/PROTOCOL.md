@@ -621,6 +621,14 @@ any other. Absent when there are no items. An older app ignores it; an
 older gateway sends none, so the app shows Labs only for its own machine
 flag.
 
+v0.26: the built-in items gain `voice.elevenlabs` ("ElevenLabs voices"),
+listed after `voice.read_aloud` when `[voice.elevenlabs] enabled = true` and
+Read aloud is on (it needs it; on alone, nothing is listed and the doctor
+says so). The app draws it inside Read aloud's block (a Voice source
+control), not as its own row. The gateway never sees the ElevenLabs key,
+voice or text: the app keeps the key in the macOS Keychain and calls
+ElevenLabs itself.
+
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
 folder (the `chat` root) when the deployment has roots of its own to show.

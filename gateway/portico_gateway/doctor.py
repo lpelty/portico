@@ -256,13 +256,17 @@ def check_config(config_path: Path) -> Check:
     if not config_path.exists() and not local.exists():
         return Check("config", True, f"{config_path} absent, using defaults")
     try:
-        load_config(config_path)
+        config = load_config(config_path)
     except ConfigError as e:
         return Check("config", False, _one_line(str(e)))
     with_local = f" with {LOCAL_CONFIG_NAME}" if local.exists() else ""
+    # v0.26 (PORT-23): ElevenLabs voices are part of Read aloud; on alone, nothing shows.
+    note = ""
+    if config.voice.elevenlabs.enabled and not config.voice.read_aloud:
+        note = "; voice.elevenlabs needs [voice] read_aloud = true, so ElevenLabs voices are off"
     if not config_path.exists():
-        return Check("config", True, f"{config_path} absent; {LOCAL_CONFIG_NAME} loads over the defaults")
-    return Check("config", True, f"{config_path} loads{with_local}")
+        return Check("config", True, f"{config_path} absent; {LOCAL_CONFIG_NAME} loads over the defaults{note}", warn=bool(note))
+    return Check("config", True, f"{config_path} loads{with_local}{note}", warn=bool(note))
 
 
 def check_system_prompt(config_path: Path, version: Callable[[], str | None] | None = None) -> Check:

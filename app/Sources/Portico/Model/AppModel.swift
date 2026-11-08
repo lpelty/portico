@@ -1085,6 +1085,9 @@ final class AppModel: ObservableObject {
             settings.deploymentReadAloud = hello.voice?.readAloud ?? false
             // v0.25: Labs; a Labs tab left with nothing in it falls back to General.
             labs = hello.labs ?? []
+            // v0.26: ElevenLabs voices are part of Read aloud, so they need its item too.
+            settings.elevenLabsAvailable = labs.contains { $0.key == LabItem.elevenLabsKey }
+                && labs.contains { $0.key == LabItem.readAloudKey }
             if settingsTab == .labs && labItems.isEmpty { settingsTab = .general }
             // Services are checked afresh too: "Checking…" until it says.
             // A gateway older than v0.4 never will: the Gateway row alone.

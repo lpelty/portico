@@ -565,3 +565,19 @@ def test_doctor_reports_signin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     skipped = check_signin(path)
     assert skipped.ok and "skipped" in skipped.line
     assert any(c.name == "signin" for c in doctor(StateDir(tmp_path / "state"), tmp_path / "missing.toml"))
+
+
+# --- v0.26: ElevenLabs voices (PORT-23) ----------------------------------------
+
+
+def test_elevenlabs_without_read_aloud_the_doctor_says_so(tmp_path: Path) -> None:
+    from portico_gateway.doctor import check_config
+
+    path = tmp_path / "config.toml"
+    path.write_text("[voice.elevenlabs]\nenabled = true\n")
+    check = check_config(path)
+    assert check.ok and check.warn
+    assert "voice.elevenlabs needs [voice] read_aloud = true" in check.line
+    path.write_text("[voice]\nread_aloud = true\n[voice.elevenlabs]\nenabled = true\n")
+    assert "voice.elevenlabs" not in check_config(path).line
+    assert not check_config(path).warn

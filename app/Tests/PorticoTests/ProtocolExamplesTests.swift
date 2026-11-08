@@ -251,8 +251,9 @@ final class ProtocolExamplesTests: XCTestCase {
         guard case .hello(let hello) = try JSONDecoder().decode(ServerMessage.self, from: data) else {
             return XCTFail("hello")
         }
-        XCTAssertEqual(hello.labs?.map(\.key), ["voice.read_aloud", "digest.daily"])
-        XCTAssertEqual(hello.labs?.map(\.tag), [.preview, .local])
+        // v0.26: and `voice.elevenlabs` after Read aloud.
+        XCTAssertEqual(hello.labs?.map(\.key), ["voice.read_aloud", "voice.elevenlabs", "digest.daily"])
+        XCTAssertEqual(hello.labs?.map(\.tag), [.preview, .preview, .local])
         XCTAssertEqual(hello.labs?.first?.home, "voice")
         XCTAssertNil(hello.labs?.last?.home)
     }

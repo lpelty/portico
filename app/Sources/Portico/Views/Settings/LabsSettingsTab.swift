@@ -18,7 +18,7 @@ struct LabsSettingsTab: View {
                 .foregroundStyle(Theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(model.labItems) { item in
-                LabItemBlock(item: item)
+                LabItemBlock(item: item, elevenLabs: item.key == LabItem.readAloudKey ? model.elevenLabsItem : nil)
             }
         }
     }
@@ -27,6 +27,8 @@ struct LabsSettingsTab: View {
 /// One Labs item: the header row, the note, the box.
 private struct LabItemBlock: View {
     let item: LabItem
+    /// v0.26: the ElevenLabs voices item, folded into Read aloud's note.
+    var elevenLabs: LabItem? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -36,7 +38,7 @@ private struct LabItemBlock: View {
                     .foregroundStyle(Theme.text)
                 LabTagPill(tag: item.tag)
             }
-            Text(LabPresentation.note(item))
+            Text(LabPresentation.note(item, elevenLabs: elevenLabs))
                 .scaledFont(11.5)
                 .foregroundStyle(Theme.text3)
                 .fixedSize(horizontal: false, vertical: true)

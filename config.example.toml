@@ -162,6 +162,11 @@
 ## Read aloud on each reply: true shows the switch in Settings; the person's on/off choice stays in
 ## the app.
 # read_aloud = false
+# [voice.elevenlabs]
+## ElevenLabs voices for Read aloud (Labs); needs [voice] read_aloud = true. The API key is never in
+## config: it's saved in the app, in the macOS Keychain. Reply text is sent to ElevenLabs to be
+## spoken.
+# enabled = false
 
 # [signin.aws-sso]
 ## Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. Unset:

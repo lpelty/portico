@@ -818,3 +818,42 @@ def test_hello_has_no_labs_on_a_stock_config() -> None:
     assert hello_for(Config(), epoch="e", gateway_version="0.25.0").labs is None
     dumped = hello_for(Config(), epoch="e", gateway_version="0.25.0").model_dump(mode="json", exclude_none=True)
     assert "labs" not in dumped
+
+
+# --- v0.26: ElevenLabs voices (PORT-23) ----------------------------------------
+
+
+def test_elevenlabs_item_follows_read_aloud(tmp_path: Path) -> None:
+    """``[voice.elevenlabs] enabled`` lists ``voice.elevenlabs`` after Read aloud, with its source."""
+    from portico_gateway.config import read_config_layers
+
+    base = tmp_path / "config.toml"
+    base.write_text("[voice]\nread_aloud = true\n")
+    (tmp_path / "config.local.toml").write_text("[voice.elevenlabs]\nenabled = true\n")
+    hello = hello_for(load_config(base), epoch="e", gateway_version="0.26.0", layers=read_config_layers(base))
+    assert hello.labs is not None
+    assert [i.key for i in hello.labs] == ["voice.read_aloud", "voice.elevenlabs"]
+    item = hello.labs[1]
+    assert (item.source, item.tag, item.home, item.title) == ("config.local.toml", "preview", "voice", "ElevenLabs voices")
+    assert item.detail == (
+        "Read aloud can use an ElevenLabs voice. The app calls ElevenLabs itself, with a key kept in this Mac's Keychain."
+    )
+    assert hello.labs[0].source == "config.toml"
+
+
+def test_elevenlabs_without_read_aloud_lists_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[voice.elevenlabs]\nenabled = true\n")
+    assert hello_for(load_config(path), epoch="e", gateway_version="0.26.0").labs is None
+
+
+def test_elevenlabs_is_off_by_default() -> None:
+    assert Config().voice.elevenlabs.enabled is False
+
+
+def test_unknown_elevenlabs_key_is_refused(tmp_path: Path) -> None:
+    """A key never goes in config: ``extra="forbid"`` refuses ``api_key``."""
+    path = tmp_path / "config.toml"
+    path.write_text('[voice.elevenlabs]\nenabled = true\napi_key = "x"\n')
+    with pytest.raises(ConfigError):
+        load_config(path)

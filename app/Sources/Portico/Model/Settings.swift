@@ -245,6 +245,9 @@ final class Settings: ObservableObject {
     @Published var deploymentReadAloud = false
     /// The Read aloud feature at all: the deployment's config turns it on, or the machine's flag.
     var readAloudAvailable: Bool { deploymentReadAloud || readAloudFlag }
+    /// v0.26 (PORT-23): the gateway listed `voice.elevenlabs` with Read aloud
+    /// (`[voice.elevenlabs] enabled`): Read aloud may speak with an ElevenLabs voice.
+    @Published var elevenLabsAvailable = false
     /// Code blocks with a language wrap long lines when true (v0.19 §9);
     /// prose in a fence always wraps. The code block header's toggle flips it.
     @Published var wrapCode: Bool {

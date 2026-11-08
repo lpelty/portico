@@ -830,6 +830,8 @@ class Voice(Strict):
 
 # v0.25: the key of the Read aloud Labs item (the app draws its controls for it).
 READ_ALOUD_LAB = "voice.read_aloud"
+# v0.26 (PORT-23): ElevenLabs voices for Read aloud; listed after Read aloud and only with it.
+ELEVENLABS_LAB = "voice.elevenlabs"
 
 
 class LabItem(Strict):
@@ -2001,6 +2003,11 @@ def example_messages() -> dict[str, BaseModel]:
                 LabItem(
                     key="voice.read_aloud", title="Read aloud",
                     detail="A Play button on each reply; replies are read as they arrive while it's on.",
+                    tag="preview", source="config.local.toml", home="voice",
+                ),
+                LabItem(
+                    key="voice.elevenlabs", title="ElevenLabs voices",
+                    detail="Read aloud can use an ElevenLabs voice. The app calls ElevenLabs itself, with a key kept in this Mac's Keychain.",
                     tag="preview", source="config.local.toml", home="voice",
                 ),
                 LabItem(
