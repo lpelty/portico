@@ -724,3 +724,100 @@ async def test_answers_ride_on_tool_finished(state_dir: StateDir, folder: Path, 
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.25 §3.2: real times from the transcript -----------------------------------
+
+
+def test_transcript_times_reads_the_sdk_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pins today's layout: ``<CLAUDE_CONFIG_DIR>/projects/<folder, non-alphanumerics -> "-">/<sid>.jsonl``."""
+    import re
+
+    from portico_gateway.engine import transcript_times
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
+    folder = tmp_path / "work"
+    folder.mkdir()
+    proj = tmp_path / "cc" / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", str(folder.resolve()))
+    proj.mkdir(parents=True)
+    lines = [
+        json.dumps({"type": "user", "uuid": "u1", "timestamp": "2026-11-06T21:42:10.123Z", "sessionId": SESSION,
+                    "message": {"role": "user", "content": "hi"}}),
+        "not json",
+        json.dumps({"type": "summary", "summary": "no uuid here"}),
+        json.dumps({"type": "assistant", "uuid": "a1", "timestamp": "2026-11-06T21:42:15.900Z", "sessionId": SESSION,
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "yo"}]}}),
+        json.dumps({"type": "assistant", "uuid": "a2", "timestamp": "garbage"}),
+    ]
+    (proj / f"{SESSION}.jsonl").write_text("\n".join(lines) + "\n")
+    assert transcript_times(SESSION, folder) == {"u1": "2026-11-06T21:42:10Z", "a1": "2026-11-06T21:42:15Z"}
+
+
+def test_transcript_times_fail_quietly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from portico_gateway import engine
+    from portico_gateway.engine import transcript_times
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "none"))
+    assert transcript_times(SESSION, tmp_path) == {}
+    assert transcript_times(None, tmp_path) == {}
+
+    def boom(session_id: str, directory: str | None) -> str | None:
+        raise RuntimeError("the SDK changed")
+
+    monkeypatch.setattr(engine, "_read_session_file", boom)
+    assert transcript_times(SESSION, tmp_path) == {}
+
+
+def test_replayed_events_carry_their_entry_time() -> None:
+    u, a = user("hi"), assistant(text("yo"), tool_use("t1", "Read", {"file_path": "/x"}))
+    r = user([tool_result("t1", "ok")])
+    times = {u["uuid"]: "2026-11-06T21:42:10Z", a["uuid"]: "2026-11-06T21:42:15Z", r["uuid"]: "2026-11-06T21:42:20Z"}
+    ev = history_events([u, a, r], chat=1, times=times)
+    by_type = {type(e): e for e in ev}
+    assert by_type[TurnStarted].ts == "2026-11-06T21:42:10Z"
+    assert by_type[UserText].ts == "2026-11-06T21:42:10Z" and by_type[UserText].no_time is None
+    assert by_type[TextDelta].ts == "2026-11-06T21:42:15Z" and by_type[TextDelta].no_time is None
+    assert by_type[ToolStarted].ts == "2026-11-06T21:42:15Z"
+    assert by_type[ToolFinished].ts == "2026-11-06T21:42:20Z"
+    assert by_type[TurnFinished].ts == "2026-11-06T21:42:20Z"
+
+
+def test_an_unmatched_event_has_no_time() -> None:
+    ev = history_events([user("hi"), assistant(text("yo"))], chat=1, times={})
+    assert next(e for e in ev if isinstance(e, UserText)).no_time is True
+    assert next(e for e in ev if isinstance(e, TextDelta)).no_time is True
+
+
+def test_without_times_nothing_changes() -> None:
+    ev = history_events([user("hi"), assistant(text("yo"))], chat=1)
+    assert all(getattr(e, "no_time", None) is None for e in ev)
+    assert "no_time" not in dump(next(e for e in ev if isinstance(e, UserText)))
+
+
+async def test_open_after_restart_replays_real_times(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, config_dir: Path
+) -> None:
+    """The server reads the transcript's times beside it; the hello lists ``history.times.v1``."""
+    restored_index(state_dir, folder, SESSION)
+    write_transcript(config_dir, folder, SESSION, [user("hi"), assistant(text("hello"))])
+    srv = await start_server(state_dir, factory)
+    conn = await attach(srv)
+    try:
+        await conn.send(dump(ChatOpen(ts=TS, chat=1, id="req-open")))
+        history = await recv(conn)
+        assert isinstance(history, ChatHistory)
+        said = next(e for e in history.events if isinstance(e, UserText))
+        reply = next(e for e in history.events if isinstance(e, TextDelta))
+        assert said.ts == TS and said.no_time is None
+        assert reply.ts == TS and reply.no_time is None
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+def test_hello_lists_history_times() -> None:
+    from portico_gateway.config import hello_for
+    from portico_gateway.messages import HISTORY_TIMES_CAPABILITY
+
+    assert HISTORY_TIMES_CAPABILITY == "history.times.v1"
+    assert HISTORY_TIMES_CAPABILITY in hello_for(Config(), epoch="e", gateway_version="0.25.0").capabilities

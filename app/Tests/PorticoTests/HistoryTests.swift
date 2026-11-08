@@ -68,3 +68,46 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(Theme.toolbarHeight, 52)
     }
 }
+
+/// v0.25 §3.2, ruling 6: a transcript replay's times show only from a gateway that lists `history.times.v1`.
+@MainActor
+final class HistoryTimesTests: XCTestCase {
+    private func replay(capabilities: [String], noTime: Bool? = nil) -> [TranscriptItem] {
+        let model = AppModel()
+        model.apply(.hello(HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.25.0", epoch: "e",
+            brand: Brand(name: "Front", agentName: "Agent"), actions: [], roots: [], commands: [],
+            capabilities: capabilities)))
+        model.apply(.chatHistory(ChatHistory(chat: 1, events: [
+            .turnStarted(TurnStarted(chat: 1, turn: 1, ts: "2026-11-06T21:42:10Z")),
+            .userText(UserText(chat: 1, turn: 1, text: "hi", noTime: noTime, ts: "2026-11-06T21:42:10Z")),
+            .textDelta(TextDelta(chat: 1, turn: 1, text: "yo", noTime: noTime, ts: "2026-11-06T21:42:15Z")),
+        ], truncated: false)))
+        return model.transcripts[1] ?? []
+    }
+
+    private func times(_ items: [TranscriptItem]) -> (user: Bool?, reply: String?) {
+        var user: Bool?
+        var reply: String?
+        for item in items {
+            if case .userText(let u) = item { user = u.noTime }
+            if case .assistantText(_, _, let at) = item { reply = at }
+        }
+        return (user, reply)
+    }
+
+    func testHistoryTimesShowOnlyFromAGatewayThatSaysSo() {
+        let trusted = times(replay(capabilities: ["history.times.v1"]))
+        XCTAssertNil(trusted.user, "the person's message keeps its time")
+        XCTAssertEqual(trusted.reply, "2026-11-06T21:42:15Z")
+        let older = times(replay(capabilities: []))
+        XCTAssertEqual(older.user, true)
+        XCTAssertNil(older.reply)
+    }
+
+    func testNoTimeHidesTheTimeEvenFromAGatewayThatSendsTimes() {
+        let unmatched = times(replay(capabilities: ["history.times.v1"], noTime: true))
+        XCTAssertEqual(unmatched.user, true)
+        XCTAssertNil(unmatched.reply)
+    }
+}

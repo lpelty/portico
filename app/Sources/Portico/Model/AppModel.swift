@@ -1509,8 +1509,8 @@ final class AppModel: ObservableObject {
         MessageTime.shown(ts, noTime: noTime, fromHistory: replayingHistory && seq == nil, gatewayTimes: gatewayTimes)
     }
 
-    /// Whether the gateway stamps replayed history with the transcript's real times.
-    private var gatewayTimes: Bool { false }
+    /// Whether the gateway stamps replayed history with the transcript's real times (`history.times.v1`).
+    private var gatewayTimes: Bool { hello?.capabilities.contains(ChatHistory.timesCapability) == true }
 
     /// The per-event reducer shared by live frames and a history replay.
     private func applyEvent(_ event: ServerMessage, to chat: Int) {

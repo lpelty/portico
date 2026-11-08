@@ -186,6 +186,7 @@ from .engine import (
     friendly_model_name,
     history_events,
     read_history,
+    transcript_times,
 )
 from .images import ATTACHMENT_HEADER, NOT_IMAGE_NOTICE_KIND, image_blocks
 from .lifecycle import CommandFailed, run_lifecycle_command
@@ -1143,6 +1144,8 @@ class GatewayServer:
         self.cards.threads_on = self.threads_on()
         # Reads a session's transcript (``engine.read_history``); replaceable for tests.
         self.history_reader: Callable[[str | None, Path], list[dict[str, Any]]] = read_history
+        # v0.25: the transcript's entry times by uuid (``engine.transcript_times``); replaceable for tests.
+        self.history_times_reader: Callable[[str | None, Path], dict[str, str]] = transcript_times
         # Runs Spotlight for ``files.search`` (``search.run_command``); replaceable for tests.
         self.search_runner: Runner = run_command
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
@@ -3049,7 +3052,8 @@ class GatewayServer:
         if not truncated and (since is not None or not chat.restored):
             return ring, truncated, []
         transcript = await asyncio.to_thread(self.history_reader, chat.session_id, chat.folder)
-        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number)]
+        times = await asyncio.to_thread(self.history_times_reader, chat.session_id, chat.folder) if transcript else {}
+        events = [self._replayed_permission(chat, e) for e in history_events(transcript, chat.number, times=times)]
         if not events:
             replayed = {e.artifact.id for e in ring if isinstance(e, ArtifactCreated)}
             return ring, truncated and since is not None, [a for a in chat.artifacts if a.id not in replayed]

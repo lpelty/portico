@@ -552,7 +552,9 @@ always, so the app may send `attachments` on `message.send` and reads them in
 `files.roots.set`; v0.20: `files.edited.v1` always, so the app may send
 `files.edited`; v0.22: `messages.deployment.v1` always, so the gateway may
 send `deployment.message` to an app that lists it too, and `spaces.act` as
-well when `[spaces] act` is, so the app acts on `space-action:` links).
+well when `[spaces] act` is, so the app acts on `space-action:` links;
+v0.25: `history.times.v1` always, so the app trusts the times of a
+transcript replay, see `chat.history`).
 Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
@@ -718,6 +720,15 @@ they are left out of the replay as they were left out live (its `seq`
 numbers then skip; nothing else changes). A transcript replay carries
 none of them: after a gateway restart a past fan-out shows as its
 `Agent` tool rows only.
+v0.25 (`history.times.v1`): each event of a transcript replay carries its
+transcript entry's real time as `ts` (`turn.started` its person's message's,
+`turn.finished` its turn's last event's), read from the engine's own
+transcript file by the entries' `uuid`. A `user.text` or `text.delta` no
+entry matched carries today's `ts` and `no_time: true`, and the app shows no
+time for it. An older gateway, which does not list `history.times.v1`, stamps
+every transcript event with the time of the replay: the app shows no time
+for a transcript event from it (a wrong time is worse than none). Events
+from the ring carry their live times either way.
 
 ### `chat.live` — `ChatLive`
 `chat`, `id` (echoing `chat.open`), `seq` (the chat's current sequence
@@ -763,10 +774,16 @@ attached files' paths, and `text` is what the person typed, without the
 paths from the block's trailing form). Only to an app whose `hello` declared
 `messages.attachments.v1`: any other app, and any older gateway, has the block
 inside `text` and no `attachments`.
+v0.25: `no_time?: true` on a transcript replay's message no transcript entry
+gave a time to (see `chat.history`); never on a live one. The app shows the
+time beside Copy on hover, and none when `no_time` is set. An older app
+ignores it.
 
 ### `text.delta` — `TextDelta`
 `chat`, `seq`, `turn`, `text`. A fragment of the agent's reply, in order;
-the app appends.
+the app appends. v0.25: the app shows the `ts` of a reply's first fragment
+as its time, and `no_time?: true` (as on `user.text`) means a transcript
+replay had no time for it.
 
 ### `tool.started` — `ToolStarted`
 `chat`, `seq`, `turn`, `tool_use_id`, `tool`, `summary`, `input: object`. *(Task 4)*

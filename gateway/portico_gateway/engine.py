@@ -59,6 +59,7 @@ from claude_agent_sdk import (
     get_session_messages,
     tool,
 )
+from claude_agent_sdk._internal.sessions import _read_session_file
 
 from .artifacts import paths_in
 from .images import split_attachments, split_edited_note, user_message
@@ -1606,6 +1607,50 @@ def read_history(session_id: str | None, folder: Path) -> list[dict[str, Any]]:
     return [dataclasses.asdict(m) for m in messages]
 
 
+def transcript_times(session_id: str | None, folder: Path) -> dict[str, str]:
+    """v0.25 §3.2: each transcript entry's time by its ``uuid``, in the gateway's format; ``{}`` on any failure.
+
+    The transcript is found the way the SDK finds it for ``get_session_messages``
+    (ruling 7), so the ``uuid`` of a session message is its entry's. If the
+    SDK changes its layout, the lookup fails quietly and the times are left
+    out: the app then shows none, never a wrong one.
+    """
+    if not session_id:
+        return {}
+    try:
+        content = _read_session_file(session_id, str(folder))
+    except Exception:
+        return {}
+    if not content:
+        return {}
+    times: dict[str, str] = {}
+    for line in content.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        uid, stamp = entry.get("uuid"), entry.get("timestamp")
+        if not isinstance(uid, str) or not isinstance(stamp, str):
+            continue
+        normal = _normal_time(stamp)
+        if normal is not None:
+            times[uid] = normal
+    return times
+
+
+def _normal_time(stamp: str) -> str | None:
+    """A transcript ``timestamp`` (``2026-11-06T21:42:10.123Z``) as ``_now()`` writes one (ruling 8); None if unreadable."""
+    try:
+        when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _blocks(content: Any) -> list[dict[str, Any]]:
     """A message's content as a list of block dicts (a plain string is one text block)."""
     if isinstance(content, str):
@@ -1674,17 +1719,24 @@ def _notification_fields(blocks: list[dict[str, Any]]) -> dict[str, str]:
     return {}
 
 
-def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1) -> list[ServerMessage]:
+def history_events(
+    messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1, times: Mapping[str, str] | None = None
+) -> list[ServerMessage]:
     """Transcript messages (``read_history``'s dicts, or ``SessionMessage``-like) -> replay events. Pure.
 
     Each user message with text starts a turn (``turn.started``, ``user.text``);
     assistant text becomes ``text.delta``, tool calls and results
     ``tool.started`` / ``tool.finished``; every turn ends with
     ``turn.finished outcome=done``. Turns count from ``first_turn``. Nothing
-    is stamped: ``seq`` is left unset, and the events carry today's ``ts``
-    because the SDK's session messages carry none.
+    is stamped: ``seq`` is left unset. The SDK's session messages carry no
+    time, so the events carry today's ``ts`` unless ``times`` (v0.25,
+    ``transcript_times``) gives the message's: then each event takes its
+    message's entry time (``turn.finished`` the last event's), and a
+    ``user.text`` or ``text.delta`` with no match gets ``no_time``.
     """
-    ts = _now()
+    now = _now()
+    ts = now
+    no_time: bool | None = None
     out: list[ServerMessage] = []
     turn = first_turn - 1
     open_turn = False
@@ -1708,6 +1760,9 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
         m = raw if isinstance(raw, Mapping) else dataclasses.asdict(raw)
         if m.get("parent_tool_use_id"):
             continue  # a subagent's message, never shown in the conversation
+        if times is not None:
+            found = times.get(str(m.get("uuid") or ""))
+            ts, no_time = (found, None) if found else (now, True)
         message = m.get("message")
         if not isinstance(message, Mapping):
             continue
@@ -1720,7 +1775,7 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                 begin()
                 # v0.19 (spec §8.4): the words typed, and the attachments apart.
                 typed, attachments = split_attachments(split_edited_note(text))
-                out.append(UserText(ts=ts, chat=chat, turn=turn, text=typed, attachments=attachments))
+                out.append(UserText(ts=ts, chat=chat, turn=turn, text=typed, attachments=attachments, no_time=no_time))
             elif _is_task_notification(blocks):
                 # Background work reporting back (v0.10): the engine's own
                 # message, never the person's; its reply is a turn nobody sent.
@@ -1788,7 +1843,7 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         # engine speaking twice in a turn): a paragraph apart,
                         # not run together.
                         text = "\n\n" + text
-                    out.append(TextDelta(ts=ts, chat=chat, turn=turn, text=text))
+                    out.append(TextDelta(ts=ts, chat=chat, turn=turn, text=text, no_time=no_time))
                 elif kind == "tool_use":
                     if not open_turn:
                         begin()

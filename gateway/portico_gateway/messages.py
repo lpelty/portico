@@ -54,6 +54,10 @@ TASKS_CAPABILITY = "tasks.v1"
 # deployment (``deployment.message``) above the message box. Only such an app
 # is sent one; with none attached, the gateway keeps them for the next hello.
 DEPLOYMENT_MESSAGE_CAPABILITY = "messages.deployment.v1"
+# v0.25: replayed history (``chat.history`` from the transcript) carries each
+# entry's real time, and ``no_time`` where no entry matched; an older gateway
+# stamps its replay with the time of the replay.
+HISTORY_TIMES_CAPABILITY = "history.times.v1"
 
 # v0.23: the app shows and writes comments in Markdown files (comment format
 # v1, protocol/COMMENTS.md). Declared for future use: the comment tools work
@@ -915,6 +919,9 @@ class UserText(Envelope):
     # v0.19 (spec §8.4, ``messages.attachments.v1``): the attached files' paths;
     # ``text`` is then what the person typed, without the "Attached files:" block.
     attachments: list[str] = []
+    # v0.25 (``history.times.v1``): true on a replayed message no transcript
+    # entry gave a time to (its ``ts`` is then the replay's); never on a live one.
+    no_time: bool | None = None
 
 
 class TextDelta(Envelope):
@@ -922,6 +929,8 @@ class TextDelta(Envelope):
     chat: int
     turn: int
     text: str
+    # v0.25 (``history.times.v1``): as ``UserText.no_time``.
+    no_time: bool | None = None
 
 
 class ToolStarted(Envelope):
@@ -1945,6 +1954,11 @@ def example_messages() -> dict[str, BaseModel]:
                 TurnStarted(ts=_TS, chat=1, seq=1, turn=1),
                 TextDelta(ts=_TS, chat=1, seq=2, turn=1, text="Hello."),
                 TurnFinished(ts=_TS, chat=1, seq=3, turn=1, outcome="done"),
+                # v0.25: a transcript replay's events are unstamped; one no entry matched has ``no_time``.
+                TurnStarted(ts=_TS, chat=1, turn=2),
+                UserText(ts=_TS, chat=1, turn=2, text="And the notes?", no_time=True),
+                TextDelta(ts=_TS, chat=1, turn=2, text="Here they are.", no_time=True),
+                TurnFinished(ts=_TS, chat=1, turn=2, outcome="done"),
             ],
             truncated=False,
         ),

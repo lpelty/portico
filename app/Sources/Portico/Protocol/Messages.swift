@@ -1058,6 +1058,8 @@ struct ChatState: Codable, Equatable, Sendable {
 
 struct ChatHistory: Codable, Equatable, Sendable {
     static let messageType = "chat.history"
+    /// v0.25: in the gateway's `hello.capabilities`, a transcript replay carries real times.
+    static let timesCapability = "history.times.v1"
     var chat: Int
     /// Chat-scoped events replayed in order, each with its `seq`.
     var events: [ServerMessage]

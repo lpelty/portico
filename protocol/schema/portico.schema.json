@@ -7571,6 +7571,18 @@
           "default": null,
           "title": "Id"
         },
+        "no_time": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "No Time"
+        },
         "seq": {
           "anyOf": [
             {
@@ -8415,6 +8427,18 @@
           ],
           "default": null,
           "title": "Id"
+        },
+        "no_time": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "No Time"
         },
         "seq": {
           "anyOf": [
