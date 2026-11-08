@@ -20,6 +20,8 @@ enum Theme {
         case wait, waitSoft, onWait, working, deny, idle, stopped, meterTrack, meterFill
         case hoverTint, pressTint, scrim, shadowStrong, shadowSoft, knob, pointerShadow
         case tipFill, tipText, tipStroke, tipShadow
+        /// v0.26: a tip's second and third lines (the marker tip's reply and time).
+        case tipText2, tipText3
         /// Pen only (ruling 15): the code never draws these; AppKit draws the real window buttons.
         case shadow, windowClose, windowMinimize, windowZoom
         case logo1, logo2, logo3, logo4, logo5, logo6, logo7, logo8, logo9, logo10
@@ -74,6 +76,9 @@ enum Theme {
         .tipText: ("#E6E6E8", "#E6E6E8"),
         .tipStroke: ("#FFFFFF1F", "#FFFFFF1F"),
         .tipShadow: ("#00000066", "#00000066"),
+        // The tip's secondary lines: text2's and text3's dark values, on the dark bubble in either appearance.
+        .tipText2: ("#B6B6BC", "#B6B6BC"),
+        .tipText3: ("#8A8A91", "#8A8A91"),
         .shadow: ("#00000022", "#00000066"),
         .windowClose: ("#FF5F57", "#FF5F57"),
         .windowMinimize: ("#FEBC2E", "#FEBC2E"),
@@ -168,6 +173,8 @@ enum Theme {
     static let tipText = color(.tipText)
     static let tipStroke = color(.tipStroke)
     static let tipShadow = color(.tipShadow)
+    static let tipText2 = color(.tipText2)
+    static let tipText3 = color(.tipText3)
 
     // MARK: measures
 

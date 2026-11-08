@@ -118,14 +118,13 @@ struct MarkerRail: View {
 /// The marker's tip, in the tooltip's style with a 10 pt corner: the person's
 /// message on one line (semibold), the first two lines of the reply, then
 /// the time and "Click to go back". The tip is the same dark bubble in either
-/// appearance, so its second and third lines take `text2`'s and `text3`'s
-/// dark values.
+/// appearance, so its second and third lines are `tipText2` and `tipText3`.
 struct MarkerTip: View {
     let marker: ConversationMarker
     var now: Date = Date()
     static let cornerRadius: CGFloat = 10
-    static let replyColour = Color(nsColor: NSColor(hex: Theme.hex(.text2).dark))
-    static let footerColour = Color(nsColor: NSColor(hex: Theme.hex(.text3).dark))
+    static let replyColour = Theme.tipText2
+    static let footerColour = Theme.tipText3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {

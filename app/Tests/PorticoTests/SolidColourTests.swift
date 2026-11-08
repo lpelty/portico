@@ -26,6 +26,7 @@ final class SolidColourTests: XCTestCase {
             .pointerShadow: ("#000000", "#000000"),
             .tipFill: ("#2B2B2E", "#2B2B2E"), .tipText: ("#E6E6E8", "#E6E6E8"),
             .tipStroke: ("#FFFFFF1F", "#FFFFFF1F"), .tipShadow: ("#00000066", "#00000066"),
+            .tipText2: ("#B6B6BC", "#B6B6BC"), .tipText3: ("#8A8A91", "#8A8A91"),
             .shadow: ("#00000022", "#00000066"),
             .windowClose: ("#FF5F57", "#FF5F57"), .windowMinimize: ("#FEBC2E", "#FEBC2E"),
             .windowZoom: ("#28C840", "#28C840"),
@@ -158,5 +159,15 @@ final class SolidColourTests: XCTestCase {
         let css = CommentsTheme.css()
         XCTAssertTrue(css.contains("--pc-wait: #B86E00"))
         XCTAssertTrue(css.contains("--pc-on-wait: #1C1C1E"))
+    }
+
+    /// v0.26 review: the marker tip's second and third lines have tokens of their own
+    /// (the tip is the same dark bubble in both appearances).
+    func testTheTipsSecondaryLinesAreTokens() {
+        XCTAssertEqual(Theme.penName(.tipText2), "tip-text-2")
+        XCTAssertEqual(Theme.hex(.tipText2).light, Theme.hex(.text2).dark)
+        XCTAssertEqual(Theme.hex(.tipText3).light, Theme.hex(.text3).dark)
+        XCTAssertEqual(MarkerTip.replyColour, Theme.tipText2)
+        XCTAssertEqual(MarkerTip.footerColour, Theme.tipText3)
     }
 }
