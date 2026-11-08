@@ -647,7 +647,10 @@ class ConfigLayers:
         The deepest path either file sets wins: ``brand.accent`` set only
         locally is the local file's even when ``[brand]`` is in both.
         """
-        parts = [p for p in dotted.split(".") if p]
+        return self.source_of_parts([p for p in dotted.split(".") if p])
+
+    def source_of_parts(self, parts: list[str]) -> str:
+        """``source_of`` for a key given as its parts (a table key may itself hold dots, like ``a.com``)."""
         for depth in range(len(parts), 0, -1):
             prefix = parts[:depth]
             if self._has(self.local, prefix) and (

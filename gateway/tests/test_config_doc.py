@@ -156,3 +156,20 @@ def test_export_config_doc_writes_both(tmp_path: Path, capsys: pytest.CaptureFix
     assert main(["export-config-doc", "--out", str(tmp_path)]) == 0
     assert (tmp_path / "CONFIGURATION.md").read_text(encoding="utf-8") == cd.render_markdown()
     assert (tmp_path / "config.example.toml").read_text(encoding="utf-8") == cd.render_example()
+
+
+def test_a_table_from_both_files_shows_each_leaf_source(tmp_path: Path) -> None:
+    path = _files(tmp_path, '[links]\nsites = { "a.com" = "A" }\n', '[links]\nsites = { "b.com" = "B" }\n')
+    rows = _rows(path)
+    text = cd.format_show(rows)
+    assert 'links.sites.a.com = "A"  [config.toml]' in text
+    assert 'links.sites.b.com = "B"  [config.local.toml]' in text
+    by_key = {r["key"]: r for r in cd.rows_json(rows)}
+    assert by_key["links.sites.a.com"]["source"] == "config.toml"
+    assert by_key["links.sites.b.com"]["source"] == "config.local.toml"
+    assert "links.sites" not in by_key
+
+
+def test_an_empty_table_is_one_row(tmp_path: Path) -> None:
+    rows = _rows(_files(tmp_path, ""))
+    assert any(r.key == "links.sites" and r.source == "default" for r in rows)

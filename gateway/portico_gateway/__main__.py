@@ -462,13 +462,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="one JSON list for programs")
     p.set_defaults(func=cmd_sessions_list)
     sessions_sub = p.add_subparsers(dest="sessions_command", required=False)
+    # A subcommand's own --state/--json default to SUPPRESS, so an absent one never clobbers what
+    # ``sessions --state X`` already parsed (argparse applies a subparser's defaults over the parent's).
     c = sessions_sub.add_parser("list", help="every session, newest first, with its prompt (mode, file, fingerprint)")
-    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
-    c.add_argument("--json", action="store_true", help="one JSON list for programs")
+    c.add_argument("--state", default=argparse.SUPPRESS, help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="one JSON list for programs")
     c.set_defaults(func=cmd_sessions_list)
     c = sessions_sub.add_parser("clear", help="forget every earlier session (the gateway must be stopped; transcripts stay)")
     c.add_argument("--yes", action="store_true", help="do not ask first")
-    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--state", default=argparse.SUPPRESS, help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     c.add_argument("--config", help="config file (default: <state>/config.toml)")
     c.set_defaults(func=cmd_sessions_clear)
 

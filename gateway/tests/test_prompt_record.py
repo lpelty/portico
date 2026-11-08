@@ -172,3 +172,42 @@ def test_sessions_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> No
     assert main(["sessions", "list", "--json", "--state", str(state.path)]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["chat"] == 3 and rows[0]["prompt"]["sha"] == "00ff00ff"
+
+
+def test_doctor_says_no_recorded_version(tmp_path: Path) -> None:
+    prompt = tmp_path / "custom.md"
+    prompt.write_text("<!-- captured from Claude Code (version unknown) · model m · 2026-11-07 -->\nInvented.", encoding="utf-8")
+    path = _config(tmp_path, f'system_prompt = "custom"\nsystem_prompt_file = "{prompt}"\n')
+    check = check_system_prompt(path, version=lambda: pytest.fail("nothing to compare"))
+    assert check.ok and not check.warn and "no recorded Claude Code version" in check.line
+    assert "unknown →" not in check.line
+
+
+def test_sessions_state_before_the_subcommand_reaches_clear(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / "default-home"
+    monkeypatch.setenv("PORTICO_HOME", str(other))
+    for position in ("before", "after"):
+        state = StateDir(tmp_path / f"home-{position}")
+        index = state.load_index()
+        index.chats = [
+            ChatRecord(chat=1, folder="/w", state="idle", created="2026-11-06T09:00:00Z", ended="2026-11-06T10:00:00Z"),
+            ChatRecord(chat=2, folder="/w", state="idle", created="2026-11-07T09:00:00Z"),
+        ]
+        state.save_index(index)
+        argv = (
+            ["sessions", "--state", str(state.path), "clear", "--yes"]
+            if position == "before"
+            else ["sessions", "clear", "--yes", "--state", str(state.path)]
+        )
+        assert main(argv) == 0, position
+        assert "cleared 1 earlier session" in capsys.readouterr().out
+        assert [c.chat for c in StateDir(state.path).load_index().chats] == [2], position
+    assert not (other / "index.json").exists()
+
+
+def test_sessions_json_before_or_after_list(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    state = StateDir(tmp_path / "home")
+    state.save_index(state.load_index())
+    for argv in (["sessions", "--json", "--state", str(state.path), "list"], ["sessions", "--state", str(state.path), "list", "--json"]):
+        assert main(argv) == 0
+        assert json.loads(capsys.readouterr().out) == []

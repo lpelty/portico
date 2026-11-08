@@ -602,7 +602,7 @@ file added after it:
   passed to the engine as a file, so a long prompt is fine; the append text
   and Portico's own lines (the viewer line, and the Main or thread line) come
   after it. A file missing at load is a config error; one that can't be read
-  later is logged, and that session starts with Claude Code's prompt instead
+  later, or is empty once its notes are left out, is logged, and that session starts with Claude Code's prompt instead
   (never an empty one) and the app's status line says so once.
 - **`"none"`** (legacy): the SDK's empty prompt, or the append text alone, as
   every deployment had before v0.10. The gateway logs a note suggesting
@@ -622,7 +622,10 @@ request, and writes it to `--out` (default
 file's first line records the Claude Code version, the model and the date;
 lines naming this computer's folders (the auto-memory location, say) get a
 `<!-- machine-specific: … -->` comment before them. Those comments are left
-out when the file is used as the prompt. It costs one small model request
+out when the file is used as the prompt, as is the engine's own
+`x-anthropic-billing-header:` accounting line, which is never copied. When the
+engine's version can't be read, the first line says "version unknown" and no
+version is compared later. It costs one small model request
 with the deployment's credential, never writes inside this checkout (the text
 is Anthropic's), and never overwrites a file. If the engine doesn't log the
 request, it says capture isn't possible and changes nothing.

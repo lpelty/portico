@@ -134,3 +134,21 @@ def test_cli_writes_and_prints_the_path(tmp_path: Path, capsys: pytest.CaptureFi
     assert main(["capture-prompt", "--state", str(tmp_path / "state"), "--out", str(out)]) == 0
     printed = capsys.readouterr().out
     assert str(out) in printed and out.is_file()
+
+
+def test_billing_header_blocks_are_dropped() -> None:
+    body = {"system": [{"type": "text", "text": "x-anthropic-billing-header: cc_version=9; cch=00;"}, {"type": "text", "text": "Real invented text."}]}
+    assert system_text(body) == "Real invented text."
+    assert system_text({"system": "x-anthropic-billing-header: a\nKept line."}) == "Kept line."
+    assert system_text({"system": [{"type": "text", "text": "  x-anthropic-billing-header: only"}]}) is None
+
+
+def test_unknown_version_writes_no_version(tmp_path: Path) -> None:
+    from portico_gateway.engine import prompt_header_version
+
+    out = asyncio.run(
+        capture_prompt(tmp_path / "state", [], tmp_path / "c.md", query=fake_query(), version=lambda: None, today="2026-11-07")
+    )
+    first = out.read_text(encoding="utf-8").splitlines()[0]
+    assert "unknown" in first and "vunknown" not in first and not HEADER_RE.match(first)
+    assert prompt_header_version(out) is None

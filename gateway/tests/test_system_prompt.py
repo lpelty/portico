@@ -403,3 +403,48 @@ async def test_none_logs_the_legacy_note(state_dir: StateDir, factory: EngineFac
         assert 'system_prompt = "none" is kept for older configs' in caplog.text
     finally:
         await srv.shutdown()
+
+
+# --- review fixes -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["", "   \n\t\n", f"{HEADER}\n", f"{HEADER}\n<!-- machine-specific: x -->\n  \n"])
+def test_an_empty_custom_prompt_falls_back(tmp_path: Path, raw: str, caplog: pytest.LogCaptureFixture) -> None:
+    path = _prompt_file(tmp_path, raw)
+    chosen = session_prompt("custom", None, str(path), tmp_path / "out.md")
+    assert chosen.fell_back and chosen.prompt == PRESET and chosen.mode == "claude_code"
+    assert "empty" in caplog.text
+
+
+async def test_an_empty_custom_prompt_says_so_once(state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path) -> None:
+    from portico_gateway.messages import StatusSet
+
+    path = _prompt_file(tmp_path, f"{HEADER}\n")
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(path))
+    sent: list[object] = []
+    real = srv.broadcast
+
+    async def broadcast(msg: object) -> None:
+        sent.append(msg)
+        if not isinstance(msg, StatusSet):
+            await real(msg)  # type: ignore[arg-type]
+
+    srv.broadcast = broadcast  # type: ignore[method-assign]
+    try:
+        assert await new_engine(srv, factory, folder) == PRESET
+        assert await new_engine(srv, factory, folder) == PRESET
+        assert len([m for m in sent if isinstance(m, StatusSet)]) == 1
+    finally:
+        await srv.shutdown()
+
+
+def test_a_billing_header_line_is_stripped() -> None:
+    raw = "x-anthropic-billing-header: cc_version=1; cch=abc;\nYou are a helper.\n"
+    assert custom_prompt_text(raw) == "You are a helper."
+
+
+def test_an_unknown_version_header_is_no_recorded_version(tmp_path: Path) -> None:
+    raw = "<!-- captured from Claude Code (version unknown) · model m · 2026-11-07 -->\nInvented."
+    path = _prompt_file(tmp_path, raw)
+    assert prompt_header_version(path) is None
+    assert custom_prompt_text(raw) == "Invented."

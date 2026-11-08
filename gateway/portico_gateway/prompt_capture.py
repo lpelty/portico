@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import REPO_ROOT
-from .engine import MARKER_PREFIX
+from .engine import BILLING_PREFIX, MARKER_PREFIX
 
 # Tests replace these; ``None`` means the SDK's ``query`` and ``claude_code_version``.
 DEFAULT_QUERY: Callable[..., Any] | None = None
@@ -45,9 +45,14 @@ def system_text(body: Any) -> str | None:
         return None
     system = body.get("system")
     if isinstance(system, str):
-        return system or None
+        kept = [line for line in system.splitlines() if not line.lstrip().startswith(BILLING_PREFIX)]
+        return "\n".join(kept).strip() or None
     if isinstance(system, list):
-        texts = [b.get("text") for b in system if isinstance(b, dict) and isinstance(b.get("text"), str)]
+        texts = [
+            b["text"]
+            for b in system
+            if isinstance(b, dict) and isinstance(b.get("text"), str) and not b["text"].lstrip().startswith(BILLING_PREFIX)
+        ]
         return "\n\n".join(texts) or None
     return None
 
@@ -101,8 +106,8 @@ async def capture_prompt(
 
     if out is not None and _inside(Path(out), REPO_ROOT):
         raise CaptureError("capture-prompt never writes inside the checkout; pick a path outside it")
-    cc = (version or DEFAULT_VERSION or claude_code_version)() or "unknown"
-    target = Path(out) if out is not None else Path(state_path) / "prompts" / f"claude-code-{cc}.md"
+    cc = (version or DEFAULT_VERSION or claude_code_version)()
+    target = Path(out) if out is not None else Path(state_path) / "prompts" / f"claude-code-{cc or 'unknown'}.md"
     if target.exists():
         raise CaptureError(f"{target} exists; pass --out with a new file name")
     run = query or DEFAULT_QUERY
@@ -133,7 +138,9 @@ async def capture_prompt(
         text, model = found
         places = [str(scratch), str(Path(tmp)), str(Path(tmp).resolve()), str(scratch.resolve()), str(Path.home())]
         body = mark_machine_lines(text, places)
-    header = f"<!-- captured from Claude Code {cc} · model {model} · {today or date.today().isoformat()} -->"
+    # No version read: the header records none (``prompt_header_version`` gives ``None``; no change warning).
+    recorded = cc if cc else "(version unknown)"
+    header = f"<!-- captured from Claude Code {recorded} · model {model} · {today or date.today().isoformat()} -->"
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".partial")
     partial.write_text(f"{header}\n{body}\n", encoding="utf-8")

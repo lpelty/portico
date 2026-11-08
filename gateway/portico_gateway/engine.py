@@ -592,15 +592,23 @@ HEADER_RE = re.compile(
     r"^<!-- captured from Claude Code (?P<version>\S+) · model (?P<model>\S+) · (?P<date>\d{4}-\d{2}-\d{2}) -->$"
 )
 MARKER_PREFIX = "<!-- machine-specific:"
+# A capture whose engine version couldn't be read: no version recorded (``HEADER_RE`` doesn't match it).
+UNKNOWN_HEADER_RE = re.compile(r"^<!-- captured from Claude Code \(version unknown\) · model \S+ · \d{4}-\d{2}-\d{2} -->$")
+# The engine's own request-accounting line, never prompt text.
+BILLING_PREFIX = "x-anthropic-billing-header:"
 
 
 def custom_prompt_text(raw: str) -> str:
     """A custom prompt file's text as sent: the capture header and machine-specific markers removed (v0.24 ruling 3)."""
-    lines = [
-        line
-        for line in raw.splitlines()
-        if not HEADER_RE.match(line.strip()) and not (line.strip().startswith(MARKER_PREFIX) and line.strip().endswith("-->"))
-    ]
+    def note(line: str) -> bool:
+        bare = line.strip()
+        return (
+            bool(HEADER_RE.match(bare) or UNKNOWN_HEADER_RE.match(bare))
+            or (bare.startswith(MARKER_PREFIX) and bare.endswith("-->"))
+            or bare.startswith(BILLING_PREFIX)
+        )
+
+    lines = [line for line in raw.splitlines() if not note(line)]
     return "\n".join(lines).strip()
 
 
@@ -613,6 +621,15 @@ def prompt_header_version(path: Path | str) -> str | None:
         return None
     match = HEADER_RE.match(first)
     return match.group("version") if match else None
+
+
+def prompt_header_unknown(path: Path | str) -> bool:
+    """Whether a captured file's header says the engine's version couldn't be read."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return bool(UNKNOWN_HEADER_RE.match(f.readline().strip()))
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 @dataclasses.dataclass
@@ -645,6 +662,9 @@ def session_prompt(kind: str, append: str | None, file: str | None, out: Path) -
             text = custom_prompt_text(Path(file).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError) as e:
             log.error("system_prompt_file %s could not be read; this session uses Claude Code's prompt: %s", file, e)
+            return SessionPrompt(deployment_system_prompt("claude_code", append), "claude_code", "claude_code", fell_back=True)
+        if not text.strip():
+            log.error("system_prompt_file %s is empty (after its notes); this session uses Claude Code's prompt", file)
             return SessionPrompt(deployment_system_prompt("claude_code", append), "claude_code", "claude_code", fell_back=True)
         extra = _read_append(append)
         if extra:

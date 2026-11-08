@@ -342,7 +342,7 @@ from .update import UPDATE_CHECK_SECONDS, check_for_update
 log = logging.getLogger(__name__)
 
 # v0.24 §3: said once when a custom prompt file can't be read at a session's start.
-PROMPT_FALLBACK_TEXT = "The custom system prompt could not be read; this session uses Claude Code's prompt."
+PROMPT_FALLBACK_TEXT = "The custom system prompt could not be read or is empty; this session uses Claude Code's prompt."
 NONE_PROMPT_NOTE = (
     'system_prompt = "none" is kept for older configs; "custom" with system_prompt_file is the way to set the whole prompt'
 )

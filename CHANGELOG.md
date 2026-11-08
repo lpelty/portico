@@ -29,7 +29,7 @@ reference for every key.
   `"default"`) is unchanged. New `"custom"` with `system_prompt_file`: the
   file's text is the whole prompt, read at each engine start and passed to
   the engine as a file, with `system_prompt_append` and Portico's own lines
-  after it. An unreadable file at a session's start is logged and that
+  after it. An unreadable or empty file at a session's start is logged and that
   session uses Claude Code's prompt, never an empty one; the status line
   says so once. `"none"` stays as legacy, with a log note suggesting
   `"custom"`.

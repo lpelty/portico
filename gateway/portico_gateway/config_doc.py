@@ -266,10 +266,26 @@ def show_rows(layers: ConfigLayers, config: Config) -> list[ShowRow]:
             note = _prompt_note(config)
         elif key == "system_prompt_file" and config.system_prompt_file and config.system_prompt != "custom":
             note = 'ignored unless system_prompt = "custom"'
+        value = _lookup(config, key)
+        if isinstance(value, dict) and value:
+            # A table of entries (``[links] sites``): one row per entry, each with its own source,
+            # since the two files merge it key by key.
+            for name, entry in value.items():
+                rows.append(
+                    ShowRow(
+                        key=f"{key}.{name}",
+                        value=entry,
+                        default=_plain(default_of(key)).get(name),
+                        source=layers.source_of_parts([*key.split("."), name]),
+                        applies=doc.applies,
+                        sensitive=doc.sensitive,
+                    )
+                )
+            continue
         rows.append(
             ShowRow(
                 key=key,
-                value=_lookup(config, key),
+                value=value,
                 default=default_of(key),
                 source=layers.source_of(key),
                 applies=doc.applies,

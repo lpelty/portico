@@ -271,7 +271,7 @@ def check_system_prompt(config_path: Path, version: Callable[[], str | None] | N
     The engine's version is asked only when there is a recorded one to compare.
     """
     from .cc_version import PROMPT_CHANGED, claude_code_version
-    from .engine import prompt_header_version
+    from .engine import prompt_header_unknown, prompt_header_version
 
     try:
         config = load_config(config_path)
@@ -282,6 +282,8 @@ def check_system_prompt(config_path: Path, version: Callable[[], str | None] | N
     if config.system_prompt != "custom" or not config.system_prompt_file:
         return Check("system prompt", True, "Claude Code's own prompt (follows Claude Code)")
     recorded = prompt_header_version(config.system_prompt_file)
+    if recorded is None and prompt_header_unknown(config.system_prompt_file):
+        return Check("system prompt", True, f"custom: {config.system_prompt_file} has no recorded Claude Code version, so no version is compared")
     if recorded is None:
         return Check("system prompt", True, f"custom: {config.system_prompt_file} has no capture header, so no version is compared")
     current = (version or claude_code_version)()
