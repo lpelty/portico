@@ -385,6 +385,8 @@ final class AppModel: ObservableObject {
 
     /// The Settings tab shown; `/mcp` and `/plugin` choose one.
     @Published var settingsTab: SettingsTab = .general
+    /// Settings › Labs's items from the gateway's hello (v0.25); `[]` when it sent none.
+    @Published var labs: [LabItem] = []
     /// A save failed for a file no viewer shows (v0.20 fix round 2): the
     /// status line says so until it's opened or saved.
     @Published var editNotice: EditNotice?
@@ -1056,6 +1058,9 @@ final class AppModel: ObservableObject {
             configStale = hello.configStale ?? false
             // v0.24: `[voice] read_aloud` shows Read aloud in Settings; absent falls back to the app's flag.
             settings.deploymentReadAloud = hello.voice?.readAloud ?? false
+            // v0.25: Labs; a Labs tab left with nothing in it falls back to General.
+            labs = hello.labs ?? []
+            if settingsTab == .labs && labItems.isEmpty { settingsTab = .general }
             // Services are checked afresh too: "Checking…" until it says.
             // A gateway older than v0.4 never will: the Gateway row alone.
             services = Self.gatewaySendsServices(hello.gatewayVersion) ? nil : []

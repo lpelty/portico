@@ -245,6 +245,18 @@ final class ProtocolExamplesTests: XCTestCase {
         XCTAssertNil(try voice(""))
     }
 
+    func testHelloExampleCarriesLabs() throws {
+        // v0.25 §2.4: `hello.labs` decodes from the gateway's own example.
+        let data = try Data(contentsOf: Self.examplesDir.appendingPathComponent("server.hello.json"))
+        guard case .hello(let hello) = try JSONDecoder().decode(ServerMessage.self, from: data) else {
+            return XCTFail("hello")
+        }
+        XCTAssertEqual(hello.labs?.map(\.key), ["voice.read_aloud", "digest.daily"])
+        XCTAssertEqual(hello.labs?.map(\.tag), [.preview, .local])
+        XCTAssertEqual(hello.labs?.first?.home, "voice")
+        XCTAssertNil(hello.labs?.last?.home)
+    }
+
     func testViewerDefaultsPropertiesIsOptional() throws {
         func defaults(_ viewer: String) throws -> ViewerDefaults? {
             let json = #"{"type":"hello","protocol":1,"gateway_version":"0.17.0","epoch":"e","brand":{"name":"Portico","agent_name":"Agent"},"actions":[],"roots":[],"commands":[],"capabilities":[],"ts":"2026-11-02T12:00:00Z","viewer_defaults":"# + viewer + "}"

@@ -158,7 +158,7 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $model.settingsTab) {
-            ForEach(SettingsTab.allCases, id: \.self) { tab in
+            ForEach(SettingsTab.visible(labs: !model.labItems.isEmpty), id: \.self) { tab in
                 content(tab)
                     .tabItem { Label(tab.title, systemImage: tab.systemImage) }
                     .tag(tab)
@@ -180,6 +180,7 @@ struct SettingsView: View {
         case .plugins: PluginsTab()
         case .voice: VoiceSettingsTab()
         case .appearance: AppearanceSettingsTab()
+        case .labs: LabsSettingsTab()
         }
     }
 }

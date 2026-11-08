@@ -754,13 +754,15 @@ struct HelloServer: Codable, Equatable, Sendable {
     var person: Person? = nil
     /// The deployment's voice settings (v0.24, config `[voice]`); absent from an older gateway.
     var voice: HelloVoice? = nil
+    /// Settings › Labs's items (v0.25): config Preview features, then plug-ins' Local items; absent when none.
+    var labs: [LabItem]? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice
+        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice, labs
         case viewerDefaults = "viewer_defaults"
         case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
@@ -778,6 +780,34 @@ struct HelloServer: Codable, Equatable, Sendable {
 
     /// One live session at a time (S1), rather than the chat list.
     var isSingle: Bool { presentation == "single" }
+}
+
+/// `hello.labs[]` (v0.25): one row in Settings › Labs. `tag` is `preview`
+/// (built into the app, not yet released) or `local` (this machine's
+/// plug-in); `source` says where it was turned on; `home` is the tab it
+/// moves to once released, when known.
+struct LabItem: Codable, Equatable, Sendable, Identifiable {
+    enum Tag: String, Codable, Equatable, Sendable {
+        case preview, local
+    }
+
+    /// The key the app draws Read aloud's controls for.
+    static let readAloudKey = "voice.read_aloud"
+
+    var key: String
+    var title: String
+    var detail: String
+    var tag: Tag
+    var source: String
+    var home: String? = nil
+
+    var id: String { key }
+
+    /// The app's own machine flag (`voice.readAloudAvailable`) as a row (ruling 5).
+    static let readAloudFlag = LabItem(
+        key: readAloudKey, title: "Read aloud",
+        detail: "A Play button on each reply; replies are read as they arrive while it's on.",
+        tag: .preview, source: "this Mac", home: "voice")
 }
 
 /// `hello.voice` (v0.24): `read_aloud` shows the Read aloud switch in Settings.
