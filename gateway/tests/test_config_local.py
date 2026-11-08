@@ -199,3 +199,10 @@ async def test_config_toml_alone_still_stale_when_newer(state_dir) -> None:  # n
     srv = _server(state_dir, path)
     _later(path)
     assert srv.config_stale()
+
+
+def test_local_custom_without_a_file_names_the_local_file(tmp_path: Path) -> None:
+    path = _write(tmp_path, "", 'system_prompt = "custom"\n')
+    with pytest.raises(ConfigError) as e:
+        load_config(path)
+    assert str(e.value).startswith('config.local.toml: system_prompt: "custom" needs system_prompt_file')

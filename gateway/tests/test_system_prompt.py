@@ -253,3 +253,153 @@ async def test_the_append_reaches_the_engine(state_dir: StateDir, factory: Engin
         assert await new_engine(srv, factory, folder) == {**PRESET, "append": "You are Acme."}
     finally:
         await srv.shutdown()
+
+
+# --- v0.24 §3: the modes ------------------------------------------------------------
+
+from portico_gateway.engine import (  # noqa: E402
+    custom_prompt_text,
+    materialize_prompt,
+    prompt_fingerprint,
+    prompt_header_version,
+    session_prompt,
+)
+
+INVENTED = "You are a careful helper for a made-up shop.\nKeep answers short."
+HEADER = "<!-- captured from Claude Code 9.9.1 · model test-model · 2026-11-07 -->"
+
+
+def _prompt_file(tmp_path: Path, text: str = INVENTED, name: str = "custom.md") -> Path:
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_default_is_claude_code() -> None:
+    assert Config(system_prompt="default").system_prompt == "claude_code"
+
+
+def test_custom_needs_a_file() -> None:
+    with pytest.raises(ConfigError) as e:
+        load_config_text('system_prompt = "custom"\n')
+    assert "system_prompt" in str(e.value) and "system_prompt_file" in str(e.value)
+
+
+def load_config_text(text: str, folder: Path | None = None) -> Config:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(folder or d) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        return load_config(path)
+
+
+def test_custom_file_must_exist(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.md"
+    with pytest.raises(ConfigError) as e:
+        load_config_text(f'system_prompt = "custom"\nsystem_prompt_file = "{missing}"\n')
+    assert str(e.value) == f"system_prompt_file: {missing} is not a file"
+    with pytest.raises(ConfigError) as e:
+        load_config_text('system_prompt = "custom"\nsystem_prompt_file = "prompt.md"\n')
+    assert "is relative" in str(e.value)
+
+
+def test_file_without_custom_is_ignored(tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path)
+    cfg = load_config_text(f'system_prompt_file = "{path}"\n')
+    assert cfg.system_prompt == "claude_code" and cfg.system_prompt_file == str(path)
+    chosen = session_prompt(cfg.system_prompt, None, cfg.system_prompt_file, tmp_path / "out.md")
+    assert chosen.prompt == PRESET and chosen.mode == "claude_code" and chosen.source == "claude_code"
+
+
+def test_custom_is_a_file_prompt_with_append_then_lines(tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path)
+    extra = _prompt_file(tmp_path, "Mention the shop's hours.", "extra.md")
+    out = tmp_path / "running" / "chat-1.md"
+    chosen = session_prompt("custom", str(extra), str(path), out)
+    assert chosen.mode == "custom" and chosen.source == str(path) and not chosen.fell_back
+    prompt = append_prompt_line(chosen.prompt, MAIN_PROMPT)
+    options = build_options(tmp_path, None, ["project"], ShowingCallbacks(), system_prompt=prompt)  # type: ignore[arg-type]
+    assert options.system_prompt == {"type": "file", "path": str(out)}
+    assert out.read_text(encoding="utf-8") == f"{INVENTED}\n\nMention the shop's hours.\n\n{MAIN_PROMPT}\n\n{VIEWER_PROMPT}"
+    assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_header_and_markers_are_stripped(tmp_path: Path) -> None:
+    raw = f"{HEADER}\nFirst line.\n<!-- machine-specific: names this computer's folders -->\nMemory lives in /x/y.\nLast."
+    assert custom_prompt_text(raw) == "First line.\nMemory lives in /x/y.\nLast."
+    path = _prompt_file(tmp_path, raw)
+    assert prompt_header_version(path) == "9.9.1"
+    assert prompt_header_version(_prompt_file(tmp_path, INVENTED, "plain.md")) is None
+
+
+def test_custom_edit_applies_next_start(tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path, "First.")
+    out = tmp_path / "out.md"
+    assert materialize_prompt(session_prompt("custom", None, str(path), out).prompt)
+    assert out.read_text(encoding="utf-8") == "First."
+    path.write_text("Second.", encoding="utf-8")
+    materialize_prompt(session_prompt("custom", None, str(path), out).prompt)
+    assert out.read_text(encoding="utf-8") == "Second."
+
+
+def test_fingerprint_is_8_hex_and_changes_with_text(tmp_path: Path) -> None:
+    import re
+
+    out = tmp_path / "out.md"
+    one = prompt_fingerprint(session_prompt("custom", None, str(_prompt_file(tmp_path, "One.")), out).prompt)
+    two = prompt_fingerprint(session_prompt("custom", None, str(_prompt_file(tmp_path, "Two.", "b.md")), out).prompt)
+    assert re.fullmatch(r"[0-9a-f]{8}", one) and one != two
+    assert prompt_fingerprint(PRESET) != prompt_fingerprint({**PRESET, "append": "x"})
+    assert prompt_fingerprint(None) == prompt_fingerprint("")
+
+
+async def test_custom_reaches_the_engine(state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path)
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(path))
+    try:
+        prompt = await new_engine(srv, factory, folder)
+        assert isinstance(prompt, dict) and prompt["type"] == "file"
+        assert prompt["path"].startswith(str(state_dir.path / "prompts" / "running"))
+        assert prompt["text"].startswith(INVENTED)
+    finally:
+        await srv.shutdown()
+
+
+async def test_unreadable_custom_falls_back_once(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from portico_gateway.messages import StatusSet
+
+    path = _prompt_file(tmp_path)
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(path))
+    sent: list[object] = []
+    real = srv.broadcast
+
+    async def broadcast(msg: object) -> None:
+        sent.append(msg)
+        if not isinstance(msg, StatusSet):  # kept off the wire so new_chat reads its own replies
+            await real(msg)  # type: ignore[arg-type]
+
+    srv.broadcast = broadcast  # type: ignore[method-assign]
+    path.unlink()
+    try:
+        assert await new_engine(srv, factory, folder) == PRESET
+        assert await new_engine(srv, factory, folder) == PRESET
+        statuses = [m for m in sent if isinstance(m, StatusSet) and "custom system prompt" in m.text]
+        assert len(statuses) == 1
+        assert "Claude Code's prompt" in statuses[0].text
+        assert "could not be read" in caplog.text
+    finally:
+        await srv.shutdown()
+
+
+async def test_none_logs_the_legacy_note(state_dir: StateDir, factory: EngineFactory, caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO)
+    srv = await start_server(state_dir, factory, system_prompt="none")
+    try:
+        assert 'system_prompt = "none" is kept for older configs' in caplog.text
+    finally:
+        await srv.shutdown()

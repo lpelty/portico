@@ -581,15 +581,137 @@ def deployment_system_prompt(kind: str, append: str | None) -> Any:
     edit applies to the next session; a file that can't be read is logged
     and left out (v0.10 decision 7).
     """
-    text = ""
-    if append:
-        try:
-            text = Path(append).read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError) as e:
-            log.error("system_prompt_append %s could not be read; starting without it: %s", append, e)
+    text = _read_append(append)
     if kind == "none":
         return text or None
     return {"type": "preset", "preset": "claude_code", **({"append": text} if text else {})}
+
+
+# v0.24: the first line ``capture-prompt`` writes, and the comment it puts before a machine-specific line.
+HEADER_RE = re.compile(
+    r"^<!-- captured from Claude Code (?P<version>\S+) · model (?P<model>\S+) · (?P<date>\d{4}-\d{2}-\d{2}) -->$"
+)
+MARKER_PREFIX = "<!-- machine-specific:"
+
+
+def custom_prompt_text(raw: str) -> str:
+    """A custom prompt file's text as sent: the capture header and machine-specific markers removed (v0.24 ruling 3)."""
+    lines = [
+        line
+        for line in raw.splitlines()
+        if not HEADER_RE.match(line.strip()) and not (line.strip().startswith(MARKER_PREFIX) and line.strip().endswith("-->"))
+    ]
+    return "\n".join(lines).strip()
+
+
+def prompt_header_version(path: Path | str) -> str | None:
+    """The Claude Code version a captured prompt file's header records, or ``None`` (no header, unreadable)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            first = f.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = HEADER_RE.match(first)
+    return match.group("version") if match else None
+
+
+@dataclasses.dataclass
+class SessionPrompt:
+    """v0.24: the prompt one engine start uses, and what the session records about it.
+
+    ``source`` is the custom file's path, or ``claude_code`` / ``none``;
+    ``fell_back`` is set when a custom file could not be read and Claude
+    Code's prompt is used instead.
+    """
+
+    prompt: Any
+    mode: str
+    source: str
+    fell_back: bool = False
+
+
+def session_prompt(kind: str, append: str | None, file: str | None, out: Path) -> SessionPrompt:
+    """The system prompt for one engine start, as the config asks (v0.24 §3).
+
+    ``custom`` reads ``file`` now (an edit applies to the next start) and
+    gives ``{"type": "file", "path": out, "text": …}``: the file's text,
+    then ``append``'s; Portico's lines are added to ``text`` and
+    ``materialize_prompt`` writes it to ``out`` (rulings 1 and 2). A file
+    that can't be read is logged, and Claude Code's prompt is used, never
+    an empty one. Other kinds are ``deployment_system_prompt``.
+    """
+    if kind == "custom" and file:
+        try:
+            text = custom_prompt_text(Path(file).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as e:
+            log.error("system_prompt_file %s could not be read; this session uses Claude Code's prompt: %s", file, e)
+            return SessionPrompt(deployment_system_prompt("claude_code", append), "claude_code", "claude_code", fell_back=True)
+        extra = _read_append(append)
+        if extra:
+            text = f"{text}\n\n{extra}" if text else extra
+        return SessionPrompt({"type": "file", "path": str(out), "text": text}, "custom", str(file))
+    mode = "none" if kind == "none" else "claude_code"
+    return SessionPrompt(deployment_system_prompt(mode, append), mode, mode)
+
+
+def _read_append(append: str | None) -> str:
+    if not append:
+        return ""
+    try:
+        return Path(append).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as e:
+        log.error("system_prompt_append %s could not be read; starting without it: %s", append, e)
+        return ""
+
+
+def materialize_prompt(system_prompt: Any) -> Any:
+    """A composed custom prompt written to its file (0600) and returned as the SDK's file prompt; others as they are."""
+    if isinstance(system_prompt, Mapping) and system_prompt.get("type") == "file" and "text" in system_prompt:
+        path = Path(system_prompt["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(system_prompt["text"], encoding="utf-8")
+        tmp.chmod(0o600)
+        tmp.replace(path)
+        return {"type": "file", "path": str(path)}
+    return system_prompt
+
+
+def prompt_text(system_prompt: Any) -> str:
+    """The prompt text Portico controls (v0.24 ruling 4): a preset is ``claude_code`` plus its append."""
+    if system_prompt is None:
+        return ""
+    if isinstance(system_prompt, str):
+        return system_prompt
+    if isinstance(system_prompt, Mapping):
+        kind = system_prompt.get("type")
+        if kind == "preset":
+            append = system_prompt.get("append") or ""
+            return f"claude_code\n{append}"
+        if kind == "custom":
+            return system_prompt.get("prompt") or ""
+        if kind == "file":
+            if "text" in system_prompt:
+                return system_prompt["text"]
+            try:
+                return Path(system_prompt["path"]).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return ""
+    return ""
+
+
+def prompt_fingerprint(system_prompt: Any) -> str:
+    """The first 8 hex digits of a SHA-256 of ``prompt_text``: what the session records (v0.24 §3)."""
+    import hashlib
+
+    return hashlib.sha256(prompt_text(system_prompt).encode("utf-8")).hexdigest()[:8]
+
+
+def final_system_prompt(system_prompt: Any, callbacks: Any) -> Any:
+    """``system_prompt`` with the viewer line ``build_options`` adds for an owner that can show files."""
+    if callable(getattr(callbacks, "on_show", None)):
+        return with_viewer_prompt(system_prompt, getattr(callbacks, "spaces_folder", None))
+    return system_prompt
 
 
 def append_prompt_line(system_prompt: Any, line: str) -> Any:
@@ -597,7 +719,8 @@ def append_prompt_line(system_prompt: Any, line: str) -> Any:
 
     ``None`` is the SDK's default, an empty prompt: the line becomes the
     prompt. A preset keeps its ``append`` and gets the line after it; a
-    custom prompt gets the line after its text. A prompt file cannot be
+    custom prompt gets the line after its text, as does a composed custom
+    prompt file (v0.24, one with ``text``). Any other prompt file cannot be
     appended to and is left as it is.
     """
     if system_prompt is None:
@@ -612,6 +735,10 @@ def append_prompt_line(system_prompt: Any, line: str) -> Any:
         if kind == "custom":
             before = system_prompt.get("prompt") or ""
             return {**system_prompt, "prompt": f"{before}\n\n{line}" if before else line}
+        if kind == "file" and "text" in system_prompt:
+            # v0.24: a composed custom prompt (``session_prompt``), not yet written.
+            before = system_prompt.get("text") or ""
+            return {**system_prompt, "text": f"{before}\n\n{line}" if before else line}
     return system_prompt
 
 
@@ -888,7 +1015,7 @@ def build_options(
     """
     pre_tool_use = [HookMatcher(matcher=QUESTION_TOOL, hooks=[noop_hook])]
     post_tool_use: list[Any] = []
-    extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": system_prompt}
+    extra: dict[str, Any] = {} if system_prompt is None else {"system_prompt": materialize_prompt(system_prompt)}
     # v0.12: the spaces folder is one of the agent's own places (an extra directory), so writing a space
     # has the permissions of writing in the chat's folder.
     spaces_folder = getattr(callbacks, "spaces_folder", None)
@@ -915,7 +1042,7 @@ def build_options(
             post_tool_use.append(
                 HookMatcher(matcher="Write|Edit|MultiEdit|Bash", hooks=[build_check_html_hook(bridge, folder, roots)])
             )
-        prompt = with_viewer_prompt(system_prompt, spaces_folder)
+        prompt = final_system_prompt(system_prompt, callbacks)
     if callable(getattr(callbacks, "on_open_thread", None)):
         # v0.16: Main's owner only (the server gives a thread's engine no such owner).
         tools.append(build_thread_tool(callbacks))
@@ -925,7 +1052,7 @@ def build_options(
         extra = {
             "mcp_servers": {SHOW_SERVER: create_sdk_mcp_server(SHOW_SERVER, tools=tools)},
             "allowed_tools": allowed,
-            **({} if prompt is None else {"system_prompt": prompt}),
+            **({} if prompt is None else {"system_prompt": materialize_prompt(prompt)}),
         }
     servers = {name: dict(cfg) for name, cfg in (extra_servers or {}).items() if name != SHOW_SERVER}
     if servers:

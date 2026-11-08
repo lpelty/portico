@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults
 
@@ -451,11 +451,13 @@ class Config(BaseModel):
     titles: Literal["generated", "first_line"] = "generated"
     title_model: str | None = None
     # v0.10: the agent's system prompt. ``claude_code`` is Claude Code's own
-    # (the agent behaves as in a terminal); ``none`` is the SDK's empty
-    # prompt, as before v0.10. ``system_prompt_append`` is a file of the
-    # deployment's (outside the checkout) added after it, read at each
-    # engine start. The viewer line always comes last.
-    system_prompt: Literal["claude_code", "none"] = "claude_code"
+    # (the agent behaves as in a terminal; ``default`` is the same, v0.24);
+    # ``custom`` (v0.24) is ``system_prompt_file``'s text as the whole prompt;
+    # ``none`` is the SDK's empty prompt, as before v0.10 (legacy).
+    # ``system_prompt_append`` is a file added after it, in any mode. Both
+    # files are read at each engine start. Portico's own lines always come last.
+    system_prompt: Literal["claude_code", "custom", "none"] = "claude_code"
+    system_prompt_file: str | None = None
     system_prompt_append: str | None = None
     # v0.11: started from the app, the gateway has launchd's bare PATH. With
     # ``login_shell_path`` it asks the person's login shell for theirs and
@@ -527,19 +529,33 @@ class Config(BaseModel):
             out.append(Root(name=root.name, path=str(path)))
         return out
 
-    @field_validator("system_prompt_append")
+    @field_validator("system_prompt", mode="before")
     @classmethod
-    def _append_file_exists(cls, value: str | None) -> str | None:
+    def _default_is_claude_code(cls, value: Any) -> Any:
+        return "claude_code" if value == "default" else value
+
+    @field_validator("system_prompt_append", "system_prompt_file")
+    @classmethod
+    def _prompt_file_exists(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None or not value.strip():
             return None
         path = Path(value.strip()).expanduser()
         if not path.is_absolute():
             raise ConfigError(
-                f"system_prompt_append: {value!r} is relative; it must be an absolute path (~ is expanded)"
+                f"{info.field_name}: {value!r} is relative; it must be an absolute path (~ is expanded)"
             )
         if not path.is_file():
-            raise ConfigError(f"system_prompt_append: {path} is not a file")
+            raise ConfigError(f"{info.field_name}: {path} is not a file")
         return str(path)
+
+    @model_validator(mode="after")
+    def _custom_has_a_file(self) -> Config:
+        if self.system_prompt == "custom" and not self.system_prompt_file:
+            raise ConfigError(
+                'system_prompt: "custom" needs system_prompt_file, the file with the whole prompt',
+                keys=frozenset({"system_prompt"}),
+            )
+        return self
 
     @field_validator("plugin_paths")
     @classmethod
@@ -682,7 +698,11 @@ def _validate(path: Path, data: dict[str, Any], layers: ConfigLayers | None = No
             ctx = err.get("ctx") or {}
             inner = ctx.get("error")
             if isinstance(inner, ConfigError):
-                raise ConfigError(prefix + str(inner), keys=_top_keys([err])) from None
+                keys = _top_keys([err]) or inner.keys
+                if not err.get("loc") and inner.keys:  # a model-level check names its keys itself
+                    local = layers is not None and all(layers.source_of(k) == LOCAL_CONFIG_NAME for k in inner.keys)
+                    prefix = f"{LOCAL_CONFIG_NAME}: " if local else ""
+                raise ConfigError(prefix + str(inner), keys=keys) from None
         label = LOCAL_CONFIG_NAME if local else str(path)
         raise ConfigError(_describe(label, e), keys=_top_keys(e.errors())) from e
 

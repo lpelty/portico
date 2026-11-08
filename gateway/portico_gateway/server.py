@@ -176,8 +176,9 @@ from .engine import (
     PermissionDecision,
     QuestionDeclined,
     Shown,
+    SessionPrompt,
     append_prompt_line,
-    deployment_system_prompt,
+    session_prompt,
     friendly_model_name,
     history_events,
     read_history,
@@ -335,6 +336,12 @@ from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
+
+# v0.24 §3: said once when a custom prompt file can't be read at a session's start.
+PROMPT_FALLBACK_TEXT = "The custom system prompt could not be read; this session uses Claude Code's prompt."
+NONE_PROMPT_NOTE = (
+    'system_prompt = "none" is kept for older configs; "custom" with system_prompt_file is the way to set the whole prompt'
+)
 
 HOST = "127.0.0.1"
 # The largest frame the gateway takes from the app (a viewer screenshot is the big one).
@@ -1016,6 +1023,10 @@ class GatewayServer:
         # v0.24: and the ``config.local.toml`` beside it (created, changed or deleted is stale).
         self.config_mtimes = self._config_mtimes()
         self._config_stale_sent = False
+        # v0.24: the status line has said the custom prompt could not be read.
+        self._prompt_fallback_said = False
+        if config.system_prompt == "none":
+            log.info(NONE_PROMPT_NOTE)
         self.started_at = _now()
         # The version the deployment's update check last found, if any.
         self.update_version: str | None = None
@@ -1818,7 +1829,14 @@ class GatewayServer:
         engine = self.engine_factory()
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
-        prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
+        chosen = session_prompt(
+            self.config.system_prompt,
+            self.config.system_prompt_append,
+            self.config.system_prompt_file,
+            self.state.path / "prompts" / "running" / f"chat-{chat.number}.md",
+        )
+        await self._note_prompt_fallback(chosen)
+        prompt = chosen.prompt
         callbacks = ChatCallbacks(self, chat)
         if chat.thread is not None:
             prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot))
@@ -1845,6 +1863,17 @@ class GatewayServer:
         await self._report_commands(chat, engine)
         await self._report_models(chat, engine)
         return engine
+
+    async def _note_prompt_fallback(self, chosen: SessionPrompt) -> None:
+        """v0.24 ruling 13: an unreadable custom prompt is said on the status line once, until it reads again."""
+        if not chosen.fell_back:
+            if self.config.system_prompt == "custom":
+                self._prompt_fallback_said = False
+            return
+        if self._prompt_fallback_said:
+            return
+        self._prompt_fallback_said = True
+        await self.broadcast(StatusSet(ts=_now(), text=PROMPT_FALLBACK_TEXT))
 
     async def _person_mcp(self, chat: Chat, sources: list[str]) -> tuple[dict[str, dict], list[str]]:
         """v0.18 §3.2: the person's MCP servers and plugins for ``chat``'s engine (rulings 2 and 3).
