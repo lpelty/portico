@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.24.0 (2026-11-07)
+## v0.24.0 (2026-11-08)
 
 Configuration a person can live with: a local override file, two clear
 system prompt modes, Read aloud from config, `config show`, and a generated
