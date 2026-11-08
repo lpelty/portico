@@ -294,6 +294,28 @@ def check_system_prompt(config_path: Path, version: Callable[[], str | None] | N
     return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}, the engine's version)")
 
 
+def check_signin(config_path: Path) -> Check:
+    """v0.25 §4.5: what a turn that fails on an expired sign-in would wait on, per kind. Runs nothing."""
+    from . import signin
+
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return Check("signin", True, "skipped: the config does not load (see the config check)")
+    cli = signin.shlex.quote(signin.cli_path())
+
+    def shown(command: str) -> str:
+        # The bundled CLI's long path reads as ``claude``.
+        return "claude" + command[len(cli):] if command.startswith(cli + " ") else command
+
+    parts = []
+    for kind in signin.kinds_for(config):
+        how = f"`{shown(kind.check)}`" if kind.check else "AWS SSO token cache"
+        opener = f"`{shown(kind.open)}`" if kind.open else "not set"
+        parts.append(f"{kind.name}: {how} every {signin.poll_interval(kind):g} s; open: {opener}")
+    return Check("signin", True, " · ".join(parts))
+
+
 def check_setting_sources(config_path: Path) -> Check:
     """Read the raw key so an empty list is reported in the exact words, independent of the config check."""
     try:
@@ -698,6 +720,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT, *, state_
         check_config(config_path),
         check_setting_sources(config_path),
         check_system_prompt(config_path),
+        check_signin(config_path),
         *check_plugins(config_path),
         check_services(config_path),
         check_viewer(config_path),

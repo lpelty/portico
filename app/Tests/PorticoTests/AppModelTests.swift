@@ -50,7 +50,7 @@ final class AppModelTests: XCTestCase {
 
         let items = model.transcripts[1] ?? []
         XCTAssertEqual(items.count, 1, "consecutive deltas of one turn are one assistant item, got \(items)")
-        guard case .assistantText(_, let text)? = items.first else { return XCTFail("expected assistantText, got \(items)") }
+        guard case .assistantText(_, let text, _)? = items.first else { return XCTFail("expected assistantText, got \(items)") }
         XCTAssertEqual(text, "Hello, world.")
 
         // A tool row in between starts a new assistant item; the first keeps its text.
@@ -59,7 +59,7 @@ final class AppModelTests: XCTestCase {
         model.apply(delta(1, turn: 1, "Done.", seq: 7))
         let after = model.transcripts[1] ?? []
         XCTAssertEqual(after.count, 3)
-        guard case .assistantText(_, let tail)? = after.last else { return XCTFail("expected assistantText last, got \(after)") }
+        guard case .assistantText(_, let tail, _)? = after.last else { return XCTFail("expected assistantText last, got \(after)") }
         XCTAssertEqual(tail, "Done.")
 
         // A new turn never coalesces into the previous turn's text.
@@ -67,7 +67,7 @@ final class AppModelTests: XCTestCase {
         model.apply(.turnStarted(TurnStarted(chat: 1, turn: 2, seq: 9)))
         model.apply(delta(1, turn: 2, "Again.", seq: 10))
         let next = model.transcripts[1] ?? []
-        guard case .assistantText(_, let fresh)? = next.last else { return XCTFail("expected assistantText last, got \(next)") }
+        guard case .assistantText(_, let fresh, _)? = next.last else { return XCTFail("expected assistantText last, got \(next)") }
         XCTAssertEqual(fresh, "Again.")
         XCTAssertEqual(model.lastSeq[1], 10)
     }
@@ -389,7 +389,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(items.count, 3, "user text, one coalesced assistant item, one turn marker; got \(items)")
         guard case .userText(let user)? = items.first else { return XCTFail("expected userText first, got \(items)") }
         XCTAssertEqual(user.text, "write a summary")
-        guard case .assistantText(_, let text)? = items.dropFirst().first else { return XCTFail("expected assistantText, got \(items)") }
+        guard case .assistantText(_, let text, _)? = items.dropFirst().first else { return XCTFail("expected assistantText, got \(items)") }
         XCTAssertEqual(text, "On it.")
         guard case .turnMarker(let marker)? = items.last else { return XCTFail("expected turnMarker last, got \(items)") }
         XCTAssertEqual(marker.outcome, .done)
@@ -427,7 +427,7 @@ final class AppModelTests: XCTestCase {
 
         let items = model.transcripts[1] ?? []
         XCTAssertEqual(items.count, 2, "got \(items)")
-        guard case .assistantText(_, let text)? = items.first else { return XCTFail("expected assistantText, got \(items)") }
+        guard case .assistantText(_, let text, _)? = items.first else { return XCTFail("expected assistantText, got \(items)") }
         XCTAssertEqual(text, "kept and more")
         XCTAssertEqual(model.lastSeq[1], 4)
     }

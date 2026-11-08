@@ -77,8 +77,6 @@ final class FileEditingTests: XCTestCase {
         let bytes = Data("first line\r\nsecond line\r\nno newline at the end".utf8)
         let url = try write("crlf.txt", bytes)
         let loaded = try FileEditing.read(url)
-        XCTAssertEqual(loaded.lineEnding, .crlf)
-        XCTAssertFalse(loaded.trailingNewline)
         try FileEditing.write(loaded.text, to: url, preserving: loaded.stamp)
         XCTAssertEqual(try Data(contentsOf: url), bytes)
     }
@@ -458,8 +456,7 @@ final class FileEditingTests: XCTestCase {
         model.apply(.artifactCreated(ArtifactCreated(chat: 3, artifact: shown)))
         model.show(shown, in: 3)
         XCTAssertEqual(model.current[3]?.id, "t-1")
-        let loaded = EditableText(text: "", stamp: FileStamp(modified: nil, size: 0), lineEnding: .lf,
-                                  trailingNewline: false, byteOrderMark: false)
+        let loaded = EditableText(text: "", stamp: FileStamp(modified: nil, size: 0), byteOrderMark: false)
         let session = EditSession(url: URL(fileURLWithPath: shown.location), loaded: loaded, mode: .markdown,
                                   language: "markdown", registry: .shared)
         session.attached = true
@@ -704,6 +701,10 @@ final class FileEditingTests: XCTestCase {
         let stale = try write(".note.md.0a1b2c3d.saving", "half")
         let other = try write(".note.md.backup.saving", "not ours")
         let unrelated = try write(".other.md.0a1b2c3d.saving", "another file's")
+        // v0.25 (ruling 25): only a leftover older than a save could be is swept.
+        for path in [stale.path, other.path, unrelated.path] {
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: path)
+        }
         _ = try FileEditing.read(url)
         XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
@@ -1174,7 +1175,47 @@ final class FileEditingTests: XCTestCase {
         edit.shown(same.path)
         XCTAssertNil(edit.readOffer, "the same text is no offer")
     }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testEditModeDoesNotOfferAnOlderRecoveryCopy() throws {
+        // #4: a copy older than the saved file is not offered (read mode already said so).
+        let recovery = folder.appendingPathComponent("unsaved")
+        let registry = EditSessions(recoveryFolder: recovery)
+        let url = try write("doc.md", "first draft\n")
+        let copy = try EditRecovery.newURL(for: "doc.md", in: recovery)
+        try EditRecovery.write("old unsaved\n", byteOrderMark: false, to: copy, source: url.resolvingSymlinksInPath())
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: copy.path)
+        try Data("newer saved work\n".utf8).write(to: url)
+        let edit = ViewerEdit(registry: registry)
+        XCTAssertNil(edit.recoveryOffer(for: url.path), "read mode: an older copy is not offered")
+        edit.turnOn(artifact(url))
+        XCTAssertNotNil(edit.session)
+        XCTAssertNil(edit.restore, "edit mode doesn't offer it either")
+    }
+
+    func testAReadDuringASaveDoesNotBreakIt() throws {
+        // #10: a read while a save is between its temporary file and the rename leaves the save alone.
+        let url = try write("race.md", "old\n")
+        let loaded = try FileEditing.read(url)
+        XCTAssertNoThrow(try FileEditing.write("new\n", to: url, preserving: loaded.stamp, beforeRename: { _ = try FileEditing.read(url) }))
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "new\n")
+    }
+
+    func testReadSweepsOnlyOldTemporaries() throws {
+        // #10 (ruling 25): a leftover temporary older than 10 s goes; a fresh one (a save in progress) stays.
+        let url = try write("tmp.md", "text\n")
+        let old = folder.appendingPathComponent(".tmp.md.0123abcd.saving")
+        let fresh = folder.appendingPathComponent(".tmp.md.89abcdef.saving")
+        try Data("x".utf8).write(to: old)
+        try Data("y".utf8).write(to: fresh)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -11)], ofItemAtPath: old.path)
+        _ = try FileEditing.read(url)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
+    }
 }
+
 
 /// Records the editor replacements a session asked for.
 @MainActor

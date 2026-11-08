@@ -431,11 +431,6 @@ def _regions(text: str) -> _Regions:
     return _Regions(lines, ignored, blocks, segs, tables)
 
 
-def ignored_regions(text: str) -> list[tuple[int, int]]:
-    """Front matter, ``` and ~~~ fences, indented code blocks, and inline code spans."""
-    return _regions(text).ignored
-
-
 # --- escaping -------------------------------------------------------------------
 
 
@@ -542,10 +537,6 @@ def _markers(text: str, reg: _Regions):
     """Live markers: (start, end, id, closing) outside ignored regions and thread blocks."""
     walls = reg.ignored + [(s, e) for s, e, _, _ in reg.blocks]
     return [(m.start(), m.end(), m.group(2), bool(m.group(1))) for m in _MARKER_RE.finditer(text) if not _inside(walls, m.start())]
-
-
-def live_markers(text: str) -> list[tuple[int, int, str, bool]]:
-    return _markers(text, _regions(text))
 
 
 def parse(text: str) -> Parsed:
@@ -933,19 +924,43 @@ def _visible(text: str):
     return "".join(chars), src, code, breaks, dropped
 
 
+# v0.25 (#3, ruling 22): spans a comment's markers must never split. An autolink with its
+# brackets, a bare URL (up to whitespace or "<"), an HTML entity.
+_ATOM_RES = (
+    re.compile(r"<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*>"),
+    re.compile(r"<[^\s<>@]+@[^\s<>@]+>"),
+    re.compile(r"(?:https?://|www\.)[^\s<]*"),
+    re.compile(r"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});"),
+)
+INSIDE_ATOM = "inside a link or entity"
+
+
+def _atoms(text: str) -> list[tuple[int, int]]:
+    """Autolinks (brackets included), bare URLs and HTML entities, as source spans."""
+    return sorted((m.start(), m.end()) for pattern in _ATOM_RES for m in pattern.finditer(text))
+
+
+def _splits_atom(atoms: list[tuple[int, int]], span: tuple[int, int]) -> bool:
+    """Whether ``span`` starts or ends strictly inside an atom (covering one whole is fine)."""
+    start, end = span
+    return any(a < start < b or a < end < b for a, b in atoms)
+
+
 def _normalise(q: str) -> str:
     # A quote may be written as the source shows a cell (`x \| y`) or as it renders (`x | y`).
     return re.sub(r"[ \t\n\r\f\v]+", " ", q.replace("\\|", "|")).strip(" ")
 
 
 def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
-    """Matches of ``quote`` in the visible text: (good spans, any in code, any across paragraphs)."""
+    """Matches of ``quote`` in the visible text: (good spans, each with whether it splits a link or
+    entity, any in code, any across paragraphs, any not shown)."""
     q = _normalise(quote)
-    good: list[tuple[int, int]] = []
+    good: list[tuple[tuple[int, int], bool]] = []
     in_code = crosses = not_shown = False
     if not q:
         return good, in_code, crosses, not_shown
     vis, src, code, breaks, dropped = _visible(text)
+    atoms = _atoms(text)
     i = vis.find(q)
     while i >= 0:
         j = i + len(q)
@@ -959,7 +974,7 @@ def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
         elif any(breaks[i:j]):
             crosses = True
         else:
-            good.append(span)
+            good.append((span, _splits_atom(atoms, span)))
         i = vis.find(q, j)
     return good, in_code, crosses, not_shown
 
@@ -969,7 +984,10 @@ def find_quote(text: str, quote: str, occurrence: int = 1) -> tuple[int, int] | 
     clusters (never split, never widened to words), or a refusal reason."""
     good, in_code, crosses, not_shown = _matches(text, quote)
     if 1 <= occurrence <= len(good):
-        a, b = good[occurrence - 1]
+        (a, b), splits = good[occurrence - 1]
+        if splits:
+            # Refused, not widened (ruling 22): widening would change the quote the fingerprint holds.
+            return INSIDE_ATOM
         return snap_to_graphemes(text, a, b)
     if good:
         return f"occurs {len(good)} times"
@@ -1022,9 +1040,17 @@ def _field(value: str, always: bool = False) -> str:
     return value
 
 
+def reply_author(name: str) -> str:
+    """#11 (ruling 23): a name as a reply line writes it: each ``:`` as ``\u2236`` (RATIO), so the line reads back.
+
+    Compare authors through it too (``is_person``, the edit guard), so a person always finds their own comments.
+    """
+    return name.replace(":", "\u2236")
+
+
 def _reply_lines(author: str, at: str, body: str, prefix: str | None = None) -> list[str]:
     parts = body.strip().replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    out = [(prefix if prefix is not None else f"{author} ({at}): ") + escape_body(parts[0])]
+    out = [(prefix if prefix is not None else f"{reply_author(author)} ({at}): ") + escape_body(parts[0])]
     for line in parts[1:]:
         line = escape_body(line)
         m = _REPLY_RE.match(line)
@@ -1081,7 +1107,9 @@ def set_status(text: str, thread_id: str, status: Literal["open", "resolved"]) -
         return _splice(text, _orphan_edits(text))  # no status field reads as open already
     else:
         at = next((f for f in t.fields if f[0] == "at"), None)
-        pos = at[2] + (1 if at and at[2] < len(text) and text[at[2]] == '"' else 0) if at else t.block[0] + len(f"<!--co:{t.id}")
+        # After the ID where ``<!--co:`` begins (#9: an indented block starts before it).
+        opener = text.find("<!--co:", t.block[0])
+        pos = at[2] + (1 if at and at[2] < len(text) and text[at[2]] == '"' else 0) if at else opener + len(f"<!--co:{t.id}")
         edit = (pos, pos, f" status:{status}", 0)
     return _splice(text, _orphan_edits(text) + [edit])
 

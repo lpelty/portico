@@ -107,7 +107,9 @@ final class ConversationRoundTripTests: XCTestCase {
         let visible = scroll.contentView.bounds
         var best: (text: String, top: CGFloat)?
         func walk(_ view: NSView) {
-            if let text = view as? NSTextView, !text.isHidden {
+            // Review M2: a text view under a hidden ancestor is one the lazy stack keeps
+            // for reuse (here, another conversation's), not one on screen.
+            if let text = view as? NSTextView, !text.isHiddenOrHasHiddenAncestor {
                 let frame = text.convert(text.bounds, to: document)
                 if frame.maxY > visible.minY, frame.minY < visible.maxY, best == nil || frame.minY < best!.top {
                     best = (String(text.string.prefix(10)), frame.minY)
@@ -651,6 +653,9 @@ final class ConversationRoundTripTests: XCTestCase {
     /// v0.16 §5: each conversation keeps its own place. Chat 3 scrolled up,
     /// chat 5 shown in its place (a new view), back to 3: the same reply at
     /// the top, at the same point; chat 5, left at its bottom, is at its bottom.
+    /// Review M2: every person bubble now reserves its hover row's height
+    /// (`UserBubble.hoverRowHeight`), so the rows are taller than when this
+    /// was written; the place is still kept, read through visible text only.
     func testEachConversationKeepsItsPlace() throws {
         let model = try model(chats: [3, 5])
         let hosted = try host(model, width: 900)

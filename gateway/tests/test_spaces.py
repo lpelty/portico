@@ -251,6 +251,30 @@ def test_rename_adds_the_key_or_the_block(spaces_dir: Path) -> None:
     assert {s.id: s.title for s in scan(spaces_dir)} == {x: "Fresh" for x in "abcd"}
 
 
+def test_rename_keeps_crlf_and_bom(spaces_dir: Path) -> None:
+    """v0.25 sweep #6: only the title line changes; line endings and a leading BOM stay."""
+    crlf = spaces_dir / "brief.md"
+    crlf.write_bytes(b"---\r\ntitle: Old\r\n---\r\nline one\r\nline two\r\n")
+    rename(spaces_dir, "brief", "New")
+    assert crlf.read_bytes() == b"---\r\ntitle: New\r\n---\r\nline one\r\nline two\r\n"
+    added = spaces_dir / "plain.md"
+    added.write_bytes(b"---\r\nicon: x\r\n---\r\ntext\r\n")
+    rename(spaces_dir, "plain", "Fresh")
+    assert added.read_bytes() == b"---\r\nicon: x\r\ntitle: Fresh\r\n---\r\ntext\r\n"
+    bare = spaces_dir / "bare.md"
+    bare.write_bytes(b"just text\r\n")
+    rename(spaces_dir, "bare", "Fresh")
+    assert bare.read_bytes() == b"---\r\ntitle: Fresh\r\n---\r\njust text\r\n"
+    commented = spaces_dir / "commented.html"
+    commented.write_bytes(b"<!-- icon: y -->\r\n<p>x</p>\r\n")
+    rename(spaces_dir, "commented", "Fresh")
+    assert commented.read_bytes() == b"<!-- icon: y\r\ntitle: Fresh -->\r\n<p>x</p>\r\n"
+    page = spaces_dir / "page.html"
+    page.write_bytes(b"\xef\xbb\xbf<html><body>x</body></html>\n")
+    rename(spaces_dir, "page", "New")
+    assert page.read_bytes() == b"\xef\xbb\xbf<!-- title: New -->\n<html><body>x</body></html>\n"
+
+
 def test_rename_refuses_unknown_or_empty(spaces_dir: Path) -> None:
     put(spaces_dir, "a.md")
     with pytest.raises(SpaceError):

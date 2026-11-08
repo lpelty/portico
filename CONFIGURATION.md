@@ -294,7 +294,7 @@ The icon's name inside app_icon_assets.
 
 ### `update.check`
 
-A command that exits 0 and prints a version when an update is available.
+A command that exits 0 and prints a version when an update is available; exit 1 or no output means none; any other exit is a failed check.
 
 - **Type:** text (optional) · **Default:** `not set`
 - **Example:** `check = "my-tool update --check"`
@@ -634,3 +634,104 @@ Read aloud on each reply: true shows the switch in Settings; the person's on/off
 - **Example:** `read_aloud = true`
 - **Applies:** gateway restart (the app follows when it reconnects)
 - **Belongs in:** commonly a personal override in `config.local.toml`
+
+## [signin]
+
+### `signin.aws-sso.patterns`
+
+Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. Unset: `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired", `ExpiredToken`, "security token included in the request is expired".
+
+- **Type:** list of text (optional) · **Default:** `not set`
+- **Example:** `patterns = ["cloud_credential_error"]`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.aws-sso.check`
+
+A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits. Unset: the AWS SSO token cache (~/.aws/sso/cache), read every 5 s.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `check = "my-tool signed-in"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.aws-sso.open`
+
+The command the card's Open sign-in page runs; its output's first URL and code show under Trouble signing in?. Unset: no button.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `open = "aws sso login --profile work"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.aws-sso.title`
+
+The card's title. Unset: "Sign in again to continue".
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `title = "Sign in again to continue"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.aws-sso.body`
+
+The card's text. Unset: "Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done."
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `body = "Your sign-in to AWS has run out."`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.aws-sso.sso_start_url`
+
+The SSO start URL whose cached token counts as signed in again. Unset: any.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `sso_start_url = "https://example.awsapps.com/start"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.claude.patterns`
+
+Regular expressions (case-insensitive), searched in the engine's own error message only, that make a failed turn an expired Claude sign-in; this kind applies only when the engine signs in with claude.ai (no CLAUDE_CODE_USE_BEDROCK or _VERTEX, no ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN). Unset: `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired", "Not logged in".
+
+- **Type:** list of text (optional) · **Default:** `not set`
+- **Example:** `patterns = ["^authentication_failed$"]`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.claude.check`
+
+A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits. Unset: `claude auth status` (signed in with claude.ai).
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `check = "claude auth status"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.claude.open`
+
+The command the card's Open sign-in page runs; its URL shows under Trouble signing in?, with a field that pastes a code into it. Unset: `claude auth login`.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `open = "claude auth login"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.claude.title`
+
+The card's title. Unset: "Sign in again to continue".
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `title = "Sign in again to continue"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `signin.claude.body`
+
+The card's text. Unset: "Your Claude sign-in has run out. Sign in in your browser; this conversation carries on by itself when you're done."
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `body = "Your Claude sign-in has run out."`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`

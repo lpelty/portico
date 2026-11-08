@@ -164,7 +164,7 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(user.chat, 1)
         XCTAssertEqual(user.turn, 1, "the bubble carries the turn the gateway numbered")
         XCTAssertEqual(user.text, "say hi\n\nAttached files:\n- /tmp/demo/a.md", "the text as the engine received it")
-        guard case .assistantText(_, let text)? = items.last else { return XCTFail("expected the reply last, got \(items)") }
+        guard case .assistantText(_, let text, _)? = items.last else { return XCTFail("expected the reply last, got \(items)") }
         XCTAssertEqual(text, "hi")
         XCTAssertNil(model.pendingSends[1], "the send has been accepted")
 

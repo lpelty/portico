@@ -147,13 +147,14 @@ class Plugins:
             hook = getattr(module, "on_hello", None)
             if hook is None:
                 continue
+            before = {item.key for item in hello.labs or []}
             try:
                 changed = hook(hello)
             except Exception as e:
                 raise PluginError(f"plug-in {module.__name__!r}: on_hello failed: {type(e).__name__}: {e}") from e
             if not isinstance(changed, HelloServer):
                 raise PluginError(f"plug-in {module.__name__!r}: on_hello must return the hello it was given (or a copy)")
-            hello = changed
+            hello = _stamp_labs(changed, before, module.__name__)
         return hello
 
     async def run_search(self, root: Path, query: str) -> list[Hit]:
@@ -166,6 +167,23 @@ class Plugins:
             if inspect.isawaitable(raw):
                 raw = await raw
         return [h if isinstance(h, Hit) else Hit.model_validate(h) for h in (raw or [])]
+
+
+def _stamp_labs(hello: HelloServer, before: set[str], module: str) -> HelloServer:
+    """v0.25 ruling 4: the Labs items a plug-in's ``on_hello`` added are ``local`` from ``plugin:<module>``.
+
+    A plug-in can't present its item as a built-in Preview or as config.
+    Items that were there before the hook ran keep what they said.
+    """
+    if not hello.labs:
+        return hello
+    labs = [
+        item
+        if item.key in before
+        else item.model_copy(update={"tag": "local", "source": f"plugin:{module}"})
+        for item in hello.labs
+    ]
+    return hello.model_copy(update={"labs": labs})
 
 
 async def call_hook(hook: ServicesHook) -> Any:

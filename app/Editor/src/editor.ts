@@ -29,7 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
-import { anchorLines, commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
+import { anchorAwareMarkdown, commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -194,7 +194,7 @@ export interface PorticoEditor {
   // v0.23: the draft's range, mapped through edits since it was marked.
   draftRange(): { from: number; to: number } | null;
   // v0.23: the selection, with why it can't be anchored (or null).
-  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | "cell" | null };
+  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | "cell" | "atom" | null };
   // v0.23: what the comments margin (viewer-comments.js) needs from the editor.
   commentHooks: CommentHooks;
   readonly view: EditorView;
@@ -242,7 +242,8 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
     if (current.mode === "markdown") {
       return [
         ...shared,
-        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage, extensions: [anchorLines()] }) }),
+        // The same setup the comments tests check (sweep #30): one function, not a copy.
+        yamlFrontmatter({ content: anchorAwareMarkdown(fenceLanguage) }),
         livePreview(openLink),
         commentsExtension(),
         EditorView.lineWrapping,

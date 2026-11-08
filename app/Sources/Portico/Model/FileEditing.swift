@@ -46,26 +46,11 @@ struct FileStamp: Equatable, Sendable {
     }
 }
 
-/// A file's line endings, as found when it was loaded.
-enum LineEnding: Equatable, Sendable {
-    case lf
-    case crlf
-
-    /// CRLF when the first line break is one; LF otherwise (and with none).
-    static func detect(_ text: String) -> LineEnding {
-        guard let index = text.utf8.firstIndex(of: 0x0A) else { return .lf }
-        guard index > text.utf8.startIndex else { return .lf }
-        return text.utf8[text.utf8.index(before: index)] == 0x0D ? .crlf : .lf
-    }
-}
-
 /// A file read for editing.
 struct EditableText: Equatable, Sendable {
     /// The text, without a byte-order mark.
     let text: String
     let stamp: FileStamp
-    let lineEnding: LineEnding
-    let trailingNewline: Bool
     /// The file started with a UTF-8 byte-order mark (written back as it was).
     let byteOrderMark: Bool
 }
@@ -184,9 +169,7 @@ enum FileEditing {
         do { data = try Data(contentsOf: target) } catch { throw Failure.from(error) }
         let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
         guard let text = String(data: bom ? data.dropFirst(3) : data, encoding: .utf8) else { throw Failure.notText }
-        return EditableText(
-            text: text, stamp: stamp, lineEnding: LineEnding.detect(text),
-            trailingNewline: text.hasSuffix("\n"), byteOrderMark: bom)
+        return EditableText(text: text, stamp: stamp, byteOrderMark: bom)
     }
 
     // MARK: writing (§2.5)
@@ -206,13 +189,22 @@ enum FileEditing {
         return tag.count == 8 && tag.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
 
+    /// How old a temporary must be before a read takes it for a crashed
+    /// save's (ruling 25): a save in progress is milliseconds old.
+    static let staleTemporaryAge: TimeInterval = 10
+
     /// Temporaries a crashed save left beside the file: removed at load
-    /// (only names matching the exact pattern above).
-    static func sweepStaleTemporaries(for target: URL) {
+    /// (only names matching the exact pattern above, and only those more than
+    /// `staleTemporaryAge` old, so a save running now keeps its file; sweep #10).
+    static func sweepStaleTemporaries(for target: URL, now: Date = Date()) {
         let folder = target.deletingLastPathComponent()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
         for name in names where isTemporary(name, for: target) {
-            unlink(folder.appendingPathComponent(name).path)
+            let path = folder.appendingPathComponent(name).path
+            guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                now.timeIntervalSince(modified) > staleTemporaryAge
+            else { continue }
+            unlink(path)
         }
     }
 

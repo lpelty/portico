@@ -689,18 +689,38 @@ export function anchorLines(): MarkdownConfig {
   };
 }
 
+// The editor's Markdown language: GFM with comment anchors read as inline
+// (editor.ts uses it with its fence languages; the tests use it as is).
 export function anchorAwareMarkdown(codeLanguages?: (info: string) => Language | null) {
   return markdown({ base: markdownLanguage, codeLanguages: codeLanguages ?? undefined, extensions: [anchorLines()] });
 }
 
-// Why a selection can't be anchored: "ignored" (code, a table, front
-// matter), "crosses" (more than one paragraph or list item), or null.
-export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | "cell" | null {
+// v0.25 (#3, ruling 22): what a comment's markers must never split: an
+// autolink with its brackets, a bare URL (up to whitespace or "<"), an HTML
+// entity. The same atoms as CommentFormat.swift and comments.py.
+const ATOM_RES = [
+  /<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*>/g,
+  /<[^\s<>@]+@[^\s<>@]+>/g,
+  /(?:https?:\/\/|www\.)[^\s<]*/g,
+  /&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});/g,
+];
+
+export function atoms(text: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const re of ATOM_RES) for (const m of text.matchAll(re)) out.push([m.index!, m.index! + m[0].length]);
+  return out;
+}
+
+// Why a selection can't be anchored: "ignored" (code or front matter),
+// "crosses" (more than one paragraph or list item), "cell" (across table
+// cells), "atom" (it starts or ends inside a link or an entity), or null.
+export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | "cell" | "atom" | null {
   if (to <= from) return "crosses";
   const text = state.doc.toString();
   const scan = scanComments(text);
   if (scan.ignored.some(([a, b]) => from < b && to > a)) return "ignored";
   if (scan.blocks.some((b) => from < b.to && to > b.from)) return "crosses";
+  if (atoms(text).some(([a, b]) => (a < from && from < b) || (a < to && to < b))) return "atom";
   const tree = syntaxTree(state);
   const ancestors = (pos: number, side: -1 | 1) => {
     const names: Array<{ name: string; from: number }> = [];

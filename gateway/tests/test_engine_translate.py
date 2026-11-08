@@ -684,3 +684,41 @@ def test_build_options_lifts_the_cli_buffer_for_image_results(tmp_path: Path) ->
     options = build_options(folder=tmp_path, resume=None, setting_sources=["project"], callbacks=cb)
     assert options.max_buffer_size is not None
     assert options.max_buffer_size >= 32 * 2**20
+
+
+# --- v0.25: the error detail rides on turn.finished, privately -----------------------
+
+
+async def test_turn_finished_keeps_the_detail_privately() -> None:
+    from claude_agent_sdk import AssistantMessage
+
+    from .conftest import fake_result
+
+    engine = FakeEngine(chat=1)
+    callbacks = RecordingCallbacks()
+    await engine.start(Path("/tmp"), None, ["project"], callbacks)
+    engine.script(
+        AssistantMessage(content=[], model="m", error="authentication_failed"),
+        fake_result(is_error=True, errors=["cloud_credential_error"]),
+    )
+    await engine.send("hi")
+    await engine.wait_idle()
+    finished = [e for e in callbacks.events if isinstance(e, TurnFinished)][-1]
+    assert finished.outcome == "error"
+    assert finished.error_detail == ["authentication_failed", "cloud_credential_error"]
+    assert "error_detail" not in finished.model_dump(mode="json")
+    assert "_error_detail" not in finished.model_dump_json()
+    # A copy (as the server stamps one) keeps it.
+    assert finished.model_copy(update={"seq": 4}).error_detail == ["authentication_failed", "cloud_credential_error"]
+
+
+def test_turn_errors_start_afresh_after_a_turn() -> None:
+    from portico_gateway.engine import TurnErrors
+
+    from .conftest import fake_result
+
+    errors = TurnErrors()
+    errors.note(fake_result(is_error=True, errors=["cloud_credential_error"]))
+    first = errors.attach(TurnFinished(ts="t", chat=1, turn=1, outcome="error"))
+    second = errors.attach(TurnFinished(ts="t", chat=1, turn=2, outcome="error"))
+    assert first.error_detail == ["cloud_credential_error"] and second.error_detail == []

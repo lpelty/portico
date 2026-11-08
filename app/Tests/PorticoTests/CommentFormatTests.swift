@@ -174,6 +174,7 @@ final class CommentFormatTests: XCTestCase {
                 case "inside code or front matter": want = .insideIgnored
                 case "crosses paragraphs": want = .crossesBlocks
                 case "not shown in the table": want = .notShown
+                case "inside a link or entity": want = .insideAtom
                 default: want = .occurs(Int(refusal.split(separator: " ")[1])!)
                 }
                 XCTAssertEqual(got, .failure(want), "\(c["name"]!)")
@@ -211,5 +212,31 @@ final class CommentFormatTests: XCTestCase {
                 }
             }
         }
+    }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testResolvingAnIndentedBareBlockKeepsItsID() throws {
+        // #9: a hand-written block, indented and with no `at:` or `status`, keeps its ID when resolved.
+        let text = try Self.read("status-indented-bare.md")
+        let out = try CommentFormat.setStatus(text, threadID: "abcde", .resolved)
+        XCTAssertEqual(out, try Self.read("status-indented-bare.resolve.after.md"))
+        let threads = CommentFormat.parse(out).threads
+        XCTAssertEqual(threads.map(\.id), ["abcde"])
+        XCTAssertEqual(threads.first?.status, .resolved)
+    }
+
+    func testANameWithAColonKeepsAuthorshipAndCanEdit() throws {
+        // #11 (ruling 23): the reply line writes the name's colons as RATIO; the person still edits their own.
+        XCTAssertEqual(CommentFormat.replyAuthor("Dr: Who"), "Dr\u{2236} Who")
+        var text = CommentFormat.addThread("Hello world\n", range: 0..<5, id: "abcde", author: "Dr: Who", at: "t", body: "hi")
+        let thread = try XCTUnwrap(CommentFormat.parse(text).threads.first)
+        XCTAssertEqual(thread.by, "Dr: Who")
+        XCTAssertEqual(thread.replies.map(\.author), ["Dr\u{2236} Who"])
+        XCTAssertEqual(thread.replies.map(\.text), ["hi"])
+        let fingerprint = CommentFormat.Fingerprint(author: thread.replies[0].author, at: thread.replies[0].at, text: "hi")
+        text = try CommentWriter.edit(
+            for: .edit(id: "abcde", index: 0, body: "hello", fingerprint: fingerprint), author: "Dr: Who", now: Date())(text)
+        XCTAssertEqual(CommentFormat.parse(text).threads.first?.replies.map(\.text), ["hello"])
     }
 }

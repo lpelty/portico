@@ -1,6 +1,7 @@
 {
   "chat": 1,
-  "outcome": "done",
+  "outcome": "error",
+  "reason": "signin.expired",
   "seq": 47,
   "ts": "2026-10-27T12:00:00Z",
   "turn": 2,

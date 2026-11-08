@@ -360,7 +360,7 @@ struct HelloClient: Codable, Equatable, Sendable {
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
         FilesRootsSet.capability, FilesEdited.capability, AgentActivity.tasksCapability,
-        DeploymentMessage.capability, commentsCapability,
+        DeploymentMessage.capability, commentsCapability, SigninWait.capability,
     ]
 
     /// v0.23: this app shows and writes comments in Markdown files (comment
@@ -754,13 +754,15 @@ struct HelloServer: Codable, Equatable, Sendable {
     var person: Person? = nil
     /// The deployment's voice settings (v0.24, config `[voice]`); absent from an older gateway.
     var voice: HelloVoice? = nil
+    /// Settings › Labs's items (v0.25): config Preview features, then plug-ins' Local items; absent when none.
+    var labs: [LabItem]? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice
+        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice, labs
         case viewerDefaults = "viewer_defaults"
         case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
@@ -778,6 +780,34 @@ struct HelloServer: Codable, Equatable, Sendable {
 
     /// One live session at a time (S1), rather than the chat list.
     var isSingle: Bool { presentation == "single" }
+}
+
+/// `hello.labs[]` (v0.25): one row in Settings › Labs. `tag` is `preview`
+/// (built into the app, not yet released) or `local` (this machine's
+/// plug-in); `source` says where it was turned on; `home` is the tab it
+/// moves to once released, when known.
+struct LabItem: Codable, Equatable, Sendable, Identifiable {
+    enum Tag: String, Codable, Equatable, Sendable {
+        case preview, local
+    }
+
+    /// The key the app draws Read aloud's controls for.
+    static let readAloudKey = "voice.read_aloud"
+
+    var key: String
+    var title: String
+    var detail: String
+    var tag: Tag
+    var source: String
+    var home: String? = nil
+
+    var id: String { key }
+
+    /// The app's own machine flag (`voice.readAloudAvailable`) as a row (ruling 5).
+    static let readAloudFlag = LabItem(
+        key: readAloudKey, title: "Read aloud",
+        detail: "A Play button on each reply; replies are read as they arrive while it's on.",
+        tag: .preview, source: "this Mac", home: "voice")
 }
 
 /// `hello.voice` (v0.24): `read_aloud` shows the Read aloud switch in Settings.
@@ -1028,6 +1058,8 @@ struct ChatState: Codable, Equatable, Sendable {
 
 struct ChatHistory: Codable, Equatable, Sendable {
     static let messageType = "chat.history"
+    /// v0.25: in the gateway's `hello.capabilities`, a transcript replay carries real times.
+    static let timesCapability = "history.times.v1"
     var chat: Int
     /// Chat-scoped events replayed in order, each with its `seq`.
     var events: [ServerMessage]
@@ -1111,9 +1143,18 @@ struct UserText: Codable, Equatable, Sendable {
     /// paths, and `text` is only what the person typed. `nil` from an older
     /// gateway, whose `text` still ends with the "Attached files:" block.
     var attachments: [String]? = nil
+    /// v0.25: a replayed message no transcript entry gave a time to; the
+    /// app shows no time for it. The app also sets it on a replayed message
+    /// whose time it can't trust (`MessageTime.shown`).
+    var noTime: Bool? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, turn, text, via, attachments, id, seq, ts
+        case noTime = "no_time"
+    }
 
     /// Named in the app's `hello.capabilities`: send `attachments` apart from the text.
     static let attachmentsCapability = "messages.attachments.v1"
@@ -1126,9 +1167,16 @@ struct TextDelta: Codable, Equatable, Sendable {
     var chat: Int
     var turn: Int
     var text: String
+    /// v0.25: a replayed reply no transcript entry gave a time to.
+    var noTime: Bool? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, turn, text, id, seq, ts
+        case noTime = "no_time"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }
@@ -1223,11 +1271,75 @@ struct TurnFinished: Codable, Equatable, Sendable {
     var chat: Int
     var turn: Int
     var outcome: Outcome
+    /// v0.25: why the turn ended, when the gateway words one (`signin.expired`); absent otherwise.
+    var reason: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// v0.25 §4.5 (`signin.v1`): a turn ended on an expired sign-in and the
+/// gateway waits for it (`waiting`), it is signed in again (`current`), or it
+/// stopped waiting (`stopped`). The card's words come from the gateway; `url`
+/// and `code` are the sign-in command's, for Trouble signing in?.
+struct SigninWait: Codable, Equatable, Sendable {
+    static let messageType = "signin.wait"
+    /// In both `hello.capabilities`: the gateway waits, the app shows the card.
+    static let capability = "signin.v1"
+
+    enum State: String, Codable, Equatable, Sendable {
+        case waiting, current, stopped
+    }
+
+    var chat: Int
+    var turn: Int
+    var state: State
+    var kind: String
+    var title: String
+    var body: String
+    var canOpen: Bool
+    var started: String
+    var url: String? = nil
+    var code: String? = nil
+    var wantsCode: Bool? = nil
+    var id: String? = nil
+    var seq: Int? = nil
+    var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, turn, state, kind, title, body, started, url, code, id, seq, ts
+        case canOpen = "can_open"
+        case wantsCode = "wants_code"
+    }
+
+    var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
+}
+
+/// v0.25 (`signin.v1`): the card's Open sign-in page.
+struct SigninOpen: Codable, Equatable, Sendable {
+    static let messageType = "signin.open"
+    var chat: Int
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// v0.25 (`signin.v1`): Don't wait (and the card's ×).
+struct SigninStop: Codable, Equatable, Sendable {
+    static let messageType = "signin.stop"
+    var chat: Int
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
+}
+
+/// v0.25 (`signin.v1`): a code pasted from the browser, for the sign-in command.
+struct SigninCode: Codable, Equatable, Sendable {
+    static let messageType = "signin.code"
+    var chat: Int
+    var code: String
+    var id: String? = nil
+    var ts: String = ProtocolClock.now()
 }
 
 struct CardAsk: Codable, Equatable, Sendable {
@@ -2333,6 +2445,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case appMessage(AppMessage)
     case appContext(AppContext)
     case appReload(AppReload)
+    case signinOpen(SigninOpen)
+    case signinStop(SigninStop)
+    case signinCode(SigninCode)
     case mcpList(McpList)
     case mcpToggle(McpToggle)
     case mcpReconnect(McpReconnect)
@@ -2390,6 +2505,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .appMessage: AppMessage.messageType
         case .appContext: AppContext.messageType
         case .appReload: AppReload.messageType
+        case .signinOpen: SigninOpen.messageType
+        case .signinStop: SigninStop.messageType
+        case .signinCode: SigninCode.messageType
         case .mcpList: McpList.messageType
         case .mcpToggle: McpToggle.messageType
         case .mcpReconnect: McpReconnect.messageType
@@ -2450,6 +2568,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case AppMessage.messageType: self = .appMessage(try AppMessage(from: decoder))
         case AppContext.messageType: self = .appContext(try AppContext(from: decoder))
         case AppReload.messageType: self = .appReload(try AppReload(from: decoder))
+        case SigninOpen.messageType: self = .signinOpen(try SigninOpen(from: decoder))
+        case SigninStop.messageType: self = .signinStop(try SigninStop(from: decoder))
+        case SigninCode.messageType: self = .signinCode(try SigninCode(from: decoder))
         case McpList.messageType: self = .mcpList(try McpList(from: decoder))
         case McpToggle.messageType: self = .mcpToggle(try McpToggle(from: decoder))
         case McpReconnect.messageType: self = .mcpReconnect(try McpReconnect(from: decoder))
@@ -2512,6 +2633,9 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .appMessage(let m): try m.encode(to: encoder)
         case .appContext(let m): try m.encode(to: encoder)
         case .appReload(let m): try m.encode(to: encoder)
+        case .signinOpen(let m): try m.encode(to: encoder)
+        case .signinStop(let m): try m.encode(to: encoder)
+        case .signinCode(let m): try m.encode(to: encoder)
         case .mcpList(let m): try m.encode(to: encoder)
         case .mcpToggle(let m): try m.encode(to: encoder)
         case .mcpReconnect(let m): try m.encode(to: encoder)
@@ -2587,6 +2711,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case pluginsState(PluginsStateMessage)
     case pluginsDetails(PluginsDetails)
     case pluginsOptions(PluginsOptions)
+    case signinWait(SigninWait)
 
     var type: String {
         switch self {
@@ -2640,6 +2765,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .pluginsState: PluginsStateMessage.messageType
         case .pluginsDetails: PluginsDetails.messageType
         case .pluginsOptions: PluginsOptions.messageType
+        case .signinWait: SigninWait.messageType
         }
     }
 
@@ -2695,6 +2821,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .pluginsState(let m): m.envelope
         case .pluginsDetails(let m): m.envelope
         case .pluginsOptions(let m): m.envelope
+        case .signinWait(let m): m.envelope
         }
     }
 
@@ -2751,6 +2878,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case PluginsStateMessage.messageType: self = .pluginsState(try PluginsStateMessage(from: decoder))
         case PluginsDetails.messageType: self = .pluginsDetails(try PluginsDetails(from: decoder))
         case PluginsOptions.messageType: self = .pluginsOptions(try PluginsOptions(from: decoder))
+        case SigninWait.messageType: self = .signinWait(try SigninWait(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -2809,6 +2937,7 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .pluginsState(let m): try m.encode(to: encoder)
         case .pluginsDetails(let m): try m.encode(to: encoder)
         case .pluginsOptions(let m): try m.encode(to: encoder)
+        case .signinWait(let m): try m.encode(to: encoder)
         }
     }
 }

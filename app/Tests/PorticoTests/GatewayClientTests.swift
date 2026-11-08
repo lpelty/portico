@@ -414,22 +414,6 @@ final class GatewayClientTests: XCTestCase {
         guard case .failed = status else { return XCTFail("expected .failed, got \(status)") }
     }
 
-    func testStopSendsGatewayStop() async throws {
-        let gateway = FakeGateway()
-        try await gateway.start()
-        defer { gateway.stop() }
-        let client = GatewayClient()
-        _ = try await client.connect(url: gateway.url, token: "tok", appVersion: "0.1.0-test")
-
-        let supervisor = await GatewaySupervisor(stateDir: try tempStateDir())
-        await supervisor.stop(using: client)
-
-        let frame = await gateway.waitForFrame(type: "gateway.stop", seconds: 5)
-        XCTAssertNotNil(frame)
-        let status = await supervisor.status
-        XCTAssertEqual(status, .stopped)
-    }
-
     // MARK: - helpers
 
     private static func hello(epoch: String) -> HelloServer {
@@ -456,6 +440,24 @@ final class GatewayClientTests: XCTestCase {
         try (body + "\n").write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         return script
+    }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testExitBeforeReadyNamesThisRunsExitCode() async throws {
+        // #5: an earlier run's last log line is not this run's reason.
+        let dir = try tempStateDir()
+        try "INFO portico_gateway.server: stopped cleanly\n".write(
+            to: dir.appendingPathComponent("gateway.log"), atomically: true, encoding: .utf8)
+        let script = try fakeGatewayScript(in: dir, "#!/bin/sh\nexit 3\n")
+        let supervisor = await GatewaySupervisor(stateDir: dir, gatewayCommand: script)
+        do {
+            _ = try await supervisor.start()
+            XCTFail("start should fail when the command exits before the ready line")
+        } catch {
+            XCTAssertEqual("\(error)", "the gateway exited before it was ready: exit code 3")
+            XCTAssertFalse("\(error)".contains("stopped cleanly"))
+        }
     }
 }
 

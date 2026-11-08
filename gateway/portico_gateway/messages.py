@@ -54,6 +54,14 @@ TASKS_CAPABILITY = "tasks.v1"
 # deployment (``deployment.message``) above the message box. Only such an app
 # is sent one; with none attached, the gateway keeps them for the next hello.
 DEPLOYMENT_MESSAGE_CAPABILITY = "messages.deployment.v1"
+# v0.25: replayed history (``chat.history`` from the transcript) carries each
+# entry's real time, and ``no_time`` where no entry matched; an older gateway
+# stamps its replay with the time of the replay.
+HISTORY_TIMES_CAPABILITY = "history.times.v1"
+# v0.25: a turn that fails on an expired sign-in waits and carries on by itself.
+# The gateway sends ``signin.wait`` only to an app that lists it too; the app
+# sends ``signin.open`` / ``signin.stop`` / ``signin.code`` only to a gateway that does.
+SIGNIN_CAPABILITY = "signin.v1"
 
 # v0.23: the app shows and writes comments in Markdown files (comment format
 # v1, protocol/COMMENTS.md). Declared for future use: the comment tools work
@@ -763,6 +771,28 @@ class FilesSearch(Envelope):
     query: str
 
 
+class SigninOpen(Envelope):
+    """v0.25 (``signin.v1``): the card's Open sign-in page: run the kind's ``open`` command."""
+
+    type: Literal["signin.open"] = "signin.open"
+    chat: int
+
+
+class SigninStop(Envelope):
+    """v0.25 (``signin.v1``): Don't wait: stop waiting; the turn stays ended."""
+
+    type: Literal["signin.stop"] = "signin.stop"
+    chat: int
+
+
+class SigninCode(Envelope):
+    """v0.25 (``signin.v1``): a code the person pasted from the browser, for the running sign-in command's input."""
+
+    type: Literal["signin.code"] = "signin.code"
+    chat: int
+    code: str
+
+
 class GatewayStop(Envelope):
     """Stop the gateway: interrupt every running turn, run ``on_stop``, exit.
 
@@ -796,6 +826,28 @@ class Voice(Strict):
 
     # Settings shows the Read aloud switch when true; the person's on/off stays in the app.
     read_aloud: bool = False
+
+
+# v0.25: the key of the Read aloud Labs item (the app draws its controls for it).
+READ_ALOUD_LAB = "voice.read_aloud"
+
+
+class LabItem(Strict):
+    """v0.25: one row in the app's Settings › Labs (``hello.labs``).
+
+    ``tag`` is ``preview`` for a feature built into the app and not yet
+    released, ``local`` for one this machine's plug-in added. ``source``
+    says where it was turned on: ``config.toml``, ``config.local.toml`` or
+    ``plugin:<module>``. ``home`` is the Settings tab it moves to when
+    released, when known (``voice``, ``general``...).
+    """
+
+    key: str
+    title: str
+    detail: str
+    tag: Literal["preview", "local"]
+    source: str
+    home: str | None = None
 
 
 class HelloServer(Envelope):
@@ -839,6 +891,9 @@ class HelloServer(Envelope):
     person: Person | None = None
     # v0.24: config ``[voice]``; absent from an older gateway.
     voice: Voice | None = None
+    # v0.25: the Labs items (built-in Preview features the config turned on,
+    # then plug-ins' Local items). Absent when there are none, and from an older gateway.
+    labs: list[LabItem] | None = None
 
 
 class ChatList(Envelope):
@@ -890,6 +945,9 @@ class UserText(Envelope):
     # v0.19 (spec §8.4, ``messages.attachments.v1``): the attached files' paths;
     # ``text`` is then what the person typed, without the "Attached files:" block.
     attachments: list[str] = []
+    # v0.25 (``history.times.v1``): true on a replayed message no transcript
+    # entry gave a time to (its ``ts`` is then the replay's); never on a live one.
+    no_time: bool | None = None
 
 
 class TextDelta(Envelope):
@@ -897,6 +955,8 @@ class TextDelta(Envelope):
     chat: int
     turn: int
     text: str
+    # v0.25 (``history.times.v1``): as ``UserText.no_time``.
+    no_time: bool | None = None
 
 
 class ToolStarted(Envelope):
@@ -945,6 +1005,54 @@ class TurnFinished(Envelope):
     chat: int
     turn: int
     outcome: Outcome
+    # v0.25: why the turn ended, when the gateway knows a reason the app words
+    # (``signin.expired``: the sign-in ran out). Absent otherwise, and from an older gateway.
+    reason: str | None = None
+    # The engine's error detail for the turn (``engine.error_detail``): the
+    # gateway reads it to recognise a sign-in error. Never sent, never logged.
+    _error_detail: list[str] = PrivateAttr(default_factory=list)
+    # The part of it the engine's own error message carried (review M1).
+    _assistant_detail: list[str] = PrivateAttr(default_factory=list)
+
+    @property
+    def error_detail(self) -> list[str]:
+        return list(self._error_detail)
+
+    @property
+    def assistant_detail(self) -> list[str]:
+        return list(self._assistant_detail)
+
+    def with_error_detail(self, detail: list[str], assistant: list[str] | None = None) -> TurnFinished:
+        """``self`` carrying ``detail`` and its ``assistant`` part (set in place; returned for chaining)."""
+        self._error_detail = list(detail)
+        self._assistant_detail = list(assistant or [])
+        return self
+
+
+class SigninWait(Envelope):
+    """v0.25 §4.5 (``signin.v1``): a turn ended on an expired sign-in and the gateway waits for it, or stopped waiting.
+
+    ``state`` is ``waiting`` (the card shows), ``current`` (signed in again:
+    the turn carries on) or ``stopped`` (Don't wait, a new message, or the
+    chat stopped). ``title`` and ``body`` word the card; ``can_open`` says
+    whether Open sign-in page has a command to run. ``url`` and ``code`` are
+    the sign-in command's link and one-time code, once it printed them, for
+    Trouble signing in?; ``wants_code`` says the command reads a code pasted
+    from the browser (``signin.code``). Not kept in the ring.
+    """
+
+    type: Literal["signin.wait"] = "signin.wait"
+    chat: int
+    turn: int
+    state: Literal["waiting", "current", "stopped"]
+    kind: Literal["aws-sso", "claude"]
+    title: str
+    body: str
+    can_open: bool
+    started: str
+    url: str | None = None
+    code: str | None = None
+    wants_code: bool = False
 
 
 class CardAsk(Envelope):
@@ -1634,6 +1742,9 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     AppMessage,
     AppContext,
     AppReload,
+    SigninOpen,
+    SigninStop,
+    SigninCode,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1686,6 +1797,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     AppResult,
     AppCancelled,
     AppCallResult,
+    SigninWait,
     Error,
 )
 
@@ -1779,7 +1891,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY, SIGNIN_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1839,6 +1951,9 @@ def example_messages() -> dict[str, BaseModel]:
         AppMessage(ts=_TS, id="req-41", chat=1, tool_use_id="toolu_01", text="Mark Launch email done"),
         AppContext(ts=_TS, chat=1, tool_use_id="toolu_01", text="Project: Acme launch. 3 of 4 tasks done."),
         AppReload(ts=_TS, id="req-42", chat=1, tool_use_id="toolu_01"),
+        SigninOpen(ts=_TS, chat=1),
+        SigninStop(ts=_TS, chat=1),
+        SigninCode(ts=_TS, chat=1, code="pasted-from-the-browser"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1882,6 +1997,17 @@ def example_messages() -> dict[str, BaseModel]:
             threads_max=2,
             person=Person(name="Sam Rivera"),
             voice=Voice(read_aloud=True),
+            labs=[
+                LabItem(
+                    key="voice.read_aloud", title="Read aloud",
+                    detail="A Play button on each reply; replies are read as they arrive while it's on.",
+                    tag="preview", source="config.local.toml", home="voice",
+                ),
+                LabItem(
+                    key="digest.daily", title="Daily digest", detail="A summary of yesterday's sessions each morning.",
+                    tag="local", source="plugin:digest",
+                ),
+            ],
         ),
         ChatList(
             ts=_TS,
@@ -1909,6 +2035,11 @@ def example_messages() -> dict[str, BaseModel]:
                 TurnStarted(ts=_TS, chat=1, seq=1, turn=1),
                 TextDelta(ts=_TS, chat=1, seq=2, turn=1, text="Hello."),
                 TurnFinished(ts=_TS, chat=1, seq=3, turn=1, outcome="done"),
+                # v0.25: a transcript replay's events are unstamped; one no entry matched has ``no_time``.
+                TurnStarted(ts=_TS, chat=1, turn=2),
+                UserText(ts=_TS, chat=1, turn=2, text="And the notes?", no_time=True),
+                TextDelta(ts=_TS, chat=1, turn=2, text="Here they are.", no_time=True),
+                TurnFinished(ts=_TS, chat=1, turn=2, outcome="done"),
             ],
             truncated=False,
         ),
@@ -1929,7 +2060,7 @@ def example_messages() -> dict[str, BaseModel]:
         ToolFinished(
             ts=_TS, chat=1, seq=46, turn=2, tool_use_id="toolu_01", ok=True, summary="read 120 lines", permission="auto"
         ),
-        TurnFinished(ts=_TS, chat=1, seq=47, turn=2, outcome="done"),
+        TurnFinished(ts=_TS, chat=1, seq=47, turn=2, outcome="error", reason="signin.expired"),
         CardAsk(
             ts=_TS,
             chat=1,
@@ -2221,6 +2352,11 @@ def example_messages() -> dict[str, BaseModel]:
             ok=True,
             content=[{"type": "text", "text": "Launch email is done."}],
             structured_content={"task": "Launch email", "status": "done"},
+        ),
+        SigninWait(
+            ts=_TS, chat=1, turn=4, state="waiting", kind="aws-sso", title="Sign in again to continue",
+            body="Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done.",
+            can_open=True, started=_TS, url="https://device.sso.us-east-1.amazonaws.com/", code="QKXW-RTBN",
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

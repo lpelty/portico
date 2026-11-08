@@ -149,7 +149,7 @@ final class ViewerCommentsTests: XCTestCase {
         let across = c.menuContext(selection: ["text": "endings. Second", "lines": [2, 2], "occurrence": 0], editMode: false)
         XCTAssertEqual(across.refusal, "Select text within one paragraph, outside links and formatting.")
         let code = c.menuContext(selection: ["text": "x", "lines": NSNull(), "occurrence": 0, "refusal": "ignored"], editMode: false)
-        XCTAssertEqual(code.refusal, "Comments can't go in code, tables or front matter.")
+        XCTAssertEqual(code.refusal, "Comments can't go in code or front matter.")
         let none = c.menuContext(selection: nil, editMode: false)
         XCTAssertFalse(none.hasSelection)
     }
@@ -469,5 +469,39 @@ final class ViewerCommentsTests: XCTestCase {
             XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), changed)
         }
         XCTAssertEqual(c.threads.first?.replies.first?.text, "Rewritten elsewhere.", "re-read so the card shows what's there now")
+    }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testADraftThatLostItsPlaceSaysSo() throws {
+        // #12 (ruling 24): an Edit-mode draft posted after Edit went off keeps its text and says why.
+        let url = try file("para.md")
+        let before = try Data(contentsOf: url)
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        let buffer = FakeBuffer(try String(contentsOf: url, encoding: .utf8))
+        c.editBuffer = buffer
+        c.beginDraft(nil, range: 0..<5, chat: 1, focus: FakeFocus())
+        c.editBuffer = nil  // Edit off (EditorPane.tearDown)
+        c.received(["type": "post", "text": "My comment"], chat: 1, focus: FakeFocus())
+        XCTAssertEqual(c.error, "Select the text again to post this comment.")
+        XCTAssertEqual(c.draft?.text, "My comment")
+        XCTAssertEqual(try Data(contentsOf: url), before)
+        withExtendedLifetime(buffer) {}
+    }
+
+    func testAReadModeDraftPostedInEditModeSaysSo() async throws {
+        // #12, the other way: a reading-mode draft, then Edit on: no range-0 write is attempted.
+        let url = try file("para.md")
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        c.beginDraft(.init(text: "writes files", lines: 2...2, occurrence: 0), chat: 1, focus: FakeFocus())
+        let buffer = FakeBuffer(try String(contentsOf: url, encoding: .utf8))
+        c.editBuffer = buffer
+        c.received(["type": "post", "text": "Which files?"], chat: 1, focus: FakeFocus())
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(c.error, "Select the text again to post this comment.")
+        XCTAssertEqual(c.draft?.text, "Which files?")
+        XCTAssertTrue(buffer.changes.isEmpty, "nothing was written to the buffer")
     }
 }

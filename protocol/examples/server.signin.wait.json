@@ -1,0 +1,15 @@
+{
+  "body": "Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done.",
+  "can_open": true,
+  "chat": 1,
+  "code": "QKXW-RTBN",
+  "kind": "aws-sso",
+  "started": "2026-10-27T12:00:00Z",
+  "state": "waiting",
+  "title": "Sign in again to continue",
+  "ts": "2026-10-27T12:00:00Z",
+  "turn": 4,
+  "type": "signin.wait",
+  "url": "https://device.sso.us-east-1.amazonaws.com/",
+  "wants_code": false
+}

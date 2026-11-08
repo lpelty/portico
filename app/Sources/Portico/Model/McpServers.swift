@@ -25,7 +25,12 @@ struct McpServersState: Equatable, Sendable {
 
 /// The tabs of Settings, in the window's order (AR1's toolbar).
 enum SettingsTab: String, CaseIterable, Sendable {
-    case general, gateway, mcpServers, plugins, voice, appearance
+    case general, gateway, mcpServers, plugins, voice, appearance, labs
+
+    /// The tabs Settings shows: Labs, last, only while it has an item (v0.25 §2.1).
+    static func visible(labs: Bool) -> [SettingsTab] {
+        allCases.filter { $0 != .labs || labs }
+    }
 
     var title: String {
         switch self {
@@ -35,6 +40,7 @@ enum SettingsTab: String, CaseIterable, Sendable {
         case .plugins: "Plugins"
         case .voice: "Voice"
         case .appearance: "Appearance"
+        case .labs: "Labs"
         }
     }
 
@@ -46,6 +52,7 @@ enum SettingsTab: String, CaseIterable, Sendable {
         case .plugins: "puzzlepiece.extension"
         case .voice: "waveform"
         case .appearance: "paintbrush"
+        case .labs: "flask"
         }
     }
 

@@ -185,10 +185,12 @@ def test_hello_carries_brand_actions_roots_and_protocol_1() -> None:
     assert hello.commands == []
     # v0.11: single presentation (the default) also offers ``sessions.clear``;
     # v0.16: and ``threads.v1`` (``[threads] max`` defaults to 2); v0.18: ``mcp.v1`` always,
-    # ``apps.v1`` with ``[apps] enabled`` (the default); v0.21: ``tasks.v1`` always; v0.22: ``messages.deployment.v1`` always.
+    # ``apps.v1`` with ``[apps] enabled`` (the default); v0.21: ``tasks.v1`` always; v0.22: ``messages.deployment.v1`` always;
+    # v0.25: ``history.times.v1`` and ``signin.v1`` always.
     assert hello.capabilities == [
         "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
         "models.v1", "mcp.v1", "plugins.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", "tasks.v1", "messages.deployment.v1",
+        "history.times.v1", "signin.v1",
         "sessions.clear", "threads.v1", "apps.v1",
     ]
     assert hello.presentation == "single"
@@ -785,3 +787,34 @@ def test_hello_carries_read_aloud(tmp_path: Path) -> None:
     hello = hello_for(load_config(path), epoch="e", gateway_version="0.24.0")
     assert hello.voice is not None and hello.voice.read_aloud is True
     assert hello.model_dump(mode="json")["voice"] == {"read_aloud": True}
+
+
+# --- v0.25: Labs -------------------------------------------------------------
+
+
+def test_hello_lists_read_aloud_in_labs_with_its_source(tmp_path: Path) -> None:
+    """v0.25 §2.3: a config-turned-on Preview feature is a Labs item naming the file that turned it on."""
+    from portico_gateway.config import read_config_layers
+
+    base = tmp_path / "config.toml"
+    base.write_text("")
+    (tmp_path / "config.local.toml").write_text("[voice]\nread_aloud = true\n")
+    hello = hello_for(load_config(base), epoch="e", gateway_version="0.25.0", layers=read_config_layers(base))
+    assert hello.labs is not None and len(hello.labs) == 1
+    item = hello.labs[0]
+    assert (item.key, item.tag, item.source, item.home) == ("voice.read_aloud", "preview", "config.local.toml", "voice")
+    assert item.title == "Read aloud"
+    assert item.detail == "A Play button on each reply; replies are read as they arrive while it's on."
+
+
+def test_hello_labs_source_defaults_to_config_toml_without_layers(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[voice]\nread_aloud = true\n")
+    hello = hello_for(load_config(path), epoch="e", gateway_version="0.25.0")
+    assert hello.labs is not None and hello.labs[0].source == "config.toml"
+
+
+def test_hello_has_no_labs_on_a_stock_config() -> None:
+    assert hello_for(Config(), epoch="e", gateway_version="0.25.0").labs is None
+    dumped = hello_for(Config(), epoch="e", gateway_version="0.25.0").model_dump(mode="json", exclude_none=True)
+    assert "labs" not in dumped

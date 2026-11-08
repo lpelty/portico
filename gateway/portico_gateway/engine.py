@@ -51,6 +51,7 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TextBlock,
     ToolPermissionContext,
     ToolResultBlock,
     ToolUseBlock,
@@ -59,6 +60,7 @@ from claude_agent_sdk import (
     get_session_messages,
     tool,
 )
+from claude_agent_sdk._internal.sessions import _read_session_file
 
 from .artifacts import paths_in
 from .images import split_attachments, split_edited_note, user_message
@@ -266,7 +268,7 @@ class Engine(Protocol):
         ...
 
     async def send(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
-        """Send ``text`` as the next turn; v0.19: ``images`` (``images.image_block``) go after it as content blocks."""
+        """Send ``text`` as the next turn; v0.19: ``images`` (``images.image_blocks``, each from ``images.read_image``) go after it as content blocks."""
         ...
 
     async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
@@ -389,6 +391,60 @@ def _result_text(content: str | list[dict[str, Any]] | None) -> str:
 def blocked_by_auto_mode(is_error: bool | None, content: str | list[dict[str, Any]] | None) -> bool:
     """Whether a tool result is auto mode's classifier refusing the step."""
     return bool(is_error) and AUTO_MODE_BLOCK_MARK in _result_text(content).lower()
+
+
+def error_detail(msg: Message) -> list[str]:
+    """v0.25 §4.3: what an engine message says about an error, as strings, for the sign-in rule. Never logged.
+
+    From a failed ``ResultMessage``: its ``errors``, ``result``,
+    ``api_error_status`` and ``terminal_reason``. From an ``AssistantMessage``
+    with ``error`` set: the error, then the message's own words (the engine
+    puts "Login expired · Please run /login" there). Anything else: nothing.
+    """
+    out: list[str] = []
+    if isinstance(msg, ResultMessage):
+        if not msg.is_error:
+            return out
+        out += [str(e) for e in (getattr(msg, "errors", None) or []) if e is not None]
+        for name in ("result", "api_error_status", "terminal_reason"):
+            value = getattr(msg, name, None)
+            if value is not None and str(value):
+                out.append(str(value))
+    elif isinstance(msg, AssistantMessage):
+        if not getattr(msg, "error", None):
+            return out
+        out.append(str(msg.error))
+        out += [block.text for block in msg.content if isinstance(block, TextBlock) and block.text]
+    return out
+
+
+class TurnErrors:
+    """A turn's error detail as the engine's messages arrive; attached to the turn's ``turn.finished`` (v0.25).
+
+    ``assistant`` keeps apart what came in the engine's own error message
+    (``AssistantMessage.error`` and its text), which alone names the Claude sign-in (review M1).
+    """
+
+    def __init__(self) -> None:
+        self.detail: list[str] = []
+        self.assistant: list[str] = []
+
+    def reset(self) -> None:
+        self.detail = []
+        self.assistant = []
+
+    def note(self, msg: Message) -> None:
+        found = error_detail(msg)
+        self.detail += found
+        if isinstance(msg, AssistantMessage):
+            self.assistant += found
+
+    def attach(self, event: ServerMessage) -> ServerMessage:
+        """``event``, and when it is a ``turn.finished``, carrying the detail so far (which then starts afresh)."""
+        if isinstance(event, TurnFinished):
+            event.with_error_detail(self.detail, assistant=self.assistant)
+            self.reset()
+        return event
 
 
 def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = None) -> list[ServerMessage]:
@@ -1311,6 +1367,8 @@ class SDKEngine:
         # The last turn a result message closed; ``turn`` beyond it is in flight.
         self._finished_turn = 0
         self._closing = False
+        # v0.25: the turn's error detail, attached to its ``turn.finished``.
+        self._errors = TurnErrors()
         # Slash command names (no ``/``) from the engine's initialize answer
         # and its ``init`` message; ``None`` until either has said.
         self._commands: set[str] | None = None
@@ -1373,11 +1431,13 @@ class SDKEngine:
                 self._note_session(msg)
                 if self._between_turns() and opens_turn(msg):
                     self.turn += 1
+                    self._errors.reset()
                     await self._callbacks.on_event(TurnStarted(ts=_now(), chat=self.chat, turn=self.turn))
+                self._errors.note(msg)
                 for event in translate(msg, self.chat, self.turn, self.agents):
                     if isinstance(event, TurnFinished):
                         self._finished_turn = event.turn
-                    await self._callbacks.on_event(event)
+                    await self._callbacks.on_event(self._errors.attach(event))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1411,7 +1471,9 @@ class SDKEngine:
         self._finished_turn = turn
         log.warning("chat %s: engine went away during turn %d; reporting the turn as an error", self.chat, turn)
         try:
-            await self._callbacks.on_event(TurnFinished(ts=_now(), chat=self.chat, turn=turn, outcome="error"))
+            await self._callbacks.on_event(
+                self._errors.attach(TurnFinished(ts=_now(), chat=self.chat, turn=turn, outcome="error"))
+            )
         except Exception:
             log.exception("chat %s: could not report the lost turn", self.chat)
 
@@ -1488,6 +1550,7 @@ class SDKEngine:
         if self._client is None:
             raise RuntimeError("engine not started")
         self.turn += 1
+        self._errors.reset()
         await self._client.query(_prompt(text, images))
 
     async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
@@ -1580,12 +1643,16 @@ class SDKEngine:
 # reader classes the same strings as scaffolding.
 # The engine's note to itself that a background task ended (v0.10).
 TASK_NOTIFICATION_PREFIX = "<task-notification>"
+# v0.25 §4.4: what the gateway sends to carry a turn on after the person signed
+# in again. Never the person's words: a replay draws no bubble for it.
+CONTINUE_TEXT = "Your sign-in was renewed. Continue where you left off; don't repeat steps that already finished."
 _HIDDEN_USER_TEXT_PREFIXES = (
     "<system-reminder>",
     "<local-command-",
     "<command-",
     "[Request interrupted by user",
     TASK_NOTIFICATION_PREFIX,
+    CONTINUE_TEXT,
 )
 
 
@@ -1604,6 +1671,50 @@ def read_history(session_id: str | None, folder: Path) -> list[dict[str, Any]]:
         log.exception("could not read the transcript for session %s in %s", session_id, folder)
         return []
     return [dataclasses.asdict(m) for m in messages]
+
+
+def transcript_times(session_id: str | None, folder: Path) -> dict[str, str]:
+    """v0.25 §3.2: each transcript entry's time by its ``uuid``, in the gateway's format; ``{}`` on any failure.
+
+    The transcript is found the way the SDK finds it for ``get_session_messages``
+    (ruling 7), so the ``uuid`` of a session message is its entry's. If the
+    SDK changes its layout, the lookup fails quietly and the times are left
+    out: the app then shows none, never a wrong one.
+    """
+    if not session_id:
+        return {}
+    try:
+        content = _read_session_file(session_id, str(folder))
+    except Exception:
+        return {}
+    if not content:
+        return {}
+    times: dict[str, str] = {}
+    for line in content.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        uid, stamp = entry.get("uuid"), entry.get("timestamp")
+        if not isinstance(uid, str) or not isinstance(stamp, str):
+            continue
+        normal = _normal_time(stamp)
+        if normal is not None:
+            times[uid] = normal
+    return times
+
+
+def _normal_time(stamp: str) -> str | None:
+    """A transcript ``timestamp`` (``2026-11-06T21:42:10.123Z``) as ``_now()`` writes one (ruling 8); None if unreadable."""
+    try:
+        when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _blocks(content: Any) -> list[dict[str, Any]]:
@@ -1674,17 +1785,24 @@ def _notification_fields(blocks: list[dict[str, Any]]) -> dict[str, str]:
     return {}
 
 
-def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1) -> list[ServerMessage]:
+def history_events(
+    messages: Iterable[Mapping[str, Any]], chat: int, first_turn: int = 1, times: Mapping[str, str] | None = None
+) -> list[ServerMessage]:
     """Transcript messages (``read_history``'s dicts, or ``SessionMessage``-like) -> replay events. Pure.
 
     Each user message with text starts a turn (``turn.started``, ``user.text``);
     assistant text becomes ``text.delta``, tool calls and results
     ``tool.started`` / ``tool.finished``; every turn ends with
     ``turn.finished outcome=done``. Turns count from ``first_turn``. Nothing
-    is stamped: ``seq`` is left unset, and the events carry today's ``ts``
-    because the SDK's session messages carry none.
+    is stamped: ``seq`` is left unset. The SDK's session messages carry no
+    time, so the events carry today's ``ts`` unless ``times`` (v0.25,
+    ``transcript_times``) gives the message's: then each event takes its
+    message's entry time (``turn.finished`` the last event's), and a
+    ``user.text`` or ``text.delta`` with no match gets ``no_time``.
     """
-    ts = _now()
+    now = _now()
+    ts = now
+    no_time: bool | None = None
     out: list[ServerMessage] = []
     turn = first_turn - 1
     open_turn = False
@@ -1708,6 +1826,9 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
         m = raw if isinstance(raw, Mapping) else dataclasses.asdict(raw)
         if m.get("parent_tool_use_id"):
             continue  # a subagent's message, never shown in the conversation
+        if times is not None:
+            found = times.get(str(m.get("uuid") or ""))
+            ts, no_time = (found, None) if found else (now, True)
         message = m.get("message")
         if not isinstance(message, Mapping):
             continue
@@ -1720,7 +1841,7 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                 begin()
                 # v0.19 (spec §8.4): the words typed, and the attachments apart.
                 typed, attachments = split_attachments(split_edited_note(text))
-                out.append(UserText(ts=ts, chat=chat, turn=turn, text=typed, attachments=attachments))
+                out.append(UserText(ts=ts, chat=chat, turn=turn, text=typed, attachments=attachments, no_time=no_time))
             elif _is_task_notification(blocks):
                 # Background work reporting back (v0.10): the engine's own
                 # message, never the person's; its reply is a turn nobody sent.
@@ -1788,7 +1909,7 @@ def history_events(messages: Iterable[Mapping[str, Any]], chat: int, first_turn:
                         # engine speaking twice in a turn): a paragraph apart,
                         # not run together.
                         text = "\n\n" + text
-                    out.append(TextDelta(ts=ts, chat=chat, turn=turn, text=text))
+                    out.append(TextDelta(ts=ts, chat=chat, turn=turn, text=text, no_time=no_time))
                 elif kind == "tool_use":
                     if not open_turn:
                         begin()

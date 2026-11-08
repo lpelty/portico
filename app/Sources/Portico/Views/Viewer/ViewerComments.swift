@@ -189,11 +189,16 @@ final class ViewerComments: ObservableObject {
 
     /// The person's own comments (by the name in use), which they may edit.
     func isPerson(_ author: String) -> Bool {
-        author.compare(personName, options: .caseInsensitive) == .orderedSame
+        Self.sameAuthor(author, personName)
     }
 
     func isAgent(_ author: String) -> Bool {
-        author.compare(agentName, options: .caseInsensitive) == .orderedSame
+        Self.sameAuthor(author, agentName)
+    }
+
+    /// A reply line writes a name's colons as RATIO (#11): both sides are compared as written.
+    static func sameAuthor(_ a: String, _ b: String) -> Bool {
+        CommentFormat.replyAuthor(a).compare(CommentFormat.replyAuthor(b), options: .caseInsensitive) == .orderedSame
     }
 
     /// The file the viewer shows changed (or none): comments as left for it, nothing active.
@@ -394,6 +399,9 @@ final class ViewerComments: ObservableObject {
     /// Edit mode's buffer, while the editor shows the file.
     weak var editBuffer: (any CommentsBuffer)?
 
+    /// A draft made in the other mode (Edit turned on or off since) can't be posted where it was.
+    static let lostPlaceText = "Select the text again to post this comment."
+
     /// Apply a comment action to the editor's buffer as one change; if the
     /// buffer moved under it, fetch the text again and retry once.
     @discardableResult
@@ -471,13 +479,17 @@ final class ViewerComments: ObservableObject {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             let made = CommentWriter.Made()
             let op: CommentWriter.Op
-            if editBuffer != nil {
-                op = .addRange(d.range ?? 0..<0, body: text)
-            } else if let anchor = d.anchor, let quote = d.quote {
+            if editBuffer != nil, let range = d.range {
+                op = .addRange(range, body: text)
+            } else if editBuffer == nil, let anchor = d.anchor, let quote = d.quote {
                 op = .addAt(anchor, quote: quote, body: text)
-            } else if let s = d.selection {
+            } else if editBuffer == nil, let s = d.selection {
                 op = .add(s, body: text)
             } else {
+                // Sweep #12 (ruling 24): Edit went on or off since the draft was made, so its
+                // place is in the other form. The text stays; nothing is written.
+                error = Self.lostPlaceText
+                push()
                 return
             }
             perform(op, made: made) { [weak self] ok in
@@ -614,6 +626,7 @@ final class ViewerComments: ObservableObject {
         var refusal: String?
         switch selection["refusal"] as? String {
         case "ignored": refusal = CommentAnchoring.reason(.insideIgnored)
+        case "atom": refusal = CommentAnchoring.reason(.insideAtom)
         case "cell": refusal = CommentAnchoring.cellWords
         case "widget": refusal = CommentAnchoring.tableWidgetWords
         case .some: refusal = CommentAnchoring.reason(.crossesBlocks)

@@ -71,6 +71,14 @@ struct ConversationView: View {
                     .padding(.bottom, 8)
                     .inConversationColumn()
             }
+            // v0.25 (ZE3): the sign-in card, docked like a permission card.
+            if model.signinWaits[chat] != nil {
+                SigninDock(chat: chat)
+                    .environment(\.dockMaxHeight, conversationHeight.map(DockedCardLayout.maxHeight))
+                    .padding(.horizontal, Self.sideInset)
+                    .padding(.bottom, 8)
+                    .inConversationColumn()
+            }
             // v0.16 (AO1): the docked question or permission card, at the
             // composer's width above it; the composer stays under it.
             if model.dockedCard(for: chat) != nil {
@@ -452,7 +460,7 @@ struct ConversationView: View {
 
     private var itemsKey: String {
         guard let last = items.last else { return "" }
-        if case .assistantText(let id, let text) = last { return "\(items.count):\(id):\(text.count)" }
+        if case .assistantText(let id, let text, _) = last { return "\(items.count):\(id):\(text.count)" }
         return "\(items.count):\(last.id)"
     }
 
@@ -502,9 +510,10 @@ struct TranscriptItemView: View {
             UserBubble(
                 content: BubbleContent(user), maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth,
                 via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) },
-                linkSites: model.hello?.linkSites ?? [:])
-        case .assistantText(let id, let text):
-            MarkdownText(text: text, id: id)
+                linkSites: model.hello?.linkSites ?? [:],
+                at: user.noTime == true ? nil : SessionTime.parse(user.ts), copyText: user.text)
+        case .assistantText(let id, let text, let at):
+            MarkdownText(text: text, id: id, at: SessionTime.parse(at))
                 .frame(maxWidth: replyWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row) where QuestionRecord.isRecord(row) && QuestionRecord.answerPairs(for: row) != nil:
@@ -545,6 +554,8 @@ struct TranscriptItemView: View {
             if let chat {
                 AgentGroupView(group: group, chat: chat, folder: folder)
             }
+        case .signinContinued(_, let at):
+            SigninContinuedLine(at: SessionTime.parse(at))
         }
     }
 }
@@ -584,6 +595,19 @@ struct UserBubble: View {
     var onOpen: (String) -> Void = { _ in }
     /// The deployment's names for link chips (hello `link_sites`).
     var linkSites: [String: String] = [:]
+    /// v0.25 (ZE2): when the message was sent, if that is known; shown on hover under the bubble.
+    var at: Date? = nil
+    /// What Copy under the bubble takes: the text as typed. Nil draws no hover row.
+    var copyText: String? = nil
+
+    @State private var hovering = false
+    @Environment(\.textScale) private var textScale
+
+    /// The space under every person bubble for its hover row (review M2): the row's
+    /// height at `scale` (measured 22 pt at 100%, 38 at 200%), rounded up.
+    static func hoverRowHeight(scale: CGFloat) -> CGFloat {
+        (16 * scale + 6).rounded(.up)
+    }
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
@@ -635,8 +659,21 @@ struct UserBubble: View {
                     .foregroundStyle(Theme.text3)
                     .padding(.trailing, 4)
             }
+            // v0.25 §3.1 (review M2): the time and Copy under the bubble, trailing, in a
+            // space every person bubble reserves, so its height never depends on the row
+            // and nothing overlaps the next item. Bubble, gap and row are one hover zone.
+            ZStack(alignment: .trailing) {
+                if let copyText {
+                    MessageHoverRow(at: at, help: "Copy this message") { copyText }
+                        .opacity(hovering ? 1 : 0)
+                        .offset(x: 6)
+                }
+            }
+            .frame(height: Self.hoverRowHeight(scale: textScale))
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
     }
 }
 
@@ -679,7 +716,7 @@ struct TurnMarkerView: View {
 
     /// Whether an item is drawn at all: a finished turn's marker is not.
     static func isDrawn(_ item: TranscriptItem) -> Bool {
-        if case .turnMarker(let marker) = item { return label(marker.outcome) != nil }
+        if case .turnMarker(let marker) = item { return label(marker) != nil }
         return true
     }
 
@@ -694,7 +731,14 @@ struct TurnMarkerView: View {
 
     /// v0.22.1: a failed turn's own reason when the gateway gave one
     /// ("This conversation's folder no longer exists: …"), else the outcome's line.
+    /// v0.25 (ZE3): a turn paused on an expired sign-in reads "Paused: sign-in
+    /// ran out" (still after it carried on, ruling 15); one that ended on it,
+    /// "Sign-in ran out".
     static func label(_ marker: TurnMarker) -> String? {
+        if marker.signinPaused { return SigninPresentation.pausedLabel }
+        if marker.outcome == .error, marker.finishReason == SigninPresentation.expiredReason {
+            return SigninPresentation.endedLabel
+        }
         if marker.outcome == .error, let reason = marker.reason, !reason.isEmpty { return reason }
         return label(marker.outcome)
     }
@@ -703,14 +747,24 @@ struct TurnMarkerView: View {
         if let label = Self.label(marker) {
             // A reason may wrap: the icon stays by its first line.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle")
+                Image(systemName: icon)
                     .font(Theme.iconFont(11))
                 Text(label)
                     .scaledFont(12)
             }
-            .foregroundStyle(marker.outcome == .error ? Theme.deny : Theme.text3)
+            .foregroundStyle(colour)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    private var icon: String {
+        if marker.signinPaused { return "pause" }
+        return marker.outcome == .error ? "exclamationmark.triangle" : "stop.circle"
+    }
+
+    private var colour: Color {
+        if marker.signinPaused { return Theme.wait }
+        return marker.outcome == .error ? Theme.deny : Theme.text3
     }
 }
 

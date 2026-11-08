@@ -67,7 +67,11 @@ enum CommentWriter {
                 return try CommentFormat.setStatus(text, threadID: id, resolved ? .resolved : .open)
             case .edit(let id, let index, let body, let fingerprint):
                 // Only the person's own comment, found as it was shown in the text as it is now.
-                guard let fingerprint, fingerprint.author.compare(author, options: .caseInsensitive) == .orderedSame else {
+                // The reply line writes a name's colons as RATIO (#11): compare it as written.
+                guard let fingerprint,
+                    CommentFormat.replyAuthor(fingerprint.author)
+                        .compare(CommentFormat.replyAuthor(author), options: .caseInsensitive) == .orderedSame
+                else {
                     throw CommentFormat.EditError.changed
                 }
                 return try CommentFormat.editComment(text, threadID: id, index: index, body: body, fingerprint: fingerprint)

@@ -68,7 +68,7 @@ final class McpSettingsTests: XCTestCase {
     // MARK: - tabs
 
     func testTabsInOrder() {
-        XCTAssertEqual(SettingsTab.allCases.map(\.title), ["General", "Gateway", "MCP servers", "Plugins", "Voice", "Appearance"])
+        XCTAssertEqual(SettingsTab.allCases.map(\.title), ["General", "Gateway", "MCP servers", "Plugins", "Voice", "Appearance", "Labs"])
         let (model, _) = model()
         XCTAssertEqual(model.settingsTab, .general)
         model.openSettings(at: .plugins)

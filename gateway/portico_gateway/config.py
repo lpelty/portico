@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, READ_ALOUD_LAB
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -45,6 +45,9 @@ CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
     MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY,
     FILES_EXTRA_CAPABILITY, FILES_EDITED_CAPABILITY, TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY,
+    # v0.25: replayed history carries the transcript's real times; a turn that
+    # fails on an expired sign-in waits for an app that lists ``signin.v1`` too.
+    HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once
@@ -130,8 +133,9 @@ class ConfigBrand(Brand):
 class UpdateConfig(BaseModel):
     """``[update]``: the deployment's own update commands, run with ``/bin/sh -c``.
 
-    ``check`` exits 0 and prints a version when an update is available (any
-    other exit, or no output, means none); ``run`` performs the update.
+    ``check`` exits 0 and prints a version when an update is available; exit 1
+    or no output means none; any other exit is a failed check. ``run``
+    performs the update.
     Portico owns when they run and the window around them; the deployment
     owns what they do.
     """
@@ -375,8 +379,8 @@ def with_default_spaces(config: Config, state_path: Path) -> Config:
 def host_allowed(host: str, act_hosts: list[str]) -> bool:
     """Whether the agent may click and type on ``host``: a local host, or an ``act_hosts`` entry or its subdomain.
 
-    Used by the doctor and the tests; the app is what enforces it (the gateway
-    only sends ``act_hosts`` in ``hello``).
+    Used by the tests; the app is what enforces it (the gateway only sends
+    ``act_hosts`` in ``hello``).
     """
     h = host.lower()
     if h.endswith("."):  # a fully qualified name: "figma.com." is "figma.com"
@@ -415,6 +419,55 @@ class VoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     read_aloud: bool = False
+
+
+class SigninKindConfig(BaseModel):
+    """v0.25 §4.5 (ruling 9): one sign-in kind's settings (``[signin.aws-sso]``, ``[signin.claude]``); unset keeps the kind's default.
+
+    ``patterns`` are Python regular expressions, searched case-insensitively in
+    each piece of a failed turn's error detail. ``check`` is a command that
+    exits 0 when the sign-in is current again; ``open`` the command the card's
+    Open sign-in page runs (its output's first URL and code show under
+    Trouble signing in?). ``title`` and ``body`` word the card.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    patterns: list[str] | None = None
+    check: str | None = None
+    open: str | None = None
+    title: str | None = None
+    body: str | None = None
+
+    @field_validator("patterns")
+    @classmethod
+    def _patterns_compile(cls, value: list[str] | None) -> list[str] | None:
+        for pattern in value or []:
+            try:
+                re.compile(pattern, re.IGNORECASE)
+            except re.error as e:
+                raise ValueError(f"patterns: {pattern!r} is not a regular expression: {e}") from None
+        return value
+
+    @field_validator("check", "open", "title", "body")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
+class AwsSsoSigninConfig(SigninKindConfig):
+    """``[signin.aws-sso]``: also ``sso_start_url``, the SSO start URL whose cached token counts (any, unset)."""
+
+    sso_start_url: str | None = None
+
+
+class SigninConfig(BaseModel):
+    """v0.25 §4.5/§4.6: the sign-in kinds a turn can pause on (``[signin.aws-sso]``, ``[signin.claude]``)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    aws_sso: AwsSsoSigninConfig = Field(default_factory=AwsSsoSigninConfig, alias="aws-sso")
+    claude: SigninKindConfig = Field(default_factory=SigninKindConfig)
 
 
 class Config(BaseModel):
@@ -495,6 +548,8 @@ class Config(BaseModel):
     person: PersonConfig = PersonConfig()
     # v0.24: voice (``[voice] read_aloud``).
     voice: VoiceConfig = VoiceConfig()
+    # v0.25: the sign-ins a turn waits on (``[signin.aws-sso]``, ``[signin.claude]``).
+    signin: SigninConfig = Field(default_factory=SigninConfig)
 
     @field_validator("title_model")
     @classmethod
@@ -742,7 +797,12 @@ def _now() -> str:
 
 
 def hello_for(
-    config: Config, epoch: str, gateway_version: str, plugins: Plugins | None = None, config_stale: bool = False
+    config: Config,
+    epoch: str,
+    gateway_version: str,
+    plugins: Plugins | None = None,
+    config_stale: bool = False,
+    layers: ConfigLayers | None = None,
 ) -> HelloServer:
     """The ``hello`` the gateway sends first on every connection.
 
@@ -759,6 +819,9 @@ def hello_for(
     presentation with ``[threads] max`` above 0, with ``threads_max`` set to it,
     and (v0.18) ``apps.v1`` when ``[apps] enabled``, and (v0.22) ``spaces.act`` with ``[spaces] act``
     (``messages.deployment.v1`` is always listed: the gateway can send ``deployment.message``).
+    ``labs`` (v0.25) lists each built-in Preview feature the config turns on
+    (``voice.read_aloud``), its ``source`` read from ``layers`` (``config.toml``
+    without them); plug-ins add their own Local items in ``on_hello``.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
@@ -800,8 +863,26 @@ def hello_for(
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
         person=Person(name=config.person.name) if config.person.name else None,
         voice=Voice(read_aloud=config.voice.read_aloud),
+        labs=_labs(config, layers) or None,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
+
+
+def _labs(config: Config, layers: ConfigLayers | None) -> list[LabItem]:
+    """v0.25: the built-in Preview features this config turns on, as Labs items."""
+    items: list[LabItem] = []
+    if config.voice.read_aloud:
+        items.append(
+            LabItem(
+                key=READ_ALOUD_LAB,
+                title="Read aloud",
+                detail="A Play button on each reply; replies are read as they arrive while it's on.",
+                tag="preview",
+                source=layers.source_of(READ_ALOUD_LAB) if layers is not None else "config.toml",
+                home="voice",
+            )
+        )
+    return items
 
 
 def can_restart_all(config: Config, plugins: Plugins | None = None) -> bool:

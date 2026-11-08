@@ -545,3 +545,23 @@ def test_doctor_prefers_the_apps_source_hint(tmp_path: Path, monkeypatch: pytest
 
     monkeypatch.setattr(state_module, "REPO_ROOT", tmp_path / "no-checkout")
     assert check_home(StateDir(), given=False).line.endswith("(from the default)")
+
+
+# --- v0.25: sign-in ---------------------------------------------------------------
+
+
+def test_doctor_reports_signin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from portico_gateway import signin
+    from portico_gateway.doctor import check_signin
+
+    monkeypatch.setattr(signin, "cli_path", lambda: "/opt/sdk/_bundled/claude")
+    path = tmp_path / "config.toml"
+    check = check_signin(path)
+    assert check.ok and check.name == "signin"
+    assert check.line == "aws-sso: AWS SSO token cache every 5 s; open: not set · claude: `claude auth status` every 10 s; open: `claude auth login`"
+    path.write_text('[signin.aws-sso]\ncheck = "my-check"\nopen = "aws sso login"\n')
+    assert check_signin(path).line.startswith("aws-sso: `my-check` every 10 s; open: `aws sso login`")
+    path.write_text("[signin.aws-sso]\nnope = 1\n")
+    skipped = check_signin(path)
+    assert skipped.ok and "skipped" in skipped.line
+    assert any(c.name == "signin" for c in doctor(StateDir(tmp_path / "state"), tmp_path / "missing.toml"))

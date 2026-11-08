@@ -263,4 +263,13 @@ final class ZoomTests: XCTestCase {
         for _ in 0..<100 where watch.running { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertFalse(watch.running)
     }
+
+    @MainActor
+    func testTheLabelUsesPercentText() {
+        // v0.25 sweep #27: the control renders `percentText`, not a copy of its formula.
+        // (1.255 × 100 is 125.4999… in binary, so it reads 125%; 1.256 rounds up for certain.)
+        let control = ZoomControl(scale: 1.256, page: nil, onIn: {}, onOut: {}, onFit: {}, onActual: {})
+        XCTAssertEqual(control.label, "126%")
+        XCTAssertEqual(control.label, ZoomControl.percentText(1.256))
+    }
 }

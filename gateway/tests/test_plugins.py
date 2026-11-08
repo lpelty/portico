@@ -184,3 +184,42 @@ def test_run_refuses_to_start_with_a_missing_plugin(tmp_path: Path, capsys: pyte
     assert main(["run", "--state", str(state)]) == 1
     err = capsys.readouterr().err
     assert "pp_absent" in err and "not found" in err
+
+
+def test_plugin_lab_items_are_stamped_local(tmp_path: Path) -> None:
+    """v0.25 ruling 4: a plug-in's Labs items are ``local`` and ``plugin:<module>``, whatever it set."""
+    write_module(
+        tmp_path,
+        "digest",
+        "PORTICO_PLUGIN_API = 1\n"
+        "from portico_gateway.messages import LabItem\n"
+        "def on_hello(hello):\n"
+        "    item = LabItem(key='digest.daily', title='Daily digest', detail='A summary each morning',\n"
+        "                   tag='preview', source='config.toml', home='general')\n"
+        "    return hello.model_copy(update={'labs': [*(hello.labs or []), item]})\n",
+    )
+    plugins = load_plugins(["digest"], [str(tmp_path)])
+    hello = hello_for(Config(), epoch="e", gateway_version="0.25.0", plugins=plugins)
+    assert hello.labs is not None
+    assert [(i.tag, i.source) for i in hello.labs] == [("local", "plugin:digest")]
+
+
+def test_a_plugin_keeps_earlier_lab_items_as_they_were(tmp_path: Path) -> None:
+    """A plug-in's stamp touches only the items its own hook added, not the gateway's Preview item."""
+    write_module(
+        tmp_path,
+        "pp_lab2",
+        "PORTICO_PLUGIN_API = 1\n"
+        "from portico_gateway.messages import LabItem\n"
+        "def on_hello(hello):\n"
+        "    item = LabItem(key='x.y', title='X', detail='Y', tag='local', source='')\n"
+        "    return hello.model_copy(update={'labs': [*(hello.labs or []), item]})\n",
+    )
+    plugins = load_plugins(["pp_lab2"], [str(tmp_path)])
+    config = Config.model_validate({"voice": {"read_aloud": True}})
+    hello = hello_for(config, epoch="e", gateway_version="0.25.0", plugins=plugins)
+    assert hello.labs is not None
+    assert [(i.key, i.tag, i.source) for i in hello.labs] == [
+        ("voice.read_aloud", "preview", "config.toml"),
+        ("x.y", "local", "plugin:pp_lab2"),
+    ]

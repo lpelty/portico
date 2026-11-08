@@ -60,6 +60,8 @@ extension EnvironmentValues {
 /// the left, no pager) both draw in it.
 struct DockedCard<Leading: View, Trailing: View>: View {
     let title: String
+    /// v0.25: an icon before the title (the sign-in card's key), in its colour.
+    var icon: (name: String, colour: Color)? = nil
     var pager: DockedCardPager? = nil
     var closeHelp: String = "Dismiss"
     /// How many lines the title may take; `nil` for all of them.
@@ -109,6 +111,11 @@ struct DockedCard<Leading: View, Trailing: View>: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            if let icon {
+                Image(systemName: icon.name)
+                    .font(Theme.iconFont(13, weight: .medium))
+                    .foregroundStyle(icon.colour)
+            }
             Text(title)
                 .scaledFont(14, weight: .semibold)
                 .foregroundStyle(Theme.text)
@@ -168,12 +175,12 @@ struct DockedCard<Leading: View, Trailing: View>: View {
 extension DockedCard where Trailing == EmptyView {
     /// A card with the left column only.
     init(
-        title: String, pager: DockedCardPager? = nil, closeHelp: String = "Dismiss", titleLines: Int? = nil,
-        onClose: @escaping () -> Void, @ViewBuilder leading: @escaping () -> Leading
+        title: String, icon: (name: String, colour: Color)? = nil, pager: DockedCardPager? = nil, closeHelp: String = "Dismiss",
+        titleLines: Int? = nil, onClose: @escaping () -> Void, @ViewBuilder leading: @escaping () -> Leading
     ) {
         self.init(
-            title: title, pager: pager, closeHelp: closeHelp, titleLines: titleLines, onClose: onClose, showsTrailing: false,
-            leading: leading, trailing: { EmptyView() })
+            title: title, icon: icon, pager: pager, closeHelp: closeHelp, titleLines: titleLines, onClose: onClose,
+            showsTrailing: false, leading: leading, trailing: { EmptyView() })
     }
 }
 

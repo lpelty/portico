@@ -1,0 +1,21 @@
+#!/bin/sh
+# A stand-in for the `claude` CLI in the sign-in tests: never the real one.
+# FAKE_CLAUDE_STATUS: what `auth status` prints (default: logged in with claude.ai);
+# FAKE_CLAUDE_STATUS_CODE: its exit code (default 0).
+# `auth login` prints a link, then copies one pasted line to $FAKE_CLAUDE_CODE_FILE.
+case "$1 $2" in
+  "auth status")
+    printf '%s\n' "${FAKE_CLAUDE_STATUS:-{\"loggedIn\": true, \"authMethod\": \"claude.ai\"}}"
+    exit "${FAKE_CLAUDE_STATUS_CODE:-0}"
+    ;;
+  "auth login")
+    echo "Opening browser to sign in..."
+    echo "If the browser didn't open, visit: https://claude.example/oauth/authorize?code=true"
+    echo "Paste code here if prompted >"
+    IFS= read -r line
+    if [ -n "$FAKE_CLAUDE_CODE_FILE" ]; then printf '%s' "$line" > "$FAKE_CLAUDE_CODE_FILE"; fi
+    exit 0
+    ;;
+esac
+echo "fake claude: unexpected arguments: $*" >&2
+exit 2

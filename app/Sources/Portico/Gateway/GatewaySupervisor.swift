@@ -8,8 +8,9 @@ import Foundation
 /// and believes it only after `GET /v1/health` answers and the token file is
 /// readable. `start` spawns the gateway command in its own session (so the
 /// app's signals never reach it), reads `PORTICO_READY port=<n>` from its
-/// stdout, and reads the token file the gateway rewrote. `stop` is the
-/// explicit action: `gateway.stop` through the client.
+/// stdout, and reads the token file the gateway rewrote. Stopping is
+/// `AppModel.stopGateway`: `gateway.stop` through the attached client (or a
+/// socket opened for it), then `noteStopped` here once the socket closes.
 @MainActor
 final class GatewaySupervisor: ObservableObject {
     enum Status: Equatable, Sendable {
@@ -273,6 +274,8 @@ final class GatewaySupervisor: ObservableObject {
         let readEnd = fds[0]
         let writeEnd = fds[1]
 
+        // Sweep #5: this run's lines start here; an earlier run's last line is not this run's reason.
+        let logStart = Self.logSize(logURL)
         let child: pid_t
         do {
             child = try Self.spawnDetached(
@@ -303,7 +306,7 @@ final class GatewaySupervisor: ObservableObject {
             let code = Self.reap(child)
             pid = nil
             close(readEnd)
-            throw SupervisorError.exitedBeforeReady(lastLogLine() ?? code.map { "exit code \($0)" })
+            throw SupervisorError.exitedBeforeReady(lastLogLine(after: logStart) ?? code.map { "exit code \($0)" })
         case .ready(let found):
             port = found
         }
@@ -386,20 +389,22 @@ final class GatewaySupervisor: ObservableObject {
         return nil
     }
 
-    private func lastLogLine() -> String? {
-        guard let text = try? String(contentsOf: logURL, encoding: .utf8) else { return nil }
-        return text.split(separator: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+    /// The last non-blank line this run wrote to the log: what follows byte `offset`.
+    private func lastLogLine(after offset: UInt64) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: logURL) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(), !data.isEmpty else { return nil }
+        return String(decoding: data, as: UTF8.self)
+            .split(separator: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
             .map(String.init)
     }
 
-    // MARK: - stop
-
-    /// Ask the gateway to stop through the attached client: it interrupts
-    /// every running turn, runs the deployment's stop command and exits.
-    func stop(using client: GatewayClient) async {
-        try? await client.send(.gatewayStop(GatewayStop()))
-        noteStopped()
+    /// The log's size in bytes now; 0 when there is none yet.
+    private static func logSize(_ url: URL) -> UInt64 {
+        ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.uint64Value ?? 0
     }
+
+    // MARK: - stop
 
     /// The gateway has gone (the app asked it to and the socket closed):
     /// forget the process and show `stopped`.

@@ -612,6 +612,15 @@
    "expect": "header-keys.resolve.after.md"
   },
   {
+   "name": "status-indented-bare",
+   "file": "status-indented-bare.md",
+   "op": "resolve",
+   "args": {
+    "id": "abcde"
+   },
+   "expect": "status-indented-bare.resolve.after.md"
+  },
+  {
    "name": "indented-code",
    "file": "indented-code.md",
    "parse": {
@@ -806,6 +815,42 @@
     "occurrence": 1
    },
    "expect_refusal": "not found"
+  },
+  {
+   "name": "find-inside-autolink",
+   "text": "Go <https://alpha.example/x> now.\n",
+   "find": {
+    "quote": "alpha",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside a link or entity"
+  },
+  {
+   "name": "find-inside-bare-url",
+   "text": "Visit https://alpha.com/x today.\n",
+   "find": {
+    "quote": "alpha",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside a link or entity"
+  },
+  {
+   "name": "find-inside-entity",
+   "text": "Tom &amp; Jerry.\n",
+   "find": {
+    "quote": "Tom &",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside a link or entity"
+  },
+  {
+   "name": "find-whole-bare-url",
+   "text": "Visit https://alpha.com/x today.\n",
+   "find": {
+    "quote": "https://alpha.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "Visit "
   },
   {
    "name": "find-indented-code",

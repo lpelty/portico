@@ -167,7 +167,8 @@ def test_fixture_finds(case):
         assert found[0] == len(case["expect_prefix"])
         if "expect_text" in case:
             assert case["text"][found[0] : found[1]] == case["expect_text"]
-        assert case["text"][found[0] : found[1]] == cm.strip_markers(case["find"]["quote"]) or True
+        else:
+            assert case["text"][found[0] : found[1]] == cm.strip_markers(case["find"]["quote"])
 
 
 @pytest.mark.parametrize("value", ROUNDTRIP)
@@ -187,8 +188,7 @@ def test_reply_text_round_trips(value):
     assert out.count("-->") == 3  # the two markers and the block's close: no reply text ends the block early
 
 
-def test_non_utf8_is_not_parsed_here():
-    # Bytes are the tools' business (comment_tools); the format works on text.
+def test_empty_text_has_no_comments():
     assert cm.parse("") == cm.Parsed((), ())
 
 
@@ -213,3 +213,36 @@ def test_fixture_refusals(case):
     want = {"changed": cm.CommentChanged, "blank": ValueError}[case["expect_error"]]
     with pytest.raises(want):
         apply_op(text, case)
+
+
+# --- v0.25 sweep fixes ---------------------------------------------------------
+
+
+def test_set_status_indented_bare_keeps_id():
+    """#9: resolving an indented block with no ``at`` and no ``status`` keeps its ID."""
+    text = '- item with <!--c:abcde-->text<!--/c:abcde--> here\n  <!--co:abcde by:larry quote:"text"\n  larry: hi\n  -->\n'
+    out = cm.set_status(text, "abcde", "resolved")
+    [t] = cm.parse(out).threads
+    assert (t.id, t.status) == ("abcde", "resolved")
+    assert '  <!--co:abcde status:resolved by:larry quote:"text"' in out
+
+
+def test_reply_author_with_colon_round_trips():
+    """#11: a name with a colon is written with RATIO on the reply line, and reads back the same."""
+    assert cm.reply_author("Dr: Who") == "Dr\u2236 Who"
+    assert cm.reply_author("Sam") == "Sam"
+    out = cm.add_thread("Hello world\n", 0, 5, id="abcde", author="Dr: Who", at="t", body="hi")
+    out = cm.add_reply(out, "abcde", author="Dr: Who", at="u", body="again")
+    [t] = cm.parse(out).threads
+    assert t.by == "Dr: Who", "the header keeps the name as given"
+    assert [(r.author, r.text) for r in t.replies] == [("Dr\u2236 Who", "hi"), ("Dr\u2236 Who", "again")]
+
+
+def test_a_match_inside_a_link_or_entity_is_refused():
+    """#3 (ruling 22): refused, not widened; the occurrence count still includes it."""
+    assert cm.find_quote("Go <https://alpha.example/x> or alpha.\n", "alpha", 1) == "inside a link or entity"
+    assert cm.find_quote("Go <https://alpha.example/x> or alpha.\n", "alpha", 2) == (32, 37)
+    assert cm.find_quote("Visit www.alpha.com today.\n", "alpha", 1) == "inside a link or entity"
+    assert cm.find_quote("A &#123; B &#x1F; C\n", "#1", 1) == "inside a link or entity"
+    assert cm.find_quote("Tom &amp; Jerry.\n", "Tom &amp; Jerry", 1) == (0, 15), "a match holding the whole entity is fine"
+    assert cm.find_quote("`https://alpha.com` text\n", "alpha", 1) == "inside code or front matter"

@@ -336,6 +336,15 @@ each configured plug-in the same way. `examples/plugin/` holds a complete
 example. The app takes no plug-ins: a new kind of screen is a request
 upstream.
 
+**Private capabilities stay out of this repo** (v0.25). Anything in the
+app's code ships to everyone, switched off. A capability for one setup
+belongs in a gateway plug-in, and Settings › Labs is where it shows: a
+plug-in's `on_hello` adds its own items to `hello.labs`
+(`LabItem(key, title, detail, tag, source, home=None)` from
+`portico_gateway.messages`), and the gateway marks each one Local, from
+`plugin:<module>`, whatever the plug-in set. Its row in Labs is
+informational; the plug-in's own config turns the feature on.
+
 ## Permissions
 
 Each session has a permission mode, shown on the composer and changeable
@@ -371,14 +380,16 @@ as agents. Nothing to configure.
 
 Voice is all in the app and all on the Mac (macOS 26 or later): nothing
 said or read goes to a server, and the gateway and protocol stay text.
-Settings › Voice turns each half on or off.
+Settings › Voice turns Talk on or off; Read aloud, while it is tried out, is in Settings › Labs.
 
 **Read aloud is off by default and hidden** (v0.9): the voices macOS lets
 apps use still sound dated, so the button and the Listen settings are kept
 out of sight until a deployment or a person turns them on. v0.24: put
 `read_aloud = true` under `[voice]` in `config.local.toml` (or the
-deployment's `config.toml`) and restart the gateway; Settings › Voice then
-shows the switch, and the on/off choice stays the person's. The older
+deployment's `config.toml`) and restart the gateway; Settings shows the
+switch, and the on/off choice stays the person's. v0.25: Read aloud's
+switch, voice, speed and sample live in Settings › Labs, a tab shown only
+while a feature being tried out is on, until Read aloud is released. The older
 machine flag still works too:
 `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`
 (and off with `-bool NO`), then relaunch.
@@ -398,7 +409,7 @@ the microphone: voice input says it needs the installed app (`bin/install`).
 
 **Read aloud.** Each reply has Read aloud beside Copy; while it reads it
 is Stop reading, and Esc stops too. It uses the voice and speed chosen in
-Settings › Voice (the system voices, and your Personal Voice once you
+Settings › Labs (the system voices, and your Personal Voice once you
 allow it there). Code is never read: a code block is "See the code below.",
 a table "See the table below."; links are read as their text.
 
@@ -563,7 +574,6 @@ bin/portico-gateway config show        # (v0.24) every key, its value in force a
 bin/portico-gateway capture-prompt     # (v0.24) copy Claude Code's prompt to <state>/prompts/ (see The agent's
                                        # system prompt); --out PATH
 bin/portico-gateway sessions           # (v0.24) every session, newest first, with its prompt; --json
-bin/portico-gateway export-config-doc  # (v0.24) regenerate CONFIGURATION.md and config.example.toml
 bin/portico-gateway message "Standup moved" --title Heads-up --notify --space meeting-prep
                                        # (v0.22) leave a message for the open app: a file in <state>/messages/,
                                        # sent within 2 s or on the app's next connect (up to 50 wait)
@@ -571,6 +581,10 @@ bin/portico-gateway sessions clear     # (v0.12) forget every earlier session; a
                                        # refuses while a gateway runs ("Stop the gateway first.") and in
                                        # multiple presentation; the transcripts on disk stay
 ```
+
+The export commands write the repo's generated files and take `--out`
+instead of `--state`: `export-config-doc` (v0.24, `CONFIGURATION.md` and
+`config.example.toml`), `export-schema` and `export-examples`.
 
 `status --json` is the supported way for other tools to see that the app
 holds a live session in a folder; the lock and ledger files in the state

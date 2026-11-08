@@ -46,7 +46,8 @@ enum MarkdownPage {
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
             .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
-            .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
+            // Its braces as entities too (sweep #13), so a file named `{{SOURCE}}.md` is not filled in.
+            .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title).replacingOccurrences(of: "{", with: "&#123;"))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(sentinelMarkers(source, body: split.body)))
@@ -503,12 +504,14 @@ struct WebPane: NSViewRepresentable {
 
     /// The page the pane renders for `load` at a text scale: a Markdown
     /// file's page, scaled (v0.15 §3). An HTML file and a site are shown
-    /// as they are, at their true size (`nil`: nothing is rendered).
-    static func renderedPage(for load: Load, scale: CGFloat) -> String? {
-        guard case .markdown(let file, let hiding) = load,
-              let source = try? String(contentsOf: file, encoding: .utf8)
-        else { return nil }
-        return try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale)
+    /// as they are, at their true size (`nil`: nothing is rendered). The one
+    /// render path: a load and a re-render (`renderedURL`) both come here
+    /// (v0.25 sweep #28). Throws when the file can't be read.
+    static func renderedHTML(for load: Load, scale: CGFloat, propertiesOpen: Bool = false) throws -> String? {
+        guard case .markdown(let file, let hiding) = load else { return nil }
+        let source = try String(contentsOf: file, encoding: .utf8)
+        return try MarkdownPage.html(
+            source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -988,8 +991,7 @@ struct WebPane: NSViewRepresentable {
             switch load {
             case .markdown(let file, let hiding):
                 do {
-                    let source = try String(contentsOf: file, encoding: .utf8)
-                    let page = try MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
+                    let page = try WebPane.renderedHTML(for: load, scale: scale, propertiesOpen: propertiesOpen) ?? ""
                     let url = handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
                     view.load(URLRequest(url: url))
                 } catch {
@@ -1018,8 +1020,8 @@ struct WebPane: NSViewRepresentable {
                 guard FileManager.default.isReadableFile(atPath: file.path) else { return nil }
                 return handler.register(file: file)
             case "md", "markdown":
-                guard let source = try? String(contentsOf: file, encoding: .utf8),
-                      let page = try? MarkdownPage.html(source: source, title: file.lastPathComponent, hiding: hiding, scale: scale, propertiesOpen: propertiesOpen)
+                guard let page = try? WebPane.renderedHTML(
+                    for: .markdown(file, hiding: hiding), scale: scale, propertiesOpen: propertiesOpen)
                 else { return nil }
                 return handler.register(page: page, root: file.deletingLastPathComponent(), source: file, hiding: hiding)
             default:
