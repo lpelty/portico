@@ -58,6 +58,10 @@ DEPLOYMENT_MESSAGE_CAPABILITY = "messages.deployment.v1"
 # entry's real time, and ``no_time`` where no entry matched; an older gateway
 # stamps its replay with the time of the replay.
 HISTORY_TIMES_CAPABILITY = "history.times.v1"
+# v0.25: a turn that fails on an expired sign-in waits and carries on by itself.
+# The gateway sends ``signin.wait`` only to an app that lists it too; the app
+# sends ``signin.open`` / ``signin.stop`` / ``signin.code`` only to a gateway that does.
+SIGNIN_CAPABILITY = "signin.v1"
 
 # v0.23: the app shows and writes comments in Markdown files (comment format
 # v1, protocol/COMMENTS.md). Declared for future use: the comment tools work
@@ -767,6 +771,28 @@ class FilesSearch(Envelope):
     query: str
 
 
+class SigninOpen(Envelope):
+    """v0.25 (``signin.v1``): the card's Open sign-in page: run the kind's ``open`` command."""
+
+    type: Literal["signin.open"] = "signin.open"
+    chat: int
+
+
+class SigninStop(Envelope):
+    """v0.25 (``signin.v1``): Don't wait: stop waiting; the turn stays ended."""
+
+    type: Literal["signin.stop"] = "signin.stop"
+    chat: int
+
+
+class SigninCode(Envelope):
+    """v0.25 (``signin.v1``): a code the person pasted from the browser, for the running sign-in command's input."""
+
+    type: Literal["signin.code"] = "signin.code"
+    chat: int
+    code: str
+
+
 class GatewayStop(Envelope):
     """Stop the gateway: interrupt every running turn, run ``on_stop``, exit.
 
@@ -994,6 +1020,32 @@ class TurnFinished(Envelope):
         """``self`` carrying ``detail`` (set in place; returned for chaining)."""
         self._error_detail = list(detail)
         return self
+
+
+class SigninWait(Envelope):
+    """v0.25 §4.5 (``signin.v1``): a turn ended on an expired sign-in and the gateway waits for it, or stopped waiting.
+
+    ``state`` is ``waiting`` (the card shows), ``current`` (signed in again:
+    the turn carries on) or ``stopped`` (Don't wait, a new message, or the
+    chat stopped). ``title`` and ``body`` word the card; ``can_open`` says
+    whether Open sign-in page has a command to run. ``url`` and ``code`` are
+    the sign-in command's link and one-time code, once it printed them, for
+    Trouble signing in?; ``wants_code`` says the command reads a code pasted
+    from the browser (``signin.code``). Not kept in the ring.
+    """
+
+    type: Literal["signin.wait"] = "signin.wait"
+    chat: int
+    turn: int
+    state: Literal["waiting", "current", "stopped"]
+    kind: Literal["aws-sso", "claude"]
+    title: str
+    body: str
+    can_open: bool
+    started: str
+    url: str | None = None
+    code: str | None = None
+    wants_code: bool = False
 
 
 class CardAsk(Envelope):
@@ -1683,6 +1735,9 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     AppMessage,
     AppContext,
     AppReload,
+    SigninOpen,
+    SigninStop,
+    SigninCode,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1735,6 +1790,7 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     AppResult,
     AppCancelled,
     AppCallResult,
+    SigninWait,
     Error,
 )
 
@@ -1828,7 +1884,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY, SIGNIN_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1888,6 +1944,9 @@ def example_messages() -> dict[str, BaseModel]:
         AppMessage(ts=_TS, id="req-41", chat=1, tool_use_id="toolu_01", text="Mark Launch email done"),
         AppContext(ts=_TS, chat=1, tool_use_id="toolu_01", text="Project: Acme launch. 3 of 4 tasks done."),
         AppReload(ts=_TS, id="req-42", chat=1, tool_use_id="toolu_01"),
+        SigninOpen(ts=_TS, chat=1),
+        SigninStop(ts=_TS, chat=1),
+        SigninCode(ts=_TS, chat=1, code="pasted-from-the-browser"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -1994,7 +2053,7 @@ def example_messages() -> dict[str, BaseModel]:
         ToolFinished(
             ts=_TS, chat=1, seq=46, turn=2, tool_use_id="toolu_01", ok=True, summary="read 120 lines", permission="auto"
         ),
-        TurnFinished(ts=_TS, chat=1, seq=47, turn=2, outcome="done"),
+        TurnFinished(ts=_TS, chat=1, seq=47, turn=2, outcome="error", reason="signin.expired"),
         CardAsk(
             ts=_TS,
             chat=1,
@@ -2286,6 +2345,11 @@ def example_messages() -> dict[str, BaseModel]:
             ok=True,
             content=[{"type": "text", "text": "Launch email is done."}],
             structured_content={"task": "Launch email", "status": "done"},
+        ),
+        SigninWait(
+            ts=_TS, chat=1, turn=4, state="waiting", kind="aws-sso", title="Sign in again to continue",
+            body="Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done.",
+            can_open=True, started=_TS, url="https://device.sso.us-east-1.amazonaws.com/", code="QKXW-RTBN",
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

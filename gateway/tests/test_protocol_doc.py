@@ -50,3 +50,13 @@ def test_config_toml_appearing_is_named_too() -> None:
     assert "or appeared" in hello[hello.index("`config_stale: bool`") :][:400]
     text = " ".join(PROTOCOL.read_text(encoding="utf-8").split())
     assert "or appeared" in text[text.index("The running gateway also checks for updates itself") :][:900]
+
+
+def test_signin_messages_are_documented() -> None:
+    for heading in ("`signin.wait` — `SigninWait`", "`signin.open` — `SigninOpen`", "`signin.stop` — `SigninStop`", "`signin.code` — `SigninCode`"):
+        assert _section(heading)
+    wait = _section("`signin.wait` — `SigninWait`")
+    assert "signin.v1" in wait and "`waiting`" in wait and "`current`" in wait and "`stopped`" in wait
+    assert "never logged" in wait
+    finished = _section("`turn.finished` — `TurnFinished`")
+    assert "`reason?" in finished and "signin.expired" in finished

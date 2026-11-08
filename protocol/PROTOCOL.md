@@ -102,7 +102,9 @@ reads them in `user.text`) and `files.extra.v1` (it sends
 with `task`; see Subagents and workflows); v0.22: `messages.deployment.v1`
 (it docks `deployment.message`; see Messages from the deployment); v0.23:
 `comments.v1` (it shows and writes comments in Markdown files; see
-[Comments](#comments-v023)), declared for future use. Absent
+[Comments](#comments-v023)), declared for future use; v0.25: `signin.v1`
+(it docks the sign-in card from `signin.wait`; see
+[Signing in again](#signing-in-again-v025)). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -554,7 +556,8 @@ always, so the app may send `attachments` on `message.send` and reads them in
 send `deployment.message` to an app that lists it too, and `spaces.act` as
 well when `[spaces] act` is, so the app acts on `space-action:` links;
 v0.25: `history.times.v1` always, so the app trusts the times of a
-transcript replay, see `chat.history`).
+transcript replay, see `chat.history`, and `signin.v1` always, see
+[Signing in again](#signing-in-again-v025)).
 Always followed by `chat.list`, so the app has the
 sidebar before anything else arrives, and then (v0.4) `services.status`,
 (v0.11) any kept `chat.commands` and (v0.15) a kept `models` per live session.
@@ -831,7 +834,13 @@ card's `scope_note`.
 turn: `done` when the engine finished, `stopped` after `turn.stop` or
 `chat.stop`, `error` when the engine reported a failure or refused the
 message. Always followed by `chat.state` (`idle`, or `stopped` after
-`chat.stop`).
+`chat.stop`). v0.25: `reason?: string`, why the turn ended when the
+gateway knows a reason the app words: `signin.expired` when an `error`
+turn failed on an expired sign-in (see [Signing in again](#signing-in-again-v025)).
+Left open for future reasons; an app shows a reason it doesn't know as the
+plain outcome. Sent to every app, whether or not it declared `signin.v1`, so
+an app without the card still says "Sign-in ran out" on the marker. Absent
+otherwise, and from an older gateway.
 
 ### `card.ask` — `CardAsk`
 `chat`, `seq`, `id`, `kind: permission | question | form`, `title`, and one of
@@ -2175,6 +2184,86 @@ quote that can't be anchored returns a plain error and changes nothing.
 Writes are atomic, keep the file's line endings and byte-order mark, and
 touch only the thread's anchors and block. A write is reported like the
 agent's `Write`/`Edit` of that file, so the app reloads it.
+
+## Signing in again *(v0.25)*
+
+On a deployment whose sign-in runs out (AWS SSO every few hours, or the
+Claude subscription login when its renewal is refused), a turn fails with a
+credential error. With `signin.v1` on both sides, the gateway pauses the
+turn instead of leaving it failed: a card docks above the composer, and once
+the person has signed in again the turn carries on by itself in the same
+session.
+
+**Capability.** The gateway always lists `signin.v1` in its `hello`; the
+app lists it in its own. The gateway sends `signin.wait` only while a
+connected app has declared it, and starts a wait only then; without it the
+turn ends as before, with `turn.finished.reason` set. The app sends
+`signin.open`, `signin.stop` and `signin.code` only to a gateway that
+listed it.
+
+**How the gateway knows.** At the end of a turn it reads the engine's error
+detail (the result's errors and text, and an assistant message's `error`).
+Each sign-in kind has patterns (`[signin.aws-sso] patterns`,
+`[signin.claude] patterns`); the first kind with a match, `aws-sso` before
+`claude`, names the sign-in. It then knows the sign-in is current again by
+the kind's `check` command (exit 0; every 10 s), or for `aws-sso` with no
+check, by the AWS SSO token cache (a token for the configured start URL,
+written after the error, that hasn't expired; every 5 s). There is no time
+limit.
+
+**How the turn carries on.** Once current, the gateway sends `signin.wait`
+with `state: current`, then starts the next turn in the same session with a
+short continue message ("Your sign-in was renewed. Continue where you left
+off; don't repeat steps that already finished."). It sends no `user.text`
+for it, and never sends the person's message a second time (the engine's
+transcript already holds it); a transcript replay draws no bubble for it.
+The app notes "Continued after sign-in" in the conversation. Each chat gets
+one wait, and one more if the continued turn fails on the sign-in again;
+after that the turn ends with the reason. A `message.send` while waiting
+stops the wait (`state: stopped`) and resets the count; so does a turn
+that finishes `done`.
+
+**Credentials.** The sign-in command's URL and one-time code are the only
+credential-adjacent values the gateway ever sends, and only to show under
+the card's Trouble signing in?. Nothing here is logged: not the command's
+output, the URL, the code, or a pasted code.
+
+### `signin.wait` — `SigninWait`
+`chat`, `turn` (the turn that failed), `state: waiting | current | stopped`,
+`kind: aws-sso | claude`, `title`, `body` (the card's words, from the
+kind's config), `can_open: bool` (the kind has an `open` command, so the
+card offers Open sign-in page), `started` (when the wait began, a
+timestamp), `url?` and `code?` (the sign-in command's first `https://` URL
+and first code-shaped token, such as `ABCD-EFGH`, once it printed them;
+never logged), `wants_code: bool` (default `false`; the command reads a
+code pasted from the browser on its standard input, so the card offers a
+Paste code field: true for `claude`). Gateway → app, only to an app that
+declared `signin.v1`. `waiting` docks the card (sent again with `url` and
+`code` once the command prints them, and again to an app that attaches
+while the wait runs); `current` means signed in: the card says so for a
+moment and the turn carries on; `stopped` closes the card (Don't wait, a
+new message, or the chat stopped or was removed). Not stamped and not kept
+in the ring: an app that reconnects gets the running wait again, and drops
+every card when its connection closes.
+
+### `signin.open` — `SigninOpen`
+`chat`. App → gateway, only to a gateway that declared `signin.v1`: the
+card's Open sign-in page. The gateway runs the kind's `open` command (a
+shell command, with the gateway's own environment) and reads its output
+for the URL and code, which it sends in a further `signin.wait`. Ignored
+when the chat isn't waiting or the kind has no `open`.
+
+### `signin.stop` — `SigninStop`
+`chat`. App → gateway, only to a gateway that declared `signin.v1`: Don't
+wait (also the card's close button). The gateway stops waiting, ends any
+running sign-in command and sends `signin.wait` with `state: stopped`; the
+turn stays ended.
+
+### `signin.code` — `SigninCode`
+`chat`, `code`. App → gateway, only to a gateway that declared `signin.v1`:
+a code the person pasted from the browser, written with a newline to the
+running sign-in command's standard input. Never logged. Ignored when no
+command is running.
 
 ## Services *(v0.4)*
 

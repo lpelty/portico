@@ -2916,6 +2916,15 @@
         },
         {
           "$ref": "#/$defs/AppReload"
+        },
+        {
+          "$ref": "#/$defs/SigninOpen"
+        },
+        {
+          "$ref": "#/$defs/SigninStop"
+        },
+        {
+          "$ref": "#/$defs/SigninCode"
         }
       ]
     },
@@ -6523,6 +6532,9 @@
           "$ref": "#/$defs/AppCallResult"
         },
         {
+          "$ref": "#/$defs/SigninWait"
+        },
+        {
           "$ref": "#/$defs/Error"
         }
       ]
@@ -7105,6 +7117,284 @@
         "ts"
       ],
       "title": "SessionsClear",
+      "type": "object"
+    },
+    "SigninCode": {
+      "additionalProperties": false,
+      "description": "v0.25 (``signin.v1``): a code the person pasted from the browser, for the running sign-in command's input.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "signin.code",
+          "default": "signin.code",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "code"
+      ],
+      "title": "SigninCode",
+      "type": "object"
+    },
+    "SigninOpen": {
+      "additionalProperties": false,
+      "description": "v0.25 (``signin.v1``): the card's Open sign-in page: run the kind's ``open`` command.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "signin.open",
+          "default": "signin.open",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "SigninOpen",
+      "type": "object"
+    },
+    "SigninStop": {
+      "additionalProperties": false,
+      "description": "v0.25 (``signin.v1``): Don't wait: stop waiting; the turn stays ended.",
+      "properties": {
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "signin.stop",
+          "default": "signin.stop",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat",
+        "ts"
+      ],
+      "title": "SigninStop",
+      "type": "object"
+    },
+    "SigninWait": {
+      "additionalProperties": false,
+      "description": "v0.25 §4.5 (``signin.v1``): a turn ended on an expired sign-in and the gateway waits for it, or stopped waiting.\n\n``state`` is ``waiting`` (the card shows), ``current`` (signed in again:\nthe turn carries on) or ``stopped`` (Don't wait, a new message, or the\nchat stopped). ``title`` and ``body`` word the card; ``can_open`` says\nwhether Open sign-in page has a command to run. ``url`` and ``code`` are\nthe sign-in command's link and one-time code, once it printed them, for\nTrouble signing in?; ``wants_code`` says the command reads a code pasted\nfrom the browser (``signin.code``). Not kept in the ring.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "can_open": {
+          "title": "Can Open",
+          "type": "boolean"
+        },
+        "chat": {
+          "title": "Chat",
+          "type": "integer"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "kind": {
+          "enum": [
+            "aws-sso",
+            "claude"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "started": {
+          "title": "Started",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "current",
+            "stopped"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "type": {
+          "const": "signin.wait",
+          "default": "signin.wait",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "wants_code": {
+          "default": false,
+          "title": "Wants Code",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "chat",
+        "ts",
+        "turn",
+        "state",
+        "kind",
+        "title",
+        "body",
+        "can_open",
+        "started"
+      ],
+      "title": "SigninWait",
       "type": "object"
     },
     "SpaceAct": {
@@ -8198,6 +8488,18 @@
           ],
           "title": "Outcome",
           "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
         },
         "seq": {
           "anyOf": [

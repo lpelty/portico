@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, READ_ALOUD_LAB
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, READ_ALOUD_LAB
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -45,8 +45,9 @@ CAPABILITIES: list[str] = [
     "cards.form", "files", "producer", "sessions", "files.search", "context", "agents.v1", "queue.v1",
     MODELS_CAPABILITY, MCP_CAPABILITY, PLUGINS_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY,
     FILES_EXTRA_CAPABILITY, FILES_EDITED_CAPABILITY, TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY,
-    # v0.25: replayed history carries the transcript's real times.
-    HISTORY_TIMES_CAPABILITY,
+    # v0.25: replayed history carries the transcript's real times; a turn that
+    # fails on an expired sign-in waits for an app that lists ``signin.v1`` too.
+    HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY,
 ]
 
 # v0.8: advertised when the deployment can restart all its services at once

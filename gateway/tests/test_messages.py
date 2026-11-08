@@ -126,6 +126,10 @@ EXPECTED_KEYS = {
     "server.app.call_result",
     "server.plugins.details",
     "server.plugins.options",
+    "server.signin.wait",
+    "client.signin.open",
+    "client.signin.stop",
+    "client.signin.code",
 }
 
 
@@ -148,7 +152,8 @@ def test_every_type_has_schema_def_and_example():
     # plugins.options (both ways), plugins.configure, plugins.state;
     # app.call_tool, app.message, app.context, app.reload, app.open, app.result, app.cancelled, app.call_result
     # v0.22's space.act, deployment.message
-    assert len(ex) == 104
+    # v0.25's signin.wait, signin.open, signin.stop, signin.code
+    assert len(ex) == 108
     assert set(ex) == EXPECTED_KEYS
 
 
@@ -307,3 +312,45 @@ def test_v016_thread_frames_round_trip_with_their_wire_shape():
     thread = json.loads(dump(listing))["chats"][-1]["thread"]
     assert set(thread) == {"label", "slot", "parent", "brief", "files", "opened_at"}
     assert "thread" not in json.loads(dump(listing))["chats"][0], "absent on a chat that is not a thread"
+
+
+# --- v0.25: sign-in -----------------------------------------------------------------
+
+
+def test_signin_messages_round_trip() -> None:
+    from portico_gateway.messages import SigninCode, SigninOpen, SigninStop, SigninWait, parse_client, parse_server
+
+    wait = SigninWait(
+        ts="2026-11-08T21:14:00Z", chat=1, turn=3, state="waiting", kind="claude", title="Sign in again to continue",
+        body="Your Claude sign-in has run out.", can_open=True, started="2026-11-08T21:14:00Z",
+        url="https://claude.example/oauth", wants_code=True,
+    )
+    back = parse_server(dump(wait))
+    assert back == wait and isinstance(back, SigninWait)
+    assert "code" not in json.loads(dump(wait))
+    for msg in (SigninOpen(ts="t", chat=1), SigninStop(ts="t", chat=1), SigninCode(ts="t", chat=1, code="abc")):
+        assert parse_client(dump(msg)) == msg
+    with pytest.raises(ProtocolError):
+        parse_server(dump(wait).replace('"waiting"', '"sleeping"'))
+
+
+def test_turn_finished_reason_is_optional() -> None:
+    from portico_gateway.messages import TurnFinished, parse_server
+
+    old = parse_server('{"type":"turn.finished","chat":1,"turn":2,"outcome":"error","ts":"t"}')
+    assert isinstance(old, TurnFinished) and old.reason is None
+    assert json.loads(dump(TurnFinished(ts="t", chat=1, turn=2, outcome="error", reason="signin.expired")))["reason"] == "signin.expired"
+
+
+def test_hello_lists_signin_v1() -> None:
+    from portico_gateway.config import Config, hello_for
+    from portico_gateway.messages import SIGNIN_CAPABILITY
+
+    assert SIGNIN_CAPABILITY == "signin.v1"
+    assert "signin.v1" in hello_for(Config(), epoch="e", gateway_version="0.25.0").capabilities
+
+
+def test_signin_wait_is_not_a_history_event() -> None:
+    from portico_gateway.messages import HistoryEvent, SigninWait
+
+    assert SigninWait not in getattr(HistoryEvent, "__args__", ())
