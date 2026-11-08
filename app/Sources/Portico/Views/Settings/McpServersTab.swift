@@ -314,7 +314,7 @@ struct McpServersTab: View {
                 sectionHeader(section)
                 SettingsPanel {
                     ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         serverRow(row)
                     }
                 }
@@ -495,7 +495,7 @@ struct McpServersTab: View {
                     .foregroundStyle(Theme.text2)
                 SettingsPanel {
                     ForEach(Array(page.tools.enumerated()), id: \.element.id) { index, tool in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         toolRow(tool, server: row.name, editable: page.policyEditable && !busy)
                     }
                 }

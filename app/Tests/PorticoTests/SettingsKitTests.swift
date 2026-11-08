@@ -132,4 +132,38 @@ final class SettingsKitTests: XCTestCase {
         XCTAssertGreaterThan(host.fittingSize.height, 100)
         XCTAssertGreaterThan(host.fittingSize.width, 100)
     }
+
+    // MARK: - v0.26 (PORT-24, ZF1b): section outlines and row lines on border-subtle
+
+    func testSectionOutlinesAndRowLinesAreSubtle() {
+        XCTAssertEqual(SettingsKit.panelOutline, Theme.borderSubtle)
+        XCTAssertEqual(SettingsKit.rowLine, Theme.borderSubtle)
+    }
+
+    private func source(_ path: String) throws -> String {
+        let url = ListFontSweepTests.sources.appendingPathComponent(path)
+        return ListFontSweepTests.withoutComments(try String(contentsOf: url, encoding: .utf8))
+    }
+
+    func testListRowLinesUseTheDivider() throws {
+        for name in ["Views/Settings/McpServersTab.swift", "Views/Settings/PluginsTab.swift"] {
+            let text = try source(name)
+            XCTAssertFalse(text.contains("Rectangle().fill(Theme.border)"), name)
+            XCTAssertTrue(text.contains("SettingsDivider()"), name)
+        }
+        let kit = try source("Views/Settings/SettingsKit.swift")
+        XCTAssertTrue(kit.contains(".stroke(SettingsKit.panelOutline, lineWidth: 1)"))
+        XCTAssertTrue(kit.contains("Rectangle().fill(SettingsKit.rowLine)"))
+    }
+
+    func testControlsKeepTheirBorders() throws {
+        let kit = try source("Views/Settings/SettingsKit.swift")
+        // Text fields and segmented controls: Theme.border; the switch: Theme.borderStrong.
+        XCTAssertTrue(kit.contains("RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Theme.border, lineWidth: 1)"))
+        XCTAssertTrue(kit.contains("RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Theme.border, lineWidth: 1)"))
+        XCTAssertTrue(kit.contains("Capsule().stroke(isOn ? Color.clear : Theme.borderStrong, lineWidth: 1)"))
+        let settings = try source("Views/SettingsView.swift")
+        XCTAssertTrue(settings.contains("stroke(Theme.borderStrong, lineWidth: 1)"))  // Appearance's stepper
+        XCTAssertTrue(settings.contains("Theme.nsColor(.border).setFill()"))           // the tab header's line
+    }
 }

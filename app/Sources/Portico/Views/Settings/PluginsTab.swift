@@ -364,7 +364,7 @@ struct PluginsTab: View {
             } else {
                 SettingsPanel {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         installedRow(row)
                     }
                 }
@@ -374,7 +374,7 @@ struct PluginsTab: View {
                 sectionTitle(PluginsPresentation.marketplacesTitle(model.plugins))
                 SettingsPanel {
                     ForEach(Array(markets.enumerated()), id: \.element.id) { index, market in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         marketplaceRow(market)
                     }
                 }
@@ -488,7 +488,7 @@ struct PluginsTab: View {
             } else {
                 SettingsPanel {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         browseRow(row)
                     }
                 }
