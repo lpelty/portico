@@ -113,6 +113,10 @@ final class Settings: ObservableObject {
         static let readAloudAvailable = "voice.readAloudAvailable"
         static let voiceIdentifier = "voice.identifier"
         static let speechRate = "voice.speechRate"
+        static let voiceSource = "voice.source"
+        static let elevenLabsVoiceID = "voice.elevenlabs.voiceID"
+        static let elevenLabsVoiceName = "voice.elevenlabs.voiceName"
+        static let elevenLabsModel = "voice.elevenlabs.model"
         static let viewerAgentCanSee = "viewer.agentCanSee"
         static let viewerAgentChecksHTML = "viewer.agentChecksHTML"
         static let propertiesOpen = "viewer.propertiesOpen"
@@ -248,6 +252,36 @@ final class Settings: ObservableObject {
     /// v0.26 (PORT-23): the gateway listed `voice.elevenlabs` with Read aloud
     /// (`[voice.elevenlabs] enabled`): Read aloud may speak with an ElevenLabs voice.
     @Published var elevenLabsAvailable = false
+
+    /// v0.26 (PORT-23): who speaks Read aloud: this Mac's voices or ElevenLabs'.
+    enum VoiceSource: String, CaseIterable, Sendable {
+        case thisMac, elevenLabs
+
+        var label: String {
+            switch self {
+            case .thisMac: "This Mac"
+            case .elevenLabs: "ElevenLabs"
+            }
+        }
+    }
+
+    @Published var voiceSource: VoiceSource {
+        didSet { defaults.set(voiceSource.rawValue, forKey: Key.voiceSource) }
+    }
+    /// The ElevenLabs voice's ID, as the person typed or chose it.
+    @Published var elevenLabsVoiceID: String? {
+        didSet { Self.store(elevenLabsVoiceID, forKey: Key.elevenLabsVoiceID, in: defaults) }
+    }
+    /// The voice's name, remembered from Choose… (ruling 10); editing the ID clears it.
+    @Published var elevenLabsVoiceName: String? {
+        didSet { Self.store(elevenLabsVoiceName, forKey: Key.elevenLabsVoiceName, in: defaults) }
+    }
+    /// The ElevenLabs model's ID (`eleven_v4_turbo` unless chosen).
+    @Published var elevenLabsModel: String {
+        didSet { defaults.set(elevenLabsModel, forKey: Key.elevenLabsModel) }
+    }
+    /// Read aloud speaks with ElevenLabs: turned on by the gateway and chosen here.
+    var speaksWithElevenLabs: Bool { elevenLabsAvailable && voiceSource == .elevenLabs }
     /// Code blocks with a language wrap long lines when true (v0.19 §9);
     /// prose in a fence always wraps. The code block header's toggle flips it.
     @Published var wrapCode: Bool {
@@ -370,6 +404,10 @@ final class Settings: ObservableObject {
         readAloudFlag = defaults.bool(forKey: Key.readAloudAvailable)
         voiceIdentifier = Self.read(Key.voiceIdentifier, in: defaults)
         speechRate = defaults.string(forKey: Key.speechRate).flatMap(SpeechRate.init(rawValue:)) ?? .normal
+        voiceSource = defaults.string(forKey: Key.voiceSource).flatMap(VoiceSource.init(rawValue:)) ?? .thisMac
+        elevenLabsVoiceID = Self.read(Key.elevenLabsVoiceID, in: defaults)
+        elevenLabsVoiceName = Self.read(Key.elevenLabsVoiceName, in: defaults)
+        elevenLabsModel = Self.read(Key.elevenLabsModel, in: defaults) ?? ElevenLabsModels.defaultID
         viewerAgentCanSee = defaults.object(forKey: Key.viewerAgentCanSee) as? Bool
         viewerAgentChecksHTML = defaults.object(forKey: Key.viewerAgentChecksHTML) as? Bool
         propertiesOpen = defaults.object(forKey: Key.propertiesOpen) as? Bool
@@ -409,3 +447,6 @@ final class Settings: ObservableObject {
         }
     }
 }
+
+/// v0.26 (PORT-23): Read aloud's voice source (`Settings.VoiceSource`).
+typealias VoiceSource = Settings.VoiceSource

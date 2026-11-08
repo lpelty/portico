@@ -97,11 +97,15 @@ final class ReadAloud: ObservableObject {
 
     /// The installed voices, read when speaking starts (a fake in tests).
     private let installedVoices: () -> [VoiceOption]
+    /// v0.26 (PORT-23): the ElevenLabs key, models and voices (nil: This Mac only).
+    let account: ElevenLabsAccount?
 
     init(
         settings: Settings, synthesizer: SpeechSynthesizing? = nil, escape: EscapeKey? = nil,
-        installedVoices: @escaping () -> [VoiceOption] = VoiceChoices.installed
+        installedVoices: @escaping () -> [VoiceOption] = VoiceChoices.installed,
+        account: ElevenLabsAccount? = nil
     ) {
+        self.account = account
         self.installedVoices = installedVoices
         self.settings = settings
         self.synthesizer = synthesizer ?? SystemSpeechSynthesizer()

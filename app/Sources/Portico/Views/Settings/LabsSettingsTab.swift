@@ -102,57 +102,112 @@ struct ReadAloudControls: View {
     /// The switch's subtitle (ruling 3).
     static let switchHelp = "A Play button on each reply; replies are read as they arrive while it's on."
 
+    /// Read aloud's footnote with This Mac's voices.
+    static let thisMacFootnote =
+        "Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading."
+    /// v0.26 (PORT-23, ruling 8): the footnote while the source is ElevenLabs.
+    static let elevenLabsFootnote =
+        "Replies are sent to ElevenLabs to be spoken, and count against your ElevenLabs plan. If ElevenLabs can't speak a reply, it's read with this Mac's voice and a note says why."
+
+    /// The rows drawn, in order (ZG1), for the tests and the body alike.
+    enum Row: Equatable { case readAloud, voiceSource, apiKey, elevenLabsVoice, model, macVoice, speed, sample }
+
+    static func rows(elevenLabsAvailable: Bool, source: VoiceSource) -> [Row] {
+        var rows: [Row] = [.readAloud]
+        if elevenLabsAvailable { rows.append(.voiceSource) }
+        if elevenLabsAvailable && source == .elevenLabs {
+            rows += [.apiKey, .elevenLabsVoice, .model]
+        } else {
+            rows += [.macVoice, .speed, .sample]
+        }
+        return rows
+    }
+
+    static func footnote(elevenLabsAvailable: Bool, source: VoiceSource) -> String {
+        elevenLabsAvailable && source == .elevenLabs ? elevenLabsFootnote : thisMacFootnote
+    }
+
     var body: some View {
+        let rows = Self.rows(elevenLabsAvailable: settings.elevenLabsAvailable, source: settings.voiceSource)
         SettingsSection(
             "",
-            footnote: "Read aloud speaks a reply's spoken summary when the agent marks one, otherwise its text. Code and tables are never read; you hear \"See the code below.\" Esc stops reading."
+            footnote: Self.footnote(elevenLabsAvailable: settings.elevenLabsAvailable, source: settings.voiceSource)
         ) {
             SettingsRow("Read aloud on replies", help: Self.switchHelp) {
                 SettingsSwitch("Read aloud on replies", isOn: $settings.readAloudEnabled)
             }
-            SettingsRow("Voice") {
-                Picker("Voice", selection: $settings.voiceIdentifier) {
-                    Text(automaticLabel).tag(String?.none)
-                    ForEach(voices) { voice in
-                        Text(voice.label).tag(Optional(voice.id))
-                    }
-                    // A chosen voice the system no longer has still shows as chosen.
-                    if let chosen = settings.voiceIdentifier, !voices.contains(where: { $0.id == chosen }) {
-                        Text("Unavailable voice").tag(Optional(chosen))
-                    }
+            if rows.contains(.voiceSource) {
+                SettingsRow("Voice source") {
+                    SettingsSegmented(
+                        selection: $settings.voiceSource,
+                        options: VoiceSource.allCases.map { ($0, $0.label) },
+                        label: "Voice source")
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
-                .hoverHighlight()
-            }
-            .disabled(!settings.readAloudEnabled)
-            SettingsRow("Speed") {
-                SettingsSegmented(
-                    selection: $settings.speechRate,
-                    options: Settings.SpeechRate.allCases.map { ($0, $0.label) },
-                    label: "Speed")
-            }
-            .disabled(!settings.readAloudEnabled)
-            HStack {
-                personalVoiceRow
-                Spacer()
-                Button(reader.reading == nil ? "Play sample" : "Stop") {
-                    if reader.reading == nil { reader.sample() } else { reader.stop() }
-                }
-                .buttonStyle(SettingsButtonStyle(kind: .quiet))
                 .disabled(!settings.readAloudEnabled)
             }
-            .settingsRowInsets()
-            if !VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage) {
-                Text("For a natural voice, download a Premium one: System Settings › Accessibility › Spoken Content › System voice › Manage Voices… (for example Ava or Zoe, Premium). It appears here once installed.")
-                    .scaledFont(11)
-                    .foregroundStyle(Theme.text3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .settingsRowInsets()
+            if rows.contains(.apiKey) {
+                if let account = reader.account {
+                    ElevenLabsKeyRow(account: account)
+                    ElevenLabsVoiceRow(account: account)
+                        .disabled(!settings.readAloudEnabled)
+                    ElevenLabsModelRow(account: account)
+                        .disabled(!settings.readAloudEnabled)
+                }
+            }
+            if rows.contains(.macVoice) {
+                macRows
             }
         }
         .onAppear(perform: refresh)
+        .task(id: reader.account?.hasKey) {
+            // Load the models when the Labs tab appears and a key is saved.
+            if settings.elevenLabsAvailable, let account = reader.account, account.hasKey { await account.loadModels() }
+        }
+    }
+
+    @ViewBuilder
+    private var macRows: some View {
+        SettingsRow("Voice") {
+            Picker("Voice", selection: $settings.voiceIdentifier) {
+                Text(automaticLabel).tag(String?.none)
+                ForEach(voices) { voice in
+                    Text(voice.label).tag(Optional(voice.id))
+                }
+                // A chosen voice the system no longer has still shows as chosen.
+                if let chosen = settings.voiceIdentifier, !voices.contains(where: { $0.id == chosen }) {
+                    Text("Unavailable voice").tag(Optional(chosen))
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+            .hoverHighlight()
+        }
+        .disabled(!settings.readAloudEnabled)
+        SettingsRow("Speed") {
+            SettingsSegmented(
+                selection: $settings.speechRate,
+                options: Settings.SpeechRate.allCases.map { ($0, $0.label) },
+                label: "Speed")
+        }
+        .disabled(!settings.readAloudEnabled)
+        HStack {
+            personalVoiceRow
+            Spacer()
+            Button(reader.reading == nil ? "Play sample" : "Stop") {
+                if reader.reading == nil { reader.sample() } else { reader.stop() }
+            }
+            .buttonStyle(SettingsButtonStyle(kind: .quiet))
+            .disabled(!settings.readAloudEnabled)
+        }
+        .settingsRowInsets()
+        if !VoiceChoices.hasNaturalVoice(voices, language: VoiceChoices.currentLanguage) {
+            Text("For a natural voice, download a Premium one: System Settings › Accessibility › Spoken Content › System voice › Manage Voices… (for example Ava or Zoe, Premium). It appears here once installed.")
+                .scaledFont(11)
+                .foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+                .settingsRowInsets()
+        }
     }
 
     /// "Best installed (Zoe, Premium)": with no voice chosen, Read aloud

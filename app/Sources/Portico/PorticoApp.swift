@@ -42,7 +42,8 @@ struct PorticoApp: App {
         _settings = StateObject(wrappedValue: settings)
         _supervisor = StateObject(wrappedValue: supervisor)
         _model = StateObject(wrappedValue: model)
-        _reader = StateObject(wrappedValue: ReadAloud(settings: settings))
+        // v0.26 (PORT-23): one ElevenLabs account, its key in the Keychain, reached through Read aloud.
+        _reader = StateObject(wrappedValue: ReadAloud(settings: settings, account: ElevenLabsAccount(store: KeychainStore.elevenLabs())))
         _dictation = StateObject(wrappedValue: Dictation(settings: settings))
     }
 
