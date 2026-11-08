@@ -243257,13 +243257,12 @@
         {
           "type": "frame",
           "id": "cQAJz",
-          "x": 14,
-          "y": 24,
+          "x": 132,
+          "y": 300,
           "name": "Marker rail",
           "width": 22,
-          "height": 712,
           "layout": "vertical",
-          "justifyContent": "space_between",
+          "gap": 8,
           "children": [
             {
               "type": "frame",
@@ -243286,37 +243285,37 @@
             {
               "type": "frame",
               "id": "oAdZG",
-              "name": "Marker",
-              "width": 10,
+              "name": "Marker (in view)",
+              "width": 14,
               "height": 2,
-              "fill": "$text-3",
+              "fill": "$text-2",
               "cornerRadius": 1
             },
             {
               "type": "frame",
               "id": "S22cFU",
-              "name": "Marker",
-              "width": 10,
+              "name": "Marker (in view)",
+              "width": 14,
               "height": 2,
-              "fill": "$text-3",
+              "fill": "$text-2",
               "cornerRadius": 1
             },
             {
               "type": "frame",
               "id": "Fni2K",
-              "name": "Marker (hovered)",
-              "width": 18,
+              "name": "Marker",
+              "width": 10,
               "height": 2,
-              "fill": "$accent",
+              "fill": "$text-3",
               "cornerRadius": 1
             },
             {
               "type": "frame",
               "id": "awza6",
-              "name": "Marker",
-              "width": 10,
+              "name": "Marker (hovered)",
+              "width": 22,
               "height": 2,
-              "fill": "$text-3",
+              "fill": "$text",
               "cornerRadius": 1
             },
             {
@@ -243331,60 +243330,6 @@
             {
               "type": "frame",
               "id": "HXjR4",
-              "name": "Marker",
-              "width": 10,
-              "height": 2,
-              "fill": "$text-3",
-              "cornerRadius": 1
-            },
-            {
-              "type": "frame",
-              "id": "q2jeW",
-              "name": "Marker",
-              "width": 10,
-              "height": 2,
-              "fill": "$text-3",
-              "cornerRadius": 1
-            },
-            {
-              "type": "frame",
-              "id": "LdYPu",
-              "name": "Marker",
-              "width": 10,
-              "height": 2,
-              "fill": "$text-3",
-              "cornerRadius": 1
-            },
-            {
-              "type": "frame",
-              "id": "CmTJO",
-              "name": "Marker",
-              "width": 10,
-              "height": 2,
-              "fill": "$text-3",
-              "cornerRadius": 1
-            },
-            {
-              "type": "frame",
-              "id": "kERwO",
-              "name": "Marker (in view)",
-              "width": 14,
-              "height": 2,
-              "fill": "$text-2",
-              "cornerRadius": 1
-            },
-            {
-              "type": "frame",
-              "id": "b24bAP",
-              "name": "Marker",
-              "width": 10,
-              "height": 2,
-              "fill": "$text-3",
-              "cornerRadius": 1
-            },
-            {
-              "type": "frame",
-              "id": "Y8slUt",
               "name": "Marker",
               "width": 10,
               "height": 2,
@@ -243505,30 +243450,41 @@
         },
         {
           "type": "frame",
-          "id": "dg7Ib",
-          "x": 40,
-          "y": 214,
+          "id": "qAMab",
+          "x": 166,
+          "y": 322,
           "name": "Marker tooltip",
-          "width": 320,
+          "width": 330,
           "fill": "$control",
-          "cornerRadius": 8,
+          "cornerRadius": 10,
           "stroke": "$border",
           "strokeWidth": 1,
           "layout": "vertical",
           "gap": 4,
           "padding": [
-            8,
-            10
+            10,
+            12
           ],
           "children": [
             {
               "type": "text",
-              "id": "DQT2D",
-              "name": "Snippet",
+              "id": "oXwYg",
+              "name": "Your message",
               "fill": "$text",
+              "content": "Rewrite onboarding step 2 so it says what Pick…",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "rE9Gd",
+              "name": "Reply start",
+              "fill": "$text-2",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "Rewrite onboarding step 2 so it says what Picked interests does and why it's asked.",
+              "content": "Two drafts are ready. One is plain and short; one explains why the interests are asked…",
               "lineHeight": 1.35,
               "fontFamily": "$font",
               "fontSize": 12.5,
@@ -243536,11 +243492,11 @@
             },
             {
               "type": "text",
-              "id": "b2W1Eh",
+              "id": "mvBRS",
               "name": "Meta",
               "fill": "$text-3",
               "content": "Yesterday 2:05 PM  ·  Click to go back",
-              "lineHeight": 1.2,
+              "lineHeight": 1.35,
               "fontFamily": "$font",
               "fontSize": 11,
               "fontWeight": "normal"
