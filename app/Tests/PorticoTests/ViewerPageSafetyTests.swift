@@ -1069,4 +1069,63 @@ final class ViewerPageSafetyTests: XCTestCase {
             """, in: rig.view)
         try await poll("the reply is written") { self.text(rig.file).contains("Still works.") }
     }
+
+    // MARK: - Round 5: references to a file's ids follow the prefix, so raw HTML works as before
+
+    func testReferencesToFileIdsFollowThePrefix() async throws {
+        let png = WebPaneRenderTests.tinyPNG(width: 4, height: 4).base64EncodedString()
+        let source = """
+            # Raw HTML
+
+            <label for="fld">Name</label> <input id="fld"> <label for="user-content-q">Q</label> <input id="user-content-q">
+
+            <img src="data:image/png;base64,\(png)" usemap="#m" width="100" height="100" style="display:block"><map name="m"><area shape="rect" coords="0,0,100,100" href="https://example.com/"></map>
+
+            <svg width="120" height="60" xmlns:xlink="http://www.w3.org/1999/xlink"><defs><linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient><rect id="s" width="30" height="20"/></defs><rect data-t="paint" width="40" height="20" fill="url(#g)" stroke="url('#g')"/><use data-t="use" href="#s" x="50"/><use data-t="xuse" xlink:href="#s" x="80"/><rect data-t="outside" fill="url(other.svg#g)" width="1" height="1"/></svg>
+
+            <span id="a">First</span> <span id="b">second</span> <button aria-labelledby="a b" aria-describedby="b">Go</button>
+
+            <a data-t="html-link" href="#a">to a</a>
+
+            """
+        let rig = try await rig(source)
+        let state = try await js("""
+            var q = function (s) { return document.querySelector(s); };
+            var img = q('#body img');
+            var r = img.getBoundingClientRect();
+            var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return {
+              label: !!q('#body label').control && q('#body label').control === q('#user-content-fld'),
+              noDouble: q('#body label + input + label').getAttribute('for'),
+              labelQ: !!q('#body label + input + label').control && q('#body label + input + label').control === q('#user-content-q'),
+              usemap: img.getAttribute('usemap'),
+              mapHit: hit ? hit.localName : null,
+              fill: q('[data-t=paint]').getAttribute('fill'),
+              stroke: q('[data-t=paint]').getAttribute('stroke'),
+              gradient: !!document.getElementById(q('[data-t=paint]').getAttribute('fill').slice(5, -1)),
+              useHref: q('[data-t=use]').getAttribute('href'),
+              useWidth: q('[data-t=use]').getBBox().width,
+              xuseWidth: q('[data-t=xuse]').getBBox().width,
+              outside: q('[data-t=outside]').getAttribute('fill'),
+              labelledby: q('#body button').getAttribute('aria-labelledby'),
+              describedby: q('#body button').getAttribute('aria-describedby'),
+              htmlLink: q('[data-t=html-link]').getAttribute('href')
+            };
+            """, in: rig.view) as? [String: Any]
+        XCTAssertEqual(state?["label"] as? Bool, true, "label for= finds its input: \(state ?? [:])")
+        XCTAssertEqual(state?["noDouble"] as? String, "user-content-q", "no double prefix")
+        XCTAssertEqual(state?["labelQ"] as? Bool, true)
+        XCTAssertEqual(state?["usemap"] as? String, "#user-content-m")
+        XCTAssertEqual(state?["mapHit"] as? String, "area", "the image map is live")
+        XCTAssertEqual(state?["fill"] as? String, "url(#user-content-g)")
+        XCTAssertEqual(state?["stroke"] as? String, "url('#user-content-g')")
+        XCTAssertEqual(state?["gradient"] as? Bool, true, "the gradient fill names an element that exists")
+        XCTAssertEqual(state?["useHref"] as? String, "#user-content-s")
+        XCTAssertEqual(state?["useWidth"] as? Double, 30, "<use href> draws its symbol")
+        XCTAssertEqual(state?["xuseWidth"] as? Double, 30, "<use xlink:href> too")
+        XCTAssertEqual(state?["outside"] as? String, "url(other.svg#g)", "a reference to another document is left alone")
+        XCTAssertEqual(state?["labelledby"] as? String, "user-content-a user-content-b")
+        XCTAssertEqual(state?["describedby"] as? String, "user-content-b")
+        XCTAssertEqual(state?["htmlLink"] as? String, "#a", "an HTML link stays: the page's click handler resolves it")
+    }
 }

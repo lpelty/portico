@@ -64,6 +64,34 @@
   // insertion), so they keep theirs.
   var LANGUAGE = /^language-[\w-]+$/;
   var PREFIX = "user-content-";
+  var prefixed = function (v) { return v.indexOf(PREFIX) === 0 ? v : PREFIX + v; };
+  // Round 5: references to the file's ids follow the prefix, so labels,
+  // image maps, ARIA and inline SVG defs work as before. Only references
+  // within the document change; HTML <a href="#x"> stays (the click handler
+  // below resolves it).
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var ID_LISTS = {
+    "for": 1, headers: 1, list: 1, form: 1,
+    "aria-labelledby": 1, "aria-describedby": 1, "aria-controls": 1, "aria-owns": 1,
+    "aria-activedescendant": 1, "aria-details": 1, "aria-errormessage": 1
+  };
+  var URL_REFS = { fill: 1, stroke: 1, "clip-path": 1, mask: 1, filter: 1, "marker-start": 1, "marker-mid": 1, "marker-end": 1 };
+  var rewriteReference = function (el, attr, value) {
+    if (attr === "id" || attr === "name") return value ? prefixed(value) : value;
+    if (ID_LISTS[attr]) return value.replace(/\S+/g, prefixed);
+    if (attr === "usemap") return /^#./.test(value) ? "#" + prefixed(value.slice(1)) : value;
+    var svg = el.namespaceURI === SVG_NS;
+    if (svg && (attr === "href" || attr === "xlink:href")) {
+      var v = value.trim();
+      return /^#./.test(v) ? "#" + prefixed(v.slice(1)) : value;
+    }
+    if (svg && URL_REFS[attr]) {
+      return value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, function (m, q, id) {
+        return "url(" + q + "#" + prefixed(id) + q + ")";
+      });
+    }
+    return value;
+  };
   var unsafeURL = function (attr, value) {
     // Browsers ignore spaces and control characters in a scheme.
     var v = String(value).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "").toLowerCase();
@@ -80,7 +108,10 @@
         var attr = a.name.toLowerCase();
         if (attr.indexOf("on") === 0 || DROP_ATTRS[attr] || (URL_ATTRS[attr] && unsafeURL(attr, a.value))
             || (attr === "class" && !(name === "code" && LANGUAGE.test(a.value)))) el.removeAttributeNode(a);
-        else if ((attr === "id" || attr === "name") && a.value) a.value = PREFIX + a.value;
+        else {
+          var next = rewriteReference(el, attr, a.value);
+          if (next !== a.value) a.value = next;
+        }
       });
       if (UNWRAP[name] && el.parentNode) {
         while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
