@@ -206,3 +206,24 @@ def test_local_custom_without_a_file_names_the_local_file(tmp_path: Path) -> Non
     with pytest.raises(ConfigError) as e:
         load_config(path)
     assert str(e.value).startswith('config.local.toml: system_prompt: "custom" needs system_prompt_file')
+
+
+def test_deleting_config_toml_is_stale(state_dir) -> None:  # noqa: ANN001
+    """v0.25 sweep #7: the README says deleting either file says "Settings changed"."""
+    path = state_dir.config_path
+    path.write_text('titles = "first_line"\n')
+    srv = _server(state_dir, path)
+    path.unlink()
+    assert srv.config_stale()
+
+
+def test_replacing_config_toml_with_an_older_file_is_stale(state_dir) -> None:  # noqa: ANN001
+    import os
+
+    path = state_dir.config_path
+    path.write_text('titles = "first_line"\n')
+    srv = _server(state_dir, path)
+    path.write_text('titles = "generated"\n')
+    earlier = path.stat().st_mtime - 100
+    os.utime(path, (earlier, earlier))
+    assert srv.config_stale()

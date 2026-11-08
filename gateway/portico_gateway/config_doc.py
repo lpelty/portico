@@ -292,6 +292,8 @@ class ShowRow:
     applies: str
     note: str = ""
     sensitive: bool = False
+    # v0.25: an entry of a table key (``links.sites``): the table's key; "" for any other row.
+    table: str = ""
 
     @property
     def changed(self) -> bool:
@@ -331,6 +333,7 @@ def show_rows(layers: ConfigLayers, config: Config) -> list[ShowRow]:
                         source=layers.source_of_parts([*key.split("."), name]),
                         applies=doc.applies,
                         sensitive=doc.sensitive,
+                        table=key,
                     )
                 )
             continue
@@ -377,9 +380,36 @@ def format_show(rows: list[ShowRow], changed: bool = False) -> str:
 
 
 def rows_json(rows: list[ShowRow], changed: bool = False) -> list[dict[str, Any]]:
-    """The same rows for agents: key, value, default, source, applies, note (secrets as ``(set)``)."""
-    out = []
+    """The same rows for agents: key, value, default, source, applies, note (secrets as ``(set)``).
+
+    v0.25 (ruling 26): a table key (``links.sites``) is one row: its ``value``
+    the nested object, ``default`` the table's default object, and ``source``
+    an object naming each entry's file. The text output keeps a row per entry.
+    """
+    out: list[dict[str, Any]] = []
+    tables: dict[str, dict[str, Any]] = {}
     for row in rows:
+        if row.table:
+            entry = row.key[len(row.table) + 1 :]
+            table = tables.get(row.table)
+            if table is None:
+                table = {
+                    "key": row.table,
+                    "section": section_of(row.table),
+                    "value": {},
+                    "default": None if row.sensitive else _plain(default_of(row.table)),
+                    "source": {},
+                    "applies": row.applies,
+                    "note": row.note,
+                    "_changed": False,
+                    "_sensitive": row.sensitive,
+                }
+                tables[row.table] = table
+                out.append(table)
+            table["value"][entry] = _plain(row.value)
+            table["source"][entry] = row.source
+            table["_changed"] = table["_changed"] or row.changed
+            continue
         if changed and not row.changed:
             continue
         out.append(
@@ -393,7 +423,16 @@ def rows_json(rows: list[ShowRow], changed: bool = False) -> list[dict[str, Any]
                 "note": row.note,
             }
         )
-    return out
+    kept: list[dict[str, Any]] = []
+    for row in out:
+        if row.get("key") in tables:
+            was_changed = row.pop("_changed")
+            if row.pop("_sensitive"):
+                row["value"] = "(set)" if row["value"] else "(not set)"
+            if changed and not was_changed:
+                continue
+        kept.append(row)
+    return kept
 
 
 # --- §6: CONFIGURATION.md and config.example.toml -------------------------------------

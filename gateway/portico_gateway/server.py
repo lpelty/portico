@@ -1449,14 +1449,15 @@ class GatewayServer:
             return None
         base_then, local_then = self.config_mtimes
         base_now, local_now = self._config_mtimes()
-        if base_now is not None and (base_then is None or base_now > base_then):
+        # Sweep #7: created, changed, replaced by an older file or deleted, as the README says.
+        if base_now != base_then:
             return self.config_path
         if local_now != local_then:
             return local_config_path(self.config_path)
         return None
 
     def config_stale(self) -> bool:
-        """Whether ``config.toml`` is newer than at start (or appeared since), or ``config.local.toml`` changed in any way."""
+        """Whether either config file was created, changed or deleted since start (v0.25: ``config.toml`` too)."""
         return self._stale_file() is not None
 
     async def check_config(self) -> None:

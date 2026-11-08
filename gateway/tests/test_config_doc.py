@@ -164,10 +164,24 @@ def test_a_table_from_both_files_shows_each_leaf_source(tmp_path: Path) -> None:
     text = cd.format_show(rows)
     assert 'links.sites.a.com = "A"  [config.toml]' in text
     assert 'links.sites.b.com = "B"  [config.local.toml]' in text
+    # v0.25 (ruling 26): the JSON nests the table as one row, a source per entry.
     by_key = {r["key"]: r for r in cd.rows_json(rows)}
-    assert by_key["links.sites.a.com"]["source"] == "config.toml"
-    assert by_key["links.sites.b.com"]["source"] == "config.local.toml"
-    assert "links.sites" not in by_key
+    assert by_key["links.sites"]["source"] == {"a.com": "config.toml", "b.com": "config.local.toml"}
+    assert "links.sites.a.com" not in by_key and "links.sites.b.com" not in by_key
+
+
+def test_json_writes_a_table_as_one_nested_row(tmp_path: Path) -> None:
+    """The ``config show --json`` nit: a table key is one row whose value is the nested object."""
+    path = _files(tmp_path, '[links]\nsites = { "a.com" = "A" }\n', '[links]\nsites = { "b.com" = "B" }\n')
+    rows = cd.rows_json(_rows(path))
+    [row] = [r for r in rows if r["key"].startswith("links.sites")]
+    assert row["key"] == "links.sites"
+    assert row["value"] == {"a.com": "A", "b.com": "B"}
+    assert row["default"] == {}
+    assert row["source"] == {"a.com": "config.toml", "b.com": "config.local.toml"}
+    assert row["section"] == "links"
+    changed = [r for r in cd.rows_json(_rows(path), changed=True) if r["key"] == "links.sites"]
+    assert changed == [row]
 
 
 def test_an_empty_table_is_one_row(tmp_path: Path) -> None:

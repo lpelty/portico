@@ -321,9 +321,13 @@ def rename(folder: Path, id: str, title: str, require_folder: bool = False) -> N
         raise fixed(space)
     path = Path(space.location)
     try:
-        text = path.read_text(encoding="utf-8")
+        # Sweep #6: as written, so a CRLF file keeps its line endings.
+        with path.open(encoding="utf-8", newline="") as f:
+            text = f.read()
     except (OSError, UnicodeDecodeError) as e:
         raise SpaceError(f"{path.name} could not be read: {e}") from None
+    first_break = text.find("\n")
+    eol = "\r\n" if first_break > 0 and text[first_break - 1] == "\r" else "\n"
     line = f"title: {_quote_if_needed(title)}"
     try:
         found = _block(text)
@@ -335,7 +339,11 @@ def rename(folder: Path, id: str, title: str, require_folder: bool = False) -> N
     if in_comment and "--" in title:
         raise SpaceError('this space keeps its title in an HTML comment, which cannot hold "--"', "space.invalid")
     if found is None:
-        new = f"<!-- {line} -->\n{text}" if path.suffix.lower() in (".html", ".htm") else f"---\n{line}\n---\n{text}"
+        # A new key block goes after a leading BOM, never before it.
+        bom = "\ufeff" if text.startswith("\ufeff") else ""
+        rest = text[len(bom) :]
+        block = f"<!-- {line} -->{eol}" if path.suffix.lower() in (".html", ".htm") else f"---{eol}{line}{eol}---{eol}"
+        new = bom + block + rest
     else:
         lines, start, close = found
         comment = not text.lstrip("\ufeff").startswith("---")
@@ -346,14 +354,16 @@ def rename(folder: Path, id: str, title: str, require_folder: bool = False) -> N
                 break
         else:
             if comment:
-                lines[-1] = lines[-1].rstrip()
+                # Joined with "\n" below; a CRLF file's break keeps its "\r" on the line before.
+                lines[-1] = lines[-1].rstrip() + ("\r" if eol == "\r\n" else "")
             lines.append(line)
         if comment:
             new = text[:start] + "\n".join(lines) + " " + text[close:]
         else:
-            new = text[:start] + "".join(f"{each}\n" for each in lines) + text[close:]
+            new = text[:start] + "".join(f"{each}{eol}" for each in lines) + text[close:]
     try:
-        path.write_text(new, encoding="utf-8")
+        with path.open("w", encoding="utf-8", newline="") as f:
+            f.write(new)
     except OSError as e:
         raise SpaceError(f"{path.name} could not be written: {e}") from None
 
