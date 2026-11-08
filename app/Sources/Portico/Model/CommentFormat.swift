@@ -703,10 +703,6 @@ enum CommentFormat {
         return nil
     }
 
-    fileprivate static func isBlankString(_ s: String) -> Bool {
-        s.unicodeScalars.allSatisfy { $0.properties.isWhitespace }
-    }
-
     fileprivate static func trimmed(_ s: String) -> String {
         s.trimmingCharacters(in: .whitespaces)
     }
@@ -943,8 +939,6 @@ enum CommentFormat {
     // MARK: blocks
 
     /// Where a new thread block goes for an anchor at `offset`: after the top-level block.
-    static func blockEnd(_ text: String, offset: Int) -> Int { blockEnd(u(text), offset: offset) }
-
     fileprivate static func blockEnd(_ t: U, offset: Int) -> Int {
         let r = regions(t)
         let ls = r.lines

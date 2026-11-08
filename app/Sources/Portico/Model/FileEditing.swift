@@ -46,26 +46,11 @@ struct FileStamp: Equatable, Sendable {
     }
 }
 
-/// A file's line endings, as found when it was loaded.
-enum LineEnding: Equatable, Sendable {
-    case lf
-    case crlf
-
-    /// CRLF when the first line break is one; LF otherwise (and with none).
-    static func detect(_ text: String) -> LineEnding {
-        guard let index = text.utf8.firstIndex(of: 0x0A) else { return .lf }
-        guard index > text.utf8.startIndex else { return .lf }
-        return text.utf8[text.utf8.index(before: index)] == 0x0D ? .crlf : .lf
-    }
-}
-
 /// A file read for editing.
 struct EditableText: Equatable, Sendable {
     /// The text, without a byte-order mark.
     let text: String
     let stamp: FileStamp
-    let lineEnding: LineEnding
-    let trailingNewline: Bool
     /// The file started with a UTF-8 byte-order mark (written back as it was).
     let byteOrderMark: Bool
 }
@@ -184,9 +169,7 @@ enum FileEditing {
         do { data = try Data(contentsOf: target) } catch { throw Failure.from(error) }
         let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
         guard let text = String(data: bom ? data.dropFirst(3) : data, encoding: .utf8) else { throw Failure.notText }
-        return EditableText(
-            text: text, stamp: stamp, lineEnding: LineEnding.detect(text),
-            trailingNewline: text.hasSuffix("\n"), byteOrderMark: bom)
+        return EditableText(text: text, stamp: stamp, byteOrderMark: bom)
     }
 
     // MARK: writing (§2.5)

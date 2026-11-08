@@ -689,6 +689,8 @@ export function anchorLines(): MarkdownConfig {
   };
 }
 
+// The editor's Markdown language: GFM with comment anchors read as inline
+// (editor.ts uses it with its fence languages; the tests use it as is).
 export function anchorAwareMarkdown(codeLanguages?: (info: string) => Language | null) {
   return markdown({ base: markdownLanguage, codeLanguages: codeLanguages ?? undefined, extensions: [anchorLines()] });
 }

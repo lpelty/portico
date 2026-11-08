@@ -227,10 +227,6 @@ final class ViewerAgent: ObservableObject {
         paneViews[slot ?? activeSlot] = WeakView(view: view)
     }
 
-    func detachPane(_ view: NSView) {
-        for (slot, held) in paneViews where held.view === view { paneViews[slot] = nil }
-    }
-
     /// A PDF's view, a text file's text view, or (with `table`) a view
     /// the size of a table's content, showing `file`.
     func attachNative(_ view: NSView, file: URL, table: DelimitedTable? = nil, rows: TableRowsSeen? = nil, slot: Slot? = nil) {

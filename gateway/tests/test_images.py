@@ -1,6 +1,6 @@
 """v0.19 (spec §8.3-8.4): images reach the agent as images; ``user.text`` carries the attachments apart.
 
-``image_block`` and ``split_attachments`` are pure. ``SDKEngine.send`` is
+``read_image`` and ``split_attachments`` are pure. ``SDKEngine.send`` is
 checked against a stand-in client recording what ``query`` got; the gateway's
 send path runs against the scripted ``FakeEngine`` from ``conftest``, so
 nothing here touches a model.
@@ -25,9 +25,9 @@ from portico_gateway.images import (
     MAX_ENCODED_TOTAL,
     MAX_IMAGE_BYTES,
     MAX_IMAGES,
-    image_block,
     image_blocks,
     not_image_notice,
+    read_image,
     split_attachments,
 )
 from portico_gateway.messages import (
@@ -116,14 +116,14 @@ def big_png() -> bytes:
     return png() + b"\x00" * (4_000_000 - len(png()))
 
 
-# --- image_block ----------------------------------------------------------------
+# --- read_image -----------------------------------------------------------------
 
 
-def test_a_png_is_an_image_block(tmp_path: Path) -> None:
+def test_a_png_is_read_as_an_image(tmp_path: Path) -> None:
     data = png()
     path = tmp_path / "red.png"
     path.write_bytes(data)
-    assert image_block(path) == {
+    assert read_image(path)[0] == {
         "type": "image",
         "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(data).decode("ascii")},
     }
@@ -132,13 +132,13 @@ def test_a_png_is_an_image_block(tmp_path: Path) -> None:
 def test_the_media_type_comes_from_the_bytes_not_the_name(tmp_path: Path) -> None:
     path = tmp_path / "really-a-photo.png"
     path.write_bytes(JPEG_HEAD)
-    block = image_block(path)
+    block = read_image(path)[0]
     assert block is not None and block["source"]["media_type"] == "image/jpeg"
     gif = tmp_path / "anim.bin"
     gif.write_bytes(b"GIF89a" + b"\x00" * 10)
     webp = tmp_path / "pic"
     webp.write_bytes(b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"\x00" * 8)
-    assert [image_block(p)["source"]["media_type"] for p in (gif, webp)] == ["image/gif", "image/webp"]  # type: ignore[index]
+    assert [read_image(p)[0]["source"]["media_type"] for p in (gif, webp)] == ["image/gif", "image/webp"]  # type: ignore[index]
 
 
 def test_heic_and_an_oversized_png_are_not_image_blocks(tmp_path: Path) -> None:
@@ -147,9 +147,9 @@ def test_heic_and_an_oversized_png_are_not_image_blocks(tmp_path: Path) -> None:
     large = tmp_path / "huge.png"
     large.write_bytes(big_png())
     assert large.stat().st_size > MAX_IMAGE_BYTES
-    assert image_block(heic) is None
-    assert image_block(large) is None
-    assert image_block(tmp_path / "gone.png") is None
+    assert read_image(heic)[0] is None
+    assert read_image(large)[0] is None
+    assert read_image(tmp_path / "gone.png")[0] is None
 
 
 def test_image_blocks_names_only_the_images_it_could_not_send(tmp_path: Path) -> None:
@@ -268,7 +268,7 @@ class RecordingClient:
 async def test_send_with_images_queries_one_message_of_blocks(tmp_path: Path) -> None:
     path = tmp_path / "red.png"
     path.write_bytes(png())
-    block = image_block(path)
+    block = read_image(path)[0]
     assert block is not None
     client = RecordingClient()
     engine = SDKEngine(chat=1)
@@ -307,7 +307,7 @@ async def test_an_image_goes_to_the_engine_and_user_text_carries_it(
         frames = await recv_until(conn, TurnFinished)
         engine = factory.last
         assert engine.calls[-1] == ("send", f"Compare these\n\nAttached files:\n- {image}")
-        assert engine.sent_images[-1] == [image_block(image)]
+        assert engine.sent_images[-1] == [read_image(image)[0]]
         user = next(f for f in frames if isinstance(f, UserText))
         assert user.text == "Compare these" and user.attachments == [str(image)]
         assert not any(isinstance(f, ChatNotice) for f in frames)
@@ -461,7 +461,7 @@ async def test_the_echo_goes_before_the_images_are_read_and_a_second_send_is_ref
         gate.go.set()
         await recv_until(conn, TurnFinished)
         assert [c[1] for c in engine.calls if c[0] == "send"] == [f"one\n\nAttached files:\n- {image}"]
-        assert engine.sent_images[-1] == [image_block(image)]
+        assert engine.sent_images[-1] == [read_image(image)[0]]
     finally:
         await conn.close()
 
@@ -513,7 +513,7 @@ async def test_a_queued_image_is_injected_as_an_image(server: GatewayServer, fac
         pause.go.set()
         frames = await recv_until(conn, TurnFinished)
         assert ("inject", f"And this\n\nAttached files:\n- {image}") in engine.calls
-        assert engine.sent_images[-1] == [image_block(image)]
+        assert engine.sent_images[-1] == [read_image(image)[0]]
         said = [f for f in frames if isinstance(f, UserText)]
         assert [(m.text, m.attachments, m.turn) for m in said] == [("And this", [str(image)], 1)]
     finally:

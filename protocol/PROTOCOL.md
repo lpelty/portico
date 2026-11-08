@@ -1015,7 +1015,8 @@ restart are lost.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
 No fields. `config.toml` is newer than when the gateway started (or it
-appeared), or (v0.24) the `config.local.toml` beside it was created, changed or deleted;
+appeared; v0.25: or it changed in any way, or was deleted), or (v0.24) the
+`config.local.toml` beside it was created, changed or deleted;
 the app says "restart the gateway to apply". Sent once when the gateway
 notices; `hello.config_stale` carries the same fact on connect.
 
@@ -2323,7 +2324,7 @@ precedence over them.
 ## Command line *(v0.3)*
 
 Besides `run` and `doctor`, the reference gateway's CLI
-(`bin/portico-gateway <command>`; `--state` and `--config` as for `run`)
+(`bin/portico-gateway <command>`; `--state` (and `--config` where the command reads the config) as for `run`)
 offers what a deployment's own tools build on. These are behaviour notes
 for the reference gateway, not protocol messages.
 

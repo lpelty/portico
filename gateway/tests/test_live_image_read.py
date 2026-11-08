@@ -8,12 +8,12 @@ async iterable yielding one user message whose content is a text block and a
 base64 PNG block: a 64x64 solid red square, written here with ``zlib`` and
 ``struct``. The reply must name the colour.
 
-It goes the shipped way: ``images.image_block`` reads the file and
+It goes the shipped way: ``images.read_image`` reads the file and
 ``SDKEngine.send(text, [block])`` builds the message (``images.user_message``:
 the SDK's own string-path message, ``content`` a list of blocks) and passes
 ``query`` an async iterable yielding it.
 
-Run once here: ``PORTICO_LIVE=1 uv run pytest tests/test_live_image_block.py -v``
+Run once here: ``PORTICO_LIVE=1 uv run pytest tests/test_live_image_read.py -v``
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import pytest
 
 from portico_gateway.doctor import has_credential
 from portico_gateway.engine import SDKEngine
-from portico_gateway.images import image_block
+from portico_gateway.images import read_image
 from portico_gateway.messages import TextDelta, TurnFinished
 from tests.conftest import RecordingCallbacks
 
@@ -73,11 +73,11 @@ async def test_an_image_block_reaches_the_agent(tmp_path: Path, monkeypatch: pyt
     callbacks = RecordingCallbacks()
     await engine.start(folder, None, ["project"], callbacks)
     try:
-        # The shipped path (fix round 1): ``image_block`` reads the file, ``SDKEngine.send``
+        # The shipped path (fix round 1): ``read_image`` reads the file, ``SDKEngine.send``
         # builds the message (``images.user_message``) and hands ``query`` the iterable.
         image = folder / "red.png"
         image.write_bytes(solid_png(64, 64, (255, 0, 0)))
-        block = image_block(image)
+        block = read_image(image)[0]
         assert block is not None and block["source"]["media_type"] == "image/png"
         await engine.send(PROMPT, [block])
 

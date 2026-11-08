@@ -124,9 +124,10 @@ final class TextScaleTests: XCTestCase {
         let markdown = folder.appendingPathComponent("notes.md")
         try "# Notes".write(to: markdown, atomically: true, encoding: .utf8)
 
-        XCTAssertNil(WebPane.renderedPage(for: .html(html), scale: 1.15), "an HTML file is served as written")
-        XCTAssertNil(WebPane.renderedPage(for: .url(URL(string: "https://example.com")!), scale: 1.15))
-        let page = try XCTUnwrap(WebPane.renderedPage(for: .markdown(markdown), scale: 1.15))
+        // v0.25 sweep #28: the pane's own render path, not a third copy.
+        XCTAssertNil(try WebPane.renderedHTML(for: .html(html), scale: 1.15), "an HTML file is served as written")
+        XCTAssertNil(try WebPane.renderedHTML(for: .url(URL(string: "https://example.com")!), scale: 1.15))
+        let page = try XCTUnwrap(try WebPane.renderedHTML(for: .markdown(markdown), scale: 1.15))
         XCTAssertTrue(page.contains("calc(15px * 1.15)"))
     }
 

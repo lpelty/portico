@@ -86,11 +86,6 @@ def read_image(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     return {"type": "image", "source": {"type": "base64", "media_type": kind, "data": base64.b64encode(data).decode("ascii")}}, None
 
 
-def image_block(path: Path) -> dict[str, Any] | None:
-    """The ``image`` content block for ``path``; ``None`` when it is not a supported image, is too large, or can't be read."""
-    return read_image(path)[0]
-
-
 def image_blocks(paths: Iterable[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """The image blocks for one message's ``paths``, in order, and a notice for each image that goes as a path only.
 

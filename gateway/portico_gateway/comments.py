@@ -431,11 +431,6 @@ def _regions(text: str) -> _Regions:
     return _Regions(lines, ignored, blocks, segs, tables)
 
 
-def ignored_regions(text: str) -> list[tuple[int, int]]:
-    """Front matter, ``` and ~~~ fences, indented code blocks, and inline code spans."""
-    return _regions(text).ignored
-
-
 # --- escaping -------------------------------------------------------------------
 
 
@@ -542,10 +537,6 @@ def _markers(text: str, reg: _Regions):
     """Live markers: (start, end, id, closing) outside ignored regions and thread blocks."""
     walls = reg.ignored + [(s, e) for s, e, _, _ in reg.blocks]
     return [(m.start(), m.end(), m.group(2), bool(m.group(1))) for m in _MARKER_RE.finditer(text) if not _inside(walls, m.start())]
-
-
-def live_markers(text: str) -> list[tuple[int, int, str, bool]]:
-    return _markers(text, _regions(text))
 
 
 def parse(text: str) -> Parsed:

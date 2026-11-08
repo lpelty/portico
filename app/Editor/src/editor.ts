@@ -29,7 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
-import { anchorLines, commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
+import { anchorAwareMarkdown, commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -242,7 +242,8 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
     if (current.mode === "markdown") {
       return [
         ...shared,
-        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage, extensions: [anchorLines()] }) }),
+        // The same setup the comments tests check (sweep #30): one function, not a copy.
+        yamlFrontmatter({ content: anchorAwareMarkdown(fenceLanguage) }),
         livePreview(openLink),
         commentsExtension(),
         EditorView.lineWrapping,

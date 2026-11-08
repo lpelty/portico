@@ -8,8 +8,9 @@ import Foundation
 /// and believes it only after `GET /v1/health` answers and the token file is
 /// readable. `start` spawns the gateway command in its own session (so the
 /// app's signals never reach it), reads `PORTICO_READY port=<n>` from its
-/// stdout, and reads the token file the gateway rewrote. `stop` is the
-/// explicit action: `gateway.stop` through the client.
+/// stdout, and reads the token file the gateway rewrote. Stopping is
+/// `AppModel.stopGateway`: `gateway.stop` through the attached client (or a
+/// socket opened for it), then `noteStopped` here once the socket closes.
 @MainActor
 final class GatewaySupervisor: ObservableObject {
     enum Status: Equatable, Sendable {
@@ -404,13 +405,6 @@ final class GatewaySupervisor: ObservableObject {
     }
 
     // MARK: - stop
-
-    /// Ask the gateway to stop through the attached client: it interrupts
-    /// every running turn, runs the deployment's stop command and exits.
-    func stop(using client: GatewayClient) async {
-        try? await client.send(.gatewayStop(GatewayStop()))
-        noteStopped()
-    }
 
     /// The gateway has gone (the app asked it to and the socket closed):
     /// forget the process and show `stopped`.

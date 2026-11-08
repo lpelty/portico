@@ -56,7 +56,7 @@ from portico_gateway.plugins import Plugins
 from portico_gateway.server import GatewayServer, MainChatCallbacks, for_app, with_attachments
 from portico_gateway.state import ProposalRecord, StateDir
 from portico_gateway.status import describe
-from portico_gateway.threads import MAIN_PROMPT, files_phrase, limit_message, proposed_text, thread_prompt
+from portico_gateway.threads import MAIN_PROMPT, limit_message, proposed_text, thread_prompt
 from tests.conftest import Block, Pause, fake_result, make_config
 from tests.test_server import attach, ws_url
 from tests.test_sessions import start_server
@@ -335,15 +335,12 @@ def thread_notices(frames: list[ServerMessage], chat: int) -> list[str]:
     return [m.text for m in frames if isinstance(m, ChatNotice) and m.chat == chat]
 
 
-def test_proposed_text_and_files_phrase() -> None:
+def test_proposed_text() -> None:
     assert proposed_text(1) == "Proposed as Thread 1; it opens if the person starts it."
     assert proposed_text(None) == "Proposed; two threads are open, so the person picks one to close before it starts."
     assert proposed_text(None, 1) == "Proposed; a thread is open, so the person picks one to close before it starts."
     assert limit_message(2) == "two threads are open; close one to start another"
     assert limit_message(1) == "a thread is open; close it to start another"
-    assert files_phrase([]) == ""
-    assert files_phrase(["/x/a.html", "b.md"]) == "a.html and b.md"
-    assert files_phrase(["a", "b", "/y/c.md"]) == "a, b and c.md"
     assert thread_prompt(2) == (
         "This is Thread 2, opened from the person's main conversation for the brief below. "
         "Work on it here; the person answers here."

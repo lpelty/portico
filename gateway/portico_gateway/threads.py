@@ -9,7 +9,6 @@ here, fixed by the spec and the plan's rulings.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 # Appended to Main's system prompt when threads are on.
 MAIN_PROMPT = (
@@ -86,13 +85,3 @@ def proposed_text(slot: int | None, limit: int = 2) -> str:
 def not_a_file(path: str) -> str:
     """The tool's refusal for a ``files`` entry that is not a file."""
     return f"{REFUSAL_PREFIX}{path} isn't a file."
-
-
-def files_phrase(files: list[str]) -> str:
-    """The files a thread takes, by name: "a.html", "a.html and b.md", "a, b and c.md"; "" for none."""
-    names = [Path(f).name or f for f in files]
-    if not names:
-        return ""
-    if len(names) == 1:
-        return names[0]
-    return f"{', '.join(names[:-1])} and {names[-1]}"

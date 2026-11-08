@@ -100,7 +100,10 @@ KEY_DOCS: dict[str, KeyDoc] = {
     "brand.app_icon_assets": KeyDoc("A precompiled asset catalog (Assets.car) for the app bundle; with app_icon_name.", 'app_icon_assets = "~/icons/Assets.car"', applies=REINSTALL),
     "brand.app_icon_name": KeyDoc("The icon's name inside app_icon_assets.", 'app_icon_name = "AppIcon"', applies=REINSTALL),
     # --- update -----------------------------------------------------------------------
-    "update.check": KeyDoc("A command that exits 0 and prints a version when an update is available.", 'check = "my-tool update --check"'),
+    "update.check": KeyDoc(
+        "A command that exits 0 and prints a version when an update is available; exit 1 or no output means none; any other exit is a failed check.",
+        'check = "my-tool update --check"',
+    ),
     "update.run": KeyDoc("A command that performs the update; the app's Update available runs it.", 'run = "my-tool update"'),
     # --- deployment -------------------------------------------------------------------
     "deployment.restart": KeyDoc("One command that restarts all the deployment's services (Restart all services).", 'restart = "my-tool restart-all"'),

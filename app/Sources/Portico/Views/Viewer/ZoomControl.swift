@@ -83,7 +83,8 @@ enum ZoomMenu {
 /// a page counter for a PDF. A solid panel capsule; it fades after 2 s of a
 /// still pointer, and stays while VoiceOver is running.
 struct ZoomControl: View {
-    let percent: Int
+    /// The zoom, 1 for 100%; the label is `percentText(scale)`.
+    let scale: CGFloat
     var page: String?
     let onIn: () -> Void
     let onOut: () -> Void
@@ -100,6 +101,9 @@ struct ZoomControl: View {
 
     static func percentText(_ scale: CGFloat) -> String { "\(Int((scale * 100).rounded()))%" }
 
+    /// What the control shows between − and +.
+    var label: String { Self.percentText(scale) }
+
     var body: some View {
         HStack(spacing: 2) {
             if let page {
@@ -110,11 +114,11 @@ struct ZoomControl: View {
                 Divider().frame(height: 14)
             }
             button("minus", "Zoom Out", onOut)
-            Text("\(percent)%")
+            Text(label)
                 .scaledFont(12, weight: .medium, monospacedDigit: true)
                 .foregroundStyle(Theme.text)
                 .frame(minWidth: 44)
-                .accessibilityLabel("Zoom, \(percent) percent")
+                .accessibilityLabel("Zoom, \(label.dropLast()) percent")
             button("plus", "Zoom In", onIn)
             Divider().frame(height: 14)
             button("arrow.up.left.and.arrow.down.right", "Zoom to Fit", onFit)

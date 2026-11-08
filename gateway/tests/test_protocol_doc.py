@@ -60,3 +60,39 @@ def test_signin_messages_are_documented() -> None:
     assert "never logged" in wait
     finished = _section("`turn.finished` — `TurnFinished`")
     assert "`reason?" in finished and "signin.expired" in finished
+
+
+README = Path(__file__).resolve().parents[2] / "README.md"
+
+
+def _parses(argv: list[str]) -> bool:
+    import contextlib
+    import io
+
+    from portico_gateway.__main__ import build_parser
+
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            build_parser().parse_args(argv)
+    except SystemExit:
+        return False
+    return True
+
+
+def test_cli_docs_name_only_real_flags() -> None:
+    """v0.25 sweep #17: every command the README lists under "each with --state" takes it; the exports take --out."""
+    text = README.read_text(encoding="utf-8")
+    block = text[text.index("## Command line") :]
+    block = block[: block.index("```", block.index("```sh") + 5)]
+    commands = re.findall(r"^bin/portico-gateway ((?:[a-z-]+)(?: (?:show|list|clear|--check))?)", block, re.M)
+    assert commands, block
+    for command in commands:
+        words = command.split()
+        # The positional each needs, as the README's own line gives it.
+        words += {"message": ["hi"], "config-value": ["brand.name"]}.get(words[0], [])
+        assert not words[0].startswith("export-"), f"{command}: the export commands take --out, not --state"
+        assert _parses([*words, "--state", "/tmp/x"]), f"{command} does not take --state"
+    assert "--out" in text[text.index("## Command line") :][:3000]
+    protocol = " ".join(PROTOCOL.read_text(encoding="utf-8").split())
+    assert "`--state` (and `--config` where the command reads the config)" in protocol
+    assert not _parses(["status", "--state", "/tmp/x", "--config", "/tmp/x/config.toml"]), "status reads no config"

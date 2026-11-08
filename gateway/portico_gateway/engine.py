@@ -268,7 +268,7 @@ class Engine(Protocol):
         ...
 
     async def send(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
-        """Send ``text`` as the next turn; v0.19: ``images`` (``images.image_block``) go after it as content blocks."""
+        """Send ``text`` as the next turn; v0.19: ``images`` (``images.image_blocks``, each from ``images.read_image``) go after it as content blocks."""
         ...
 
     async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:

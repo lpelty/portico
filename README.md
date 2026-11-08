@@ -574,7 +574,6 @@ bin/portico-gateway config show        # (v0.24) every key, its value in force a
 bin/portico-gateway capture-prompt     # (v0.24) copy Claude Code's prompt to <state>/prompts/ (see The agent's
                                        # system prompt); --out PATH
 bin/portico-gateway sessions           # (v0.24) every session, newest first, with its prompt; --json
-bin/portico-gateway export-config-doc  # (v0.24) regenerate CONFIGURATION.md and config.example.toml
 bin/portico-gateway message "Standup moved" --title Heads-up --notify --space meeting-prep
                                        # (v0.22) leave a message for the open app: a file in <state>/messages/,
                                        # sent within 2 s or on the app's next connect (up to 50 wait)
@@ -582,6 +581,10 @@ bin/portico-gateway sessions clear     # (v0.12) forget every earlier session; a
                                        # refuses while a gateway runs ("Stop the gateway first.") and in
                                        # multiple presentation; the transcripts on disk stay
 ```
+
+The export commands write the repo's generated files and take `--out`
+instead of `--state`: `export-config-doc` (v0.24, `CONFIGURATION.md` and
+`config.example.toml`), `export-schema` and `export-examples`.
 
 `status --json` is the supported way for other tools to see that the app
 holds a live session in a folder; the lock and ledger files in the state

@@ -294,7 +294,7 @@ The icon's name inside app_icon_assets.
 
 ### `update.check`
 
-A command that exits 0 and prints a version when an update is available.
+A command that exits 0 and prints a version when an update is available; exit 1 or no output means none; any other exit is a failed check.
 
 - **Type:** text (optional) · **Default:** `not set`
 - **Example:** `check = "my-tool update --check"`

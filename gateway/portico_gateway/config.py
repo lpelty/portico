@@ -133,8 +133,9 @@ class ConfigBrand(Brand):
 class UpdateConfig(BaseModel):
     """``[update]``: the deployment's own update commands, run with ``/bin/sh -c``.
 
-    ``check`` exits 0 and prints a version when an update is available (any
-    other exit, or no output, means none); ``run`` performs the update.
+    ``check`` exits 0 and prints a version when an update is available; exit 1
+    or no output means none; any other exit is a failed check. ``run``
+    performs the update.
     Portico owns when they run and the window around them; the deployment
     owns what they do.
     """
@@ -378,8 +379,8 @@ def with_default_spaces(config: Config, state_path: Path) -> Config:
 def host_allowed(host: str, act_hosts: list[str]) -> bool:
     """Whether the agent may click and type on ``host``: a local host, or an ``act_hosts`` entry or its subdomain.
 
-    Used by the doctor and the tests; the app is what enforces it (the gateway
-    only sends ``act_hosts`` in ``hello``).
+    Used by the tests; the app is what enforces it (the gateway only sends
+    ``act_hosts`` in ``hello``).
     """
     h = host.lower()
     if h.endswith("."):  # a fully qualified name: "figma.com." is "figma.com"

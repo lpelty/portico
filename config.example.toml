@@ -75,7 +75,8 @@
 ## e.g. app_icon_name = "AppIcon"  (not set by default)
 
 # [update]
-## A command that exits 0 and prints a version when an update is available.
+## A command that exits 0 and prints a version when an update is available; exit 1 or no output
+## means none; any other exit is a failed check.
 ## e.g. check = "my-tool update --check"  (not set by default)
 ## A command that performs the update; the app's Update available runs it.
 ## e.g. run = "my-tool update"  (not set by default)

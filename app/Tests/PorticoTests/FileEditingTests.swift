@@ -77,8 +77,6 @@ final class FileEditingTests: XCTestCase {
         let bytes = Data("first line\r\nsecond line\r\nno newline at the end".utf8)
         let url = try write("crlf.txt", bytes)
         let loaded = try FileEditing.read(url)
-        XCTAssertEqual(loaded.lineEnding, .crlf)
-        XCTAssertFalse(loaded.trailingNewline)
         try FileEditing.write(loaded.text, to: url, preserving: loaded.stamp)
         XCTAssertEqual(try Data(contentsOf: url), bytes)
     }
@@ -458,8 +456,7 @@ final class FileEditingTests: XCTestCase {
         model.apply(.artifactCreated(ArtifactCreated(chat: 3, artifact: shown)))
         model.show(shown, in: 3)
         XCTAssertEqual(model.current[3]?.id, "t-1")
-        let loaded = EditableText(text: "", stamp: FileStamp(modified: nil, size: 0), lineEnding: .lf,
-                                  trailingNewline: false, byteOrderMark: false)
+        let loaded = EditableText(text: "", stamp: FileStamp(modified: nil, size: 0), byteOrderMark: false)
         let session = EditSession(url: URL(fileURLWithPath: shown.location), loaded: loaded, mode: .markdown,
                                   language: "markdown", registry: .shared)
         session.attached = true

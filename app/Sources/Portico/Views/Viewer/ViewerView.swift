@@ -1041,7 +1041,7 @@ struct ImagePane: View {
             ImageZoomPane(file: file, image: image, scale: $scale, controllerBox: box)
                 .overlay(alignment: .bottomTrailing) {
                     ZoomControl(
-                        percent: Int((scale * 100).rounded()), page: nil,
+                        scale: scale, page: nil,
                         onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
                         onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
                         awake: awake)
@@ -1067,7 +1067,7 @@ struct PDFPane: View {
         PDFZoomPane(file: file, scale: $scale, page: $page, controllerBox: box)
             .overlay(alignment: .bottomTrailing) {
                 ZoomControl(
-                    percent: Int((scale * 100).rounded()), page: page.isEmpty ? nil : page,
+                    scale: scale, page: page.isEmpty ? nil : page,
                     onIn: { box.controller?.zoomIn() }, onOut: { box.controller?.zoomOut() },
                     onFit: { box.controller?.zoomToFit() }, onActual: { box.controller?.zoomActual() },
                     awake: awake)

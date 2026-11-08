@@ -414,22 +414,6 @@ final class GatewayClientTests: XCTestCase {
         guard case .failed = status else { return XCTFail("expected .failed, got \(status)") }
     }
 
-    func testStopSendsGatewayStop() async throws {
-        let gateway = FakeGateway()
-        try await gateway.start()
-        defer { gateway.stop() }
-        let client = GatewayClient()
-        _ = try await client.connect(url: gateway.url, token: "tok", appVersion: "0.1.0-test")
-
-        let supervisor = await GatewaySupervisor(stateDir: try tempStateDir())
-        await supervisor.stop(using: client)
-
-        let frame = await gateway.waitForFrame(type: "gateway.stop", seconds: 5)
-        XCTAssertNotNil(frame)
-        let status = await supervisor.status
-        XCTAssertEqual(status, .stopped)
-    }
-
     // MARK: - helpers
 
     private static func hello(epoch: String) -> HelloServer {
