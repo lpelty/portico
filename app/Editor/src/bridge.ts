@@ -8,6 +8,13 @@
 //   {type: "changed", text, dirty: true}   800 ms after typing stops;
 //   {type: "saveNow", text}                on blur, when there is an edit not
 //                                          yet sent.
+// v0.23: comment messages go to the `comments` handler, not this one:
+//   {type: "commentMenu", x, y, from, to, refusal?}  a right-click in the
+//                                          editor (offsets are UTF-16);
+//   the comments margin's own messages (activate, anchorClicked, reply,
+//   resolve, reopen, post, cancelDraft) come from viewer-comments.js.
+// A comment action from Swift arrives as portico.applyChange and is an edit
+// like typing: it is sent back with dirty/changed and saved.
 // Text always carries the file's own line endings. Sending `changed` or
 // `saveNow` hands the text to Swift to save: from then on the edit is
 // Swift's, and the next edit starts a new round with a new `dirty`.

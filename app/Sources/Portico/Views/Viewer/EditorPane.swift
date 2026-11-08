@@ -18,10 +18,13 @@ enum EditorPage {
         let template = try resource("editor", "html")
         let css = try resource("viewer", "css")
         let script = try resource("editor", "js")
+        let comments = try resource("viewer-comments", "js")
         // The stylesheet first: the script is the large part, and nothing
         // inside it is taken for a placeholder.
         return template
             .replacingOccurrences(of: "{{CSS}}", with: css)
+            .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
+            .replacingOccurrences(of: "{{COMMENTS_JS}}", with: comments)
             .replacingOccurrences(of: "{{EDITOR}}", with: script)
     }
 
@@ -78,6 +81,8 @@ struct EditorPane: NSViewRepresentable {
     var onOpenFile: (String) -> Void
     /// The pane's coordinator, given to the viewer for the top line.
     var onCoordinator: (Coordinator?) -> Void = { _ in }
+    /// v0.23: the viewer's comments; the margin works in Edit mode too.
+    var comments: ViewerComments? = nil
     @Environment(\.textScale) private var textScale
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -90,6 +95,7 @@ struct EditorPane: NSViewRepresentable {
         coordinator.topLine = topLine
         coordinator.onStop = onStop
         coordinator.onOpenFile = onOpenFile
+        coordinator.comments = comments
         let view = coordinator.makeWebView()
         coordinator.start(in: view)
         onCoordinator(coordinator)
@@ -124,6 +130,8 @@ struct EditorPane: NSViewRepresentable {
         var topLine = 1
         var onStop: () -> Void = {}
         var onOpenFile: (String) -> Void = { _ in }
+        /// v0.23: the comments controller; comment actions become changes to this buffer.
+        weak var comments: ViewerComments?
         private(set) weak var webView: WKWebView?
         /// The page said `ready`.
         private(set) var ready = false
@@ -142,6 +150,7 @@ struct EditorPane: NSViewRepresentable {
             configuration.defaultWebpagePreferences.allowsContentJavaScript = true
             configuration.setURLSchemeHandler(handler, forURLScheme: RenderedPageHandler.scheme)
             configuration.userContentController.add(EditorMessages(self), name: Self.handlerName)
+            configuration.userContentController.add(EditorCommentMessages(self), name: "comments")
             let view = WKWebView(frame: .zero, configuration: configuration)
             view.navigationDelegate = self
             view.uiDelegate = self
@@ -182,6 +191,10 @@ struct EditorPane: NSViewRepresentable {
         /// hidden). The session may still need the editor's last text: the
         /// web view is kept, by the session alone, until it has ended.
         func tearDown(_ view: WKWebView) {
+            if let comments, comments.editBuffer === self {
+                comments.editBuffer = nil
+                comments.evaluate = nil
+            }
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
             guard let session else { return }
@@ -236,6 +249,20 @@ struct EditorPane: NSViewRepresentable {
                 return
             }
             holdsText = true
+            if session.mode == .markdown, let comments {
+                comments.attach(view)
+                comments.editBuffer = self
+                comments.reload(text: session.text)
+                comments.push()
+            }
+        }
+
+        /// The comments script's messages from this page.
+        func commentsMessage(_ body: Any, isMainFrame: Bool) {
+            guard isMainFrame, holdsText, let comments, let view = webView else { return }
+            comments.attach(view)
+            comments.editBuffer = self
+            comments.received(body)
         }
 
         /// The page's load call (a test makes it fail).
@@ -302,6 +329,8 @@ struct EditorPane: NSViewRepresentable {
                 if escape, (responder as? NSTextInputClient)?.hasMarkedText() == true {
                     return event
                 }
+                // v0.23: Esc in a comment field cancels that field, not Edit.
+                if escape, self.comments?.marginFocused == true { return event }
                 self.onStop()
                 return nil
             }
@@ -376,6 +405,47 @@ private final class EditorMessages: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// The comments script's `comments` handler in the editor's page (v0.23).
+private final class EditorCommentMessages: NSObject, WKScriptMessageHandler {
+    weak var coordinator: EditorPane.Coordinator?
+
+    init(_ coordinator: EditorPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            coordinator?.commentsMessage(message.body, isMainFrame: message.frameInfo.isMainFrame)
+        }
+    }
+}
+
+extension EditorPane.Coordinator: CommentsBuffer {
+    func currentText() async -> String? {
+        guard holdsText, let view = webView else { return nil }
+        return try? await view.callAsyncJavaScript(
+            "return portico.commentText();", arguments: [:], in: nil, contentWorld: .page) as? String
+    }
+
+    func draftRange() async -> Range<Int>? {
+        guard holdsText, let view = webView,
+            let value = try? await view.callAsyncJavaScript(
+                "var d = portico.draftRange(); return d ? [d.from, d.to] : null;", arguments: [:], in: nil,
+                contentWorld: .page) as? [NSNumber], value.count == 2, value[0].intValue <= value[1].intValue
+        else { return nil }
+        return value[0].intValue..<value[1].intValue
+    }
+
+    func applyChange(from: Int, to: Int, insert: String, expectedLength: Int) async -> Bool {
+        guard holdsText, let view = webView else { return false }
+        let value = try? await view.callAsyncJavaScript(
+            "return portico.applyChange(from, to, insert, expectedLength) === true;",
+            arguments: ["from": from, "to": to, "insert": insert, "expectedLength": expectedLength],
+            in: nil, contentWorld: .page)
+        return (value as? NSNumber)?.boolValue ?? false
+    }
+}
+
 /// The editor with Settings' Wrap code observed, so a change reconfigures it.
 struct EditorPaneHost: View {
     @ObservedObject var settings: Settings
@@ -384,10 +454,11 @@ struct EditorPaneHost: View {
     var onStop: () -> Void
     var onOpenFile: (String) -> Void
     var onCoordinator: (EditorPane.Coordinator?) -> Void
+    var comments: ViewerComments? = nil
 
     var body: some View {
         EditorPane(session: session, wrap: settings.wrapCode, topLine: topLine,
-                   onStop: onStop, onOpenFile: onOpenFile, onCoordinator: onCoordinator)
+                   onStop: onStop, onOpenFile: onOpenFile, onCoordinator: onCoordinator, comments: comments)
     }
 }
 
@@ -583,7 +654,8 @@ final class ViewerEditing {
 
 // MARK: - Header parts
 
-/// The header's Edit toggle: a pencil, accent while on (as Focus is).
+/// The header's Edit toggle: a square and pencil (a bare pencil reads as
+/// a slash at this size), accent while on (as Focus is).
 struct ViewerEditToggle: View {
     let on: Bool
     let editability: Editability
@@ -593,12 +665,12 @@ struct ViewerEditToggle: View {
     var body: some View {
         let enabled = editability.canEdit || on
         Button(action: action) {
-            Image(systemName: "pencil")
+            Image(systemName: "square.and.pencil")
                 .font(Theme.iconFont(ViewerHeader.iconSize, weight: ViewerHeader.iconWeight))
                 .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(on ? accent : (enabled ? Theme.text2 : Theme.text3))
                 .frame(width: ViewerHeader.buttonHeight, height: ViewerHeader.buttonHeight)
-                .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(on ? Theme.accentSoft : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
                 .contentShape(Rectangle())
         }

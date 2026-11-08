@@ -55,6 +55,11 @@ TASKS_CAPABILITY = "tasks.v1"
 # is sent one; with none attached, the gateway keeps them for the next hello.
 DEPLOYMENT_MESSAGE_CAPABILITY = "messages.deployment.v1"
 
+# v0.23: the app shows and writes comments in Markdown files (comment format
+# v1, protocol/COMMENTS.md). Declared for future use: the comment tools work
+# without the app, since they write files.
+COMMENTS_CAPABILITY = "comments.v1"
+
 # v0.11 (item 74): the capability, on both sides, for messages typed while
 # the agent works. A gateway that lists it queues a ``message.send`` that
 # arrives during a turn (``chat.queued``) instead of refusing it, but only
@@ -780,6 +785,12 @@ class ViewerDefaults(Strict):
     properties: Literal["folded", "open"] = "folded"
 
 
+class Person(Strict):
+    """v0.23: the person using the app, by real name (config ``[person] name``, or a plug-in)."""
+
+    name: str
+
+
 class HelloServer(Envelope):
     type: Literal["hello"] = "hello"
     protocol: Literal[1] = PROTOCOL_VERSION
@@ -816,6 +827,9 @@ class HelloServer(Envelope):
     # v0.16: how many threads may be open beside Main (config ``[threads] max``),
     # sent with ``threads.v1``; absent otherwise. The app's limit card follows it.
     threads_max: int | None = None
+    # v0.23: the person's real name, written as the author of their comments.
+    # Absent: the app uses the computer's full user name.
+    person: Person | None = None
 
 
 class ChatList(Envelope):
@@ -1756,7 +1770,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.22.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1857,6 +1871,7 @@ def example_messages() -> dict[str, BaseModel]:
             link_sites={"acme.example": "Acme"},
             viewer_defaults=ViewerDefaults(agent_can_see=True, agent_checks_html=True, act_hosts=["figma.com"]),
             threads_max=2,
+            person=Person(name="Sam Rivera"),
         ),
         ChatList(
             ts=_TS,

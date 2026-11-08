@@ -11,6 +11,10 @@ enum Theme {
     /// The solid palette (v0.19 spec §2.2): one table, read by the code and the tests.
     enum Token: CaseIterable {
         case window, sidebar, panel, surface, control, borderSubtle, border, borderStrong, text, text2, text3, selected
+        /// v0.23: the agent's avatar on a comment card (teal).
+        case agentAvatar
+        /// v0.23: a destructive confirm (Delete) with white text, 4.5:1 or more; darker than `deny`.
+        case dangerStrong
     }
 
     static let palette: [Token: (light: String, dark: String)] = [
@@ -28,6 +32,8 @@ enum Theme {
         .text2: ("#5E5E64", "#B6B6BC"),
         .text3: ("#6C6C72", "#8A8A91"),
         .selected: ("#E0E0E5", "#34343A"),
+        .agentAvatar: ("#2F7A6B", "#3E8E7E"),
+        .dangerStrong: ("#B3261E", "#C4362E"),
     ]
 
     static func hex(_ token: Token) -> (light: String, dark: String) {

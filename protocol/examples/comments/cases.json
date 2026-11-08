@@ -1,0 +1,1725 @@
+{
+ "format": "comments v1",
+ "cases": [
+  {
+   "name": "plugin-basic",
+   "file": "plugin-basic.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "k3x9a",
+      "by": "me",
+      "at": "2026-11-02T10:15:00.000Z",
+      "status": "open",
+      "quote": "permis",
+      "anchored_text": "permis",
+      "replies": [
+       {
+        "author": "me",
+        "at": "2026-11-02T10:15:00.000Z",
+        "text": "Is this still true for MCP tools?"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "list-after",
+   "file": "list-after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ab12c",
+      "by": "Sam",
+      "at": "2026-10-17T09:00:00.000Z",
+      "status": "open",
+      "quote": "round trip",
+      "anchored_text": "round trip",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "Byte for byte?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-10-18",
+        "text": "Yes, every fixture."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "quoted-fields",
+   "file": "quoted-fields.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "qf001",
+      "by": "Sam Rivera",
+      "at": "2026-11-01T08:00:00.000Z",
+      "status": "open",
+      "quote": "\"quiet\" mode",
+      "anchored_text": "\"quiet\" mode",
+      "replies": [
+       {
+        "author": "Sam Rivera",
+        "at": "2026-11-01T08:00:00.000Z",
+        "text": "Should this be in quotes?"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "continuation",
+   "file": "continuation.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cn001",
+      "by": "Sam",
+      "at": "2026-11-03T12:00:00.000Z",
+      "status": "open",
+      "quote": "after an agent write",
+      "anchored_text": "after an agent write",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-03T12:00:00.000Z",
+        "text": "Does it keep the scroll position?\nAnd the selection too?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-11-03T12:01:00.000Z",
+        "text": "It keeps the scroll position."
+       }
+      ],
+      "reactions": [
+       "+👍 Sam, Agent"
+      ]
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "code-ignored",
+   "file": "code-ignored.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "rl001",
+      "by": "Sam",
+      "at": "2026-11-04T09:30:00.000Z",
+      "status": "open",
+      "quote": "real one",
+      "anchored_text": "real one",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T09:30:00.000Z",
+        "text": "Only this is a comment."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "front-matter",
+   "file": "front-matter.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "fm002",
+      "by": "Sam",
+      "at": "2026-11-04T10:00:00.000Z",
+      "status": "open",
+      "quote": "text here",
+      "anchored_text": "text here",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T10:00:00.000Z",
+        "text": "Front matter is skipped."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "resolved",
+   "file": "resolved.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "rs001",
+      "by": "Sam",
+      "at": "2026-11-04T11:00:00.000Z",
+      "status": "open",
+      "quote": "open point",
+      "anchored_text": "open point",
+      "replies": [],
+      "reactions": []
+     },
+     {
+      "id": "rs002",
+      "by": "Sam",
+      "at": "2026-11-04T11:05:00.000Z",
+      "status": "resolved",
+      "quote": "settled point",
+      "anchored_text": "settled point",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T11:05:00.000Z",
+        "text": "Done."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "orphan-anchor",
+   "file": "orphan-anchor.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "or002",
+      "by": "Sam",
+      "at": "2026-11-04T12:00:00.000Z",
+      "status": "open",
+      "quote": "a real thread",
+      "anchored_text": "a real thread",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T12:00:00.000Z",
+        "text": "Kept."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": [
+     "or001"
+    ]
+   }
+  },
+  {
+   "name": "escapes",
+   "file": "escapes.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "es001",
+      "by": "Sam",
+      "at": "2026-11-04T13:00:00.000Z",
+      "status": "open",
+      "quote": "a --> b",
+      "anchored_text": "a --> b",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T13:00:00.000Z",
+        "text": "Is --> safe here?\nNote: see the spec.\nhttps://example.com/a\n\n+1 from me"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "crlf-no-final-newline",
+   "file": "crlf-no-final-newline.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cr001",
+      "by": "Sam",
+      "at": "2026-11-04T16:00:00.000Z",
+      "status": "open",
+      "quote": "line endings",
+      "anchored_text": "line endings",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T16:00:00.000Z",
+        "text": "Kept as CRLF."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "emoji",
+   "file": "emoji.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "em001",
+      "by": "Sam",
+      "at": "2026-11-04T15:00:00.000Z",
+      "status": "open",
+      "quote": "first draft",
+      "anchored_text": "first draft",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T15:00:00.000Z",
+        "text": "👍 looks good."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "quote-wrap",
+   "file": "quote-wrap.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "qw001",
+      "by": "Sam",
+      "at": "2026-11-04T14:00:00.000Z",
+      "status": "open",
+      "quote": "when the point is settled",
+      "anchored_text": "when the\n> point is settled",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T14:00:00.000Z",
+        "text": "Wraps across lines."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "para",
+   "file": "para.md",
+   "parse": {
+    "threads": [],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "add-paragraph",
+   "file": "para.md",
+   "op": "add",
+   "args": {
+    "quote": "writes files",
+    "id": "nw001",
+    "author": "Sam Rivera",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Which files?"
+   },
+   "expect": "para.add.after.md"
+  },
+  {
+   "name": "add-tight-list",
+   "file": "list-after.md",
+   "op": "add",
+   "args": {
+    "quote": "Read the file",
+    "id": "nw002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "First?"
+   },
+   "expect": "list-after.add.after.md"
+  },
+  {
+   "name": "add-loose-list",
+   "file": "loose-list.md",
+   "op": "add",
+   "args": {
+    "quote": "two lines",
+    "id": "nw003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Loose list."
+   },
+   "expect": "loose-list.add.after.md"
+  },
+  {
+   "name": "add-eof-no-newline",
+   "file": "no-newline.md",
+   "op": "add",
+   "args": {
+    "quote": "without",
+    "id": "nw004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "End of file."
+   },
+   "expect": "no-newline.add.after.md"
+  },
+  {
+   "name": "add-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "add",
+   "args": {
+    "quote": "second paragraph",
+    "id": "nw005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Line endings stay CRLF."
+   },
+   "expect": "crlf-no-final-newline.add.after.md"
+  },
+  {
+   "name": "add-nested",
+   "file": "continuation.md",
+   "op": "add",
+   "args": {
+    "quote": "agent write",
+    "id": "nw006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Which agent?"
+   },
+   "expect": "continuation.add.after.md"
+  },
+  {
+   "name": "add-quote-wrap",
+   "file": "quote-wrap.md",
+   "op": "add",
+   "args": {
+    "quote": "thread, and the person",
+    "id": "nw007",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Across two quote lines."
+   },
+   "expect": "quote-wrap.add.after.md"
+  },
+  {
+   "name": "add-after-emoji",
+   "file": "emoji.md",
+   "op": "add",
+   "args": {
+    "quote": "is ready",
+    "id": "nw008",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Ready 🎉"
+   },
+   "expect": "emoji.add.after.md"
+  },
+  {
+   "name": "reply",
+   "file": "plugin-basic.md",
+   "op": "reply",
+   "args": {
+    "id": "k3x9a",
+    "author": "Agent",
+    "at": "2026-11-07T18:40:00.000Z",
+    "body": "Yes, MCP tools too."
+   },
+   "expect": "plugin-basic.reply.after.md"
+  },
+  {
+   "name": "reply-colon-line",
+   "file": "resolved.md",
+   "op": "reply",
+   "args": {
+    "id": "rs001",
+    "author": "Agent",
+    "at": "2026-11-07T18:40:00.000Z",
+    "body": "Two lines:\nNote: second line"
+   },
+   "expect": "resolved.reply.after.md"
+  },
+  {
+   "name": "resolve",
+   "file": "plugin-basic.md",
+   "op": "resolve",
+   "args": {
+    "id": "k3x9a"
+   },
+   "expect": "plugin-basic.resolve.after.md"
+  },
+  {
+   "name": "reopen",
+   "file": "resolved.md",
+   "op": "reopen",
+   "args": {
+    "id": "rs002"
+   },
+   "expect": "resolved.reopen.after.md"
+  },
+  {
+   "name": "write-drops-orphan-anchor",
+   "file": "orphan-anchor.md",
+   "op": "resolve",
+   "args": {
+    "id": "or002"
+   },
+   "expect": "orphan-anchor.resolve.after.md"
+  },
+  {
+   "name": "anchor-col0",
+   "file": "anchor-col0.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ca001",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "Hello",
+      "anchored_text": "Hello",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T09:00:00.000Z",
+        "text": "Column zero."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "header-keys",
+   "file": "header-keys.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "hq001",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "First wins."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "hq002",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "resolved",
+      "quote": "beta",
+      "anchored_text": "beta",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "Quoted status."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "hq003",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "gamma status:resolved",
+      "anchored_text": "gamma",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "Not a status."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "resolve-first-status-wins",
+   "file": "header-keys.md",
+   "op": "resolve",
+   "args": {
+    "id": "hq001"
+   },
+   "expect": "header-keys.resolve.after.md"
+  },
+  {
+   "name": "indented-code",
+   "file": "indented-code.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ic002",
+      "by": "Sam",
+      "at": "2026-11-04T09:00:00.000Z",
+      "status": "open",
+      "quote": "real",
+      "anchored_text": "real",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T09:00:00.000Z",
+        "text": "Only this."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "add-heading-body",
+   "file": "heading-body.md",
+   "op": "add",
+   "args": {
+    "quote": "word",
+    "id": "bk001",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "heading-body.add.after.md"
+  },
+  {
+   "name": "add-lazy-quote",
+   "file": "lazy-quote.md",
+   "op": "add",
+   "args": {
+    "quote": "quoted",
+    "id": "bk002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "lazy-quote.add.after.md"
+  },
+  {
+   "name": "add-para-fence",
+   "file": "para-fence.md",
+   "op": "add",
+   "args": {
+    "quote": "Intro",
+    "id": "bk003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-fence.add.after.md"
+  },
+  {
+   "name": "add-list-fence",
+   "file": "list-fence.md",
+   "op": "add",
+   "args": {
+    "quote": "one",
+    "id": "bk004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "list-fence.add.after.md"
+  },
+  {
+   "name": "add-para-html",
+   "file": "para-html.md",
+   "op": "add",
+   "args": {
+    "quote": "one",
+    "id": "bk005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-html.add.after.md"
+  },
+  {
+   "name": "add-setext",
+   "file": "setext.md",
+   "op": "add",
+   "args": {
+    "quote": "Setext",
+    "id": "bk006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "setext.add.after.md"
+  },
+  {
+   "name": "add-para-dashes",
+   "file": "para-dashes.md",
+   "op": "add",
+   "args": {
+    "quote": "Para",
+    "id": "bk007",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-dashes.add.after.md"
+  },
+  {
+   "name": "add-para-heading",
+   "file": "para-heading.md",
+   "op": "add",
+   "args": {
+    "quote": "text",
+    "id": "bk008",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "para-heading.add.after.md"
+  },
+  {
+   "name": "add-col0",
+   "file": "col0.md",
+   "op": "add",
+   "args": {
+    "quote": "Hello",
+    "id": "bk009",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "col0.add.after.md"
+  },
+  {
+   "name": "find-link-destination",
+   "text": "See [the docs](https://example.com/word) and word here.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "See [the docs](https://example.com/word) and "
+  },
+  {
+   "name": "find-link-title",
+   "text": "See [x](u \"a word\") then word.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "See [x](u \"a word\") then "
+  },
+  {
+   "name": "find-image",
+   "text": "![a word](img/word.png) then word.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "![a word](img/word.png) then "
+  },
+  {
+   "name": "find-html-attribute",
+   "text": "A <span title=\"word\">x</span> word\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_prefix": "A <span title=\"word\">x</span> "
+  },
+  {
+   "name": "find-autolink-url-visible",
+   "text": "Go <https://word.example> or word.\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 2
+   },
+   "expect_prefix": "Go <https://word.example> or "
+  },
+  {
+   "name": "find-autolink-brackets",
+   "text": "Go <https://word.example> now.\n",
+   "find": {
+    "quote": "<https",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-indented-code",
+   "text": "    indented code word\n\nPara\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside code or front matter"
+  },
+  {
+   "name": "find-refdef",
+   "text": "See [x][r] word.\n\n[r]: http://word.example\n",
+   "find": {
+    "quote": "word",
+    "occurrence": 2
+   },
+   "expect_refusal": "occurs 1 times"
+  },
+  {
+   "name": "find-occurrence-skips-destination",
+   "text": "[cat](cat) cat\n",
+   "find": {
+    "quote": "cat",
+    "occurrence": 2
+   },
+   "expect_prefix": "[cat](cat) "
+  },
+  {
+   "name": "find-across-link-refused",
+   "text": "See [the docs](u) now.\n",
+   "find": {
+    "quote": "See the docs",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-heading-body-refused",
+   "text": "# Heading\nBody\n",
+   "find": {
+    "quote": "Heading Body",
+    "occurrence": 1
+   },
+   "expect_refusal": "crosses paragraphs"
+  },
+  {
+   "name": "find-col0-anchor",
+   "text": "<!--c:ca001-->Hello<!--/c:ca001--> world\n<!--co:ca001 by:S at:T status:open quote:\"Hello\"\nS: a\n-->\n",
+   "find": {
+    "quote": "world",
+    "occurrence": 1
+   },
+   "expect_prefix": "<!--c:ca001-->Hello<!--/c:ca001--> "
+  },
+  {
+   "name": "escape-roundtrip",
+   "roundtrip": [
+    "a\\b",
+    "say \"hi\"",
+    "a --> b",
+    "a --\\> b",
+    "--\\\\>",
+    "x\\",
+    "\\leading",
+    "end \\",
+    "C:\\path\\to",
+    "quote \" and \\\" both",
+    "---->",
+    "Note: y",
+    "+1 then",
+    "two\nlines: x\n\\back\n+plus\n\nafter blank"
+   ]
+  },
+  {
+   "name": "header-bare",
+   "file": "header-bare.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "hb001",
+      "by": "",
+      "at": "",
+      "status": "open",
+      "quote": "",
+      "anchored_text": "x",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": null,
+        "text": "hi"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "find-grapheme-skin-tone",
+   "text": "Great 👍🏽 work\n",
+   "find": {
+    "quote": "👍",
+    "occurrence": 1
+   },
+   "expect_prefix": "Great ",
+   "expect_text": "👍🏽"
+  },
+  {
+   "name": "find-grapheme-family",
+   "text": "Family 👨‍👩‍👧 here\n",
+   "find": {
+    "quote": "👨",
+    "occurrence": 1
+   },
+   "expect_prefix": "Family ",
+   "expect_text": "👨‍👩‍👧"
+  },
+  {
+   "name": "find-grapheme-flag",
+   "text": "Flag 🇯🇵 here\n",
+   "find": {
+    "quote": "🇯",
+    "occurrence": 1
+   },
+   "expect_prefix": "Flag ",
+   "expect_text": "🇯🇵"
+  },
+  {
+   "name": "find-grapheme-combining",
+   "text": "an étude\n",
+   "find": {
+    "quote": "e",
+    "occurrence": 1
+   },
+   "expect_prefix": "an ",
+   "expect_text": "é"
+  },
+  {
+   "name": "find-ends-not-widened-to-words",
+   "text": "the permission prompt\n",
+   "find": {
+    "quote": "ermission pro",
+    "occurrence": 1
+   },
+   "expect_prefix": "the p",
+   "expect_text": "ermission pro"
+  },
+  {
+   "name": "add-table-first-cell",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "alpha",
+    "id": "tc001",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-first-cell.add.after.md"
+  },
+  {
+   "name": "add-table-header-middle",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "Note",
+    "id": "tc002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-header-middle.add.after.md"
+  },
+  {
+   "name": "add-table-last-cell",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "20",
+    "id": "tc003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-last-cell.add.after.md"
+  },
+  {
+   "name": "add-table-escaped-pipe",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "a | b",
+    "id": "tc004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-escaped-pipe.add.after.md"
+  },
+  {
+   "name": "add-table-in-list",
+   "file": "table-in-list.md",
+   "op": "add",
+   "args": {
+    "quote": "y",
+    "id": "tc005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-in-list.add.after.md"
+  },
+  {
+   "name": "add-table-crlf",
+   "file": "table-crlf.md",
+   "op": "add",
+   "args": {
+    "quote": "two",
+    "id": "tc006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-crlf.add.after.md"
+  },
+  {
+   "name": "table-cells",
+   "file": "table-cells.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "tp001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "tp002",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "y",
+      "anchored_text": "y",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "find-table-across-cells",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "alpha | a",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-across-cells-plain",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "alpha a",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-code-in-cell",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "code",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside code or front matter"
+  },
+  {
+   "name": "find-table-alignment-row",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": ":-----",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-escaped-pipe-kept",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "| b",
+    "occurrence": 1
+   },
+   "expect_prefix": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a ",
+   "expect_text": "\\| b"
+  },
+  {
+   "name": "find-table-quote-as-source",
+   "text": "| a | b |\n|---|---|\n| x \\| y | z |\n",
+   "find": {
+    "quote": "x \\| y",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| ",
+   "expect_text": "x \\| y"
+  },
+  {
+   "name": "find-table-quote-as-rendered",
+   "text": "| a | b |\n|---|---|\n| x \\| y | z |\n",
+   "find": {
+    "quote": "x | y",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| ",
+   "expect_text": "x \\| y"
+  },
+  {
+   "name": "find-table-ragged-extra-cell",
+   "text": "| h1 | h2 |\n|:--|--:|\n| r1 |\n| r2 | c | extra |\n",
+   "find": {
+    "quote": "extra",
+    "occurrence": 1
+   },
+   "expect_refusal": "not shown in the table"
+  },
+  {
+   "name": "find-table-pipe-splits-code",
+   "text": "| a | b |\n|---|---|\n| `c|d` | z |\n",
+   "find": {
+    "quote": "c",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| `",
+   "expect_text": "c"
+  },
+  {
+   "name": "table-pipe-code",
+   "file": "table-pipe-code.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "pc001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "c",
+      "anchored_text": "c",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "edit-first-comment",
+   "file": "plugin-basic.md",
+   "op": "edit",
+   "args": {
+    "id": "k3x9a",
+    "index": 0,
+    "body": "Edited: still true?"
+   },
+   "expect": "edit-first-comment.after.md"
+  },
+  {
+   "name": "edit-middle-reply",
+   "file": "list-after.md",
+   "op": "edit",
+   "args": {
+    "id": "ab12c",
+    "index": 1,
+    "body": "Yes.\nNote: every one\n\nthen --> done"
+   },
+   "expect": "edit-middle-reply.after.md"
+  },
+  {
+   "name": "edit-multiline-to-one",
+   "file": "continuation.md",
+   "op": "edit",
+   "args": {
+    "id": "cn001",
+    "index": 0,
+    "body": "One line now."
+   },
+   "expect": "edit-multiline-to-one.after.md"
+  },
+  {
+   "name": "delete-reply",
+   "file": "continuation.md",
+   "op": "delete",
+   "args": {
+    "id": "cn001",
+    "index": 1
+   },
+   "expect": "delete-reply.after.md"
+  },
+  {
+   "name": "delete-thread-no-replies",
+   "file": "resolved.md",
+   "op": "delete",
+   "args": {
+    "id": "rs001",
+    "index": 0
+   },
+   "expect": "delete-thread-no-replies.after.md"
+  },
+  {
+   "name": "delete-thread-with-replies",
+   "file": "list-after.md",
+   "op": "delete",
+   "args": {
+    "id": "ab12c",
+    "index": 0
+   },
+   "expect": "delete-thread-with-replies.after.md"
+  },
+  {
+   "name": "edit-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "edit",
+   "args": {
+    "id": "cr001",
+    "index": 0,
+    "body": "Two\nlines."
+   },
+   "expect": "edit-crlf.after.md"
+  },
+  {
+   "name": "delete-thread-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "delete",
+   "args": {
+    "id": "cr001",
+    "index": 0
+   },
+   "expect": "delete-thread-crlf.after.md"
+  },
+  {
+   "name": "delete-thread-in-table",
+   "file": "table-cells.md",
+   "op": "delete",
+   "args": {
+    "id": "tp002",
+    "index": 0
+   },
+   "expect": "delete-thread-in-table.after.md"
+  },
+  {
+   "name": "edit-in-table",
+   "file": "table-cells.md",
+   "op": "edit",
+   "args": {
+    "id": "tp001",
+    "index": 0,
+    "body": "In a cell."
+   },
+   "expect": "edit-in-table.after.md"
+  },
+  {
+   "name": "delete-thread-at-eof",
+   "file": "block-at-eof.md",
+   "op": "delete",
+   "args": {
+    "id": "ef001",
+    "index": 0
+   },
+   "expect": "delete-thread-at-eof.after.md"
+  },
+  {
+   "name": "parse-delete-thread-with-replies",
+   "file": "delete-thread-with-replies.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-delete-reply",
+   "file": "delete-reply.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cn001",
+      "by": "Sam",
+      "at": "2026-11-03T12:00:00.000Z",
+      "status": "open",
+      "quote": "after an agent write",
+      "anchored_text": "after an agent write",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-03T12:00:00.000Z",
+        "text": "Does it keep the scroll position?\nAnd the selection too?"
+       }
+      ],
+      "reactions": [
+       "+👍 Sam, Agent"
+      ]
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-edit-crlf",
+   "file": "edit-crlf.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cr001",
+      "by": "Sam",
+      "at": "2026-11-04T16:00:00.000Z",
+      "status": "open",
+      "quote": "line endings",
+      "anchored_text": "line endings",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T16:00:00.000Z",
+        "text": "Two\nlines."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-edit-middle-reply",
+   "file": "edit-middle-reply.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ab12c",
+      "by": "Sam",
+      "at": "2026-10-17T09:00:00.000Z",
+      "status": "open",
+      "quote": "round trip",
+      "anchored_text": "round trip",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "Byte for byte?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-10-18",
+        "text": "Yes.\nNote: every one\n\nthen --> done"
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-delete-thread-in-table",
+   "file": "delete-thread-in-table.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "tp001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "closer-delete-last",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 2,
+    "fingerprint": {
+     "author": "R",
+     "at": "T",
+     "text": "last"
+    }
+   },
+   "expect": "closer-delete-last.after.md"
+  },
+  {
+   "name": "closer-delete-middle",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect": "closer-delete-middle.after.md"
+  },
+  {
+   "name": "closer-edit-last",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 2,
+    "body": "new\nNote: two",
+    "fingerprint": {
+     "author": "R",
+     "at": "T",
+     "text": "last"
+    }
+   },
+   "expect": "closer-edit-last.after.md"
+  },
+  {
+   "name": "closer-edit-middle",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "body": "mid2",
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect": "closer-edit-middle.after.md"
+  },
+  {
+   "name": "closer-edit-first",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "body": "zero",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect": "closer-edit-first.after.md"
+  },
+  {
+   "name": "closer-delete-thread",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect": "closer-delete-thread.after.md"
+  },
+  {
+   "name": "closer-edit-only",
+   "file": "closer-only.md",
+   "op": "edit",
+   "args": {
+    "id": "cl003",
+    "index": 0,
+    "body": "changed",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "only"
+    }
+   },
+   "expect": "closer-edit-only.after.md"
+  },
+  {
+   "name": "closer-delete-only",
+   "file": "closer-only.md",
+   "op": "delete",
+   "args": {
+    "id": "cl003",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "only"
+    }
+   },
+   "expect": "closer-delete-only.after.md"
+  },
+  {
+   "name": "dup-id",
+   "file": "dup-id.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "du001",
+      "by": "S",
+      "at": "T",
+      "status": "open",
+      "quote": "x",
+      "anchored_text": "x",
+      "replies": [
+       {
+        "author": "S",
+        "at": "T",
+        "text": "first"
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "du001",
+      "by": "S",
+      "at": "T",
+      "status": "open",
+      "quote": "x",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "S",
+        "at": "T",
+        "text": "pasted copy"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "dup-delete-copy",
+   "file": "dup-id.md",
+   "op": "delete",
+   "args": {
+    "id": "du001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "pasted copy"
+    }
+   },
+   "expect": "dup-delete-copy.after.md"
+  },
+  {
+   "name": "dup-delete-first",
+   "file": "dup-id.md",
+   "op": "delete",
+   "args": {
+    "id": "du001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "first"
+    }
+   },
+   "expect": "dup-delete-first.after.md"
+  },
+  {
+   "name": "edit-changed-since",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "body": "x",
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "not what it says now"
+    }
+   },
+   "expect_error": "changed"
+  },
+  {
+   "name": "delete-changed-since",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "fingerprint": {
+     "author": "Q",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect_error": "changed"
+  },
+  {
+   "name": "edit-blank-refused",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "body": "  \n ",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect_error": "blank"
+  }
+ ]
+}

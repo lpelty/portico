@@ -9,7 +9,7 @@ import {
   EditorSelection,
   EditorState,
   type Extension,
-  type Text,
+  Text,
   Transaction,
   type TransactionSpec,
 } from "@codemirror/state";
@@ -29,6 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
+import { anchorLines, commentsExtension, draftField, scanComments, selectionRefusal, setDraft } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -182,7 +183,31 @@ export interface PorticoEditor {
   visibleText(): string;
   scrollTopLine(): number;
   scrollToLine(line: number): void;
+  // v0.23: a comment action from Swift, as one change on the buffer; refused
+  // (false) when the document isn't the length Swift computed it for. It is
+  // a normal edit: sent back and saved like typing.
+  // Offsets, lengths and text are in the editor's own LF space (a CRLF file's
+  // line breaks count as one); the save path writes the file's line endings.
+  applyChange(from: number, to: number, insert: string, expectedLength: number): boolean;
+  // v0.23: the text in that LF space, for comment actions.
+  commentText(): string;
+  // v0.23: the draft's range, mapped through edits since it was marked.
+  draftRange(): { from: number; to: number } | null;
+  // v0.23: the selection, with why it can't be anchored (or null).
+  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | "cell" | null };
+  // v0.23: what the comments margin (viewer-comments.js) needs from the editor.
+  commentHooks: CommentHooks;
   readonly view: EditorView;
+}
+
+export interface CommentHooks {
+  contentElement(): HTMLElement;
+  marginParent(): HTMLElement;
+  anchorTop(id: string): number | null;
+  draftTop(): number | null;
+  onLayout(layout: { column: number; card: number } | null): void;
+  markDraft(): number;
+  clearDraft(): void;
 }
 
 export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOpener): PorticoEditor {
@@ -217,8 +242,9 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
     if (current.mode === "markdown") {
       return [
         ...shared,
-        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }) }),
+        yamlFrontmatter({ content: markdown({ base: markdownLanguage, codeLanguages: fenceLanguage, extensions: [anchorLines()] }) }),
         livePreview(openLink),
+        commentsExtension(),
         EditorView.lineWrapping,
         EditorView.editorAttributes.of({ class: "portico-markdown" }),
       ];
@@ -240,6 +266,12 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
     const anchor = Math.min(cursor, state.doc.length);
     view.setState(state.update({ selection: EditorSelection.cursor(anchor) }).state);
     bridge.loaded();
+  }
+
+  function topInScroller(pos: number): number {
+    const scroller = view.scrollDOM;
+    const offset = view.documentTop - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    return view.lineBlockAt(pos).top + offset;
   }
 
   function setScale(scale: number) {
@@ -318,8 +350,82 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       const n = Math.max(1, Math.min(Math.floor(line) || 1, view.state.doc.lines));
       view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "start" }) });
     },
+    applyChange(from, to, insert, expectedLength) {
+      const length = view.state.doc.length;
+      if (length !== expectedLength || from < 0 || to < from || to > length) return false;
+      view.dispatch({
+        changes: { from, to, insert: Text.of(insert.split(/\r\n?|\n/)) },
+        annotations: Transaction.userEvent.of("input.comment"),
+      });
+      return true;
+    },
+    commentText() {
+      return view.state.doc.toString();
+    },
+    draftRange() {
+      return view.state.field(draftField, false) ?? null;
+    },
+    commentHooks: {
+      contentElement: () => view.contentDOM,
+      marginParent: () => view.scrollDOM,
+      // Tops in the scroller's own coordinates (the margin scrolls inside it).
+      anchorTop(id) {
+        if (current.mode !== "markdown") return null;
+        const drawn = view.dom.querySelector(`.cm-md-table mark[data-c="${id}"]`);
+        if (drawn) {
+          const scroller = view.scrollDOM;
+          return drawn.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        }
+        const a = scanComments(view.state.doc.toString()).anchors.find((x) => x.id === id);
+        return a ? topInScroller(a.openTo) : null;
+      },
+      draftTop() {
+        const d = view.state.field(draftField, false);
+        return d ? topInScroller(d.from) : null;
+      },
+      onLayout(layout) {
+        const c = view.contentDOM.style;
+        if (layout) {
+          c.marginLeft = "12px";
+          c.marginRight = "0";
+          c.maxWidth = `${layout.column + 64}px`;
+        } else {
+          c.marginLeft = c.marginRight = c.maxWidth = "";
+        }
+        view.requestMeasure();
+      },
+      markDraft() {
+        const { from, to } = view.state.selection.main;
+        view.dispatch({ effects: setDraft.of(to > from ? { from, to } : null) });
+        return to > from ? 1 : 0;
+      },
+      clearDraft() {
+        view.dispatch({ effects: setDraft.of(null) });
+      },
+    },
+    selectionRange() {
+      const { from, to } = view.state.selection.main;
+      return { from, to, refusal: to > from ? selectionRefusal(view.state, from, to) : null };
+    },
   };
   return api;
+}
+
+// v0.23: the viewer's own context menu, with the selection's offsets and why
+// it can't be anchored; Swift draws the menu (comments handler). A right-click
+// in a table drawn as a widget can't be mapped to the source, so it asks the
+// person to click into the table (which shows its source).
+export function commentMenuMessage(editor: PorticoEditor, target: Node | null, x: number, y: number): Record<string, unknown> {
+  const el = target && (target.nodeType === 1 ? (target as Element) : target.parentElement);
+  const sel = editor.selectionRange();
+  const message: Record<string, unknown> = { type: "commentMenu", x, y, from: sel.from, to: sel.to };
+  if (el && el.closest(".cm-md-table")) {
+    message.refusal = "widget";
+    message.to = Math.max(sel.to, sel.from + 1);
+  } else if (sel.refusal) {
+    message.refusal = sel.refusal;
+  }
+  return message;
 }
 
 // In the page: build into #editor, publish the global, say ready.
@@ -328,5 +434,12 @@ const mount = doc?.getElementById("editor");
 if (mount && !(globalThis as any).portico) {
   const editor = createEditor(mount);
   (globalThis as any).portico = editor;
+  // v0.23: the viewer's own context menu, with the selection's offsets and
+  // why it can't be anchored; Swift draws the menu (comments handler).
+  editor.view.contentDOM.addEventListener("contextmenu", (e: MouseEvent) => {
+    e.preventDefault();
+    const handler = (globalThis as any).webkit?.messageHandlers?.comments;
+    if (handler) handler.postMessage(commentMenuMessage(editor, e.target as Node, e.clientX, e.clientY));
+  });
   new Bridge().ready();
 }

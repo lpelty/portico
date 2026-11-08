@@ -3,7 +3,8 @@
   The markdown viewer page. `MarkdownPage` (WebPane.swift) fills the
   placeholders: the stylesheet, the vendored renderer, the markdown body as
   a JSON string, and the front matter's Properties block (v0.11, item 68;
-  empty when the file has none). Everything is inlined: the page is served to the
+  empty when the file has none); v0.23: the body's first source line, the
+  comment colours and the comments script (viewer-comments.js). Everything is inlined: the page is served to the
   web view under the app's own scheme (RenderedPageHandler) with the
   markdown file's directory as its root, so relative images resolve and
   nothing else is fetched.
@@ -15,6 +16,7 @@
 <title>{{TITLE}}</title>
 <style>
 {{CSS}}
+{{COMMENTS_CSS}}
 </style>
 </head>
 <body>
@@ -25,9 +27,51 @@
 <script>
 (function () {
   var source = {{SOURCE}};
-  var html = marked.parse(source, { gfm: true, breaks: false });
-  document.getElementById("body").innerHTML = html;
+  var bodyLine = {{BODY_LINE}};
+  var options = { gfm: true, breaks: false };
+  var body = document.getElementById("body");
+  // v0.23: rendered one top-level token at a time, so each block's elements
+  // carry the source lines they came from (data-lines, 0-based, the file's
+  // own numbering); a new comment is anchored in that block's source. When
+  // the tokens don't add up to the source, no lines are set and anchoring
+  // is refused.
+  // Each token's lines come from where its text is in the source, so a
+  // token the lexer drops or changes (a link definition, expanded tabs)
+  // leaves the others right; a token not found carries no lines.
+  var tokens = marked.lexer(source, options);
+  var norm = source.replace(/\r\n?/g, "\n");
+  var cursor = 0;
+  var line = bodyLine;
+  var count = function (s) { return (s.match(/\n/g) || []).length; };
+  var definitions = [];
+  norm.replace(/^ {0,3}\[[^\]\n]+\]:[^\n]*(?:\n|$)/gm, function (m, offset) { definitions.push([offset, offset + m.length]); return m; });
+  var inDefinition = function (i) { return definitions.some(function (d) { return d[0] <= i && i < d[1]; }); };
+  tokens.forEach(function (t) {
+    if (t.type === "space") return;
+    // A block's text starts a line, and never inside a link definition (the
+    // lexer drops those, so their text must not be taken for the next block's).
+    var at = t.raw ? norm.indexOf(t.raw, cursor) : -1;
+    while (at >= 0 && ((at > 0 && norm[at - 1] !== "\n") || inDefinition(at))) at = norm.indexOf(t.raw, at + 1);
+    var start = -1, end = -1;
+    if (at >= 0) {
+      line += count(norm.slice(cursor, at));
+      start = line;
+      end = start + count(t.raw.replace(/\n+$/, ""));
+      line += count(t.raw);
+      cursor = at + t.raw.length;
+    }
+    var list = Object.assign([t], { links: tokens.links });
+    var holder = document.createElement("template");
+    holder.innerHTML = marked.parser(list, options);
+    Array.prototype.forEach.call(holder.content.children, function (el) {
+      if (start >= 0) el.setAttribute("data-lines", start + "-" + end);
+    });
+    body.appendChild(holder.content);
+  });
 })();
+</script>
+<script>
+{{COMMENTS_JS}}
 </script>
 </body>
 </html>

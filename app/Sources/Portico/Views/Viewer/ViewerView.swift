@@ -169,6 +169,8 @@ struct ViewerView: View {
     @StateObject private var page = ViewerPageAddress()
     /// The Edit switch and the file being edited (v0.20 §2.2).
     @StateObject private var edit = ViewerEdit()
+    /// v0.23: the comments margin for the shown Markdown file.
+    @StateObject private var comments = ViewerComments()
 
     var body: some View {
         let app = model.viewerApp[chat].flatMap { model.app(forToolUse: $0) }
@@ -199,6 +201,9 @@ struct ViewerView: View {
         // Edit is off at every open; another file (or none) saves the old
         // one, and a file whose edits are still unsaved comes back in Edit.
         .onChange(of: model.current[chat]?.location) { _, location in edit.shown(location) }
+        .onChange(of: commentsFile, initial: true) { _, file in syncComments(); comments.show(file: file) }
+        .onChange(of: model.hello) { syncComments(); comments.push() }
+        .onChange(of: commentsReadOnly, initial: true) { _, reason in comments.readOnly = reason; comments.push() }
         .onAppear {
             edit.chat = chat
             ViewerEditing.shared.register(edit, chat: chat)
@@ -219,6 +224,30 @@ struct ViewerView: View {
             guard identity != nil, let session = edit.session else { return }
             Task { await session.recheckDisk() }
         }
+    }
+
+    /// v0.23: the Markdown file the comments are for, when the toggle shows.
+    private var commentsFile: URL? {
+        guard page.outside == nil, let current = model.current[chat] else { return nil }
+        let shown = ArtifactPresentation(artifact: current)
+        let isSpace = model.spaces.contains { $0.location == current.location }
+        guard !shown.isMissing, ViewerCommentsToggle.shows(media: shown.media, isSpace: isSpace) else { return nil }
+        return shown.fileURL
+    }
+
+    /// Why comments can't be written for the shown file (it's read-only), else nil.
+    private var commentsReadOnly: String? {
+        if case .readOnly(let reason) = editability { return reason }
+        return nil
+    }
+
+    private func syncComments() {
+        comments.onWritten = { [weak model, chat] url in model?.fileEdited(path: url.path, chat: chat) }
+        comments.chat = chat
+        comments.focus = model
+        comments.helloPersonName = model.hello?.person?.name
+        comments.agentName = model.hello?.brand.agentName ?? "Agent"
+        comments.accentHex = model.hello?.brand.accent
     }
 
     /// The edited file's date and size, while Edit is on.
@@ -267,6 +296,13 @@ struct ViewerView: View {
                     }
                     .tip("Edits from \(offer.date.formatted(date: .abbreviated, time: .shortened)) weren't saved; "
                         + "Restore turns Edit on and puts them back (⌘Z undoes it)")
+                }
+                if commentsFile != nil {
+                    ViewerCommentsToggle(on: comments.shown, count: comments.openCount, focused: model.isFocused(chat: chat),
+                                         accent: model.brand.accent ?? Theme.accent) {
+                        syncComments()
+                        comments.setShown(!comments.shown, chat: chat, focus: model)
+                    }
                 }
                 ViewerEditToggle(on: edit.isEditing, editability: editability,
                                  accent: model.brand.accent ?? Theme.accent) {
@@ -473,7 +509,8 @@ struct ViewerView: View {
                     settings: model.settings, session: session, topLine: edit.topLine(for: session.url),
                     onStop: { Task { await edit.turnOff() } },
                     onOpenFile: { [chat] path in model.reveal(file: path, in: chat) },
-                    onCoordinator: { [edit] in edit.editor = $0 })
+                    onCoordinator: { [edit] in edit.editor = $0 },
+                    comments: comments)
                     .id("edit|\(current.location)|\(ObjectIdentifier(session).hashValue)")
             }
             // The editor's view, for the agent's look (v0.20 §4).
@@ -481,9 +518,12 @@ struct ViewerView: View {
             .environment(\.viewerSlot, .work)
         } else if let current = model.current[chat] {
             ArtifactContent(artifact: current)
-                .id(ArtifactPresentation(artifact: current).contentIdentity)
+                // v0.23: a comment written here re-reads the page in place (paneRevision), keeping the reader's place.
+                .id(comments.paneKey(ArtifactPresentation(artifact: current).contentIdentity))
                 .environment(\.viewerAgent, model.viewerAgent)
                 .environment(\.viewerSlot, .work)
+                .environment(\.viewerComments, comments)
+                .environment(\.webPaneRevision, comments.paneRevision)
         } else {
             ContentUnavailableView(
                 "Nothing open", systemImage: "rectangle.on.rectangle",
@@ -578,7 +618,7 @@ struct ViewerFocusButton: View {
                 .frame(width: ViewerHeader.glyphSide, height: ViewerHeader.glyphSide)
                 .foregroundStyle(on ? accent : Theme.text2)
                 .frame(width: ViewerHeader.buttonHeight, height: ViewerHeader.buttonHeight)
-                .background(on ? accent.opacity(0.15) : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(on ? Theme.accentSoft : Theme.control, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(on ? accent : Theme.border, lineWidth: 1))
                 .contentShape(Rectangle())
         }

@@ -37,6 +37,9 @@
   },
   "lock_folder": false,
   "permission_mode": "auto",
+  "person": {
+    "name": "Sam Rivera"
+  },
   "presentation": "single",
   "protocol": 1,
   "roots": [

@@ -7,6 +7,12 @@ import { EditorState, Range, StateField, type Extension, type TransactionSpec } 
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNodeRef } from "@lezer/common";
+import { cellWithComments, scanComments } from "./comments.ts";
+
+// v0.23: the ids of open comment threads, for the table widget's highlights.
+function openThreads(state: EditorState): Set<string> {
+  return new Set(scanComments(state.doc.toString()).blocks.filter((b) => b.status === "open").map((b) => b.id));
+}
 
 // The lines that show their marks: every line a selection range touches.
 export function activeLines(state: EditorState): Set<number> {
@@ -116,13 +122,18 @@ class ImageWidget extends WidgetType {
 class TableWidget extends WidgetType {
   readonly rows: string[][];
   readonly source: string;
-  constructor(rows: string[][], source: string) {
+  // v0.23: the open threads, so a cell's comments draw highlighted.
+  readonly open: Set<string>;
+  readonly openKey: string;
+  constructor(rows: string[][], source: string, open: Set<string> = new Set()) {
     super();
     this.rows = rows;
     this.source = source;
+    this.open = open;
+    this.openKey = [...open].sort().join(",");
   }
   eq(other: TableWidget) {
-    return other.source === this.source;
+    return other.source === this.source && other.openKey === this.openKey;
   }
   toDOM() {
     const wrap = document.createElement("div");
@@ -132,7 +143,7 @@ class TableWidget extends WidgetType {
       const tr = document.createElement("tr");
       for (const cell of cells) {
         const td = document.createElement(index === 0 ? "th" : "td");
-        td.textContent = cell;
+        td.appendChild(cellWithComments(document, cell, this.open));
         tr.appendChild(td);
       }
       (index === 0 ? table.createTHead() : table.tBodies[0] ?? table.createTBody()).appendChild(tr);
@@ -335,7 +346,7 @@ export function buildDecorations(state: EditorState): DecorationSet {
           } else {
             const source = state.sliceDoc(first.from, last.to);
             out.push(
-              Decoration.replace({ widget: new TableWidget(tableRows(state, node), source), block: true }).range(
+              Decoration.replace({ widget: new TableWidget(tableRows(state, node), source, openThreads(state)), block: true }).range(
                 first.from,
                 last.to,
               ),
