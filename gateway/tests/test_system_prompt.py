@@ -527,3 +527,58 @@ def test_sessions_clear_command_deletes_the_cleared_prompt_files(tmp_path: Path)
     assert main(["sessions", "clear", "--yes", "--state", str(home)]) == 0
     assert not ended_file.exists()
     assert live_file.exists()
+
+
+def test_gateway_start_prunes_a_stale_tmp_file_too(state_dir: StateDir, folder: Path) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    live = registry.create(folder)
+    registry.persist()
+    stale_tmp = _running(state_dir, live.number + 7).with_name(f"chat-{live.number + 7}.md.tmp")
+    stale_tmp.parent.mkdir(parents=True, exist_ok=True)
+    stale_tmp.write_text("half written", encoding="utf-8")
+    ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3).prune_running_prompts()
+    assert not stale_tmp.exists()
+
+
+def test_prune_survives_a_directory_named_like_a_prompt(state_dir: StateDir, folder: Path) -> None:
+    # Review L4: an unexpected entry never stops the gateway from starting.
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    odd = _running(state_dir, 99)
+    odd.mkdir(parents=True)
+    (odd / "inside.txt").write_text("kept", encoding="utf-8")
+    stale = _write_running(state_dir, 98)
+    registry.prune_running_prompts()
+    assert odd.is_dir() and (odd / "inside.txt").exists(), "not a regular file: left alone"
+    assert not stale.exists(), "the regular stale file still goes"
+
+
+def test_remove_never_raises_on_an_odd_prompt_entry(state_dir: StateDir, folder: Path) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    chat = registry.create(folder)
+    _running(state_dir, chat.number).mkdir(parents=True)
+    registry.remove(chat.number)  # must not raise after the index is saved
+    assert chat.number not in registry
+    assert chat.number not in [c.chat for c in state_dir.load_index().chats]
+
+
+def test_prune_never_follows_links_out_of_the_state_dir(state_dir: StateDir, folder: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    victim = outside / "chat-5.md"
+    victim.write_text("not ours", encoding="utf-8")
+    prompts = state_dir.path / "prompts"
+    prompts.mkdir(exist_ok=True)
+    (prompts / "running").symlink_to(outside, target_is_directory=True)
+    ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3).prune_running_prompts()
+    assert victim.exists(), "a running folder that resolves outside the state directory is not pruned"
+
+
+def test_prune_skips_a_symlink_named_like_a_prompt(state_dir: StateDir, folder: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target.md"
+    target.write_text("not ours", encoding="utf-8")
+    running = state_dir.path / "prompts" / "running"
+    running.mkdir(parents=True)
+    (running / "chat-77.md").symlink_to(target)
+    ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3).prune_running_prompts()
+    assert target.exists()
+    assert (running / "chat-77.md").is_symlink(), "a link is not a regular file: left alone"
