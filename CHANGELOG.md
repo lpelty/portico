@@ -34,6 +34,10 @@ agent, and the Edit icon fix.
   draft card beside it, and posting writes the comment into the file. When
   the selection can't be anchored (across paragraphs, in code or a table,
   across formatting), Comment is disabled and says why.
+- **Comments in table cells.** Select text within one cell, in reading
+  or Edit mode, and comment on it; the thread goes after the table. A
+  selection across cells says "Select text within one cell." In Edit mode,
+  click into a table to comment in it.
 - **Edit mode** hides the comment markup the way reading mode does,
   keeps the anchors around text you edit inside them, and removes them when
   you delete all of their text. The margin works there too: a comment action

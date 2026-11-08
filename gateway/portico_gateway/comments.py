@@ -47,6 +47,8 @@ _ORDERED_RE = re.compile(r"^ {0,3}\d{1,9}[.)](?:[ \t]|$)")
 _ORDERED_ONE_RE = re.compile(r"^ {0,3}1[.)][ \t]+\S")
 _LIST_RE = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)")
 _REFDEF_RE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*\S")
+_ROW_PREFIX_RE = re.compile(r"^[ \t>]*")
+_DELIMITER_RE = re.compile(r"^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
 
 
 @dataclass(frozen=True)
@@ -301,6 +303,46 @@ def _segments(text: str, lines, blocks) -> list[tuple[str, int, int]]:
         segs.append(("para", i, j))
         i = j + 1
     return segs
+
+
+def _unescaped_pipes(line: str) -> list[int]:
+    """Offsets of the ``|`` in ``line`` that are cell boundaries (not ``\\|``)."""
+    out = []
+    i = 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] == "|":
+            out.append(i)
+        i += 1
+    return out
+
+
+def _tables(text: str, lines, hidden) -> list[tuple[int, int, int]]:
+    """GFM tables as (header line, delimiter line, last row line), outside code and thread blocks."""
+    out = []
+    n = len(lines)
+
+    def body(k: int) -> str:
+        s, e, _ = lines[k]
+        return text[s:e][len(_ROW_PREFIX_RE.match(text[s:e]).group(0)) :]
+
+    k = 0
+    while k + 1 < n:
+        if _inside(hidden, lines[k][0]) or _inside(hidden, lines[k + 1][0]):
+            k += 1
+            continue
+        head, delim = body(k), body(k + 1)
+        if _unescaped_pipes(head) and "|" in delim and "-" in delim and _DELIMITER_RE.match(delim):
+            j = k + 1
+            while j + 1 < n and not _blank(body(j + 1)) and not _inside(hidden, lines[j + 1][0]) and not _interrupts(body(j + 1)):
+                j += 1
+            out.append((k, k + 1, j))
+            k = j + 1
+            continue
+        k += 1
+    return out
 
 
 def _code_spans(text: str, segments) -> list[tuple[int, int]]:
@@ -600,10 +642,15 @@ def _grapheme_boundary(text: str, i: int) -> bool:
 
 
 def snap_to_graphemes(text: str, start: int, end: int) -> tuple[int, int]:
-    """Widen each end to a grapheme cluster boundary, so a match never splits one."""
+    """Widen each end to a grapheme cluster boundary, so a match never splits one,
+    and never split an escaped pipe (``\\|``)."""
     while not _grapheme_boundary(text, start):
         start -= 1
     while not _grapheme_boundary(text, end):
+        end += 1
+    if start > 0 and text[start - 1] == "\\" and start < len(text) and text[start] == "|":
+        start -= 1
+    if end > 0 and text[end - 1] == "\\" and end < len(text) and text[end] == "|":
         end += 1
     return start, end
 
@@ -755,8 +802,22 @@ def _visible(text: str):
         segments.append((pos, len(text)))
     for a, b in segments:
         _inline_walls(text, a, b, walls)
+    # Tables: a cell boundary (an unescaped pipe) and the delimiter row are walls,
+    # so a match stays in one cell; an escaped pipe's backslash is zero-width.
+    zero = []
+    for head, delim, last in _tables(text, lines, hidden):
+        walls.append((lines[delim][0], lines[delim][1]))
+        for k in range(head, last + 1):
+            if k == delim:
+                continue
+            s, e, _ = lines[k]
+            for pipe in _unescaped_pipes(text[s:e]):
+                walls.append((s + pipe, s + pipe + 1))
+    for m in re.finditer(r"\\\|", text):
+        if not _inside(reg.ignored, m.start()):
+            zero.append((m.start(), m.start() + 1))
     walls.sort()
-    markers = sorted((m.start(), m.end()) for m in _MARKER_RE.finditer(text))
+    markers = sorted([(m.start(), m.end()) for m in _MARKER_RE.finditer(text)] + zero)
     # Line breaks that end a top-level block: the space they become is a paragraph break.
     seg_ends = {lines[s[2]][1] for s in reg.segs}
     chars: list[str] = []

@@ -597,6 +597,34 @@ export function commentsExtension(): Extension {
   return [decorations, keepAnchors, protectBlocks, draftField, commentKeys];
 }
 
+// A table cell's source drawn with its comments: markers hidden, text anchored
+// by an open thread in a highlight (the table widget, when the cursor is
+// outside the table).
+export function cellWithComments(doc: Document, source: string, open: Set<string>): DocumentFragment {
+  const frag = doc.createDocumentFragment();
+  const stack: Node[] = [frag];
+  const re = /<!--(\/?)c:([a-z0-9]{5,8})-->/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const top = () => stack[stack.length - 1];
+  const textOf = (s: string) => s.replace(/\\\|/g, "|");
+  while ((m = re.exec(source))) {
+    if (m.index > last) top().appendChild(doc.createTextNode(textOf(source.slice(last, m.index))));
+    if (!m[1]) {
+      const mark = doc.createElement("mark");
+      mark.className = "pc-anchor cm-comment-anchor" + (open.has(m[2]) ? " pc-open" : "");
+      mark.setAttribute("data-c", m[2]);
+      top().appendChild(mark);
+      stack.push(mark);
+    } else if (stack.length > 1 && (top() as Element).getAttribute?.("data-c") === m[2]) {
+      stack.pop();
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < source.length) top().appendChild(doc.createTextNode(textOf(source.slice(last))));
+  return frag;
+}
+
 // A line that starts with an anchor marker is text, not an HTML block
 // (comment format v1 writes anchors at a line's start when the selection
 // starts there); the rest of the line is parsed as Markdown.
@@ -623,7 +651,7 @@ export function anchorAwareMarkdown(codeLanguages?: (info: string) => Language |
 
 // Why a selection can't be anchored: "ignored" (code, a table, front
 // matter), "crosses" (more than one paragraph or list item), or null.
-export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | null {
+export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | "cell" | null {
   if (to <= from) return "crosses";
   const text = state.doc.toString();
   const scan = scanComments(text);
@@ -637,8 +665,16 @@ export function selectionRefusal(state: EditorState, from: number, to: number): 
   };
   const a = ancestors(from, 1);
   const b = ancestors(to, -1);
-  const code = /^(FencedCode|CodeBlock|InlineCode|Table|TableRow|TableCell|Frontmatter|FrontMatter)$/;
+  const code = /^(FencedCode|CodeBlock|InlineCode|Frontmatter|FrontMatter)$/;
   if (a.some((n) => code.test(n.name)) || b.some((n) => code.test(n.name))) return "ignored";
+  // A table: only within one cell (spec §13); an escaped pipe is text in its cell.
+  const inTable = (list: typeof a) => list.some((n) => n.name === "Table");
+  if (inTable(a) || inTable(b)) {
+    const ca = a.find((n) => n.name === "TableCell");
+    const cb = b.find((n) => n.name === "TableCell");
+    if (!ca || !cb || ca.from !== cb.from) return "cell";
+    return null;
+  }
   const holder = (list: typeof a) => list.find((n) => n.name === "Paragraph" || n.name === "ListItem");
   const ha = holder(a);
   const hb = holder(b);

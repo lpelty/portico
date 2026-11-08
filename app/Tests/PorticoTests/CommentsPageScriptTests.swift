@@ -421,4 +421,54 @@ final class CommentsPageScriptTests: XCTestCase {
             XCTAssertEqual(info?["text"] as? String, want)
         }
     }
+
+    // MARK: - table cells (spec §13)
+
+    func testACellSelectionReportsItsRowAndCell() async throws {
+        let view = try await page(try CommentFormatTests.read("table.md"))
+        _ = try await js("""
+            var td = document.querySelectorAll('tbody tr')[0].children[2];
+            var r = document.createRange(); r.selectNodeContents(td);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertNil(info?["refusal"] as? String)
+        XCTAssertEqual(info?["text"] as? String, "10")
+        XCTAssertEqual(info?["lines"] as? [Int], [2, 5], "the table's lines")
+        XCTAssertEqual(info?["row"] as? Int, 1, "the first body row")
+        XCTAssertEqual(info?["cell"] as? Int, 2)
+        XCTAssertEqual(info?["table"] as? Int, 0)
+        _ = try await js("""
+            var th = document.querySelectorAll('thead th')[1];
+            var r = document.createRange(); r.selectNodeContents(th);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let head = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(head?["row"] as? Int, 0, "the header row")
+        XCTAssertEqual(head?["cell"] as? Int, 1)
+    }
+
+    func testASelectionAcrossCellsIsRefusedAsCells() async throws {
+        let view = try await page(try CommentFormatTests.read("table.md"))
+        _ = try await js("""
+            var tds = document.querySelectorAll('tbody tr')[0].children;
+            var r = document.createRange(); r.setStart(tds[0].firstChild, 1); r.setEnd(tds[1].firstChild, 1);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertEqual(info?["refusal"] as? String, "cell")
+    }
+
+    func testHighlightsRenderInsideCells() async throws {
+        let view = try await page(try CommentFormatTests.read("table-cells.md"))
+        let out = try await js("""
+            return [...document.querySelectorAll('mark.pc-anchor.pc-open')].map(m => [m.dataset.c, m.textContent, !!m.closest('td')]);
+            """, in: view) as? [[Any]]
+        XCTAssertEqual(out?.count, 2)
+        XCTAssertEqual(out?[0][1] as? String, "alpha")
+        XCTAssertEqual(out?[1][1] as? String, "y")
+        XCTAssertEqual(out?[1][2] as? Bool, true)
+        let cell = try await js("return document.querySelectorAll('tbody td')[1].textContent;", in: view) as? String
+        XCTAssertEqual(cell, "x | y", "the escaped pipe is text in its cell")
+    }
 }

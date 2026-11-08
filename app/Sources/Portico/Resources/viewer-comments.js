@@ -278,19 +278,33 @@
     var text = norm(range.toString()).trim();
     if (!text) return null;
     var info = { text: text, lines: null, occurrence: 0 };
-    var ignored = "pre, code, table, .properties, details.fm";
+    var ignored = "pre, code, .properties, details.fm";
     if (closestOf(range.startContainer, ignored) || closestOf(range.endContainer, ignored)) {
       info.refusal = "ignored";
       return info;
     }
+    // A table: only a selection within one cell (spec §13).
+    var tableA = closestOf(range.startContainer, "table"), tableB = closestOf(range.endContainer, "table");
+    var cellA = closestOf(range.startContainer, "td, th"), cellB = closestOf(range.endContainer, "td, th");
+    if (tableA || tableB) {
+      if (!cellA || cellA !== cellB) { info.refusal = "cell"; return info; }
+    }
     var a = blockOf(range.startContainer), b = blockOf(range.endContainer);
     if (!a || a !== b) { info.refusal = "crosses"; return info; }
-    if (closestOf(range.startContainer, "li, p") !== closestOf(range.endContainer, "li, p")) {
+    if (!cellA && closestOf(range.startContainer, "li, p") !== closestOf(range.endContainer, "li, p")) {
       info.refusal = "crosses";
       return info;
     }
     var lines = a.getAttribute("data-lines").split("-").map(Number);
     info.lines = lines;
+    if (cellA) {
+      var tr = cellA.parentElement;
+      var inHead = !!tr.closest("thead");
+      info.cell = Array.prototype.indexOf.call(tr.children, cellA);
+      info.row = inHead ? 0 : 1 + Array.prototype.indexOf.call(tr.parentElement.children, tr);
+      info.table = Array.prototype.indexOf.call(a.matches("table") ? [a] : a.querySelectorAll("table"), tableA);
+      a = cellA; // occurrences count within the cell
+    }
     // Occurrences count visible text only, as the source search does: text in code isn't counted.
     var whole = "", prefix = "", reached = false;
     var walker = document.createTreeWalker(a, NodeFilter.SHOW_TEXT);

@@ -194,7 +194,7 @@ export interface PorticoEditor {
   // v0.23: the draft's range, mapped through edits since it was marked.
   draftRange(): { from: number; to: number } | null;
   // v0.23: the selection, with why it can't be anchored (or null).
-  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | null };
+  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | "cell" | null };
   // v0.23: what the comments margin (viewer-comments.js) needs from the editor.
   commentHooks: CommentHooks;
   readonly view: EditorView;
@@ -371,6 +371,11 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       // Tops in the scroller's own coordinates (the margin scrolls inside it).
       anchorTop(id) {
         if (current.mode !== "markdown") return null;
+        const drawn = view.dom.querySelector(`.cm-md-table mark[data-c="${id}"]`);
+        if (drawn) {
+          const scroller = view.scrollDOM;
+          return drawn.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        }
         const a = scanComments(view.state.doc.toString()).anchors.find((x) => x.id === id);
         return a ? topInScroller(a.openTo) : null;
       },
@@ -406,6 +411,23 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
   return api;
 }
 
+// v0.23: the viewer's own context menu, with the selection's offsets and why
+// it can't be anchored; Swift draws the menu (comments handler). A right-click
+// in a table drawn as a widget can't be mapped to the source, so it asks the
+// person to click into the table (which shows its source).
+export function commentMenuMessage(editor: PorticoEditor, target: Node | null, x: number, y: number): Record<string, unknown> {
+  const el = target && (target.nodeType === 1 ? (target as Element) : target.parentElement);
+  const sel = editor.selectionRange();
+  const message: Record<string, unknown> = { type: "commentMenu", x, y, from: sel.from, to: sel.to };
+  if (el && el.closest(".cm-md-table")) {
+    message.refusal = "widget";
+    message.to = Math.max(sel.to, sel.from + 1);
+  } else if (sel.refusal) {
+    message.refusal = sel.refusal;
+  }
+  return message;
+}
+
 // In the page: build into #editor, publish the global, say ready.
 const doc = (globalThis as any).document as Document | undefined;
 const mount = doc?.getElementById("editor");
@@ -416,11 +438,8 @@ if (mount && !(globalThis as any).portico) {
   // why it can't be anchored; Swift draws the menu (comments handler).
   editor.view.contentDOM.addEventListener("contextmenu", (e: MouseEvent) => {
     e.preventDefault();
-    const sel = editor.selectionRange();
     const handler = (globalThis as any).webkit?.messageHandlers?.comments;
-    const message: Record<string, unknown> = { type: "commentMenu", x: e.clientX, y: e.clientY, from: sel.from, to: sel.to };
-    if (sel.refusal) message.refusal = sel.refusal;
-    if (handler) handler.postMessage(message);
+    if (handler) handler.postMessage(commentMenuMessage(editor, e.target as Node, e.clientX, e.clientY));
   });
   new Bridge().ready();
 }

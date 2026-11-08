@@ -88,4 +88,40 @@ final class CommentAnchoringTests: XCTestCase {
             XCTAssertEqual(String(decoding: Array(text.utf16)[snapped], as: UTF16.self), needle)
         }
     }
+
+    // MARK: - table cells (spec §13)
+
+    func testLocatesInsideATableCell() throws {
+        let source = try CommentFormatTests.read("table.md")
+        let r = try CommentAnchoring.locate(.init(text: "10", lines: 2...5, occurrence: 0, cell: 2, row: 1), in: source).get()
+        XCTAssertEqual(slice(source, r), "10")
+        let header = try CommentAnchoring.locate(.init(text: "Size", lines: 2...5, occurrence: 0, cell: 2, row: 0), in: source).get()
+        XCTAssertEqual(slice(source, header), "Size")
+    }
+
+    func testCellWithAnEscapedPipeKeepsItWhole() throws {
+        let source = try CommentFormatTests.read("table.md")
+        let r = try CommentAnchoring.locate(.init(text: "a | b", lines: 2...5, occurrence: 0, cell: 1, row: 1), in: source).get()
+        XCTAssertEqual(slice(source, r), "a \\| b")
+        let tail = try CommentAnchoring.locate(.init(text: "| b", lines: 2...5, occurrence: 0, cell: 1, row: 1), in: source).get()
+        XCTAssertEqual(slice(source, tail), "\\| b", "a marker never splits \\|")
+    }
+
+    func testCellSelectionIsSearchedInItsCellOnly() {
+        let source = (try? CommentFormatTests.read("table.md")) ?? ""
+        XCTAssertEqual(CommentAnchoring.locate(.init(text: "alpha", lines: 2...5, occurrence: 0, cell: 1, row: 1), in: source), .failure(.notFound))
+        XCTAssertEqual(CommentAnchoring.cellWords, "Select text within one cell.")
+    }
+
+    func testInlineCodeInACellIsRefused() throws {
+        let source = try CommentFormatTests.read("table.md")
+        XCTAssertEqual(
+            CommentAnchoring.locate(.init(text: "code", lines: 2...5, occurrence: 0, cell: 1, row: 2), in: source), .failure(.insideIgnored))
+    }
+
+    func testATableInsideAListItemIsFoundByItsRow() throws {
+        let source = try CommentFormatTests.read("table-in-list.md")
+        let r = try CommentAnchoring.locate(.init(text: "y", lines: 0...4, occurrence: 0, cell: 1, row: 1), in: source).get()
+        XCTAssertEqual(slice(source, r), "y")
+    }
 }

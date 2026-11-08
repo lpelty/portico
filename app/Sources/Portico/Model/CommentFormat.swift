@@ -157,6 +157,8 @@ enum CommentFormat {
     nonisolated(unsafe) fileprivate static let orderedOneRE = rx(#"^ {0,3}1[.)][ \t]+\S"#)
     nonisolated(unsafe) fileprivate static let listRE = rx(#"^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)"#)
     nonisolated(unsafe) fileprivate static let refdefRE = rx(#"^ {0,3}\[[^\]]+\]:[ \t]*\S"#)
+    nonisolated(unsafe) fileprivate static let rowPrefixRE = rx(#"^[ \t>]*"#)
+    nonisolated(unsafe) fileprivate static let delimiterRE = rx(#"^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"#)
     nonisolated(unsafe) fileprivate static let indentedRE = rx(#"^(?: {4}| {0,3}\t)"#)
     nonisolated(unsafe) fileprivate static let blockStartRE = rx(#"^[ \t]*<!--co:[a-z0-9]{5,8}(?=[ \t\r\n\f\u000B]|-->|$)"#)
     nonisolated(unsafe) fileprivate static let autolinkRE = rx(#"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>"#)
@@ -168,6 +170,73 @@ enum CommentFormat {
     }
 
     fileprivate static func lineText(_ t: U, _ l: Line) -> String { s(t[l.start..<l.end]) }
+
+    /// UTF-16 offsets of the `|` in `line` that are cell boundaries (not `\|`).
+    fileprivate static func unescapedPipes(_ line: U) -> [Int] {
+        var out: [Int] = []
+        var i = 0
+        while i < line.count {
+            if line[i] == backslash { i += 2; continue }
+            if line[i] == 124 { out.append(i) }
+            i += 1
+        }
+        return out
+    }
+
+    fileprivate static func rowPrefix(_ line: String) -> Int {
+        rowPrefixRE.firstMatch(in: line, range: NSRange(location: 0, length: line.utf16.count))?.range.length ?? 0
+    }
+
+    /// GFM tables as (header line, delimiter line, last row line), outside `hidden`.
+    fileprivate static func tables(_ t: U, _ ls: [Line], _ hidden: [Range<Int>]) -> [(Int, Int, Int)] {
+        var out: [(Int, Int, Int)] = []
+        let n = ls.count
+        func body(_ k: Int) -> String {
+            let line = lineText(t, ls[k])
+            return String(decoding: Array(line.utf16).dropFirst(rowPrefix(line)), as: UTF16.self)
+        }
+        var k = 0
+        while k + 1 < n {
+            if inside(hidden, ls[k].start) || inside(hidden, ls[k + 1].start) { k += 1; continue }
+            let head = body(k), delim = body(k + 1)
+            if !unescapedPipes(u(head)).isEmpty, delim.contains("|"), delim.contains("-"), match(delimiterRE, delim) {
+                var j = k + 1
+                while j + 1 < n, !blankLine(body(j + 1)), !inside(hidden, ls[j + 1].start), !interrupts(body(j + 1)) { j += 1 }
+                out.append((k, k + 1, j))
+                k = j + 1
+                continue
+            }
+            k += 1
+        }
+        return out
+    }
+
+    /// The file's GFM tables (outside code and thread blocks), by 0-based line.
+    static func tables(_ text: String) -> [(header: Int, delimiter: Int, last: Int)] {
+        let t = u(text)
+        let r = regions(t)
+        let hidden = (r.ignored + r.blocks.map { $0.start..<$0.end }).sorted { $0.lowerBound < $1.lowerBound }
+        return tables(t, r.lines, hidden).map { (header: $0.0, delimiter: $0.1, last: $0.2) }
+    }
+
+    /// The cells of the table row on line `range` (a line's UTF-16 range): the source spans between boundary pipes.
+    static func tableCells(_ text: String, line range: Range<Int>) -> [Range<Int>] {
+        let units = Array(text.utf16)
+        var end = min(range.upperBound, units.count)
+        while end > range.lowerBound, units[end - 1] == 10 || units[end - 1] == 13 { end -= 1 }
+        let line = Array(units[range.lowerBound..<end])
+        let lineString = String(decoding: line, as: UTF16.self)
+        let lead = rowPrefix(lineString)
+        var trimmed = line.count
+        while trimmed > lead, line[trimmed - 1] == 32 || line[trimmed - 1] == 9 { trimmed -= 1 }
+        let bounds = unescapedPipes(line).filter { $0 >= lead }
+        let starts = [lead] + bounds.map { $0 + 1 }
+        let ends = bounds + [trimmed]
+        var cells = Array(zip(starts, ends))
+        if let first = bounds.first, first == lead, !cells.isEmpty { cells.removeFirst() }
+        if let last = bounds.last, last == trimmed - 1, !cells.isEmpty { cells.removeLast() }
+        return cells.map { (range.lowerBound + $0.0)..<(range.lowerBound + max($0.0, $0.1)) }
+    }
 
     fileprivate static func interrupts(_ line: String, inQuote: Bool = false) -> Bool {
         if match(blockStartRE, line) { return true }
@@ -785,8 +854,11 @@ enum CommentFormat {
     }
 
     fileprivate static func snapGraphemes(_ t: U, _ r: Range<Int>, _ bounds: [Int]) -> Range<Int> {
-        let a = bounds.last { $0 <= r.lowerBound } ?? 0
-        let b = bounds.first { $0 >= r.upperBound } ?? t.count
+        var a = bounds.last { $0 <= r.lowerBound } ?? 0
+        var b = bounds.first { $0 >= r.upperBound } ?? t.count
+        // Never split an escaped pipe (`\|`).
+        if a > 0, a < t.count, t[a - 1] == backslash, t[a] == 124 { a -= 1 }
+        if b > 0, b < t.count, t[b - 1] == backslash, t[b] == 124 { b += 1 }
         return a..<max(a, b)
     }
 
@@ -962,9 +1034,24 @@ enum CommentFormat {
         }
         if pos < t.count { segments.append(pos..<t.count) }
         for seg in segments { inlineWalls(t, ns, seg.lowerBound, seg.upperBound, &walls) }
+        // Tables: a cell boundary and the delimiter row are walls, so a match stays
+        // in one cell; an escaped pipe's backslash is zero-width.
+        for (head, delim, last) in tables(t, r.lines, hidden) {
+            walls.append(r.lines[delim].start..<r.lines[delim].end)
+            for k in head...last where k != delim {
+                let l = r.lines[k]
+                for p in unescapedPipes(Array(t[l.start..<l.end])) { walls.append((l.start + p)..<(l.start + p + 1)) }
+            }
+        }
+        var zero: [Range<Int>] = []
+        var zi = 0
+        while zi + 1 < t.count {
+            if t[zi] == backslash, t[zi + 1] == 124, !inside(r.ignored, zi) { zero.append(zi..<(zi + 1)) }
+            zi += 1
+        }
         var wallAt: [Int: Int] = [:]
         for w in walls where (wallAt[w.lowerBound] ?? -1) < w.upperBound { wallAt[w.lowerBound] = w.upperBound }
-        let ms = markers(t).map(\.range)
+        let ms = (markers(t).map(\.range) + zero).sorted { $0.lowerBound < $1.lowerBound }
         let segEnds = Set(r.segs.map { r.lines[$0.last].end })
         var v = Visible()
         var prefixEnds: [Int: Int] = [:]

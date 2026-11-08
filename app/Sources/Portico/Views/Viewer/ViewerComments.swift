@@ -485,6 +485,8 @@ final class ViewerComments: ObservableObject {
         var refusal: String?
         switch selection["refusal"] as? String {
         case "ignored": refusal = CommentAnchoring.reason(.insideIgnored)
+        case "cell": refusal = CommentAnchoring.cellWords
+        case "widget": refusal = CommentAnchoring.tableWidgetWords
         case .some: refusal = CommentAnchoring.reason(.crossesBlocks)
         case nil:
             if trustSelection {
@@ -506,7 +508,9 @@ final class ViewerComments: ObservableObject {
         }
         let a = lines[0].intValue, b = lines[1].intValue
         guard a <= b else { return nil }
-        return .init(text: text, lines: a...b, occurrence: (info["occurrence"] as? NSNumber)?.intValue ?? 0)
+        return .init(text: text, lines: a...b, occurrence: (info["occurrence"] as? NSNumber)?.intValue ?? 0,
+                     cell: (info["cell"] as? NSNumber)?.intValue, row: (info["row"] as? NSNumber)?.intValue ?? 0,
+                     table: (info["table"] as? NSNumber)?.intValue ?? 0)
     }
 
     /// Choose Comment: comments on (widening if needed), a draft card at the

@@ -351,4 +351,18 @@ final class ViewerCommentsTests: XCTestCase {
         XCTAssertTrue(ok)
         XCTAssertTrue(buffer.text.hasPrefix("日本語の<!--c:\(made.id!)-->文章<!--/c:\(made.id!)-->です"), buffer.text)
     }
+
+    func testCellRefusalAndCellSelectionInTheMenu() throws {
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: try file("table.md"))
+        let across = c.menuContext(selection: ["text": "x", "lines": [4, 4], "occurrence": 0, "refusal": "cell"], editMode: false)
+        XCTAssertEqual(across.refusal, "Select text within one cell.")
+        let ok = c.menuContext(selection: ["text": "10", "lines": [2, 5], "occurrence": 0, "cell": 2, "row": 1, "table": 0], editMode: false)
+        XCTAssertNil(ok.refusal)
+        let sel = ViewerComments.selection(["text": "10", "lines": [2, 5], "occurrence": 0, "cell": 2, "row": 1, "table": 0])
+        XCTAssertEqual(sel?.cell, 2)
+        XCTAssertEqual(sel?.row, 1)
+        let widget = c.menuContext(selection: ["text": "selection", "lines": [0, 0], "occurrence": 0, "refusal": "widget"], editMode: true, trustSelection: true)
+        XCTAssertEqual(widget.refusal, "Click into the table to comment.")
+    }
 }

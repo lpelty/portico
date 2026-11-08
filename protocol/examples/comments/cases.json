@@ -954,6 +954,171 @@
    },
    "expect_prefix": "the p",
    "expect_text": "ermission pro"
+  },
+  {
+   "name": "add-table-first-cell",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "alpha",
+    "id": "tc001",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-first-cell.add.after.md"
+  },
+  {
+   "name": "add-table-header-middle",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "Note",
+    "id": "tc002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-header-middle.add.after.md"
+  },
+  {
+   "name": "add-table-last-cell",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "20",
+    "id": "tc003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-last-cell.add.after.md"
+  },
+  {
+   "name": "add-table-escaped-pipe",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "a | b",
+    "id": "tc004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-escaped-pipe.add.after.md"
+  },
+  {
+   "name": "add-table-in-list",
+   "file": "table-in-list.md",
+   "op": "add",
+   "args": {
+    "quote": "y",
+    "id": "tc005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-in-list.add.after.md"
+  },
+  {
+   "name": "add-table-crlf",
+   "file": "table-crlf.md",
+   "op": "add",
+   "args": {
+    "quote": "two",
+    "id": "tc006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-crlf.add.after.md"
+  },
+  {
+   "name": "table-cells",
+   "file": "table-cells.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "tp001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "tp002",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "y",
+      "anchored_text": "y",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "find-table-across-cells",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "alpha | a",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-across-cells-plain",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "alpha a",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-code-in-cell",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "code",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside code or front matter"
+  },
+  {
+   "name": "find-table-alignment-row",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": ":-----",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-escaped-pipe-kept",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "| b",
+    "occurrence": 1
+   },
+   "expect_prefix": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a ",
+   "expect_text": "\\| b"
   }
  ]
 }
