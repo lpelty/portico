@@ -53,7 +53,10 @@ final class ViewerPageSafetyTests: XCTestCase {
 
     /// `body` written to `name` and shown in a pane whose comments are for
     /// `commentsFor` (default: that same file).
-    private func rig(_ body: String, name: String = "note.md", commentsFor: URL? = nil, extra: [String: Data] = [:]) async throws -> Rig {
+    private func rig(
+        _ body: String, name: String = "note.md", commentsFor: URL? = nil, extra: [String: Data] = [:], scale: CGFloat = 1,
+        agentScript: Bool = false
+    ) async throws -> Rig {
         let dir = try tempDir()
         for (n, data) in extra { try data.write(to: dir.appendingPathComponent(n)) }
         let file = dir.appendingPathComponent(name)
@@ -69,7 +72,11 @@ final class ViewerPageSafetyTests: XCTestCase {
         comments.show(file: commentsFor ?? file)
         let coordinator = WebPane.Coordinator()
         coordinator.comments = comments
+        coordinator.scale = scale
         let view = coordinator.makeWebView()
+        if agentScript, let script = ViewerAgentScript.userScript() {
+            view.configuration.userContentController.addUserScript(script)
+        }
         let size = NSSize(width: 900, height: 700)
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -98,8 +105,13 @@ final class ViewerPageSafetyTests: XCTestCase {
         var description: String { "timed out waiting until \(what)" }
     }
 
-    private func js(_ script: String, in view: WKWebView) async throws -> Any? {
-        try await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+    private func js(_ script: String, in view: WKWebView, world: WKContentWorld = .page) async throws -> Any? {
+        try await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: world)
+    }
+
+    /// What the comments script itself can do: run in its own world.
+    private func commentsJS(_ script: String, in view: WKWebView) async throws -> Any? {
+        try await js(script, in: view, world: ViewerCommentsScript.world)
     }
 
     // MARK: - §11.1 the page runs only its own scripts
@@ -166,14 +178,23 @@ final class ViewerPageSafetyTests: XCTestCase {
         let nonce = try XCTUnwrap(policy.firstMatch(of: /script-src 'nonce-([A-Za-z0-9+\/=]+)'/)?.1).description
         XCTAssertGreaterThanOrEqual(nonce.count, 22, "at least 128 bits")
         XCTAssertNotEqual(csp(one), csp(two), "each render gets its own nonce")
-        for part in ["object-src 'none'", "base-uri 'none'", "connect-src portico-view:", "frame-src portico-view:", "form-action portico-view:"] {
+        for part in [
+            "object-src 'none'", "base-uri 'none'", "connect-src portico-view:", "frame-src portico-view:",
+            "form-action portico-view:", "style-src 'nonce-\(nonce)'",
+        ] {
             XCTAssertTrue(policy.contains(part), "\(part) in \(policy)")
         }
         XCTAssertFalse(policy.contains("unsafe-inline"))
         XCTAssertFalse(policy.contains("unsafe-eval"))
         let tags = one.matches(of: /<script[^>]*>/).map { String($0.0) }
-        XCTAssertEqual(tags.count, 3, "the renderer, the page script and the comments script")
+        XCTAssertEqual(tags.count, 2, "the renderer and the page script (review H1: the comments script runs in its own world)")
         for tag in tags { XCTAssertEqual(tag, "<script nonce=\"\(nonce)\">") }
+        let styles = one.matches(of: /<style[^>]*>/).map { String($0.0) }
+        XCTAssertEqual(styles, ["<style nonce=\"\(nonce)\">"], "the stylesheet, comments and scale rules sit in one nonce'd style")
+        let styleBody = one[one.range(of: "<style nonce")!.upperBound..<one.range(of: "</style>")!.lowerBound]
+        XCTAssertTrue(styleBody.contains("#content"), "the viewer stylesheet is inside it")
+        XCTAssertTrue(styleBody.contains(".pc-"), "the comments stylesheet is inside it")
+        XCTAssertFalse(one.contains("window.__porticoComments = api"), "the comments script is not in the page")
         // The CSP comes before the first script.
         XCTAssertLessThan(one.range(of: "Content-Security-Policy")!.lowerBound, one.range(of: "<script")!.lowerBound)
         // A source naming the placeholders is left as text.
@@ -216,7 +237,8 @@ final class ViewerPageSafetyTests: XCTestCase {
             [site](https://example.com/) and <a id="raw-link" href="other.md#part">raw</a>
 
             """
-        let rig = try await rig(source, extra: ["chart.png": png])
+        let svg = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="9" height="4"><rect width="9" height="4" fill="red"/></svg>"#.utf8)
+        let rig = try await rig(source.replacingOccurrences(of: "[site]", with: "![pic](pic.svg) [site]"), extra: ["chart.png": png, "pic.svg": svg])
         try await Task.sleep(for: .milliseconds(300))
         let state = try await js("""
             return {
@@ -227,6 +249,7 @@ final class ViewerPageSafetyTests: XCTestCase {
               chart: document.querySelector('#body img[alt=chart]').naturalWidth,
               raw: document.getElementById('raw').naturalWidth,
               inline: document.getElementById('inline').naturalWidth,
+              svg: document.querySelector('#body img[alt=pic]').naturalWidth,
               link: document.querySelector('#body a[href^=https]').getAttribute('href'),
               rawLink: document.getElementById('raw-link').getAttribute('href')
             };
@@ -238,6 +261,7 @@ final class ViewerPageSafetyTests: XCTestCase {
         XCTAssertEqual(state?["chart"] as? Int, 7, "a relative image still loads")
         XCTAssertEqual(state?["raw"] as? Int, 7)
         XCTAssertEqual(state?["inline"] as? Int, 7, "a data:image/ URL stays")
+        XCTAssertEqual(state?["svg"] as? Int, 9, "a sibling SVG still shows as an image")
         XCTAssertEqual(state?["link"] as? String, "https://example.com/")
         XCTAssertEqual(state?["rawLink"] as? String, "other.md#part")
     }
@@ -300,14 +324,14 @@ final class ViewerPageSafetyTests: XCTestCase {
         // Edit and delete the person's own reply, as the card's menu posts them.
         let edited = CommentFormat.parse(text(rig.file)).threads.first { $0.id == "ab12c" }
         let mine = try XCTUnwrap(edited?.replies.last)
-        _ = try await js("""
+        _ = try await commentsJS("""
             window.webkit.messageHandlers.comments.postMessage({type: 'edit', id: 'ab12c', index: 1, text: 'Reworded.',
               fp: {author: \(MarkdownPage.jsString(mine.author)), at: \(MarkdownPage.jsString(mine.at ?? "")), text: 'A reply.'}});
             return true;
             """, in: rig.view)
         try await poll("the edit is written") { self.text(rig.file).contains("Reworded.") }
         let reworded = try XCTUnwrap(CommentFormat.parse(text(rig.file)).threads.first { $0.id == "ab12c" }?.replies.last)
-        _ = try await js("""
+        _ = try await commentsJS("""
             window.webkit.messageHandlers.comments.postMessage({type: 'delete', id: 'ab12c', index: 1,
               fp: {author: \(MarkdownPage.jsString(reworded.author)), at: \(MarkdownPage.jsString(reworded.at ?? "")), text: 'Reworded.'}});
             return true;
@@ -319,7 +343,7 @@ final class ViewerPageSafetyTests: XCTestCase {
         rig.coordinator.apply(.markdown(rig.file), revision: rig.comments.paneRevision, to: rig.view)
         try await poll("the page has re-read the file") {
             (try? await self.js(
-                "return window.__old !== true && document.readyState === 'complete' && !!document.querySelector('#body tbody td') && !!window.__porticoComments",
+                "return window.__old !== true && document.readyState === 'complete' && !!document.querySelector('#body tbody td') && !!document.getElementById('pc-margin')",
                 in: rig.view) as? Bool) == true
         }
         _ = try await js("""
@@ -345,8 +369,10 @@ final class ViewerPageSafetyTests: XCTestCase {
         let before = try Data(contentsOf: note)
         let rig = try await rig("""
             <!doctype html><html><body><p>Page</p><script>
-            window.webkit.messageHandlers.comments.postMessage({type: 'ready'});
-            window.webkit.messageHandlers.comments.postMessage({type: 'reply', id: 'ab12c', text: 'forged'});
+            try {
+              window.webkit.messageHandlers.comments.postMessage({type: 'ready'});
+              window.webkit.messageHandlers.comments.postMessage({type: 'reply', id: 'ab12c', text: 'forged'});
+            } catch (e) { window.__unreachable = true; }
             window.__posted = true;
             </script></body></html>
             """, name: "page.html", commentsFor: note)
@@ -356,6 +382,8 @@ final class ViewerPageSafetyTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertNil(rig.comments.webView, "the handler never attached to the HTML page")
         XCTAssertEqual(try Data(contentsOf: note), before, "nothing was written")
+        let unreachable = try await js("return window.__unreachable === true", in: rig.view) as? Bool
+        XCTAssertEqual(unreachable, true, "review H1: the page's world has no comments handler at all")
     }
 
     func testAnotherMarkdownPageCannotWriteTheShownFilesComments() async throws {
@@ -364,7 +392,8 @@ final class ViewerPageSafetyTests: XCTestCase {
         try Self.thread.write(to: note, atomically: true, encoding: .utf8)
         let before = try Data(contentsOf: note)
         let rig = try await rig("# Other\n", name: "other.md", commentsFor: note)
-        _ = try await js("window.webkit.messageHandlers.comments.postMessage({type: 'reply', id: 'ab12c', text: 'forged'}); return true;", in: rig.view)
+        // Even the comments script's own world, on another Markdown page, is refused.
+        _ = try await commentsJS("window.webkit.messageHandlers.comments.postMessage({type: 'reply', id: 'ab12c', text: 'forged'}); return true;", in: rig.view)
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(try Data(contentsOf: note), before)
         XCTAssertNil(rig.comments.webView)
@@ -479,9 +508,7 @@ final class ViewerPageSafetyTests: XCTestCase {
             <!doctype html><html><body><a id="act" href="space-action:approve?item=1">Approve</a></body></html>
             """)
         let reachable = try await js("""
-            var h = window.webkit && window.webkit.messageHandlers;
-            return Object.keys(h || {}).length === 0 ? (h && h.\(WebPane.Coordinator.spaceActionClickHandler) ? 'yes' : 'no') :
-              (h.\(WebPane.Coordinator.spaceActionClickHandler) ? 'yes' : 'no');
+            return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.\(WebPane.Coordinator.spaceActionClickHandler)) ? 'yes' : 'no';
             """, in: rig.view) as? String
         XCTAssertEqual(reachable, "no", "the page's own scripts cannot post a click")
         // Even a forged post (were it reachable) followed by a.click() runs nothing.
@@ -491,5 +518,281 @@ final class ViewerPageSafetyTests: XCTestCase {
             """, in: rig.view)
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(activated(), [])
+    }
+
+    // MARK: - Round 1 (review H1): a sibling document never shares the rendered page's origin
+
+    private static let siblingScript = """
+        var out = {};
+        try { history.replaceState(null, '', '/'); out.replaced = location.href; } catch (e) { out.replaced = 'threw'; }
+        try {
+          window.webkit.messageHandlers.comments.postMessage({type: 'ready'});
+          window.webkit.messageHandlers.comments.postMessage({type: 'reply', id: 'ab12c', text: 'forged by sibling'});
+          out.posted = true;
+        } catch (e) { out.posted = false; }
+        fetch('/').then(function (r) { return r.text(); }).then(function (t) { out.read = t.indexOf('ab12c') >= 0; })
+          .catch(function () { out.read = false; })
+          .then(function () { window.__sibling = JSON.stringify(out); });
+        """
+
+    private func followSibling(_ link: String, extra: [String: Data]) async throws -> (Rig, [String: Any]) {
+        let rig = try await rig(Self.thread + "\n[the docs](\(link))\n", extra: extra)
+        let renderHost = try XCTUnwrap(rig.view.url?.host)
+        try click(try await center(of: "#body a[href]", in: rig), in: rig)
+        try await poll("the sibling has run its script") {
+            (try? await self.js("return typeof window.__sibling === 'string'", in: rig.view) as? Bool) == true
+        }
+        let raw = try await js("return window.__sibling", in: rig.view) as? String
+        let out = try JSONSerialization.jsonObject(with: Data((raw ?? "{}").utf8)) as? [String: Any] ?? [:]
+        XCTAssertNotEqual(rig.view.url?.host, renderHost, "the sibling has an origin of its own: \(rig.view.url?.absoluteString ?? "")")
+        return (rig, out)
+    }
+
+    func testReviewP1_aSiblingHTMLPageCannotPassTheCommentsRuleWithReplaceState() async throws {
+        let html = Data("<!doctype html><html><body><p>Docs</p><script>\(Self.siblingScript)</script></body></html>".utf8)
+        let (rig, out) = try await followSibling("docs.html", extra: ["docs.html": html])
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(try String(contentsOf: rig.file, encoding: .utf8), Self.thread + "\n[the docs](docs.html)\n", "nothing was written")
+        XCTAssertEqual(out["posted"] as? Bool, false, "the page's world has no comments handler")
+        XCTAssertEqual(out["read"] as? Bool, false, "fetch('/') cannot read the rendered page: \(out)")
+        XCTAssertTrue(rig.coordinator.isAway(in: rig.view), "the pane knows it is off the file, even after replaceState('/')")
+    }
+
+    func testReviewP1_aSiblingSVGCannotPassTheCommentsRuleEither() async throws {
+        let svg = Data("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40"/><script><![CDATA[
+            \(Self.siblingScript)
+            ]]></script></svg>
+            """.utf8)
+        let (rig, out) = try await followSibling("pic.svg", extra: ["pic.svg": svg])
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(try String(contentsOf: rig.file, encoding: .utf8), Self.thread + "\n[the docs](pic.svg)\n", "nothing was written")
+        XCTAssertEqual(out["posted"] as? Bool, false)
+        XCTAssertEqual(out["read"] as? Bool, false, "\(out)")
+        XCTAssertTrue(rig.coordinator.isAway(in: rig.view))
+    }
+
+    func testASiblingDocumentServedUnderTheRenderedPageNeverRunsScript() async throws {
+        // Belt and braces: were one ever loaded as a document under the page's
+        // render id, its response is sandboxed (no scripts, an opaque origin).
+        let rig = try await rig("# Note\n", extra: ["docs.html": Data("<p>Docs</p>".utf8), "chart.png": WebPaneRenderTests.tinyPNG(width: 2, height: 2)])
+        let headers = try await js("""
+            var a = await fetch('/docs.html'); var b = await fetch('/chart.png');
+            return [a.headers.get('Content-Security-Policy') || '', b.headers.get('Content-Security-Policy') || ''];
+            """, in: rig.view) as? [String]
+        XCTAssertEqual(headers?.first, "sandbox", "\(headers ?? [])")
+        XCTAssertEqual(headers?.last, "", "an image is served as before")
+    }
+
+    func testAcceptsCommentsOnlyForTheMainFrameOfThePageRenderedForTheFile() throws {
+        let dir = try tempDir()
+        let note = dir.appendingPathComponent("note.md"), other = dir.appendingPathComponent("other.md")
+        let html = dir.appendingPathComponent("page.html")
+        for f in [note, other, html] { try "x".write(to: f, atomically: true, encoding: .utf8) }
+        let suite = "viewer-safety-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let comments = ViewerComments(defaults: defaults)
+        comments.show(file: note)
+        let coordinator = WebPane.Coordinator()
+        coordinator.comments = comments
+        coordinator.loadedForTesting = .markdown(note)
+        let page = coordinator.handler.register(page: "<p>", root: dir, source: note)
+        let otherPage = coordinator.handler.register(page: "<p>", root: dir, source: other)
+        let htmlPage = coordinator.handler.register(file: html)
+        XCTAssertTrue(coordinator.acceptsComments(isMainFrame: true, frameURL: page))
+        XCTAssertFalse(coordinator.acceptsComments(isMainFrame: false, frameURL: page), "a frame")
+        XCTAssertFalse(coordinator.acceptsComments(isMainFrame: true, frameURL: otherPage), "another Markdown page")
+        XCTAssertFalse(coordinator.acceptsComments(isMainFrame: true, frameURL: htmlPage), "an HTML file")
+        XCTAssertFalse(
+            coordinator.acceptsComments(isMainFrame: true, frameURL: URL(string: "portico-view://\(htmlPage.host!)/")!),
+            "an HTML file's origin with its path rewritten to /")
+        XCTAssertFalse(coordinator.acceptsComments(isMainFrame: true, frameURL: URL(string: "https://acme.example/")!), "a site")
+        XCTAssertFalse(coordinator.acceptsComments(isMainFrame: true, frameURL: nil))
+        coordinator.loadedForTesting = .html(html)
+        XCTAssertFalse(coordinator.acceptsComments(isMainFrame: true, frameURL: page), "the pane shows something else")
+    }
+
+    // MARK: - Round 1 (review M1, L2): the page's own styles only; the cleaning covers SVG animation
+
+    func testRawStylesAreDroppedAndThePagesOwnStylesStillApply() async throws {
+        let source = """
+            # Notes
+
+            <p id="s" style="color: rgb(255, 0, 0)">styled</p>
+
+            <style>#body h1 { color: rgb(0, 255, 0) !important }</style>
+
+            <link rel="stylesheet" href="x.css">
+
+            A <!--c:ab12c-->round trip<!--/c:ab12c--> here.
+            <!--co:ab12c by:Sam at:2026-10-17T09:00:00.000Z status:open quote:"round trip"
+            Sam (2026-10-17): Byte for byte?
+            -->
+
+            """
+        let rig = try await rig(source, scale: 1.2)
+        try await poll("the comments script drew its highlight") {
+            (try? await self.js("return !!document.querySelector('mark.pc-anchor')", in: rig.view) as? Bool) == true
+        }
+        let state = try await js("""
+            return {
+              styleAttr: document.getElementById('s').getAttribute('style'),
+              styles: document.querySelectorAll('#body style, #body link').length,
+              h1: getComputedStyle(document.querySelector('#body h1')).color,
+              font: getComputedStyle(document.body).fontSize,
+              measure: getComputedStyle(document.getElementById('content')).maxWidth,
+              mark: getComputedStyle(document.querySelector('mark.pc-anchor')).backgroundColor
+            };
+            """, in: rig.view) as? [String: Any]
+        XCTAssertTrue(state?["styleAttr"] is NSNull, "\(state ?? [:])")
+        XCTAssertEqual(state?["styles"] as? Int, 0)
+        XCTAssertNotEqual(state?["h1"] as? String, "rgb(0, 255, 0)")
+        XCTAssertEqual(state?["font"] as? String, "18px", "the zoom rule applies (15px × 1.2)")
+        XCTAssertNotEqual(state?["measure"] as? String, "none", "the viewer stylesheet applies")
+        XCTAssertNotEqual(state?["mark"] as? String, "rgba(0, 0, 0, 0)", "the comments stylesheet applies: \(state ?? [:])")
+    }
+
+    func testTheAgentsMarksStillDrawUnderThePagesStylePolicy() async throws {
+        let rig = try await rig("# Elevation\n\nGains 420 m.\n", agentScript: true)
+        rig.view.reload()
+        try await poll("the agent's script is in") {
+            (try? await self.js("return !!window.__porticoAgent && document.readyState === 'complete' && !!document.querySelector('#body h1')", in: rig.view) as? Bool) == true
+        }
+        let position = try await js("""
+            var a = window.__porticoAgent; a.outline();
+            var ref = document.querySelector('#body h1').getAttribute('data-portico-ref');
+            var loc = a.markLocate(ref, a.page);
+            a.showMarks([{n: 1, note: 'Here', locator: loc.locator}], '#3366ff');
+            var box = document.querySelector('portico-marks').shadowRoot.querySelector('.box');
+            return getComputedStyle(box).position;
+            """, in: rig.view) as? String
+        XCTAssertEqual(position, "absolute", "the marks' own stylesheet applies")
+    }
+
+    func testReviewP3_svgAnimationAndDataLinksAreCleaned() async throws {
+        let source = """
+            # Note
+
+            <svg width="20" height="20"><a id="anim"><set attributeName="href" to="javascript:window.__ran='set'"/><animate attributeName="href" values="javascript:1"/><animateMotion dur="1s"/><animateTransform attributeName="transform"/><rect width="20" height="20"/></a></svg>
+
+            <a id="dl" href="data:image/svg+xml,%3Csvg%3E%3C/svg%3E">pic</a> <svg><a id="xl" xlink:href="data:image/png;base64,AA"><text>x</text></a></svg>
+
+            """
+        let rig = try await rig(source)
+        let state = try await js("""
+            return {
+              animations: document.querySelectorAll('#body set, #body animate, #body animateMotion, #body animateTransform').length,
+              dl: document.getElementById('dl').getAttribute('href'),
+              xl: document.getElementById('xl').getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+            };
+            """, in: rig.view) as? [String: Any]
+        XCTAssertEqual(state?["animations"] as? Int, 0, "\(state ?? [:])")
+        XCTAssertTrue(state?["dl"] is NSNull, "data:image/ is allowed only in src")
+        XCTAssertTrue(state?["xl"] is NSNull, "nor in xlink:href")
+    }
+
+    // MARK: - Round 1 (review M1, L1, N1): the click recorder
+
+    func testReviewP2_anInvisibleOverlayActionLinkInAMarkdownSpaceTakesNoClick() async throws {
+        let (rig, activated) = try await spaceRig("""
+            # Notes
+
+            <a href="space-action:delete?item=9" style="position:fixed;inset:0;opacity:0;z-index:99"></a>
+
+            <a id="more" href="#notes">Read more</a>
+
+            """, name: "notes.md")
+        try click(try await center(of: "#more", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "a click meant for Read more runs nothing")
+    }
+
+    func testAnInvisibleOrCoveredLinkInAnHTMLSpaceTakesNoClick() async throws {
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body style="margin:0">
+            <p><a id="more" href="#notes" style="display:inline-block;padding:20px">Read more</a></p>
+            <a id="ghost" href="space-action:delete?item=9" style="position:fixed;inset:0;opacity:0.05;z-index:99"></a>
+            </body></html>
+            """)
+        try click(try await center(of: "#more", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(300))
+        _ = try await js("""
+            var g = document.getElementById('ghost'); g.style.opacity = '1'; g.style.visibility = 'hidden'; return true;
+            """, in: rig.view)
+        try click(try await center(of: "#more", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(activated(), [], "a nearly transparent or hidden link takes no click")
+    }
+
+    func testImageMapAndXlinkActionLinksTakeARealClick() async throws {
+        let png = WebPaneRenderTests.tinyPNG(width: 4, height: 4).base64EncodedString()
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body style="margin:0">
+            <img id="map" src="data:image/png;base64,\(png)" usemap="#m" width="100" height="100" style="display:block">
+            <map name="m"><area shape="rect" coords="0,0,100,100" href="space-action:approve?item=map"></map>
+            <svg width="100" height="100" style="display:block" xmlns:xlink="http://www.w3.org/1999/xlink">
+              <a id="xl" xlink:href="space-action:approve?item=svg"><rect width="100" height="100" fill="blue"/></a>
+            </svg>
+            </body></html>
+            """)
+        try click(try await center(of: "#map", in: rig), in: rig)
+        try await poll("the image map's click runs") { activated().count == 1 }
+        try click(try await center(of: "#xl rect", in: rig), in: rig)
+        try await poll("the xlink's click runs") { activated().count == 2 }
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=map", "space-action:approve?item=svg"])
+    }
+
+    func testAPageCannotSwapTheLinkAtClickTime() async throws {
+        // Review L1: the recorder listens on window, capture, from document start, so it sees the link first.
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body style="margin:0">
+            <p><a id="notes" href="#top" style="display:inline-block;padding:20px">Open notes</a></p>
+            <script>
+            window.addEventListener('click', function (e) {
+              var a = e.target.closest('a'); if (a) a.setAttribute('href', 'space-action:delete?item=42');
+            }, true);
+            </script></body></html>
+            """)
+        try click(try await center(of: "#notes", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [])
+    }
+
+    /// Documented limitation (PROTOCOL.md `space.act`, CHANGELOG): the rule stops
+    /// actions with no real click, but a page that runs script the deployment
+    /// does not control can still steer a real one, here by swapping the link on
+    /// mousedown. This asserts today's behaviour so a change to it is noticed.
+    func testDocumentedLimitation_aScriptedPageCanSteerARealClickBySwappingTheLinkOnMousedown() async throws {
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body style="margin:0">
+            <p><a id="notes" href="#top" style="display:inline-block;padding:20px">Open notes</a></p>
+            <script>
+            document.getElementById('notes').addEventListener('mousedown', function () {
+              this.setAttribute('href', 'space-action:delete?item=42');
+            });
+            </script></body></html>
+            """)
+        try click(try await center(of: "#notes", in: rig), in: rig)
+        try await poll("the steered click runs (the documented limitation)") { activated().count == 1 }
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:delete?item=42"])
+    }
+
+    func testReturnOnAFocusedActionLinkStillRunsIt() async throws {
+        // A keyboard activation is a trusted click with no pointer position: the focused link counts.
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body><a id="act" href="space-action:approve?item=kb">Approve</a></body></html>
+            """)
+        rig.window.makeFirstResponder(rig.view)
+        _ = try await js("document.getElementById('act').focus(); return document.activeElement.id;", in: rig.view)
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            let event = try XCTUnwrap(NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: rig.window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                isARepeat: false, keyCode: 36))
+            if type == .keyDown { rig.view.keyDown(with: event) } else { rig.view.keyUp(with: event) }
+        }
+        try await poll("Return on the focused link runs it") { activated().count == 1 }
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=kb"])
     }
 }

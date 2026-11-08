@@ -31,23 +31,31 @@ final class CommentsPageScriptTests: XCTestCase {
     }
 
     /// The viewer's page for `source`, loaded and rendered.
+    /// v0.24 (review H1): the comments script runs in its own content world,
+    /// installed as `WebPane` installs it (here without the rendered-page
+    /// check, since the page is loaded under a test address).
     func page(_ source: String, size: NSSize = NSSize(width: 1200, height: 800)) async throws -> WKWebView {
         let view = webView(size: size)
+        view.configuration.userContentController.addUserScript(try XCTUnwrap(ViewerCommentsScript.userScript(onlyRenderedPage: false)))
         view.loadHTMLString(try MarkdownPage.html(source: source, title: "note.md"), baseURL: URL(string: "https://acme.example/"))
         let deadline = ContinuousClock.now + .seconds(15)
         while true {
             let ready = try? await view.callAsyncJavaScript(
                 "return document.readyState === 'complete' && !!window.__porticoComments",
-                arguments: [:], in: nil, contentWorld: .page) as? Bool
+                arguments: [:], in: nil, contentWorld: ViewerCommentsScript.world) as? Bool
             if ready == true { return view }
             if ContinuousClock.now >= deadline { throw Timeout() }
             try await Task.sleep(for: .milliseconds(20))
         }
     }
 
+    /// The editor's pages run the comments script in their page world.
+    private var editorViews: Set<ObjectIdentifier> = []
+
     func js(_ body: String, _ args: [String: Any] = [:], in view: WKWebView) async throws -> Any? {
         let wrapped = "return JSON.stringify((function () { \(body) })())"
-        let text = try await view.callAsyncJavaScript(wrapped, arguments: args, in: nil, contentWorld: .page) as? String
+        let world = editorViews.contains(ObjectIdentifier(view)) ? WKContentWorld.page : ViewerCommentsScript.world
+        let text = try await view.callAsyncJavaScript(wrapped, arguments: args, in: nil, contentWorld: world) as? String
         guard let data = text?.data(using: .utf8) else { return nil }
         return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     }
@@ -298,6 +306,7 @@ final class CommentsPageScriptTests: XCTestCase {
 
     func testEditorPageHidesMarkupAndDrawsTheMargin() async throws {
         let view = webView(size: NSSize(width: 1400, height: 800))
+        editorViews.insert(ObjectIdentifier(view))
         view.loadHTMLString(try EditorPage.html(), baseURL: URL(string: "https://acme.example/"))
         let deadline = ContinuousClock.now + .seconds(15)
         while true {

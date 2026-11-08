@@ -781,9 +781,15 @@
     host.style.setProperty("--accent", MARK_FALLBACK_ACCENT);
     if (typeof accent === "string" && accent) host.style.setProperty("--accent", accent);
     var root = host.attachShadow({ mode: "open" });
-    var style = document.createElement("style");
-    style.textContent = MARKS_STYLE;
-    root.appendChild(style);
+    // v0.24: a constructed sheet, which a page's style-src policy (the
+    // rendered Markdown page's nonce) does not block, as it would a <style>.
+    var sheet = null;
+    try { sheet = new CSSStyleSheet(); sheet.replaceSync(MARKS_STYLE); root.adoptedStyleSheets = [sheet]; } catch (e) { sheet = null; }
+    if (!sheet) {
+      var style = document.createElement("style");
+      style.textContent = MARKS_STYLE;
+      root.appendChild(style);
+    }
     document.documentElement.appendChild(host);
     marks.host = host;
     marks.root = root;

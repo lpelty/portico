@@ -37,7 +37,6 @@ enum MarkdownPage {
         // Present but unreadable: the words in its place (v0.20 §2.3), even with nothing to show.
         let drawn = shownProperties.flatMap { $0.unreadable || !$0.properties.isEmpty ? $0.html(open: propertiesOpen) : nil }
         let properties = (drawn ?? "").replacingOccurrences(of: "{", with: "&#123;")
-        let comments = try resource("viewer-comments.js")
         // v0.24 (sweep #1): first, so nothing filled in after (the title, the
         // source, the scripts) can name the placeholders.
         let nonce = newNonce()
@@ -47,7 +46,6 @@ enum MarkdownPage {
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
             .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
-            .replacingOccurrences(of: "{{COMMENTS_JS}}", with: comments)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
@@ -55,14 +53,14 @@ enum MarkdownPage {
     }
 
     /// v0.24 (sweep #1): the rendered page's policy. Only the page's own
-    /// script blocks run (they carry `nonce`): no inline handler, no injected
-    /// script, no `eval`. Nothing can be fetched, framed or submitted outside
-    /// the page's own scheme, so even a script that did run could send
-    /// nothing out. Images and styles are as before (no `img-src` or
-    /// `style-src`), so remote and relative images still show.
+    /// script blocks and its own style block run (they carry `nonce`): no
+    /// inline handler, no injected script, no `eval`, no style from the file
+    /// (review round 1). No script, fetch, frame or form can reach outside the
+    /// page's own scheme. Images (and fonts and media) load as before: there
+    /// is no `img-src`, so remote and relative images still show.
     static func contentSecurityPolicy(nonce: String) -> String {
         let own = "\(RenderedPageHandler.scheme):"
-        return "script-src 'nonce-\(nonce)'; object-src 'none'; base-uri 'none'; "
+        return "script-src 'nonce-\(nonce)'; style-src 'nonce-\(nonce)'; object-src 'none'; base-uri 'none'; "
             + "connect-src \(own); frame-src \(own); form-action \(own)"
     }
 
@@ -271,6 +269,28 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         return file
     }
 
+    /// v0.24 (review H1): a file a browser shows as a document that can run
+    /// script: HTML, XHTML, SVG, XML (and web archives).
+    static func isDocument(_ file: URL) -> Bool {
+        let ext = file.pathExtension.lowercased()
+        if ["html", "htm", "shtml", "xhtml", "xht", "svg", "svgz", "xml", "xsl", "xslt", "webarchive", "mht", "mhtml"].contains(ext) {
+            return true
+        }
+        guard let type = UTType(filenameExtension: ext) else { return false }
+        return type.conforms(to: .html) || type.conforms(to: .xml) || type.conforms(to: .svg) || type.conforms(to: .webArchive)
+    }
+
+    /// v0.24 (review H1): the file a URL names when it is a document beside a
+    /// rendered Markdown page, under that page's render id. Such a document is
+    /// never shown there (it would share the rendered page's origin): the
+    /// pane loads it under an id of its own instead.
+    func siblingDocument(for url: URL) -> URL? {
+        guard url.scheme == Self.scheme, let host = url.host, let render = renders[host], render.page != nil,
+              !Self.isRenderedPage(url.path), let file = Self.file(url.path, in: render), Self.isDocument(file)
+        else { return nil }
+        return file
+    }
+
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         let url = task.request.url ?? URL(string: "\(Self.scheme)://missing/")!
         guard let host = url.host, let render = renders[host] else {
@@ -283,7 +303,12 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         guard let file = Self.file(path, in: render), let body = try? Data(contentsOf: file) else {
             return respond(task, url: url, status: 404, type: "text/plain", body: Data("not found".utf8))
         }
-        respond(task, url: url, status: 200, type: Self.contentType(of: file, body: body), body: body)
+        // v0.24 (review H1): a document beside a rendered Markdown page is
+        // only ever an image or data here (the pane loads it elsewhere to show
+        // it); should it ever be shown as a document, it runs no script and has
+        // an origin of its own.
+        let extra = render.page != nil && Self.isDocument(file) ? ["Content-Security-Policy": "sandbox"] : [:]
+        respond(task, url: url, status: 200, type: Self.contentType(of: file, body: body), body: body, extra: extra)
     }
 
     /// The `Content-Type` for a served file. HTML with no charset of its
@@ -297,10 +322,10 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 
-    private func respond(_ task: any WKURLSchemeTask, url: URL, status: Int, type: String, body: Data) {
+    private func respond(_ task: any WKURLSchemeTask, url: URL, status: Int, type: String, body: Data, extra: [String: String] = [:]) {
         let response = HTTPURLResponse(
             url: url, statusCode: status, httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": type, "Content-Length": String(body.count)])!
+            headerFields: ["Content-Type": type, "Content-Length": String(body.count)].merging(extra) { a, _ in a })!
         task.didReceive(response)
         task.didReceive(body)
         task.didFinish()
@@ -592,7 +617,13 @@ struct WebPane: NSViewRepresentable {
                 configuration.userContentController.addUserScript(script)
             }
             configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
-            configuration.userContentController.add(CommentsMessages(self), name: CommentsMessages.name)
+            // v0.24 (review H1): the comments script and its handler live in a
+            // world of their own; no page script can post to `comments`.
+            if let script = ViewerCommentsScript.userScript() {
+                configuration.userContentController.addUserScript(script)
+            }
+            configuration.userContentController.add(
+                CommentsMessages(self), contentWorld: ViewerCommentsScript.world, name: CommentsMessages.name)
             // v0.24 (sweep #2): the click recorder lives in a world of its own,
             // so the page's scripts can neither reach its handler nor fake a click.
             configuration.userContentController.addUserScript(WKUserScript(
@@ -607,17 +638,59 @@ struct WebPane: NSViewRepresentable {
         static let spaceActionClickHandler = "spaceActionClick"
 
         /// Tells the app of each real click (`isTrusted`) on a `space-action:`
-        /// link, in the capture phase so the page cannot stop it first. A
-        /// script's `a.click()`, a dispatched event, a timer or a redirect is
-        /// never trusted, so it is never reported.
+        /// link. A script's `a.click()`, a dispatched event, a timer or a
+        /// redirect is never trusted, so it is never reported.
+        ///
+        /// Review round 1: it listens on `window`, capture, from document
+        /// start, so it runs before any listener the page adds and sees the
+        /// link before a page could swap it at click time (L1). A click counts
+        /// only when it landed on the link itself (`elementFromPoint` at the
+        /// click is the link or inside it; for the keyboard, the link has the
+        /// focus) and the link can be seen: not `visibility: hidden` and its
+        /// opacity, multiplied up the ancestor chain, above 0.1 (M1). An image
+        /// map's `area` and an SVG link with only `xlink:href` count too (N1).
         static let clickRecorder = """
             (function () {
-              document.addEventListener("click", function (e) {
+              var XLINK = "http://www.w3.org/1999/xlink";
+              function hrefOf(a) {
+                var h = a.href;
+                if (typeof h !== "string") h = (h && h.baseVal) || "";
+                return h || a.getAttributeNS(XLINK, "href") || a.getAttribute("href") || "";
+              }
+              function seen(el) {
+                var cs = getComputedStyle(el);
+                if (cs.visibility === "hidden" || cs.visibility === "collapse") return false;
+                var opacity = 1;
+                for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+                  var s = getComputedStyle(n);
+                  if (s.display === "none") return false;
+                  opacity *= parseFloat(s.opacity);
+                }
+                return opacity > 0.1;
+              }
+              // What the person sees as the link: the link itself, or for an
+              // image map's area, the image that uses the map.
+              function mapImage(area) {
+                var map = area.closest("map");
+                return map ? document.querySelector('img[usemap="#' + CSS.escape(map.name) + '"]') : null;
+              }
+              // That element, when the click landed on it (or, from the keyboard, the link has the focus).
+              function shownElement(a, e) {
+                var target = a.localName === "area" ? mapImage(a) : a;
+                if (!target) return null;
+                if (e.detail === 0) return document.activeElement === a ? target : null;
+                var hit = document.elementFromPoint(e.clientX, e.clientY);
+                // WebKit reports an image map's area itself at a point inside it.
+                return hit && (hit === a || target === hit || target.contains(hit)) ? target : null;
+              }
+              window.addEventListener("click", function (e) {
                 if (!e.isTrusted || !e.target || !e.target.closest) return;
-                var a = e.target.closest("a[href]");
+                var a = e.target.closest("a, area");
                 if (!a) return;
-                var href = typeof a.href === "string" ? a.href : (a.href && a.href.baseVal) || a.getAttribute("href") || "";
+                var href = hrefOf(a);
                 if (!/^\\s*space-action:/i.test(href)) return;
+                var shown = shownElement(a, e);
+                if (!shown || !seen(shown)) return;
                 window.webkit.messageHandlers.\(spaceActionClickHandler).postMessage({ href: href.trim(), time: Date.now() });
               }, true);
             })();
@@ -965,6 +1038,22 @@ struct WebPane: NSViewRepresentable {
                 }
                 return
             }
+            // v0.24 (review H1): a document beside a rendered Markdown page (an
+            // HTML file, an SVG) is loaded under an id of its own, never the
+            // page's, so it cannot rewrite its address to the page's or read it.
+            if let url = navigationAction.request.url, let file = handler.siblingDocument(for: url) {
+                decisionHandler(.cancel)
+                guard navigationAction.targetFrame?.isMainFrame == true else {
+                    Self.log.notice("a document beside a rendered page was not loaded in a frame")
+                    return
+                }
+                var fresh = URLComponents(url: handler.register(file: file), resolvingAgainstBaseURL: false)
+                let asked = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                fresh?.percentEncodedQuery = asked?.percentEncodedQuery
+                fresh?.percentEncodedFragment = asked?.percentEncodedFragment
+                if let target = fresh?.url { webView.load(URLRequest(url: target)) }
+                return
+            }
             decisionHandler(.allow)
         }
 
@@ -1080,7 +1169,7 @@ private final class CommentsMessages: NSObject, WKScriptMessageHandler {
                 WebPane.Coordinator.log.notice("comments message ignored: not from the page rendered for the file")
                 return
             }
-            comments.attach(view)
+            comments.attach(view, world: ViewerCommentsScript.world)
             comments.received(message.body)
         }
     }

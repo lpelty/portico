@@ -280,11 +280,17 @@ final class ViewerComments: ObservableObject {
     }
 
     /// The page that posted, so the state can be pushed back to it.
-    func attach(_ view: WKWebView) {
+    /// `world`: where the page's comments script runs (v0.24: the viewer's
+    /// in `ViewerCommentsScript.world`; the editor's in its page).
+    func attach(_ view: WKWebView, world: WKContentWorld = .page) {
         webView = view
-        evaluate = { [weak view] script in view?.evaluateJavaScript(script, completionHandler: nil) }
+        scriptWorld = world
+        evaluate = { [weak view] script in view?.evaluateJavaScript(script, in: nil, in: world, completionHandler: nil) }
         installShortcut()
     }
+
+    /// The content world the attached page's comments script runs in.
+    private(set) var scriptWorld: WKContentWorld = .page
 
     // MARK: ⌥⌘M (spec §13.2)
 
@@ -318,7 +324,7 @@ final class ViewerComments: ObservableObject {
             : "return window.__porticoComments ? window.__porticoComments.selectionInfo() : null;"
         Task { @MainActor [weak self] in
             guard let self, let focus = self.focus else { return }
-            let value = try? await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+            let value = try? await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: editing ? .page : self.scriptWorld)
             let info = value as? [String: Any]
             if editing {
                 let from = (info?["from"] as? NSNumber)?.intValue ?? 0, to = (info?["to"] as? NSNumber)?.intValue ?? 0

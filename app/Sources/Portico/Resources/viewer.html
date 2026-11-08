@@ -4,14 +4,16 @@
   placeholders: the stylesheet, the vendored renderer, the markdown body as
   a JSON string, and the front matter's Properties block (v0.11, item 68;
   empty when the file has none); v0.23: the body's first source line, the
-  comment colours and the comments script (viewer-comments.js). Everything is inlined: the page is served to the
+  comment colours (v0.24: the comments script, viewer-comments.js, runs in
+  its own content world, ViewerCommentsScript, not in this page). Everything is inlined: the page is served to the
   web view under the app's own scheme (RenderedPageHandler) with the
   markdown file's directory as its root, so relative images resolve and
   nothing else is fetched.
   v0.24 (sweep #1): the page runs only its own scripts. Each render has a
-  fresh nonce (on every script block, and in the Content-Security-Policy),
-  so inline handlers and injected scripts in the file never run; and the
-  rendered fragment is cleaned before it is inserted (cleanFragment).
+  fresh nonce (on every script block and the style block, and in the
+  Content-Security-Policy), so inline handlers, injected scripts and the
+  file's own styles never apply; and the rendered fragment is cleaned
+  before it is inserted (cleanFragment).
 -->
 <html>
 <head>
@@ -19,7 +21,7 @@
 <meta http-equiv="Content-Security-Policy" content="{{CSP}}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
-<style>
+<style nonce="{{NONCE}}">
 {{CSS}}
 {{COMMENTS_CSS}}
 </style>
@@ -35,13 +37,20 @@
   // fragment goes into the page, elements that run or embed other content
   // are dropped, and so are every on* attribute and script-bearing URLs.
   // Ordinary raw HTML (details, kbd, br, tables, images, links) is left alone.
-  var DROP = { script: 1, iframe: 1, frame: 1, frameset: 1, object: 1, embed: 1, base: 1, meta: 1 };
+  // Review round 1: styles too (style attributes, style and link elements), as
+  // GitHub's sanitiser does, so a file cannot hide or stretch a link over
+  // the page; and SVG animation, which can set an href after cleaning.
+  var DROP = {
+    script: 1, iframe: 1, frame: 1, frameset: 1, object: 1, embed: 1, base: 1, meta: 1,
+    style: 1, link: 1, set: 1, animate: 1, animatemotion: 1, animatetransform: 1
+  };
   var URL_ATTRS = { href: 1, src: 1, "xlink:href": 1, formaction: 1, action: 1 };
-  var unsafeURL = function (value) {
+  var unsafeURL = function (attr, value) {
     // Browsers ignore spaces and control characters in a scheme.
     var v = String(value).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "").toLowerCase();
     if (/^(javascript|vbscript):/.test(v)) return true;
-    return /^data:/.test(v) && !/^data:image\//.test(v);
+    // data:image/ only where it can only be an image (src), never a link.
+    return /^data:/.test(v) && !(attr === "src" && /^data:image\//.test(v));
   };
   var cleanFragment = function (root) {
     Array.prototype.slice.call(root.querySelectorAll("*")).forEach(function (el) {
@@ -50,7 +59,7 @@
       if (name === "template") cleanFragment(el.content);
       Array.prototype.slice.call(el.attributes).forEach(function (a) {
         var attr = a.name.toLowerCase();
-        if (attr.indexOf("on") === 0 || (URL_ATTRS[attr] && unsafeURL(a.value))) el.removeAttributeNode(a);
+        if (attr.indexOf("on") === 0 || attr === "style" || (URL_ATTRS[attr] && unsafeURL(attr, a.value))) el.removeAttributeNode(a);
       });
     });
   };
@@ -112,9 +121,6 @@
     body.appendChild(holder.content);
   });
 })();
-</script>
-<script nonce="{{NONCE}}">
-{{COMMENTS_JS}}
 </script>
 </body>
 </html>
