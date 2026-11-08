@@ -34,6 +34,14 @@ agent, and the Edit icon fix.
   draft card beside it, and posting writes the comment into the file. When
   the selection can't be anchored (across paragraphs, in code or a table,
   across formatting), Comment is disabled and says why.
+- **Card actions.** Each comment has a … menu: Edit (your own comments)
+  and Delete. Edit in place with Save and Cancel (⌘Return, Esc); the time
+  stays as written. Deleting a reply needs no confirmation; deleting a
+  thread with replies asks inside the card first, and removes its
+  highlight. Long comments fold at six lines with "Show more".
+- **Resolved threads are hidden** until "Show resolved (n)" at the bottom
+  of the margin is on; it is remembered per file.
+- **⌥⌘M adds a comment** on the selection, as Comment in the menu does.
 - **Comments in table cells.** Select text within one cell, in reading
   or Edit mode, and comment on it; the thread goes after the table. A
   selection across cells says "Select text within one cell." In Edit mode,

@@ -429,15 +429,118 @@
     return h;
   }
 
-  function replyNode(r) {
+  // Card actions (spec §13.2): a … menu per comment (Edit for your own,
+  // Delete), editing in place, the in-card confirm for a thread with replies,
+  // and long text clamped at 6 lines.
+  var editing = null;      // {id, index}
+  var confirming = null;   // thread id
+  var openMenu = null;     // "id#index"
+  var shownMore = {};      // "id#index" -> true
+
+  function replyNode(r, t) {
+    var key = t.id + "#" + r.index;
     var d = el("div", "pc-reply");
-    d.appendChild(head(r.author, r.initial, r.agent, r.time));
-    d.appendChild(el("div", "pc-text", r.text));
+    var h = head(r.author, r.initial, r.agent, r.time);
+    if (typeof r.index === "number" && !state.readOnly) {
+      var more = el("button", "pc-more", "…");
+      more.type = "button";
+      more.title = "More";
+      more.setAttribute("aria-label", "More actions");
+      more.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openMenu = openMenu === key ? null : key;
+        render(state);
+      });
+      h.appendChild(more);
+    }
+    d.appendChild(h);
+    if (openMenu === key) d.appendChild(actionMenu(r, t));
+    if (editing && editing.id === t.id && editing.index === r.index) {
+      d.appendChild(editBox(r, t));
+      return d;
+    }
+    var text = el("div", "pc-text" + (shownMore[key] ? "" : " pc-clamp"), r.text);
+    text.setAttribute("data-key", key);
+    d.appendChild(text);
     return d;
   }
 
+  function actionMenu(r, t) {
+    var menu = el("div", "pc-menu");
+    menu.addEventListener("click", function (e) { e.stopPropagation(); });
+    var item = function (label, cls, run) {
+      var b = el("button", cls, label);
+      b.type = "button";
+      b.addEventListener("click", function (e) { e.stopPropagation(); openMenu = null; run(); });
+      menu.appendChild(b);
+    };
+    if (r.own) item("Edit", "pc-menu-edit", function () { editing = { id: t.id, index: r.index }; render(state); });
+    item("Delete", "pc-menu-delete", function () {
+      if (r.index === 0 && t.replies.length > 1) {
+        confirming = t.id;
+        render(state);
+      } else {
+        post({ type: "delete", id: t.id, index: r.index });
+      }
+    });
+    return menu;
+  }
+
+  function editBox(r, t) {
+    var box = el("div", "pc-edit");
+    var area = el("textarea", "pc-field pc-edit-field");
+    area.value = r.text;
+    var cancel = function () { editing = null; render(state); };
+    var save = function () {
+      if (!area.value.trim()) return;
+      editing = null;
+      post({ type: "edit", id: t.id, index: r.index, text: area.value });
+    };
+    area.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); }
+    });
+    box.appendChild(area);
+    var row = el("div", "pc-actions");
+    row.appendChild(button("pc-edit-cancel", "Cancel", cancel));
+    row.appendChild(button("pc-edit-save", "Save", save, "Save (⌘Return)"));
+    box.appendChild(row);
+    return box;
+  }
+
+  function confirmBox(t) {
+    var n = t.replies.length - 1;
+    var box = el("div", "pc-confirm");
+    box.appendChild(el("div", "pc-confirm-words", "Delete this thread and its " + n + (n === 1 ? " reply?" : " replies?")));
+    var row = el("div", "pc-actions");
+    row.appendChild(button("pc-confirm-cancel", "Cancel", function () { confirming = null; render(state); }));
+    row.appendChild(button("pc-danger", "Delete", function () {
+      confirming = null;
+      post({ type: "delete", id: t.id, index: 0 });
+    }));
+    box.appendChild(row);
+    return box;
+  }
+
+  // After the cards are in: a clamped text that overflows gets "Show more".
+  function addShowMore(root) {
+    root.querySelectorAll(".pc-text[data-key]").forEach(function (text) {
+      var key = text.getAttribute("data-key");
+      var over = text.classList.contains("pc-clamp") && text.scrollHeight > text.clientHeight + 1;
+      if (!over && !shownMore[key]) return;
+      var link = el("button", "pc-show-more", shownMore[key] ? "Show less" : "Show more");
+      link.type = "button";
+      link.addEventListener("click", function (e) {
+        e.stopPropagation();
+        shownMore[key] = !shownMore[key];
+        render(state);
+      });
+      text.parentNode.insertBefore(link, text.nextSibling);
+    });
+  }
+
   function field(placeholder, onEnter, onEscape) {
-    var t = el("textarea", "pc-field");
+    var t = el("textarea", "pc-field pc-input");
     t.rows = 1;
     t.placeholder = placeholder;
     if (state.readOnly) { t.disabled = true; t.title = state.readOnly; }
@@ -482,15 +585,16 @@
       });
       card.appendChild(line);
       if (expanded[t.id]) {
-        t.replies.forEach(function (r) { card.appendChild(replyNode(r)); });
+        t.replies.forEach(function (r) { card.appendChild(replyNode(r, t)); });
         var actions = el("div", "pc-actions");
         actions.appendChild(button("pc-reopen", "Reopen", function () { post({ type: "reopen", id: t.id }); }));
         card.appendChild(actions);
       }
     } else {
       if (t.orphan) card.appendChild(el("div", "pc-orphan-note", "Text no longer found"));
-      t.replies.forEach(function (r) { card.appendChild(replyNode(r)); });
-      if (active) {
+      t.replies.forEach(function (r) { card.appendChild(replyNode(r, t)); });
+      if (confirming === t.id) card.appendChild(confirmBox(t));
+      if (active && confirming !== t.id) {
         card.classList.add("pc-active");
         card.appendChild(field("Reply", function (text) { post({ type: "reply", id: t.id, text: text }); },
           function () { post({ type: "activate", id: null }); }));
@@ -539,7 +643,7 @@
     // What the person was typing survives a redraw.
     var typing = null;
     if (margin) {
-      var f = margin.querySelector(".pc-active .pc-field");
+      var f = margin.querySelector(".pc-active .pc-input");
       if (f) typing = { id: f.closest(".pc-card").getAttribute("data-id"), value: f.value, focused: document.activeElement === f };
     }
     if (!st.on) {
@@ -568,6 +672,7 @@
     margin.textContent = "";
     var anchored = [], loose = [];
     st.threads.forEach(function (t) {
+      if (t.status === "resolved" && !st.showResolved) return;
       var top = t.orphan ? null : anchorTop(t.id);
       (top == null ? loose : anchored).push({ t: t, top: top });
     });
@@ -577,6 +682,22 @@
     }
     anchored.sort(function (a, b) { return a.top - b.top; });
     var items = anchored.concat(loose);
+    // "Show resolved (n)", at the bottom of the margin, when there are any.
+    var sw = document.querySelector(".pc-show-resolved");
+    if (sw) sw.remove();
+    if (st.resolvedCount > 0) {
+      sw = el("label", "pc-show-resolved");
+      sw.appendChild(el("span", "", "Show resolved (" + st.resolvedCount + ")"));
+      var input = el("input", "");
+      input.type = "checkbox";
+      input.setAttribute("role", "switch");
+      input.checked = !!st.showResolved;
+      input.addEventListener("change", function () { post({ type: "showResolved", on: input.checked }); });
+      sw.appendChild(input);
+      sw.style.left = margin.getBoundingClientRect().left + "px";
+      sw.style.width = L.card + "px";
+      document.body.appendChild(sw);
+    }
     if (!items.length) {
       margin.appendChild(el("div", "pc-empty", "No comments. Select text and choose Comment."));
       margin.firstChild.style.top = (box && !api.marginParent ? docTop(box) + 28 : 28) + "px";
@@ -589,19 +710,20 @@
     });
     var lastAnchored = anchored.length ? anchored[anchored.length - 1].top : (box && !api.marginParent ? docTop(box) + 28 : 28);
     var tops = items.map(function (it) { return it.top == null ? lastAnchored : it.top; });
+    addShowMore(margin);
     var placed = stack(tops, nodes.map(function (n) { return n.getBoundingClientRect().height; }));
     nodes.forEach(function (n, i) { n.style.top = placed[i] + "px"; });
     if (typing) {
-      var again = margin.querySelector('.pc-card[data-id="' + typing.id + '"] .pc-field');
+      var again = margin.querySelector('.pc-card[data-id="' + typing.id + '"] .pc-input');
       if (again) { again.value = typing.value; if (typing.focused) again.focus(); }
     }
-    var draftField = margin.querySelector(".pc-draft-card .pc-field");
+    var draftField = margin.querySelector(".pc-draft-card .pc-input");
     if (draftField && !typing) draftField.focus();
     var activeKey = st.draft ? "draft" : st.activeID;
     if (activeKey && activeKey !== lastActive) {
       var activeCard = margin.querySelector('.pc-card[data-id="' + activeKey + '"]');
       if (activeCard && activeCard.scrollIntoView) activeCard.scrollIntoView({ block: "nearest" });
-      var fieldNow = activeCard && activeCard.querySelector(".pc-field");
+      var fieldNow = activeCard && (activeCard.querySelector(".pc-edit-field") || activeCard.querySelector(".pc-input"));
       if (fieldNow && !st.readOnly) fieldNow.focus();
     }
     lastActive = activeKey || null;
@@ -613,6 +735,10 @@
   }
 
   document.addEventListener("click", function (e) {
+    if (openMenu && !(e.target && e.target.closest && e.target.closest(".pc-menu, .pc-more"))) {
+      openMenu = null;
+      if (state) render(state);
+    }
     var m = innermostMark(e.target);
     if (m) post({ type: "anchorClicked", id: m.getAttribute("data-c") });
   });
@@ -626,6 +752,15 @@
     }
   });
   window.addEventListener("resize", function () { if (state) render(state); });
+
+  // The app needs to know when a margin field has the keyboard (Edit mode's
+  // Esc would otherwise leave Edit).
+  document.addEventListener("focusin", function (e) {
+    if (e.target && e.target.closest && e.target.closest("#pc-margin")) post({ type: "marginFocus", on: true });
+  });
+  document.addEventListener("focusout", function (e) {
+    if (e.target && e.target.closest && e.target.closest("#pc-margin")) post({ type: "marginFocus", on: false });
+  });
 
   // The viewer's own menu (Comment, Cut, Copy, Paste, Select All) replaces WebKit's.
   document.addEventListener("contextmenu", function (e) {

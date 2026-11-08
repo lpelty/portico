@@ -47,4 +47,13 @@ final class CommentMenuTests: XCTestCase {
         XCTAssertEqual(item(items, "Comment")?.enabled, false)
         XCTAssertEqual(item(items, "Comment")?.tip, "Nope.")
     }
+
+    func testCommentShowsItsShortcut() {
+        let items = CommentMenu.items(.init(editMode: false, hasSelection: true, readOnly: nil, refusal: nil))
+        let comment = items.first { $0.title == "Comment" }
+        XCTAssertEqual(comment?.key, "m")
+        XCTAssertEqual(comment?.option, true, "⌥⌘M")
+        XCTAssertTrue(CommentShortcut.matches(characters: "m", option: true, command: true, shift: false, control: false))
+        XCTAssertFalse(CommentShortcut.matches(characters: "m", option: false, command: true, shift: false, control: false))
+    }
 }

@@ -162,7 +162,7 @@ final class CommentsPageScriptTests: XCTestCase {
 
     static let state: [String: Any] = [
         "on": true, "activeID": NSNull(), "readOnly": NSNull(), "draft": NSNull(), "error": NSNull(),
-        "theme": [String: String](),
+        "theme": [String: String](), "showResolved": true, "resolvedCount": 1,
         "threads": [
             ["id": "rs001", "status": "open", "quote": "open point", "orphan": false,
              "replies": [["author": "Sam", "initial": "S", "agent": false, "time": "2 h ago", "text": "First."]]],
@@ -470,5 +470,149 @@ final class CommentsPageScriptTests: XCTestCase {
         XCTAssertEqual(out?[1][2] as? Bool, true)
         let cell = try await js("return document.querySelectorAll('tbody td')[1].textContent;", in: view) as? String
         XCTAssertEqual(cell, "x | y", "the escaped pipe is text in its cell")
+    }
+
+    // MARK: - card actions (spec §13.2)
+
+    static func actionState(text: String = "First.", showResolved: Bool = false) -> [String: Any] {
+        [
+            "on": true, "activeID": "rs001", "readOnly": NSNull(), "draft": NSNull(), "error": NSNull(),
+            "theme": [String: String](), "showResolved": showResolved, "resolvedCount": 1,
+            "threads": [
+                ["id": "rs001", "status": "open", "quote": "open point", "orphan": false,
+                 "replies": [
+                    ["author": "Sam", "initial": "S", "agent": false, "own": true, "index": 0, "time": "2 h ago", "text": text],
+                    ["author": "Agent", "initial": "A", "agent": true, "own": false, "index": 1, "time": "1 h ago", "text": "Reply."],
+                 ]],
+                ["id": "rs002", "status": "resolved", "quote": "settled point", "orphan": false,
+                 "replies": [["author": "Agent", "initial": "A", "agent": true, "own": false, "index": 0, "time": "1 h ago", "text": "Done."]]],
+            ],
+        ]
+    }
+
+    func capture(_ view: WKWebView) async throws {
+        _ = try await js("window.__sent = []; window.__porticoComments.post = function (m) { window.__sent.push(m); }; return true;", in: view)
+    }
+
+    func sent(_ view: WKWebView) async throws -> [[String: Any]] {
+        try await js("return window.__sent;", in: view) as? [[String: Any]] ?? []
+    }
+
+    func testTheMoreMenuOffersEditOnlyForYourOwnComments() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        try await render(Self.actionState(), in: view)
+        let menus = try await js("""
+            var out = [];
+            document.querySelectorAll('.pc-card[data-id="rs001"] .pc-reply').forEach(function (r) {
+              r.querySelector('.pc-more').click();
+              out.push([...document.querySelectorAll('.pc-menu button')].map(b => b.textContent));
+              document.body.click();
+            });
+            return out;
+            """, in: view) as? [[String]]
+        XCTAssertEqual(menus, [["Edit", "Delete"], ["Delete"]])
+        let focusable = try await js("return document.querySelector('.pc-more').tagName;", in: view) as? String
+        XCTAssertEqual(focusable, "BUTTON", "reachable by keyboard")
+    }
+
+    func testEditSavesWithCommandReturnAndCancelsWithEscape() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        try await render(Self.actionState(), in: view)
+        try await capture(view)
+        let field = try await js("""
+            document.querySelector('.pc-card[data-id="rs001"] .pc-reply .pc-more').click();
+            [...document.querySelectorAll('.pc-menu button')].find(b => b.textContent === 'Edit').click();
+            var f = document.querySelector('.pc-edit-field');
+            var had = f.value;
+            f.value = 'Changed.';
+            f.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', metaKey: true, bubbles: true}));
+            return had;
+            """, in: view) as? String
+        XCTAssertEqual(field, "First.")
+        let messages = try await sent(view)
+        XCTAssertEqual(messages.last?["type"] as? String, "edit")
+        XCTAssertEqual(messages.last?["id"] as? String, "rs001")
+        XCTAssertEqual(messages.last?["index"] as? Int, 0)
+        XCTAssertEqual(messages.last?["text"] as? String, "Changed.")
+        let cancelled = try await js("""
+            document.querySelector('.pc-card[data-id="rs001"] .pc-reply .pc-more').click();
+            [...document.querySelectorAll('.pc-menu button')].find(b => b.textContent === 'Edit').click();
+            var f = document.querySelector('.pc-edit-field');
+            f.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+            return !document.querySelector('.pc-edit-field') && !!document.querySelector('.pc-card[data-id="rs001"] .pc-text');
+            """, in: view) as? Bool
+        XCTAssertEqual(cancelled, true)
+    }
+
+    func testDeletingAThreadWithRepliesAsksInTheCardFirst() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        try await render(Self.actionState(), in: view)
+        try await capture(view)
+        let words = try await js("""
+            document.querySelector('.pc-card[data-id="rs001"] .pc-reply .pc-more').click();
+            [...document.querySelectorAll('.pc-menu button')].find(b => b.textContent === 'Delete').click();
+            var c = document.querySelector('.pc-confirm');
+            return [c.querySelector('.pc-confirm-words').textContent, getComputedStyle(c.querySelector('.pc-danger')).backgroundColor];
+            """, in: view) as? [String]
+        XCTAssertEqual(words?.first, "Delete this thread and its 1 reply?")
+        XCTAssertNotEqual(words?.last, "rgba(0, 0, 0, 0)")
+        let before = try await sent(view).filter { $0["type"] as? String == "delete" }
+        XCTAssertTrue(before.isEmpty, "nothing deleted before the confirm")
+        _ = try await js("document.querySelector('.pc-confirm .pc-danger').click(); return true;", in: view)
+        let after = try await sent(view)
+        XCTAssertEqual(after.last?["type"] as? String, "delete")
+        XCTAssertEqual(after.last?["index"] as? Int, 0)
+        // A reply goes at once.
+        _ = try await js("""
+            document.querySelectorAll('.pc-card[data-id="rs001"] .pc-reply')[1].querySelector('.pc-more').click();
+            [...document.querySelectorAll('.pc-menu button')].find(b => b.textContent === 'Delete').click();
+            return true;
+            """, in: view)
+        let last = try await sent(view).last
+        XCTAssertEqual(last?["index"] as? Int, 1)
+    }
+
+    func testLongCommentsClampWithShowMore() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        let long = Array(repeating: "A long line of comment text that wraps.", count: 20).joined(separator: " ")
+        try await render(Self.actionState(text: long), in: view)
+        let out = try await js("""
+            var more = document.querySelector('.pc-card[data-id="rs001"] .pc-show-more');
+            var text = document.querySelector('.pc-card[data-id="rs001"] .pc-text');
+            var lh = parseFloat(getComputedStyle(text).lineHeight);
+            var clamped = text.getBoundingClientRect().height;
+            more.click();
+            var more2 = document.querySelector('.pc-card[data-id="rs001"] .pc-show-more');
+            return [more.textContent, Math.round(clamped / lh), more2.textContent,
+                    document.querySelector('.pc-card[data-id="rs001"] .pc-text').getBoundingClientRect().height > clamped];
+            """, in: view) as? [Any]
+        XCTAssertEqual(out?[0] as? String, "Show more")
+        XCTAssertEqual(out?[1] as? Int, 6)
+        XCTAssertEqual(out?[2] as? String, "Show less")
+        XCTAssertEqual(out?[3] as? Bool, true)
+    }
+
+    func testResolvedThreadsHideUntilTheSwitchIsOn() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        try await render(Self.actionState(), in: view)
+        try await capture(view)
+        let off = try await js("""
+            return [!!document.querySelector('.pc-card[data-id="rs002"]'), document.querySelector('.pc-show-resolved').textContent.trim()];
+            """, in: view) as? [Any]
+        XCTAssertEqual(off?[0] as? Bool, false)
+        XCTAssertEqual(off?[1] as? String, "Show resolved (1)")
+        _ = try await js("document.querySelector('.pc-show-resolved input').click(); return true;", in: view)
+        let toggled = try await sent(view).last
+        XCTAssertEqual(toggled?["type"] as? String, "showResolved")
+        XCTAssertEqual(toggled?["on"] as? Bool, true)
+        try await render(Self.actionState(showResolved: true), in: view)
+        let on = try await js("return !!document.querySelector('.pc-card[data-id=\"rs002\"] .pc-resolved-line');", in: view) as? Bool
+        XCTAssertEqual(on, true)
+        var none = Self.actionState()
+        none["resolvedCount"] = 0
+        none["threads"] = [(none["threads"] as! [[String: Any]])[0]]
+        try await render(none, in: view)
+        let hidden = try await js("return !!document.querySelector('.pc-show-resolved');", in: view) as? Bool
+        XCTAssertEqual(hidden, false)
     }
 }

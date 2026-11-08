@@ -49,6 +49,12 @@ Agent (2026-11-07T18:40:00.000Z): The ones in this folder.
 - In a reply, one backslash is added between `--` and `>` wherever `--`, any number of backslashes and `>` occur, and one is removed when reading: `-->` is written `--\>`, and a literal `--\>` is written `--\\>`. So reading what was written always gives the text back.
 - A continuation line starting with `\` is never a reply: the `\` is dropped and the rest is text. Writers put a leading `\` on any continuation line that would otherwise read as a reply (it contains a colon after a name, as in `Note: …` or a URL), that starts with `+` or `\`, or that is blank (a lone `\`).
 
+## Editing and deleting
+
+- Editing a comment replaces that comment's text (its reply line and continuation lines) and nothing else. Its author and its time stay as written: the format has no "edited" mark.
+- Deleting a reply removes its lines. Deleting a thread's first comment deletes the thread: its block and both of its anchors.
+- Reactions already in a block are kept by every edit.
+
 ## Table cells
 
 - Text within one cell of a GFM table can be commented: the anchors go inside that cell's text, and the thread block goes after the whole table.

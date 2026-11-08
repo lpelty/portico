@@ -16,6 +16,10 @@ enum CommentWriter {
         /// Reading mode: a new thread where the draft was made (`range`, whose text was `quote`);
         /// if the text there changed, found again by its quote, once and only once, else `Stale`.
         case addAt(Range<Int>, quote: String, body: String)
+        /// Replace comment `index`'s text (0 is the thread's first).
+        case edit(id: String, index: Int, body: String)
+        /// Delete reply `index`, or with 0 the whole thread.
+        case delete(id: String, index: Int)
     }
 
     /// The text a draft was made on is no longer where it was, and isn't in the file exactly once.
@@ -61,6 +65,10 @@ enum CommentWriter {
                 return try CommentFormat.addReply(text, threadID: id, author: author, at: at, body: body)
             case .setStatus(let id, let resolved):
                 return try CommentFormat.setStatus(text, threadID: id, resolved ? .resolved : .open)
+            case .edit(let id, let index, let body):
+                return try CommentFormat.editComment(text, threadID: id, index: index, body: body)
+            case .delete(let id, let index):
+                return try CommentFormat.deleteComment(text, threadID: id, index: index)
             case .addAt(let stored, let quote, let body):
                 let units = Array(text.utf16)
                 var range: Range<Int>? = nil

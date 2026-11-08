@@ -365,4 +365,83 @@ final class ViewerCommentsTests: XCTestCase {
         let widget = c.menuContext(selection: ["text": "selection", "lines": [0, 0], "occurrence": 0, "refusal": "widget"], editMode: true, trustSelection: true)
         XCTAssertEqual(widget.refusal, "Click into the table to comment.")
     }
+
+    // MARK: - card actions (spec §13.2)
+
+    func testEditingYourOwnCommentKeepsItsTimeAndTheOthers() throws {
+        let url = try file("list-after.md")
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        c.helloPersonName = "Sam"
+        c.received(["type": "edit", "id": "ab12c", "index": 0, "text": "Changed."], chat: 1, focus: FakeFocus())
+        XCTAssertNil(c.error)
+        let t = try XCTUnwrap(CommentFormat.parse(try String(contentsOf: url, encoding: .utf8)).threads.first)
+        XCTAssertEqual(t.replies.map(\.text), ["Changed.", "Yes, every fixture."])
+        XCTAssertEqual(t.replies[0].at, "2026-10-17")
+    }
+
+    func testOnlyYourOwnCommentsCanBeEdited() throws {
+        let url = try file("list-after.md")
+        let before = try Data(contentsOf: url)
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        c.helloPersonName = "Sam"
+        c.received(["type": "edit", "id": "ab12c", "index": 1, "text": "Not mine."], chat: 1, focus: FakeFocus())
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    func testDeletingAReplyThenTheThread() throws {
+        let url = try file("list-after.md")
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        c.activeID = "ab12c"
+        c.received(["type": "delete", "id": "ab12c", "index": 1], chat: 1, focus: FakeFocus())
+        var text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertEqual(CommentFormat.parse(text).threads.first?.replies.count, 1)
+        c.received(["type": "delete", "id": "ab12c", "index": 0], chat: 1, focus: FakeFocus())
+        text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(text.contains("ab12c"))
+        XCTAssertNil(c.activeID)
+    }
+
+    func testPageStateSaysWhichCommentsAreYoursAndCountsResolved() throws {
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: try file("list-after.md"))
+        c.helloPersonName = "sam"
+        let state = c.pageState()
+        let threads = try XCTUnwrap(state["threads"] as? [[String: Any]])
+        let replies = try XCTUnwrap(threads[0]["replies"] as? [[String: Any]])
+        XCTAssertEqual(replies.map { $0["own"] as? Bool }, [true, false])
+        XCTAssertEqual(replies.map { $0["index"] as? Int }, [0, 1])
+        XCTAssertEqual(state["resolvedCount"] as? Int, 1)
+        XCTAssertEqual(state["showResolved"] as? Bool, false)
+    }
+
+    func testShowResolvedIsRememberedPerFile() throws {
+        let d = defaults()
+        let url = try file("list-after.md")
+        let c = ViewerComments(defaults: d)
+        c.show(file: url)
+        c.received(["type": "showResolved", "on": true], chat: 1, focus: FakeFocus())
+        XCTAssertTrue(c.showResolved)
+        let again = ViewerComments(defaults: d)
+        again.show(file: url)
+        XCTAssertTrue(again.showResolved)
+        let other = ViewerComments(defaults: d)
+        other.show(file: try file("para.md"))
+        XCTAssertFalse(other.showResolved)
+    }
+
+    func testEditModeDeleteGoesThroughTheBuffer() async throws {
+        let url = try file("plugin-basic.md")
+        let before = try Data(contentsOf: url)
+        let c = ViewerComments(defaults: defaults())
+        c.show(file: url)
+        let buffer = FakeBuffer(try String(contentsOf: url, encoding: .utf8))
+        c.editBuffer = buffer
+        let ok = await c.applyInBuffer(.delete(id: "k3x9a", index: 0))
+        XCTAssertTrue(ok)
+        XCTAssertFalse(buffer.text.contains("k3x9a"))
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
 }
