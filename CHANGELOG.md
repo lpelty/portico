@@ -13,8 +13,9 @@ low findings and nits.
   `[voice.elevenlabs] enabled = true`, normally in `config.local.toml`, with
   `[voice] read_aloud = true`. Read aloud's block gains a Voice source: This
   Mac or ElevenLabs. With ElevenLabs: an API key, kept in this Mac's
-  Keychain (never in a config file, a log, the gateway, or anything the
-  agent sees; Replace… and Remove); a voice ID with Choose…, the account's
+  Keychain as "<app name> — ElevenLabs key" (never in a config file, a log,
+  an HTTP cache, the gateway, or anything the agent sees; read only when
+  ElevenLabs speaks or lists voices; Replace… and Remove); a voice ID with Choose…, the account's
   voices by name; and a model (`eleven_v4_turbo` by default; the documented
   models when the list can't be fetched). Long replies are split at
   paragraphs, then sentences, under the model's limit and played in order;
@@ -28,7 +29,8 @@ low findings and nits.
   blank or "Agent") it stays "Main"; threads and "Brief from Main" are
   unchanged.
 - **Conversation markers.** A short mark per message you sent, in a tight
-  stack in the chat's left margin, never over the text. Marks for messages
+  stack in the chat's left margin, never over the text (the margin away
+  from the stack still scrolls and selects the conversation). Marks for messages
   on screen are longer and brighter, the hovered one longest; hover shows
   your message, the start of the reply and its time with "Click to go
   back"; a click scrolls to the message and highlights it for a moment.
@@ -62,7 +64,8 @@ low findings and nits.
 - L2 An AWS sign-in made while the turn was still failing counts.
 - L3 SSO start URLs match with a trailing `/`, a `#/` or another host case.
 - L4 A comment can quote a URL followed by `,` `.` `)` and an autolink's
-  address; the agent's refusal no longer asks for the whole link.
+  address (the markers go around the whole `<…>`, so the link still
+  renders); the agent's refusal no longer asks for the whole link.
 - L5 A conversation replayed after a continue shows "Continued after
   sign-in" between the replies, also after a reconnect.
 - L6 The SDK's private transcript lookup is imported where it's used, so an
@@ -91,7 +94,8 @@ low findings and nits.
 - **One token set.** Every colour the app draws is a `Theme` token: no
   white, black or hex outside `Theme.swift`. New tokens for white on colour,
   the scrim, shadows, the switch knob, the agent pointer's shadow, the
-  tooltip, the window buttons (Pen only) and the MCP and Plugins badges.
+  tooltip (and its secondary lines), the window buttons (Pen only) and the
+  MCP and Plugins badges.
 - **The Pen check.** `PenTokensTests` compares `Theme` with
   `design/portico.pen`'s variables (names in kebab case);
   `tests/pen_tokens.py` lists hex in the design file's UI frames, with its
