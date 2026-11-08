@@ -641,17 +641,26 @@ struct WebPane: NSViewRepresentable {
         /// link. A script's `a.click()`, a dispatched event, a timer or a
         /// redirect is never trusted, so it is never reported.
         ///
-        /// Review round 1: it listens on `window`, capture, from document
-        /// start, so it runs before any listener the page adds and sees the
-        /// link before a page could swap it at click time (L1). A click counts
-        /// only when it landed on the link itself (`elementFromPoint` at the
-        /// click is the link or inside it; for the keyboard, the link has the
-        /// focus) and the link can be seen: not `visibility: hidden` and its
-        /// opacity, multiplied up the ancestor chain, above 0.1 (M1). An image
-        /// map's `area` and an SVG link with only `xlink:href` count too (N1).
+        /// What it checks, all structural (review rounds 1 and 2):
+        /// - it listens on `window`, capture, from document start, so it sees
+        ///   the link before any listener the page adds;
+        /// - a pointer click counts only when `elementFromPoint` at the click
+        ///   is the link or inside it (for an image map's `area`, the area or
+        ///   its image), and the link is not `visibility: hidden` and not
+        ///   nearly transparent (opacity up the chain above 0.1);
+        /// - a keyboard activation (Return) counts only on the link the
+        ///   person's own Tab (or Option-Tab, Shift-Tab) or click put the
+        ///   focus on since the page loaded; focus set by script or
+        ///   `autofocus` does not count;
+        /// - in the rendered Markdown page, an action link counts only as
+        ///   text: no children but inline text formatting (`strong`, `em`,
+        ///   `b`, `i`, `code`, `span`) and some text in it.
+        /// It cannot tell who wrote a link: a space that shows untrusted text
+        /// must not let links from that text through unchanged.
         static let clickRecorder = """
             (function () {
               var XLINK = "http://www.w3.org/1999/xlink";
+              var TEXT_ONLY = { strong: 1, em: 1, b: 1, i: 1, code: 1, span: 1 };
               function hrefOf(a) {
                 var h = a.href;
                 if (typeof h !== "string") h = (h && h.baseVal) || "";
@@ -668,17 +677,43 @@ struct WebPane: NSViewRepresentable {
                 }
                 return opacity > 0.1;
               }
+              // The rendered Markdown page (served at / with its #content and #body).
+              function renderedMarkdown() {
+                return location.protocol === "\(RenderedPageHandler.scheme):"
+                  && (location.pathname === "/" || location.pathname === "/index.html")
+                  && !!document.getElementById("content") && !!document.getElementById("body");
+              }
+              function textOnly(a) {
+                var all = a.querySelectorAll("*");
+                for (var i = 0; i < all.length; i++) if (!TEXT_ONLY[all[i].localName.toLowerCase()]) return false;
+                return a.textContent.trim().length > 0;
+              }
               // What the person sees as the link: the link itself, or for an
               // image map's area, the image that uses the map.
               function mapImage(area) {
                 var map = area.closest("map");
                 return map ? document.querySelector('img[usemap="#' + CSS.escape(map.name) + '"]') : null;
               }
-              // That element, when the click landed on it (or, from the keyboard, the link has the focus).
+
+              // The element the person's own Tab or click put the focus on.
+              var personFocus = null, tabbing = false, pointing = false;
+              window.addEventListener("keydown", function (e) {
+                if (e.isTrusted && e.key === "Tab") tabbing = true;
+              }, true);
+              window.addEventListener("keyup", function (e) { if (e.key === "Tab") tabbing = false; }, true);
+              window.addEventListener("mousedown", function (e) { if (e.isTrusted) pointing = true; }, true);
+              window.addEventListener("mouseup", function () { pointing = false; }, true);
+              window.addEventListener("focusin", function (e) {
+                personFocus = tabbing || pointing ? e.target : null;
+                tabbing = false;
+              }, true);
+              window.addEventListener("pageshow", function (e) { if (e.persisted) personFocus = null; });
+
+              // The element shown as the link, when the activation reached it.
               function shownElement(a, e) {
                 var target = a.localName === "area" ? mapImage(a) : a;
                 if (!target) return null;
-                if (e.detail === 0) return document.activeElement === a ? target : null;
+                if (e.detail === 0) return document.activeElement === a && personFocus === a ? target : null;
                 var hit = document.elementFromPoint(e.clientX, e.clientY);
                 // WebKit reports an image map's area itself at a point inside it.
                 return hit && (hit === a || target === hit || target.contains(hit)) ? target : null;
@@ -687,8 +722,10 @@ struct WebPane: NSViewRepresentable {
                 if (!e.isTrusted || !e.target || !e.target.closest) return;
                 var a = e.target.closest("a, area");
                 if (!a) return;
+                if (e.detail > 0) personFocus = a;
                 var href = hrefOf(a);
                 if (!/^\\s*space-action:/i.test(href)) return;
+                if (renderedMarkdown() && (a.localName !== "a" || !textOnly(a))) return;
                 var shown = shownElement(a, e);
                 if (!shown || !seen(shown)) return;
                 window.webkit.messageHandlers.\(spaceActionClickHandler).postMessage({ href: href.trim(), time: Date.now() });

@@ -45,6 +45,14 @@
     style: 1, link: 1, set: 1, animate: 1, animatemotion: 1, animatetransform: 1
   };
   var URL_ATTRS = { href: 1, src: 1, "xlink:href": 1, formaction: 1, action: 1 };
+  // Review round 2: nothing in the file may take the keyboard focus or
+  // colour text (a link drawn in the background colour); <font> is unwrapped,
+  // its text kept.
+  var DROP_ATTRS = {
+    style: 1, autofocus: 1, tabindex: 1,
+    color: 1, bgcolor: 1, background: 1, text: 1, link: 1, vlink: 1, alink: 1
+  };
+  var UNWRAP = { font: 1 };
   var unsafeURL = function (attr, value) {
     // Browsers ignore spaces and control characters in a scheme.
     var v = String(value).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "").toLowerCase();
@@ -59,8 +67,12 @@
       if (name === "template") cleanFragment(el.content);
       Array.prototype.slice.call(el.attributes).forEach(function (a) {
         var attr = a.name.toLowerCase();
-        if (attr.indexOf("on") === 0 || attr === "style" || (URL_ATTRS[attr] && unsafeURL(attr, a.value))) el.removeAttributeNode(a);
+        if (attr.indexOf("on") === 0 || DROP_ATTRS[attr] || (URL_ATTRS[attr] && unsafeURL(attr, a.value))) el.removeAttributeNode(a);
       });
+      if (UNWRAP[name] && el.parentNode) {
+        while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+        el.remove();
+      }
     });
   };
 

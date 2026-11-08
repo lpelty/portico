@@ -778,22 +778,103 @@ final class ViewerPageSafetyTests: XCTestCase {
         XCTAssertEqual(activated().map(\.absoluteString), ["space-action:delete?item=42"])
     }
 
-    func testReturnOnAFocusedActionLinkStillRunsIt() async throws {
-        // A keyboard activation is a trusted click with no pointer position: the focused link counts.
+    // MARK: - Round 2 (re-review R1, R2): structural rules for the keyboard and for Markdown action links
+
+    /// A real key press, as AppKit delivers one to the view.
+    private func key(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = [], in rig: Rig) throws {
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            let event = try XCTUnwrap(NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: rig.window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+            if type == .keyDown { rig.view.keyDown(with: event) } else { rig.view.keyUp(with: event) }
+        }
+    }
+
+    private func pressReturn(in rig: Rig) throws { try key("\r", code: 36, in: rig) }
+
+    /// Option-Tab: WebKit's default way to move the keyboard focus onto a link.
+    private func pressTab(in rig: Rig) throws { try key("\t", code: 48, modifiers: .option, in: rig) }
+
+    func testReturnOnALinkThePersonTabbedToStillRunsIt() async throws {
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body><a id="act" href="space-action:approve?item=kb">Approve</a></body></html>
+            """)
+        rig.window.makeFirstResponder(rig.view)
+        try pressTab(in: rig)
+        try await poll("the person's Tab put the focus on the link") {
+            (try? await self.js("return document.activeElement && document.activeElement.id", in: rig.view) as? String) == "act"
+        }
+        try pressReturn(in: rig)
+        try await poll("Return on the link the person tabbed to runs it") { activated().count == 1 }
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=kb"])
+    }
+
+    func testReturnOnALinkFocusedByScriptRunsNothing() async throws {
+        // Re-review R2: focus the page set is not the person's.
         let (rig, activated) = try await spaceRig("""
             <!doctype html><html><body><a id="act" href="space-action:approve?item=kb">Approve</a></body></html>
             """)
         rig.window.makeFirstResponder(rig.view)
         _ = try await js("document.getElementById('act').focus(); return document.activeElement.id;", in: rig.view)
-        for type in [NSEvent.EventType.keyDown, .keyUp] {
-            let event = try XCTUnwrap(NSEvent.keyEvent(
-                with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: rig.window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
-                isARepeat: false, keyCode: 36))
-            if type == .keyDown { rig.view.keyDown(with: event) } else { rig.view.keyUp(with: event) }
-        }
-        try await poll("Return on the focused link runs it") { activated().count == 1 }
-        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=kb"])
+        try pressReturn(in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [])
+    }
+
+    func testReRevieR1a_anAutofocusedActionLinkInAMarkdownSpaceTakesNoReturn() async throws {
+        let (rig, activated) = try await spaceRig(
+            "# Notes\n\nSome text <a href=\"space-action:delete?item=7\" autofocus tabindex=\"1\">details</a>\n", name: "notes.md")
+        rig.window.makeFirstResponder(rig.view)
+        let attrs = try await js("""
+            var a = document.querySelector('#body a'); return [a.hasAttribute('autofocus'), a.hasAttribute('tabindex')];
+            """, in: rig.view) as? [Bool]
+        XCTAssertEqual(attrs, [false, false], "autofocus and tabindex are dropped")
+        try pressReturn(in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "Return with no person-made focus runs nothing")
+    }
+
+    func testReRevieR1b_anImageOnlyActionLinkInAMarkdownSpaceTakesNoClick() async throws {
+        let gif = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        let (rig, activated) = try await spaceRig("""
+            # Notes
+
+            Before.
+
+            <a id="blank" href="space-action:delete?item=9"><img src="data:image/gif;base64,\(gif)" width="600" height="200"></a>
+
+            After.
+
+            """, name: "notes.md")
+        try click(try await center(of: "#body a img", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "a Markdown action link counts only as text")
+    }
+
+    func testReRevieR1c_fontColourCannotHideAnActionLinkInAMarkdownSpace() async throws {
+        let (rig, _) = try await spaceRig("""
+            # Notes
+
+            <a id="hid" href="space-action:delete?item=8"><font color="#000001" size="7">hidden words</font></a> and <p bgcolor="#000001" text="#000001">para</p>
+
+            """, name: "notes.md")
+        let state = try await js("""
+            var a = document.querySelector('#body a');
+            return { fonts: document.querySelectorAll('#body font').length, text: a.textContent,
+                     colour: getComputedStyle(a).color,
+                     attrs: document.querySelectorAll('#body [color], #body [bgcolor], #body [text]').length };
+            """, in: rig.view) as? [String: Any]
+        XCTAssertEqual(state?["fonts"] as? Int, 0, "font is unwrapped")
+        XCTAssertEqual(state?["text"] as? String, "hidden words", "its text stays")
+        XCTAssertEqual(state?["attrs"] as? Int, 0, "colour attributes are dropped")
+        XCTAssertNotEqual(state?["colour"] as? String, "rgb(0, 0, 1)", "the link has the page's own link colour: \(state ?? [:])")
+    }
+
+    func testATextLinkWithFormattingInAMarkdownSpaceStillTakesAClick() async throws {
+        let (rig, activated) = try await spaceRig("# Brief\n\n[**Mark** `done`](space-action:mark-done?item=t2)\n", name: "brief.md")
+        try click(try await center(of: "#body a strong", in: rig), in: rig)
+        try await poll("a formatted text link still runs") { activated().count == 1 }
     }
 
     // MARK: - Round 2 (re-review R4): comments pause while the pane is away
