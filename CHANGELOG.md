@@ -70,7 +70,8 @@ reference for every key.
   the page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`,
   `<base>`, `<meta>`, `<style>`, `<link>` and SVG animation (`<set>`,
   `<animate>`, `<animateMotion>`, `<animateTransform>`), every `on*`,
-  `style`, `autofocus` and `tabindex` attribute and the colour attributes
+  `style`, `id`, `class` (except marked's `language-…` on code),
+  `autofocus` and `tabindex` attribute and the colour attributes
   (`color`, `bgcolor`, `background`, `text`, `link`, `vlink`, `alink`),
   unwraps `<font>` (its text stays), and removes `javascript:`,
   `vbscript:` and `data:` URLs (`data:image/` stays, in `src` only). Ordinary raw HTML (`<details>`,
@@ -94,9 +95,10 @@ reference for every key.
   redirect, or focus set by script or `autofocus` runs nothing and is
   logged, in Markdown and HTML spaces alike. **A space that triggered
   actions from script must now have the person click the link.** In a
-  Markdown space an action link counts only as text (plain or with bold,
-  italic or code), and the file cannot style, colour, hide or focus
-  anything. **What it cannot do:** the app checks that a real click or key
+  Markdown space an action link counts only when it is text (plain, bold,
+  italic or code, with at least one letter or digit), and the page drops
+  the file's styles, `id` and `class` attributes, colour attributes,
+  `<font>`, `autofocus` and `tabindex`. **What it cannot do:** the app checks that a real click or key
   press by the person reached the link; it can't tell who wrote the link.
   A space that shows untrusted text (email, web pages, other people's
   notes) must not let links from that text through unchanged. In an HTML
@@ -121,6 +123,8 @@ reference for every key.
 
 ### For deployments
 
+- A Markdown space's `notice_target` must name an `<a name="…">` in the
+  page: the viewer drops the file's own `id` attributes (v0.24).
 - Keep `config.toml` the deployment's; a person's preferences go in
   `config.local.toml`. A deployment that keeps its config in git adds
   `config.local.toml` to that repository's `.gitignore`.
