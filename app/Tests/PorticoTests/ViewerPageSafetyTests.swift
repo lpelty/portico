@@ -795,4 +795,43 @@ final class ViewerPageSafetyTests: XCTestCase {
         try await poll("Return on the focused link runs it") { activated().count == 1 }
         XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=kb"])
     }
+
+    // MARK: - Round 2 (re-review R4): comments pause while the pane is away
+
+    func testCommentsDoNotDrawOrTakeTheMenuWhileThePaneIsAway() async throws {
+        let spoof = Data("""
+            <!doctype html><html><body><script>
+            history.replaceState(null, '', '/');
+            document.write('<article id="content"><div id="body"><p>spoof</p></div></article>');
+            </script></body></html>
+            """.utf8)
+        let source = Self.thread + "\n[the docs](docs.html)\n"
+        let rig = try await rig(source, extra: ["docs.html": spoof])
+        try await poll("the comments script is ready") { rig.comments.webView === rig.view }
+        rig.comments.setShown(true, chat: 1, focus: FakeFocus())
+        try await poll("the margin draws at home") {
+            (try? await self.js("return document.querySelectorAll('.pc-card').length", in: rig.view) as? Int) ?? 0 > 0
+        }
+        try click(try await center(of: "#body a[href]", in: rig), in: rig)
+        try await poll("the spoof page is in") {
+            (try? await self.js("return document.body.textContent.indexOf('spoof') >= 0 && document.readyState === 'complete'", in: rig.view) as? Bool) == true
+        }
+        try await poll("the pane knows it is away") { rig.coordinator.isAway(in: rig.view) && rig.comments.away }
+        rig.comments.push()
+        try await Task.sleep(for: .milliseconds(300))
+        let away = try await js("""
+            var e = new MouseEvent('contextmenu', {bubbles: true, cancelable: true});
+            document.body.dispatchEvent(e);
+            return { cards: document.querySelectorAll('.pc-card, #pc-margin').length, menuTaken: e.defaultPrevented };
+            """, in: rig.view) as? [String: Any]
+        XCTAssertEqual(away?["cards"] as? Int, 0, "no threads are drawn into the page away from home")
+        XCTAssertEqual(away?["menuTaken"] as? Bool, false, "the page away keeps its own context menu")
+
+        rig.view.goBack()
+        try await poll("back home, comments resume") { !rig.coordinator.isAway(in: rig.view) && !rig.comments.away }
+        rig.comments.push()
+        try await poll("the margin draws again") {
+            (try? await self.js("return document.querySelectorAll('.pc-card').length", in: rig.view) as? Int) ?? 0 > 0
+        }
+    }
 }

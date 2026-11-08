@@ -855,6 +855,11 @@ struct WebPane: NSViewRepresentable {
             // Marks are drawn again on every load. WebKit calls this on
             // Back too, from its back-forward cache or not (v0.14).
             agent?.pageLoaded(webView)
+            // Review round 2 (R4): comments pause while the pane is away from
+            // the rendered page, and resume when it is back.
+            if let comments, comments.webView == nil || comments.webView === webView {
+                comments.setAway(isAway(in: webView))
+            }
             rereadIfDrawnForOlder(in: webView)
             if let fragment = pendingFragment, isPage(webView.url) {
                 // The fragment wins over a re-read's old scroll position.
