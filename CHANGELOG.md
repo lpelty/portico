@@ -69,9 +69,11 @@ reference for every key.
   fonts and media load as before. Before a rendered block is inserted,
   the page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`,
   `<base>`, `<meta>`, `<style>`, `<link>` and SVG animation (`<set>`,
-  `<animate>`, `<animateMotion>`, `<animateTransform>`), every `on*` and
-  `style` attribute, and `javascript:`, `vbscript:` and `data:` URLs
-  (`data:image/` stays, in `src` only). Ordinary raw HTML (`<details>`,
+  `<animate>`, `<animateMotion>`, `<animateTransform>`), every `on*`,
+  `style`, `autofocus` and `tabindex` attribute and the colour attributes
+  (`color`, `bgcolor`, `background`, `text`, `link`, `vlink`, `alink`),
+  unwraps `<font>` (its text stays), and removes `javascript:`,
+  `vbscript:` and `data:` URLs (`data:image/` stays, in `src` only). Ordinary raw HTML (`<details>`,
   `<kbd>`, `<br>`, tables, images, links) renders as before, without
   inline styles. The Properties block's fold is now wired by the page's
   script rather than an inline handler.
@@ -82,19 +84,25 @@ reference for every key.
   any page but the one rendered for the file. A document beside a
   rendered Markdown page (an HTML file, an SVG, XML) that a link opens is
   loaded under an address of its own, so it can neither take on the
-  rendered page's address nor read it.
-- **Space actions only on a real click (behaviour change).** A
-  `space-action:` link now runs only when the person really clicked that
-  link (a trusted click within the last second, used once), the click
-  landed on the link itself, and the link can be seen (not hidden, not
-  nearly transparent). A script's `a.click()`, a dispatched event, a
-  timer or a redirect runs nothing and is logged, in Markdown and HTML
-  spaces alike. **A space that triggered actions from script must now
-  have the person click the link.** What the rule does not do: it stops
-  actions with no real click, but a page that runs script the deployment
-  does not control can still steer a real click (for example by changing
-  a link as the mouse goes down). Keep third-party script out of HTML
-  spaces. PROTOCOL.md (`space.act`) says so.
+  rendered page's address nor read it. While the viewer is away from the
+  rendered page, comments draw nothing and leave the context menu alone.
+- **Space actions only on the person's real click or key press (behaviour
+  change).** A `space-action:` link now runs only when a trusted click by
+  the person landed on that link within the last second (used once), or
+  the person pressed Return on it after their own Tab or click put the
+  focus there. A script's `a.click()`, a dispatched event, a timer, a
+  redirect, or focus set by script or `autofocus` runs nothing and is
+  logged, in Markdown and HTML spaces alike. **A space that triggered
+  actions from script must now have the person click the link.** In a
+  Markdown space an action link counts only as text (plain or with bold,
+  italic or code), and the file cannot style, colour, hide or focus
+  anything. **What it cannot do:** the app checks that a real click or key
+  press by the person reached the link; it can't tell who wrote the link.
+  A space that shows untrusted text (email, web pages, other people's
+  notes) must not let links from that text through unchanged. In an HTML
+  space, script the deployment does not control can also steer a real
+  click or key press (by changing a link as the mouse goes down, or moving
+  the keyboard focus). PROTOCOL.md (`space.act`) says so.
 - HTML files and sites shown in the viewer are unchanged: they run their
   scripts as before. The Markdown editor shows no untrusted HTML and is
   unchanged.
