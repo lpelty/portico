@@ -319,4 +319,14 @@ final class ProtocolExamplesTests: XCTestCase {
         let data = Data(#"{"type":"nope","ts":"2026-10-27T12:00:00Z"}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ServerMessage.self, from: data))
     }
+
+    /// v0.26 review L8: the `signin.continued` notice's example decodes with its kind.
+    func testTheSigninContinuedNoticeExampleDecodes() throws {
+        let data = try Data(contentsOf: Self.examplesDir.appendingPathComponent("server.chat.notice.signin-continued.json"))
+        guard case .chatNotice(let notice) = try JSONDecoder().decode(ServerMessage.self, from: data) else {
+            return XCTFail("chat.notice")
+        }
+        XCTAssertEqual(notice.kind, ChatNotice.signinContinued)
+        XCTAssertEqual(notice.text, "Continued after sign-in")
+    }
 }

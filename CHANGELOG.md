@@ -53,7 +53,7 @@ low findings and nits.
 ### Protocol (additive)
 
 - `hello.labs` built-in item `voice.elevenlabs`.
-- `chat.notice.kind` value `signin.continued`.
+- `chat.notice.kind` value `signin.continued` (example `server.chat.notice.signin-continued.json`).
 
 ### Fixes (the v0.25 review)
 

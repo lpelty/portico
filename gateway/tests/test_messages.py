@@ -354,3 +354,22 @@ def test_signin_wait_is_not_a_history_event() -> None:
     from portico_gateway.messages import HistoryEvent, SigninWait
 
     assert SigninWait not in getattr(HistoryEvent, "__args__", ())
+
+
+# --- v0.26 review L8: the signin.continued notice has its example ------------------------
+
+
+def test_the_signin_continued_notice_has_an_example():
+    from pathlib import Path
+
+    from portico_gateway.messages import ChatNotice, canonical_json, example_variants, to_json_obj
+
+    variants = example_variants()
+    msg = variants["server.chat.notice.signin-continued"]
+    assert isinstance(msg, ChatNotice) and msg.kind == "signin.continued" and msg.text == "Continued after sign-in"
+    path = Path(__file__).resolve().parents[2] / "protocol" / "examples" / "server.chat.notice.signin-continued.json"
+    assert path.read_text(encoding="utf-8") == canonical_json(to_json_obj(msg)), "run bin/portico-gateway export-examples"
+    assert parse_server(path.read_text(encoding="utf-8")) == msg
+    for key, variant in variants.items():
+        direction, _, rest = key.partition(".")
+        assert rest.startswith(variant.type + "."), key

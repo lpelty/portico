@@ -2377,6 +2377,16 @@ def example_messages() -> dict[str, BaseModel]:
     return out
 
 
+def example_variants() -> dict[str, BaseModel]:
+    """Another shape of a type that already has its example, keyed ``<direction>.<type>.<variant>``."""
+    return {
+        # v0.26 (review L5, L8): the note where a turn carried on after a sign-in.
+        "server.chat.notice.signin-continued": ChatNotice(
+            ts=_TS, chat=1, seq=54, text="Continued after sign-in", kind="signin.continued"
+        ),
+    }
+
+
 def canonical_json(obj: Any) -> str:
     """Deterministic text (sorted keys, 2-space indent, trailing newline)."""
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

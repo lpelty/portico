@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from portico_gateway import REPO_ROOT, __version__
-from portico_gateway.messages import canonical_json, example_messages, export_schema, to_json_obj
+from portico_gateway.messages import canonical_json, example_messages, example_variants, export_schema, to_json_obj
 
 PROTOCOL_DIR = REPO_ROOT / "protocol"
 
@@ -418,7 +418,7 @@ def cmd_export_config_doc(args: argparse.Namespace) -> int:
 def cmd_export_examples(args: argparse.Namespace) -> int:
     out_dir = Path(args.out) if args.out else PROTOCOL_DIR / "examples"
     out_dir.mkdir(parents=True, exist_ok=True)
-    examples = example_messages()
+    examples = {**example_messages(), **example_variants()}
     for key, msg in sorted(examples.items()):
         (out_dir / f"{key}.json").write_text(canonical_json(to_json_obj(msg)), encoding="utf-8")
     print(f"wrote {len(examples)} examples to {out_dir}")
