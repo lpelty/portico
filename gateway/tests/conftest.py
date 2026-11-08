@@ -22,7 +22,7 @@ from claude_agent_sdk import ResultMessage
 from portico_gateway.agents import AgentTracker
 from portico_gateway.config import Config
 from portico_gateway import server as server_mod
-from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, opens_turn, translate
+from portico_gateway.engine import EngineCallbacks, PermissionDecision, QuestionDeclined, TurnErrors, opens_turn, translate
 from portico_gateway.messages import Action, AgentCommand, Brand, ModelChoice, Root, ServerMessage, TurnFinished, TurnStarted
 from portico_gateway.mcp_inventory import CliResult, invalidate_plugin_cache
 from portico_gateway.state import StateDir
@@ -81,7 +81,9 @@ class Pause:
     reached: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-def fake_result(is_error: bool = False, session_id: str = "fake-session") -> ResultMessage:
+def fake_result(
+    is_error: bool = False, session_id: str = "fake-session", errors: list[str] | None = None, result: str | None = None
+) -> ResultMessage:
     return ResultMessage(
         subtype="error_during_execution" if is_error else "success",
         duration_ms=1,
@@ -89,6 +91,8 @@ def fake_result(is_error: bool = False, session_id: str = "fake-session") -> Res
         is_error=is_error,
         num_turns=1,
         session_id=session_id,
+        errors=errors,
+        result=result,
     )
 
 
@@ -191,6 +195,8 @@ class FakeEngine:
         self.context_reads = 0
         # v0.10: subagents and workflows, as the real engine follows them.
         self.agents = AgentTracker()
+        # v0.25: the turn's error detail, attached to its ``turn.finished`` as the real adapter does.
+        self.errors = TurnErrors()
         # The last turn a result closed: an ``opens_turn`` message after it
         # begins a turn nobody sent, as in the real adapter.
         self.finished_turn = 0
@@ -261,6 +267,7 @@ class FakeEngine:
         if self.callbacks is None:
             raise RuntimeError("FakeEngine.send before start")
         self.turn += 1
+        self.errors.reset()
         if self.session_id is None:
             self.session_id = self._session_id
         self._interrupted.clear()
@@ -300,11 +307,13 @@ class FakeEngine:
             else:
                 if 0 < self.turn <= self.finished_turn and opens_turn(item):
                     self.turn += 1
+                    self.errors.reset()
                     await cb.on_event(TurnStarted(ts="2026-10-29T12:00:00Z", chat=self.chat, turn=self.turn))
+                self.errors.note(item)
                 for ev in translate(item, self.chat, self.turn, self.agents):
                     if isinstance(ev, TurnFinished):
                         self.finished_turn = ev.turn
-                    await cb.on_event(ev)
+                    await cb.on_event(self.errors.attach(ev))
 
     async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """A message written into the turn in flight (v0.11): recorded; the script goes on as it was."""

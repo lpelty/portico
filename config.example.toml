@@ -161,3 +161,37 @@
 ## Read aloud on each reply: true shows the switch in Settings; the person's on/off choice stays in
 ## the app.
 # read_aloud = false
+
+# [signin.aws-sso]
+## Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. Unset:
+## `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired".
+## e.g. patterns = ["cloud_credential_error"]  (not set by default)
+## A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits.
+## Unset: the AWS SSO token cache (~/.aws/sso/cache), read every 5 s.
+## e.g. check = "my-tool signed-in"  (not set by default)
+## The command the card's Open sign-in page runs; its output's first URL and code show under Trouble
+## signing in?. Unset: no button.
+## e.g. open = "aws sso login --profile work"  (not set by default)
+## The card's title. Unset: "Sign in again to continue".
+## e.g. title = "Sign in again to continue"  (not set by default)
+## The card's text. Unset: "Your sign-in to AWS has run out. Sign in in your browser; this
+## conversation carries on by itself when you're done."
+## e.g. body = "Your sign-in to AWS has run out."  (not set by default)
+## The SSO start URL whose cached token counts as signed in again. Unset: any.
+## e.g. sso_start_url = "https://example.awsapps.com/start"  (not set by default)
+# [signin.claude]
+## Regular expressions (case-insensitive) that make a failed turn an expired Claude sign-in. Unset:
+## `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired",
+## "Not logged in".
+## e.g. patterns = ["^authentication_failed$"]  (not set by default)
+## A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits.
+## Unset: `claude auth status` (signed in with claude.ai).
+## e.g. check = "claude auth status"  (not set by default)
+## The command the card's Open sign-in page runs; its URL shows under Trouble signing in?, with a
+## field that pastes a code into it. Unset: `claude auth login`.
+## e.g. open = "claude auth login"  (not set by default)
+## The card's title. Unset: "Sign in again to continue".
+## e.g. title = "Sign in again to continue"  (not set by default)
+## The card's text. Unset: "Your Claude sign-in has run out. Sign in in your browser; this
+## conversation carries on by itself when you're done."
+## e.g. body = "Your Claude sign-in has run out."  (not set by default)

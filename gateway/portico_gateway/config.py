@@ -419,6 +419,55 @@ class VoiceConfig(BaseModel):
     read_aloud: bool = False
 
 
+class SigninKindConfig(BaseModel):
+    """v0.25 §4.5 (ruling 9): one sign-in kind's settings (``[signin.aws-sso]``, ``[signin.claude]``); unset keeps the kind's default.
+
+    ``patterns`` are Python regular expressions, searched case-insensitively in
+    each piece of a failed turn's error detail. ``check`` is a command that
+    exits 0 when the sign-in is current again; ``open`` the command the card's
+    Open sign-in page runs (its output's first URL and code show under
+    Trouble signing in?). ``title`` and ``body`` word the card.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    patterns: list[str] | None = None
+    check: str | None = None
+    open: str | None = None
+    title: str | None = None
+    body: str | None = None
+
+    @field_validator("patterns")
+    @classmethod
+    def _patterns_compile(cls, value: list[str] | None) -> list[str] | None:
+        for pattern in value or []:
+            try:
+                re.compile(pattern, re.IGNORECASE)
+            except re.error as e:
+                raise ValueError(f"patterns: {pattern!r} is not a regular expression: {e}") from None
+        return value
+
+    @field_validator("check", "open", "title", "body")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+
+class AwsSsoSigninConfig(SigninKindConfig):
+    """``[signin.aws-sso]``: also ``sso_start_url``, the SSO start URL whose cached token counts (any, unset)."""
+
+    sso_start_url: str | None = None
+
+
+class SigninConfig(BaseModel):
+    """v0.25 §4.5/§4.6: the sign-in kinds a turn can pause on (``[signin.aws-sso]``, ``[signin.claude]``)."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    aws_sso: AwsSsoSigninConfig = Field(default_factory=AwsSsoSigninConfig, alias="aws-sso")
+    claude: SigninKindConfig = Field(default_factory=SigninKindConfig)
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -497,6 +546,8 @@ class Config(BaseModel):
     person: PersonConfig = PersonConfig()
     # v0.24: voice (``[voice] read_aloud``).
     voice: VoiceConfig = VoiceConfig()
+    # v0.25: the sign-ins a turn waits on (``[signin.aws-sso]``, ``[signin.claude]``).
+    signin: SigninConfig = Field(default_factory=SigninConfig)
 
     @field_validator("title_model")
     @classmethod

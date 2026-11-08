@@ -43,7 +43,7 @@ class KeyDoc:
 # Grouping for ``config show`` and the reference, in the README's order; newer sections last.
 SECTION_ORDER: list[str] = [
     "general", "brand", "update", "deployment", "actions", "services", "roots", "sessions", "threads",
-    "files", "viewer", "links", "apps", "mcp", "spaces", "person", "voice",
+    "files", "viewer", "links", "apps", "mcp", "spaces", "person", "voice", "signin",
 ]
 
 # Fields of shared models the gateway fills itself; never set in config.
@@ -152,7 +152,59 @@ KEY_DOCS: dict[str, KeyDoc] = {
         "Read aloud on each reply: true shows the switch in Settings; the person's on/off choice stays in the app.",
         "read_aloud = true", applies="gateway restart (the app follows when it reconnects)", scope="personal",
     ),
+    # --- signin -----------------------------------------------------------------------
+    "signin.aws-sso.patterns": KeyDoc(
+        "Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. "
+        'Unset: `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired".',
+        'patterns = ["cloud_credential_error"]',
+    ),
+    "signin.aws-sso.check": KeyDoc(
+        "A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits. "
+        "Unset: the AWS SSO token cache (~/.aws/sso/cache), read every 5 s.",
+        'check = "my-tool signed-in"',
+    ),
+    "signin.aws-sso.open": KeyDoc(
+        "The command the card's Open sign-in page runs; its output's first URL and code show under Trouble signing in?. Unset: no button.",
+        'open = "aws sso login --profile work"',
+    ),
+    "signin.aws-sso.sso_start_url": KeyDoc(
+        "The SSO start URL whose cached token counts as signed in again. Unset: any.",
+        'sso_start_url = "https://example.awsapps.com/start"',
+    ),
+    "signin.aws-sso.title": KeyDoc("The card's title. Unset: \"Sign in again to continue\".", 'title = "Sign in again to continue"'),
+    "signin.aws-sso.body": KeyDoc(
+        "The card's text. Unset: \"Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done.\"",
+        'body = "Your sign-in to AWS has run out."',
+    ),
+    "signin.claude.patterns": KeyDoc(
+        "Regular expressions (case-insensitive) that make a failed turn an expired Claude sign-in. "
+        'Unset: `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired", "Not logged in".',
+        'patterns = ["^authentication_failed$"]',
+    ),
+    "signin.claude.check": KeyDoc(
+        "A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits. Unset: `claude auth status` (signed in with claude.ai).",
+        'check = "claude auth status"',
+    ),
+    "signin.claude.open": KeyDoc(
+        "The command the card's Open sign-in page runs; its URL shows under Trouble signing in?, with a field that pastes a code into it. Unset: `claude auth login`.",
+        'open = "claude auth login"',
+    ),
+    "signin.claude.title": KeyDoc("The card's title. Unset: \"Sign in again to continue\".", 'title = "Sign in again to continue"'),
+    "signin.claude.body": KeyDoc(
+        "The card's text. Unset: \"Your Claude sign-in has run out. Sign in in your browser; this conversation carries on by itself when you're done.\"",
+        'body = "Your Claude sign-in has run out."',
+    ),
 }
+
+
+def _named(model: type[BaseModel], part: str) -> str:
+    """The field name for ``part``, a field's name or its alias (``aws-sso`` is ``aws_sso``)."""
+    if part in model.model_fields:
+        return part
+    for name, field in model.model_fields.items():
+        if field.alias == part:
+            return name
+    raise KeyError(part)
 
 
 def _model_of(annotation: Any) -> tuple[type[BaseModel] | None, bool]:
@@ -169,7 +221,7 @@ def model_keys(model: type[BaseModel] = Config, prefix: str = "") -> list[str]:
     """Every config key the models define, dotted; a list of tables is ``name`` and ``name[].field``."""
     out: list[str] = []
     for name, field in model.model_fields.items():
-        key = prefix + name
+        key = prefix + (field.alias or name)
         inner, is_list = _model_of(field.annotation)
         if inner is None:
             out.append(key)
@@ -194,7 +246,7 @@ def show_keys() -> list[str]:
 
 def _lookup(node: Any, dotted: str) -> Any:
     for part in dotted.split("."):
-        node = getattr(node, part)
+        node = getattr(node, _named(type(node), part))
     return node
 
 
@@ -224,8 +276,8 @@ def default_of(key: str) -> Any:
     model: type[BaseModel] = Config
     parts = key.split(".")
     for part in parts[:-1]:
-        model = _model_of(model.model_fields[part].annotation)[0]  # type: ignore[assignment]
-    field = model.model_fields[parts[-1]]
+        model = _model_of(model.model_fields[_named(model, part)].annotation)[0]  # type: ignore[assignment]
+    field = model.model_fields[_named(model, parts[-1])]
     if field.default is PydanticUndefined and field.default_factory is None:
         return _lookup(Config(), key)
     return field.get_default(call_default_factory=True)
@@ -394,8 +446,8 @@ def _field(key: str) -> Any:
     model: type[BaseModel] = Config
     parts = key.replace("[]", "").split(".")
     for part in parts[:-1]:
-        model = _model_of(model.model_fields[part].annotation)[0]  # type: ignore[assignment]
-    return model.model_fields[parts[-1]]
+        model = _model_of(model.model_fields[_named(model, part)].annotation)[0]  # type: ignore[assignment]
+    return model.model_fields[_named(model, parts[-1])]
 
 
 def type_name(annotation: Any) -> str:
@@ -480,10 +532,16 @@ def render_example() -> str:
                 field_doc = KEY_DOCS[key]
                 lines.append(f"#   {field_doc.example}    ## {_default_text(key)}")
             continue
-        if section != "general":
+        if section != "general" and any(k.count(".") == 1 for k in keys):
             lines.append(f"# [{section}]")
+        table = section
         for key in keys:
             doc = KEY_DOCS[key]
+            # A table inside the section (``[signin.aws-sso]``) gets its own header.
+            here = key.rsplit(".", 1)[0] if section != "general" else section
+            if here != table:
+                lines.append(f"# [{here}]")
+                table = here
             lines += _comment(doc.text)
             name = key.rsplit(".", 1)[-1]
             default = default_of(key)

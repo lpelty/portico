@@ -979,6 +979,21 @@ class TurnFinished(Envelope):
     chat: int
     turn: int
     outcome: Outcome
+    # v0.25: why the turn ended, when the gateway knows a reason the app words
+    # (``signin.expired``: the sign-in ran out). Absent otherwise, and from an older gateway.
+    reason: str | None = None
+    # The engine's error detail for the turn (``engine.error_detail``): the
+    # gateway reads it to recognise a sign-in error. Never sent, never logged.
+    _error_detail: list[str] = PrivateAttr(default_factory=list)
+
+    @property
+    def error_detail(self) -> list[str]:
+        return list(self._error_detail)
+
+    def with_error_detail(self, detail: list[str]) -> TurnFinished:
+        """``self`` carrying ``detail`` (set in place; returned for chaining)."""
+        self._error_detail = list(detail)
+        return self
 
 
 class CardAsk(Envelope):

@@ -51,6 +51,7 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TextBlock,
     ToolPermissionContext,
     ToolResultBlock,
     ToolUseBlock,
@@ -390,6 +391,51 @@ def _result_text(content: str | list[dict[str, Any]] | None) -> str:
 def blocked_by_auto_mode(is_error: bool | None, content: str | list[dict[str, Any]] | None) -> bool:
     """Whether a tool result is auto mode's classifier refusing the step."""
     return bool(is_error) and AUTO_MODE_BLOCK_MARK in _result_text(content).lower()
+
+
+def error_detail(msg: Message) -> list[str]:
+    """v0.25 §4.3: what an engine message says about an error, as strings, for the sign-in rule. Never logged.
+
+    From a failed ``ResultMessage``: its ``errors``, ``result``,
+    ``api_error_status`` and ``terminal_reason``. From an ``AssistantMessage``
+    with ``error`` set: the error, then the message's own words (the engine
+    puts "Login expired · Please run /login" there). Anything else: nothing.
+    """
+    out: list[str] = []
+    if isinstance(msg, ResultMessage):
+        if not msg.is_error:
+            return out
+        out += [str(e) for e in (getattr(msg, "errors", None) or []) if e is not None]
+        for name in ("result", "api_error_status", "terminal_reason"):
+            value = getattr(msg, name, None)
+            if value is not None and str(value):
+                out.append(str(value))
+    elif isinstance(msg, AssistantMessage):
+        if not getattr(msg, "error", None):
+            return out
+        out.append(str(msg.error))
+        out += [block.text for block in msg.content if isinstance(block, TextBlock) and block.text]
+    return out
+
+
+class TurnErrors:
+    """A turn's error detail as the engine's messages arrive; attached to the turn's ``turn.finished`` (v0.25)."""
+
+    def __init__(self) -> None:
+        self.detail: list[str] = []
+
+    def reset(self) -> None:
+        self.detail = []
+
+    def note(self, msg: Message) -> None:
+        self.detail += error_detail(msg)
+
+    def attach(self, event: ServerMessage) -> ServerMessage:
+        """``event``, and when it is a ``turn.finished``, carrying the detail so far (which then starts afresh)."""
+        if isinstance(event, TurnFinished):
+            event.with_error_detail(self.detail)
+            self.detail = []
+        return event
 
 
 def translate(msg: Message, chat: int, turn: int, agents: AgentTracker | None = None) -> list[ServerMessage]:
@@ -1312,6 +1358,8 @@ class SDKEngine:
         # The last turn a result message closed; ``turn`` beyond it is in flight.
         self._finished_turn = 0
         self._closing = False
+        # v0.25: the turn's error detail, attached to its ``turn.finished``.
+        self._errors = TurnErrors()
         # Slash command names (no ``/``) from the engine's initialize answer
         # and its ``init`` message; ``None`` until either has said.
         self._commands: set[str] | None = None
@@ -1374,11 +1422,13 @@ class SDKEngine:
                 self._note_session(msg)
                 if self._between_turns() and opens_turn(msg):
                     self.turn += 1
+                    self._errors.reset()
                     await self._callbacks.on_event(TurnStarted(ts=_now(), chat=self.chat, turn=self.turn))
+                self._errors.note(msg)
                 for event in translate(msg, self.chat, self.turn, self.agents):
                     if isinstance(event, TurnFinished):
                         self._finished_turn = event.turn
-                    await self._callbacks.on_event(event)
+                    await self._callbacks.on_event(self._errors.attach(event))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1412,7 +1462,9 @@ class SDKEngine:
         self._finished_turn = turn
         log.warning("chat %s: engine went away during turn %d; reporting the turn as an error", self.chat, turn)
         try:
-            await self._callbacks.on_event(TurnFinished(ts=_now(), chat=self.chat, turn=turn, outcome="error"))
+            await self._callbacks.on_event(
+                self._errors.attach(TurnFinished(ts=_now(), chat=self.chat, turn=turn, outcome="error"))
+            )
         except Exception:
             log.exception("chat %s: could not report the lost turn", self.chat)
 
@@ -1489,6 +1541,7 @@ class SDKEngine:
         if self._client is None:
             raise RuntimeError("engine not started")
         self.turn += 1
+        self._errors.reset()
         await self._client.query(_prompt(text, images))
 
     async def inject(self, text: str, images: list[dict[str, Any]] | None = None) -> None:
