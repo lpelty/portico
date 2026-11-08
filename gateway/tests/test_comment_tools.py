@@ -220,3 +220,10 @@ async def test_add_in_one_table_cell_and_not_across_cells(folder: Path) -> None:
     t = cm.parse(text).threads[0]
     assert cm.anchored_text(text, t) == "a \\| b"
     assert text.index("<!--co:") > text.index("| beta |"), "the thread goes after the whole table"
+
+
+async def test_add_refuses_text_the_table_does_not_show(folder: Path) -> None:
+    put(folder, "r.md", text="| h1 | h2 |\n|:--|--:|\n| r1 |\n| r2 | c | extra |\n")
+    out = await tools(folder)["comment_add"].handler({"path": "r.md", "quote": "extra", "text": "x"})
+    assert out.get("is_error") is True
+    assert text_of(out) == "That text isn't shown in the table."

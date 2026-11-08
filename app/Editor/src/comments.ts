@@ -261,6 +261,42 @@ export function headerFields(header: string): Map<string, string> {
   return out;
 }
 
+function unescapedPipes(line: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\\") { i++; continue; }
+    if (line[i] === "|") out.push(i);
+  }
+  return out;
+}
+
+const ROW_PREFIX = /^[ \t>]*/;
+const DELIMITER = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+// GFM tables as [header line, delimiter line, last row line], outside `hidden`.
+export function tables(text: string, ls: Line[], hidden: Array<[number, number]>): Array<[number, number, number]> {
+  const out: Array<[number, number, number]> = [];
+  const body = (k: number) => {
+    const line = text.slice(ls[k].start, ls[k].end);
+    return line.slice(ROW_PREFIX.exec(line)![0].length);
+  };
+  const isBlank = (x: string) => /^[ \t\r\f\v]*$/.test(x);
+  let k = 0;
+  while (k + 1 < ls.length) {
+    if (inside(hidden, ls[k].start) || inside(hidden, ls[k + 1].start)) { k++; continue; }
+    const head = body(k), delim = body(k + 1);
+    if (unescapedPipes(head).length && delim.includes("|") && delim.includes("-") && DELIMITER.test(delim)) {
+      let j = k + 1;
+      while (j + 1 < ls.length && !isBlank(body(j + 1)) && !inside(hidden, ls[j + 1].start) && !interrupts(body(j + 1))) j++;
+      out.push([k, k + 1, j]);
+      k = j + 1;
+      continue;
+    }
+    k++;
+  }
+  return out;
+}
+
 function codeSpans(text: string, segments: Array<[number, number]>): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const [a, b] of segments) {
@@ -317,9 +353,17 @@ export function scanComments(text: string): Scan {
   for (const sg of segs) if (sg.kind === "icode") coarse.push([ls[sg.first].start, ls[sg.last].full]);
   coarse.sort((x, y) => x[0] - y[0]);
   const walls = [...coarse, ...blocks.map((b) => [b.from, b.to] as [number, number])].sort((x, y) => x[0] - y[0]);
+  // GFM splits a table row on its unescaped pipes before inline code is
+  // recognised: a code span never runs across a cell boundary.
+  const cuts: Array<[number, number]> = [];
+  for (const [head, , last] of tables(text, ls, walls)) {
+    for (let k = head; k <= last; k++) {
+      for (const q of unescapedPipes(text.slice(ls[k].start, ls[k].end))) cuts.push([ls[k].start + q, ls[k].start + q + 1]);
+    }
+  }
   const textSegs: Array<[number, number]> = [];
   let pos = 0;
-  for (const [a, b] of walls) {
+  for (const [a, b] of [...walls, ...cuts].sort((x, y) => x[0] - y[0])) {
     if (a > pos) textSegs.push([pos, a]);
     pos = Math.max(pos, b);
   }

@@ -419,3 +419,11 @@ test("right-clicking in the table widget says to click into the table", () => {
   const plain = commentMenuMessage(editor, editor.view.contentDOM, 1, 2);
   assert.equal(plain.refusal, undefined);
 });
+
+test("GFM: a pipe splits a table row before inline code, so `c|d` is plain text in two cells", () => {
+  const text = "| a | b |\n|---|---|\n| `c|d` |\n";
+  const s = state(text);
+  const c = text.indexOf("c|");
+  assert.equal(selectionRefusal(s, c, c + 1), null);
+  assert.equal(selectionRefusal(s, c + 2, c + 3), null);
+});

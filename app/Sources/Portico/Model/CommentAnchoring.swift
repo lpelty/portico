@@ -50,6 +50,7 @@ enum CommentAnchoring {
     static func reason(_ r: CommentFormat.Refusal) -> String {
         switch r {
         case .notFound, .occurs, .crossesBlocks: "Select text within one paragraph, outside links and formatting."
+        case .notShown: "That text isn't shown in the table."
         case .insideIgnored: "Comments can't go in code, tables or front matter."
         }
     }

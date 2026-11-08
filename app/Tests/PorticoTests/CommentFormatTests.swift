@@ -161,6 +161,7 @@ final class CommentFormatTests: XCTestCase {
                 case "not found": want = .notFound
                 case "inside code or front matter": want = .insideIgnored
                 case "crosses paragraphs": want = .crossesBlocks
+                case "not shown in the table": want = .notShown
                 default: want = .occurs(Int(refusal.split(separator: " ")[1])!)
                 }
                 XCTAssertEqual(got, .failure(want), "\(c["name"]!)")

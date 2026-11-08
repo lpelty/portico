@@ -1119,6 +1119,70 @@
    },
    "expect_prefix": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a ",
    "expect_text": "\\| b"
+  },
+  {
+   "name": "find-table-quote-as-source",
+   "text": "| a | b |\n|---|---|\n| x \\| y | z |\n",
+   "find": {
+    "quote": "x \\| y",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| ",
+   "expect_text": "x \\| y"
+  },
+  {
+   "name": "find-table-quote-as-rendered",
+   "text": "| a | b |\n|---|---|\n| x \\| y | z |\n",
+   "find": {
+    "quote": "x | y",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| ",
+   "expect_text": "x \\| y"
+  },
+  {
+   "name": "find-table-ragged-extra-cell",
+   "text": "| h1 | h2 |\n|:--|--:|\n| r1 |\n| r2 | c | extra |\n",
+   "find": {
+    "quote": "extra",
+    "occurrence": 1
+   },
+   "expect_refusal": "not shown in the table"
+  },
+  {
+   "name": "find-table-pipe-splits-code",
+   "text": "| a | b |\n|---|---|\n| `c|d` | z |\n",
+   "find": {
+    "quote": "c",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| `",
+   "expect_text": "c"
+  },
+  {
+   "name": "table-pipe-code",
+   "file": "table-pipe-code.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "pc001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "c",
+      "anchored_text": "c",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
   }
  ]
 }

@@ -55,6 +55,8 @@ enum CommentFormat {
         case occurs(Int)
         case crossesBlocks
         case insideIgnored
+        /// Only in a table cell the renderer drops (beyond the header's columns).
+        case notShown
     }
 
     enum EditError: Error, Equatable {
@@ -141,6 +143,7 @@ enum CommentFormat {
         var ignored: [Range<Int>]
         var blocks: [Block]
         var segs: [Segment]
+        var tables: [(Int, Int, Int)] = []
     }
 
     // MARK: block starts (CommonMark, as far as comments need it)
@@ -491,15 +494,25 @@ enum CommentFormat {
         let icode = segs.filter { $0.kind == "icode" }.map { ls[$0.first].start..<ls[$0.last].full }
         let coarseAll = (coarse + icode).sorted { $0.lowerBound < $1.lowerBound }
         let walls = (coarseAll + blocks.map { $0.start..<$0.end }).sorted { $0.lowerBound < $1.lowerBound }
+        let tbls = tables(t, ls, walls)
+        // GFM splits a table row on its unescaped pipes before inline code is
+        // recognised: a code span never runs across a cell boundary.
+        var cuts: [Range<Int>] = []
+        for (head, _, last) in tbls {
+            for k in head...last {
+                let l = ls[k]
+                cuts += unescapedPipes(Array(t[l.start..<l.end])).map { (l.start + $0)..<(l.start + $0 + 1) }
+            }
+        }
         var segments: [Range<Int>] = []
         var pos = 0
-        for w in walls {
+        for w in (walls + cuts).sorted(by: { $0.lowerBound < $1.lowerBound }) {
             if w.lowerBound > pos { segments.append(pos..<w.lowerBound) }
             pos = max(pos, w.upperBound)
         }
         if pos < t.count { segments.append(pos..<t.count) }
         let ignored = (coarseAll + codeSpans(t, segments)).sorted { $0.lowerBound < $1.lowerBound }
-        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs)
+        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs, tables: tbls)
     }
 
     /// Front matter, ``` and ~~~ fences, indented code blocks, and inline code spans.
@@ -903,6 +916,8 @@ enum CommentFormat {
         var src: [Int] = []
         var ignored: [Bool] = []
         var breaks: [Bool] = []
+        /// Cells beyond the header's columns: the renderer drops them.
+        var dropped: [Range<Int>] = []
 
         mutating func space(_ i: Int, _ ig: Bool, _ brk: Bool) {
             if chars.last == CommentFormat.sp {
@@ -1036,11 +1051,19 @@ enum CommentFormat {
         for seg in segments { inlineWalls(t, ns, seg.lowerBound, seg.upperBound, &walls) }
         // Tables: a cell boundary and the delimiter row are walls, so a match stays
         // in one cell; an escaped pipe's backslash is zero-width.
-        for (head, delim, last) in tables(t, r.lines, hidden) {
+        var dropped: [Range<Int>] = []
+        let full = s(t[...])
+        for (head, delim, last) in r.tables {
             walls.append(r.lines[delim].start..<r.lines[delim].end)
+            let headLine = r.lines[head]
+            let columns = tableCells(full, line: headLine.start..<headLine.end).count
             for k in head...last where k != delim {
                 let l = r.lines[k]
                 for p in unescapedPipes(Array(t[l.start..<l.end])) { walls.append((l.start + p)..<(l.start + p + 1)) }
+                let cells = tableCells(full, line: l.start..<l.end)
+                if cells.count > columns, let first = cells.dropFirst(columns).first, let lastCell = cells.last {
+                    dropped.append(first.lowerBound..<lastCell.upperBound)
+                }
             }
         }
         var zero: [Range<Int>] = []
@@ -1054,6 +1077,7 @@ enum CommentFormat {
         let ms = (markers(t).map(\.range) + zero).sorted { $0.lowerBound < $1.lowerBound }
         let segEnds = Set(r.segs.map { r.lines[$0.last].end })
         var v = Visible()
+        v.dropped = dropped
         var prefixEnds: [Int: Int] = [:]
         for l in r.lines {
             var i = l.start
@@ -1104,7 +1128,8 @@ enum CommentFormat {
 
     fileprivate static func normalise(_ q: String) -> U {
         var out: U = []
-        for c in u(q) {
+        // A quote may be written as the source shows a cell (`x \| y`) or as it renders (`x | y`).
+        for c in u(q.replacingOccurrences(of: "\\|", with: "|")) {
             if asciiSpace(c) {
                 if out.last != sp { out.append(sp) }
             } else {
@@ -1128,13 +1153,15 @@ enum CommentFormat {
     {
         guard !q.isEmpty else { return .failure(.notFound) }
         var good: [Range<Int>] = []
-        var inCode = false, crosses = false
+        var inCode = false, crosses = false, notShown = false
         var i = find(v.chars, q, from: 0)
         while let a = i {
             let b = a + q.count
             let span = v.src[a]..<(v.src[b - 1] + 1)
             if let within, !(within.contains(span.lowerBound) && span.upperBound <= within.upperBound) {
                 // outside the block asked about
+            } else if v.dropped.contains(where: { $0.contains(span.lowerBound) }) {
+                notShown = true
             } else if v.ignored[a..<b].contains(true) {
                 inCode = true
             } else if v.breaks[a..<b].contains(true) {
@@ -1149,6 +1176,7 @@ enum CommentFormat {
             return .success(selection ? snapSelection(t, r) : snapGraphemes(t, r))
         }
         if !good.isEmpty { return .failure(.occurs(good.count)) }
+        if notShown { return .failure(.notShown) }
         if inCode { return .failure(.insideIgnored) }
         if crosses { return .failure(.crossesBlocks) }
         return .failure(.notFound)

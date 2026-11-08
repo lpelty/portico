@@ -224,6 +224,8 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
         def refusal(found: tuple[int, int] | str) -> dict[str, Any] | None:
             if not isinstance(found, str):
                 return None
+            if found == "not shown in the table":
+                return _error("That text isn't shown in the table.")
             if found.startswith("occurs "):
                 n = found.split()[1]
                 return _error(f'"{quote}" occurs {n} times in {raw}; there is no occurrence {occurrence}.')

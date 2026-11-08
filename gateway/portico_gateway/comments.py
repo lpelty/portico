@@ -305,6 +305,19 @@ def _segments(text: str, lines, blocks) -> list[tuple[str, int, int]]:
     return segs
 
 
+def _row_cells(line: str) -> list[tuple[int, int]]:
+    """A table row's cells as (start, end) offsets in ``line``, between boundary pipes."""
+    lead = len(_ROW_PREFIX_RE.match(line).group(0))
+    end = len(line.rstrip(" \t"))
+    bounds = [q for q in _unescaped_pipes(line) if q >= lead]
+    cells = list(zip([lead] + [q + 1 for q in bounds], bounds + [end]))
+    if bounds and bounds[0] == lead:
+        cells = cells[1:]
+    if bounds and bounds[-1] == end - 1:
+        cells = cells[:-1]
+    return cells
+
+
 def _unescaped_pipes(line: str) -> list[int]:
     """Offsets of the ``|`` in ``line`` that are cell boundaries (not ``\\|``)."""
     out = []
@@ -384,6 +397,7 @@ class _Regions:
     ignored: list  # front matter, fences, indented code, inline code
     blocks: list  # thread blocks
     segs: list  # top-level blocks
+    tables: list  # (header line, delimiter line, last row line)
 
 
 def _regions(text: str) -> _Regions:
@@ -395,16 +409,24 @@ def _regions(text: str) -> _Regions:
     icode = [(lines[a][0], lines[b][2]) for kind, a, b in segs if kind == "icode"]
     coarse = sorted(coarse + icode)
     walls = sorted(coarse + [(s, e) for s, e, _, _ in blocks])
+    tables = _tables(text, lines, walls)
+    # GFM splits a table row on its unescaped pipes before inline code is
+    # recognised: a code span never runs across a cell boundary.
+    cuts = []
+    for head, delim, last in tables:
+        for k in range(head, last + 1):
+            s0, e0, _ = lines[k]
+            cuts += [(s0 + q, s0 + q + 1) for q in _unescaped_pipes(text[s0:e0])]
     segments = []
     pos = 0
-    for a, b in walls:
+    for a, b in sorted(walls + cuts):
         if a > pos:
             segments.append((pos, a))
         pos = max(pos, b)
     if pos < len(text):
         segments.append((pos, len(text)))
     ignored = sorted(coarse + _code_spans(text, segments))
-    return _Regions(lines, ignored, blocks, segs)
+    return _Regions(lines, ignored, blocks, segs, tables)
 
 
 def ignored_regions(text: str) -> list[tuple[int, int]]:
@@ -805,14 +827,19 @@ def _visible(text: str):
     # Tables: a cell boundary (an unescaped pipe) and the delimiter row are walls,
     # so a match stays in one cell; an escaped pipe's backslash is zero-width.
     zero = []
-    for head, delim, last in _tables(text, lines, hidden):
+    dropped: list[tuple[int, int]] = []  # cells beyond the header's columns: the renderer drops them
+    for head, delim, last in reg.tables:
         walls.append((lines[delim][0], lines[delim][1]))
+        columns = len(_row_cells(text[lines[head][0] : lines[head][1]]))
         for k in range(head, last + 1):
             if k == delim:
                 continue
             s, e, _ = lines[k]
             for pipe in _unescaped_pipes(text[s:e]):
                 walls.append((s + pipe, s + pipe + 1))
+            extra = _row_cells(text[s:e])[columns:]
+            if extra:
+                dropped.append((s + extra[0][0], s + extra[-1][1]))
     for m in re.finditer(r"\\\|", text):
         if not _inside(reg.ignored, m.start()):
             zero.append((m.start(), m.start() + 1))
@@ -885,27 +912,30 @@ def _visible(text: str):
         code.append(_inside(ig, i))
         breaks.append(False)
         i += 1
-    return "".join(chars), src, code, breaks
+    return "".join(chars), src, code, breaks, dropped
 
 
 def _normalise(q: str) -> str:
-    return re.sub(r"[ \t\n\r\f\v]+", " ", q).strip(" ")
+    # A quote may be written as the source shows a cell (`x \| y`) or as it renders (`x | y`).
+    return re.sub(r"[ \t\n\r\f\v]+", " ", q.replace("\\|", "|")).strip(" ")
 
 
 def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
     """Matches of ``quote`` in the visible text: (good spans, any in code, any across paragraphs)."""
     q = _normalise(quote)
     good: list[tuple[int, int]] = []
-    in_code = crosses = False
+    in_code = crosses = not_shown = False
     if not q:
-        return good, in_code, crosses
-    vis, src, code, breaks = _visible(text)
+        return good, in_code, crosses, not_shown
+    vis, src, code, breaks, dropped = _visible(text)
     i = vis.find(q)
     while i >= 0:
         j = i + len(q)
         span = (src[i], src[j - 1] + 1)
         if within and not (within[0] <= span[0] and span[1] <= within[1]):
             pass
+        elif any(a <= span[0] < b for a, b in dropped):
+            not_shown = True
         elif any(code[i:j]):
             in_code = True
         elif any(breaks[i:j]):
@@ -913,18 +943,20 @@ def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
         else:
             good.append(span)
         i = vis.find(q, j)
-    return good, in_code, crosses
+    return good, in_code, crosses, not_shown
 
 
 def find_quote(text: str, quote: str, occurrence: int = 1) -> tuple[int, int] | str:
     """The ``occurrence``-th (1-based) visible match of ``quote``, its ends snapped to grapheme
     clusters (never split, never widened to words), or a refusal reason."""
-    good, in_code, crosses = _matches(text, quote)
+    good, in_code, crosses, not_shown = _matches(text, quote)
     if 1 <= occurrence <= len(good):
         a, b = good[occurrence - 1]
         return snap_to_graphemes(text, a, b)
     if good:
         return f"occurs {len(good)} times"
+    if not_shown:
+        return "not shown in the table"
     if in_code:
         return "inside code or front matter"
     if crosses:
