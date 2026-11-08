@@ -97,3 +97,62 @@ def test_cli_config_show_reports_a_bad_file(tmp_path: Path, capsys: pytest.Captu
     _files(tmp_path, "", "titles = \n")
     assert main(["config", "show", "--state", str(tmp_path)]) == 1
     assert "config.local.toml" in capsys.readouterr().err
+
+
+# --- §6: the generated reference and template -------------------------------------
+
+from portico_gateway import REPO_ROOT  # noqa: E402
+
+
+def test_configuration_md_is_current() -> None:
+    assert (REPO_ROOT / "CONFIGURATION.md").read_text(encoding="utf-8") == cd.render_markdown(), (
+        "CONFIGURATION.md is out of date: run bin/portico-gateway export-config-doc"
+    )
+
+
+def test_example_toml_is_current() -> None:
+    assert (REPO_ROOT / "config.example.toml").read_text(encoding="utf-8") == cd.render_example(), (
+        "config.example.toml is out of date: run bin/portico-gateway export-config-doc"
+    )
+
+
+def test_every_key_is_in_the_reference_with_its_parts() -> None:
+    text = cd.render_markdown()
+    for key, doc in cd.KEY_DOCS.items():
+        assert f"`{key}`" in text, key
+        assert doc.applies in text
+    for word in ("Type", "Default", "Example", "Applies", "Belongs in"):
+        assert word in text
+
+
+def test_example_toml_uncommented_loads_at_the_defaults(tmp_path: Path) -> None:
+    """Every key line is commented out at its default; uncommenting the scalar ones still loads as defaults."""
+    import tomllib
+
+    lines = []
+    for line in cd.render_example().splitlines():
+        if line.startswith("# [[") or line.startswith("#   "):
+            continue  # a list-of-tables sample stays a comment
+        if line.startswith("# ") and ("=" in line or line.startswith("# [")) and not line.startswith("# #"):
+            line = line[2:]
+        if line.startswith("#"):
+            continue
+        lines.append(line)
+    data = tomllib.loads("\n".join(lines))
+    path = tmp_path / "config.toml"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    assert load_config(path) == load_config(tmp_path / "absent.toml")
+    assert data["system_prompt"] == "claude_code"
+
+
+def test_intro_says_local_first() -> None:
+    intro = cd.render_markdown().split("## General", 1)[0]
+    assert "config.local.toml" in intro and "config show" in intro
+    assert "never edit `config.toml` for a personal preference" in intro.lower() or "Never edit `config.toml` for a personal preference" in intro
+    assert ".gitignore" in intro
+
+
+def test_export_config_doc_writes_both(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["export-config-doc", "--out", str(tmp_path)]) == 0
+    assert (tmp_path / "CONFIGURATION.md").read_text(encoding="utf-8") == cd.render_markdown()
+    assert (tmp_path / "config.example.toml").read_text(encoding="utf-8") == cd.render_example()

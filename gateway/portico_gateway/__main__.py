@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``sessions`` (list, clear), ``config show``, ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``sessions`` (list, clear), ``config show``, ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``, ``export-config-doc``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -403,6 +403,18 @@ def cmd_export_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_config_doc(args: argparse.Namespace) -> int:
+    """v0.24 §6: write CONFIGURATION.md and config.example.toml (the repo root unless --out) from the key docs."""
+    from portico_gateway.config_doc import render_example, render_markdown
+
+    out_dir = Path(args.out) if args.out else REPO_ROOT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "CONFIGURATION.md").write_text(render_markdown(), encoding="utf-8")
+    (out_dir / "config.example.toml").write_text(render_example(), encoding="utf-8")
+    print(f"wrote CONFIGURATION.md and config.example.toml to {out_dir}")
+    return 0
+
+
 def cmd_export_examples(args: argparse.Namespace) -> int:
     out_dir = Path(args.out) if args.out else PROTOCOL_DIR / "examples"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -498,6 +510,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")
     p.set_defaults(func=cmd_export_schema)
+
+    p = sub.add_parser("export-config-doc", help="write CONFIGURATION.md and config.example.toml from the key docs")
+    p.add_argument("--out", help="write both into this directory instead of the repo root")
+    p.set_defaults(func=cmd_export_config_doc)
 
     p = sub.add_parser("export-examples", help="write protocol/examples/<direction>.<type>.json from the models")
     p.add_argument("--out", help="write the examples into this directory instead")
