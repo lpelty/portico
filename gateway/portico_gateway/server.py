@@ -168,7 +168,7 @@ from .apps import AppHost, build_ui_map
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, with_default_spaces
+from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, local_config_path, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
     STILL_LOADING_TEXT,
@@ -1013,7 +1013,8 @@ class GatewayServer:
         # The file the config came from and its modification time at start:
         # a newer file means the running gateway is not using it (v0.3).
         self.config_path = Path(config_path) if config_path is not None else None
-        self.config_mtime = self._config_mtime()
+        # v0.24: and the ``config.local.toml`` beside it (created, changed or deleted is stale).
+        self.config_mtimes = self._config_mtimes()
         self._config_stale_sent = False
         self.started_at = _now()
         # The version the deployment's update check last found, if any.
@@ -1379,27 +1380,41 @@ class GatewayServer:
 
     # --- the config file and the gateway's status ----------------------------------
 
-    def _config_mtime(self) -> float | None:
-        if self.config_path is None:
-            return None
+    @staticmethod
+    def _mtime(path: Path) -> float | None:
         try:
-            return self.config_path.stat().st_mtime
+            return path.stat().st_mtime
         except OSError:
             return None
 
-    def config_stale(self) -> bool:
-        """Whether the config file is newer than when this gateway started (or appeared since)."""
+    def _config_mtimes(self) -> tuple[float | None, float | None]:
         if self.config_path is None:
-            return False
-        now = self._config_mtime()
-        return now is not None and (self.config_mtime is None or now > self.config_mtime)
+            return (None, None)
+        return (self._mtime(self.config_path), self._mtime(local_config_path(self.config_path)))
+
+    def _stale_file(self) -> Path | None:
+        """The config file that changed since start, if any (v0.24: either one)."""
+        if self.config_path is None:
+            return None
+        base_then, local_then = self.config_mtimes
+        base_now, local_now = self._config_mtimes()
+        if base_now is not None and (base_then is None or base_now > base_then):
+            return self.config_path
+        if local_now != local_then:
+            return local_config_path(self.config_path)
+        return None
+
+    def config_stale(self) -> bool:
+        """Whether ``config.toml`` is newer than at start (or appeared since), or ``config.local.toml`` changed in any way."""
+        return self._stale_file() is not None
 
     async def check_config(self) -> None:
-        """Send ``config.stale`` once, the first time the file is seen newer."""
-        if self._config_stale_sent or not self.config_stale():
+        """Send ``config.stale`` once, the first time a config file is seen changed."""
+        changed = self._stale_file()
+        if self._config_stale_sent or changed is None:
             return
         self._config_stale_sent = True
-        log.info("%s changed after the gateway started; restart the gateway to apply it", self.config_path)
+        log.info("%s changed after the gateway started; restart the gateway to apply it", changed)
         await self.broadcast(ConfigStale(ts=_now()))
 
     async def _watch_config(self) -> None:

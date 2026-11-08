@@ -122,3 +122,80 @@ def test_doctor_says_the_local_file_loads(tmp_path: Path) -> None:
     path = _write(tmp_path, "", 'titles = "first_line"\n')
     check = check_config(path)
     assert check.ok and "config.local.toml" in check.line
+
+
+# --- §2 staleness: the config-stale check watches both files ------------------------
+
+
+def _server(state_dir, path: Path):  # noqa: ANN001, ANN202 - StateDir; GatewayServer
+    from portico_gateway import __version__
+    from portico_gateway.chats import ChatRegistry
+    from portico_gateway.config import Config
+    from portico_gateway.server import GatewayServer
+    from tests.conftest import FakeEngine
+
+    config = Config()
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=config.history_buffer)
+    return GatewayServer(
+        config=config, state=state_dir, registry=registry, engine_factory=FakeEngine, version=__version__, config_path=path
+    )
+
+
+def _later(path: Path) -> None:
+    import os
+
+    later = path.stat().st_mtime + 5
+    os.utime(path, (later, later))
+
+
+async def _stale_broadcasts(srv) -> int:  # noqa: ANN001
+    from portico_gateway.messages import ConfigStale
+
+    sent: list[object] = []
+
+    async def broadcast(msg: object) -> None:
+        sent.append(msg)
+
+    srv.broadcast = broadcast  # type: ignore[method-assign]
+    await srv.check_config()
+    await srv.check_config()
+    return sum(isinstance(m, ConfigStale) for m in sent)
+
+
+async def test_creating_the_local_file_is_stale(state_dir) -> None:  # noqa: ANN001
+    path = state_dir.config_path
+    path.write_text("")
+    srv = _server(state_dir, path)
+    assert not srv.config_stale()
+    (path.parent / LOCAL_CONFIG_NAME).write_text('titles = "first_line"\n')
+    assert srv.config_stale()
+    assert await _stale_broadcasts(srv) == 1
+
+
+async def test_changing_the_local_file_is_stale(state_dir) -> None:  # noqa: ANN001
+    path = state_dir.config_path
+    local = path.parent / LOCAL_CONFIG_NAME
+    local.write_text("")
+    srv = _server(state_dir, path)
+    assert not srv.config_stale()
+    _later(local)
+    assert srv.config_stale()
+    assert await _stale_broadcasts(srv) == 1
+
+
+async def test_deleting_the_local_file_is_stale(state_dir) -> None:  # noqa: ANN001
+    path = state_dir.config_path
+    local = path.parent / LOCAL_CONFIG_NAME
+    local.write_text("")
+    srv = _server(state_dir, path)
+    local.unlink()
+    assert srv.config_stale()
+    assert await _stale_broadcasts(srv) == 1
+
+
+async def test_config_toml_alone_still_stale_when_newer(state_dir) -> None:  # noqa: ANN001
+    path = state_dir.config_path
+    path.write_text("")
+    srv = _server(state_dir, path)
+    _later(path)
+    assert srv.config_stale()
