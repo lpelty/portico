@@ -4,15 +4,12 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pen_tokens import hex_in_ui_frames, load_rules, main  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
-# True until the controller's Pen sync converts what the scan still lists.
-AWAITING_PEN_SYNC = False
 
 
 def test_hex_in_a_ui_frame_is_listed():
@@ -67,7 +64,6 @@ def test_main_prints_and_fails_on_any(tmp_path, capsys):
     assert main([str(path)]) == 0
 
 
-@pytest.mark.skipif(AWAITING_PEN_SYNC, reason="awaiting controller Pen sync")
 def test_the_design_file_has_no_hex_in_ui_frames():
     pen = json.loads((REPO / "design" / "portico.pen").read_text(encoding="utf-8"))
     assert hex_in_ui_frames(pen) == []

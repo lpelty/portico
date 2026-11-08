@@ -9,10 +9,6 @@ import XCTest
 /// every Pen colour variable is a token. A Pen variable with one value
 /// (not a light/dark list) means both modes.
 final class PenTokensTests: XCTestCase {
-    /// True until the controller's Pen sync adds the v0.26 variables
-    /// (the list they need is written by the build, not by this test).
-    static let awaitingPenSync = false
-
     static var penFile: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // PorticoTests
@@ -52,7 +48,6 @@ final class PenTokensTests: XCTestCase {
     }
 
     func testThemeEqualsThePenVariables() throws {
-        if Self.awaitingPenSync { throw XCTSkip("awaiting controller Pen sync") }
         let pen = try Self.penColours()
         var missingInPen: [String] = [], missingInTheme: [String] = [], different: [String] = []
         for token in Theme.Token.allCases {
