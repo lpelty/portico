@@ -793,7 +793,7 @@ struct LabItem: Codable, Equatable, Sendable, Identifiable {
 
     /// The key the app draws Read aloud's controls for.
     static let readAloudKey = "voice.read_aloud"
-    /// v0.26 (PORT-23): ElevenLabs voices, drawn inside Read aloud's block.
+    /// v0.26 (PORT-23): the third-party voices item, drawn inside Read aloud's block (the app calls the service).
     static let elevenLabsKey = "voice.elevenlabs"
 
     var key: String
