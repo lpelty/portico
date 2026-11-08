@@ -144319,6 +144319,7 @@
           "id": "iV0tt",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -163979,6 +163980,7 @@
           "id": "XEbTQ",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -165691,6 +165693,7 @@
           "id": "chOXW",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -166987,6 +166990,7 @@
           "id": "paoiC",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -169155,6 +169159,7 @@
           "id": "NTTJU",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -181790,6 +181795,7 @@
           "id": "LdZtn",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -182886,6 +182892,7 @@
           "id": "mywZv",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -183755,6 +183762,7 @@
           "id": "mghHQ",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -236384,6 +236392,7 @@
           "id": "EfjWi",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -236858,7 +236867,7 @@
                           "type": "ellipse",
                           "id": "Epse9",
                           "name": "Dot",
-                          "fill": "#FFFFFF",
+                          "fill": "$on-accent",
                           "width": 14,
                           "height": 14
                         }
@@ -239394,6 +239403,7 @@
           "id": "k4pDi",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -240423,7 +240433,7 @@
                           "type": "ellipse",
                           "id": "LX6ui",
                           "name": "Dot",
-                          "fill": "#FFFFFF",
+                          "fill": "$on-accent",
                           "width": 14,
                           "height": 14
                         }
@@ -240459,6 +240469,7 @@
           "id": "zpaUM",
           "name": "Toolbar",
           "width": "fill_container",
+          "fill": "$sidebar",
           "stroke": "$border",
           "strokeWidth": {
             "bottom": 1
@@ -241488,7 +241499,7 @@
                           "type": "ellipse",
                           "id": "Q2U1sw",
                           "name": "Dot",
-                          "fill": "#FFFFFF",
+                          "fill": "$on-accent",
                           "width": 14,
                           "height": 14
                         }
