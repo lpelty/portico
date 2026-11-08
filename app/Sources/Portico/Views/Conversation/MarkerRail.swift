@@ -40,14 +40,18 @@ struct MarkerRail: View {
             let slots = ConversationMarkers.slots(
                 count: markers.count, height: height, inView: inViewIndices, hovered: hovered)
             let drawn = slots.filter(\.drawn)
+            let band = Self.hitBand(drawn)
             ZStack(alignment: .topLeading) {
-                // The hit area: the stack's column, the whole height.
+                // The hit area: only the stack (review M2), from the first drawn mark minus
+                // `reach` to the last plus `reach`; elsewhere the margin is the transcript's.
                 Color.clear
-                    .frame(width: ConversationMarkers.railWidth, height: height)
+                    .frame(width: ConversationMarkers.railWidth, height: band.height)
                     .contentShape(Rectangle())
+                    .offset(y: band.minY)
                     .onContinuousHover { phase in
                         switch phase {
-                        case .active(let point):
+                        case .active(let local):
+                            let point = CGPoint(x: local.x, y: local.y + band.minY)
                             let index = ConversationMarkers.nearest(point.y, in: slots)
                             hovered = index.flatMap { abs(slots[$0].y - point.y) <= Self.reach ? $0 : nil }
                         case .ended:
@@ -87,6 +91,13 @@ struct MarkerRail: View {
             }
         }
         .frame(width: ConversationMarkers.railWidth)
+    }
+
+    /// The vertical band the rail answers in: the drawn stack, `reach` beyond each end.
+    static func hitBand(_ drawn: [MarkerSlot]) -> (minY: CGFloat, height: CGFloat) {
+        guard let first = drawn.first?.y, let last = drawn.last?.y else { return (0, 0) }
+        let top = drawn.map(\.y).min() ?? first, bottom = drawn.map(\.y).max() ?? last
+        return (top - reach, bottom - top + 2 * reach)
     }
 
     /// What VoiceOver reads for a mark: its place, not the message (worked out only on hover).

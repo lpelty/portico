@@ -1395,6 +1395,25 @@ extension ConversationRoundTripTests {
         XCTAssertTrue(atBottom(hosted))
     }
 
+    /// Review M2: the rail takes the pointer only over its stack; elsewhere in the margin a
+    /// point lands in the transcript's scroll view (wheel, drag-select and clicks reach it).
+    func testOutsideTheStackTheMarginIsTheTranscripts() throws {
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        func landsInTranscript(_ y: CGFloat) -> Bool {
+            guard let hit = hosted.host.hitTest(NSPoint(x: 20, y: y)) else { return false }
+            return hit === hosted.scroll || hit.isDescendant(of: hosted.scroll)
+        }
+        // The transcript's frame in the window (the point `hitTest` takes is in the host's superview's).
+        let area = hosted.scroll.convert(hosted.scroll.bounds, to: nil)
+        XCTAssertTrue(landsInTranscript(area.maxY - 20), "an end of the margin, far from the stack")
+        XCTAssertTrue(landsInTranscript(area.minY + 20), "the other end")
+        XCTAssertFalse(landsInTranscript(area.midY), "on the stack, the rail takes it")
+        let beside = hosted.host.hitTest(NSPoint(x: 120, y: area.midY))
+        XCTAssertTrue(beside.map { $0 === hosted.scroll || $0.isDescendant(of: hosted.scroll) } == true, "beside the rail")
+    }
+
     /// At the minimum window width the rail's frame lies inside the side inset.
     func testTheRailStaysInsideTheSideInsetAtTheMinimumWidth() throws {
         let model = try model()
