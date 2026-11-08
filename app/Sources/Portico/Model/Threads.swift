@@ -379,7 +379,7 @@ struct DoneCard: Equatable, Identifiable {
     static func replyLine(in items: [TranscriptItem]) -> String? {
         let start = items.lastIndex { if case .userText = $0 { true } else { false } }.map { $0 + 1 } ?? 0
         for item in items[start...].reversed() {
-            guard case .assistantText(_, let text) = item else { continue }
+            guard case .assistantText(_, let text, _) = item else { continue }
             if let line = text.split(whereSeparator: \.isNewline)
                 .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
             {

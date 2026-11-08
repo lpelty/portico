@@ -449,6 +449,8 @@ struct MarkdownText: View {
     let text: String
     /// The message's id: Read aloud knows the reply by it.
     var id: String? = nil
+    /// v0.25 (ZE2): when the reply started, if that is known; shown left of Copy on hover.
+    var at: Date? = nil
 
     /// v0.12 (A7): 15-point regular (v0.11's 16 came down a step; code is 14),
     /// so bold (`MarkdownAttributed.boldWeight`) reads as bold; with the
@@ -472,8 +474,7 @@ struct MarkdownText: View {
                 .environment(\.codeWrapControl, CodeWrapControl(on: settings.wrapCode, toggle: { settings.wrapCode.toggle() }))
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
-            HStack(spacing: 2) {
-                CopyButton(help: "Copy this message as Markdown") { MarkdownCopy.message(shown) }
+            MessageHoverRow(at: at, help: "Copy this message as Markdown", copy: { MarkdownCopy.message(shown) }) {
                 if settings.readAloudShown {
                     ReadAloudButton(reply: text, key: id)
                 }

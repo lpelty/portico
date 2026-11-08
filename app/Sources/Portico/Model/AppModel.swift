@@ -62,7 +62,8 @@ extension UserText {
 
 enum TranscriptItem: Equatable, Sendable, Identifiable {
     case userText(UserText)
-    case assistantText(id: String, text: String)
+    /// v0.25: `at` is the time of the frame that started the reply, when it is a real one (`MessageTime.shown`).
+    case assistantText(id: String, text: String, at: String? = nil)
     case tool(ToolRow)
     case card(CardAsk)
     case turnMarker(TurnMarker)
@@ -77,7 +78,7 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
     var id: String {
         switch self {
         case .userText(let u): "user:\(u.turn):\(u.userKey.hashValue)"
-        case .assistantText(let id, _): "assistant:\(id)"
+        case .assistantText(let id, _, _): "assistant:\(id)"
         case .tool(let row): "tool:\(row.toolUseId)"
         case .card(let card): "card:\(card.id)"
         case .turnMarker(let marker): "turn:\(marker.turn)"
@@ -1500,6 +1501,17 @@ final class AppModel: ObservableObject {
         if let kept { pendingSends[chat] = kept }
     }
 
+    /// v0.25 §3: whether a message's time is real. A transcript replay's
+    /// events (in `chat.history`, unstamped) carry real times only from a
+    /// gateway that lists `history.times.v1` (ruling 6); a ring event (stamped)
+    /// and a live one always do.
+    private func trustedTime(_ ts: String, noTime: Bool?, seq: Int?) -> Date? {
+        MessageTime.shown(ts, noTime: noTime, fromHistory: replayingHistory && seq == nil, gatewayTimes: gatewayTimes)
+    }
+
+    /// Whether the gateway stamps replayed history with the transcript's real times.
+    private var gatewayTimes: Bool { false }
+
     /// The per-event reducer shared by live frames and a history replay.
     private func applyEvent(_ event: ServerMessage, to chat: Int) {
         // A subagent's tool row is a step in its list, not the
@@ -1525,10 +1537,12 @@ final class AppModel: ObservableObject {
             currentTurn[chat] = started.turn
             turnStartedAt[chat] = SessionTime.parse(started.ts) ?? Date()
 
-        case .userText(let user):
+        case .userText(var user):
             // The gateway's echo is the bubble, live or replayed; the send
             // that started this turn has been accepted and owes nothing more.
             currentTurn[chat] = user.turn
+            // v0.25: a replayed time the app can't trust is not shown.
+            if trustedTime(user.ts, noTime: user.noTime, seq: user.seq) == nil { user.noTime = true }
             items.append(.userText(user))
             pendingSends[chat] = nil
             if user.via != nil, !replayingHistory { noteAppMessageTaken(chat: chat, id: user.id, echo: true) }
@@ -1539,11 +1553,13 @@ final class AppModel: ObservableObject {
             }
 
         case .textDelta(let delta):
-            if case .assistantText(let id, let text)? = items.last, currentTurn[chat] == delta.turn {
-                items[items.count - 1] = .assistantText(id: id, text: text + delta.text)
+            if case .assistantText(let id, let text, let at)? = items.last, currentTurn[chat] == delta.turn {
+                items[items.count - 1] = .assistantText(id: id, text: text + delta.text, at: at)
             } else {
                 currentTurn[chat] = delta.turn
-                items.append(.assistantText(id: Self.itemId(&nextItemId), text: delta.text))
+                // v0.25: the reply's time is its first frame's, when it is a real one.
+                let at = trustedTime(delta.ts, noTime: delta.noTime, seq: delta.seq) != nil ? delta.ts : nil
+                items.append(.assistantText(id: Self.itemId(&nextItemId), text: delta.text, at: at))
             }
 
         case .toolStarted(let started):

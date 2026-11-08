@@ -452,7 +452,7 @@ struct ConversationView: View {
 
     private var itemsKey: String {
         guard let last = items.last else { return "" }
-        if case .assistantText(let id, let text) = last { return "\(items.count):\(id):\(text.count)" }
+        if case .assistantText(let id, let text, _) = last { return "\(items.count):\(id):\(text.count)" }
         return "\(items.count):\(last.id)"
     }
 
@@ -502,9 +502,10 @@ struct TranscriptItemView: View {
             UserBubble(
                 content: BubbleContent(user), maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth,
                 via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) },
-                linkSites: model.hello?.linkSites ?? [:])
-        case .assistantText(let id, let text):
-            MarkdownText(text: text, id: id)
+                linkSites: model.hello?.linkSites ?? [:],
+                at: user.noTime == true ? nil : SessionTime.parse(user.ts), copyText: user.text)
+        case .assistantText(let id, let text, let at):
+            MarkdownText(text: text, id: id, at: SessionTime.parse(at))
                 .frame(maxWidth: replyWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(let row) where QuestionRecord.isRecord(row) && QuestionRecord.answerPairs(for: row) != nil:
@@ -584,6 +585,12 @@ struct UserBubble: View {
     var onOpen: (String) -> Void = { _ in }
     /// The deployment's names for link chips (hello `link_sites`).
     var linkSites: [String: String] = [:]
+    /// v0.25 (ZE2): when the message was sent, if that is known; shown on hover under the bubble.
+    var at: Date? = nil
+    /// What Copy under the bubble takes: the text as typed. Nil draws no hover row.
+    var copyText: String? = nil
+
+    @State private var hovering = false
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
@@ -635,8 +642,15 @@ struct UserBubble: View {
                     .foregroundStyle(Theme.text3)
                     .padding(.trailing, 4)
             }
+            // v0.25 §3.1: the time and Copy under the bubble, trailing, while the pointer is on it.
+            if let copyText {
+                MessageHoverRow(at: at, help: "Copy this message") { copyText }
+                    .opacity(hovering ? 1 : 0)
+                    .offset(x: 6)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .onHover { hovering = $0 }
     }
 }
 

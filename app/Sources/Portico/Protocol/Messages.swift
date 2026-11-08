@@ -1141,9 +1141,18 @@ struct UserText: Codable, Equatable, Sendable {
     /// paths, and `text` is only what the person typed. `nil` from an older
     /// gateway, whose `text` still ends with the "Attached files:" block.
     var attachments: [String]? = nil
+    /// v0.25: a replayed message no transcript entry gave a time to; the
+    /// app shows no time for it. The app also sets it on a replayed message
+    /// whose time it can't trust (`MessageTime.shown`).
+    var noTime: Bool? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, turn, text, via, attachments, id, seq, ts
+        case noTime = "no_time"
+    }
 
     /// Named in the app's `hello.capabilities`: send `attachments` apart from the text.
     static let attachmentsCapability = "messages.attachments.v1"
@@ -1156,9 +1165,16 @@ struct TextDelta: Codable, Equatable, Sendable {
     var chat: Int
     var turn: Int
     var text: String
+    /// v0.25: a replayed reply no transcript entry gave a time to.
+    var noTime: Bool? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
+
+    enum CodingKeys: String, CodingKey {
+        case chat, turn, text, id, seq, ts
+        case noTime = "no_time"
+    }
 
     var envelope: Envelope { Envelope(chat: chat, id: id, seq: seq) }
 }

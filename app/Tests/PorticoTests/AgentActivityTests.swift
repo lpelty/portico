@@ -716,7 +716,7 @@ final class AgentActivityTests: XCTestCase {
         model.apply(.textDelta(TextDelta(chat: 1, turn: 2, text: "The workflow finished.", seq: next(), ts: ts)))
         model.apply(turnFinished(2))
         let items = model.transcripts[1] ?? []
-        let texts = items.compactMap { if case .assistantText(_, let text) = $0 { text } else { nil } }
+        let texts = items.compactMap { if case .assistantText(_, let text, _) = $0 { text } else { nil } }
         XCTAssertEqual(texts, ["The workflow finished."])
         XCTAssertEqual(items.filter { if case .userText = $0 { true } else { false } }.count, 1)
         XCTAssertNil(model.turnStartedAt[1])
