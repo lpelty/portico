@@ -601,6 +601,7 @@ struct UserBubble: View {
     var copyText: String? = nil
 
     @State private var hovering = false
+    @State private var rowHovering = false
 
     /// Before the column is measured: 70% of the widest column.
     static let fallbackMaxWidth = ConversationColumn.bubbleMaxWidth(column: ConversationColumn.maxWidth)
@@ -652,14 +653,21 @@ struct UserBubble: View {
                     .foregroundStyle(Theme.text3)
                     .padding(.trailing, 4)
             }
-            // v0.25 §3.1: the time and Copy under the bubble, trailing, while the pointer is on it.
-            if let copyText {
-                MessageHoverRow(at: at, help: "Copy this message") { copyText }
-                    .opacity(hovering ? 1 : 0)
-                    .offset(x: 6)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        // v0.25 §3.1: the time and Copy under the bubble, trailing, while the pointer is on it.
+        // Hung below the message in the gap before the next item rather than in the layout:
+        // a row in the flow changed every bubble's height and moved the places conversations
+        // keep (ConversationRoundTripTests.testEachConversationKeepsItsPlace).
+        .overlay(alignment: .bottomTrailing) {
+            if let copyText {
+                MessageHoverRow(at: at, help: "Copy this message") { copyText }
+                    .opacity(hovering || rowHovering ? 1 : 0)
+                    .onHover { rowHovering = $0 }
+                    .offset(x: 6)
+                    .alignmentGuide(.bottom) { $0[.top] - 2 }
+            }
+        }
         .onHover { hovering = $0 }
     }
 }

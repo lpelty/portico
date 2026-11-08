@@ -72,7 +72,7 @@ struct MessageHoverRow<Extra: View>: View {
                     .scaledFont(11)
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 6)
-                    .help(MessageTime.full(at))
+                    .tip(MessageTime.full(at))
             }
             CopyButton(help: help, text: copy)
             extra

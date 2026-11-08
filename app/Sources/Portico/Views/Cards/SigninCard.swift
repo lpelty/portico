@@ -127,7 +127,7 @@ struct SigninFold: View {
                         .scaledFont(12)
                         .foregroundStyle(Theme.text3)
                     Text(code)
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                        .scaledFont(15, weight: .semibold, design: .monospaced)
                         .foregroundStyle(Theme.text)
                         .textSelection(.enabled)
                         .padding(.horizontal, 10)

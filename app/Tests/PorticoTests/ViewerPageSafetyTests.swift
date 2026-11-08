@@ -200,7 +200,8 @@ final class ViewerPageSafetyTests: XCTestCase {
         XCTAssertLessThan(one.range(of: "Content-Security-Policy")!.lowerBound, one.range(of: "<script")!.lowerBound)
         // A source naming the placeholders is left as text.
         let tricky = try MarkdownPage.html(source: "{{NONCE}} {{CSP}}", title: "{{NONCE}}.md")
-        XCTAssertTrue(tricky.contains("{{NONCE}}.md"), "the title keeps its braces")
+        // v0.25 sweep #13: the title's braces go in as entities (it still reads `{{NONCE}}.md`).
+        XCTAssertTrue(tricky.contains("&#123;&#123;NONCE}}.md"), "the title keeps its braces")
     }
 
     func testNothingCanBeSentOutEvenFromAScriptTheAppRuns() async throws {
