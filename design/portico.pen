@@ -237837,6 +237837,28 @@
                         },
                         {
                           "type": "frame",
+                          "id": "Pbm5t",
+                          "name": "Trouble link",
+                          "padding": [
+                            0,
+                            6
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "I6fAa",
+                              "name": "Link",
+                              "fill": "$accent",
+                              "content": "Trouble signing in?",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
                           "id": "g6tNy",
                           "name": "Don't wait",
                           "height": 28,
@@ -238478,6 +238500,850 @@
                               "name": "T",
                               "fill": "$on-accent",
                               "content": "Send",
+                              "fontFamily": "$font",
+                              "fontSize": 12.5,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "FiQIS",
+          "name": "5 · Trouble signing in? — AWS: the page didn't open; the link and the code it shows",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "id": "SxRGs",
+              "name": "State label",
+              "fill": "$text-3",
+              "content": "5 · Trouble signing in? — AWS: the page didn't open; the link and the code it shows",
+              "lineHeight": 1.2,
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "lXCvU",
+              "name": "Window",
+              "width": "fill_container",
+              "fill": "$window",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": [
+                20,
+                120
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "VMwiS",
+                  "name": "Sign-in dock · aws-sso",
+                  "width": "fill_container",
+                  "fill": "$surface",
+                  "cornerRadius": 12,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": [
+                    12,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "LuVfh",
+                      "name": "Header",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "c9aX8",
+                          "name": "Icon",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "key-round",
+                          "library": "lucide",
+                          "fill": "$wait"
+                        },
+                        {
+                          "type": "text",
+                          "id": "LyT8h",
+                          "name": "Title",
+                          "fill": "$text",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Sign in again to continue",
+                          "lineHeight": 1.2,
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "yprS7",
+                          "name": "Icon",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$text-2"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "fW1ob",
+                      "name": "Body",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "NuRpd",
+                      "name": "Trouble fold (open)",
+                      "width": "fill_container",
+                      "fill": "$control",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "gap": 8,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xrNYt",
+                          "name": "Fold intro",
+                          "fill": "$text-2",
+                          "content": "If the page didn't open, use this link and enter the code:",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "G3gJw",
+                          "name": "URL row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "YEIRe",
+                              "name": "URL",
+                              "width": "fill_container",
+                              "fill": "$surface",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "padding": [
+                                5,
+                                9
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "IQkvN",
+                                  "name": "U",
+                                  "fill": "$text",
+                                  "content": "https://device.sso.us-east-1.amazonaws.com/",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "lIcPo",
+                              "name": "Copy",
+                              "height": 24,
+                              "fill": "$control",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 5,
+                              "padding": [
+                                0,
+                                9
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "YKguk",
+                                  "name": "L",
+                                  "fill": "$text",
+                                  "content": "Copy",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 11.5,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "BcQKR",
+                              "name": "Open",
+                              "height": 24,
+                              "fill": "$control",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 5,
+                              "padding": [
+                                0,
+                                9
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "T2zpwl",
+                                  "name": "L",
+                                  "fill": "$text",
+                                  "content": "Open",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 11.5,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "P8v9SU",
+                          "name": "Code row",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "AisnI",
+                              "name": "K",
+                              "fill": "$text-3",
+                              "content": "Code",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "hjmuG",
+                              "name": "Code",
+                              "fill": "$surface",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "padding": [
+                                5,
+                                10
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "uzTXw",
+                                  "name": "C",
+                                  "fill": "$text",
+                                  "content": "QKXW-RTBN",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "600",
+                                  "letterSpacing": 1
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "AQdmR",
+                              "name": "Copy",
+                              "height": 24,
+                              "fill": "$control",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 5,
+                              "padding": [
+                                0,
+                                9
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "bu2j2",
+                                  "name": "L",
+                                  "fill": "$text",
+                                  "content": "Copy",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 11.5,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "veCqW",
+                      "name": "Footer",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "M8lhM",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "loader",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        },
+                        {
+                          "type": "text",
+                          "id": "kQbPC",
+                          "name": "Waiting",
+                          "fill": "$text-3",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Waiting for sign-in…  since 9:14 PM",
+                          "lineHeight": 1.2,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "L9wzA",
+                          "name": "Trouble link",
+                          "padding": [
+                            0,
+                            6
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "PezuE",
+                              "name": "Link",
+                              "fill": "$accent",
+                              "content": "Hide",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "g1Irgm",
+                          "name": "Don't wait",
+                          "height": 28,
+                          "fill": "$control",
+                          "cornerRadius": 6,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "gap": 5,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "B9UVP",
+                              "name": "L",
+                              "fill": "$text",
+                              "content": "Don't wait",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12.5,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Kbcrw",
+                          "name": "Open sign-in page",
+                          "height": 28,
+                          "fill": "$accent",
+                          "cornerRadius": 6,
+                          "gap": 5,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "GeD8G",
+                              "name": "L",
+                              "fill": "$on-accent",
+                              "content": "Open sign-in page",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12.5,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "W47Es",
+          "name": "6 · Trouble signing in? — your Claude subscription: the link, then paste the code back",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "id": "woyQD",
+              "name": "State label",
+              "fill": "$text-3",
+              "content": "6 · Trouble signing in? — your Claude subscription: the link, then paste the code back",
+              "lineHeight": 1.2,
+              "fontFamily": "$font",
+              "fontSize": 12,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "rBxUS",
+              "name": "Window",
+              "width": "fill_container",
+              "fill": "$window",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "layout": "vertical",
+              "gap": 12,
+              "padding": [
+                20,
+                120
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "I4QD50",
+                  "name": "Sign-in dock · claude",
+                  "width": "fill_container",
+                  "fill": "$surface",
+                  "cornerRadius": 12,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": [
+                    12,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "nHhoS",
+                      "name": "Header",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "b1R0Lz",
+                          "name": "Icon",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "key-round",
+                          "library": "lucide",
+                          "fill": "$wait"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Knt2K",
+                          "name": "Title",
+                          "fill": "$text",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Sign in again to continue",
+                          "lineHeight": 1.2,
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "NAqBw",
+                          "name": "Icon",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$text-2"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "v8Bfpl",
+                      "name": "Body",
+                      "fill": "$text-2",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your Claude sign-in has run out. Sign in in your browser; this conversation carries on by itself when you're done.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "y0uTwo",
+                      "name": "Trouble fold (open)",
+                      "width": "fill_container",
+                      "fill": "$control",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "gap": 8,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "G5bWc",
+                          "name": "Fold intro",
+                          "fill": "$text-2",
+                          "content": "If the page didn't open, use this link and paste the code it gives you:",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dHxPz",
+                          "name": "URL row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aCq0e",
+                              "name": "URL",
+                              "width": "fill_container",
+                              "fill": "$surface",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "padding": [
+                                5,
+                                9
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "AUHlc",
+                                  "name": "U",
+                                  "fill": "$text",
+                                  "content": "https://claude.ai/oauth/authorize?…",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "VgT0P",
+                              "name": "Copy",
+                              "height": 24,
+                              "fill": "$control",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 5,
+                              "padding": [
+                                0,
+                                9
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "EDvBT",
+                                  "name": "L",
+                                  "fill": "$text",
+                                  "content": "Copy",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 11.5,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "SftEW",
+                              "name": "Open",
+                              "height": 24,
+                              "fill": "$control",
+                              "cornerRadius": 6,
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 5,
+                              "padding": [
+                                0,
+                                9
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "s7LZhn",
+                                  "name": "L",
+                                  "fill": "$text",
+                                  "content": "Open",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 11.5,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "RYGKO",
+                          "name": "Paste row",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ctcFi",
+                              "name": "Field",
+                              "width": "fill_container",
+                              "fill": "$surface",
+                              "cornerRadius": 6,
+                              "stroke": "$border-strong",
+                              "strokeWidth": 1,
+                              "padding": [
+                                6,
+                                9
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "J17LZ7",
+                                  "name": "Placeholder",
+                                  "fill": "$text-3",
+                                  "content": "Paste the code from the browser",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "G71tyV",
+                              "name": "Submit",
+                              "height": 24,
+                              "fill": "$accent",
+                              "cornerRadius": 6,
+                              "gap": 5,
+                              "padding": [
+                                0,
+                                9
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "lZNfK",
+                                  "name": "L",
+                                  "fill": "$on-accent",
+                                  "content": "Submit",
+                                  "lineHeight": 1.2,
+                                  "fontFamily": "$font",
+                                  "fontSize": 11.5,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fIdw7",
+                      "name": "Footer",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "n5F3n",
+                          "name": "Icon",
+                          "width": 13,
+                          "height": 13,
+                          "icon": "loader",
+                          "library": "lucide",
+                          "fill": "$text-3"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mYxrH",
+                          "name": "Waiting",
+                          "fill": "$text-3",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Waiting for sign-in…  since 9:14 PM",
+                          "lineHeight": 1.2,
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "z1ZsM",
+                          "name": "Trouble link",
+                          "padding": [
+                            0,
+                            6
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "xCKym",
+                              "name": "Link",
+                              "fill": "$accent",
+                              "content": "Hide",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "W2PSz",
+                          "name": "Don't wait",
+                          "height": 28,
+                          "fill": "$control",
+                          "cornerRadius": 6,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "gap": 5,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "qltbF",
+                              "name": "L",
+                              "fill": "$text",
+                              "content": "Don't wait",
+                              "lineHeight": 1.2,
+                              "fontFamily": "$font",
+                              "fontSize": 12.5,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "w4Sjcz",
+                          "name": "Open sign-in page",
+                          "height": 28,
+                          "fill": "$accent",
+                          "cornerRadius": 6,
+                          "gap": 5,
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Ylowf",
+                              "name": "L",
+                              "fill": "$on-accent",
+                              "content": "Open sign-in page",
+                              "lineHeight": 1.2,
                               "fontFamily": "$font",
                               "fontSize": 12.5,
                               "fontWeight": "500"
