@@ -261,6 +261,42 @@ export function headerFields(header: string): Map<string, string> {
   return out;
 }
 
+function unescapedPipes(line: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\\") { i++; continue; }
+    if (line[i] === "|") out.push(i);
+  }
+  return out;
+}
+
+const ROW_PREFIX = /^[ \t>]*/;
+const DELIMITER = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+
+// GFM tables as [header line, delimiter line, last row line], outside `hidden`.
+export function tables(text: string, ls: Line[], hidden: Array<[number, number]>): Array<[number, number, number]> {
+  const out: Array<[number, number, number]> = [];
+  const body = (k: number) => {
+    const line = text.slice(ls[k].start, ls[k].end);
+    return line.slice(ROW_PREFIX.exec(line)![0].length);
+  };
+  const isBlank = (x: string) => /^[ \t\r\f\v]*$/.test(x);
+  let k = 0;
+  while (k + 1 < ls.length) {
+    if (inside(hidden, ls[k].start) || inside(hidden, ls[k + 1].start)) { k++; continue; }
+    const head = body(k), delim = body(k + 1);
+    if (unescapedPipes(head).length && delim.includes("|") && delim.includes("-") && DELIMITER.test(delim)) {
+      let j = k + 1;
+      while (j + 1 < ls.length && !isBlank(body(j + 1)) && !inside(hidden, ls[j + 1].start) && !interrupts(body(j + 1))) j++;
+      out.push([k, k + 1, j]);
+      k = j + 1;
+      continue;
+    }
+    k++;
+  }
+  return out;
+}
+
 function codeSpans(text: string, segments: Array<[number, number]>): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const [a, b] of segments) {
@@ -317,9 +353,17 @@ export function scanComments(text: string): Scan {
   for (const sg of segs) if (sg.kind === "icode") coarse.push([ls[sg.first].start, ls[sg.last].full]);
   coarse.sort((x, y) => x[0] - y[0]);
   const walls = [...coarse, ...blocks.map((b) => [b.from, b.to] as [number, number])].sort((x, y) => x[0] - y[0]);
+  // GFM splits a table row on its unescaped pipes before inline code is
+  // recognised: a code span never runs across a cell boundary.
+  const cuts: Array<[number, number]> = [];
+  for (const [head, , last] of tables(text, ls, walls)) {
+    for (let k = head; k <= last; k++) {
+      for (const q of unescapedPipes(text.slice(ls[k].start, ls[k].end))) cuts.push([ls[k].start + q, ls[k].start + q + 1]);
+    }
+  }
   const textSegs: Array<[number, number]> = [];
   let pos = 0;
-  for (const [a, b] of walls) {
+  for (const [a, b] of [...walls, ...cuts].sort((x, y) => x[0] - y[0])) {
     if (a > pos) textSegs.push([pos, a]);
     pos = Math.max(pos, b);
   }
@@ -597,6 +641,34 @@ export function commentsExtension(): Extension {
   return [decorations, keepAnchors, protectBlocks, draftField, commentKeys];
 }
 
+// A table cell's source drawn with its comments: markers hidden, text anchored
+// by an open thread in a highlight (the table widget, when the cursor is
+// outside the table).
+export function cellWithComments(doc: Document, source: string, open: Set<string>): DocumentFragment {
+  const frag = doc.createDocumentFragment();
+  const stack: Node[] = [frag];
+  const re = /<!--(\/?)c:([a-z0-9]{5,8})-->/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const top = () => stack[stack.length - 1];
+  const textOf = (s: string) => s.replace(/\\\|/g, "|");
+  while ((m = re.exec(source))) {
+    if (m.index > last) top().appendChild(doc.createTextNode(textOf(source.slice(last, m.index))));
+    if (!m[1]) {
+      const mark = doc.createElement("mark");
+      mark.className = "pc-anchor cm-comment-anchor" + (open.has(m[2]) ? " pc-open" : "");
+      mark.setAttribute("data-c", m[2]);
+      top().appendChild(mark);
+      stack.push(mark);
+    } else if (stack.length > 1 && (top() as Element).getAttribute?.("data-c") === m[2]) {
+      stack.pop();
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < source.length) top().appendChild(doc.createTextNode(textOf(source.slice(last))));
+  return frag;
+}
+
 // A line that starts with an anchor marker is text, not an HTML block
 // (comment format v1 writes anchors at a line's start when the selection
 // starts there); the rest of the line is parsed as Markdown.
@@ -623,7 +695,7 @@ export function anchorAwareMarkdown(codeLanguages?: (info: string) => Language |
 
 // Why a selection can't be anchored: "ignored" (code, a table, front
 // matter), "crosses" (more than one paragraph or list item), or null.
-export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | null {
+export function selectionRefusal(state: EditorState, from: number, to: number): "ignored" | "crosses" | "cell" | null {
   if (to <= from) return "crosses";
   const text = state.doc.toString();
   const scan = scanComments(text);
@@ -637,8 +709,16 @@ export function selectionRefusal(state: EditorState, from: number, to: number): 
   };
   const a = ancestors(from, 1);
   const b = ancestors(to, -1);
-  const code = /^(FencedCode|CodeBlock|InlineCode|Table|TableRow|TableCell|Frontmatter|FrontMatter)$/;
+  const code = /^(FencedCode|CodeBlock|InlineCode|Frontmatter|FrontMatter)$/;
   if (a.some((n) => code.test(n.name)) || b.some((n) => code.test(n.name))) return "ignored";
+  // A table: only within one cell (spec §13); an escaped pipe is text in its cell.
+  const inTable = (list: typeof a) => list.some((n) => n.name === "Table");
+  if (inTable(a) || inTable(b)) {
+    const ca = a.find((n) => n.name === "TableCell");
+    const cb = b.find((n) => n.name === "TableCell");
+    if (!ca || !cb || ca.from !== cb.from) return "cell";
+    return null;
+  }
   const holder = (list: typeof a) => list.find((n) => n.name === "Paragraph" || n.name === "ListItem");
   const ha = holder(a);
   const hb = holder(b);

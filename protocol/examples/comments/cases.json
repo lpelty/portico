@@ -954,6 +954,772 @@
    },
    "expect_prefix": "the p",
    "expect_text": "ermission pro"
+  },
+  {
+   "name": "add-table-first-cell",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "alpha",
+    "id": "tc001",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-first-cell.add.after.md"
+  },
+  {
+   "name": "add-table-header-middle",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "Note",
+    "id": "tc002",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-header-middle.add.after.md"
+  },
+  {
+   "name": "add-table-last-cell",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "20",
+    "id": "tc003",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-last-cell.add.after.md"
+  },
+  {
+   "name": "add-table-escaped-pipe",
+   "file": "table.md",
+   "op": "add",
+   "args": {
+    "quote": "a | b",
+    "id": "tc004",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-escaped-pipe.add.after.md"
+  },
+  {
+   "name": "add-table-in-list",
+   "file": "table-in-list.md",
+   "op": "add",
+   "args": {
+    "quote": "y",
+    "id": "tc005",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-in-list.add.after.md"
+  },
+  {
+   "name": "add-table-crlf",
+   "file": "table-crlf.md",
+   "op": "add",
+   "args": {
+    "quote": "two",
+    "id": "tc006",
+    "author": "Sam",
+    "at": "2026-11-07T18:38:26.176Z",
+    "body": "Here."
+   },
+   "expect": "table-crlf.add.after.md"
+  },
+  {
+   "name": "table-cells",
+   "file": "table-cells.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "tp001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "tp002",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "y",
+      "anchored_text": "y",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "find-table-across-cells",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "alpha | a",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-across-cells-plain",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "alpha a",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-code-in-cell",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "code",
+    "occurrence": 1
+   },
+   "expect_refusal": "inside code or front matter"
+  },
+  {
+   "name": "find-table-alignment-row",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": ":-----",
+    "occurrence": 1
+   },
+   "expect_refusal": "not found"
+  },
+  {
+   "name": "find-table-escaped-pipe-kept",
+   "text": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a \\| b | 10 |\n| beta | `code` cell | 20 |\n\nAfter.\n",
+   "find": {
+    "quote": "| b",
+    "occurrence": 1
+   },
+   "expect_prefix": "Intro.\n\n| Name | Note | Size |\n|:-----|:----:|-----:|\n| alpha | a ",
+   "expect_text": "\\| b"
+  },
+  {
+   "name": "find-table-quote-as-source",
+   "text": "| a | b |\n|---|---|\n| x \\| y | z |\n",
+   "find": {
+    "quote": "x \\| y",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| ",
+   "expect_text": "x \\| y"
+  },
+  {
+   "name": "find-table-quote-as-rendered",
+   "text": "| a | b |\n|---|---|\n| x \\| y | z |\n",
+   "find": {
+    "quote": "x | y",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| ",
+   "expect_text": "x \\| y"
+  },
+  {
+   "name": "find-table-ragged-extra-cell",
+   "text": "| h1 | h2 |\n|:--|--:|\n| r1 |\n| r2 | c | extra |\n",
+   "find": {
+    "quote": "extra",
+    "occurrence": 1
+   },
+   "expect_refusal": "not shown in the table"
+  },
+  {
+   "name": "find-table-pipe-splits-code",
+   "text": "| a | b |\n|---|---|\n| `c|d` | z |\n",
+   "find": {
+    "quote": "c",
+    "occurrence": 1
+   },
+   "expect_prefix": "| a | b |\n|---|---|\n| `",
+   "expect_text": "c"
+  },
+  {
+   "name": "table-pipe-code",
+   "file": "table-pipe-code.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "pc001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "c",
+      "anchored_text": "c",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "edit-first-comment",
+   "file": "plugin-basic.md",
+   "op": "edit",
+   "args": {
+    "id": "k3x9a",
+    "index": 0,
+    "body": "Edited: still true?"
+   },
+   "expect": "edit-first-comment.after.md"
+  },
+  {
+   "name": "edit-middle-reply",
+   "file": "list-after.md",
+   "op": "edit",
+   "args": {
+    "id": "ab12c",
+    "index": 1,
+    "body": "Yes.\nNote: every one\n\nthen --> done"
+   },
+   "expect": "edit-middle-reply.after.md"
+  },
+  {
+   "name": "edit-multiline-to-one",
+   "file": "continuation.md",
+   "op": "edit",
+   "args": {
+    "id": "cn001",
+    "index": 0,
+    "body": "One line now."
+   },
+   "expect": "edit-multiline-to-one.after.md"
+  },
+  {
+   "name": "delete-reply",
+   "file": "continuation.md",
+   "op": "delete",
+   "args": {
+    "id": "cn001",
+    "index": 1
+   },
+   "expect": "delete-reply.after.md"
+  },
+  {
+   "name": "delete-thread-no-replies",
+   "file": "resolved.md",
+   "op": "delete",
+   "args": {
+    "id": "rs001",
+    "index": 0
+   },
+   "expect": "delete-thread-no-replies.after.md"
+  },
+  {
+   "name": "delete-thread-with-replies",
+   "file": "list-after.md",
+   "op": "delete",
+   "args": {
+    "id": "ab12c",
+    "index": 0
+   },
+   "expect": "delete-thread-with-replies.after.md"
+  },
+  {
+   "name": "edit-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "edit",
+   "args": {
+    "id": "cr001",
+    "index": 0,
+    "body": "Two\nlines."
+   },
+   "expect": "edit-crlf.after.md"
+  },
+  {
+   "name": "delete-thread-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "delete",
+   "args": {
+    "id": "cr001",
+    "index": 0
+   },
+   "expect": "delete-thread-crlf.after.md"
+  },
+  {
+   "name": "delete-thread-in-table",
+   "file": "table-cells.md",
+   "op": "delete",
+   "args": {
+    "id": "tp002",
+    "index": 0
+   },
+   "expect": "delete-thread-in-table.after.md"
+  },
+  {
+   "name": "edit-in-table",
+   "file": "table-cells.md",
+   "op": "edit",
+   "args": {
+    "id": "tp001",
+    "index": 0,
+    "body": "In a cell."
+   },
+   "expect": "edit-in-table.after.md"
+  },
+  {
+   "name": "delete-thread-at-eof",
+   "file": "block-at-eof.md",
+   "op": "delete",
+   "args": {
+    "id": "ef001",
+    "index": 0
+   },
+   "expect": "delete-thread-at-eof.after.md"
+  },
+  {
+   "name": "parse-delete-thread-with-replies",
+   "file": "delete-thread-with-replies.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-delete-reply",
+   "file": "delete-reply.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cn001",
+      "by": "Sam",
+      "at": "2026-11-03T12:00:00.000Z",
+      "status": "open",
+      "quote": "after an agent write",
+      "anchored_text": "after an agent write",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-03T12:00:00.000Z",
+        "text": "Does it keep the scroll position?\nAnd the selection too?"
+       }
+      ],
+      "reactions": [
+       "+👍 Sam, Agent"
+      ]
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-edit-crlf",
+   "file": "edit-crlf.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cr001",
+      "by": "Sam",
+      "at": "2026-11-04T16:00:00.000Z",
+      "status": "open",
+      "quote": "line endings",
+      "anchored_text": "line endings",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T16:00:00.000Z",
+        "text": "Two\nlines."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-edit-middle-reply",
+   "file": "edit-middle-reply.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ab12c",
+      "by": "Sam",
+      "at": "2026-10-17T09:00:00.000Z",
+      "status": "open",
+      "quote": "round trip",
+      "anchored_text": "round trip",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "Byte for byte?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-10-18",
+        "text": "Yes.\nNote: every one\n\nthen --> done"
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-delete-thread-in-table",
+   "file": "delete-thread-in-table.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "tp001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "closer-delete-last",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 2,
+    "fingerprint": {
+     "author": "R",
+     "at": "T",
+     "text": "last"
+    }
+   },
+   "expect": "closer-delete-last.after.md"
+  },
+  {
+   "name": "closer-delete-middle",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect": "closer-delete-middle.after.md"
+  },
+  {
+   "name": "closer-edit-last",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 2,
+    "body": "new\nNote: two",
+    "fingerprint": {
+     "author": "R",
+     "at": "T",
+     "text": "last"
+    }
+   },
+   "expect": "closer-edit-last.after.md"
+  },
+  {
+   "name": "closer-edit-middle",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "body": "mid2",
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect": "closer-edit-middle.after.md"
+  },
+  {
+   "name": "closer-edit-first",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "body": "zero",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect": "closer-edit-first.after.md"
+  },
+  {
+   "name": "closer-delete-thread",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect": "closer-delete-thread.after.md"
+  },
+  {
+   "name": "closer-edit-only",
+   "file": "closer-only.md",
+   "op": "edit",
+   "args": {
+    "id": "cl003",
+    "index": 0,
+    "body": "changed",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "only"
+    }
+   },
+   "expect": "closer-edit-only.after.md"
+  },
+  {
+   "name": "closer-delete-only",
+   "file": "closer-only.md",
+   "op": "delete",
+   "args": {
+    "id": "cl003",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "only"
+    }
+   },
+   "expect": "closer-delete-only.after.md"
+  },
+  {
+   "name": "dup-id",
+   "file": "dup-id.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "du001",
+      "by": "S",
+      "at": "T",
+      "status": "open",
+      "quote": "x",
+      "anchored_text": "x",
+      "replies": [
+       {
+        "author": "S",
+        "at": "T",
+        "text": "first"
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "du001",
+      "by": "S",
+      "at": "T",
+      "status": "open",
+      "quote": "x",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "S",
+        "at": "T",
+        "text": "pasted copy"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "dup-delete-copy",
+   "file": "dup-id.md",
+   "op": "delete",
+   "args": {
+    "id": "du001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "pasted copy"
+    }
+   },
+   "expect": "dup-delete-copy.after.md"
+  },
+  {
+   "name": "dup-delete-first",
+   "file": "dup-id.md",
+   "op": "delete",
+   "args": {
+    "id": "du001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "first"
+    }
+   },
+   "expect": "dup-delete-first.after.md"
+  },
+  {
+   "name": "edit-changed-since",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "body": "x",
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "not what it says now"
+    }
+   },
+   "expect_error": "changed"
+  },
+  {
+   "name": "delete-changed-since",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "fingerprint": {
+     "author": "Q",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect_error": "changed"
+  },
+  {
+   "name": "edit-blank-refused",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "body": "  \n ",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect_error": "blank"
   }
  ]
 }

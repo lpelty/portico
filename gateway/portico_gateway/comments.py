@@ -47,6 +47,8 @@ _ORDERED_RE = re.compile(r"^ {0,3}\d{1,9}[.)](?:[ \t]|$)")
 _ORDERED_ONE_RE = re.compile(r"^ {0,3}1[.)][ \t]+\S")
 _LIST_RE = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)")
 _REFDEF_RE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*\S")
+_ROW_PREFIX_RE = re.compile(r"^[ \t>]*")
+_DELIMITER_RE = re.compile(r"^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,8 @@ class Thread:
     # Where the header's fields sit, for splices: (key, value start, value end).
     fields: tuple[tuple[str, int, int], ...] = ()
     close: int = 0  # offset of the closing "-->"
+    # Each reply's source: (line start, where its text starts, end of its last line without the line break).
+    reply_spans: tuple[tuple[int, int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -303,6 +307,59 @@ def _segments(text: str, lines, blocks) -> list[tuple[str, int, int]]:
     return segs
 
 
+def _row_cells(line: str) -> list[tuple[int, int]]:
+    """A table row's cells as (start, end) offsets in ``line``, between boundary pipes."""
+    lead = len(_ROW_PREFIX_RE.match(line).group(0))
+    end = len(line.rstrip(" \t"))
+    bounds = [q for q in _unescaped_pipes(line) if q >= lead]
+    cells = list(zip([lead] + [q + 1 for q in bounds], bounds + [end]))
+    if bounds and bounds[0] == lead:
+        cells = cells[1:]
+    if bounds and bounds[-1] == end - 1:
+        cells = cells[:-1]
+    return cells
+
+
+def _unescaped_pipes(line: str) -> list[int]:
+    """Offsets of the ``|`` in ``line`` that are cell boundaries (not ``\\|``)."""
+    out = []
+    i = 0
+    while i < len(line):
+        if line[i] == "\\":
+            i += 2
+            continue
+        if line[i] == "|":
+            out.append(i)
+        i += 1
+    return out
+
+
+def _tables(text: str, lines, hidden) -> list[tuple[int, int, int]]:
+    """GFM tables as (header line, delimiter line, last row line), outside code and thread blocks."""
+    out = []
+    n = len(lines)
+
+    def body(k: int) -> str:
+        s, e, _ = lines[k]
+        return text[s:e][len(_ROW_PREFIX_RE.match(text[s:e]).group(0)) :]
+
+    k = 0
+    while k + 1 < n:
+        if _inside(hidden, lines[k][0]) or _inside(hidden, lines[k + 1][0]):
+            k += 1
+            continue
+        head, delim = body(k), body(k + 1)
+        if _unescaped_pipes(head) and "|" in delim and "-" in delim and _DELIMITER_RE.match(delim):
+            j = k + 1
+            while j + 1 < n and not _blank(body(j + 1)) and not _inside(hidden, lines[j + 1][0]) and not _interrupts(body(j + 1)):
+                j += 1
+            out.append((k, k + 1, j))
+            k = j + 1
+            continue
+        k += 1
+    return out
+
+
 def _code_spans(text: str, segments) -> list[tuple[int, int]]:
     out = []
     for a, b in segments:
@@ -342,6 +399,7 @@ class _Regions:
     ignored: list  # front matter, fences, indented code, inline code
     blocks: list  # thread blocks
     segs: list  # top-level blocks
+    tables: list  # (header line, delimiter line, last row line)
 
 
 def _regions(text: str) -> _Regions:
@@ -353,16 +411,24 @@ def _regions(text: str) -> _Regions:
     icode = [(lines[a][0], lines[b][2]) for kind, a, b in segs if kind == "icode"]
     coarse = sorted(coarse + icode)
     walls = sorted(coarse + [(s, e) for s, e, _, _ in blocks])
+    tables = _tables(text, lines, walls)
+    # GFM splits a table row on its unescaped pipes before inline code is
+    # recognised: a code span never runs across a cell boundary.
+    cuts = []
+    for head, delim, last in tables:
+        for k in range(head, last + 1):
+            s0, e0, _ = lines[k]
+            cuts += [(s0 + q, s0 + q + 1) for q in _unescaped_pipes(text[s0:e0])]
     segments = []
     pos = 0
-    for a, b in walls:
+    for a, b in sorted(walls + cuts):
         if a > pos:
             segments.append((pos, a))
         pos = max(pos, b)
     if pos < len(text):
         segments.append((pos, len(text)))
     ignored = sorted(coarse + _code_spans(text, segments))
-    return _Regions(lines, ignored, blocks, segs)
+    return _Regions(lines, ignored, blocks, segs, tables)
 
 
 def ignored_regions(text: str) -> list[tuple[int, int]]:
@@ -443,13 +509,16 @@ def _header_fields(text: str, a: int, b: int) -> list[tuple[str, int, int, str]]
     return out
 
 
-def _thread_lines(raw: list[str]) -> tuple[list[Reply], list[str]]:
+def _thread_lines(raw: list[tuple[str, int]]) -> tuple[list[Reply], list[str], list[tuple[int, int, int]]]:
+    """Replies, reactions and each reply's source span, from (line, start offset) pairs."""
     replies: list[list] = []
     reactions: list[str] = []
-    for line in raw:
+    spans: list[list[int]] = []
+    for line, at in raw:
         if line.startswith("\\"):
             if replies:
                 replies[-1][2] += "\n" + unescape_body(line[1:])
+                spans[-1][2] = at + len(line)
             continue
         if _blank(line):
             continue
@@ -459,9 +528,11 @@ def _thread_lines(raw: list[str]) -> tuple[list[Reply], list[str]]:
         m = _REPLY_RE.match(line)
         if m and m.group(1).strip():
             replies.append([m.group(1).strip(), m.group(2), unescape_body(m.group(3))])
+            spans.append([at, at + m.start(3), at + len(line)])
         elif replies:
             replies[-1][2] += "\n" + unescape_body(line)
-    return [Reply(a, t, x) for a, t, x in replies], reactions
+            spans[-1][2] = at + len(line)
+    return [Reply(a, t, x) for a, t, x in replies], reactions, [tuple(x) for x in spans]
 
 
 # --- parse --------------------------------------------------------------------
@@ -483,6 +554,7 @@ def parse(text: str) -> Parsed:
     threads = []
     seen = set()
     for start, end, close, tid in reg.blocks:
+        first_of_id = tid not in seen  # a later block with the same id (a pasted copy) is an orphan thread
         seen.add(tid)
         header_end = text.find("\n", start)
         header_end = end if header_end < 0 or header_end >= close else header_end
@@ -494,11 +566,20 @@ def parse(text: str) -> Parsed:
         values: dict[str, str] = {}
         for k, _, _, v in fields:
             values.setdefault(k, v)  # the first of a duplicated key wins
-        body = text[hb:close]
-        raw = [l.rstrip("\r") for l in body.split("\n")[1:]] if close > hb else []
-        replies, reactions = _thread_lines(raw)
+        raw: list[tuple[str, int]] = []
+        if close > hb:
+            at = hb
+            parts = text[hb:close].split("\n")
+            for k, part in enumerate(parts):
+                if k:
+                    line = part.rstrip("\r")
+                    if k == len(parts) - 1:
+                        line = line.rstrip(" \t")  # text before a `-->` on the same line
+                    raw.append((line, at))
+                at += len(part) + 1
+        replies, reactions, spans = _thread_lines(raw)
         anchor = None
-        o = next((m for m in markers if m[2] == tid and not m[3]), None)
+        o = next((m for m in markers if m[2] == tid and not m[3]), None) if first_of_id else None
         if o:
             c = next((m for m in markers if m[2] == tid and m[3] and m[0] >= o[1]), None)
             if c:
@@ -516,6 +597,7 @@ def parse(text: str) -> Parsed:
                 anchor=anchor,
                 fields=tuple((k, s, e) for k, s, e, _ in fields),
                 close=close,
+                reply_spans=tuple(spans),
             )
         )
     orphans = []
@@ -600,10 +682,15 @@ def _grapheme_boundary(text: str, i: int) -> bool:
 
 
 def snap_to_graphemes(text: str, start: int, end: int) -> tuple[int, int]:
-    """Widen each end to a grapheme cluster boundary, so a match never splits one."""
+    """Widen each end to a grapheme cluster boundary, so a match never splits one,
+    and never split an escaped pipe (``\\|``)."""
     while not _grapheme_boundary(text, start):
         start -= 1
     while not _grapheme_boundary(text, end):
+        end += 1
+    if start > 0 and text[start - 1] == "\\" and start < len(text) and text[start] == "|":
+        start -= 1
+    if end > 0 and text[end - 1] == "\\" and end < len(text) and text[end] == "|":
         end += 1
     return start, end
 
@@ -755,8 +842,27 @@ def _visible(text: str):
         segments.append((pos, len(text)))
     for a, b in segments:
         _inline_walls(text, a, b, walls)
+    # Tables: a cell boundary (an unescaped pipe) and the delimiter row are walls,
+    # so a match stays in one cell; an escaped pipe's backslash is zero-width.
+    zero = []
+    dropped: list[tuple[int, int]] = []  # cells beyond the header's columns: the renderer drops them
+    for head, delim, last in reg.tables:
+        walls.append((lines[delim][0], lines[delim][1]))
+        columns = len(_row_cells(text[lines[head][0] : lines[head][1]]))
+        for k in range(head, last + 1):
+            if k == delim:
+                continue
+            s, e, _ = lines[k]
+            for pipe in _unescaped_pipes(text[s:e]):
+                walls.append((s + pipe, s + pipe + 1))
+            extra = _row_cells(text[s:e])[columns:]
+            if extra:
+                dropped.append((s + extra[0][0], s + extra[-1][1]))
+    for m in re.finditer(r"\\\|", text):
+        if not _inside(reg.ignored, m.start()):
+            zero.append((m.start(), m.start() + 1))
     walls.sort()
-    markers = sorted((m.start(), m.end()) for m in _MARKER_RE.finditer(text))
+    markers = sorted([(m.start(), m.end()) for m in _MARKER_RE.finditer(text)] + zero)
     # Line breaks that end a top-level block: the space they become is a paragraph break.
     seg_ends = {lines[s[2]][1] for s in reg.segs}
     chars: list[str] = []
@@ -824,27 +930,30 @@ def _visible(text: str):
         code.append(_inside(ig, i))
         breaks.append(False)
         i += 1
-    return "".join(chars), src, code, breaks
+    return "".join(chars), src, code, breaks, dropped
 
 
 def _normalise(q: str) -> str:
-    return re.sub(r"[ \t\n\r\f\v]+", " ", q).strip(" ")
+    # A quote may be written as the source shows a cell (`x \| y`) or as it renders (`x | y`).
+    return re.sub(r"[ \t\n\r\f\v]+", " ", q.replace("\\|", "|")).strip(" ")
 
 
 def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
     """Matches of ``quote`` in the visible text: (good spans, any in code, any across paragraphs)."""
     q = _normalise(quote)
     good: list[tuple[int, int]] = []
-    in_code = crosses = False
+    in_code = crosses = not_shown = False
     if not q:
-        return good, in_code, crosses
-    vis, src, code, breaks = _visible(text)
+        return good, in_code, crosses, not_shown
+    vis, src, code, breaks, dropped = _visible(text)
     i = vis.find(q)
     while i >= 0:
         j = i + len(q)
         span = (src[i], src[j - 1] + 1)
         if within and not (within[0] <= span[0] and span[1] <= within[1]):
             pass
+        elif any(a <= span[0] < b for a, b in dropped):
+            not_shown = True
         elif any(code[i:j]):
             in_code = True
         elif any(breaks[i:j]):
@@ -852,18 +961,20 @@ def _matches(text: str, quote: str, within: tuple[int, int] | None = None):
         else:
             good.append(span)
         i = vis.find(q, j)
-    return good, in_code, crosses
+    return good, in_code, crosses, not_shown
 
 
 def find_quote(text: str, quote: str, occurrence: int = 1) -> tuple[int, int] | str:
     """The ``occurrence``-th (1-based) visible match of ``quote``, its ends snapped to grapheme
     clusters (never split, never widened to words), or a refusal reason."""
-    good, in_code, crosses = _matches(text, quote)
+    good, in_code, crosses, not_shown = _matches(text, quote)
     if 1 <= occurrence <= len(good):
         a, b = good[occurrence - 1]
         return snap_to_graphemes(text, a, b)
     if good:
         return f"occurs {len(good)} times"
+    if not_shown:
+        return "not shown in the table"
     if in_code:
         return "inside code or front matter"
     if crosses:
@@ -911,9 +1022,9 @@ def _field(value: str, always: bool = False) -> str:
     return value
 
 
-def _reply_lines(author: str, at: str, body: str) -> list[str]:
+def _reply_lines(author: str, at: str, body: str, prefix: str | None = None) -> list[str]:
     parts = body.strip().replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    out = [f"{author} ({at}): " + escape_body(parts[0])]
+    out = [(prefix if prefix is not None else f"{author} ({at}): ") + escape_body(parts[0])]
     for line in parts[1:]:
         line = escape_body(line)
         m = _REPLY_RE.match(line)
@@ -973,3 +1084,78 @@ def set_status(text: str, thread_id: str, status: Literal["open", "resolved"]) -
         pos = at[2] + (1 if at and at[2] < len(text) and text[at[2]] == '"' else 0) if at else t.block[0] + len(f"<!--co:{t.id}")
         edit = (pos, pos, f" status:{status}", 0)
     return _splice(text, _orphan_edits(text) + [edit])
+
+
+class CommentChanged(Exception):
+    """The comment an action was aimed at isn't in the text as it was seen (someone changed it)."""
+
+
+Fingerprint = tuple  # (author, at, text) of a comment as it was shown
+
+
+def _locate(text: str, thread_id: str, index: int, fingerprint: Fingerprint | None) -> tuple[Thread, int]:
+    """The thread and comment an action means: by id and the comment's fingerprint when given
+    (exactly one match, and the thread's first comment exactly when ``index`` is 0), else by index."""
+    threads = [t for t in parse(text).threads if t.id == thread_id]
+    if not threads:
+        raise KeyError(thread_id)
+    if fingerprint is None:
+        t = threads[0]
+        if not 0 <= index < max(1, len(t.replies)):
+            raise KeyError(f"{thread_id}#{index}")
+        return t, index
+    found = [
+        (t, i)
+        for t in threads
+        for i, r in enumerate(t.replies)
+        if (r.author, r.at, r.text) == tuple(fingerprint) and (i == 0) == (index == 0)
+    ]
+    if len(found) != 1:
+        raise CommentChanged(thread_id)
+    return found[0]
+
+
+def _closer_on_line(text: str, end: int, close: int) -> bool:
+    return "\n" not in text[end:close]
+
+
+def edit_comment(text: str, thread_id: str, index: int, *, body: str, fingerprint: Fingerprint | None = None) -> str:
+    """Replace the text of comment ``index`` (0 is the thread's first) and nothing else: its author
+    and time stay as written, the other comments, reactions and the header are untouched; a closing
+    ``-->`` on its line moves to a line of its own."""
+    if not body.strip():
+        raise ValueError("a comment needs text")
+    t, i = _locate(text, thread_id, index, fingerprint)
+    if not t.reply_spans:
+        raise KeyError(f"{thread_id}#{index}")
+    start, text_at, end = t.reply_spans[i]
+    eol = line_ending(text)
+    lines = eol.join(_reply_lines("", "", body, prefix=text[start:text_at]))
+    if _closer_on_line(text, end, t.close):
+        edit = (start, t.close, lines + eol, 0)
+    else:
+        edit = (start, end, lines, 0)
+    return _splice(text, _orphan_edits(text) + [edit])
+
+
+def delete_comment(text: str, thread_id: str, index: int, fingerprint: Fingerprint | None = None) -> str:
+    """Delete reply ``index``, or with ``index`` 0 the whole thread: the block the comment is in and,
+    when that block owns them, its anchors. A closing ``-->`` is never removed with a reply."""
+    reg = _regions(text)
+    t, i = _locate(text, thread_id, index, fingerprint)
+    edits = _orphan_edits(text)
+    if i == 0:
+        start, end = t.block
+        if end == len(text) and not text.endswith("\n") and start > 0:
+            start -= 2 if text[start - 2 : start] == "\r\n" else 1  # the file keeps having no final line break
+        edits.append((start, end, "", 2))
+        if t.anchor is not None:
+            edits += [(a, b, "", 1) for a, b, tid, _ in _markers(text, reg) if tid == thread_id]
+        return _splice(text, edits)
+    start, _, end = t.reply_spans[i]
+    if _closer_on_line(text, end, t.close):
+        edits.append((start, t.close, "", 0))
+    else:
+        nl = text.find("\n", end)
+        edits.append((start, len(text) if nl < 0 else nl + 1, "", 0))
+    return _splice(text, edits)

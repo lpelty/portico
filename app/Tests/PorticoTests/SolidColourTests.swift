@@ -12,6 +12,7 @@ final class SolidColourTests: XCTestCase {
             .text2: ("#5E5E64", "#B6B6BC"), .text3: ("#6C6C72", "#8A8A91"),
             .selected: ("#E0E0E5", "#34343A"),
             .agentAvatar: ("#2F7A6B", "#3E8E7E"),
+            .dangerStrong: ("#B3261E", "#C4362E"),
         ]
         XCTAssertEqual(spec.count, Theme.Token.allCases.count)
         for (token, want) in spec {
@@ -90,5 +91,12 @@ final class SolidColourTests: XCTestCase {
         }
         let (l1, l2) = (lum(a), lum(b))
         return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+    }
+
+    /// v0.23 §13.2: the Delete confirmation is a darker red with white text at 4.5:1 or more.
+    func testDeleteButtonContrast() {
+        for hex in [Theme.hex(.dangerStrong).light, Theme.hex(.dangerStrong).dark] {
+            XCTAssertGreaterThanOrEqual(Self.contrast("#FFFFFF", hex), 4.5, hex)
+        }
     }
 }

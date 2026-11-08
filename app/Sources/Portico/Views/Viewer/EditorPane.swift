@@ -329,6 +329,8 @@ struct EditorPane: NSViewRepresentable {
                 if escape, (responder as? NSTextInputClient)?.hasMarkedText() == true {
                     return event
                 }
+                // v0.23: Esc in a comment field cancels that field, not Edit.
+                if escape, self.comments?.marginFocused == true { return event }
                 self.onStop()
                 return nil
             }

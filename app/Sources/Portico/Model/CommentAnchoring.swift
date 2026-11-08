@@ -13,13 +13,32 @@ enum CommentAnchoring {
         var text: String
         /// 0-based source lines of the block the selection is in.
         var lines: ClosedRange<Int>
-        /// How many times the text occurs in the block before the selection (0-based).
+        /// How many times the text occurs in the block (or cell) before the selection (0-based).
         var occurrence: Int
+        /// In a table: the cell's index in its row, the row (0 is the header,
+        /// then the body rows), and which table in the block (`lines`) it is.
+        var cell: Int? = nil
+        var row: Int = 0
+        var table: Int = 0
     }
+
+    static let cellWords = "Select text within one cell."
+    static let tableWidgetWords = "Click into the table to comment."
 
     /// The UTF-16 range of the selected text in `source`, snapped to words, or why it can't be anchored.
     static func locate(_ s: Selection, in source: String) -> Result<Range<Int>, CommentFormat.Refusal> {
-        guard let block = lineRange(s.lines, in: source) else { return .failure(.notFound) }
+        guard var block = lineRange(s.lines, in: source) else { return .failure(.notFound) }
+        if let cell = s.cell {
+            // Only that cell's source is searched (spec §13).
+            let tables = CommentFormat.tables(source).filter { s.lines.contains($0.header) }
+            guard s.table >= 0, s.table < tables.count else { return .failure(.notFound) }
+            let t = tables[s.table]
+            let line = s.row == 0 ? t.header : t.delimiter + s.row
+            guard s.row >= 0, line <= t.last, let rowRange = lineRange(line...line, in: source) else { return .failure(.notFound) }
+            let cells = CommentFormat.tableCells(source, line: rowRange)
+            guard cell >= 0, cell < cells.count else { return .failure(.notFound) }
+            block = cells[cell]
+        }
         switch CommentFormat.findQuote(source, s.text, occurrence: s.occurrence + 1, within: block) {
         case .success(let r): return .success(r)
         case .failure(.occurs): return .failure(.notFound)
@@ -31,6 +50,7 @@ enum CommentAnchoring {
     static func reason(_ r: CommentFormat.Refusal) -> String {
         switch r {
         case .notFound, .occurs, .crossesBlocks: "Select text within one paragraph, outside links and formatting."
+        case .notShown: "That text isn't shown in the table."
         case .insideIgnored: "Comments can't go in code, tables or front matter."
         }
     }

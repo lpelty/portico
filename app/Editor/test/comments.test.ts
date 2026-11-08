@@ -56,7 +56,10 @@ test("scan agrees with fixtures", () => {
     const scan = scanComments(text);
     assert.deepEqual(scan.blocks.map((b) => b.id), c.parse.threads.map((t: any) => t.id), c.name);
     assert.deepEqual(scan.blocks.map((b) => b.status), c.parse.threads.map((t: any) => t.status), c.name);
+    const seenIds = new Set<string>();
     for (const t of c.parse.threads) {
+      if (seenIds.has(t.id)) continue; // a pasted copy of a block: an orphan thread; its id's anchors are the first's
+      seenIds.add(t.id);
       const a = scan.anchors.find((a) => a.id === t.id);
       if (t.anchored_text === null) assert.equal(a, undefined, `${c.name} ${t.id}`);
       else assert.equal(strip(text.slice(a!.openTo, a!.closeFrom)), t.anchored_text, `${c.name} ${t.id}`);
@@ -155,7 +158,7 @@ test("selection in code or table refused", () => {
   const code = text.indexOf("code here");
   assert.equal(selectionRefusal(s, code, code + 4), "ignored");
   const cell = text.indexOf("| 1");
-  assert.equal(selectionRefusal(s, cell + 2, cell + 3), "ignored");
+  assert.equal(selectionRefusal(s, cell + 2, cell + 3), null, "within one cell (spec §13)");
   const inline = text.indexOf("make");
   assert.equal(selectionRefusal(s, inline, inline + 4), "ignored");
   assert.equal(selectionRefusal(s, text.indexOf("continues"), text.indexOf("three")), "crosses");
@@ -378,4 +381,52 @@ test("a deletion from inside one thread to inside the next moves the cursor inst
   assert.equal(editor.visibleText(), DOC3);
   assert.ok(view.state.selection.main.empty);
   assert.equal(view.state.selection.main.head, DOC3.indexOf("<!--co:bbbbb"));
+});
+
+
+// --- table cells (spec §13) ------------------------------------------------------------
+
+const { commentMenuMessage } = await import("../src/editor.ts");
+
+test("a selection in one table cell can be commented; across cells, a pipe or the delimiter row can't", () => {
+  const text = read("table.md");
+  const s = state(text);
+  const at = (needle: string) => text.indexOf(needle);
+  assert.equal(selectionRefusal(s, at("alpha"), at("alpha") + 5), null);
+  assert.equal(selectionRefusal(s, at("a \\| b"), at("a \\| b") + 6), null, "an escaped pipe is text");
+  assert.equal(selectionRefusal(s, at("alpha"), at("a \\| b") + 1), "cell");
+  assert.equal(selectionRefusal(s, at(":-----"), at(":-----") + 3), "cell");
+  assert.equal(selectionRefusal(s, at("code"), at("code") + 4), "ignored");
+});
+
+test("the table widget shows comment highlights, never the markup", () => {
+  const { editor } = mount();
+  const text = read("table-cells.md") + "\nAfter.\n";
+  editor.load({ text, mode: "markdown" });
+  editor.view.dispatch({ selection: EditorSelection.cursor(text.length) });
+  const widget = editor.view.dom.querySelector(".cm-md-table");
+  assert.ok(widget, "the table draws as a widget");
+  assert.ok(!widget!.textContent!.includes("<!--"), widget!.textContent!);
+  const marks = [...widget!.querySelectorAll("mark.pc-anchor.pc-open")].map((m) => [m.getAttribute("data-c"), m.textContent]);
+  assert.deepEqual(marks, [["tp001", "alpha"], ["tp002", "y"]]);
+});
+
+test("right-clicking in the table widget says to click into the table", () => {
+  const { editor } = mount();
+  const text = read("table-cells.md") + "\nAfter.\n";
+  editor.load({ text, mode: "markdown" });
+  editor.view.dispatch({ selection: EditorSelection.cursor(text.length) });
+  const cell = editor.view.dom.querySelector(".cm-md-table td")!;
+  const msg = commentMenuMessage(editor, cell, 5, 6);
+  assert.equal(msg.refusal, "widget");
+  const plain = commentMenuMessage(editor, editor.view.contentDOM, 1, 2);
+  assert.equal(plain.refusal, undefined);
+});
+
+test("GFM: a pipe splits a table row before inline code, so `c|d` is plain text in two cells", () => {
+  const text = "| a | b |\n|---|---|\n| `c|d` |\n";
+  const s = state(text);
+  const c = text.indexOf("c|");
+  assert.equal(selectionRefusal(s, c, c + 1), null);
+  assert.equal(selectionRefusal(s, c + 2, c + 3), null);
 });

@@ -208,3 +208,22 @@ async def test_add_refuses_indented_code_and_counts_visible_matches(folder: Path
     put(folder, "a.md", text="    word in code\n\n[word](word) word\n")
     out = await tools(folder)["comment_add"].handler({"path": "a.md", "quote": "word", "text": "x", "occurrence": 3})
     assert text_of(out) == '"word" occurs 2 times in a.md; there is no occurrence 3.'
+
+
+async def test_add_in_one_table_cell_and_not_across_cells(folder: Path) -> None:
+    p = put(folder, "t.md", "table.md")
+    out = await tools(folder)["comment_add"].handler({"path": "t.md", "quote": "alpha | a", "text": "x"})
+    assert out.get("is_error") is True
+    out = await tools(folder)["comment_add"].handler({"path": "t.md", "quote": "a | b", "text": "In the cell."})
+    assert not out.get("is_error"), out
+    text = p.read_text()
+    t = cm.parse(text).threads[0]
+    assert cm.anchored_text(text, t) == "a \\| b"
+    assert text.index("<!--co:") > text.index("| beta |"), "the thread goes after the whole table"
+
+
+async def test_add_refuses_text_the_table_does_not_show(folder: Path) -> None:
+    put(folder, "r.md", text="| h1 | h2 |\n|:--|--:|\n| r1 |\n| r2 | c | extra |\n")
+    out = await tools(folder)["comment_add"].handler({"path": "r.md", "quote": "extra", "text": "x"})
+    assert out.get("is_error") is True
+    assert text_of(out) == "That text isn't shown in the table."

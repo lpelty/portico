@@ -23,7 +23,7 @@ enum CommentsTheme {
               --pc-accent: \(accent ?? pick(accentHex)); --pc-accent-soft: \(pick(accentSoftHex));
               --pc-agent: \(token(.agentAvatar)); --pc-card: \(token(.control)); --pc-border: \(token(.border));
               --pc-text: \(token(.text)); --pc-text2: \(token(.text2)); --pc-text3: \(token(.text3));
-              --pc-surface: \(token(.surface)); --pc-panel: \(token(.panel));
+              --pc-surface: \(token(.surface)); --pc-panel: \(token(.panel)); --pc-danger: \(token(.dangerStrong));
             """
         }
         let light = block({ $0.0 }) { Theme.hex($0).light }
@@ -41,12 +41,14 @@ enum CommentsTheme {
 /// with comments off unless it was left on.
 enum CommentsMemory {
     static let key = "viewer.commentsShown"
+    /// v0.23 §13.2: files whose margin shows resolved threads.
+    static let resolvedKey = "viewer.commentsShowResolved"
 
-    static func isOn(_ path: String, defaults: UserDefaults = .standard) -> Bool {
+    static func isOn(_ path: String, key: String = key, defaults: UserDefaults = .standard) -> Bool {
         (defaults.stringArray(forKey: key) ?? []).contains(path)
     }
 
-    static func set(_ path: String, _ on: Bool, defaults: UserDefaults = .standard) {
+    static func set(_ path: String, _ on: Bool, key: String = key, defaults: UserDefaults = .standard) {
         var paths = (defaults.stringArray(forKey: key) ?? []).filter { $0 != path }
         if on { paths.append(path) }
         defaults.set(paths, forKey: key)
@@ -132,6 +134,7 @@ extension AppModel: CommentsFocus {}
 final class ViewerComments: ObservableObject {
     static let staleWords = "Not saved — the text you chose changed; select it again and choose Comment."
     static let notUTF8Words = "This file isn't UTF-8 text; comments can't be added."
+    static let changedWords = "This comment changed since you opened it; try again."
 
     struct Draft: Equatable {
         var selection: CommentAnchoring.Selection?
@@ -144,6 +147,10 @@ final class ViewerComments: ObservableObject {
     }
 
     @Published var shown = false
+    /// A field in the margin has the keyboard (Edit mode's Esc leaves it alone then).
+    var marginFocused = false
+    /// Resolved threads are hidden unless this is on (remembered per file).
+    @Published var showResolved = false
     @Published var activeID: String?
     @Published var draft: Draft?
     @Published var error: String?
@@ -180,6 +187,11 @@ final class ViewerComments: ObservableObject {
     /// Open threads, orphans included (spec §12.4).
     var openCount: Int { threads.filter { $0.status == .open }.count }
 
+    /// The person's own comments (by the name in use), which they may edit.
+    func isPerson(_ author: String) -> Bool {
+        author.compare(personName, options: .caseInsensitive) == .orderedSame
+    }
+
     func isAgent(_ author: String) -> Bool {
         author.compare(agentName, options: .caseInsensitive) == .orderedSame
     }
@@ -192,6 +204,7 @@ final class ViewerComments: ObservableObject {
         draft = nil
         error = nil
         shown = url.map { CommentsMemory.isOn($0.path, defaults: defaults) } ?? false
+        showResolved = url.map { CommentsMemory.isOn($0.path, key: CommentsMemory.resolvedKey, defaults: defaults) } ?? false
         reload()
     }
 
@@ -225,12 +238,15 @@ final class ViewerComments: ObservableObject {
                 as Any? ?? NSNull(),
             "error": error as Any? ?? NSNull(),
             "theme": theme,
+            "showResolved": showResolved,
+            "resolvedCount": threads.filter { $0.status == .resolved }.count,
             "threads": threads.map { t -> [String: Any] in
                 [
                     "id": t.id, "status": t.status.rawValue, "quote": t.quote, "orphan": t.isOrphan,
-                    "replies": t.replies.map { r -> [String: Any] in
+                    "replies": t.replies.enumerated().map { index, r -> [String: Any] in
                         [
                             "author": r.author, "initial": Self.initial(r.author), "agent": isAgent(r.author),
+                            "own": isPerson(r.author), "index": index, "at": r.at as Any? ?? NSNull(),
                             "time": CommentTime.relative(r.at, now: now), "text": r.text,
                         ]
                     },
@@ -267,6 +283,61 @@ final class ViewerComments: ObservableObject {
     func attach(_ view: WKWebView) {
         webView = view
         evaluate = { [weak view] script in view?.evaluateJavaScript(script, completionHandler: nil) }
+        installShortcut()
+    }
+
+    // MARK: ⌥⌘M (spec §13.2)
+
+    nonisolated(unsafe) private var shortcutMonitor: Any?
+
+    deinit {
+        if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor) }
+    }
+
+    /// ⌥⌘M with the page or the editor in front adds a comment on the selection,
+    /// by the same rules as the menu's Comment (a beep when it can't).
+    private func installShortcut() {
+        guard shortcutMonitor == nil else { return }
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let flags = event.modifierFlags
+            guard CommentShortcut.matches(
+                characters: event.charactersIgnoringModifiers, option: flags.contains(.option),
+                command: flags.contains(.command), shift: flags.contains(.shift), control: flags.contains(.control)),
+                let self, let view = self.webView as? WKWebView, let window = view.window, event.window === window,
+                let responder = window.firstResponder as? NSView, responder === view || responder.isDescendant(of: view)
+            else { return event }
+            self.commentFromShortcut(in: view)
+            return nil
+        }
+    }
+
+    func commentFromShortcut(in view: WKWebView) {
+        let editing = editBuffer != nil
+        let script = editing
+            ? "var s = portico.selectionRange(); return {from: s.from, to: s.to, refusal: s.refusal};"
+            : "return window.__porticoComments ? window.__porticoComments.selectionInfo() : null;"
+        Task { @MainActor [weak self] in
+            guard let self, let focus = self.focus else { return }
+            let value = try? await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+            let info = value as? [String: Any]
+            if editing {
+                let from = (info?["from"] as? NSNumber)?.intValue ?? 0, to = (info?["to"] as? NSNumber)?.intValue ?? 0
+                var sel: [String: Any]? = nil
+                if to > from {
+                    sel = ["text": "selection", "lines": [0, 0], "occurrence": 0]
+                    if let r = info?["refusal"] as? String { sel?["refusal"] = r }
+                }
+                let context = self.menuContext(selection: sel, editMode: true, trustSelection: true)
+                guard context.hasSelection, context.readOnly == nil, context.refusal == nil else { NSSound.beep(); return }
+                self.beginDraft(nil, range: from..<to, chat: self.chat, focus: focus)
+            } else {
+                let context = self.menuContext(selection: info, editMode: false)
+                guard context.hasSelection, context.readOnly == nil, context.refusal == nil,
+                    let info, let selection = Self.selection(info)
+                else { NSSound.beep(); return }
+                self.beginDraft(selection, chat: self.chat, focus: focus)
+            }
+        }
     }
 
     /// A message from the page, for this controller's chat.
@@ -317,6 +388,10 @@ final class ViewerComments: ObservableObject {
                 new = try edit(old)
             } catch let refusal as CommentFormat.Refusal {
                 error = "Not saved — \(CommentAnchoring.reason(refusal))"
+                return false
+            } catch CommentFormat.EditError.changed {
+                error = Self.changedWords
+                reload(text: old)
                 return false
             } catch {
                 self.error = "Not saved — the comment's thread is gone"
@@ -402,6 +477,26 @@ final class ViewerComments: ObservableObject {
                 self.error = nil
                 if type == "resolve", self.activeID == id { self.activeID = nil }
             }
+        case "edit":
+            guard let id, let index = (message["index"] as? NSNumber)?.intValue,
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return }
+            perform(.edit(id: id, index: index, body: text, fingerprint: Self.fingerprint(message["fp"]))) { [weak self] ok in
+                if ok { self?.error = nil }
+            }
+        case "delete":
+            guard let id, let index = (message["index"] as? NSNumber)?.intValue else { return }
+            perform(.delete(id: id, index: index, fingerprint: Self.fingerprint(message["fp"]))) { [weak self] ok in
+                guard let self, ok else { return }
+                self.error = nil
+                if index == 0, self.activeID == id { self.activeID = nil }
+            }
+        case "marginFocus":
+            marginFocused = (message["on"] as? Bool) ?? false
+        case "showResolved":
+            showResolved = (message["on"] as? Bool) ?? false
+            if let file { CommentsMemory.set(file.path, showResolved, key: CommentsMemory.resolvedKey, defaults: defaults) }
+            push()
         case "commentMenu":
             let from = (message["from"] as? NSNumber)?.intValue ?? 0
             let to = (message["to"] as? NSNumber)?.intValue ?? 0
@@ -441,6 +536,11 @@ final class ViewerComments: ObservableObject {
         }
     }
 
+    static func fingerprint(_ value: Any?) -> CommentFormat.Fingerprint? {
+        guard let f = value as? [String: Any], let author = f["author"] as? String, let text = f["text"] as? String else { return nil }
+        return .init(author: author, at: f["at"] as? String, text: text)
+    }
+
     /// Write one comment action to the file; false (and `error` set) when it couldn't.
     @discardableResult
     func write(_ op: CommentWriter.Op, made: CommentWriter.Made? = nil) -> Bool {
@@ -459,6 +559,10 @@ final class ViewerComments: ObservableObject {
             return false
         } catch is CommentWriter.Stale {
             error = Self.staleWords
+            return false
+        } catch CommentFormat.EditError.changed {
+            error = Self.changedWords
+            reload()
             return false
         } catch let refusal as CommentFormat.Refusal {
             error = "Not saved — \(CommentAnchoring.reason(refusal))"
@@ -485,6 +589,8 @@ final class ViewerComments: ObservableObject {
         var refusal: String?
         switch selection["refusal"] as? String {
         case "ignored": refusal = CommentAnchoring.reason(.insideIgnored)
+        case "cell": refusal = CommentAnchoring.cellWords
+        case "widget": refusal = CommentAnchoring.tableWidgetWords
         case .some: refusal = CommentAnchoring.reason(.crossesBlocks)
         case nil:
             if trustSelection {
@@ -506,7 +612,9 @@ final class ViewerComments: ObservableObject {
         }
         let a = lines[0].intValue, b = lines[1].intValue
         guard a <= b else { return nil }
-        return .init(text: text, lines: a...b, occurrence: (info["occurrence"] as? NSNumber)?.intValue ?? 0)
+        return .init(text: text, lines: a...b, occurrence: (info["occurrence"] as? NSNumber)?.intValue ?? 0,
+                     cell: (info["cell"] as? NSNumber)?.intValue, row: (info["row"] as? NSNumber)?.intValue ?? 0,
+                     table: (info["table"] as? NSNumber)?.intValue ?? 0)
     }
 
     /// Choose Comment: comments on (widening if needed), a draft card at the
@@ -554,6 +662,7 @@ final class ViewerComments: ObservableObject {
             let target = MenuAction(action)
             menuTargets.append(target)
             let entry = NSMenuItem(title: item.title, action: #selector(MenuAction.fire(_:)), keyEquivalent: item.key ?? "")
+            if item.option { entry.keyEquivalentModifierMask = [.command, .option] }
             entry.target = target
             entry.isEnabled = item.enabled
             entry.toolTip = item.tip

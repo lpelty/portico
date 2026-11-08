@@ -42,7 +42,16 @@ enum CommentFormat {
         var fields: [Field]
         /// Where the closing `-->` starts.
         var close: Int
+        /// Each reply's source: its line's start, where its text starts, and the
+        /// end of its last line (without the line break). UTF-16 offsets.
+        var replySpans: [ReplySpan] = []
         var isOrphan: Bool { anchor == nil }
+    }
+
+    struct ReplySpan: Equatable, Sendable {
+        var start: Int
+        var textStart: Int
+        var end: Int
     }
 
     struct Parsed: Equatable, Sendable {
@@ -55,10 +64,23 @@ enum CommentFormat {
         case occurs(Int)
         case crossesBlocks
         case insideIgnored
+        /// Only in a table cell the renderer drops (beyond the header's columns).
+        case notShown
     }
 
     enum EditError: Error, Equatable {
         case unknownThread(String)
+        /// The comment an action meant isn't there as it was seen (someone changed it).
+        case changed
+        /// A comment needs text.
+        case blank
+    }
+
+    /// A comment as it was shown: what an edit or delete is aimed at.
+    struct Fingerprint: Equatable, Sendable {
+        var author: String
+        var at: String?
+        var text: String
     }
 
     static let idCharacters = Array("abcdefghijklmnopqrstuvwxyz0123456789")
@@ -141,6 +163,7 @@ enum CommentFormat {
         var ignored: [Range<Int>]
         var blocks: [Block]
         var segs: [Segment]
+        var tables: [(Int, Int, Int)] = []
     }
 
     // MARK: block starts (CommonMark, as far as comments need it)
@@ -157,6 +180,8 @@ enum CommentFormat {
     nonisolated(unsafe) fileprivate static let orderedOneRE = rx(#"^ {0,3}1[.)][ \t]+\S"#)
     nonisolated(unsafe) fileprivate static let listRE = rx(#"^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)"#)
     nonisolated(unsafe) fileprivate static let refdefRE = rx(#"^ {0,3}\[[^\]]+\]:[ \t]*\S"#)
+    nonisolated(unsafe) fileprivate static let rowPrefixRE = rx(#"^[ \t>]*"#)
+    nonisolated(unsafe) fileprivate static let delimiterRE = rx(#"^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$"#)
     nonisolated(unsafe) fileprivate static let indentedRE = rx(#"^(?: {4}| {0,3}\t)"#)
     nonisolated(unsafe) fileprivate static let blockStartRE = rx(#"^[ \t]*<!--co:[a-z0-9]{5,8}(?=[ \t\r\n\f\u000B]|-->|$)"#)
     nonisolated(unsafe) fileprivate static let autolinkRE = rx(#"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>"#)
@@ -168,6 +193,73 @@ enum CommentFormat {
     }
 
     fileprivate static func lineText(_ t: U, _ l: Line) -> String { s(t[l.start..<l.end]) }
+
+    /// UTF-16 offsets of the `|` in `line` that are cell boundaries (not `\|`).
+    fileprivate static func unescapedPipes(_ line: U) -> [Int] {
+        var out: [Int] = []
+        var i = 0
+        while i < line.count {
+            if line[i] == backslash { i += 2; continue }
+            if line[i] == 124 { out.append(i) }
+            i += 1
+        }
+        return out
+    }
+
+    fileprivate static func rowPrefix(_ line: String) -> Int {
+        rowPrefixRE.firstMatch(in: line, range: NSRange(location: 0, length: line.utf16.count))?.range.length ?? 0
+    }
+
+    /// GFM tables as (header line, delimiter line, last row line), outside `hidden`.
+    fileprivate static func tables(_ t: U, _ ls: [Line], _ hidden: [Range<Int>]) -> [(Int, Int, Int)] {
+        var out: [(Int, Int, Int)] = []
+        let n = ls.count
+        func body(_ k: Int) -> String {
+            let line = lineText(t, ls[k])
+            return String(decoding: Array(line.utf16).dropFirst(rowPrefix(line)), as: UTF16.self)
+        }
+        var k = 0
+        while k + 1 < n {
+            if inside(hidden, ls[k].start) || inside(hidden, ls[k + 1].start) { k += 1; continue }
+            let head = body(k), delim = body(k + 1)
+            if !unescapedPipes(u(head)).isEmpty, delim.contains("|"), delim.contains("-"), match(delimiterRE, delim) {
+                var j = k + 1
+                while j + 1 < n, !blankLine(body(j + 1)), !inside(hidden, ls[j + 1].start), !interrupts(body(j + 1)) { j += 1 }
+                out.append((k, k + 1, j))
+                k = j + 1
+                continue
+            }
+            k += 1
+        }
+        return out
+    }
+
+    /// The file's GFM tables (outside code and thread blocks), by 0-based line.
+    static func tables(_ text: String) -> [(header: Int, delimiter: Int, last: Int)] {
+        let t = u(text)
+        let r = regions(t)
+        let hidden = (r.ignored + r.blocks.map { $0.start..<$0.end }).sorted { $0.lowerBound < $1.lowerBound }
+        return tables(t, r.lines, hidden).map { (header: $0.0, delimiter: $0.1, last: $0.2) }
+    }
+
+    /// The cells of the table row on line `range` (a line's UTF-16 range): the source spans between boundary pipes.
+    static func tableCells(_ text: String, line range: Range<Int>) -> [Range<Int>] {
+        let units = Array(text.utf16)
+        var end = min(range.upperBound, units.count)
+        while end > range.lowerBound, units[end - 1] == 10 || units[end - 1] == 13 { end -= 1 }
+        let line = Array(units[range.lowerBound..<end])
+        let lineString = String(decoding: line, as: UTF16.self)
+        let lead = rowPrefix(lineString)
+        var trimmed = line.count
+        while trimmed > lead, line[trimmed - 1] == 32 || line[trimmed - 1] == 9 { trimmed -= 1 }
+        let bounds = unescapedPipes(line).filter { $0 >= lead }
+        let starts = [lead] + bounds.map { $0 + 1 }
+        let ends = bounds + [trimmed]
+        var cells = Array(zip(starts, ends))
+        if let first = bounds.first, first == lead, !cells.isEmpty { cells.removeFirst() }
+        if let last = bounds.last, last == trimmed - 1, !cells.isEmpty { cells.removeLast() }
+        return cells.map { (range.lowerBound + $0.0)..<(range.lowerBound + max($0.0, $0.1)) }
+    }
 
     fileprivate static func interrupts(_ line: String, inQuote: Bool = false) -> Bool {
         if match(blockStartRE, line) { return true }
@@ -422,15 +514,25 @@ enum CommentFormat {
         let icode = segs.filter { $0.kind == "icode" }.map { ls[$0.first].start..<ls[$0.last].full }
         let coarseAll = (coarse + icode).sorted { $0.lowerBound < $1.lowerBound }
         let walls = (coarseAll + blocks.map { $0.start..<$0.end }).sorted { $0.lowerBound < $1.lowerBound }
+        let tbls = tables(t, ls, walls)
+        // GFM splits a table row on its unescaped pipes before inline code is
+        // recognised: a code span never runs across a cell boundary.
+        var cuts: [Range<Int>] = []
+        for (head, _, last) in tbls {
+            for k in head...last {
+                let l = ls[k]
+                cuts += unescapedPipes(Array(t[l.start..<l.end])).map { (l.start + $0)..<(l.start + $0 + 1) }
+            }
+        }
         var segments: [Range<Int>] = []
         var pos = 0
-        for w in walls {
+        for w in (walls + cuts).sorted(by: { $0.lowerBound < $1.lowerBound }) {
             if w.lowerBound > pos { segments.append(pos..<w.lowerBound) }
             pos = max(pos, w.upperBound)
         }
         if pos < t.count { segments.append(pos..<t.count) }
         let ignored = (coarseAll + codeSpans(t, segments)).sorted { $0.lowerBound < $1.lowerBound }
-        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs)
+        return Regions(lines: ls, frontMatter: fm, ignored: ignored, blocks: blocks, segs: segs, tables: tbls)
     }
 
     /// Front matter, ``` and ~~~ fences, indented code blocks, and inline code spans.
@@ -572,21 +674,27 @@ enum CommentFormat {
 
     /// `^(.*?)(?:\s\(([^)]*)\))?:\s?(.*)$` — name, time, text.
     fileprivate static func replyMatch(_ line: String) -> (String, String?, String)? {
+        replyMatchAt(line).map { ($0.0, $0.1, $0.2) }
+    }
+
+    /// The reply pattern, with the UTF-16 offset where the text (group 3) starts.
+    fileprivate static func replyMatchAt(_ line: String) -> (String, String?, String, Int)? {
         let cs = Array(line.unicodeScalars)
         func str(_ r: Range<Int>) -> String { String(String.UnicodeScalarView(cs[r])) }
-        func rest(_ from: Int) -> String {
+        func rest(_ from: Int) -> (String, Int) {
             var f = from
             if f < cs.count, cs[f].properties.isWhitespace { f += 1 }
-            return str(f..<cs.count)
+            return (str(f..<cs.count), str(0..<f).utf16.count)
         }
         var k = 0
         while k < cs.count {
             if cs[k].properties.isWhitespace, k + 1 < cs.count, cs[k + 1] == "(" {
                 if let j = cs[(k + 2)...].firstIndex(of: ")"), j + 1 < cs.count, cs[j + 1] == ":" {
-                    return (str(0..<k), str((k + 2)..<j), rest(j + 2))
+                    let r = rest(j + 2)
+                    return (str(0..<k), str((k + 2)..<j), r.0, r.1)
                 }
             }
-            if cs[k] == ":" { return (str(0..<k), nil, rest(k + 1)) }
+            if cs[k] == ":" { let r = rest(k + 1); return (str(0..<k), nil, r.0, r.1) }
             k += 1
         }
         return nil
@@ -600,23 +708,30 @@ enum CommentFormat {
         s.trimmingCharacters(in: .whitespaces)
     }
 
-    fileprivate static func threadLines(_ raw: [String]) -> ([Reply], [String]) {
+    fileprivate static func threadLines(_ raw: [(String, Int)]) -> ([Reply], [String], [ReplySpan]) {
         var replies: [Reply] = []
         var reactions: [String] = []
-        for line in raw {
+        var spans: [ReplySpan] = []
+        for (line, at) in raw {
+            let end = at + line.utf16.count
             if line.hasPrefix("\\") {
-                if !replies.isEmpty { replies[replies.count - 1].text += "\n" + unescapeBody(String(line.dropFirst())) }
+                if !replies.isEmpty {
+                    replies[replies.count - 1].text += "\n" + unescapeBody(String(line.dropFirst()))
+                    spans[spans.count - 1].end = end
+                }
                 continue
             }
             if blankLine(line) { continue }
             if line.hasPrefix("+") { reactions.append(line); continue }
-            if let m = replyMatch(line), !trimmed(m.0).isEmpty {
+            if let m = replyMatchAt(line), !trimmed(m.0).isEmpty {
                 replies.append(Reply(author: trimmed(m.0), at: m.1, text: unescapeBody(m.2)))
+                spans.append(ReplySpan(start: at, textStart: at + m.3, end: end))
             } else if !replies.isEmpty {
                 replies[replies.count - 1].text += "\n" + unescapeBody(line)
+                spans[spans.count - 1].end = end
             }
         }
-        return (replies, reactions)
+        return (replies, reactions, spans)
     }
 
     // MARK: parse
@@ -629,6 +744,8 @@ enum CommentFormat {
         var threads: [Thread] = []
         var seen = Set<String>()
         for b in r.blocks {
+            // A later block with the same id (a pasted copy) is an orphan thread.
+            let firstOfID = !seen.contains(b.id)
             seen.insert(b.id)
             var headerEnd = t[b.start...].firstIndex(of: nl) ?? b.end
             if headerEnd >= b.close { headerEnd = b.end }
@@ -638,16 +755,24 @@ enum CommentFormat {
             let fields = headerFields(t, headFrom, hb)
             var values: [String: String] = [:]
             for (f, v) in fields where values[f.key] == nil { values[f.key] = v }
-            var raw: [String] = []
+            var raw: [(String, Int)] = []
             if b.close > hb {
-                let body = s(t[hb..<b.close])
-                raw = body.components(separatedBy: "\n").dropFirst().map {
-                    $0.hasSuffix("\r") ? String($0.dropLast()) : $0
+                var at = hb
+                let parts = s(t[hb..<b.close]).components(separatedBy: "\n")
+                for (k, part) in parts.enumerated() {
+                    if k > 0 {
+                        var line = part.hasSuffix("\r") ? String(part.dropLast()) : part
+                        if k == parts.count - 1 {  // text before a `-->` on the same line
+                            while line.hasSuffix(" ") || line.hasSuffix("\t") { line.removeLast() }
+                        }
+                        raw.append((line, at))
+                    }
+                    at += part.utf16.count + 1
                 }
             }
-            let (replies, reactions) = threadLines(raw)
+            let (replies, reactions, spans) = threadLines(raw)
             var anchor: Range<Int>? = nil
-            if let o = ms.first(where: { $0.id == b.id && !$0.closing }),
+            if firstOfID, let o = ms.first(where: { $0.id == b.id && !$0.closing }),
                 let c = ms.first(where: { $0.id == b.id && $0.closing && $0.range.lowerBound >= o.range.upperBound })
             {
                 anchor = o.range.upperBound..<c.range.lowerBound
@@ -657,7 +782,8 @@ enum CommentFormat {
                     id: b.id, by: values["by"] ?? "", at: values["at"] ?? "",
                     status: values["status"] == "resolved" ? .resolved : .open,
                     quote: values["quote"] ?? "", replies: replies, reactions: reactions,
-                    block: b.start..<b.end, anchor: anchor, fields: fields.map(\.0), close: b.close))
+                    block: b.start..<b.end, anchor: anchor, fields: fields.map(\.0), close: b.close,
+                    replySpans: spans))
         }
         var orphans: [String] = []
         for m in ms.filter({ !$0.closing }) + ms.filter({ $0.closing })
@@ -785,8 +911,11 @@ enum CommentFormat {
     }
 
     fileprivate static func snapGraphemes(_ t: U, _ r: Range<Int>, _ bounds: [Int]) -> Range<Int> {
-        let a = bounds.last { $0 <= r.lowerBound } ?? 0
-        let b = bounds.first { $0 >= r.upperBound } ?? t.count
+        var a = bounds.last { $0 <= r.lowerBound } ?? 0
+        var b = bounds.first { $0 >= r.upperBound } ?? t.count
+        // Never split an escaped pipe (`\|`).
+        if a > 0, a < t.count, t[a - 1] == backslash, t[a] == 124 { a -= 1 }
+        if b > 0, b < t.count, t[b - 1] == backslash, t[b] == 124 { b += 1 }
         return a..<max(a, b)
     }
 
@@ -831,6 +960,8 @@ enum CommentFormat {
         var src: [Int] = []
         var ignored: [Bool] = []
         var breaks: [Bool] = []
+        /// Cells beyond the header's columns: the renderer drops them.
+        var dropped: [Range<Int>] = []
 
         mutating func space(_ i: Int, _ ig: Bool, _ brk: Bool) {
             if chars.last == CommentFormat.sp {
@@ -962,11 +1093,35 @@ enum CommentFormat {
         }
         if pos < t.count { segments.append(pos..<t.count) }
         for seg in segments { inlineWalls(t, ns, seg.lowerBound, seg.upperBound, &walls) }
+        // Tables: a cell boundary and the delimiter row are walls, so a match stays
+        // in one cell; an escaped pipe's backslash is zero-width.
+        var dropped: [Range<Int>] = []
+        let full = s(t[...])
+        for (head, delim, last) in r.tables {
+            walls.append(r.lines[delim].start..<r.lines[delim].end)
+            let headLine = r.lines[head]
+            let columns = tableCells(full, line: headLine.start..<headLine.end).count
+            for k in head...last where k != delim {
+                let l = r.lines[k]
+                for p in unescapedPipes(Array(t[l.start..<l.end])) { walls.append((l.start + p)..<(l.start + p + 1)) }
+                let cells = tableCells(full, line: l.start..<l.end)
+                if cells.count > columns, let first = cells.dropFirst(columns).first, let lastCell = cells.last {
+                    dropped.append(first.lowerBound..<lastCell.upperBound)
+                }
+            }
+        }
+        var zero: [Range<Int>] = []
+        var zi = 0
+        while zi + 1 < t.count {
+            if t[zi] == backslash, t[zi + 1] == 124, !inside(r.ignored, zi) { zero.append(zi..<(zi + 1)) }
+            zi += 1
+        }
         var wallAt: [Int: Int] = [:]
         for w in walls where (wallAt[w.lowerBound] ?? -1) < w.upperBound { wallAt[w.lowerBound] = w.upperBound }
-        let ms = markers(t).map(\.range)
+        let ms = (markers(t).map(\.range) + zero).sorted { $0.lowerBound < $1.lowerBound }
         let segEnds = Set(r.segs.map { r.lines[$0.last].end })
         var v = Visible()
+        v.dropped = dropped
         var prefixEnds: [Int: Int] = [:]
         for l in r.lines {
             var i = l.start
@@ -1017,7 +1172,8 @@ enum CommentFormat {
 
     fileprivate static func normalise(_ q: String) -> U {
         var out: U = []
-        for c in u(q) {
+        // A quote may be written as the source shows a cell (`x \| y`) or as it renders (`x | y`).
+        for c in u(q.replacingOccurrences(of: "\\|", with: "|")) {
             if asciiSpace(c) {
                 if out.last != sp { out.append(sp) }
             } else {
@@ -1041,13 +1197,15 @@ enum CommentFormat {
     {
         guard !q.isEmpty else { return .failure(.notFound) }
         var good: [Range<Int>] = []
-        var inCode = false, crosses = false
+        var inCode = false, crosses = false, notShown = false
         var i = find(v.chars, q, from: 0)
         while let a = i {
             let b = a + q.count
             let span = v.src[a]..<(v.src[b - 1] + 1)
             if let within, !(within.contains(span.lowerBound) && span.upperBound <= within.upperBound) {
                 // outside the block asked about
+            } else if v.dropped.contains(where: { $0.contains(span.lowerBound) }) {
+                notShown = true
             } else if v.ignored[a..<b].contains(true) {
                 inCode = true
             } else if v.breaks[a..<b].contains(true) {
@@ -1062,6 +1220,7 @@ enum CommentFormat {
             return .success(selection ? snapSelection(t, r) : snapGraphemes(t, r))
         }
         if !good.isEmpty { return .failure(.occurs(good.count)) }
+        if notShown { return .failure(.notShown) }
         if inCode { return .failure(.insideIgnored) }
         if crosses { return .failure(.crossesBlocks) }
         return .failure(.notFound)
@@ -1151,11 +1310,11 @@ enum CommentFormat {
         return v
     }
 
-    fileprivate static func replyLines(author: String, at: String, body: String) -> [String] {
+    fileprivate static func replyLines(author: String, at: String, body: String, prefix: String? = nil) -> [String] {
         let parts = body.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
-        var out = ["\(author) (\(at)): " + escapeBody(parts[0])]
+        var out = [(prefix ?? "\(author) (\(at)): ") + escapeBody(parts[0])]
         for raw in parts.dropFirst() {
             var line = escapeBody(raw)
             // A leading backslash keeps a line that would read as a reply, a reaction, an
@@ -1226,5 +1385,78 @@ enum CommentFormat {
             edit = Edit(start: pos, end: pos, insert: " status:\(status.rawValue)", order: 0)
         }
         return splice(t, orphanEdits(t) + [edit])
+    }
+
+    /// The thread and comment an action means: by id and the comment's fingerprint when given
+    /// (exactly one match, the thread's first comment exactly when `index` is 0), else by index.
+    fileprivate static func locate(_ t: U, _ threadID: String, _ index: Int, _ fp: Fingerprint?) throws -> (Thread, Int) {
+        let threads = parse(t).threads.filter { $0.id == threadID }
+        guard let first = threads.first else { throw EditError.unknownThread(threadID) }
+        guard let fp else {
+            guard index >= 0, index < max(1, first.replySpans.count) else { throw EditError.unknownThread("\(threadID)#\(index)") }
+            return (first, index)
+        }
+        var found: [(Thread, Int)] = []
+        for th in threads {
+            for (i, r) in th.replies.enumerated()
+            where r.author == fp.author && r.at == fp.at && r.text == fp.text && (i == 0) == (index == 0) {
+                found.append((th, i))
+            }
+        }
+        guard found.count == 1 else { throw EditError.changed }
+        return found[0]
+    }
+
+    fileprivate static func closerOnLine(_ t: U, _ end: Int, _ close: Int) -> Bool {
+        end <= close && !t[end..<close].contains(nl)
+    }
+
+    /// Replace the text of comment `index` (0 is the thread's first) and nothing else: its author
+    /// and time stay as written; a closing `-->` on its line moves to a line of its own.
+    static func editComment(_ text: String, threadID: String, index: Int, body: String, fingerprint: Fingerprint? = nil)
+        throws -> String
+    {
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw EditError.blank }
+        let t = u(text)
+        let (th, i) = try locate(t, threadID, index, fingerprint)
+        guard i < th.replySpans.count else { throw EditError.unknownThread("\(threadID)#\(index)") }
+        let span = th.replySpans[i]
+        let eol = lineEnding(text)
+        let lines = replyLines(author: "", at: "", body: body, prefix: s(t[span.start..<span.textStart])).joined(separator: eol)
+        let edit = closerOnLine(t, span.end, th.close)
+            ? Edit(start: span.start, end: th.close, insert: lines + eol, order: 0)
+            : Edit(start: span.start, end: span.end, insert: lines, order: 0)
+        return splice(t, orphanEdits(t) + [edit])
+    }
+
+    /// Delete reply `index`, or with `index` 0 the whole thread: the block the comment is in and,
+    /// when that block owns them, its anchors. A closing `-->` is never removed with a reply.
+    static func deleteComment(_ text: String, threadID: String, index: Int, fingerprint: Fingerprint? = nil) throws -> String {
+        let t = u(text)
+        let r = regions(t)
+        let (th, i) = try locate(t, threadID, index, fingerprint)
+        var edits = orphanEdits(t)
+        if i == 0 {
+            var start = th.block.lowerBound
+            let end = th.block.upperBound
+            if end == t.count, t.last != nl, start > 0 {
+                start -= start >= 2 && t[start - 2] == cr && t[start - 1] == nl ? 2 : 1
+            }
+            edits.append(Edit(start: start, end: end, insert: "", order: 2))
+            if th.anchor != nil {
+                edits += liveMarkers(t, r).filter { $0.id == threadID }.map {
+                    Edit(start: $0.range.lowerBound, end: $0.range.upperBound, insert: "", order: 1)
+                }
+            }
+            return splice(t, edits)
+        }
+        let span = th.replySpans[i]
+        if closerOnLine(t, span.end, th.close) {
+            edits.append(Edit(start: span.start, end: th.close, insert: "", order: 0))
+        } else {
+            let next = t[span.end...].firstIndex(of: nl).map { $0 + 1 } ?? t.count
+            edits.append(Edit(start: span.start, end: next, insert: "", order: 0))
+        }
+        return splice(t, edits)
     }
 }

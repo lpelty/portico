@@ -4,6 +4,13 @@ import Foundation
 
 /// The viewer's own context menu, replacing WebKit's: Comment, a divider,
 /// Cut, Copy and Paste, a divider, Select All. Formatting comes later.
+/// ⌥⌘M adds a comment on the selection (spec §13.2).
+enum CommentShortcut {
+    static func matches(characters: String?, option: Bool, command: Bool, shift: Bool, control: Bool) -> Bool {
+        option && command && !shift && !control && (characters?.lowercased() == "m" || characters == "µ")
+    }
+}
+
 enum CommentMenu {
     struct Context: Equatable {
         var editMode: Bool
@@ -17,8 +24,9 @@ enum CommentMenu {
     struct Item: Equatable {
         var title: String
         var symbol: String? = nil
-        /// The shortcut's key, with Command.
+        /// The shortcut's key, with Command (and Option when `option`).
         var key: String? = nil
+        var option = false
         var enabled = true
         var tip: String? = nil
         var isDivider = false
@@ -31,7 +39,7 @@ enum CommentMenu {
     static func items(_ c: Context) -> [Item] {
         let commentTip: String? = !c.hasSelection ? noSelectionTip : (c.readOnly ?? c.refusal)
         return [
-            Item(title: "Comment", symbol: "plus.bubble", enabled: commentTip == nil, tip: commentTip),
+            Item(title: "Comment", symbol: "plus.bubble", key: "m", option: true, enabled: commentTip == nil, tip: commentTip),
             .divider,
             Item(title: "Cut", key: "x", enabled: c.editMode && c.hasSelection),
             Item(title: "Copy", key: "c", enabled: c.hasSelection),

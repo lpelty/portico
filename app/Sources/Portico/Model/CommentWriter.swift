@@ -16,6 +16,10 @@ enum CommentWriter {
         /// Reading mode: a new thread where the draft was made (`range`, whose text was `quote`);
         /// if the text there changed, found again by its quote, once and only once, else `Stale`.
         case addAt(Range<Int>, quote: String, body: String)
+        /// Replace the text of the comment shown as `fingerprint` (the person's own).
+        case edit(id: String, index: Int, body: String, fingerprint: CommentFormat.Fingerprint?)
+        /// Delete the reply shown as `fingerprint`, or with index 0 the whole thread.
+        case delete(id: String, index: Int, fingerprint: CommentFormat.Fingerprint?)
     }
 
     /// The text a draft was made on is no longer where it was, and isn't in the file exactly once.
@@ -61,6 +65,15 @@ enum CommentWriter {
                 return try CommentFormat.addReply(text, threadID: id, author: author, at: at, body: body)
             case .setStatus(let id, let resolved):
                 return try CommentFormat.setStatus(text, threadID: id, resolved ? .resolved : .open)
+            case .edit(let id, let index, let body, let fingerprint):
+                // Only the person's own comment, found as it was shown in the text as it is now.
+                guard let fingerprint, fingerprint.author.compare(author, options: .caseInsensitive) == .orderedSame else {
+                    throw CommentFormat.EditError.changed
+                }
+                return try CommentFormat.editComment(text, threadID: id, index: index, body: body, fingerprint: fingerprint)
+            case .delete(let id, let index, let fingerprint):
+                guard let fingerprint else { throw CommentFormat.EditError.changed }
+                return try CommentFormat.deleteComment(text, threadID: id, index: index, fingerprint: fingerprint)
             case .addAt(let stored, let quote, let body):
                 let units = Array(text.utf16)
                 var range: Range<Int>? = nil
