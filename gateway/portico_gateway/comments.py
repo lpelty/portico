@@ -1089,10 +1089,22 @@ def _thread(text: str, thread_id: str) -> Thread:
     raise KeyError(thread_id)
 
 
+def widen_to_autolink(text: str, start: int, end: int) -> tuple[int, int]:
+    """Review M1: a span that covers an autolink's address but not its brackets, widened to the
+    whole ``<…>``, so the markers go outside the brackets and the link still renders."""
+    for a, b, ia, ib in _atoms(text):
+        if (a, b) != (ia, ib) and start <= ia and ib <= end and (a < start < b or a < end < b):
+            start, end = min(start, a), max(end, b)
+    return start, end
+
+
 def add_thread(text: str, start: int, end: int, *, id: str, author: str, at: str, body: str) -> str:
     eol = line_ending(text)
+    # The quote is what was matched (an autolink's address); the markers go around the whole link.
+    quote = quote_text(text[start:end])
+    start, end = widen_to_autolink(text, start, end)
     lines = [
-        f"<!--co:{id} by:{_field(author)} at:{_field(at)} status:open quote:{_field(quote_text(text[start:end]), True)}",
+        f"<!--co:{id} by:{_field(author)} at:{_field(at)} status:open quote:{_field(quote, True)}",
         *_reply_lines(author, at, body),
         "-->",
     ]

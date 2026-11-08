@@ -735,6 +735,21 @@ export function atoms(text: string): Atom[] {
   return out;
 }
 
+// v0.26 review M1: a range that covers an autolink's address but not its brackets, widened to
+// the whole <…>, so a comment's markers go outside the brackets and the link still renders.
+// The same rule as comments.py's widen_to_autolink and CommentFormat.widenToAutolink.
+export function widenToAutolink(text: string, from: number, to: number): [number, number] {
+  for (const a of atoms(text)) {
+    if (a.innerFrom === a.from && a.innerTo === a.to) continue;
+    const splits = (a.from < from && from < a.to) || (a.from < to && to < a.to);
+    if (from <= a.innerFrom && a.innerTo <= to && splits) {
+      from = Math.min(from, a.from);
+      to = Math.max(to, a.to);
+    }
+  }
+  return [from, to];
+}
+
 // Whether [from, to) starts or ends strictly inside an atom; covering a whole one, or an
 // autolink's address, is fine.
 function splitsAtom(a: Atom, from: number, to: number): boolean {

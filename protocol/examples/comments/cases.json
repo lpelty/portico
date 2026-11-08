@@ -1079,6 +1079,48 @@
    "expect": "table-crlf.add.after.md"
   },
   {
+   "name": "add-autolink-https",
+   "file": "autolink.md",
+   "op": "add",
+   "args": {
+    "quote": "https://alpha.example/x",
+    "id": "al001",
+    "author": "Sam Rivera",
+    "at": "2026-11-08T10:00:00.000Z",
+    "body": "Which page?"
+   },
+   "expect": "autolink-https.add.after.md",
+   "expect_link": "<https://alpha.example/x>"
+  },
+  {
+   "name": "add-autolink-email",
+   "file": "autolink.md",
+   "op": "add",
+   "args": {
+    "quote": "me@x.com",
+    "id": "al002",
+    "author": "Sam Rivera",
+    "at": "2026-11-08T10:00:00.000Z",
+    "body": "Whose address?"
+   },
+   "expect": "autolink-email.add.after.md",
+   "expect_link": "<me@x.com>"
+  },
+  {
+   "name": "add-autolink-obsidian",
+   "file": "autolink.md",
+   "op": "add",
+   "args": {
+    "quote": "obsidian://open?vault=V",
+    "id": "al003",
+    "author": "Sam Rivera",
+    "at": "2026-11-08T10:00:00.000Z",
+    "body": "Which vault?"
+   },
+   "expect": "autolink-obsidian.add.after.md",
+   "expect_link": "<obsidian://open?vault=V>"
+  },
+  {
    "name": "table-cells",
    "file": "table-cells.md",
    "parse": {

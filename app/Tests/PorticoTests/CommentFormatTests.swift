@@ -239,4 +239,20 @@ final class CommentFormatTests: XCTestCase {
             for: .edit(id: "abcde", index: 0, body: "hello", fingerprint: fingerprint), author: "Dr: Who", now: Date())(text)
         XCTAssertEqual(CommentFormat.parse(text).threads.first?.replies.map(\.text), ["hello"])
     }
+
+    /// v0.26 review M1: quoting an autolink's address writes the markers around the whole `<…>`.
+    func testQuotingAnAutolinksAddressKeepsTheLink() throws {
+        let cases = try Self.cases().filter { $0["expect_link"] != nil }
+        XCTAssertEqual(cases.count, 3)
+        for c in cases {
+            let a = c["args"] as! [String: Any]
+            let text = try Self.read(c["file"] as! String)
+            let range = try CommentFormat.findQuote(text, a["quote"] as! String, occurrence: 1).get()
+            let written = CommentFormat.addThread(
+                text, range: range, id: a["id"] as! String, author: a["author"] as! String, at: a["at"] as! String,
+                body: a["body"] as! String)
+            XCTAssertEqual(written, try Self.read(c["expect"] as! String), "\(c["name"]!)")
+            XCTAssertTrue(written.contains("<!--c:\(a["id"]!)-->\(c["expect_link"]!)<!--/c:\(a["id"]!)-->"))
+        }
+    }
 }

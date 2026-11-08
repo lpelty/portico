@@ -1260,6 +1260,28 @@ enum CommentFormat {
         return out
     }
 
+    /// Review M1: a range that covers an autolink's address but not its brackets, widened to
+    /// the whole `<…>`, so the markers go outside the brackets and the link still renders.
+    static func widenToAutolink(_ text: String, _ range: Range<Int>) -> Range<Int> {
+        widenToAutolink(u(text), range)
+    }
+
+    fileprivate static func widenToAutolink(_ t: U, _ range: Range<Int>) -> Range<Int> {
+        var r = range
+        for atom in atoms(t) where atom.inner != atom.range
+            && r.lowerBound <= atom.inner.lowerBound && atom.inner.upperBound <= r.upperBound && splits(r, atom.range)
+        {
+            r = min(r.lowerBound, atom.range.lowerBound)..<max(r.upperBound, atom.range.upperBound)
+        }
+        return r
+    }
+
+    /// Whether `span` starts or ends strictly inside `range`.
+    fileprivate static func splits(_ span: Range<Int>, _ range: Range<Int>) -> Bool {
+        (range.lowerBound < span.lowerBound && span.lowerBound < range.upperBound)
+            || (range.lowerBound < span.upperBound && span.upperBound < range.upperBound)
+    }
+
     /// Whether `span` starts or ends strictly inside `atom` (covering a whole one, or an
     /// autolink's address, is fine).
     fileprivate static func splits(_ span: Range<Int>, _ atom: Atom) -> Bool {
@@ -1388,7 +1410,9 @@ enum CommentFormat {
     {
         let t = u(text)
         let eol = lineEnding(text)
+        // The quote is what was matched (an autolink's address); the markers go around the whole link.
         let quote = quoteText(s(t[range]))
+        let range = widenToAutolink(t, range)
         let block = (["<!--co:\(id) by:\(field(author)) at:\(field(at)) status:open quote:\(field(quote, always: true))"]
             + replyLines(author: author, at: at, body: body) + ["-->"]).joined(separator: eol)
         let p = blockEnd(t, offset: range.lowerBound)
