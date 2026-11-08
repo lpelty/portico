@@ -35,15 +35,27 @@ enum SecretStoreError: Error, Equatable, CustomStringConvertible {
 final class KeychainStore: SecretStore {
     let service: String
     let account: String
+    /// What Keychain Access and an access prompt show for the item.
+    let label: String
 
-    init(service: String, account: String = "api-key") {
+    init(service: String, account: String = "api-key", label: String? = nil) {
         self.service = service
         self.account = account
+        self.label = label ?? service
     }
 
-    /// The app's own item: "<bundle id>.elevenlabs", account "api-key". Tests never use it.
+    /// The app's own item (review L7): named as the person knows the app, "<app name> — ElevenLabs
+    /// key", never the product or the bundle id; account "api-key". Tests never use it.
     static func elevenLabs() -> KeychainStore {
-        KeychainStore(service: "\(Bundle.main.bundleIdentifier ?? "app").elevenlabs")
+        let info = Bundle.main.infoDictionary
+        let name = info?["CFBundleDisplayName"] as? String ?? info?["CFBundleName"] as? String
+        return elevenLabs(appName: name)
+    }
+
+    static func elevenLabs(appName: String?) -> KeychainStore {
+        let trimmed = appName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = "\(trimmed.isEmpty ? "This app" : trimmed) — ElevenLabs key"
+        return KeychainStore(service: name, label: name)
     }
 
     private var query: [String: Any] {
@@ -77,6 +89,7 @@ final class KeychainStore: SecretStore {
         let update: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+            kSecAttrLabel as String: label,
         ]
         let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if status == errSecSuccess { return }

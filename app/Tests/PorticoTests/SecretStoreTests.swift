@@ -44,7 +44,7 @@ final class SecretStoreTests: XCTestCase {
     /// The app's service name; and no test calls `.elevenLabs()` (the app's real item) but this one.
     func testTheAppsServiceIsNotUsedByTests() throws {
         let service = KeychainStore.elevenLabs().service
-        XCTAssertTrue(service.hasSuffix(".elevenlabs"))
+        XCTAssertTrue(service.hasSuffix(" — ElevenLabs key"), service)
         XCTAssertEqual(KeychainStore.elevenLabs().account, "api-key")
         let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let files = try FileManager.default.contentsOfDirectory(at: tests, includingPropertiesForKeys: nil)
@@ -55,5 +55,20 @@ final class SecretStoreTests: XCTestCase {
             if text.contains("KeychainStore" + ".elevenLabs()") { callers.append(file.lastPathComponent) }
         }
         XCTAssertEqual(callers, ["SecretStoreTests.swift"])
+    }
+
+    /// Review L7: what the person sees in Keychain Access and an access prompt names the app as
+    /// the person knows it, never the product or a bundle id.
+    func testTheItemsNameIsThePersonsAppName() {
+        let named = KeychainStore.elevenLabs(appName: "Acme Agent")
+        XCTAssertEqual(named.service, "Acme Agent — ElevenLabs key")
+        XCTAssertEqual(named.label, "Acme Agent — ElevenLabs key")
+        XCTAssertEqual(KeychainStore.elevenLabs(appName: nil).label, "This app — ElevenLabs key")
+        XCTAssertEqual(KeychainStore.elevenLabs(appName: "  ").label, "This app — ElevenLabs key")
+        for store in [KeychainStore.elevenLabs(), named] {
+            XCTAssertFalse(store.service.lowercased().contains("portico"), store.service)
+            XCTAssertFalse(store.label.lowercased().contains("portico"), store.label)
+            XCTAssertFalse(store.service.contains("dev."), store.service)
+        }
     }
 }
