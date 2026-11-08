@@ -559,7 +559,9 @@ sidebar before anything else arrives, and then (v0.4) `services.status`,
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
-changed after the gateway started, so a restart is needed to apply it);
+changed after the gateway started, so a restart is needed to apply it; v0.24:
+`config.toml` is newer than at start, or the `config.local.toml` beside it
+was created, changed or deleted);
 `can_update: bool` (the deployment configured an update command, which
 `portico-gateway update` runs); `default_folder?` (config `default_folder`,
 `~` expanded: where a new session works when the person has not chosen a
@@ -591,6 +593,11 @@ an app that gets none (an older v0.16 gateway) assumes 2.
 v0.23: `person?: {name}` (config `[person] name`, or a plug-in's
 `on_hello`): the person's real name, which the app writes as the author of
 their comments. Absent: the app uses the computer's full user name.
+
+v0.24: `voice?: {read_aloud: bool}` (config `[voice] read_aloud`, default
+`false`): when `true`, the app's Settings shows the Read aloud switch; the
+person's own on/off choice stays in the app. `false` or absent (an older
+gateway): the app keeps its older machine flag (`voice.readAloudAvailable`).
 
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
@@ -964,8 +971,9 @@ the turn each followed and without `seq`; only notices from before the
 restart are lost.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
-No fields. The config file is newer than when the gateway started; the
-app says "restart the gateway to apply". Sent once when the gateway
+No fields. `config.toml` is newer than when the gateway started, or
+(v0.24) the `config.local.toml` beside it was created, changed or deleted;
+the app says "restart the gateway to apply". Sent once when the gateway
 notices; `hello.config_stale` carries the same fact on connect.
 
 ### `update.available` — `UpdateAvailable` *(v0.3)*
@@ -2220,6 +2228,7 @@ for the reference gateway, not protocol messages.
 The running gateway also checks for updates itself: `update.check` at
 start and every 6 hours, in the background; a version found goes to the
 attached app as `update.available`, and again to an app that attaches
-later. It watches the config file's modification time every ~10 seconds
-and sends `config.stale` once when the file is newer than at start.
+later. It watches the config files every ~10 seconds and sends `config.stale`
+once when `config.toml` is newer than at start or (v0.24) the
+`config.local.toml` beside it was created, changed or deleted.
 
