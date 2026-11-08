@@ -8,10 +8,15 @@
   web view under the app's own scheme (RenderedPageHandler) with the
   markdown file's directory as its root, so relative images resolve and
   nothing else is fetched.
+  v0.24 (sweep #1): the page runs only its own scripts. Each render has a
+  fresh nonce (on every script block, and in the Content-Security-Policy),
+  so inline handlers and injected scripts in the file never run; and the
+  rendered fragment is cleaned before it is inserted (cleanFragment).
 -->
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{CSP}}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
 <style>
@@ -21,11 +26,48 @@
 </head>
 <body>
 <article id="content">{{PROPERTIES}}<div id="body"></div></article>
-<script>
+<script nonce="{{NONCE}}">
 {{MARKED}}
 </script>
-<script>
+<script nonce="{{NONCE}}">
 (function () {
+  // v0.24 (sweep #1), the second layer under the policy: before a rendered
+  // fragment goes into the page, elements that run or embed other content
+  // are dropped, and so are every on* attribute and script-bearing URLs.
+  // Ordinary raw HTML (details, kbd, br, tables, images, links) is left alone.
+  var DROP = { script: 1, iframe: 1, frame: 1, frameset: 1, object: 1, embed: 1, base: 1, meta: 1 };
+  var URL_ATTRS = { href: 1, src: 1, "xlink:href": 1, formaction: 1, action: 1 };
+  var unsafeURL = function (value) {
+    // Browsers ignore spaces and control characters in a scheme.
+    var v = String(value).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "").toLowerCase();
+    if (/^(javascript|vbscript):/.test(v)) return true;
+    return /^data:/.test(v) && !/^data:image\//.test(v);
+  };
+  var cleanFragment = function (root) {
+    Array.prototype.slice.call(root.querySelectorAll("*")).forEach(function (el) {
+      var name = el.localName.toLowerCase();
+      if (DROP[name]) { el.remove(); return; }
+      if (name === "template") cleanFragment(el.content);
+      Array.prototype.slice.call(el.attributes).forEach(function (a) {
+        var attr = a.name.toLowerCase();
+        if (attr.indexOf("on") === 0 || (URL_ATTRS[attr] && unsafeURL(a.value))) el.removeAttributeNode(a);
+      });
+    });
+  };
+
+  // v0.17 §3.7: the person folding or unfolding the Properties block goes to
+  // the app's porticoProperties handler (v0.24: here, not an inline handler,
+  // which the policy blocks). Only a change from what was last drawn or
+  // posted: data-open holds that, so the toggle WebKit fires for a block
+  // parsed open is not taken for a choice.
+  var properties = document.querySelector("#content > details.fm");
+  if (properties) properties.addEventListener("toggle", function () {
+    if (String(properties.open) === properties.dataset.open) return;
+    properties.dataset.open = String(properties.open);
+    var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.porticoProperties;
+    if (h) h.postMessage({ open: properties.open });
+  });
+
   var source = {{SOURCE}};
   var bodyLine = {{BODY_LINE}};
   var options = { gfm: true, breaks: false };
@@ -63,6 +105,7 @@
     var list = Object.assign([t], { links: tokens.links });
     var holder = document.createElement("template");
     holder.innerHTML = marked.parser(list, options);
+    cleanFragment(holder.content);
     Array.prototype.forEach.call(holder.content.children, function (el) {
       if (start >= 0) el.setAttribute("data-lines", start + "-" + end);
     });
@@ -70,7 +113,7 @@
   });
 })();
 </script>
-<script>
+<script nonce="{{NONCE}}">
 {{COMMENTS_JS}}
 </script>
 </body>

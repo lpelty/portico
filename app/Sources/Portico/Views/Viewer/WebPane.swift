@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -37,7 +38,12 @@ enum MarkdownPage {
         let drawn = shownProperties.flatMap { $0.unreadable || !$0.properties.isEmpty ? $0.html(open: propertiesOpen) : nil }
         let properties = (drawn ?? "").replacingOccurrences(of: "{", with: "&#123;")
         let comments = try resource("viewer-comments.js")
+        // v0.24 (sweep #1): first, so nothing filled in after (the title, the
+        // source, the scripts) can name the placeholders.
+        let nonce = newNonce()
         return template
+            .replacingOccurrences(of: "{{CSP}}", with: contentSecurityPolicy(nonce: nonce))
+            .replacingOccurrences(of: "{{NONCE}}", with: nonce)
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
             .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
@@ -46,6 +52,25 @@ enum MarkdownPage {
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(sentinelMarkers(source, body: split.body)))
+    }
+
+    /// v0.24 (sweep #1): the rendered page's policy. Only the page's own
+    /// script blocks run (they carry `nonce`): no inline handler, no injected
+    /// script, no `eval`. Nothing can be fetched, framed or submitted outside
+    /// the page's own scheme, so even a script that did run could send
+    /// nothing out. Images and styles are as before (no `img-src` or
+    /// `style-src`), so remote and relative images still show.
+    static func contentSecurityPolicy(nonce: String) -> String {
+        let own = "\(RenderedPageHandler.scheme):"
+        return "script-src 'nonce-\(nonce)'; object-src 'none'; base-uri 'none'; "
+            + "connect-src \(own); frame-src \(own); form-action \(own)"
+    }
+
+    /// 128 random bits, base64: a fresh one for every render.
+    static func newNonce() -> String {
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        return Data(bytes).base64EncodedString()
     }
 
     /// v0.23: the body with each comment marker (outside code and thread
@@ -511,6 +536,7 @@ struct WebPane: NSViewRepresentable {
         var onSpaceAction: ((URL) -> Void)?
         /// v0.23: the file viewer's comments; the page's `comments` messages go to it.
         weak var comments: ViewerComments?
+        static let log = Logger(subsystem: "Portico", category: "viewer")
         /// v0.22 (S2): the last fragment request carried out, and one waiting
         /// for the page to finish loading.
         private var doneFragmentKey: String?
@@ -536,6 +562,19 @@ struct WebPane: NSViewRepresentable {
             configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
             configuration.userContentController.add(CommentsMessages(self), name: CommentsMessages.name)
             return configuration
+        }
+
+        /// v0.24 (sweep #1): whether a `comments` message comes from the page
+        /// rendered for the file the comments are for: the main frame of a
+        /// rendered Markdown page whose source is that file. An HTML file or
+        /// site shown in the viewer, another Markdown page, or a frame is not.
+        func acceptsComments(isMainFrame: Bool, frameURL: URL?) -> Bool {
+            guard isMainFrame, let frameURL, frameURL.scheme == RenderedPageHandler.scheme,
+                  case .markdown = loaded,
+                  let source = handler.source(for: frameURL),
+                  let file = comments?.file
+            else { return false }
+            return source == file.standardizedFileURL.resolvingSymlinksInPath()
         }
 
         /// A web view wired to this coordinator: navigation failures
@@ -964,11 +1003,16 @@ private final class CommentsMessages: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         MainActor.assumeIsolated {
-            guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.scheme == RenderedPageHandler.scheme,
-                let comments = coordinator?.comments, let view = message.webView
-            else { return }
+            guard let coordinator, let comments = coordinator.comments, let view = message.webView else { return }
+            // v0.24 (sweep #1): only the page rendered for the comments' file.
+            guard coordinator.acceptsComments(isMainFrame: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url)
+            else {
+                WebPane.Coordinator.log.notice("comments message ignored: not from the page rendered for the file")
+                return
+            }
             comments.attach(view)
             comments.received(message.body)
         }
     }
 }
+
