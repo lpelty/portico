@@ -23,10 +23,10 @@
 .pc-error { color: #C93C37; font-size: 12px; margin-top: 6px; }
 .pc-head { position: relative; }
 /* The … button is drawn in the card's own colour until the comment is hovered or it has focus (solid colours, no fade). */
-.pc-more { margin-left: auto; font: inherit; line-height: 1; color: var(--pc-card); background: var(--pc-card); border: 1px solid var(--pc-card); border-radius: 5px; padding: 0 6px; }
+.pc-more { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 26px; height: 22px; font: inherit; line-height: 1; color: var(--pc-card); background: var(--pc-card); border: 1px solid var(--pc-card); border-radius: 5px; padding: 0 0 4px; }
 .pc-reply:hover .pc-more, .pc-more:focus, .pc-more:focus-visible { color: var(--pc-text2); border-color: var(--pc-border); }
 .pc-reply { position: relative; }
-.pc-menu { position: absolute; right: 0; top: 22px; z-index: 6; display: flex; flex-direction: column; min-width: 120px; background: var(--pc-panel); border: 1px solid var(--pc-border); border-radius: 7px; padding: 4px; }
+.pc-menu { position: absolute; right: 0; top: 26px; z-index: 6; display: flex; flex-direction: column; min-width: 120px; background: var(--pc-panel); border: 1px solid var(--pc-border); border-radius: 7px; padding: 4px; }
 .pc-menu button { font: inherit; text-align: left; color: var(--pc-text); background: var(--pc-panel); border: 0; border-radius: 4px; padding: 4px 8px; }
 .pc-menu button:hover, .pc-menu button:focus { background: var(--pc-surface); }
 .pc-menu .pc-menu-delete { color: var(--pc-danger); }
