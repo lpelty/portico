@@ -99,19 +99,34 @@ final class ReadAloud: ObservableObject {
     private let installedVoices: () -> [VoiceOption]
     /// v0.26 (PORT-23): the ElevenLabs key, models and voices (nil: This Mac only).
     let account: ElevenLabsAccount?
+    /// Plays ElevenLabs' audio.
+    private let player: AudioPlaying
+    /// Per reply key, the last ElevenLabs failure's note; cleared when that
+    /// reply next reads with ElevenLabs.
+    @Published private(set) var notes: [String: String] = [:]
+    /// The ElevenLabs reading: fetching and playing chunk by chunk.
+    private var elevenLabsTask: Task<Void, Never>?
+    private var prefetch: Task<Data, Error>?
+    /// The current chunk's end, awaited by the reading.
+    private var playing: (token: Int, done: CheckedContinuation<Void, Never>)?
 
     init(
         settings: Settings, synthesizer: SpeechSynthesizing? = nil, escape: EscapeKey? = nil,
         installedVoices: @escaping () -> [VoiceOption] = VoiceChoices.installed,
-        account: ElevenLabsAccount? = nil
+        player: AudioPlaying? = nil, account: ElevenLabsAccount? = nil
     ) {
         self.account = account
+        self.player = player ?? SystemAudioPlayer()
         self.installedVoices = installedVoices
         self.settings = settings
         self.synthesizer = synthesizer ?? SystemSpeechSynthesizer()
         self.escape = escape ?? EscapeKey()
         self.synthesizer.onFinish = { [weak self] token in self?.finished(token) }
+        self.player.onFinish = { [weak self] token in self?.chunkFinished(token) }
     }
+
+    /// The note under the reply known by `key`, when ElevenLabs couldn't speak it.
+    func note(for key: String) -> String? { notes[key] }
 
     /// Whether the reply known by `key` (its message's id, else its text) is reading.
     func isReading(_ key: String) -> Bool { reading == key }
@@ -131,7 +146,86 @@ final class ReadAloud: ObservableObject {
         token += 1
         reading = key ?? reply
         escape.watch { [weak self] in self?.stop() }
-        synthesizer.speak(speech, voiceIdentifier: voice, rate: settings.speechRate.utteranceRate, token: token)
+        if settings.speaksWithElevenLabs, let account {
+            speakWithElevenLabs(speech, key: key ?? reply, account: account, token: token)
+        } else {
+            synthesizer.speak(speech, voiceIdentifier: voice, rate: settings.speechRate.utteranceRate, token: token)
+        }
+    }
+
+    // MARK: ElevenLabs (v0.26, PORT-23)
+
+    /// Fetches chunk 1, then plays each chunk while fetching the next. A failure
+    /// reads the unread chunks with the Mac voice and sets the reply's note
+    /// (ruling 6). Anything that arrives after Stop or another read is dropped.
+    private func speakWithElevenLabs(_ speech: String, key: String, account: ElevenLabsAccount, token: Int) {
+        let model = settings.elevenLabsModel
+        let chunks = SpeechChunks.split(speech, limit: ElevenLabsModels.limit(for: model, live: account.models))
+        guard let client = account.speechClient() else {
+            return fallBack(chunks, from: 0, failure: .noKey, key: key, token: token)
+        }
+        guard let voiceID = settings.elevenLabsVoiceID, !voiceID.isEmpty else {
+            return fallBack(chunks, from: 0, failure: .noVoice, key: key, token: token)
+        }
+        func fetch(_ index: Int) -> Task<Data, Error> {
+            let text = chunks[index]
+            return Task { try await client.speech(text, voiceID: voiceID, modelID: model) }
+        }
+        prefetch = fetch(0)
+        elevenLabsTask = Task { @MainActor [weak self] in
+            for index in chunks.indices {
+                guard let self, let request = self.prefetch else { return }
+                let data: Data
+                do {
+                    data = try await request.value
+                } catch {
+                    guard self.token == token, !Task.isCancelled else { return }
+                    return self.fallBack(chunks, from: index, failure: error as? ElevenLabsFailure ?? .network, key: key, token: token)
+                }
+                guard self.token == token, !Task.isCancelled else { return }
+                self.prefetch = index + 1 < chunks.count ? fetch(index + 1) : nil
+                do {
+                    try self.player.play(data, token: token)
+                } catch {
+                    return self.fallBack(chunks, from: index, failure: .audio, key: key, token: token)
+                }
+                if index == 0 { self.notes[key] = nil }
+                await withCheckedContinuation { done in self.playing = (token, done) }
+                guard self.token == token, !Task.isCancelled else { return }
+            }
+            guard let self, self.token == token else { return }
+            self.reading = nil
+            self.escape.unwatch()
+        }
+    }
+
+    /// ElevenLabs couldn't: the note, then the rest with the Mac voice.
+    private func fallBack(_ chunks: [String], from index: Int, failure: ElevenLabsFailure, key: String, token: Int) {
+        notes[key] = failure.note
+        prefetch?.cancel()
+        prefetch = nil
+        let rest = chunks[index...].joined(separator: "\n\n")
+        synthesizer.speak(rest, voiceIdentifier: voice, rate: settings.speechRate.utteranceRate, token: token)
+    }
+
+    /// A chunk ended by itself: the reading goes on to the next.
+    private func chunkFinished(_ ended: Int) {
+        guard let playing, playing.token == ended else { return }
+        self.playing = nil
+        playing.done.resume()
+    }
+
+    /// Ends the ElevenLabs reading, whatever it was doing.
+    private func stopElevenLabs() {
+        elevenLabsTask?.cancel()
+        elevenLabsTask = nil
+        prefetch?.cancel()
+        prefetch = nil
+        player.stop()
+        if let playing {
+            self.playing = nil
+            playing.done.resume()
+        }
     }
 
     /// The chosen voice, or the best installed one (`VoiceChoices.resolved`).
@@ -147,7 +241,10 @@ final class ReadAloud: ObservableObject {
     func stop() {
         guard reading != nil else { return }
         reading = nil
+        // A newer token: whatever the stopped reading still had in flight is dropped.
+        token += 1
         escape.unwatch()
+        stopElevenLabs()
         synthesizer.stop()
     }
 
