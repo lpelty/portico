@@ -149,6 +149,7 @@ import logging
 import os
 import re
 import secrets
+import time
 import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
@@ -184,16 +185,24 @@ from .engine import (
     prompt_header_version,
     session_prompt,
     friendly_model_name,
+    CONTINUE_TEXT,
     history_events,
     read_history,
     transcript_times,
 )
+from . import signin as signin_mod
+from .signin import SIGNIN_EXPIRED, SigninCommand, SigninWaitState, kinds_for, match_kind, poll_interval
 from .images import ATTACHMENT_HEADER, NOT_IMAGE_NOTICE_KIND, image_blocks
 from .lifecycle import CommandFailed, run_lifecycle_command
 from .mcp_inventory import CliRunner, SubprocessCli, plugin_paths_for_engine, servers_for_engine
 from .mcp_settings import McpSettings, ToolPolicy, strip_url_queries
 from .plugin_settings import PluginSettings
 from .messages import (
+    SIGNIN_CAPABILITY,
+    SigninCode,
+    SigninOpen,
+    SigninStop,
+    SigninWait,
     AGENT_FRAME_TYPES,
     AGENTS_CAPABILITY,
     AgentStarted,
@@ -635,6 +644,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
     if isinstance(msg, DeploymentMessage) and DEPLOYMENT_MESSAGE_CAPABILITY not in capabilities:
         return None  # v0.22: an app that cannot dock a message from the deployment is sent none
+    if isinstance(msg, SigninWait) and SIGNIN_CAPABILITY not in capabilities:
+        return None  # v0.25: an app without signin.v1 shows no sign-in card
     if isinstance(msg, Models) and MODELS_CAPABILITY not in capabilities:
         return None  # v0.15: an app that did not declare models.v1 cannot decode models
     if isinstance(msg, (ChatQueue, ChatQueued)) and QUEUE_CAPABILITY not in capabilities:
@@ -1146,6 +1157,11 @@ class GatewayServer:
         self.history_reader: Callable[[str | None, Path], list[dict[str, Any]]] = read_history
         # v0.25: the transcript's entry times by uuid (``engine.transcript_times``); replaceable for tests.
         self.history_times_reader: Callable[[str | None, Path], dict[str, str]] = transcript_times
+        # v0.25 §4: whether a kind's sign-in is current again (``signin.is_current``), how
+        # often to ask, and the AWS SSO token cache it reads; replaceable for tests.
+        self.signin_is_current: Callable[[signin_mod.SigninKind, float, Path], Awaitable[bool]] = signin_mod.is_current
+        self.signin_interval: Callable[[signin_mod.SigninKind], float] = poll_interval
+        self.sso_folder = Path.home() / ".aws" / "sso" / "cache"
         # Runs Spotlight for ``files.search`` (``search.run_command``); replaceable for tests.
         self.search_runner: Runner = run_command
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
@@ -1187,6 +1203,9 @@ class GatewayServer:
         self.register("message.send", self.on_message_send)
         self.register("chat.unqueue", self.on_chat_unqueue)
         self.register("turn.stop", self.on_turn_stop)
+        self.register("signin.open", self.on_signin_open)
+        self.register("signin.stop", self.on_signin_stop)
+        self.register("signin.code", self.on_signin_code)
         self.register("gateway.stop", self.on_gateway_stop)
         self.register("files.list", self.on_files_list)
         self.register("files.roots.set", self.on_files_roots_set)
@@ -1331,6 +1350,7 @@ class GatewayServer:
             # Its client disconnects as it is cancelled: let that finish first.
             await asyncio.gather(probe, return_exceptions=True)
         for chat in self.registry.chats():
+            await self._end_signin(chat, tell=False)
             await self.cards.cancel_all(chat, "gateway stopping", self.emit)
             await self._close_engine(chat)
         if server is not None:
@@ -1383,6 +1403,7 @@ class GatewayServer:
             )
         for chat in self.registry.chats():
             run = self._runs.get(chat.number)
+            await self._end_signin(chat)
             await self.cards.cancel_all(chat, reason, self.emit)
             await self._close_engine(chat)
             if run is not None:
@@ -1623,6 +1644,10 @@ class GatewayServer:
             for chat in self.registry.chats():
                 if chat.ended is None:
                     await self._send(conn, self._models_frame(chat))
+        # v0.25: a sign-in wait still running (the app dropped its card when the connection closed).
+        for chat in self.registry.chats():
+            if chat.signin is not None:
+                await self._send(conn, self._signin_frame(chat, chat.signin, "waiting"))
         # Frames are handled one at a time, in order, by a worker; this loop
         # only reads. So a ``gateway.stop`` is acted on at once even while
         # the worker is inside a slow handler (a hung ``before_first_chat``).
@@ -2240,15 +2265,137 @@ class GatewayServer:
         if run.stop_requested:
             event = event.model_copy(update={"outcome": "stopped"})
         run.outcome = event.outcome
+        # v0.25 §4.3: a failure on an expired sign-in says so, and may wait for it.
+        kind = self._signin_kind(event)
+        if kind is not None:
+            event = event.model_copy(update={"reason": SIGNIN_EXPIRED})
         await self._report_artifacts(chat, run)
         await self.emit(chat, event)
         await self._finish_run(chat, run)
+        if run.outcome == "done":
+            chat.signin_waits = 0
+        elif kind is not None:
+            await self._maybe_wait(chat, run, kind)
         # Its own task: the engine is asked from inside its own event stream.
         if chat.engine is not None:
             self._spawn(self._report_context(chat, chat.engine), name=f"portico-context-{chat.number}")
         if run.outcome == "done" and run.title_message is not None and self.wants_title(chat):
             # Its own task too: a title never holds up or fails a turn.
             self._spawn(self._title_task(chat, run), name=f"portico-title-{chat.number}")
+
+    # --- v0.25: waiting for a sign-in -----------------------------------------------
+
+    def _signin_kind(self, event: TurnFinished) -> signin_mod.SigninKind | None:
+        """The sign-in kind a failed turn's error detail names (§4.3), or None."""
+        if event.outcome != "error" or not event.error_detail:
+            return None
+        return match_kind(event.error_detail, kinds_for(self.config))
+
+    def _app_signs_in(self) -> bool:
+        """A connected app declared ``signin.v1`` (ruling 17)."""
+        return self._app is not None and SIGNIN_CAPABILITY in _capabilities(self._app)
+
+    async def _maybe_wait(self, chat: Chat, run: TurnRun, kind: signin_mod.SigninKind) -> None:
+        """Start waiting for ``kind``'s sign-in after ``run`` failed on it: one wait at a time, two in a row at most (ruling 18)."""
+        if not self._app_signs_in() or chat.signin is not None or chat.signin_waits >= 2:
+            return
+        if chat.ended is not None or self._busy(chat) or self._queues.get(chat.number):
+            return  # what the person queued goes instead; the turn stays ended
+        chat.signin_waits += 1
+        state = SigninWaitState(kind=kind, turn=run.turn, started=_now(), since=time.time())
+        chat.signin = state
+        log.info("chat %d: turn %d ended on an expired %s sign-in; waiting", chat.number, run.turn, kind.name)
+        await self.broadcast(self._signin_frame(chat, state, "waiting"))
+        state.task = self._spawn(self._signin_waiter(chat, state), name=f"portico-signin-{chat.number}")
+
+    def _signin_frame(self, chat: Chat, state: SigninWaitState, word: str) -> SigninWait:
+        kind = state.kind
+        return SigninWait(
+            ts=_now(), chat=chat.number, turn=state.turn, state=word,  # type: ignore[arg-type]
+            kind=kind.name, title=kind.title, body=kind.body, can_open=bool(kind.open), started=state.started,
+            url=state.url, code=state.code, wants_code=kind.wants_code,
+        )
+
+    async def _signin_waiter(self, chat: Chat, state: SigninWaitState) -> None:
+        """Ask every interval, with no time limit, whether the sign-in is current; then carry the turn on."""
+        while chat.signin is state:
+            await asyncio.sleep(self.signin_interval(state.kind))
+            if chat.signin is not state:
+                return
+            try:
+                current = await self.signin_is_current(state.kind, state.since, self.sso_folder)
+            except Exception as e:
+                log.warning("chat %d: could not check the sign-in: %s", chat.number, type(e).__name__)
+                current = False
+            if current and chat.signin is state:
+                await self._signin_current(chat, state)
+                return
+
+    async def _signin_current(self, chat: Chat, state: SigninWaitState) -> None:
+        """Signed in again: say so, end the command, and carry the turn on with the continue message.
+
+        Controller ruling (2026-11-08): always the continue, in the same
+        session; the person's message is never sent again (the transcript
+        already holds it, and a re-send showed it twice in a replay).
+        """
+        chat.signin = None
+        await self.broadcast(self._signin_frame(chat, state, "current"))
+        if state.command is not None:
+            await state.command.close()
+        if chat.ended is not None or self._busy(chat) or chat not in self.registry.chats():
+            return
+        log.info("chat %d: signed in again; carrying turn %d on", chat.number, state.turn)
+        run = await self._echo_turn(chat, CONTINUE_TEXT, echo_user=False)
+        try:
+            await self._begin_turn(chat, run, CONTINUE_TEXT)
+        except ProtocolError as e:
+            log.warning("chat %d: could not carry the turn on after sign-in: %s", chat.number, e.code)
+
+    async def _end_signin(self, chat: Chat, tell: bool = True) -> None:
+        """Stop ``chat``'s wait, if one runs: its waiter and command end, nothing resumes; ``tell`` sends ``stopped``."""
+        state = chat.signin
+        if state is None:
+            return
+        chat.signin = None
+        task = state.task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+        if state.command is not None:
+            await state.command.close()
+        if tell:
+            await self.broadcast(self._signin_frame(chat, state, "stopped"))
+
+    async def on_signin_open(self, msg: SigninOpen, conn: ServerConnection) -> None:
+        """Open sign-in page: run the kind's ``open`` command; its link and code go out as they appear."""
+        chat = self.registry.get(msg.chat)
+        state = chat.signin
+        if state is None or not state.kind.open:
+            return
+        if state.command is not None:
+            await state.command.close()
+        command = SigninCommand()
+        state.command = command
+
+        async def on_link(url: str | None, code: str | None) -> None:
+            if chat.signin is not state:
+                return
+            state.url, state.code = url, code
+            await self.broadcast(self._signin_frame(chat, state, "waiting"))
+
+        try:
+            await command.start(state.kind.open, on_link)
+        except OSError as e:
+            log.warning("chat %d: the sign-in command could not start: %s", chat.number, type(e).__name__)
+
+    async def on_signin_stop(self, msg: SigninStop, conn: ServerConnection) -> None:
+        """Don't wait: the wait stops, the turn stays ended."""
+        await self._end_signin(self.registry.get(msg.chat))
+
+    async def on_signin_code(self, msg: SigninCode, conn: ServerConnection) -> None:
+        """A code pasted from the browser, for the running sign-in command (never logged)."""
+        state = self.registry.get(msg.chat).signin
+        if state is not None and state.command is not None:
+            await state.command.write_code(msg.code)
 
     def _with_permission(self, chat: Chat, event: ToolFinished) -> ToolFinished:
         """``event`` with what became of its permission (v0.3), recorded on the chat.
@@ -3022,6 +3169,9 @@ class GatewayServer:
             await self._send(conn, card)
         # v0.11: what is still waiting to go, an empty list too (it replaces the app's).
         await self._send(conn, self._queue_frame(chat))
+        # v0.25: the sign-in wait, if one runs (not in the ring: sent as it stands).
+        if chat.signin is not None:
+            await self._send(conn, self._signin_frame(chat, chat.signin, "waiting"))
         # v0.16: the proposals made in this chat, as they stand (only to an app with threads.v1).
         for record in self.registry.proposals_for(chat.number):
             await self._send(conn, self._proposal_frame(record))
@@ -3118,6 +3268,7 @@ class GatewayServer:
 
     async def on_chat_stop(self, msg: ChatStop, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
+        await self._end_signin(chat)
         run = self._runs.get(chat.number)
         if self._queues.pop(chat.number, None):
             # A stop is a stop: nothing held goes to the agent after it (v0.11).
@@ -3139,6 +3290,7 @@ class GatewayServer:
 
     async def on_chat_remove(self, msg: ChatRemove, conn: ServerConnection) -> None:
         chat = self.registry.get(msg.chat)
+        await self._end_signin(chat)
         await self.cards.cancel_all(chat, "chat removed", self.emit)
         await self._close_engine(chat)
         self._queues.pop(chat.number, None)
@@ -3754,6 +3906,9 @@ class GatewayServer:
         """
         self._check_can_send(chat)
         attachments = check_attachments(msg.attachments)
+        # v0.25 §4.4: the person's message goes as usual; a wait stops, and the count starts again.
+        await self._end_signin(chat)
+        chat.signin_waits = 0
         # The session's title: the first line of the first thing the person
         # said (never a log step's message, which does not come this way).
         # A chat restored from a v0.1 index keeps no title rather than
@@ -4108,9 +4263,18 @@ class GatewayServer:
         return run
 
     async def _echo_turn(
-        self, chat: Chat, text: str, via: str | None = None, attachments: list[str] | None = None
+        self,
+        chat: Chat,
+        text: str,
+        via: str | None = None,
+        attachments: list[str] | None = None,
+        echo_user: bool = True,
     ) -> TurnRun:
-        """Register the next turn and send its echo: ``turn.started``, ``user.text``, ``chat.state working``."""
+        """Register the next turn and send its echo: ``turn.started``, ``user.text``, ``chat.state working``.
+
+        ``echo_user`` False (v0.25, carrying on after a sign-in) sends no
+        ``user.text``: the text is the gateway's, not the person's.
+        """
         chat.turn += 1
         run = TurnRun(turn=chat.turn, collector=TurnCollector(chat))
         # Registered before the engine starts: a second send meanwhile is busy.
@@ -4118,9 +4282,10 @@ class GatewayServer:
         await self.emit(chat, TurnStarted(ts=_now(), chat=chat.number, turn=chat.turn))
         # The person's words go in the ring too, as the engine receives them,
         # so a replay from this launch reads as a conversation, not a monologue.
-        await self.emit(
-            chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text, via=via, attachments=list(attachments or []))
-        )
+        if echo_user:
+            await self.emit(
+                chat, UserText(ts=_now(), chat=chat.number, turn=chat.turn, text=text, via=via, attachments=list(attachments or []))
+            )
         await self.set_state(chat, "working")
         return run
 

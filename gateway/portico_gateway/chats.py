@@ -52,6 +52,7 @@ from .messages import (
 from .state import ChatRecord, Index, PromptRecord, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
 
 if TYPE_CHECKING:
+    from .signin import SigninWaitState
     from .engine import Engine
 
 STATE_WORDS: frozenset[str] = frozenset(get_args(ChatStateWord))
@@ -197,6 +198,11 @@ class Chat:
         # v0.24: the prompt the session started with (never sent to the app).
         self.prompt = prompt
         self.can_log = False
+        # v0.25 §4.4: the sign-in wait running for this chat (``signin.SigninWaitState``),
+        # and how many waits ran since the last turn that finished ``done`` or the
+        # person's last message (ruling 18: a third is not started). Not stored.
+        self.signin: SigninWaitState | None = None
+        self.signin_waits = 0
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from

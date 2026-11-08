@@ -1634,12 +1634,16 @@ class SDKEngine:
 # reader classes the same strings as scaffolding.
 # The engine's note to itself that a background task ended (v0.10).
 TASK_NOTIFICATION_PREFIX = "<task-notification>"
+# v0.25 §4.4: what the gateway sends to carry a turn on after the person signed
+# in again. Never the person's words: a replay draws no bubble for it.
+CONTINUE_TEXT = "Your sign-in was renewed. Continue where you left off; don't repeat steps that already finished."
 _HIDDEN_USER_TEXT_PREFIXES = (
     "<system-reminder>",
     "<local-command-",
     "<command-",
     "[Request interrupted by user",
     TASK_NOTIFICATION_PREFIX,
+    CONTINUE_TEXT,
 )
 
 

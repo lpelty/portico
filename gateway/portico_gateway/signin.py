@@ -37,6 +37,7 @@ __all__ = [
     "SIGNIN_EXPIRED",
     "SigninCommand",
     "SigninKind",
+    "SigninWaitState",
     "claude_status_current",
     "cli_path",
     "command_current",
@@ -257,6 +258,25 @@ def parse_signin_link(lines: Sequence[str]) -> tuple[str | None, str | None]:
             if found_code:
                 code = found_code.group(0)
     return url, code
+
+
+# --- a wait ---------------------------------------------------------------------------
+
+
+@dataclass
+class SigninWaitState:
+    """One chat's sign-in wait (``Chat.signin``): which kind, for which turn, since when, and what is running for it."""
+
+    kind: SigninKind
+    turn: int
+    # When the wait began: ``signin.wait.started`` (the gateway's format), and as epoch seconds
+    # (a token written before it is not a new sign-in).
+    started: str
+    since: float
+    task: asyncio.Task[None] | None = None
+    command: SigninCommand | None = None
+    url: str | None = None
+    code: str | None = None
 
 
 # --- the sign-in command ------------------------------------------------------------
