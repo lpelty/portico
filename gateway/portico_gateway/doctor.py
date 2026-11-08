@@ -298,8 +298,13 @@ def check_system_prompt(config_path: Path, version: Callable[[], str | None] | N
     return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}, the engine's version)")
 
 
-def check_signin(config_path: Path) -> Check:
-    """v0.25 §4.5: what a turn that fails on an expired sign-in would wait on, per kind. Runs nothing."""
+def check_signin(config_path: Path, environ: Mapping[str, str] = os.environ) -> Check:
+    """v0.25 §4.5: what a turn that fails on an expired sign-in would wait on, per kind. Runs nothing.
+
+    v0.26: only the kinds ``environ`` allows (the ``claude`` kind only with a
+    claude.ai login, review M1). The doctor runs as the person, so it reads
+    their environment; the service's own environment can differ.
+    """
     from . import signin
 
     try:
@@ -313,7 +318,7 @@ def check_signin(config_path: Path) -> Check:
         return "claude" + command[len(cli):] if command.startswith(cli + " ") else command
 
     parts = []
-    for kind in signin.kinds_for(config):
+    for kind in signin.kinds_for(config, claude=signin.claude_login(environ)):
         how = f"`{shown(kind.check)}`" if kind.check else "AWS SSO token cache"
         opener = f"`{shown(kind.open)}`" if kind.open else "not set"
         parts.append(f"{kind.name}: {how} every {signin.poll_interval(kind):g} s; open: {opener}")

@@ -197,18 +197,29 @@ def _expiry(value: object) -> datetime | None:
     return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
+def normalise_start_url(url: str) -> str:
+    """A start URL as compared (review L3): no fragment, no trailing ``/``, the scheme and host in lower case."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url.strip())
+    path = parts.path.rstrip("/")
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
+
+
 def sso_cache_current(folder: Path, since: float, start_url: str | None, now: datetime) -> bool:
     """Whether the AWS SSO token cache holds a sign-in made after ``since`` that hasn't run out.
 
     A file counts when it has an ``accessToken`` (present, never read), its
-    ``startUrl`` is ``start_url`` (any, when that is None), its ``expiresAt``
-    is later than ``now``, and it was written after ``since`` (the error).
+    ``startUrl`` is ``start_url`` (any, when that is None; both normalised,
+    review L3), its ``expiresAt`` is later than ``now``, and it was written
+    after ``since`` (the failed turn's start, review L2).
     Unreadable and non-JSON files are skipped.
     """
     try:
         files = sorted(Path(folder).glob("*.json"))
     except OSError:
         return False
+    wanted = normalise_start_url(start_url) if start_url is not None else None
     for path in files:
         try:
             if path.stat().st_mtime <= since:
@@ -218,7 +229,8 @@ def sso_cache_current(folder: Path, since: float, start_url: str | None, now: da
             continue
         if not isinstance(data, dict) or not data.get("accessToken"):
             continue
-        if start_url is not None and data.get("startUrl") != start_url:
+        cached = data.get("startUrl")
+        if wanted is not None and (not isinstance(cached, str) or normalise_start_url(cached) != wanted):
             continue
         expires = _expiry(data.get("expiresAt"))
         if expires is not None and expires > now:
@@ -229,18 +241,19 @@ def sso_cache_current(folder: Path, since: float, start_url: str | None, now: da
 async def _run_check(command: str) -> tuple[int, str]:
     """Run a check command in a shell; its exit code and standard output (never logged). -1 when it can't run or times out."""
     try:
+        # Review L10: a session of its own, so a timeout ends everything it started.
         proc = await asyncio.create_subprocess_shell(
-            command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+            command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
         )
     except OSError:
         return -1, ""
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), CHECK_TIMEOUT)
     except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
+        _signal_group(proc, signal.SIGKILL)
         with contextlib.suppress(Exception):
-            await proc.wait()
+            await asyncio.wait_for(proc.wait(), 2.0)
         return -1, ""
     return proc.returncode if proc.returncode is not None else -1, out.decode("utf-8", "replace")
 
@@ -330,12 +343,19 @@ class SigninCommand:
     is logged: only that it started and how it exited.
     """
 
+    # Review N4: the lines kept for parsing; a sign-in prints its link and code near the start.
+    MAX_LINES = 200
+
     def __init__(self) -> None:
         self._proc: asyncio.subprocess.Process | None = None
         self._readers: list[asyncio.Task[None]] = []
         self._lines: list[str] = []
+        # How many lines the command printed in all (kept or not).
+        self._seen_lines = 0
         self._sent: tuple[str | None, str | None] = (None, None)
         self._on_link: LinkCallback | None = None
+        # Review N3: kept, so the exit report isn't garbage-collected before it logs.
+        self._exit_task: asyncio.Task[None] | None = None
 
     @property
     def running(self) -> bool:
@@ -345,6 +365,7 @@ class SigninCommand:
         """Start ``command`` in a shell with every pipe open; the gateway's own environment."""
         await self.close()
         self._lines = []
+        self._seen_lines = 0
         self._sent = (None, None)
         self._on_link = on_link
         self._proc = await asyncio.create_subprocess_shell(
@@ -360,7 +381,7 @@ class SigninCommand:
             asyncio.create_task(self._read(self._proc.stdout), name="signin-stdout"),
             asyncio.create_task(self._read(self._proc.stderr), name="signin-stderr"),
         ]
-        asyncio.create_task(self._report_exit(self._proc), name="signin-exit")
+        self._exit_task = asyncio.create_task(self._report_exit(self._proc), name="signin-exit")
 
     async def _read(self, stream: asyncio.StreamReader) -> None:
         while True:
@@ -372,6 +393,10 @@ class SigninCommand:
                 return
             if not raw:
                 return
+            self._seen_lines += 1
+            # Review N4: both found (or the buffer full): later lines aren't parsed.
+            if all(self._sent) or len(self._lines) >= self.MAX_LINES:
+                continue
             self._lines.append(raw.decode("utf-8", "replace"))
             found = parse_signin_link(self._lines)
             if found[0] is not None and found != self._sent and self._on_link is not None:

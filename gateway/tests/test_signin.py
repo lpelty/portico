@@ -392,3 +392,108 @@ def test_the_claude_kind_only_with_a_claude_login(env: dict[str, str], claude: b
     assert claude_login(env) is claude
     names = [k.name for k in kinds_for(Config(), claude=claude_login(env))]
     assert names == (["aws-sso", "claude"] if claude else ["aws-sso"])
+
+
+# --- v0.26: the v0.25 review's sign-in leftovers (PORT-22) ------------------------------
+
+
+def test_a_token_written_after_the_turn_started_counts(tmp_path: Path) -> None:
+    """L2: ``since`` is the failed turn's start, so a sign-in made while the turn was failing counts."""
+    now = datetime(2026, 11, 8, 20, 0, tzinfo=UTC)
+    turn_started = time.time() - 30
+    folder = _cache(tmp_path, "fresh.json", mtime=time.time() - 10)  # after the turn began, before the wait
+    assert sso_cache_current(folder, turn_started, START_URL, now)
+
+
+@pytest.mark.parametrize("cached", [
+    "https://example-x.awsapps.com/start/", "https://example-x.awsapps.com/start/#/",
+    "https://EXAMPLE-X.awsapps.com/start", "HTTPS://example-x.awsapps.com/start#",
+])
+def test_start_urls_match_with_a_slash_or_fragment(tmp_path: Path, cached: str) -> None:
+    """L3: a trailing ``/`` or ``#/``, or the host's case, never stops a match."""
+    now = datetime(2026, 11, 8, 20, 0, tzinfo=UTC)
+    folder = tmp_path / "sso"
+    folder.mkdir()
+    data = json.loads((FIXTURES / "sso_cache" / "fresh.json").read_text())
+    data["startUrl"] = cached
+    (folder / "a.json").write_text(json.dumps(data))
+    assert sso_cache_current(folder, time.time() - 60, START_URL, now)
+    assert sso_cache_current(folder, time.time() - 60, START_URL + "/", now)
+    assert not sso_cache_current(folder, time.time() - 60, "https://example-x.awsapps.com/other", now)
+
+
+def test_normalise_start_url() -> None:
+    from portico_gateway.signin import normalise_start_url
+
+    assert normalise_start_url("https://Example-X.awsapps.com/start/#/") == "https://example-x.awsapps.com/start"
+    assert normalise_start_url("https://example-x.awsapps.com/start") == "https://example-x.awsapps.com/start"
+    assert normalise_start_url("https://example-x.awsapps.com/Start") == "https://example-x.awsapps.com/Start", "the path keeps its case"
+
+
+async def test_a_timed_out_check_kills_its_children(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """L10: the check runs in a session of its own; on timeout its whole group goes."""
+    monkeypatch.setattr(signin, "CHECK_TIMEOUT", 0.3)
+    pids = tmp_path / "pids"
+    check = f"sh -c 'sleep 60 & echo $! > {shlex.quote(str(pids))}; wait'"
+    began = time.monotonic()
+    code, _ = await signin._run_check(check)
+    assert code == -1
+    assert time.monotonic() - began < 5, "the check's children don't hold it open"
+    child = int(pids.read_text().strip())
+
+    def alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    await _until(lambda: not alive(child), timeout=3.0)
+
+
+async def test_the_exit_report_task_is_kept(tmp_path: Path) -> None:
+    """N3: the task that reports the command's exit is kept until it completes."""
+    from portico_gateway.signin import SigninCommand
+
+    async def on_link(url: str | None, code: str | None) -> None:
+        pass
+
+    cmd = SigninCommand()
+    await cmd.start(_script(tmp_path, "quick", "exit 0\n"), on_link)
+    try:
+        assert cmd._exit_task is not None
+        await _until(lambda: cmd._exit_task is not None and cmd._exit_task.done())
+    finally:
+        await cmd.close()
+
+
+async def test_output_stops_parsing_once_link_and_code_are_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """N4: once both the URL and the code are found, later lines aren't parsed; the buffer is capped."""
+    from portico_gateway.signin import SigninCommand
+
+    calls = 0
+    real = signin.parse_signin_link
+
+    def counting(lines):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return real(lines)
+
+    monkeypatch.setattr(signin, "parse_signin_link", counting)
+    seen: list[tuple[str | None, str | None]] = []
+
+    async def on_link(url: str | None, code: str | None) -> None:
+        seen.append((url, code))
+
+    body = "echo 'https://device.sso.us-east-1.amazonaws.com/'\necho 'QKXW-RTBN'\n"
+    body += "i=0; while [ $i -lt 500 ]; do echo \"noise line $i\"; i=$((i+1)); done\nsleep 5\n"
+    cmd = SigninCommand()
+    await cmd.start(_script(tmp_path, "noisy", body), on_link)
+    try:
+        await _until(lambda: len(cmd._lines) >= SigninCommand.MAX_LINES or cmd._seen_lines >= 502)
+        await _until(lambda: cmd._seen_lines >= 502)
+        assert seen[-1] == ("https://device.sso.us-east-1.amazonaws.com/", "QKXW-RTBN")
+        assert calls <= 2, calls
+        assert len(cmd._lines) <= SigninCommand.MAX_LINES
+    finally:
+        await cmd.close()
