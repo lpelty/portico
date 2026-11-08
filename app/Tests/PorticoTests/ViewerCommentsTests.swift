@@ -149,7 +149,7 @@ final class ViewerCommentsTests: XCTestCase {
         let across = c.menuContext(selection: ["text": "endings. Second", "lines": [2, 2], "occurrence": 0], editMode: false)
         XCTAssertEqual(across.refusal, "Select text within one paragraph, outside links and formatting.")
         let code = c.menuContext(selection: ["text": "x", "lines": NSNull(), "occurrence": 0, "refusal": "ignored"], editMode: false)
-        XCTAssertEqual(code.refusal, "Comments can't go in code, tables or front matter.")
+        XCTAssertEqual(code.refusal, "Comments can't go in code or front matter.")
         let none = c.menuContext(selection: nil, editMode: false)
         XCTAssertFalse(none.hasSelection)
     }

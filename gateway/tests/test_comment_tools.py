@@ -227,3 +227,13 @@ async def test_add_refuses_text_the_table_does_not_show(folder: Path) -> None:
     out = await tools(folder)["comment_add"].handler({"path": "r.md", "quote": "extra", "text": "x"})
     assert out.get("is_error") is True
     assert text_of(out) == "That text isn't shown in the table."
+
+
+async def test_add_refuses_text_inside_a_link_or_entity(folder: Path) -> None:
+    """v0.25 #3: markers inside a URL or an entity would break the file, so the agent hears why."""
+    p = put(folder, "u.md", text="Visit https://alpha.com/x today.\n")
+    before = p.read_bytes()
+    out = await tools(folder)["comment_add"].handler({"path": "u.md", "quote": "alpha", "text": "x"})
+    assert out.get("is_error") is True
+    assert text_of(out) == '"alpha" is inside a link or an HTML entity in u.md; quote text outside it, or the whole link.'
+    assert p.read_bytes() == before

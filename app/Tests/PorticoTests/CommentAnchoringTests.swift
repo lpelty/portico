@@ -29,7 +29,7 @@ final class CommentAnchoringTests: XCTestCase {
     func testInsideInlineCodeRefused() {
         let result = CommentAnchoring.locate(.init(text: "make build", lines: 0...0, occurrence: 0), in: "Run `make build` now.\n")
         XCTAssertEqual(result, .failure(.insideIgnored))
-        XCTAssertEqual(CommentAnchoring.reason(.insideIgnored), "Comments can't go in code, tables or front matter.")
+        XCTAssertEqual(CommentAnchoring.reason(.insideIgnored), "Comments can't go in code or front matter.")
     }
 
     func testOverlapsExistingAnchor() throws {
@@ -123,5 +123,35 @@ final class CommentAnchoringTests: XCTestCase {
         let source = try CommentFormatTests.read("table-in-list.md")
         let r = try CommentAnchoring.locate(.init(text: "y", lines: 0...4, occurrence: 0, cell: 1, row: 1), in: source).get()
         XCTAssertEqual(slice(source, r), "y")
+    }
+
+    // MARK: - v0.25 sweep fixes
+
+    func testInsideIgnoredReasonDoesNotMentionTables() {
+        // #18: a single-cell selection works, so the words don't say tables.
+        XCTAssertEqual(CommentAnchoring.reason(.insideIgnored), "Comments can't go in code or front matter.")
+    }
+
+    func testACommentInsideALinkOrEntityIsRefused() {
+        // #3 (ruling 22): refused, not widened, in the words a bad selection already gets.
+        for (source, text) in [
+            ("Visit <https://alpha.com/x> today.\n", "alpha"),
+            ("Visit https://alpha.com/x today.\n", "alpha"),
+            ("Tom &amp; Jerry.\n", "Tom &"),
+        ] {
+            let result = CommentAnchoring.locate(.init(text: text, lines: 0...0, occurrence: 0), in: source)
+            XCTAssertEqual(result, .failure(.insideAtom), source)
+        }
+        XCTAssertEqual(CommentAnchoring.reason(.insideAtom), "Select text within one paragraph, outside links and formatting.")
+        let whole = CommentAnchoring.locate(.init(text: "https://alpha.com/x", lines: 0...0, occurrence: 0), in: "Visit https://alpha.com/x today.\n")
+        XCTAssertEqual(whole, .success(6..<25), "the whole bare link is fine")
+    }
+
+    @MainActor
+    func testAnEditModeSelectionInsideALinkSaysWhy() {
+        let name = "CommentAnchoringTests-\(UUID().uuidString)"
+        let comments = ViewerComments(defaults: UserDefaults(suiteName: name)!)
+        let context = comments.menuContext(selection: ["text": "alpha", "refusal": "atom"], editMode: true)
+        XCTAssertEqual(context.refusal, "Select text within one paragraph, outside links and formatting.")
     }
 }

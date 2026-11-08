@@ -66,6 +66,9 @@ enum CommentFormat {
         case insideIgnored
         /// Only in a table cell the renderer drops (beyond the header's columns).
         case notShown
+        /// v0.25 (#3, ruling 22): starts or ends inside an autolink, a bare URL or an HTML
+        /// entity, where the markers would break it. Refused, not widened.
+        case insideAtom
     }
 
     enum EditError: Error, Equatable {
@@ -1196,7 +1199,9 @@ enum CommentFormat {
                                     selection: Bool = false) -> Result<Range<Int>, Refusal>
     {
         guard !q.isEmpty else { return .failure(.notFound) }
-        var good: [Range<Int>] = []
+        // Each match, and whether it splits a link or an entity (it still counts as an occurrence).
+        var good: [(span: Range<Int>, splits: Bool)] = []
+        let atoms = atoms(t)
         var inCode = false, crosses = false, notShown = false
         var i = find(v.chars, q, from: 0)
         while let a = i {
@@ -1211,12 +1216,14 @@ enum CommentFormat {
             } else if v.breaks[a..<b].contains(true) {
                 crosses = true
             } else {
-                good.append(span)
+                good.append((span, atoms.contains { splits(span, $0) }))
             }
             i = find(v.chars, q, from: b)
         }
         if occurrence >= 1, occurrence <= good.count {
-            let r = good[occurrence - 1]
+            let match = good[occurrence - 1]
+            if match.splits { return .failure(.insideAtom) }
+            let r = match.span
             return .success(selection ? snapSelection(t, r) : snapGraphemes(t, r))
         }
         if !good.isEmpty { return .failure(.occurs(good.count)) }
@@ -1224,6 +1231,29 @@ enum CommentFormat {
         if inCode { return .failure(.insideIgnored) }
         if crosses { return .failure(.crossesBlocks) }
         return .failure(.notFound)
+    }
+
+    /// v0.25 (#3): an autolink with its brackets, a bare URL (up to whitespace or `<`) and
+    /// an HTML entity, as UTF-16 source ranges: the atoms a comment's markers never split.
+    private static let atomPatterns: [NSRegularExpression] = [
+        #"<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*>"#,
+        #"<[^\s<>@]+@[^\s<>@]+>"#,
+        #"(?:https?://|www\.)[^\s<]*"#,
+        #"&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});"#,
+    ].map { try! NSRegularExpression(pattern: $0) }
+
+    fileprivate static func atoms(_ t: U) -> [Range<Int>] {
+        let text = s(t[...]) as NSString
+        let whole = NSRange(location: 0, length: text.length)
+        return atomPatterns.flatMap { pattern in
+            pattern.matches(in: text as String, range: whole).map { $0.range.location..<($0.range.location + $0.range.length) }
+        }
+    }
+
+    /// Whether `span` starts or ends strictly inside `atom` (covering a whole one is fine).
+    fileprivate static func splits(_ span: Range<Int>, _ atom: Range<Int>) -> Bool {
+        (atom.lowerBound < span.lowerBound && span.lowerBound < atom.upperBound)
+            || (atom.lowerBound < span.upperBound && span.upperBound < atom.upperBound)
     }
 
     /// Like `findQuote`, but only matches whose source lies inside `range`
@@ -1310,11 +1340,17 @@ enum CommentFormat {
         return v
     }
 
+    /// v0.25 (#11, ruling 23): a name as a reply line writes it, each `:` as `∶` (U+2236 RATIO),
+    /// so the line reads back with the whole name. Compare authors through it too.
+    static func replyAuthor(_ name: String) -> String {
+        name.replacingOccurrences(of: ":", with: "\u{2236}")
+    }
+
     fileprivate static func replyLines(author: String, at: String, body: String, prefix: String? = nil) -> [String] {
         let parts = body.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
-        var out = [(prefix ?? "\(author) (\(at)): ") + escapeBody(parts[0])]
+        var out = [(prefix ?? "\(replyAuthor(author)) (\(at)): ") + escapeBody(parts[0])]
         for raw in parts.dropFirst() {
             var line = escapeBody(raw)
             // A leading backslash keeps a line that would read as a reply, a reaction, an
@@ -1378,7 +1414,9 @@ enum CommentFormat {
         } else if status == .open {
             return splice(t, orphanEdits(t))  // no status field reads as open already
         } else {
-            var pos = th.block.lowerBound + 7 + th.id.utf16.count
+            // After the ID where `<!--co:` begins (#9: an indented block's range starts at its line).
+            let opener = find(t, u("<!--co:"), from: th.block.lowerBound) ?? th.block.lowerBound
+            var pos = opener + 7 + th.id.utf16.count
             if let at = th.fields.first(where: { $0.key == "at" }) {
                 pos = at.range.upperBound + (at.range.upperBound < t.count && t[at.range.upperBound] == quoteMark ? 1 : 0)
             }

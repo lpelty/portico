@@ -194,7 +194,7 @@ export interface PorticoEditor {
   // v0.23: the draft's range, mapped through edits since it was marked.
   draftRange(): { from: number; to: number } | null;
   // v0.23: the selection, with why it can't be anchored (or null).
-  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | "cell" | null };
+  selectionRange(): { from: number; to: number; refusal: "ignored" | "crosses" | "cell" | "atom" | null };
   // v0.23: what the comments margin (viewer-comments.js) needs from the editor.
   commentHooks: CommentHooks;
   readonly view: EditorView;

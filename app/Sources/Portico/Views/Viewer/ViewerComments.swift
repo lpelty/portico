@@ -189,11 +189,16 @@ final class ViewerComments: ObservableObject {
 
     /// The person's own comments (by the name in use), which they may edit.
     func isPerson(_ author: String) -> Bool {
-        author.compare(personName, options: .caseInsensitive) == .orderedSame
+        Self.sameAuthor(author, personName)
     }
 
     func isAgent(_ author: String) -> Bool {
-        author.compare(agentName, options: .caseInsensitive) == .orderedSame
+        Self.sameAuthor(author, agentName)
+    }
+
+    /// A reply line writes a name's colons as RATIO (#11): both sides are compared as written.
+    static func sameAuthor(_ a: String, _ b: String) -> Bool {
+        CommentFormat.replyAuthor(a).compare(CommentFormat.replyAuthor(b), options: .caseInsensitive) == .orderedSame
     }
 
     /// The file the viewer shows changed (or none): comments as left for it, nothing active.
@@ -614,6 +619,7 @@ final class ViewerComments: ObservableObject {
         var refusal: String?
         switch selection["refusal"] as? String {
         case "ignored": refusal = CommentAnchoring.reason(.insideIgnored)
+        case "atom": refusal = CommentAnchoring.reason(.insideAtom)
         case "cell": refusal = CommentAnchoring.cellWords
         case "widget": refusal = CommentAnchoring.tableWidgetWords
         case .some: refusal = CommentAnchoring.reason(.crossesBlocks)

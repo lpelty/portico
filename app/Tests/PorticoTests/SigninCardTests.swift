@@ -39,7 +39,7 @@ final class SigninCardTests: XCTestCase {
         return nil
     }
 
-    func testTheAppDeclaresSignin() {
+    func testTheAppListsSigninInItsHello() {
         XCTAssertTrue(HelloClient.appCapabilities.contains("signin.v1"))
         XCTAssertEqual(SigninWait.capability, "signin.v1")
     }

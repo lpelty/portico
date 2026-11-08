@@ -165,6 +165,17 @@ test("selection in code or table refused", () => {
   assert.equal(selectionRefusal(s, text.indexOf("two"), text.indexOf("continues") + 4), null);
 });
 
+test("a selection inside a link or an entity is refused (v0.25 #3)", () => {
+  const text = "Visit <https://alpha.example/x> or https://beta.example/y and Tom &amp; Jerry.\n";
+  const s = state(text);
+  const at = (w: string) => text.indexOf(w);
+  assert.equal(selectionRefusal(s, at("alpha"), at("alpha") + 5), "atom", "inside an autolink");
+  assert.equal(selectionRefusal(s, at("beta"), at("beta") + 4), "atom", "inside a bare URL");
+  assert.equal(selectionRefusal(s, at("Tom"), at("&amp;") + 1), "atom", "ends inside an entity");
+  assert.equal(selectionRefusal(s, at("https://beta"), at("https://beta") + "https://beta.example/y".length), null, "the whole bare URL");
+  assert.equal(selectionRefusal(s, at("Jerry"), at("Jerry") + 5), null);
+});
+
 test("emoji offsets", () => {
   const text = read("emoji.md");
   const a = scanComments(text).anchors[0];
