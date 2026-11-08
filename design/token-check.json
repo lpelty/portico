@@ -1,0 +1,6 @@
+{
+  "about": "Rules for tests/pen_tokens.py, the check that lists hex colours in Pen's UI frames (v0.26, PORT-25). Edit here; no code change needed.",
+  "content_frame_prefix": "Content · ",
+  "checked_frame_prefixes": ["AS1", "AS2", "AS3", "AS4", "AS5", "AS6", "AT", "ZB", "ZC", "ZD", "ZE", "ZF", "ZG", "DS", "Sidebar", "TrafficLights"],
+  "allowed_values": ["#00000000"]
+}
