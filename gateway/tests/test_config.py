@@ -785,3 +785,34 @@ def test_hello_carries_read_aloud(tmp_path: Path) -> None:
     hello = hello_for(load_config(path), epoch="e", gateway_version="0.24.0")
     assert hello.voice is not None and hello.voice.read_aloud is True
     assert hello.model_dump(mode="json")["voice"] == {"read_aloud": True}
+
+
+# --- v0.25: Labs -------------------------------------------------------------
+
+
+def test_hello_lists_read_aloud_in_labs_with_its_source(tmp_path: Path) -> None:
+    """v0.25 §2.3: a config-turned-on Preview feature is a Labs item naming the file that turned it on."""
+    from portico_gateway.config import read_config_layers
+
+    base = tmp_path / "config.toml"
+    base.write_text("")
+    (tmp_path / "config.local.toml").write_text("[voice]\nread_aloud = true\n")
+    hello = hello_for(load_config(base), epoch="e", gateway_version="0.25.0", layers=read_config_layers(base))
+    assert hello.labs is not None and len(hello.labs) == 1
+    item = hello.labs[0]
+    assert (item.key, item.tag, item.source, item.home) == ("voice.read_aloud", "preview", "config.local.toml", "voice")
+    assert item.title == "Read aloud"
+    assert item.detail == "A Play button on each reply; replies are read as they arrive while it's on."
+
+
+def test_hello_labs_source_defaults_to_config_toml_without_layers(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[voice]\nread_aloud = true\n")
+    hello = hello_for(load_config(path), epoch="e", gateway_version="0.25.0")
+    assert hello.labs is not None and hello.labs[0].source == "config.toml"
+
+
+def test_hello_has_no_labs_on_a_stock_config() -> None:
+    assert hello_for(Config(), epoch="e", gateway_version="0.25.0").labs is None
+    dumped = hello_for(Config(), epoch="e", gateway_version="0.25.0").model_dump(mode="json", exclude_none=True)
+    assert "labs" not in dumped

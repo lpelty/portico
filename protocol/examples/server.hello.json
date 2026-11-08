@@ -32,6 +32,23 @@
   "epoch": "7f1c4a2e-3b5d-4c6e-9a8b-0d1e2f3a4b5c",
   "gateway_version": "0.1.0",
   "hide_session_folder": false,
+  "labs": [
+    {
+      "detail": "A Play button on each reply; replies are read as they arrive while it's on.",
+      "home": "voice",
+      "key": "voice.read_aloud",
+      "source": "config.local.toml",
+      "tag": "preview",
+      "title": "Read aloud"
+    },
+    {
+      "detail": "A summary of yesterday's sessions each morning.",
+      "key": "digest.daily",
+      "source": "plugin:digest",
+      "tag": "local",
+      "title": "Daily digest"
+    }
+  ],
   "link_sites": {
     "acme.example": "Acme"
   },

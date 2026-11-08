@@ -798,6 +798,28 @@ class Voice(Strict):
     read_aloud: bool = False
 
 
+# v0.25: the key of the Read aloud Labs item (the app draws its controls for it).
+READ_ALOUD_LAB = "voice.read_aloud"
+
+
+class LabItem(Strict):
+    """v0.25: one row in the app's Settings › Labs (``hello.labs``).
+
+    ``tag`` is ``preview`` for a feature built into the app and not yet
+    released, ``local`` for one this machine's plug-in added. ``source``
+    says where it was turned on: ``config.toml``, ``config.local.toml`` or
+    ``plugin:<module>``. ``home`` is the Settings tab it moves to when
+    released, when known (``voice``, ``general``...).
+    """
+
+    key: str
+    title: str
+    detail: str
+    tag: Literal["preview", "local"]
+    source: str
+    home: str | None = None
+
+
 class HelloServer(Envelope):
     type: Literal["hello"] = "hello"
     protocol: Literal[1] = PROTOCOL_VERSION
@@ -839,6 +861,9 @@ class HelloServer(Envelope):
     person: Person | None = None
     # v0.24: config ``[voice]``; absent from an older gateway.
     voice: Voice | None = None
+    # v0.25: the Labs items (built-in Preview features the config turned on,
+    # then plug-ins' Local items). Absent when there are none, and from an older gateway.
+    labs: list[LabItem] | None = None
 
 
 class ChatList(Envelope):
@@ -1882,6 +1907,17 @@ def example_messages() -> dict[str, BaseModel]:
             threads_max=2,
             person=Person(name="Sam Rivera"),
             voice=Voice(read_aloud=True),
+            labs=[
+                LabItem(
+                    key="voice.read_aloud", title="Read aloud",
+                    detail="A Play button on each reply; replies are read as they arrive while it's on.",
+                    tag="preview", source="config.local.toml", home="voice",
+                ),
+                LabItem(
+                    key="digest.daily", title="Daily digest", detail="A summary of yesterday's sessions each morning.",
+                    tag="local", source="plugin:digest",
+                ),
+            ],
         ),
         ChatList(
             ts=_TS,

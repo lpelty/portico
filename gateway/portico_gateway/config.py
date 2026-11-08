@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, READ_ALOUD_LAB
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -742,7 +742,12 @@ def _now() -> str:
 
 
 def hello_for(
-    config: Config, epoch: str, gateway_version: str, plugins: Plugins | None = None, config_stale: bool = False
+    config: Config,
+    epoch: str,
+    gateway_version: str,
+    plugins: Plugins | None = None,
+    config_stale: bool = False,
+    layers: ConfigLayers | None = None,
 ) -> HelloServer:
     """The ``hello`` the gateway sends first on every connection.
 
@@ -759,6 +764,9 @@ def hello_for(
     presentation with ``[threads] max`` above 0, with ``threads_max`` set to it,
     and (v0.18) ``apps.v1`` when ``[apps] enabled``, and (v0.22) ``spaces.act`` with ``[spaces] act``
     (``messages.deployment.v1`` is always listed: the gateway can send ``deployment.message``).
+    ``labs`` (v0.25) lists each built-in Preview feature the config turns on
+    (``voice.read_aloud``), its ``source`` read from ``layers`` (``config.toml``
+    without them); plug-ins add their own Local items in ``on_hello``.
     """
     can_log = bool(config.log_prompt) or (plugins is not None and plugins.renew is not None)
     capabilities = list(CAPABILITIES)
@@ -800,8 +808,26 @@ def hello_for(
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
         person=Person(name=config.person.name) if config.person.name else None,
         voice=Voice(read_aloud=config.voice.read_aloud),
+        labs=_labs(config, layers) or None,
     )
     return plugins.on_hello(hello) if plugins is not None else hello
+
+
+def _labs(config: Config, layers: ConfigLayers | None) -> list[LabItem]:
+    """v0.25: the built-in Preview features this config turns on, as Labs items."""
+    items: list[LabItem] = []
+    if config.voice.read_aloud:
+        items.append(
+            LabItem(
+                key=READ_ALOUD_LAB,
+                title="Read aloud",
+                detail="A Play button on each reply; replies are read as they arrive while it's on.",
+                tag="preview",
+                source=layers.source_of(READ_ALOUD_LAB) if layers is not None else "config.toml",
+                home="voice",
+            )
+        )
+    return items
 
 
 def can_restart_all(config: Config, plugins: Plugins | None = None) -> bool:

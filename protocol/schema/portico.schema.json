@@ -3986,6 +3986,21 @@
           "default": null,
           "title": "Id"
         },
+        "labs": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/LabItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labs"
+        },
         "link_sites": {
           "additionalProperties": {
             "type": "string"
@@ -4141,6 +4156,57 @@
         "path"
       ],
       "title": "Hit",
+      "type": "object"
+    },
+    "LabItem": {
+      "additionalProperties": false,
+      "description": "v0.25: one row in the app's Settings › Labs (``hello.labs``).\n\n``tag`` is ``preview`` for a feature built into the app and not yet\nreleased, ``local`` for one this machine's plug-in added. ``source``\nsays where it was turned on: ``config.toml``, ``config.local.toml`` or\n``plugin:<module>``. ``home`` is the Settings tab it moves to when\nreleased, when known (``voice``, ``general``...).",
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "home": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Home"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "tag": {
+          "enum": [
+            "preview",
+            "local"
+          ],
+          "title": "Tag",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "detail",
+        "tag",
+        "source"
+      ],
+      "title": "LabItem",
       "type": "object"
     },
     "McpAdd": {

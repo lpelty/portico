@@ -169,7 +169,7 @@ from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, 
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
 from .cc_version import PROMPT_CHANGED, CachedVersion
-from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, local_config_path, with_default_spaces
+from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, ConfigError, ConfigLayers, hello_for, read_config_layers, local_config_path, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
     STILL_LOADING_TEXT,
@@ -735,7 +735,7 @@ class ChatCallbacks:
     def agent_name(self) -> str:
         """v0.23: the comment tools' author, the agent name in the hello the app receives (after plug-ins)."""
         s = self.server
-        return hello_for(s.config, s.epoch, s.version, s.plugins).brand.agent_name
+        return hello_for(s.config, s.epoch, s.version, s.plugins, layers=s.config_layers).brand.agent_name
 
     @property
     def viewer_roots(self) -> list[Path]:
@@ -1027,6 +1027,13 @@ class GatewayServer:
         # v0.24: and the ``config.local.toml`` beside it (created, changed or deleted is stale).
         self.config_mtimes = self._config_mtimes()
         self._config_stale_sent = False
+        # v0.25: the two config files as read at start, so a Labs item names the file that turned it on.
+        self.config_layers: ConfigLayers | None = None
+        if self.config_path is not None:
+            try:
+                self.config_layers = read_config_layers(self.config_path)
+            except ConfigError:
+                self.config_layers = None
         # v0.24: the status line has said the custom prompt could not be read.
         self._prompt_fallback_said = False
         # v0.24: the engine's version (asked once; tests set their own) and the versions already warned about.
@@ -1591,7 +1598,7 @@ class GatewayServer:
         stale = self.config_stale()
         if stale:
             self._config_stale_sent = True  # ``hello`` says it; no separate ``config.stale`` needed
-        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale))
+        await self._send(conn, hello_for(self.config, self.epoch, self.version, self.plugins, config_stale=stale, layers=self.config_layers))
         await self._send(conn, self.chat_list())
         # v0.4: every connection hears the services as they stand (an empty
         # list when the deployment lists none: the app has its own Gateway row).
@@ -2084,7 +2091,7 @@ class GatewayServer:
         """The kept lists an app hears on connect (v0.11 item 66): the default folder's and each live session's."""
         # (as the app names the folder, the key the list is kept under)
         folders: list[tuple[str, str]] = []
-        default = hello_for(self.config, self.epoch, self.version, self.plugins).default_folder
+        default = hello_for(self.config, self.epoch, self.version, self.plugins, layers=self.config_layers).default_folder
         if default:
             try:
                 key = str(Path(default).expanduser().resolve())
@@ -4006,7 +4013,7 @@ class GatewayServer:
 
     def deployment_commands(self) -> set[str]:
         """Command names (no ``/``) the deployment offers: ``hello.commands`` and its actions' slash text."""
-        hello = hello_for(self.config, self.epoch, self.version, self.plugins)
+        hello = hello_for(self.config, self.epoch, self.version, self.plugins, layers=self.config_layers)
         names = {c.strip().lstrip("/").split()[0] for c in hello.commands if c.strip().lstrip("/")}
         for action in hello.actions:
             name = slash_command(action.text)

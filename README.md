@@ -336,6 +336,15 @@ each configured plug-in the same way. `examples/plugin/` holds a complete
 example. The app takes no plug-ins: a new kind of screen is a request
 upstream.
 
+**Private capabilities stay out of this repo** (v0.25). Anything in the
+app's code ships to everyone, switched off. A capability for one setup
+belongs in a gateway plug-in, and Settings › Labs is where it shows: a
+plug-in's `on_hello` adds its own items to `hello.labs`
+(`LabItem(key, title, detail, tag, source, home=None)` from
+`portico_gateway.messages`), and the gateway marks each one Local, from
+`plugin:<module>`, whatever the plug-in set. Its row in Labs is
+informational; the plug-in's own config turns the feature on.
+
 ## Permissions
 
 Each session has a permission mode, shown on the composer and changeable
@@ -377,8 +386,10 @@ Settings › Voice turns each half on or off.
 apps use still sound dated, so the button and the Listen settings are kept
 out of sight until a deployment or a person turns them on. v0.24: put
 `read_aloud = true` under `[voice]` in `config.local.toml` (or the
-deployment's `config.toml`) and restart the gateway; Settings › Voice then
-shows the switch, and the on/off choice stays the person's. The older
+deployment's `config.toml`) and restart the gateway; Settings shows the
+switch, and the on/off choice stays the person's. v0.25: Read aloud's
+switch, voice, speed and sample live in Settings › Labs, a tab shown only
+while a feature being tried out is on, until Read aloud is released. The older
 machine flag still works too:
 `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`
 (and off with `-bool NO`), then relaunch.
@@ -398,7 +409,7 @@ the microphone: voice input says it needs the installed app (`bin/install`).
 
 **Read aloud.** Each reply has Read aloud beside Copy; while it reads it
 is Stop reading, and Esc stops too. It uses the voice and speed chosen in
-Settings › Voice (the system voices, and your Personal Voice once you
+Settings › Labs (the system voices, and your Personal Voice once you
 allow it there). Code is never read: a code block is "See the code below.",
 a table "See the table below."; links are read as their text.
 

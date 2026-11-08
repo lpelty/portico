@@ -599,6 +599,23 @@ v0.24: `voice?: {read_aloud: bool}` (config `[voice] read_aloud`, default
 person's own on/off choice stays in the app. `false` or absent (an older
 gateway): the app keeps its older machine flag (`voice.readAloudAvailable`).
 
+v0.25: `labs?: [{key, title, detail, tag, source, home?}]`: the rows of the
+app's Settings › Labs, for features being tried out on this machine.
+`tag` is `preview` (built into the app, not yet released, off for everyone
+unless turned on) or `local` (added by this machine's setup, a gateway
+plug-in; not part of the app). `source` says where the item was turned on:
+`config.toml` (the base file's name), `config.local.toml`, or
+`plugin:<module>`. `home` is the Settings tab the item moves to once
+released (`voice`, `general`...), when known. The gateway adds one
+`preview` item for each built-in feature its config turns on (v0.25:
+`voice.read_aloud`, with `[voice] read_aloud = true`); each plug-in's
+`on_hello` may add its own items, which the gateway stamps `tag: "local"`
+and `source: "plugin:<module>"` whatever the plug-in set. The app draws the
+controls for keys it knows (`voice.read_aloud`) and an informational row for
+any other. Absent when there are no items. An older app ignores it; an
+older gateway sends none, so the app shows Labs only for its own machine
+flag.
+
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
 folder (the `chat` root) when the deployment has roots of its own to show.
