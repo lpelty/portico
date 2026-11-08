@@ -1993,10 +1993,7 @@ ignores them):
   words the notification itself.
 - `notice_target?: string`: from `notice_target`, a fragment in the page
   (`meeting-1000`) a click on the notification scrolls to. A leading `#`
-  is dropped; an empty value is left out. The app scrolls to the element
-  with that `id`, else that `name`; in a Markdown space use
-  `<a name="meeting-1000"></a>`, since v0.24 drops the file's own `id`
-  attributes.
+  is dropped; an empty value is left out.
 - `removable?: false`: from `removable: false` (also `no`, any case) in the
   front matter or comment block. Sent only when `false`; absent means
   `true`. The gateway refuses `space.rename` and `space.remove` for such a
@@ -2024,8 +2021,9 @@ within the last second and is used once. In a rendered Markdown page an
 action link counts only when it is text (no children but `strong`, `em`,
 `b`, `i` or `code`, and at least one letter or digit; the Hangul fillers
 and the blank Braille cell are blank), and the page drops the file's
-styles, `id` and `class` attributes (marked's `language-…` on code stays),
-colour attributes, `<font>`, `autofocus` and `tabindex`. A
+styles, `class` attributes (marked's `language-…` on code stays), colour
+attributes, `<font>`, `autofocus` and `tabindex`, and prefixes the file's
+`id` and `name` with `user-content-` (fragments still find them). A
 script's `a.click()`, a dispatched event, a timer, a redirect to a
 `space-action:` URL, or keyboard focus set by script or `autofocus` runs
 nothing (the app logs and ignores it), in Markdown and HTML spaces alike.

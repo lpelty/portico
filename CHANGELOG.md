@@ -70,11 +70,15 @@ reference for every key.
   the page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`,
   `<base>`, `<meta>`, `<style>`, `<link>` and SVG animation (`<set>`,
   `<animate>`, `<animateMotion>`, `<animateTransform>`), every `on*`,
-  `style`, `id`, `class` (except marked's `language-…` on code),
+  `style`, `class` (except marked's `language-…` on code),
   `autofocus` and `tabindex` attribute and the colour attributes
   (`color`, `bgcolor`, `background`, `text`, `link`, `vlink`, `alink`),
   unwraps `<font>` (its text stays), and removes `javascript:`,
-  `vbscript:` and `data:` URLs (`data:image/` stays, in `src` only). Ordinary raw HTML (`<details>`,
+  `vbscript:` and `data:` URLs (`data:image/` stays, in `src` only). The
+  file's `id` and `name` attributes are kept with a `user-content-`
+  prefix in the rendered page, as on GitHub, so a deployment's CSS or
+  script can't rely on them; in-page `#links`, the address's fragment and
+  a space's `notice_target` still find them. Ordinary raw HTML (`<details>`,
   `<kbd>`, `<br>`, tables, images, links) renders as before, without
   inline styles. The Properties block's fold is now wired by the page's
   script rather than an inline handler.
@@ -97,8 +101,9 @@ reference for every key.
   actions from script must now have the person click the link.** In a
   Markdown space an action link counts only when it is text (plain, bold,
   italic or code, with at least one letter or digit), and the page drops
-  the file's styles, `id` and `class` attributes, colour attributes,
-  `<font>`, `autofocus` and `tabindex`. **What it cannot do:** the app checks that a real click or key
+  the file's styles, `class` attributes, colour attributes, `<font>`,
+  `autofocus` and `tabindex` (and prefixes its `id` and `name` with
+  `user-content-`). **What it cannot do:** the app checks that a real click or key
   press by the person reached the link; it can't tell who wrote the link.
   A space that shows untrusted text (email, web pages, other people's
   notes) must not let links from that text through unchanged. In an HTML
@@ -123,8 +128,6 @@ reference for every key.
 
 ### For deployments
 
-- A Markdown space's `notice_target` must name an `<a name="…">` in the
-  page: the viewer drops the file's own `id` attributes (v0.24).
 - Keep `config.toml` the deployment's; a person's preferences go in
   `config.local.toml`. A deployment that keeps its config in git adds
   `config.local.toml` to that repository's `.gitignore`.

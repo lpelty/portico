@@ -518,7 +518,7 @@ page. Only the person's real click or key press on the link runs it
 app can't tell who wrote a link, so a space that shows untrusted text
 (email, web pages, other people's notes) must not let links from that
 text through unchanged; see PROTOCOL.md `space.act`. A page can word the notification its change raises (`notice`, and
-`notice_target`, a fragment in the page, an `<a name="…">` in Markdown; `notice: ""` for none) and can be
+`notice_target`, a fragment in the page; `notice: ""` for none) and can be
 fixed (`removable: false`: no Remove, no Rename). `examples/spaces/meeting-prep.md` is a
 starting file. Spaces need an app that lists `spaces.v1`, and the
 viewer tools need `viewer.v1`; an older app is sent neither.
