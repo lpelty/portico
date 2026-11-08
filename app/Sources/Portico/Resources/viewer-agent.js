@@ -86,7 +86,8 @@
   function labelledBy(el) {
     var ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
     return ids.map(function (id) {
-      var other = document.getElementById(id);
+      // A rendered Markdown page prefixes the file's ids (v0.24): that one first.
+      var other = document.getElementById("user-content-" + id) || document.getElementById(id);
       return other ? other.innerText || other.textContent : "";
     }).join(" ");
   }

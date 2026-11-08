@@ -1146,7 +1146,11 @@ struct WebPane: NSViewRepresentable {
         static func scrollToFragment(_ fragment: String) -> String {
             """
             (function (id) {
-              var e = document.getElementById(id) || document.getElementsByName(id)[0];
+              // v0.24 (round 4): a rendered Markdown page prefixes the file's ids
+              // and names with "user-content-"; that one first, then the plain one.
+              var p = 'user-content-' + id;
+              var e = document.getElementById(p) || document.getElementsByName(p)[0]
+                || document.getElementById(id) || document.getElementsByName(id)[0];
               if (e) e.scrollIntoView({ block: 'start' });
             })(\(MarkdownPage.jsString(fragment))); true
             """

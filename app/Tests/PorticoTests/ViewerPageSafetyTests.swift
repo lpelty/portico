@@ -968,7 +968,9 @@ final class ViewerPageSafetyTests: XCTestCase {
             """, in: rig.view) as? [String: Any]
         XCTAssertEqual(state?["text"] as? Bool, true, "the comments script no longer removes a file span: \(state ?? [:])")
         XCTAssertEqual(state?["block"] as? Bool, true)
-        XCTAssertEqual(state?["fileIds"] as? Int, 0)
+        XCTAssertEqual(state?["fileIds"] as? Int, 1, "round 4: the file's id stays, prefixed")
+        let fileId = try await js("return document.querySelector('#body [id]').id", in: rig.view) as? String
+        XCTAssertEqual(fileId, "user-content-pc-margin")
         XCTAssertEqual(state?["fileClasses"] as? [String], ["code.language-swift"], "only marked's language class stays")
         XCTAssertEqual(state?["marginIsTheApps"] as? Bool, true)
     }
@@ -997,5 +999,74 @@ final class ViewerPageSafetyTests: XCTestCase {
         let (rig, activated) = try await spaceRig("# Brief\n\n[完了 2](space-action:mark-done?item=t3)\n", name: "brief.md")
         try click(try await center(of: "#body a", in: rig), in: rig)
         try await poll("a CJK text link runs") { activated().count == 1 }
+    }
+
+    // MARK: - Round 4: file ids and names are prefixed (as GitHub does), and every fragment lookup finds them
+
+    private static let longPage: String = {
+        let filler = (1...60).map { "Paragraph \($0) of filler text." }.joined(separator: "\n\n")
+        return "# Guide\n\n[go](#setup)\n\n\(filler)\n\n<h2 id=\"setup\">Setup</h2>\n\nInstall it.\n\n\(filler)\n"
+    }()
+
+    private func headingTop(_ rig: Rig) async throws -> Double {
+        let top = try await js("return document.getElementById('user-content-setup').getBoundingClientRect().top", in: rig.view) as? Double
+        return try XCTUnwrap(top)
+    }
+
+    func testAnInPageLinkToARawHTMLIdScrollsThere() async throws {
+        let rig = try await rig(Self.longPage)
+        let names = try await js("return [!!document.getElementById('user-content-setup'), !!document.getElementById('setup')]", in: rig.view) as? [Bool]
+        XCTAssertEqual(names, [true, false], "the file's id is prefixed")
+        let startTop = try await headingTop(rig)
+        XCTAssertGreaterThan(startTop, 400, "the heading starts far below")
+        try click(try await center(of: "#body a[href='#setup']", in: rig), in: rig)
+        try await poll("the click scrolls to the heading") {
+            let top = (try? await self.headingTop(rig)) ?? 1000
+            return abs(top) < 40
+        }
+        let hash = try await js("return location.hash", in: rig.view) as? String
+        XCTAssertEqual(hash, "#setup", "the address keeps the file's own fragment")
+    }
+
+    func testAFragmentInTheAddressFindsThePrefixedId() async throws {
+        let rig = try await rig(Self.longPage)
+        _ = try await js("location.hash = 'setup'; return true;", in: rig.view)
+        try await poll("the fragment scrolls to the heading") {
+            let top = (try? await self.headingTop(rig)) ?? 1000
+            return abs(top) < 40
+        }
+    }
+
+    func testNoticeTargetNamingARawHTMLIdStillScrolls() async throws {
+        let rig = try await rig(Self.longPage)
+        rig.coordinator.scroll(to: WebPane.FragmentRequest(key: "n1", fragment: "setup"), in: rig.view)
+        try await poll("notice_target scrolls to the heading") {
+            let top = (try? await self.headingTop(rig)) ?? 1000
+            return abs(top) < 40
+        }
+    }
+
+    func testAFileNameCannotClobberTheCommentsScriptsLookups() async throws {
+        let source = Self.thread + """
+            <img name="getElementById" src="x.png"> <form name="querySelector"></form>
+
+            """
+        let rig = try await rig(source)
+        let names = try await js("""
+            return Array.prototype.map.call(document.querySelectorAll('#body [name]'), function (e) { return e.getAttribute('name'); });
+            """, in: rig.view) as? [String]
+        XCTAssertEqual(names, ["user-content-getElementById", "user-content-querySelector"])
+        try await poll("the comments script still says it is ready") { rig.comments.webView === rig.view }
+        rig.comments.setShown(true, chat: 1, focus: FakeFocus())
+        rig.comments.activeID = "ab12c"
+        rig.comments.push()
+        try await poll("the thread's card is active") {
+            (try? await self.js("return !!document.querySelector('.pc-card.pc-active[data-id=ab12c] textarea')", in: rig.view) as? Bool) == true
+        }
+        _ = try await js("""
+            var t = document.querySelector('.pc-card.pc-active[data-id=ab12c] textarea'); t.value = 'Still works.';
+            t.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); return true;
+            """, in: rig.view)
+        try await poll("the reply is written") { self.text(rig.file).contains("Still works.") }
     }
 }
