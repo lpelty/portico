@@ -1183,6 +1183,301 @@
     ],
     "orphan_anchors": []
    }
+  },
+  {
+   "name": "edit-first-comment",
+   "file": "plugin-basic.md",
+   "op": "edit",
+   "args": {
+    "id": "k3x9a",
+    "index": 0,
+    "body": "Edited: still true?"
+   },
+   "expect": "edit-first-comment.after.md"
+  },
+  {
+   "name": "edit-middle-reply",
+   "file": "list-after.md",
+   "op": "edit",
+   "args": {
+    "id": "ab12c",
+    "index": 1,
+    "body": "Yes.\nNote: every one\n\nthen --> done"
+   },
+   "expect": "edit-middle-reply.after.md"
+  },
+  {
+   "name": "edit-multiline-to-one",
+   "file": "continuation.md",
+   "op": "edit",
+   "args": {
+    "id": "cn001",
+    "index": 0,
+    "body": "One line now."
+   },
+   "expect": "edit-multiline-to-one.after.md"
+  },
+  {
+   "name": "delete-reply",
+   "file": "continuation.md",
+   "op": "delete",
+   "args": {
+    "id": "cn001",
+    "index": 1
+   },
+   "expect": "delete-reply.after.md"
+  },
+  {
+   "name": "delete-thread-no-replies",
+   "file": "resolved.md",
+   "op": "delete",
+   "args": {
+    "id": "rs001",
+    "index": 0
+   },
+   "expect": "delete-thread-no-replies.after.md"
+  },
+  {
+   "name": "delete-thread-with-replies",
+   "file": "list-after.md",
+   "op": "delete",
+   "args": {
+    "id": "ab12c",
+    "index": 0
+   },
+   "expect": "delete-thread-with-replies.after.md"
+  },
+  {
+   "name": "edit-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "edit",
+   "args": {
+    "id": "cr001",
+    "index": 0,
+    "body": "Two\nlines."
+   },
+   "expect": "edit-crlf.after.md"
+  },
+  {
+   "name": "delete-thread-crlf",
+   "file": "crlf-no-final-newline.md",
+   "op": "delete",
+   "args": {
+    "id": "cr001",
+    "index": 0
+   },
+   "expect": "delete-thread-crlf.after.md"
+  },
+  {
+   "name": "delete-thread-in-table",
+   "file": "table-cells.md",
+   "op": "delete",
+   "args": {
+    "id": "tp002",
+    "index": 0
+   },
+   "expect": "delete-thread-in-table.after.md"
+  },
+  {
+   "name": "edit-in-table",
+   "file": "table-cells.md",
+   "op": "edit",
+   "args": {
+    "id": "tp001",
+    "index": 0,
+    "body": "In a cell."
+   },
+   "expect": "edit-in-table.after.md"
+  },
+  {
+   "name": "delete-thread-at-eof",
+   "file": "block-at-eof.md",
+   "op": "delete",
+   "args": {
+    "id": "ef001",
+    "index": 0
+   },
+   "expect": "delete-thread-at-eof.after.md"
+  },
+  {
+   "name": "parse-delete-thread-with-replies",
+   "file": "delete-thread-with-replies.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-delete-reply",
+   "file": "delete-reply.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cn001",
+      "by": "Sam",
+      "at": "2026-11-03T12:00:00.000Z",
+      "status": "open",
+      "quote": "after an agent write",
+      "anchored_text": "after an agent write",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-03T12:00:00.000Z",
+        "text": "Does it keep the scroll position?\nAnd the selection too?"
+       }
+      ],
+      "reactions": [
+       "+👍 Sam, Agent"
+      ]
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-edit-crlf",
+   "file": "edit-crlf.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "cr001",
+      "by": "Sam",
+      "at": "2026-11-04T16:00:00.000Z",
+      "status": "open",
+      "quote": "line endings",
+      "anchored_text": "line endings",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-04T16:00:00.000Z",
+        "text": "Two\nlines."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-edit-middle-reply",
+   "file": "edit-middle-reply.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "ab12c",
+      "by": "Sam",
+      "at": "2026-10-17T09:00:00.000Z",
+      "status": "open",
+      "quote": "round trip",
+      "anchored_text": "round trip",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "Byte for byte?"
+       },
+       {
+        "author": "Agent",
+        "at": "2026-10-18",
+        "text": "Yes.\nNote: every one\n\nthen --> done"
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "de34f",
+      "by": "Sam",
+      "at": "2026-10-17T09:05:00.000Z",
+      "status": "resolved",
+      "quote": "files with CRLF",
+      "anchored_text": "files with CRLF",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "And old Windows files."
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "gh56i",
+      "by": "Sam",
+      "at": "2026-10-17T09:10:00.000Z",
+      "status": "open",
+      "quote": "Ship it now",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-10-17",
+        "text": "This text was edited away."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "parse-delete-thread-in-table",
+   "file": "delete-thread-in-table.after.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "tp001",
+      "by": "Sam",
+      "at": "2026-11-07T18:38:26.176Z",
+      "status": "open",
+      "quote": "alpha",
+      "anchored_text": "alpha",
+      "replies": [
+       {
+        "author": "Sam",
+        "at": "2026-11-07T18:38:26.176Z",
+        "text": "Here."
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
   }
  ]
 }

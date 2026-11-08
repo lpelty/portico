@@ -42,7 +42,16 @@ enum CommentFormat {
         var fields: [Field]
         /// Where the closing `-->` starts.
         var close: Int
+        /// Each reply's source: its line's start, where its text starts, and the
+        /// end of its last line (without the line break). UTF-16 offsets.
+        var replySpans: [ReplySpan] = []
         var isOrphan: Bool { anchor == nil }
+    }
+
+    struct ReplySpan: Equatable, Sendable {
+        var start: Int
+        var textStart: Int
+        var end: Int
     }
 
     struct Parsed: Equatable, Sendable {
@@ -654,21 +663,27 @@ enum CommentFormat {
 
     /// `^(.*?)(?:\s\(([^)]*)\))?:\s?(.*)$` — name, time, text.
     fileprivate static func replyMatch(_ line: String) -> (String, String?, String)? {
+        replyMatchAt(line).map { ($0.0, $0.1, $0.2) }
+    }
+
+    /// The reply pattern, with the UTF-16 offset where the text (group 3) starts.
+    fileprivate static func replyMatchAt(_ line: String) -> (String, String?, String, Int)? {
         let cs = Array(line.unicodeScalars)
         func str(_ r: Range<Int>) -> String { String(String.UnicodeScalarView(cs[r])) }
-        func rest(_ from: Int) -> String {
+        func rest(_ from: Int) -> (String, Int) {
             var f = from
             if f < cs.count, cs[f].properties.isWhitespace { f += 1 }
-            return str(f..<cs.count)
+            return (str(f..<cs.count), str(0..<f).utf16.count)
         }
         var k = 0
         while k < cs.count {
             if cs[k].properties.isWhitespace, k + 1 < cs.count, cs[k + 1] == "(" {
                 if let j = cs[(k + 2)...].firstIndex(of: ")"), j + 1 < cs.count, cs[j + 1] == ":" {
-                    return (str(0..<k), str((k + 2)..<j), rest(j + 2))
+                    let r = rest(j + 2)
+                    return (str(0..<k), str((k + 2)..<j), r.0, r.1)
                 }
             }
-            if cs[k] == ":" { return (str(0..<k), nil, rest(k + 1)) }
+            if cs[k] == ":" { let r = rest(k + 1); return (str(0..<k), nil, r.0, r.1) }
             k += 1
         }
         return nil
@@ -682,23 +697,30 @@ enum CommentFormat {
         s.trimmingCharacters(in: .whitespaces)
     }
 
-    fileprivate static func threadLines(_ raw: [String]) -> ([Reply], [String]) {
+    fileprivate static func threadLines(_ raw: [(String, Int)]) -> ([Reply], [String], [ReplySpan]) {
         var replies: [Reply] = []
         var reactions: [String] = []
-        for line in raw {
+        var spans: [ReplySpan] = []
+        for (line, at) in raw {
+            let end = at + line.utf16.count
             if line.hasPrefix("\\") {
-                if !replies.isEmpty { replies[replies.count - 1].text += "\n" + unescapeBody(String(line.dropFirst())) }
+                if !replies.isEmpty {
+                    replies[replies.count - 1].text += "\n" + unescapeBody(String(line.dropFirst()))
+                    spans[spans.count - 1].end = end
+                }
                 continue
             }
             if blankLine(line) { continue }
             if line.hasPrefix("+") { reactions.append(line); continue }
-            if let m = replyMatch(line), !trimmed(m.0).isEmpty {
+            if let m = replyMatchAt(line), !trimmed(m.0).isEmpty {
                 replies.append(Reply(author: trimmed(m.0), at: m.1, text: unescapeBody(m.2)))
+                spans.append(ReplySpan(start: at, textStart: at + m.3, end: end))
             } else if !replies.isEmpty {
                 replies[replies.count - 1].text += "\n" + unescapeBody(line)
+                spans[spans.count - 1].end = end
             }
         }
-        return (replies, reactions)
+        return (replies, reactions, spans)
     }
 
     // MARK: parse
@@ -720,14 +742,15 @@ enum CommentFormat {
             let fields = headerFields(t, headFrom, hb)
             var values: [String: String] = [:]
             for (f, v) in fields where values[f.key] == nil { values[f.key] = v }
-            var raw: [String] = []
+            var raw: [(String, Int)] = []
             if b.close > hb {
-                let body = s(t[hb..<b.close])
-                raw = body.components(separatedBy: "\n").dropFirst().map {
-                    $0.hasSuffix("\r") ? String($0.dropLast()) : $0
+                var at = hb
+                for (k, part) in s(t[hb..<b.close]).components(separatedBy: "\n").enumerated() {
+                    if k > 0 { raw.append((part.hasSuffix("\r") ? String(part.dropLast()) : part, at)) }
+                    at += part.utf16.count + 1
                 }
             }
-            let (replies, reactions) = threadLines(raw)
+            let (replies, reactions, spans) = threadLines(raw)
             var anchor: Range<Int>? = nil
             if let o = ms.first(where: { $0.id == b.id && !$0.closing }),
                 let c = ms.first(where: { $0.id == b.id && $0.closing && $0.range.lowerBound >= o.range.upperBound })
@@ -739,7 +762,8 @@ enum CommentFormat {
                     id: b.id, by: values["by"] ?? "", at: values["at"] ?? "",
                     status: values["status"] == "resolved" ? .resolved : .open,
                     quote: values["quote"] ?? "", replies: replies, reactions: reactions,
-                    block: b.start..<b.end, anchor: anchor, fields: fields.map(\.0), close: b.close))
+                    block: b.start..<b.end, anchor: anchor, fields: fields.map(\.0), close: b.close,
+                    replySpans: spans))
         }
         var orphans: [String] = []
         for m in ms.filter({ !$0.closing }) + ms.filter({ $0.closing })
@@ -1266,11 +1290,11 @@ enum CommentFormat {
         return v
     }
 
-    fileprivate static func replyLines(author: String, at: String, body: String) -> [String] {
+    fileprivate static func replyLines(author: String, at: String, body: String, prefix: String? = nil) -> [String] {
         let parts = body.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
-        var out = ["\(author) (\(at)): " + escapeBody(parts[0])]
+        var out = [(prefix ?? "\(author) (\(at)): ") + escapeBody(parts[0])]
         for raw in parts.dropFirst() {
             var line = escapeBody(raw)
             // A leading backslash keeps a line that would read as a reply, a reaction, an
@@ -1341,5 +1365,43 @@ enum CommentFormat {
             edit = Edit(start: pos, end: pos, insert: " status:\(status.rawValue)", order: 0)
         }
         return splice(t, orphanEdits(t) + [edit])
+    }
+
+    /// Replace the text of comment `index` (0 is the thread's first) and nothing else:
+    /// its author and time stay as written; other comments, reactions and the header don't change.
+    static func editComment(_ text: String, threadID: String, index: Int, body: String) throws -> String {
+        let t = u(text)
+        let th = try thread(t, threadID)
+        guard index >= 0, index < th.replySpans.count else { throw EditError.unknownThread("\(threadID)#\(index)") }
+        let span = th.replySpans[index]
+        let prefix = s(t[span.start..<span.textStart])
+        let lines = replyLines(author: "", at: "", body: body, prefix: prefix).joined(separator: lineEnding(text))
+        return splice(t, orphanEdits(t) + [Edit(start: span.start, end: span.end, insert: lines, order: 0)])
+    }
+
+    /// Delete reply `index`, or with `index` 0 the whole thread: its block and its anchors.
+    static func deleteComment(_ text: String, threadID: String, index: Int) throws -> String {
+        let t = u(text)
+        let r = regions(t)
+        let th = try thread(t, threadID)
+        guard index >= 0, index < max(1, th.replySpans.count) else { throw EditError.unknownThread("\(threadID)#\(index)") }
+        var edits = orphanEdits(t)
+        if index == 0 {
+            var start = th.block.lowerBound
+            let end = th.block.upperBound
+            if end == t.count, t.last != nl, start > 0 {
+                // The file keeps having no final line break.
+                start -= start >= 2 && t[start - 2] == cr && t[start - 1] == nl ? 2 : 1
+            }
+            edits.append(Edit(start: start, end: end, insert: "", order: 2))
+            edits += liveMarkers(t, r).filter { $0.id == threadID }.map {
+                Edit(start: $0.range.lowerBound, end: $0.range.upperBound, insert: "", order: 1)
+            }
+            return splice(t, edits)
+        }
+        let span = th.replySpans[index]
+        let next = t[span.end...].firstIndex(of: nl).map { $0 + 1 } ?? t.count
+        edits.append(Edit(start: span.start, end: next, insert: "", order: 0))
+        return splice(t, edits)
     }
 }

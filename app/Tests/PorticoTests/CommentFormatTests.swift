@@ -57,6 +57,10 @@ final class CommentFormatTests: XCTestCase {
                 body: a["body"] as! String)
         case "resolve": return try CommentFormat.setStatus(text, threadID: a["id"] as! String, .resolved)
         case "reopen": return try CommentFormat.setStatus(text, threadID: a["id"] as! String, .open)
+        case "edit":
+            return try CommentFormat.editComment(text, threadID: a["id"] as! String, index: a["index"] as! Int, body: a["body"] as! String)
+        case "delete":
+            return try CommentFormat.deleteComment(text, threadID: a["id"] as! String, index: a["index"] as! Int)
         default: XCTFail("unknown op"); return text
         }
     }

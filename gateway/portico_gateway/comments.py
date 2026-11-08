@@ -72,6 +72,8 @@ class Thread:
     # Where the header's fields sit, for splices: (key, value start, value end).
     fields: tuple[tuple[str, int, int], ...] = ()
     close: int = 0  # offset of the closing "-->"
+    # Each reply's source: (line start, where its text starts, end of its last line without the line break).
+    reply_spans: tuple[tuple[int, int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -507,13 +509,16 @@ def _header_fields(text: str, a: int, b: int) -> list[tuple[str, int, int, str]]
     return out
 
 
-def _thread_lines(raw: list[str]) -> tuple[list[Reply], list[str]]:
+def _thread_lines(raw: list[tuple[str, int]]) -> tuple[list[Reply], list[str], list[tuple[int, int, int]]]:
+    """Replies, reactions and each reply's source span, from (line, start offset) pairs."""
     replies: list[list] = []
     reactions: list[str] = []
-    for line in raw:
+    spans: list[list[int]] = []
+    for line, at in raw:
         if line.startswith("\\"):
             if replies:
                 replies[-1][2] += "\n" + unescape_body(line[1:])
+                spans[-1][2] = at + len(line)
             continue
         if _blank(line):
             continue
@@ -523,9 +528,11 @@ def _thread_lines(raw: list[str]) -> tuple[list[Reply], list[str]]:
         m = _REPLY_RE.match(line)
         if m and m.group(1).strip():
             replies.append([m.group(1).strip(), m.group(2), unescape_body(m.group(3))])
+            spans.append([at, at + m.start(3), at + len(line)])
         elif replies:
             replies[-1][2] += "\n" + unescape_body(line)
-    return [Reply(a, t, x) for a, t, x in replies], reactions
+            spans[-1][2] = at + len(line)
+    return [Reply(a, t, x) for a, t, x in replies], reactions, [tuple(x) for x in spans]
 
 
 # --- parse --------------------------------------------------------------------
@@ -558,9 +565,14 @@ def parse(text: str) -> Parsed:
         values: dict[str, str] = {}
         for k, _, _, v in fields:
             values.setdefault(k, v)  # the first of a duplicated key wins
-        body = text[hb:close]
-        raw = [l.rstrip("\r") for l in body.split("\n")[1:]] if close > hb else []
-        replies, reactions = _thread_lines(raw)
+        raw: list[tuple[str, int]] = []
+        if close > hb:
+            at = hb
+            for k, part in enumerate(text[hb:close].split("\n")):
+                if k:
+                    raw.append((part.rstrip("\r"), at))
+                at += len(part) + 1
+        replies, reactions, spans = _thread_lines(raw)
         anchor = None
         o = next((m for m in markers if m[2] == tid and not m[3]), None)
         if o:
@@ -580,6 +592,7 @@ def parse(text: str) -> Parsed:
                 anchor=anchor,
                 fields=tuple((k, s, e) for k, s, e, _ in fields),
                 close=close,
+                reply_spans=tuple(spans),
             )
         )
     orphans = []
@@ -1004,9 +1017,9 @@ def _field(value: str, always: bool = False) -> str:
     return value
 
 
-def _reply_lines(author: str, at: str, body: str) -> list[str]:
+def _reply_lines(author: str, at: str, body: str, prefix: str | None = None) -> list[str]:
     parts = body.strip().replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    out = [f"{author} ({at}): " + escape_body(parts[0])]
+    out = [(prefix if prefix is not None else f"{author} ({at}): ") + escape_body(parts[0])]
     for line in parts[1:]:
         line = escape_body(line)
         m = _REPLY_RE.match(line)
@@ -1066,3 +1079,35 @@ def set_status(text: str, thread_id: str, status: Literal["open", "resolved"]) -
         pos = at[2] + (1 if at and at[2] < len(text) and text[at[2]] == '"' else 0) if at else t.block[0] + len(f"<!--co:{t.id}")
         edit = (pos, pos, f" status:{status}", 0)
     return _splice(text, _orphan_edits(text) + [edit])
+
+
+def edit_comment(text: str, thread_id: str, index: int, *, body: str) -> str:
+    """Replace the text of comment ``index`` (0 is the thread's first) and nothing else: its author
+    and time stay as written, the other comments, reactions and the header are untouched."""
+    t = _thread(text, thread_id)
+    if not 0 <= index < len(t.reply_spans):
+        raise KeyError(f"{thread_id}#{index}")
+    start, text_at, end = t.reply_spans[index]
+    eol = line_ending(text)
+    lines = _reply_lines("", "", body, prefix=text[start:text_at])
+    return _splice(text, _orphan_edits(text) + [(start, end, eol.join(lines), 0)])
+
+
+def delete_comment(text: str, thread_id: str, index: int) -> str:
+    """Delete reply ``index``, or with ``index`` 0 the whole thread: its block and its anchors."""
+    reg = _regions(text)
+    t = _thread(text, thread_id)
+    if not 0 <= index < max(1, len(t.reply_spans)):
+        raise KeyError(f"{thread_id}#{index}")
+    edits = _orphan_edits(text)
+    if index == 0:
+        start, end = t.block
+        if end == len(text) and not text.endswith("\n") and start > 0:
+            start -= 2 if text[start - 2 : start] == "\r\n" else 1  # the file keeps having no final line break
+        edits.append((start, end, "", 2))
+        edits += [(a, b, "", 1) for a, b, tid, _ in _markers(text, reg) if tid == thread_id]
+        return _splice(text, edits)
+    start, _, end = t.reply_spans[index]
+    nl = text.find("\n", end)
+    edits.append((start, len(text) if nl < 0 else nl + 1, "", 0))
+    return _splice(text, edits)
