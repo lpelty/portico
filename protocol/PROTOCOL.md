@@ -2011,7 +2011,12 @@ the gateway lists `spaces.act`, and only for the person's own click: the
 link must be in the page's main frame (not an iframe) while the viewer is
 showing that space's own page, and a click made by the viewer agent
 (`viewer.act`) never sends it (the agent can
-ask the person to click). The gateway runs `[spaces] act` with
+ask the person to click). v0.24: "the person's own click" means a real,
+trusted click (`event.isTrusted`) on that same link within the last second,
+used once; a script's `a.click()`, a dispatched event, a timer or a redirect
+to a `space-action:` URL runs nothing (the app logs and ignores it), in
+Markdown and HTML spaces alike. A space that triggered actions from script
+must have the person click the link instead. The gateway runs `[spaces] act` with
 `/bin/sh -c` for up to 30 s, with `$PORTICO_SPACE`, `$PORTICO_ACTION` and
 `$PORTICO_ITEM` (empty with no item) set in the environment, never in the
 command string, and answers with a new `spaces.list` (the deployment

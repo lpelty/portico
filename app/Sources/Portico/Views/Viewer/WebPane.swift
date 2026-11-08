@@ -446,6 +446,36 @@ struct WebPane: NSViewRepresentable {
         let fragment: String
     }
 
+    /// v0.24 (sweep #2): the person's real clicks on `space-action:` links,
+    /// as the page's click recorder reports them. A navigation to such a
+    /// link runs its action only when it matches a click on the same link
+    /// from the last second, and each click is used once.
+    struct TrustedClicks {
+        static let window: TimeInterval = 1
+        private var clicks: [(link: String, at: Date)] = []
+
+        mutating func note(_ link: URL, at time: Date) {
+            clicks.append((Self.key(link), time))
+            if clicks.count > 16 { clicks.removeFirst(clicks.count - 16) }
+        }
+
+        /// Whether a click on `link` came at most a second before `now`; the click is used up.
+        mutating func take(_ link: URL, at now: Date) -> Bool {
+            clicks.removeAll { now.timeIntervalSince($0.at) > Self.window }
+            let key = Self.key(link)
+            guard let i = clicks.firstIndex(where: { $0.link == key && now >= $0.at }) else { return false }
+            clicks.remove(at: i)
+            return true
+        }
+
+        /// The link as compared: its scheme without case, as the URL parser has it.
+        private static func key(_ link: URL) -> String {
+            let text = link.absoluteString
+            guard let colon = text.firstIndex(of: ":") else { return text }
+            return text[..<colon].lowercased() + text[colon...]
+        }
+    }
+
     /// The page the pane renders for `load` at a text scale: a Markdown
     /// file's page, scaled (v0.15 §3). An HTML file and a site are shown
     /// as they are, at their true size (`nil`: nothing is rendered).
@@ -536,6 +566,8 @@ struct WebPane: NSViewRepresentable {
         var onSpaceAction: ((URL) -> Void)?
         /// v0.23: the file viewer's comments; the page's `comments` messages go to it.
         weak var comments: ViewerComments?
+        /// v0.24 (sweep #2): the person's recent real clicks on action links.
+        var trustedClicks = TrustedClicks()
         static let log = Logger(subsystem: "Portico", category: "viewer")
         /// v0.22 (S2): the last fragment request carried out, and one waiting
         /// for the page to finish loading.
@@ -561,7 +593,40 @@ struct WebPane: NSViewRepresentable {
             }
             configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
             configuration.userContentController.add(CommentsMessages(self), name: CommentsMessages.name)
+            // v0.24 (sweep #2): the click recorder lives in a world of its own,
+            // so the page's scripts can neither reach its handler nor fake a click.
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: Self.clickRecorder, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.clickWorld))
+            configuration.userContentController.add(
+                SpaceActionClicks(self), contentWorld: Self.clickWorld, name: Self.spaceActionClickHandler)
             return configuration
+        }
+
+        /// v0.24 (sweep #2): the world the click recorder runs in, apart from the page's own.
+        static let clickWorld = WKContentWorld.world(name: "space-action-clicks")
+        static let spaceActionClickHandler = "spaceActionClick"
+
+        /// Tells the app of each real click (`isTrusted`) on a `space-action:`
+        /// link, in the capture phase so the page cannot stop it first. A
+        /// script's `a.click()`, a dispatched event, a timer or a redirect is
+        /// never trusted, so it is never reported.
+        static let clickRecorder = """
+            (function () {
+              document.addEventListener("click", function (e) {
+                if (!e.isTrusted || !e.target || !e.target.closest) return;
+                var a = e.target.closest("a[href]");
+                if (!a) return;
+                var href = typeof a.href === "string" ? a.href : (a.href && a.href.baseVal) || a.getAttribute("href") || "";
+                if (!/^\\s*space-action:/i.test(href)) return;
+                window.webkit.messageHandlers.\(spaceActionClickHandler).postMessage({ href: href.trim(), time: Date.now() });
+              }, true);
+            })();
+            """
+
+        /// The person's real click on `link`, reported by the click recorder.
+        func trustedClick(on link: URL, isMainFrame: Bool) {
+            guard isMainFrame else { return }
+            trustedClicks.note(link, at: Date())
         }
 
         /// v0.24 (sweep #1): whether a `comments` message comes from the page
@@ -879,12 +944,15 @@ struct WebPane: NSViewRepresentable {
             }
             // v0.22 (S1): a space-action link never loads; a click on one in
             // a space's page goes to the model, which checks it and the
-            // gateway's `spaces.act`. One a script follows is not a click,
-            // nor is one in a frame, on a site a link went to, or while the
-            // viewer agent acts (its clicks never run the deployment's actions).
+            // gateway's `spaces.act`. v0.24 (sweep #2): only the person's real
+            // click counts, matched against the click recorder's report; a
+            // script's `a.click()`, a dispatched event, a timer or a redirect
+            // does not. Nor does one in a frame, on a site a link went to, or
+            // while the viewer agent acts (its clicks never run the deployment's actions).
             if let url = navigationAction.request.url, url.scheme?.lowercased() == SpaceActionLink.scheme {
                 decisionHandler(.cancel)
                 let taken = Self.takesSpaceAction(
+                    trustedClick: trustedClicks.take(url, at: Date()),
                     linkActivated: navigationAction.navigationType == .linkActivated,
                     targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
                     sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
@@ -902,11 +970,13 @@ struct WebPane: NSViewRepresentable {
 
         /// v0.22: whether a `space-action:` navigation runs: a link click,
         /// from and into the main frame, while the pane shows the space's own
-        /// page, and not while the viewer agent acts.
+        /// page, and not while the viewer agent acts. v0.24 (sweep #2): and
+        /// the person really clicked that link within the last second.
         static func takesSpaceAction(
-            linkActivated: Bool, targetIsMainFrame: Bool?, sourceIsMainFrame: Bool, showingOwnPage: Bool, agentActing: Bool
+            trustedClick: Bool, linkActivated: Bool, targetIsMainFrame: Bool?, sourceIsMainFrame: Bool,
+            showingOwnPage: Bool, agentActing: Bool
         ) -> Bool {
-            linkActivated && targetIsMainFrame == true && sourceIsMainFrame && showingOwnPage && !agentActing
+            trustedClick && linkActivated && targetIsMainFrame == true && sourceIsMainFrame && showingOwnPage && !agentActing
         }
 
         /// The pane shows the file it was asked to (a space is a Markdown
@@ -1016,3 +1086,19 @@ private final class CommentsMessages: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// v0.24 (sweep #2): the click recorder's handler, reachable only from its
+/// own content world. Holds its pane weakly.
+private final class SpaceActionClicks: NSObject, WKScriptMessageHandler {
+    weak var coordinator: WebPane.Coordinator?
+
+    init(_ coordinator: WebPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            guard let href = (message.body as? [String: Any])?["href"] as? String, let link = URL(string: href) else { return }
+            coordinator?.trustedClick(on: link, isMainFrame: message.frameInfo.isMainFrame)
+        }
+    }
+}

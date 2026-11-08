@@ -373,4 +373,123 @@ final class ViewerPageSafetyTests: XCTestCase {
     private func text(_ url: URL) -> String {
         (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
+
+    // MARK: - §11.2 space actions only on a real click
+
+    private func spaceRig(_ body: String, name: String = "space.html") async throws -> (Rig, () -> [URL]) {
+        let rig = try await rig(body, name: name)
+        var activated: [URL] = []
+        rig.coordinator.onSpaceAction = { activated.append($0) }
+        return (rig, { activated })
+    }
+
+    private func center(of selector: String, in rig: Rig) async throws -> NSPoint {
+        let rect = try await js("""
+            var r = document.querySelector(\(MarkdownPage.jsString(selector))).getBoundingClientRect();
+            return [r.left + r.width / 2, r.top + r.height / 2];
+            """, in: rig.view) as? [Double]
+        let p = try XCTUnwrap(rect)
+        // Window coordinates: the view fills the window; AppKit's y runs up.
+        return NSPoint(x: p[0], y: rig.view.bounds.height - p[1])
+    }
+
+    /// A real mouse click, as AppKit delivers one to the view: the page sees a trusted click.
+    private func click(_ point: NSPoint, in rig: Rig) throws {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: rig.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            if type == .leftMouseDown { rig.view.mouseDown(with: event) } else { rig.view.mouseUp(with: event) }
+        }
+    }
+
+    func testAScriptsClickOnASpaceActionLinkRunsNothing() async throws {
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body>
+            <a id="act" href="space-action:approve?item=1">Approve</a>
+            <script>
+            window.fire = function () { document.getElementById('act').click(); };
+            window.dispatch = function () { document.getElementById('act').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); };
+            window.later = function () { setTimeout(function () { document.getElementById('act').click(); }, 10); };
+            window.go = function () { location.href = 'space-action:approve?item=1'; };
+            </script></body></html>
+            """)
+        for call in ["fire()", "dispatch()", "later()", "go()"] {
+            _ = try await js("\(call); return true;", in: rig.view)
+        }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "a.click(), a dispatched event, a timer and a redirect run nothing")
+    }
+
+    func testAPersonsRealClickStillRunsTheAction() async throws {
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body style="margin:0">
+            <p><a id="act" href="space-action:approve?item=1" style="display:inline-block;padding:20px">Approve</a></p>
+            <p><a id="other" href="space-action:archive" style="display:inline-block;padding:20px">Archive</a></p>
+            <script>window.clicks = []; document.addEventListener('click', function (e) { clicks.push(e.isTrusted); });</script>
+            </body></html>
+            """)
+        try click(try await center(of: "#act", in: rig), in: rig)
+        try await poll("the person's click runs the action") { activated().count == 1 }
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=1"])
+        let trusted = try await js("return clicks", in: rig.view) as? [Bool]
+        XCTAssertEqual(trusted, [true], "the test's click is a trusted one")
+
+        // The click is used once: a script following the same link right after runs nothing.
+        _ = try await js("document.getElementById('act').click(); return true;", in: rig.view)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(activated().count, 1, "a click is used once")
+
+        // A real click on one link does not let a script follow another.
+        try click(try await center(of: "#act", in: rig), in: rig)
+        try await poll("the second real click runs it again") { activated().count == 2 }
+        _ = try await js("document.getElementById('other').click(); return true;", in: rig.view)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:approve?item=1", "space-action:approve?item=1"])
+    }
+
+    func testAPersonsRealClickRunsTheActionInAMarkdownSpace() async throws {
+        let (rig, activated) = try await spaceRig("# Brief\n\n[Mark done](space-action:mark-done?item=t1)\n", name: "brief.md")
+        try click(try await center(of: "#body a", in: rig), in: rig)
+        try await poll("the person's click runs the action") { activated().count == 1 }
+        XCTAssertEqual(activated().map(\.absoluteString), ["space-action:mark-done?item=t1"])
+    }
+
+    func testTheTrustedClickRecordIsUsedOnceAndOnlyWithinASecond() {
+        var clicks = WebPane.TrustedClicks()
+        let link = URL(string: "space-action:approve?item=1")!
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        XCTAssertFalse(clicks.take(link, at: t0), "no click recorded")
+        clicks.note(link, at: t0)
+        XCTAssertFalse(clicks.take(URL(string: "space-action:approve?item=2")!, at: t0), "another link")
+        XCTAssertTrue(clicks.take(link, at: t0.addingTimeInterval(0.5)))
+        XCTAssertFalse(clicks.take(link, at: t0.addingTimeInterval(0.6)), "used once")
+        clicks.note(link, at: t0)
+        XCTAssertFalse(clicks.take(link, at: t0.addingTimeInterval(1.01)), "older than a second")
+        XCTAssertFalse(clicks.take(link, at: t0.addingTimeInterval(1.02)), "and gone")
+        clicks.note(link, at: t0)
+        XCTAssertFalse(clicks.take(link, at: t0.addingTimeInterval(-0.5)), "a click from the future is no click")
+        // The scheme is matched without case, as the parser does.
+        clicks.note(URL(string: "SPACE-ACTION:archive")!, at: t0)
+        XCTAssertTrue(clicks.take(URL(string: "space-action:archive")!, at: t0))
+    }
+
+    func testTheClickRecorderIsOutOfThePagesReach() async throws {
+        let (rig, activated) = try await spaceRig("""
+            <!doctype html><html><body><a id="act" href="space-action:approve?item=1">Approve</a></body></html>
+            """)
+        let reachable = try await js("""
+            var h = window.webkit && window.webkit.messageHandlers;
+            return Object.keys(h || {}).length === 0 ? (h && h.\(WebPane.Coordinator.spaceActionClickHandler) ? 'yes' : 'no') :
+              (h.\(WebPane.Coordinator.spaceActionClickHandler) ? 'yes' : 'no');
+            """, in: rig.view) as? String
+        XCTAssertEqual(reachable, "no", "the page's own scripts cannot post a click")
+        // Even a forged post (were it reachable) followed by a.click() runs nothing.
+        _ = try await js("""
+            try { window.webkit.messageHandlers.\(WebPane.Coordinator.spaceActionClickHandler).postMessage({href: 'space-action:approve?item=1'}); } catch (e) {}
+            document.getElementById('act').click(); return true;
+            """, in: rig.view)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(activated(), [])
+    }
 }
