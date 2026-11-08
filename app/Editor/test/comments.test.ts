@@ -56,7 +56,10 @@ test("scan agrees with fixtures", () => {
     const scan = scanComments(text);
     assert.deepEqual(scan.blocks.map((b) => b.id), c.parse.threads.map((t: any) => t.id), c.name);
     assert.deepEqual(scan.blocks.map((b) => b.status), c.parse.threads.map((t: any) => t.status), c.name);
+    const seenIds = new Set<string>();
     for (const t of c.parse.threads) {
+      if (seenIds.has(t.id)) continue; // a pasted copy of a block: an orphan thread; its id's anchors are the first's
+      seenIds.add(t.id);
       const a = scan.anchors.find((a) => a.id === t.id);
       if (t.anchored_text === null) assert.equal(a, undefined, `${c.name} ${t.id}`);
       else assert.equal(strip(text.slice(a!.openTo, a!.closeFrom)), t.anchored_text, `${c.name} ${t.id}`);

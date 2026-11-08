@@ -70,6 +70,17 @@ enum CommentFormat {
 
     enum EditError: Error, Equatable {
         case unknownThread(String)
+        /// The comment an action meant isn't there as it was seen (someone changed it).
+        case changed
+        /// A comment needs text.
+        case blank
+    }
+
+    /// A comment as it was shown: what an edit or delete is aimed at.
+    struct Fingerprint: Equatable, Sendable {
+        var author: String
+        var at: String?
+        var text: String
     }
 
     static let idCharacters = Array("abcdefghijklmnopqrstuvwxyz0123456789")
@@ -733,6 +744,8 @@ enum CommentFormat {
         var threads: [Thread] = []
         var seen = Set<String>()
         for b in r.blocks {
+            // A later block with the same id (a pasted copy) is an orphan thread.
+            let firstOfID = !seen.contains(b.id)
             seen.insert(b.id)
             var headerEnd = t[b.start...].firstIndex(of: nl) ?? b.end
             if headerEnd >= b.close { headerEnd = b.end }
@@ -745,14 +758,21 @@ enum CommentFormat {
             var raw: [(String, Int)] = []
             if b.close > hb {
                 var at = hb
-                for (k, part) in s(t[hb..<b.close]).components(separatedBy: "\n").enumerated() {
-                    if k > 0 { raw.append((part.hasSuffix("\r") ? String(part.dropLast()) : part, at)) }
+                let parts = s(t[hb..<b.close]).components(separatedBy: "\n")
+                for (k, part) in parts.enumerated() {
+                    if k > 0 {
+                        var line = part.hasSuffix("\r") ? String(part.dropLast()) : part
+                        if k == parts.count - 1 {  // text before a `-->` on the same line
+                            while line.hasSuffix(" ") || line.hasSuffix("\t") { line.removeLast() }
+                        }
+                        raw.append((line, at))
+                    }
                     at += part.utf16.count + 1
                 }
             }
             let (replies, reactions, spans) = threadLines(raw)
             var anchor: Range<Int>? = nil
-            if let o = ms.first(where: { $0.id == b.id && !$0.closing }),
+            if firstOfID, let o = ms.first(where: { $0.id == b.id && !$0.closing }),
                 let c = ms.first(where: { $0.id == b.id && $0.closing && $0.range.lowerBound >= o.range.upperBound })
             {
                 anchor = o.range.upperBound..<c.range.lowerBound
@@ -1367,41 +1387,76 @@ enum CommentFormat {
         return splice(t, orphanEdits(t) + [edit])
     }
 
-    /// Replace the text of comment `index` (0 is the thread's first) and nothing else:
-    /// its author and time stay as written; other comments, reactions and the header don't change.
-    static func editComment(_ text: String, threadID: String, index: Int, body: String) throws -> String {
-        let t = u(text)
-        let th = try thread(t, threadID)
-        guard index >= 0, index < th.replySpans.count else { throw EditError.unknownThread("\(threadID)#\(index)") }
-        let span = th.replySpans[index]
-        let prefix = s(t[span.start..<span.textStart])
-        let lines = replyLines(author: "", at: "", body: body, prefix: prefix).joined(separator: lineEnding(text))
-        return splice(t, orphanEdits(t) + [Edit(start: span.start, end: span.end, insert: lines, order: 0)])
+    /// The thread and comment an action means: by id and the comment's fingerprint when given
+    /// (exactly one match, the thread's first comment exactly when `index` is 0), else by index.
+    fileprivate static func locate(_ t: U, _ threadID: String, _ index: Int, _ fp: Fingerprint?) throws -> (Thread, Int) {
+        let threads = parse(t).threads.filter { $0.id == threadID }
+        guard let first = threads.first else { throw EditError.unknownThread(threadID) }
+        guard let fp else {
+            guard index >= 0, index < max(1, first.replySpans.count) else { throw EditError.unknownThread("\(threadID)#\(index)") }
+            return (first, index)
+        }
+        var found: [(Thread, Int)] = []
+        for th in threads {
+            for (i, r) in th.replies.enumerated()
+            where r.author == fp.author && r.at == fp.at && r.text == fp.text && (i == 0) == (index == 0) {
+                found.append((th, i))
+            }
+        }
+        guard found.count == 1 else { throw EditError.changed }
+        return found[0]
     }
 
-    /// Delete reply `index`, or with `index` 0 the whole thread: its block and its anchors.
-    static func deleteComment(_ text: String, threadID: String, index: Int) throws -> String {
+    fileprivate static func closerOnLine(_ t: U, _ end: Int, _ close: Int) -> Bool {
+        end <= close && !t[end..<close].contains(nl)
+    }
+
+    /// Replace the text of comment `index` (0 is the thread's first) and nothing else: its author
+    /// and time stay as written; a closing `-->` on its line moves to a line of its own.
+    static func editComment(_ text: String, threadID: String, index: Int, body: String, fingerprint: Fingerprint? = nil)
+        throws -> String
+    {
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw EditError.blank }
+        let t = u(text)
+        let (th, i) = try locate(t, threadID, index, fingerprint)
+        guard i < th.replySpans.count else { throw EditError.unknownThread("\(threadID)#\(index)") }
+        let span = th.replySpans[i]
+        let eol = lineEnding(text)
+        let lines = replyLines(author: "", at: "", body: body, prefix: s(t[span.start..<span.textStart])).joined(separator: eol)
+        let edit = closerOnLine(t, span.end, th.close)
+            ? Edit(start: span.start, end: th.close, insert: lines + eol, order: 0)
+            : Edit(start: span.start, end: span.end, insert: lines, order: 0)
+        return splice(t, orphanEdits(t) + [edit])
+    }
+
+    /// Delete reply `index`, or with `index` 0 the whole thread: the block the comment is in and,
+    /// when that block owns them, its anchors. A closing `-->` is never removed with a reply.
+    static func deleteComment(_ text: String, threadID: String, index: Int, fingerprint: Fingerprint? = nil) throws -> String {
         let t = u(text)
         let r = regions(t)
-        let th = try thread(t, threadID)
-        guard index >= 0, index < max(1, th.replySpans.count) else { throw EditError.unknownThread("\(threadID)#\(index)") }
+        let (th, i) = try locate(t, threadID, index, fingerprint)
         var edits = orphanEdits(t)
-        if index == 0 {
+        if i == 0 {
             var start = th.block.lowerBound
             let end = th.block.upperBound
             if end == t.count, t.last != nl, start > 0 {
-                // The file keeps having no final line break.
                 start -= start >= 2 && t[start - 2] == cr && t[start - 1] == nl ? 2 : 1
             }
             edits.append(Edit(start: start, end: end, insert: "", order: 2))
-            edits += liveMarkers(t, r).filter { $0.id == threadID }.map {
-                Edit(start: $0.range.lowerBound, end: $0.range.upperBound, insert: "", order: 1)
+            if th.anchor != nil {
+                edits += liveMarkers(t, r).filter { $0.id == threadID }.map {
+                    Edit(start: $0.range.lowerBound, end: $0.range.upperBound, insert: "", order: 1)
+                }
             }
             return splice(t, edits)
         }
-        let span = th.replySpans[index]
-        let next = t[span.end...].firstIndex(of: nl).map { $0 + 1 } ?? t.count
-        edits.append(Edit(start: span.start, end: next, insert: "", order: 0))
+        let span = th.replySpans[i]
+        if closerOnLine(t, span.end, th.close) {
+            edits.append(Edit(start: span.start, end: th.close, insert: "", order: 0))
+        } else {
+            let next = t[span.end...].firstIndex(of: nl).map { $0 + 1 } ?? t.count
+            edits.append(Edit(start: span.start, end: next, insert: "", order: 0))
+        }
         return splice(t, edits)
     }
 }

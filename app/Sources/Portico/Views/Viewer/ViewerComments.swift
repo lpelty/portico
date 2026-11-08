@@ -134,6 +134,7 @@ extension AppModel: CommentsFocus {}
 final class ViewerComments: ObservableObject {
     static let staleWords = "Not saved — the text you chose changed; select it again and choose Comment."
     static let notUTF8Words = "This file isn't UTF-8 text; comments can't be added."
+    static let changedWords = "This comment changed since you opened it; try again."
 
     struct Draft: Equatable {
         var selection: CommentAnchoring.Selection?
@@ -245,7 +246,7 @@ final class ViewerComments: ObservableObject {
                     "replies": t.replies.enumerated().map { index, r -> [String: Any] in
                         [
                             "author": r.author, "initial": Self.initial(r.author), "agent": isAgent(r.author),
-                            "own": isPerson(r.author), "index": index,
+                            "own": isPerson(r.author), "index": index, "at": r.at as Any? ?? NSNull(),
                             "time": CommentTime.relative(r.at, now: now), "text": r.text,
                         ]
                     },
@@ -388,6 +389,10 @@ final class ViewerComments: ObservableObject {
             } catch let refusal as CommentFormat.Refusal {
                 error = "Not saved — \(CommentAnchoring.reason(refusal))"
                 return false
+            } catch CommentFormat.EditError.changed {
+                error = Self.changedWords
+                reload(text: old)
+                return false
             } catch {
                 self.error = "Not saved — the comment's thread is gone"
                 return false
@@ -474,13 +479,14 @@ final class ViewerComments: ObservableObject {
             }
         case "edit":
             guard let id, let index = (message["index"] as? NSNumber)?.intValue,
-                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                let t = threads.first(where: { $0.id == id }), index < t.replies.count, isPerson(t.replies[index].author)
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return }
-            perform(.edit(id: id, index: index, body: text)) { [weak self] ok in if ok { self?.error = nil } }
+            perform(.edit(id: id, index: index, body: text, fingerprint: Self.fingerprint(message["fp"]))) { [weak self] ok in
+                if ok { self?.error = nil }
+            }
         case "delete":
             guard let id, let index = (message["index"] as? NSNumber)?.intValue else { return }
-            perform(.delete(id: id, index: index)) { [weak self] ok in
+            perform(.delete(id: id, index: index, fingerprint: Self.fingerprint(message["fp"]))) { [weak self] ok in
                 guard let self, ok else { return }
                 self.error = nil
                 if index == 0, self.activeID == id { self.activeID = nil }
@@ -530,6 +536,11 @@ final class ViewerComments: ObservableObject {
         }
     }
 
+    static func fingerprint(_ value: Any?) -> CommentFormat.Fingerprint? {
+        guard let f = value as? [String: Any], let author = f["author"] as? String, let text = f["text"] as? String else { return nil }
+        return .init(author: author, at: f["at"] as? String, text: text)
+    }
+
     /// Write one comment action to the file; false (and `error` set) when it couldn't.
     @discardableResult
     func write(_ op: CommentWriter.Op, made: CommentWriter.Made? = nil) -> Bool {
@@ -548,6 +559,10 @@ final class ViewerComments: ObservableObject {
             return false
         } catch is CommentWriter.Stale {
             error = Self.staleWords
+            return false
+        } catch CommentFormat.EditError.changed {
+            error = Self.changedWords
+            reload()
             return false
         } catch let refusal as CommentFormat.Refusal {
             error = "Not saved — \(CommentAnchoring.reason(refusal))"

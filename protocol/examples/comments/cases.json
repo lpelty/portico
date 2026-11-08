@@ -1478,6 +1478,248 @@
     ],
     "orphan_anchors": []
    }
+  },
+  {
+   "name": "closer-delete-last",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 2,
+    "fingerprint": {
+     "author": "R",
+     "at": "T",
+     "text": "last"
+    }
+   },
+   "expect": "closer-delete-last.after.md"
+  },
+  {
+   "name": "closer-delete-middle",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect": "closer-delete-middle.after.md"
+  },
+  {
+   "name": "closer-edit-last",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 2,
+    "body": "new\nNote: two",
+    "fingerprint": {
+     "author": "R",
+     "at": "T",
+     "text": "last"
+    }
+   },
+   "expect": "closer-edit-last.after.md"
+  },
+  {
+   "name": "closer-edit-middle",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "body": "mid2",
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect": "closer-edit-middle.after.md"
+  },
+  {
+   "name": "closer-edit-first",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "body": "zero",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect": "closer-edit-first.after.md"
+  },
+  {
+   "name": "closer-delete-thread",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect": "closer-delete-thread.after.md"
+  },
+  {
+   "name": "closer-edit-only",
+   "file": "closer-only.md",
+   "op": "edit",
+   "args": {
+    "id": "cl003",
+    "index": 0,
+    "body": "changed",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "only"
+    }
+   },
+   "expect": "closer-edit-only.after.md"
+  },
+  {
+   "name": "closer-delete-only",
+   "file": "closer-only.md",
+   "op": "delete",
+   "args": {
+    "id": "cl003",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "only"
+    }
+   },
+   "expect": "closer-delete-only.after.md"
+  },
+  {
+   "name": "dup-id",
+   "file": "dup-id.md",
+   "parse": {
+    "threads": [
+     {
+      "id": "du001",
+      "by": "S",
+      "at": "T",
+      "status": "open",
+      "quote": "x",
+      "anchored_text": "x",
+      "replies": [
+       {
+        "author": "S",
+        "at": "T",
+        "text": "first"
+       }
+      ],
+      "reactions": []
+     },
+     {
+      "id": "du001",
+      "by": "S",
+      "at": "T",
+      "status": "open",
+      "quote": "x",
+      "anchored_text": null,
+      "replies": [
+       {
+        "author": "S",
+        "at": "T",
+        "text": "pasted copy"
+       }
+      ],
+      "reactions": []
+     }
+    ],
+    "orphan_anchors": []
+   }
+  },
+  {
+   "name": "dup-delete-copy",
+   "file": "dup-id.md",
+   "op": "delete",
+   "args": {
+    "id": "du001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "pasted copy"
+    }
+   },
+   "expect": "dup-delete-copy.after.md"
+  },
+  {
+   "name": "dup-delete-first",
+   "file": "dup-id.md",
+   "op": "delete",
+   "args": {
+    "id": "du001",
+    "index": 0,
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "first"
+    }
+   },
+   "expect": "dup-delete-first.after.md"
+  },
+  {
+   "name": "edit-changed-since",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "body": "x",
+    "fingerprint": {
+     "author": "M",
+     "at": "T",
+     "text": "not what it says now"
+    }
+   },
+   "expect_error": "changed"
+  },
+  {
+   "name": "delete-changed-since",
+   "file": "closer-inline.md",
+   "op": "delete",
+   "args": {
+    "id": "cl001",
+    "index": 1,
+    "fingerprint": {
+     "author": "Q",
+     "at": "T",
+     "text": "middle"
+    }
+   },
+   "expect_error": "changed"
+  },
+  {
+   "name": "edit-blank-refused",
+   "file": "closer-inline.md",
+   "op": "edit",
+   "args": {
+    "id": "cl001",
+    "index": 0,
+    "body": "  \n ",
+    "fingerprint": {
+     "author": "S",
+     "at": "T",
+     "text": "one"
+    }
+   },
+   "expect_error": "blank"
   }
  ]
 }

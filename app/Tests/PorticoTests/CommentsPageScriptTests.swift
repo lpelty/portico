@@ -481,7 +481,7 @@ final class CommentsPageScriptTests: XCTestCase {
             "threads": [
                 ["id": "rs001", "status": "open", "quote": "open point", "orphan": false,
                  "replies": [
-                    ["author": "Sam", "initial": "S", "agent": false, "own": true, "index": 0, "time": "2 h ago", "text": text],
+                    ["author": "Sam", "initial": "S", "agent": false, "own": true, "index": 0, "at": "T0", "time": "2 h ago", "text": text],
                     ["author": "Agent", "initial": "A", "agent": true, "own": false, "index": 1, "time": "1 h ago", "text": "Reply."],
                  ]],
                 ["id": "rs002", "status": "resolved", "quote": "settled point", "orphan": false,
@@ -534,6 +534,7 @@ final class CommentsPageScriptTests: XCTestCase {
         XCTAssertEqual(messages.last?["id"] as? String, "rs001")
         XCTAssertEqual(messages.last?["index"] as? Int, 0)
         XCTAssertEqual(messages.last?["text"] as? String, "Changed.")
+        XCTAssertEqual(messages.last?["fp"] as? [String: String], ["author": "Sam", "at": "T0", "text": "First."])
         let cancelled = try await js("""
             document.querySelector('.pc-card[data-id="rs001"] .pc-reply .pc-more').click();
             [...document.querySelectorAll('.pc-menu button')].find(b => b.textContent === 'Edit').click();
@@ -614,5 +615,17 @@ final class CommentsPageScriptTests: XCTestCase {
         try await render(none, in: view)
         let hidden = try await js("return !!document.querySelector('.pc-show-resolved');", in: view) as? Bool
         XCTAssertEqual(hidden, false)
+    }
+
+    func testMarginFocusIsRecomputedWhenAFocusedFieldIsRedrawnAway() async throws {
+        let view = try await page(try CommentFormatTests.read("resolved.md"))
+        try await capture(view)
+        try await render(Self.actionState(), in: view)
+        _ = try await js("document.querySelector('.pc-card[data-id=\"rs001\"] .pc-input').focus(); return true;", in: view)
+        var closed = Self.actionState()
+        closed["activeID"] = NSNull()
+        try await render(closed, in: view)
+        let focus = try await sent(view).filter { $0["type"] as? String == "marginFocus" }.last
+        XCTAssertEqual(focus?["on"] as? Bool, false)
     }
 }

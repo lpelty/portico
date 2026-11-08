@@ -17,7 +17,8 @@ from portico_gateway import comments as cm
 FIXTURES = Path(__file__).resolve().parents[2] / "protocol" / "examples" / "comments"
 CASES = json.loads((FIXTURES / "cases.json").read_text(encoding="utf-8"))["cases"]
 PARSE_CASES = [c for c in CASES if "parse" in c]
-OP_CASES = [c for c in CASES if "op" in c]
+OP_CASES = [c for c in CASES if "op" in c and "expect" in c]
+ERROR_CASES = [c for c in CASES if "expect_error" in c]
 FIND_CASES = [c for c in CASES if "find" in c]
 ROUNDTRIP = [s for c in CASES if "roundtrip" in c for s in c["roundtrip"]]
 
@@ -39,6 +40,11 @@ def thread_json(text: str, t: cm.Thread) -> dict:
     }
 
 
+def _fp(a):
+    f = a.get("fingerprint")
+    return (f["author"], f["at"], f["text"]) if f else None
+
+
 def apply_op(text: str, case: dict) -> str:
     a = case["args"]
     op = case["op"]
@@ -53,9 +59,9 @@ def apply_op(text: str, case: dict) -> str:
     if op == "reopen":
         return cm.set_status(text, a["id"], "open")
     if op == "edit":
-        return cm.edit_comment(text, a["id"], a["index"], body=a["body"])
+        return cm.edit_comment(text, a["id"], a["index"], body=a["body"], fingerprint=_fp(a))
     if op == "delete":
-        return cm.delete_comment(text, a["id"], a["index"])
+        return cm.delete_comment(text, a["id"], a["index"], fingerprint=_fp(a))
     raise AssertionError(op)
 
 
@@ -199,3 +205,11 @@ def test_edit_and_delete_refuse_unknown_comments():
         cm.edit_comment(text, "k3x9a", 5, body="x")
     with pytest.raises(KeyError):
         cm.delete_comment(text, "zzzzz", 0)
+
+
+@pytest.mark.parametrize("case", ERROR_CASES, ids=[c["name"] for c in ERROR_CASES])
+def test_fixture_refusals(case):
+    text = read(case["file"])
+    want = {"changed": cm.CommentChanged, "blank": ValueError}[case["expect_error"]]
+    with pytest.raises(want):
+        apply_op(text, case)

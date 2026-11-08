@@ -465,6 +465,12 @@
     return d;
   }
 
+  // The comment as shown, so the app acts on this comment even if the file
+  // changed meanwhile (or refuses).
+  function fingerprint(r) {
+    return { author: r.author, at: r.at === undefined ? null : r.at, text: r.text };
+  }
+
   function actionMenu(r, t) {
     var menu = el("div", "pc-menu");
     menu.addEventListener("click", function (e) { e.stopPropagation(); });
@@ -480,7 +486,7 @@
         confirming = t.id;
         render(state);
       } else {
-        post({ type: "delete", id: t.id, index: r.index });
+        post({ type: "delete", id: t.id, index: r.index, fp: fingerprint(r) });
       }
     });
     return menu;
@@ -494,7 +500,7 @@
     var save = function () {
       if (!area.value.trim()) return;
       editing = null;
-      post({ type: "edit", id: t.id, index: r.index, text: area.value });
+      post({ type: "edit", id: t.id, index: r.index, text: area.value, fp: fingerprint(r) });
     };
     area.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
@@ -516,7 +522,7 @@
     row.appendChild(button("pc-confirm-cancel", "Cancel", function () { confirming = null; render(state); }));
     row.appendChild(button("pc-danger", "Delete", function () {
       confirming = null;
-      post({ type: "delete", id: t.id, index: 0 });
+      post({ type: "delete", id: t.id, index: 0, fp: fingerprint(t.replies[0]) });
     }));
     box.appendChild(row);
     return box;
@@ -651,6 +657,9 @@
       if (margin) margin.remove();
       if (box) { box.style.marginLeft = ""; box.style.marginRight = ""; box.style.maxWidth = ""; box.style.width = ""; }
       if (api.onLayout) api.onLayout(null);
+      var gone = document.querySelector(".pc-show-resolved");
+      if (gone) gone.remove();
+      reportFocus();
       return;
     }
     document.body.classList.add("pc-comments-on");
@@ -701,6 +710,7 @@
     if (!items.length) {
       margin.appendChild(el("div", "pc-empty", "No comments. Select text and choose Comment."));
       margin.firstChild.style.top = (box && !api.marginParent ? docTop(box) + 28 : 28) + "px";
+      reportFocus();
       return;
     }
     var nodes = items.map(function (it) {
@@ -727,6 +737,7 @@
       if (fieldNow && !st.readOnly) fieldNow.focus();
     }
     lastActive = activeKey || null;
+    reportFocus();
   }
 
   function innermostMark(target) {
@@ -754,7 +765,12 @@
   window.addEventListener("resize", function () { if (state) render(state); });
 
   // The app needs to know when a margin field has the keyboard (Edit mode's
-  // Esc would otherwise leave Edit).
+  // Esc would otherwise leave Edit). Also recomputed after every redraw: a
+  // focused field removed by a redraw sends no focusout.
+  function reportFocus() {
+    var a = document.activeElement;
+    post({ type: "marginFocus", on: !!(a && a.closest && a.closest("#pc-margin")) });
+  }
   document.addEventListener("focusin", function (e) {
     if (e.target && e.target.closest && e.target.closest("#pc-margin")) post({ type: "marginFocus", on: true });
   });

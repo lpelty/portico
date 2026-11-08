@@ -554,6 +554,7 @@ def parse(text: str) -> Parsed:
     threads = []
     seen = set()
     for start, end, close, tid in reg.blocks:
+        first_of_id = tid not in seen  # a later block with the same id (a pasted copy) is an orphan thread
         seen.add(tid)
         header_end = text.find("\n", start)
         header_end = end if header_end < 0 or header_end >= close else header_end
@@ -568,13 +569,17 @@ def parse(text: str) -> Parsed:
         raw: list[tuple[str, int]] = []
         if close > hb:
             at = hb
-            for k, part in enumerate(text[hb:close].split("\n")):
+            parts = text[hb:close].split("\n")
+            for k, part in enumerate(parts):
                 if k:
-                    raw.append((part.rstrip("\r"), at))
+                    line = part.rstrip("\r")
+                    if k == len(parts) - 1:
+                        line = line.rstrip(" \t")  # text before a `-->` on the same line
+                    raw.append((line, at))
                 at += len(part) + 1
         replies, reactions, spans = _thread_lines(raw)
         anchor = None
-        o = next((m for m in markers if m[2] == tid and not m[3]), None)
+        o = next((m for m in markers if m[2] == tid and not m[3]), None) if first_of_id else None
         if o:
             c = next((m for m in markers if m[2] == tid and m[3] and m[0] >= o[1]), None)
             if c:
@@ -1081,33 +1086,76 @@ def set_status(text: str, thread_id: str, status: Literal["open", "resolved"]) -
     return _splice(text, _orphan_edits(text) + [edit])
 
 
-def edit_comment(text: str, thread_id: str, index: int, *, body: str) -> str:
+class CommentChanged(Exception):
+    """The comment an action was aimed at isn't in the text as it was seen (someone changed it)."""
+
+
+Fingerprint = tuple  # (author, at, text) of a comment as it was shown
+
+
+def _locate(text: str, thread_id: str, index: int, fingerprint: Fingerprint | None) -> tuple[Thread, int]:
+    """The thread and comment an action means: by id and the comment's fingerprint when given
+    (exactly one match, and the thread's first comment exactly when ``index`` is 0), else by index."""
+    threads = [t for t in parse(text).threads if t.id == thread_id]
+    if not threads:
+        raise KeyError(thread_id)
+    if fingerprint is None:
+        t = threads[0]
+        if not 0 <= index < max(1, len(t.replies)):
+            raise KeyError(f"{thread_id}#{index}")
+        return t, index
+    found = [
+        (t, i)
+        for t in threads
+        for i, r in enumerate(t.replies)
+        if (r.author, r.at, r.text) == tuple(fingerprint) and (i == 0) == (index == 0)
+    ]
+    if len(found) != 1:
+        raise CommentChanged(thread_id)
+    return found[0]
+
+
+def _closer_on_line(text: str, end: int, close: int) -> bool:
+    return "\n" not in text[end:close]
+
+
+def edit_comment(text: str, thread_id: str, index: int, *, body: str, fingerprint: Fingerprint | None = None) -> str:
     """Replace the text of comment ``index`` (0 is the thread's first) and nothing else: its author
-    and time stay as written, the other comments, reactions and the header are untouched."""
-    t = _thread(text, thread_id)
-    if not 0 <= index < len(t.reply_spans):
+    and time stay as written, the other comments, reactions and the header are untouched; a closing
+    ``-->`` on its line moves to a line of its own."""
+    if not body.strip():
+        raise ValueError("a comment needs text")
+    t, i = _locate(text, thread_id, index, fingerprint)
+    if not t.reply_spans:
         raise KeyError(f"{thread_id}#{index}")
-    start, text_at, end = t.reply_spans[index]
+    start, text_at, end = t.reply_spans[i]
     eol = line_ending(text)
-    lines = _reply_lines("", "", body, prefix=text[start:text_at])
-    return _splice(text, _orphan_edits(text) + [(start, end, eol.join(lines), 0)])
+    lines = eol.join(_reply_lines("", "", body, prefix=text[start:text_at]))
+    if _closer_on_line(text, end, t.close):
+        edit = (start, t.close, lines + eol, 0)
+    else:
+        edit = (start, end, lines, 0)
+    return _splice(text, _orphan_edits(text) + [edit])
 
 
-def delete_comment(text: str, thread_id: str, index: int) -> str:
-    """Delete reply ``index``, or with ``index`` 0 the whole thread: its block and its anchors."""
+def delete_comment(text: str, thread_id: str, index: int, fingerprint: Fingerprint | None = None) -> str:
+    """Delete reply ``index``, or with ``index`` 0 the whole thread: the block the comment is in and,
+    when that block owns them, its anchors. A closing ``-->`` is never removed with a reply."""
     reg = _regions(text)
-    t = _thread(text, thread_id)
-    if not 0 <= index < max(1, len(t.reply_spans)):
-        raise KeyError(f"{thread_id}#{index}")
+    t, i = _locate(text, thread_id, index, fingerprint)
     edits = _orphan_edits(text)
-    if index == 0:
+    if i == 0:
         start, end = t.block
         if end == len(text) and not text.endswith("\n") and start > 0:
             start -= 2 if text[start - 2 : start] == "\r\n" else 1  # the file keeps having no final line break
         edits.append((start, end, "", 2))
-        edits += [(a, b, "", 1) for a, b, tid, _ in _markers(text, reg) if tid == thread_id]
+        if t.anchor is not None:
+            edits += [(a, b, "", 1) for a, b, tid, _ in _markers(text, reg) if tid == thread_id]
         return _splice(text, edits)
-    start, _, end = t.reply_spans[index]
-    nl = text.find("\n", end)
-    edits.append((start, len(text) if nl < 0 else nl + 1, "", 0))
+    start, _, end = t.reply_spans[i]
+    if _closer_on_line(text, end, t.close):
+        edits.append((start, t.close, "", 0))
+    else:
+        nl = text.find("\n", end)
+        edits.append((start, len(text) if nl < 0 else nl + 1, "", 0))
     return _splice(text, edits)

@@ -42,6 +42,11 @@ final class CommentFormatTests: XCTestCase {
         return x == y
     }
 
+    static func fingerprint(_ a: [String: Any]) -> CommentFormat.Fingerprint? {
+        guard let f = a["fingerprint"] as? [String: Any] else { return nil }
+        return .init(author: f["author"] as! String, at: f["at"] as? String, text: f["text"] as! String)
+    }
+
     static func apply(_ c: [String: Any], to text: String) throws -> String {
         let a = c["args"] as! [String: Any]
         switch c["op"] as! String {
@@ -58,9 +63,12 @@ final class CommentFormatTests: XCTestCase {
         case "resolve": return try CommentFormat.setStatus(text, threadID: a["id"] as! String, .resolved)
         case "reopen": return try CommentFormat.setStatus(text, threadID: a["id"] as! String, .open)
         case "edit":
-            return try CommentFormat.editComment(text, threadID: a["id"] as! String, index: a["index"] as! Int, body: a["body"] as! String)
+            return try CommentFormat.editComment(
+                text, threadID: a["id"] as! String, index: a["index"] as! Int, body: a["body"] as! String,
+                fingerprint: fingerprint(a))
         case "delete":
-            return try CommentFormat.deleteComment(text, threadID: a["id"] as! String, index: a["index"] as! Int)
+            return try CommentFormat.deleteComment(
+                text, threadID: a["id"] as! String, index: a["index"] as! Int, fingerprint: fingerprint(a))
         default: XCTFail("unknown op"); return text
         }
     }
@@ -79,7 +87,7 @@ final class CommentFormatTests: XCTestCase {
     }
 
     func testFixtureOps() throws {
-        let ops = try Self.cases().filter { $0["op"] != nil }
+        let ops = try Self.cases().filter { $0["op"] != nil && $0["expect"] != nil }
         XCTAssertGreaterThan(ops.count, 10)
         for c in ops {
             let text = try Self.read(c["file"] as! String)
@@ -188,6 +196,20 @@ final class CommentFormatTests: XCTestCase {
             var out = CommentFormat.addThread("Word here.\n", range: 0..<4, id: "rt001", author: "Sam", at: "2026-11-07T00:00:00.000Z", body: v)
             out = try CommentFormat.addReply(out, threadID: "rt001", author: "Agent", at: "2026-11-07T00:00:01.000Z", body: v)
             XCTAssertEqual(CommentFormat.parse(out).threads[0].replies.map(\.text), [v, v], v)
+        }
+    }
+
+    func testFixtureRefusals() throws {
+        let cases = try Self.cases().filter { $0["expect_error"] != nil }
+        XCTAssertGreaterThanOrEqual(cases.count, 3)
+        for c in cases {
+            let text = try Self.read(c["file"] as! String)
+            XCTAssertThrowsError(try Self.apply(c, to: text), "\(c["name"]!)") { error in
+                switch c["expect_error"] as! String {
+                case "changed": XCTAssertEqual(error as? CommentFormat.EditError, .changed, "\(c["name"]!)")
+                default: XCTAssertEqual(error as? CommentFormat.EditError, .blank, "\(c["name"]!)")
+                }
+            }
         }
     }
 }
