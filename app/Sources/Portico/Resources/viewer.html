@@ -4,28 +4,166 @@
   placeholders: the stylesheet, the vendored renderer, the markdown body as
   a JSON string, and the front matter's Properties block (v0.11, item 68;
   empty when the file has none); v0.23: the body's first source line, the
-  comment colours and the comments script (viewer-comments.js). Everything is inlined: the page is served to the
+  comment colours (v0.24: the comments script, viewer-comments.js, runs in
+  its own content world, ViewerCommentsScript, not in this page). Everything is inlined: the page is served to the
   web view under the app's own scheme (RenderedPageHandler) with the
   markdown file's directory as its root, so relative images resolve and
   nothing else is fetched.
+  v0.24 (sweep #1): the page runs only its own scripts. Each render has a
+  fresh nonce (on every script block and the style block, and in the
+  Content-Security-Policy), so inline handlers, injected scripts and the
+  file's own styles never apply; and the rendered fragment is cleaned
+  before it is inserted (cleanFragment).
 -->
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{CSP}}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
-<style>
+<style nonce="{{NONCE}}">
 {{CSS}}
 {{COMMENTS_CSS}}
 </style>
 </head>
 <body>
 <article id="content">{{PROPERTIES}}<div id="body"></div></article>
-<script>
+<script nonce="{{NONCE}}">
 {{MARKED}}
 </script>
-<script>
+<script nonce="{{NONCE}}">
 (function () {
+  // v0.24 (sweep #1), the second layer under the policy: before a rendered
+  // fragment goes into the page, elements that run or embed other content
+  // are dropped, and so are every on* attribute and script-bearing URLs.
+  // Ordinary raw HTML (details, kbd, br, tables, images, links) is left alone.
+  // Review round 1: styles too (style attributes, style and link elements), as
+  // GitHub's sanitiser does, so a file cannot hide or stretch a link over
+  // the page; and SVG animation, which can set an href after cleaning.
+  var DROP = {
+    script: 1, iframe: 1, frame: 1, frameset: 1, object: 1, embed: 1, base: 1, meta: 1,
+    style: 1, link: 1, set: 1, animate: 1, animatemotion: 1, animatetransform: 1
+  };
+  var URL_ATTRS = { href: 1, src: 1, "xlink:href": 1, formaction: 1, action: 1 };
+  // Review round 2: nothing in the file may take the keyboard focus or
+  // colour text (a link drawn in the background colour); <font> is unwrapped,
+  // its text kept.
+  var DROP_ATTRS = {
+    style: 1, autofocus: 1, tabindex: 1,
+    color: 1, bgcolor: 1, background: 1, text: 1, link: 1, vlink: 1, alink: 1
+  };
+  var UNWRAP = { font: 1 };
+  // Review rounds 3 and 4: no class from the file, so it cannot borrow the
+  // app's own styles (.pc-menu); only marked's fenced-code class stays. The
+  // file's id and name attributes are kept with a "user-content-" prefix, as
+  // GitHub does, so they cannot collide with what the comments script looks
+  // up (#pc-margin) or clobber document properties (name="getElementById");
+  // fragment lookups below try the prefixed name first. The app's own
+  // margin, cards and Properties are added outside this pass (Properties are
+  // not in the rendered fragment; the margin and highlights come after
+  // insertion), so they keep theirs.
+  var LANGUAGE = /^language-[\w-]+$/;
+  var PREFIX = "user-content-";
+  var prefixed = function (v) { return v.indexOf(PREFIX) === 0 ? v : PREFIX + v; };
+  // Round 5: references to the file's ids follow the prefix, so labels,
+  // image maps, ARIA and inline SVG defs work as before. Only references
+  // within the document change; HTML <a href="#x"> stays (the click handler
+  // below resolves it).
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var ID_LISTS = {
+    "for": 1, headers: 1, list: 1, form: 1,
+    "aria-labelledby": 1, "aria-describedby": 1, "aria-controls": 1, "aria-owns": 1,
+    "aria-activedescendant": 1, "aria-details": 1, "aria-errormessage": 1
+  };
+  var URL_REFS = { fill: 1, stroke: 1, "clip-path": 1, mask: 1, filter: 1, "marker-start": 1, "marker-mid": 1, "marker-end": 1 };
+  var rewriteReference = function (el, attr, value) {
+    if (attr === "id" || attr === "name") return value ? prefixed(value) : value;
+    if (ID_LISTS[attr]) return value.replace(/\S+/g, prefixed);
+    if (attr === "usemap") return /^#./.test(value) ? "#" + prefixed(value.slice(1)) : value;
+    var svg = el.namespaceURI === SVG_NS;
+    if (svg && (attr === "href" || attr === "xlink:href")) {
+      var v = value.trim();
+      return /^#./.test(v) ? "#" + prefixed(v.slice(1)) : value;
+    }
+    if (svg && URL_REFS[attr]) {
+      return value.replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, function (m, q, id) {
+        return "url(" + q + "#" + prefixed(id) + q + ")";
+      });
+    }
+    return value;
+  };
+  var unsafeURL = function (attr, value) {
+    // Browsers ignore spaces and control characters in a scheme.
+    var v = String(value).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "").toLowerCase();
+    if (/^(javascript|vbscript):/.test(v)) return true;
+    // data:image/ only where it can only be an image (src), never a link.
+    return /^data:/.test(v) && !(attr === "src" && /^data:image\//.test(v));
+  };
+  var cleanFragment = function (root) {
+    Array.prototype.slice.call(root.querySelectorAll("*")).forEach(function (el) {
+      var name = el.localName.toLowerCase();
+      if (DROP[name]) { el.remove(); return; }
+      if (name === "template") cleanFragment(el.content);
+      Array.prototype.slice.call(el.attributes).forEach(function (a) {
+        var attr = a.name.toLowerCase();
+        if (attr.indexOf("on") === 0 || DROP_ATTRS[attr] || (URL_ATTRS[attr] && unsafeURL(attr, a.value))
+            || (attr === "class" && !(name === "code" && LANGUAGE.test(a.value)))) el.removeAttributeNode(a);
+        else {
+          var next = rewriteReference(el, attr, a.value);
+          if (next !== a.value) a.value = next;
+        }
+      });
+      if (UNWRAP[name] && el.parentNode) {
+        while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+        el.remove();
+      }
+    });
+  };
+
+  // v0.17 §3.7: the person folding or unfolding the Properties block goes to
+  // the app's porticoProperties handler (v0.24: here, not an inline handler,
+  // which the policy blocks). Only a change from what was last drawn or
+  // posted: data-open holds that, so the toggle WebKit fires for a block
+  // parsed open is not taken for a choice.
+  var properties = document.querySelector("#content > details.fm");
+  if (properties) properties.addEventListener("toggle", function () {
+    if (String(properties.open) === properties.dataset.open) return;
+    properties.dataset.open = String(properties.open);
+    var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.porticoProperties;
+    if (h) h.postMessage({ open: properties.open });
+  });
+
+  // Round 4: a fragment in this page names the file's id or name, which the
+  // cleaning prefixed; look for the prefixed one first, then the plain one.
+  var fragmentTarget = function (raw) {
+    var f;
+    try { f = decodeURIComponent(raw); } catch (e) { f = raw; }
+    if (!f) return null;
+    return document.getElementById(PREFIX + f) || document.getElementsByName(PREFIX + f)[0]
+      || document.getElementById(f) || document.getElementsByName(f)[0] || null;
+  };
+  // An in-page link (#x) goes to the prefixed element; WebKit's own fragment
+  // navigation would look only for the plain id.
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+    var href = a ? a.getAttribute("href") : null;
+    if (!href || href.charAt(0) !== "#") return;
+    var el = fragmentTarget(href.slice(1));
+    if (!el) return;
+    e.preventDefault();
+    if (location.hash !== href) history.pushState(null, "", href);
+    el.scrollIntoView({ block: "start" });
+  });
+  // The address's own fragment: at load, and when it changes (Back, a script).
+  var toHash = function () {
+    if (location.hash.length < 2) return;
+    var el = fragmentTarget(location.hash.slice(1));
+    if (el) el.scrollIntoView({ block: "start" });
+  };
+  window.addEventListener("hashchange", toHash);
+  window.addEventListener("load", toHash);
+
   var source = {{SOURCE}};
   var bodyLine = {{BODY_LINE}};
   var options = { gfm: true, breaks: false };
@@ -63,15 +201,13 @@
     var list = Object.assign([t], { links: tokens.links });
     var holder = document.createElement("template");
     holder.innerHTML = marked.parser(list, options);
+    cleanFragment(holder.content);
     Array.prototype.forEach.call(holder.content.children, function (el) {
       if (start >= 0) el.setAttribute("data-lines", start + "-" + end);
     });
     body.appendChild(holder.content);
   });
 })();
-</script>
-<script>
-{{COMMENTS_JS}}
 </script>
 </body>
 </html>

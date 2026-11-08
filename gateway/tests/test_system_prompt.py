@@ -253,3 +253,332 @@ async def test_the_append_reaches_the_engine(state_dir: StateDir, factory: Engin
         assert await new_engine(srv, factory, folder) == {**PRESET, "append": "You are Acme."}
     finally:
         await srv.shutdown()
+
+
+# --- v0.24 §3: the modes ------------------------------------------------------------
+
+from portico_gateway.engine import (  # noqa: E402
+    custom_prompt_text,
+    materialize_prompt,
+    prompt_fingerprint,
+    prompt_header_version,
+    session_prompt,
+)
+
+INVENTED = "You are a careful helper for a made-up shop.\nKeep answers short."
+HEADER = "<!-- captured from Claude Code 9.9.1 · model test-model · 2026-11-07 -->"
+
+
+def _prompt_file(tmp_path: Path, text: str = INVENTED, name: str = "custom.md") -> Path:
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_default_is_claude_code() -> None:
+    assert Config(system_prompt="default").system_prompt == "claude_code"
+
+
+def test_custom_needs_a_file() -> None:
+    with pytest.raises(ConfigError) as e:
+        load_config_text('system_prompt = "custom"\n')
+    assert "system_prompt" in str(e.value) and "system_prompt_file" in str(e.value)
+
+
+def load_config_text(text: str, folder: Path | None = None) -> Config:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(folder or d) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        return load_config(path)
+
+
+def test_custom_file_must_exist(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.md"
+    with pytest.raises(ConfigError) as e:
+        load_config_text(f'system_prompt = "custom"\nsystem_prompt_file = "{missing}"\n')
+    assert str(e.value) == f"system_prompt_file: {missing} is not a file"
+    with pytest.raises(ConfigError) as e:
+        load_config_text('system_prompt = "custom"\nsystem_prompt_file = "prompt.md"\n')
+    assert "is relative" in str(e.value)
+
+
+def test_file_without_custom_is_ignored(tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path)
+    cfg = load_config_text(f'system_prompt_file = "{path}"\n')
+    assert cfg.system_prompt == "claude_code" and cfg.system_prompt_file == str(path)
+    chosen = session_prompt(cfg.system_prompt, None, cfg.system_prompt_file, tmp_path / "out.md")
+    assert chosen.prompt == PRESET and chosen.mode == "claude_code" and chosen.source == "claude_code"
+
+
+def test_custom_is_a_file_prompt_with_append_then_lines(tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path)
+    extra = _prompt_file(tmp_path, "Mention the shop's hours.", "extra.md")
+    out = tmp_path / "running" / "chat-1.md"
+    chosen = session_prompt("custom", str(extra), str(path), out)
+    assert chosen.mode == "custom" and chosen.source == str(path) and not chosen.fell_back
+    prompt = append_prompt_line(chosen.prompt, MAIN_PROMPT)
+    options = build_options(tmp_path, None, ["project"], ShowingCallbacks(), system_prompt=prompt)  # type: ignore[arg-type]
+    assert options.system_prompt == {"type": "file", "path": str(out)}
+    assert out.read_text(encoding="utf-8") == f"{INVENTED}\n\nMention the shop's hours.\n\n{MAIN_PROMPT}\n\n{VIEWER_PROMPT}"
+    assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_header_and_markers_are_stripped(tmp_path: Path) -> None:
+    raw = f"{HEADER}\nFirst line.\n<!-- machine-specific: names this computer's folders -->\nMemory lives in /x/y.\nLast."
+    assert custom_prompt_text(raw) == "First line.\nMemory lives in /x/y.\nLast."
+    path = _prompt_file(tmp_path, raw)
+    assert prompt_header_version(path) == "9.9.1"
+    assert prompt_header_version(_prompt_file(tmp_path, INVENTED, "plain.md")) is None
+
+
+def test_custom_edit_applies_next_start(tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path, "First.")
+    out = tmp_path / "out.md"
+    assert materialize_prompt(session_prompt("custom", None, str(path), out).prompt)
+    assert out.read_text(encoding="utf-8") == "First."
+    path.write_text("Second.", encoding="utf-8")
+    materialize_prompt(session_prompt("custom", None, str(path), out).prompt)
+    assert out.read_text(encoding="utf-8") == "Second."
+
+
+def test_fingerprint_is_8_hex_and_changes_with_text(tmp_path: Path) -> None:
+    import re
+
+    out = tmp_path / "out.md"
+    one = prompt_fingerprint(session_prompt("custom", None, str(_prompt_file(tmp_path, "One.")), out).prompt)
+    two = prompt_fingerprint(session_prompt("custom", None, str(_prompt_file(tmp_path, "Two.", "b.md")), out).prompt)
+    assert re.fullmatch(r"[0-9a-f]{8}", one) and one != two
+    assert prompt_fingerprint(PRESET) != prompt_fingerprint({**PRESET, "append": "x"})
+    assert prompt_fingerprint(None) == prompt_fingerprint("")
+
+
+async def test_custom_reaches_the_engine(state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path) -> None:
+    path = _prompt_file(tmp_path)
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(path))
+    try:
+        prompt = await new_engine(srv, factory, folder)
+        assert isinstance(prompt, dict) and prompt["type"] == "file"
+        assert prompt["path"].startswith(str(state_dir.path / "prompts" / "running"))
+        assert prompt["text"].startswith(INVENTED)
+    finally:
+        await srv.shutdown()
+
+
+async def test_unreadable_custom_falls_back_once(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from portico_gateway.messages import StatusSet
+
+    path = _prompt_file(tmp_path)
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(path))
+    sent: list[object] = []
+    real = srv.broadcast
+
+    async def broadcast(msg: object) -> None:
+        sent.append(msg)
+        if not isinstance(msg, StatusSet):  # kept off the wire so new_chat reads its own replies
+            await real(msg)  # type: ignore[arg-type]
+
+    srv.broadcast = broadcast  # type: ignore[method-assign]
+    path.unlink()
+    try:
+        assert await new_engine(srv, factory, folder) == PRESET
+        assert await new_engine(srv, factory, folder) == PRESET
+        statuses = [m for m in sent if isinstance(m, StatusSet) and "custom system prompt" in m.text]
+        assert len(statuses) == 1
+        assert "Claude Code's prompt" in statuses[0].text
+        assert "could not be read" in caplog.text
+    finally:
+        await srv.shutdown()
+
+
+async def test_none_logs_the_legacy_note(state_dir: StateDir, factory: EngineFactory, caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO)
+    srv = await start_server(state_dir, factory, system_prompt="none")
+    try:
+        assert 'system_prompt = "none" is kept for older configs' in caplog.text
+    finally:
+        await srv.shutdown()
+
+
+# --- review fixes -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["", "   \n\t\n", f"{HEADER}\n", f"{HEADER}\n<!-- machine-specific: x -->\n  \n"])
+def test_an_empty_custom_prompt_falls_back(tmp_path: Path, raw: str, caplog: pytest.LogCaptureFixture) -> None:
+    path = _prompt_file(tmp_path, raw)
+    chosen = session_prompt("custom", None, str(path), tmp_path / "out.md")
+    assert chosen.fell_back and chosen.prompt == PRESET and chosen.mode == "claude_code"
+    assert "empty" in caplog.text
+
+
+async def test_an_empty_custom_prompt_says_so_once(state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path) -> None:
+    from portico_gateway.messages import StatusSet
+
+    path = _prompt_file(tmp_path, f"{HEADER}\n")
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(path))
+    sent: list[object] = []
+    real = srv.broadcast
+
+    async def broadcast(msg: object) -> None:
+        sent.append(msg)
+        if not isinstance(msg, StatusSet):
+            await real(msg)  # type: ignore[arg-type]
+
+    srv.broadcast = broadcast  # type: ignore[method-assign]
+    try:
+        assert await new_engine(srv, factory, folder) == PRESET
+        assert await new_engine(srv, factory, folder) == PRESET
+        assert len([m for m in sent if isinstance(m, StatusSet)]) == 1
+    finally:
+        await srv.shutdown()
+
+
+def test_a_billing_header_line_is_stripped() -> None:
+    raw = "x-anthropic-billing-header: cc_version=1; cch=abc;\nYou are a helper.\n"
+    assert custom_prompt_text(raw) == "You are a helper."
+
+
+def test_an_unknown_version_header_is_no_recorded_version(tmp_path: Path) -> None:
+    raw = "<!-- captured from Claude Code (version unknown) · model m · 2026-11-07 -->\nInvented."
+    path = _prompt_file(tmp_path, raw)
+    assert prompt_header_version(path) is None
+    assert custom_prompt_text(raw) == "Invented."
+
+
+# --- running prompt files are cleaned up (v0.24 §11.3, sweep #14) ---------------------
+
+
+def _running(state: StateDir, number: int) -> Path:
+    return state.path / "prompts" / "running" / f"chat-{number}.md"
+
+
+def _write_running(state: StateDir, number: int) -> Path:
+    path = _running(state, number)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("A composed prompt.", encoding="utf-8")
+    return path
+
+
+def test_a_removed_chats_prompt_file_is_deleted(state_dir: StateDir, folder: Path) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    gone, kept = registry.create(folder), registry.create(folder)
+    gone_file, kept_file = _write_running(state_dir, gone.number), _write_running(state_dir, kept.number)
+    registry.remove(gone.number)
+    assert not gone_file.exists()
+    assert kept_file.exists(), "another chat's file stays"
+    # A chat whose engine never wrote one is removed without complaint.
+    third = registry.create(folder)
+    registry.remove(third.number)
+
+
+async def test_chat_remove_deletes_its_prompt_file(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path
+) -> None:
+    from portico_gateway.messages import ChatList, ChatRemove, dump
+    from tests.test_turns import TS, recv
+
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(_prompt_file(tmp_path)))
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        path = _write_running(state_dir, number)
+        await conn.send(dump(ChatRemove(ts=TS, chat=number)))
+        assert isinstance(await recv(conn), ChatList)
+        assert not path.exists()
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_gateway_start_deletes_prompt_files_of_chats_not_in_the_index(
+    state_dir: StateDir, factory: EngineFactory, folder: Path
+) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    live = registry.create(folder)
+    registry.persist()
+    kept = _write_running(state_dir, live.number)
+    stale = _write_running(state_dir, live.number + 40)
+    other = state_dir.path / "prompts" / "running" / "notes.md"
+    other.write_text("Not a chat's file.", encoding="utf-8")
+    srv = await start_server(state_dir, factory)
+    try:
+        assert kept.exists(), "a chat still in the index keeps its file"
+        assert not stale.exists(), "a chat no longer in the index loses its file"
+        assert other.exists(), "only chat-<n>.md files are touched"
+    finally:
+        await srv.shutdown()
+
+
+def test_sessions_clear_command_deletes_the_cleared_prompt_files(tmp_path: Path) -> None:
+    from portico_gateway.__main__ import main
+
+    home = tmp_path / "home"
+    state = StateDir(home)
+    registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=3)
+    ended, live = registry.create(home), registry.create(home)
+    ended.ended = "2026-10-01T00:00:00Z"
+    registry.persist()
+    ended_file, live_file = _write_running(state, ended.number), _write_running(state, live.number)
+    assert main(["sessions", "clear", "--yes", "--state", str(home)]) == 0
+    assert not ended_file.exists()
+    assert live_file.exists()
+
+
+def test_gateway_start_prunes_a_stale_tmp_file_too(state_dir: StateDir, folder: Path) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    live = registry.create(folder)
+    registry.persist()
+    stale_tmp = _running(state_dir, live.number + 7).with_name(f"chat-{live.number + 7}.md.tmp")
+    stale_tmp.parent.mkdir(parents=True, exist_ok=True)
+    stale_tmp.write_text("half written", encoding="utf-8")
+    ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3).prune_running_prompts()
+    assert not stale_tmp.exists()
+
+
+def test_prune_survives_a_directory_named_like_a_prompt(state_dir: StateDir, folder: Path) -> None:
+    # Review L4: an unexpected entry never stops the gateway from starting.
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    odd = _running(state_dir, 99)
+    odd.mkdir(parents=True)
+    (odd / "inside.txt").write_text("kept", encoding="utf-8")
+    stale = _write_running(state_dir, 98)
+    registry.prune_running_prompts()
+    assert odd.is_dir() and (odd / "inside.txt").exists(), "not a regular file: left alone"
+    assert not stale.exists(), "the regular stale file still goes"
+
+
+def test_remove_never_raises_on_an_odd_prompt_entry(state_dir: StateDir, folder: Path) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    chat = registry.create(folder)
+    _running(state_dir, chat.number).mkdir(parents=True)
+    registry.remove(chat.number)  # must not raise after the index is saved
+    assert chat.number not in registry
+    assert chat.number not in [c.chat for c in state_dir.load_index().chats]
+
+
+def test_prune_never_follows_links_out_of_the_state_dir(state_dir: StateDir, folder: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    victim = outside / "chat-5.md"
+    victim.write_text("not ours", encoding="utf-8")
+    prompts = state_dir.path / "prompts"
+    prompts.mkdir(exist_ok=True)
+    (prompts / "running").symlink_to(outside, target_is_directory=True)
+    ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3).prune_running_prompts()
+    assert victim.exists(), "a running folder that resolves outside the state directory is not pruned"
+
+
+def test_prune_skips_a_symlink_named_like_a_prompt(state_dir: StateDir, folder: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target.md"
+    target.write_text("not ours", encoding="utf-8")
+    running = state_dir.path / "prompts" / "running"
+    running.mkdir(parents=True)
+    (running / "chat-77.md").symlink_to(target)
+    ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3).prune_running_prompts()
+    assert target.exists()
+    assert (running / "chat-77.md").is_symlink(), "a link is not a regular file: left alone"

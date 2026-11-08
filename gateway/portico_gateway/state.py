@@ -89,6 +89,21 @@ class QuestionOutcome(BaseModel):
     declined: str | None = None
 
 
+class PromptRecord(BaseModel):
+    """v0.24 §3: the system prompt a session started with.
+
+    ``mode`` is ``claude_code``, ``custom`` or ``none``; ``source`` the
+    custom file's path (or the mode); ``sha`` the first 8 hex digits of a
+    SHA-256 of the final prompt text (``engine.prompt_fingerprint``); ``at``
+    when it was recorded.
+    """
+
+    mode: str
+    source: str
+    sha: str
+    at: str
+
+
 class ChatRecord(BaseModel):
     """One chat as the gateway remembers it across launches.
 
@@ -136,6 +151,8 @@ class ChatRecord(BaseModel):
     # v0.16: set on a thread (``None`` on Main, every other chat, and in an
     # older index).
     thread: ThreadInfo | None = None
+    # v0.24: the prompt the session started with (``None`` in an older index).
+    prompt: PromptRecord | None = None
 
 
 class ProposalRecord(BaseModel):
@@ -267,6 +284,14 @@ class StateDir:
     @property
     def config_path(self) -> Path:
         return self.path / "config.toml"
+
+    @property
+    def running_prompts_path(self) -> Path:
+        """v0.24: where each chat's composed custom prompt is written (``chat-<n>.md``)."""
+        return self.path / "prompts" / "running"
+
+    def running_prompt_path(self, chat: int) -> Path:
+        return self.running_prompts_path / f"chat-{chat}.md"
 
     # --- token ----------------------------------------------------------------
 

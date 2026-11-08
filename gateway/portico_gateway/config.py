@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import re
 import tomllib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -404,6 +405,18 @@ class PersonConfig(BaseModel):
     name: str | None = None
 
 
+class VoiceConfig(BaseModel):
+    """v0.24: ``[voice] read_aloud``, Read aloud on each reply, shown in Settings when true (sent in ``hello``).
+
+    The person's on/off choice stays in the app. False keeps the app's own
+    hidden flag, so a machine that already turned it on keeps it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    read_aloud: bool = False
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -450,11 +463,13 @@ class Config(BaseModel):
     titles: Literal["generated", "first_line"] = "generated"
     title_model: str | None = None
     # v0.10: the agent's system prompt. ``claude_code`` is Claude Code's own
-    # (the agent behaves as in a terminal); ``none`` is the SDK's empty
-    # prompt, as before v0.10. ``system_prompt_append`` is a file of the
-    # deployment's (outside the checkout) added after it, read at each
-    # engine start. The viewer line always comes last.
-    system_prompt: Literal["claude_code", "none"] = "claude_code"
+    # (the agent behaves as in a terminal; ``default`` is the same, v0.24);
+    # ``custom`` (v0.24) is ``system_prompt_file``'s text as the whole prompt;
+    # ``none`` is the SDK's empty prompt, as before v0.10 (legacy).
+    # ``system_prompt_append`` is a file added after it, in any mode. Both
+    # files are read at each engine start. Portico's own lines always come last.
+    system_prompt: Literal["claude_code", "custom", "none"] = "claude_code"
+    system_prompt_file: str | None = None
     system_prompt_append: str | None = None
     # v0.11: started from the app, the gateway has launchd's bare PATH. With
     # ``login_shell_path`` it asks the person's login shell for theirs and
@@ -478,6 +493,8 @@ class Config(BaseModel):
     apps: AppsConfig = AppsConfig()
     # v0.23: the person's name for comments (``[person] name``).
     person: PersonConfig = PersonConfig()
+    # v0.24: voice (``[voice] read_aloud``).
+    voice: VoiceConfig = VoiceConfig()
 
     @field_validator("title_model")
     @classmethod
@@ -526,19 +543,33 @@ class Config(BaseModel):
             out.append(Root(name=root.name, path=str(path)))
         return out
 
-    @field_validator("system_prompt_append")
+    @field_validator("system_prompt", mode="before")
     @classmethod
-    def _append_file_exists(cls, value: str | None) -> str | None:
+    def _default_is_claude_code(cls, value: Any) -> Any:
+        return "claude_code" if value == "default" else value
+
+    @field_validator("system_prompt_append", "system_prompt_file")
+    @classmethod
+    def _prompt_file_exists(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None or not value.strip():
             return None
         path = Path(value.strip()).expanduser()
         if not path.is_absolute():
             raise ConfigError(
-                f"system_prompt_append: {value!r} is relative; it must be an absolute path (~ is expanded)"
+                f"{info.field_name}: {value!r} is relative; it must be an absolute path (~ is expanded)"
             )
         if not path.is_file():
-            raise ConfigError(f"system_prompt_append: {path} is not a file")
+            raise ConfigError(f"{info.field_name}: {path} is not a file")
         return str(path)
+
+    @model_validator(mode="after")
+    def _custom_has_a_file(self) -> Config:
+        if self.system_prompt == "custom" and not self.system_prompt_file:
+            raise ConfigError(
+                'system_prompt: "custom" needs system_prompt_file, the file with the whole prompt',
+                keys=frozenset({"system_prompt"}),
+            )
+        return self
 
     @field_validator("plugin_paths")
     @classmethod
@@ -554,20 +585,129 @@ class Config(BaseModel):
         return out
 
 
-def _describe(path: Path, e: ValidationError) -> str:
+LOCAL_CONFIG_NAME = "config.local.toml"
+DEFAULT_SOURCE = "default"
+
+
+def local_config_path(config_path: Path) -> Path:
+    """v0.24: the person's own overrides, beside whichever ``config.toml`` the gateway reads."""
+    return Path(config_path).with_name(LOCAL_CONFIG_NAME)
+
+
+def merge_tables(base: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    """``local`` over ``base``: tables merge key by key, recursively; any other value (arrays too) replaces.
+
+    Neither argument is changed.
+    """
+    out = dict(base)
+    for key, value in local.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merge_tables(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _read_toml(path: Path, label: str) -> dict[str, Any]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ConfigError(f"{label}: cannot read: {e}") from e
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{label}: not valid TOML: {e}") from e
+
+
+@dataclass
+class ConfigLayers:
+    """v0.24: the deployment's file and the person's local file, as read (each ``{}`` when absent)."""
+
+    base: dict[str, Any]
+    local: dict[str, Any]
+    base_path: Path
+    local_path: Path
+
+    @property
+    def base_label(self) -> str:
+        return self.base_path.name
+
+    def merged(self) -> dict[str, Any]:
+        return merge_tables(self.base, self.local)
+
+    def _has(self, data: dict[str, Any], parts: list[str]) -> bool:
+        node: Any = data
+        for part in parts:
+            if not isinstance(node, dict) or part not in node:
+                return False
+            node = node[part]
+        return True
+
+    def source_of(self, dotted: str) -> str:
+        """Where the value at ``dotted`` comes from: ``config.local.toml``, the base file's name, or ``default``.
+
+        The deepest path either file sets wins: ``brand.accent`` set only
+        locally is the local file's even when ``[brand]`` is in both.
+        """
+        return self.source_of_parts([p for p in dotted.split(".") if p])
+
+    def source_of_parts(self, parts: list[str]) -> str:
+        """``source_of`` for a key given as its parts (a table key may itself hold dots, like ``a.com``)."""
+        for depth in range(len(parts), 0, -1):
+            prefix = parts[:depth]
+            if self._has(self.local, prefix) and (
+                depth == len(parts) or not isinstance(self._get(self.local, prefix), dict)
+            ):
+                return LOCAL_CONFIG_NAME
+            if self._has(self.base, prefix) and (
+                depth == len(parts) or not isinstance(self._get(self.base, prefix), dict)
+            ):
+                return self.base_label
+        return DEFAULT_SOURCE
+
+    @staticmethod
+    def _get(data: dict[str, Any], parts: list[str]) -> Any:
+        node: Any = data
+        for part in parts:
+            node = node[part]
+        return node
+
+
+def read_config_layers(config_path: Path) -> ConfigLayers:
+    """Read ``config.toml`` and the ``config.local.toml`` beside it; a missing file is ``{}``.
+
+    A file that can't be read or isn't TOML is a ``ConfigError``; the local
+    file's names it as ``config.local.toml``.
+    """
+    path = Path(config_path)
+    local_path = local_config_path(path)
+    base = _read_toml(path, str(path)) if path.exists() else {}
+    local = _read_toml(local_path, LOCAL_CONFIG_NAME) if local_path.exists() else {}
+    return ConfigLayers(base=base, local=local, base_path=path, local_path=local_path)
+
+
+def _describe(label: str, e: ValidationError) -> str:
     parts = []
     for err in e.errors():
         loc = ".".join(str(p) for p in err["loc"]) or "<root>"
         parts.append(f"{loc}: {err['msg']}")
-    return f"{path}: " + "; ".join(parts)
+    return f"{label}: " + "; ".join(parts)
 
 
-def _validate(path: Path, data: dict[str, Any]) -> Config:
+def _from_local(layers: ConfigLayers | None, errors: Any) -> bool:
+    """Whether every located error points at a value the local file set (v0.24 ruling 6)."""
+    if layers is None or not layers.local:
+        return False
+    locs = [".".join(str(p) for p in err["loc"] if not isinstance(p, int)) for err in errors if err.get("loc")]
+    return bool(locs) and all(layers.source_of(loc) == LOCAL_CONFIG_NAME for loc in locs)
+
+
+def _validate(path: Path, data: dict[str, Any], layers: ConfigLayers | None = None) -> Config:
     try:
         return Config.model_validate(data)
     except ConfigError:
         raise
     except ValidationError as e:
+        local = _from_local(layers, e.errors())
+        prefix = f"{LOCAL_CONFIG_NAME}: " if local else ""
         # A ConfigError raised inside a field validator is wrapped by
         # pydantic; surface its exact text rather than the wrapped form,
         # naming the top-level key it was raised for.
@@ -575,8 +715,13 @@ def _validate(path: Path, data: dict[str, Any]) -> Config:
             ctx = err.get("ctx") or {}
             inner = ctx.get("error")
             if isinstance(inner, ConfigError):
-                raise ConfigError(str(inner), keys=_top_keys([err])) from None
-        raise ConfigError(_describe(path, e), keys=_top_keys(e.errors())) from e
+                keys = _top_keys([err]) or inner.keys
+                if not err.get("loc") and inner.keys:  # a model-level check names its keys itself
+                    local = layers is not None and all(layers.source_of(k) == LOCAL_CONFIG_NAME for k in inner.keys)
+                    prefix = f"{LOCAL_CONFIG_NAME}: " if local else ""
+                raise ConfigError(prefix + str(inner), keys=keys) from None
+        label = LOCAL_CONFIG_NAME if local else str(path)
+        raise ConfigError(_describe(label, e), keys=_top_keys(e.errors())) from e
 
 
 def _top_keys(errors: Any) -> frozenset[str]:
@@ -585,17 +730,11 @@ def _top_keys(errors: Any) -> frozenset[str]:
 
 
 def load_config(path: Path) -> Config:
-    """Read ``config.toml``; a missing file means defaults."""
-    path = Path(path)
-    if not path.exists():
+    """Read ``config.toml`` with the ``config.local.toml`` beside it merged over it (v0.24); missing files mean defaults."""
+    layers = read_config_layers(Path(path))
+    if not layers.base and not layers.local and not layers.base_path.exists() and not layers.local_path.exists():
         return Config()
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except OSError as e:
-        raise ConfigError(f"{path}: cannot read: {e}") from e
-    except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"{path}: not valid TOML: {e}") from e
-    return _validate(path, data)
+    return _validate(Path(path), layers.merged(), layers)
 
 
 def _now() -> str:
@@ -660,6 +799,7 @@ def hello_for(
         viewer_defaults=ViewerDefaults(**config.viewer.model_dump()),
         threads_max=config.threads.max if THREADS_CAPABILITY in capabilities else None,
         person=Person(name=config.person.name) if config.person.name else None,
+        voice=Voice(read_aloud=config.voice.read_aloud),
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 

@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``sessions clear``, ``message``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``sessions`` (list, clear), ``config show``, ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``, ``export-config-doc``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -183,6 +183,29 @@ def cmd_config_value(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_show(args: argparse.Namespace) -> int:
+    """v0.24 §5: every key with its value in force and where it came from; no gateway needed."""
+    import json
+
+    from portico_gateway.config import ConfigError, load_config, read_config_layers
+    from portico_gateway.config_doc import format_show, rows_json, show_rows
+
+    _, config_path = _state_and_config_path(args)
+    try:
+        layers = read_config_layers(config_path)
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    rows = show_rows(layers, config)
+    if args.json:
+        print(json.dumps(rows_json(rows, changed=args.changed), ensure_ascii=False))
+    else:
+        print(f"# {layers.base_path} with {layers.local_path.name} over it" + ("" if layers.local_path.exists() else " (absent)"))
+        print(format_show(rows, changed=args.changed))
+    return 0
+
+
 # Exit code of ``stop`` and ``status`` when no gateway runs on the state directory.
 EXIT_NONE_RUNNING = 3
 
@@ -254,6 +277,26 @@ def cmd_sessions_clear(args: argparse.Namespace) -> int:
     for chat in ended:
         registry.remove(chat.number)
     print(f"cleared {len(ended)} earlier session{'s' if len(ended) != 1 else ''}")
+    return 0
+
+
+def cmd_sessions_list(args: argparse.Namespace) -> int:
+    """v0.24: every session in the index, newest first, with the prompt it started with; ``--json`` for agents."""
+    import json
+
+    from portico_gateway.state import StateDir
+
+    state = StateDir(Path(args.state).expanduser() if getattr(args, "state", None) else None)
+    records = sorted(state.load_index().chats, key=lambda r: r.chat, reverse=True)
+    if getattr(args, "json", False):
+        print(json.dumps([r.model_dump(mode="json", include={"chat", "folder", "title", "created", "ended", "prompt"}) for r in records]))
+        return 0
+    for r in records:
+        parts = [f"#{r.chat}", r.created[:10], "ended" if r.ended else r.state, r.title or r.folder]
+        if r.prompt is not None:
+            name = Path(r.prompt.source).name if r.prompt.mode == "custom" else r.prompt.source
+            parts.append(f"prompt {r.prompt.mode} {name} {r.prompt.sha}")
+        print("  ".join(parts))
     return 0
 
 
@@ -330,11 +373,45 @@ def cmd_message(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capture_prompt(args: argparse.Namespace) -> int:
+    """v0.24: copy Claude Code's own system prompt to a file, the start of a custom prompt (one small model request)."""
+    from portico_gateway.config import ConfigError, load_config
+    from portico_gateway.prompt_capture import CaptureError, capture_prompt
+
+    state, config_path = _state_and_config_path(args)
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    out = Path(args.out).expanduser() if args.out else None
+    try:
+        path = asyncio.run(capture_prompt(state.path, list(config.setting_sources), out))
+    except CaptureError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    print(f"wrote {path}")
+    print('Use it with system_prompt = "custom" and system_prompt_file in config.local.toml; it applies to the next new or renewed session.')
+    return 0
+
+
 def cmd_export_schema(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else PROTOCOL_DIR / "schema" / "portico.schema.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(canonical_json(export_schema()), encoding="utf-8")
     print(f"wrote {out}")
+    return 0
+
+
+def cmd_export_config_doc(args: argparse.Namespace) -> int:
+    """v0.24 §6: write CONFIGURATION.md and config.example.toml (the repo root unless --out) from the key docs."""
+    from portico_gateway.config_doc import render_example, render_markdown
+
+    out_dir = Path(args.out) if args.out else REPO_ROOT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "CONFIGURATION.md").write_text(render_markdown(), encoding="utf-8")
+    (out_dir / "config.example.toml").write_text(render_example(), encoding="utf-8")
+    print(f"wrote CONFIGURATION.md and config.example.toml to {out_dir}")
     return 0
 
 
@@ -380,11 +457,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("sessions", help="admin commands on the session list")
-    sessions_sub = p.add_subparsers(dest="sessions_command", required=True)
+    p = sub.add_parser("sessions", help="list sessions with the prompt each started with (v0.24), or clear earlier ones")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    p.add_argument("--json", action="store_true", help="one JSON list for programs")
+    p.set_defaults(func=cmd_sessions_list)
+    sessions_sub = p.add_subparsers(dest="sessions_command", required=False)
+    # A subcommand's own --state/--json default to SUPPRESS, so an absent one never clobbers what
+    # ``sessions --state X`` already parsed (argparse applies a subparser's defaults over the parent's).
+    c = sessions_sub.add_parser("list", help="every session, newest first, with its prompt (mode, file, fingerprint)")
+    c.add_argument("--state", default=argparse.SUPPRESS, help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="one JSON list for programs")
+    c.set_defaults(func=cmd_sessions_list)
     c = sessions_sub.add_parser("clear", help="forget every earlier session (the gateway must be stopped; transcripts stay)")
     c.add_argument("--yes", action="store_true", help="do not ask first")
-    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--state", default=argparse.SUPPRESS, help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     c.add_argument("--config", help="config file (default: <state>/config.toml)")
     c.set_defaults(func=cmd_sessions_clear)
 
@@ -400,6 +486,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_config_value)
 
+    p = sub.add_parser("config", help="config commands (v0.24): show")
+    config_sub = p.add_subparsers(dest="config_command", required=True)
+    c = config_sub.add_parser("show", help="every config key, its value in force and [default], [config.toml] or [config.local.toml]")
+    c.add_argument("--changed", action="store_true", help="only the keys not at their defaults")
+    c.add_argument("--json", action="store_true", help="the same rows as one JSON list, for agents")
+    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--config", help="config file (default: <state>/config.toml)")
+    c.set_defaults(func=cmd_config_show)
+
     p = sub.add_parser("message", help="leave a message from the deployment for the open app (a file in <state>/messages/)")
     p.add_argument("text", help="the message (Markdown)")
     p.add_argument("--title", help="a short heading shown in bold")
@@ -408,9 +503,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.set_defaults(func=cmd_message)
 
+    p = sub.add_parser("capture-prompt", help="copy Claude Code's own system prompt to a file, to start a custom prompt (one small model request)")
+    p.add_argument("--out", help="the file to write (default: <state>/prompts/claude-code-<version>.md); never inside the checkout")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    p.add_argument("--config", help="config file (default: <state>/config.toml)")
+    p.set_defaults(func=cmd_capture_prompt)
+
     p = sub.add_parser("export-schema", help="write protocol/schema/portico.schema.json from the models")
     p.add_argument("--out", help="write the schema to this path instead")
     p.set_defaults(func=cmd_export_schema)
+
+    p = sub.add_parser("export-config-doc", help="write CONFIGURATION.md and config.example.toml from the key docs")
+    p.add_argument("--out", help="write both into this directory instead of the repo root")
+    p.set_defaults(func=cmd_export_config_doc)
 
     p = sub.add_parser("export-examples", help="write protocol/examples/<direction>.<type>.json from the models")
     p.add_argument("--out", help="write the examples into this directory instead")
@@ -459,7 +564,7 @@ def _env_file_path_first(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command in ("run", "doctor"):
+    if args.command in ("run", "doctor", "capture-prompt"):
         _load_env_file(args)
     return int(args.func(args))
 

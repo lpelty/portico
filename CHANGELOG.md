@@ -1,5 +1,147 @@
 # Changelog
 
+## v0.24.0 (2026-11-08)
+
+Configuration a person can live with: a local override file, two clear
+system prompt modes, Read aloud from config, `config show`, and a generated
+reference for every key.
+
+### What a person gets (app)
+
+- **Read aloud from config.** `[voice] read_aloud = true` shows the Read
+  aloud switch in Settings › Voice; the on/off choice stays the person's.
+  Without it the app keeps the older machine flag
+  (`voice.readAloudAvailable`), so a Mac that already turned it on keeps it.
+  Talk is unchanged.
+- **The restart notice covers the local file.** Creating, changing or
+  deleting `config.local.toml` says a restart is needed, as `config.toml`
+  does.
+
+### The gateway
+
+- **`config.local.toml`** beside `config.toml` holds a person's own
+  overrides; nothing else writes it. Tables merge key by key; any other
+  value, arrays included, replaces the deployment's. The merged result is
+  checked as one file; an error from the local file names it
+  (`config.local.toml: system_prompt_file: … is not a file`), stops the
+  gateway from starting, and `bin/doctor` reports it.
+- **System prompt modes.** `system_prompt = "claude_code"` (also
+  `"default"`) is unchanged. New `"custom"` with `system_prompt_file`: the
+  file's text is the whole prompt, read at each engine start and passed to
+  the engine as a file, with `system_prompt_append` and Portico's own lines
+  after it. An unreadable or empty file at a session's start is logged and that
+  session uses Claude Code's prompt, never an empty one; the status line
+  says so once. `"none"` stays as legacy, with a log note suggesting
+  `"custom"`.
+- **`bin/portico-gateway capture-prompt [--out PATH]`** copies Claude Code's
+  own prompt (one small model request, raw request logging to a temporary
+  folder that is then deleted) to `<state>/prompts/claude-code-<version>.md`,
+  with a header recording the version, the model and the date, and a marker
+  comment before machine-specific lines. It never writes inside the
+  checkout and never overwrites a file.
+- **The change warning.** With `"custom"`, `bin/doctor` and the gateway log
+  (once per engine version) say when the engine's Claude Code version
+  differs from the one the file was captured from.
+- **Each session records its prompt**: the mode, the file (or
+  `claude_code`) and the first 8 hex digits of a SHA-256 of the final
+  prompt text, in the session's record and the gateway log.
+  `bin/portico-gateway sessions` (or `sessions list`, `--json`) lists them.
+- **`bin/portico-gateway config show`**: every key, its value in force and
+  `[default]`, `[config.toml]` or `[config.local.toml]`, by section, with
+  when a change applies; `--changed`, `--json`. No gateway needed.
+- **`CONFIGURATION.md`** and **`config.example.toml`** are generated from
+  the key docs (`bin/portico-gateway export-config-doc`), and a test fails
+  when they are out of date. The README's long config block is now a short
+  example and a link.
+- `hello` gains `voice: {read_aloud}` (additive). Nothing else changes on
+  the wire.
+
+### Security fixes before release (sweep)
+
+- **A viewed Markdown file runs only the page's own scripts.** Raw HTML in
+  a Markdown file could run script in the viewer (`<img onerror>`,
+  `<svg onload>`), write, resolve or delete comments in the file as the
+  person, and send data out. The rendered page now carries a
+  Content-Security-Policy with a fresh nonce on every render: only the
+  page's own script and style blocks apply (no inline handlers, no
+  injected `<script>`, no `eval`, no styles from the file). No script,
+  fetch, frame or form can reach outside the page's own scheme; images,
+  fonts and media load as before. Before a rendered block is inserted,
+  the page also drops `<script>`, `<iframe>`, `<object>`, `<embed>`,
+  `<base>`, `<meta>`, `<style>`, `<link>` and SVG animation (`<set>`,
+  `<animate>`, `<animateMotion>`, `<animateTransform>`), every `on*`,
+  `style`, `class` (except marked's `language-…` on code),
+  `autofocus` and `tabindex` attribute and the colour attributes
+  (`color`, `bgcolor`, `background`, `text`, `link`, `vlink`, `alink`),
+  unwraps `<font>` (its text stays), and removes `javascript:`,
+  `vbscript:` and `data:` URLs (`data:image/` stays, in `src` only). The
+  file's `id` and `name` attributes are kept with a `user-content-`
+  prefix in the rendered page, as on GitHub, so a deployment's CSS or
+  script can't rely on them; in-page `#links`, the address's fragment and
+  a space's `notice_target` still find them, and references within the
+  file (label `for`, image maps, ARIA id lists, SVG `url(#…)` and
+  `<use href="#…">`) are rewritten to match. Ordinary raw HTML (`<details>`,
+  `<kbd>`, `<br>`, tables, images, links) renders as before, without
+  inline styles. The Properties block's fold is now wired by the page's
+  script rather than an inline handler.
+- **Comments are written only by the viewer's own comments script, for
+  the page rendered for the file.** The comments script and its handler
+  run in a content world of their own, so no page script in any document
+  can post to it; and the handler still ignores, and logs, a message from
+  any page but the one rendered for the file. A document beside a
+  rendered Markdown page (an HTML file, an SVG, XML) that a link opens is
+  loaded under an address of its own, so it can neither take on the
+  rendered page's address nor read it. While the viewer is away from the
+  rendered page, comments draw nothing and leave the context menu alone.
+- **Space actions only on the person's real click or key press (behaviour
+  change).** A `space-action:` link now runs only when a trusted click by
+  the person landed on that link within the last second (used once), or
+  the person pressed Return on it after their own Tab or click put the
+  focus there. A script's `a.click()`, a dispatched event, a timer, a
+  redirect, or focus set by script or `autofocus` runs nothing and is
+  logged, in Markdown and HTML spaces alike. **A space that triggered
+  actions from script must now have the person click the link.** In a
+  Markdown space an action link counts only when it is text (plain, bold,
+  italic or code, with at least one letter or digit), and the page drops
+  the file's styles, `class` attributes, colour attributes, `<font>`,
+  `autofocus` and `tabindex` (and prefixes its `id` and `name` with
+  `user-content-`). **What it cannot do:** the app checks that a real click or key
+  press by the person reached the link; it can't tell who wrote the link.
+  A space that shows untrusted text (email, web pages, other people's
+  notes) must not let links from that text through unchanged. In an HTML
+  space, script the deployment does not control can also steer a real
+  click or key press (by changing a link as the mouse goes down, or moving
+  the keyboard focus). PROTOCOL.md (`space.act`) says so.
+- HTML files and sites shown in the viewer are unchanged: they run their
+  scripts as before. The Markdown editor shows no untrusted HTML and is
+  unchanged.
+
+### Loose ends
+
+- **Running prompt files are cleaned up.** `<state>/prompts/running/chat-<n>.md`
+  (a session's composed custom prompt) is deleted when its chat is removed
+  or cleared (in the app or with `sessions clear`), and at gateway start
+  for any chat no longer in the index. A renewal overwrites it as before.
+  Only regular files inside the state directory are touched, and a
+  failure is logged, never fatal.
+- **PROTOCOL.md**: `config.stale` (and `hello.config_stale`) name both
+  `config.toml` (newer, or appeared) and `config.local.toml`; `hello` documents
+  `voice?: {read_aloud: bool}`.
+
+### For deployments
+
+- Keep `config.toml` the deployment's; a person's preferences go in
+  `config.local.toml`. A deployment that keeps its config in git adds
+  `config.local.toml` to that repository's `.gitignore`.
+
+### Owed
+
+- On screen: a `config.local.toml` with `[voice] read_aloud = true` shows the
+  Read aloud switch; a custom prompt session, checked with `config show` and
+  the session's fingerprint, then back to Claude Code's prompt by deleting
+  the line; the restart notice after changing the local file; one real
+  `capture-prompt` run.
+
 ## v0.23.0 (2026-11-07)
 
 Comments in Markdown files, shown and written in the viewer and by the

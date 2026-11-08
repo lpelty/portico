@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import REPO_ROOT
-from .config import EMPTY_SETTING_SOURCES_MESSAGE, ConfigError, load_config
+from .config import EMPTY_SETTING_SOURCES_MESSAGE, LOCAL_CONFIG_NAME, ConfigError, load_config, local_config_path, read_config_layers
 from .plugins import check_plugin
 from .state import ENV_HOME, ENV_HOME_SOURCE, StateDir
 
@@ -252,23 +252,57 @@ def check_credential(env: Mapping[str, str] | None = None) -> Check:
 
 
 def check_config(config_path: Path) -> Check:
-    if not config_path.exists():
+    local = local_config_path(config_path)
+    if not config_path.exists() and not local.exists():
         return Check("config", True, f"{config_path} absent, using defaults")
     try:
         load_config(config_path)
     except ConfigError as e:
         return Check("config", False, _one_line(str(e)))
-    return Check("config", True, f"{config_path} loads")
+    with_local = f" with {LOCAL_CONFIG_NAME}" if local.exists() else ""
+    if not config_path.exists():
+        return Check("config", True, f"{config_path} absent; {LOCAL_CONFIG_NAME} loads over the defaults")
+    return Check("config", True, f"{config_path} loads{with_local}")
+
+
+def check_system_prompt(config_path: Path, version: Callable[[], str | None] | None = None) -> Check:
+    """v0.24 §3: which prompt runs; with ``custom``, whether Claude Code changed since the file was captured.
+
+    The engine's version is asked only when there is a recorded one to compare.
+    """
+    from .cc_version import PROMPT_CHANGED, claude_code_version
+    from .engine import prompt_header_unknown, prompt_header_version
+
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return Check("system prompt", True, "skipped: the config does not load (see the config check)")
+    if config.system_prompt == "none":
+        return Check("system prompt", True, 'system_prompt = "none" (legacy): use "custom" with system_prompt_file for the whole prompt')
+    if config.system_prompt != "custom" or not config.system_prompt_file:
+        return Check("system prompt", True, "Claude Code's own prompt (follows Claude Code)")
+    recorded = prompt_header_version(config.system_prompt_file)
+    if recorded is None and prompt_header_unknown(config.system_prompt_file):
+        return Check("system prompt", True, f"custom: {config.system_prompt_file} has no recorded Claude Code version, so no version is compared")
+    if recorded is None:
+        return Check("system prompt", True, f"custom: {config.system_prompt_file} has no capture header, so no version is compared")
+    current = (version or claude_code_version)()
+    if current is None:
+        return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}; the engine's version is unknown)")
+    if current != recorded:
+        return Check("system prompt", True, PROMPT_CHANGED.format(old=recorded, new=current), warn=True)
+    return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}, the engine's version)")
 
 
 def check_setting_sources(config_path: Path) -> Check:
     """Read the raw key so an empty list is reported in the exact words, independent of the config check."""
-    if not config_path.exists():
-        return Check("setting_sources", True, "default [project]")
     try:
-        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
+        layers = read_config_layers(config_path)
+    except ConfigError as e:
         return Check("setting_sources", False, f"{config_path} could not be read: {_one_line(str(e))}")
+    data = layers.merged()
+    if layers.source_of("setting_sources") == LOCAL_CONFIG_NAME:
+        config_path = layers.local_path
     if "setting_sources" not in data:
         return Check("setting_sources", True, "default [project]")
     value = data["setting_sources"]
@@ -663,6 +697,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT, *, state_
         check_credential(),
         check_config(config_path),
         check_setting_sources(config_path),
+        check_system_prompt(config_path),
         *check_plugins(config_path),
         check_services(config_path),
         check_viewer(config_path),

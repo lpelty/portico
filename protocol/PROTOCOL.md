@@ -559,7 +559,9 @@ sidebar before anything else arrives, and then (v0.4) `services.status`,
 
 v0.2 added `presentation: single | multiple` and `can_log`. v0.3:
 `presentation` defaults to `single`; `config_stale: bool` (the config file
-changed after the gateway started, so a restart is needed to apply it);
+changed after the gateway started, so a restart is needed to apply it; v0.24:
+`config.toml` is newer than at start (or appeared), or the
+`config.local.toml` beside it was created, changed or deleted);
 `can_update: bool` (the deployment configured an update command, which
 `portico-gateway update` runs); `default_folder?` (config `default_folder`,
 `~` expanded: where a new session works when the person has not chosen a
@@ -591,6 +593,11 @@ an app that gets none (an older v0.16 gateway) assumes 2.
 v0.23: `person?: {name}` (config `[person] name`, or a plug-in's
 `on_hello`): the person's real name, which the app writes as the author of
 their comments. Absent: the app uses the computer's full user name.
+
+v0.24: `voice?: {read_aloud: bool}` (config `[voice] read_aloud`, default
+`false`): when `true`, the app's Settings shows the Read aloud switch; the
+person's own on/off choice stays in the app. `false` or absent (an older
+gateway): the app keeps its older machine flag (`voice.readAloudAvailable`).
 
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
@@ -964,8 +971,9 @@ the turn each followed and without `seq`; only notices from before the
 restart are lost.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
-No fields. The config file is newer than when the gateway started; the
-app says "restart the gateway to apply". Sent once when the gateway
+No fields. `config.toml` is newer than when the gateway started (or it
+appeared), or (v0.24) the `config.local.toml` beside it was created, changed or deleted;
+the app says "restart the gateway to apply". Sent once when the gateway
 notices; `hello.config_stale` carries the same fact on connect.
 
 ### `update.available` — `UpdateAvailable` *(v0.3)*
@@ -2003,7 +2011,32 @@ the gateway lists `spaces.act`, and only for the person's own click: the
 link must be in the page's main frame (not an iframe) while the viewer is
 showing that space's own page, and a click made by the viewer agent
 (`viewer.act`) never sends it (the agent can
-ask the person to click). The gateway runs `[spaces] act` with
+ask the person to click). v0.24: "the person's own click" means one of:
+a trusted click (`event.isTrusted`) that landed on that link (the element
+at the click is the link or inside it), on a link that is not
+`visibility: hidden` and not nearly transparent (opacity above 0.1); or a
+Return on the link after the person's own Tab (or Option-Tab, Shift-Tab)
+or click put the keyboard focus there since the page loaded. It must come
+within the last second and is used once. In a rendered Markdown page an
+action link counts only when it is text (no children but `strong`, `em`,
+`b`, `i` or `code`, and at least one letter or digit; the Hangul fillers
+and the blank Braille cell are blank), and the page drops the file's
+styles, `class` attributes (marked's `language-…` on code stays), colour
+attributes, `<font>`, `autofocus` and `tabindex`, and prefixes the file's
+`id` and `name` with `user-content-` (fragments, and references within
+the file such as label `for` and SVG `url(#…)`, still find them). A
+script's `a.click()`, a dispatched event, a timer, a redirect to a
+`space-action:` URL, or keyboard focus set by script or `autofocus` runs
+nothing (the app logs and ignores it), in Markdown and HTML spaces alike.
+A space that triggered actions from script must have the person click the
+link instead. What it cannot do: the app checks that a real click or key
+press by the person reached the link; it can't tell who wrote the link. A
+space that shows untrusted text (email, web pages, other people's notes)
+must not let links from that text through unchanged. In an HTML space,
+script the deployment does not control can also steer a real click or key
+press (by changing the link as the mouse goes down, or setting the
+keyboard focus before the person's Tab); keep such script out of HTML
+spaces. The gateway runs `[spaces] act` with
 `/bin/sh -c` for up to 30 s, with `$PORTICO_SPACE`, `$PORTICO_ACTION` and
 `$PORTICO_ITEM` (empty with no item) set in the environment, never in the
 command string, and answers with a new `spaces.list` (the deployment
@@ -2220,6 +2253,7 @@ for the reference gateway, not protocol messages.
 The running gateway also checks for updates itself: `update.check` at
 start and every 6 hours, in the background; a version found goes to the
 attached app as `update.available`, and again to an app that attaches
-later. It watches the config file's modification time every ~10 seconds
-and sends `config.stale` once when the file is newer than at start.
+later. It watches the config files every ~10 seconds and sends `config.stale`
+once when `config.toml` is newer than at start (or appeared) or (v0.24) the
+`config.local.toml` beside it was created, changed or deleted.
 

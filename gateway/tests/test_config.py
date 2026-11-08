@@ -775,3 +775,13 @@ def test_on_hello_plugin_may_fill_person(tmp_path: Path, monkeypatch: pytest.Mon
     hello = hello_for(Config(), epoch="e", gateway_version="0.23.0", plugins=plugins)
     assert hello.person is not None and hello.person.name == "Sam"
     sys.modules.pop("pp_person", None)
+
+
+def test_hello_carries_read_aloud(tmp_path: Path) -> None:
+    """v0.24 §4: ``[voice] read_aloud`` goes to the app in ``hello``; false when unset."""
+    assert hello_for(Config(), epoch="e", gateway_version="0.24.0").voice.read_aloud is False
+    path = tmp_path / "config.toml"
+    path.write_text("[voice]\nread_aloud = true\n", encoding="utf-8")
+    hello = hello_for(load_config(path), epoch="e", gateway_version="0.24.0")
+    assert hello.voice is not None and hello.voice.read_aloud is True
+    assert hello.model_dump(mode="json")["voice"] == {"read_aloud": True}

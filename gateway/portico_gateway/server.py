@@ -168,7 +168,8 @@ from .apps import AppHost, build_ui_map
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
-from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, with_default_spaces
+from .cc_version import PROMPT_CHANGED, CachedVersion
+from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, local_config_path, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
     STILL_LOADING_TEXT,
@@ -176,8 +177,12 @@ from .engine import (
     PermissionDecision,
     QuestionDeclined,
     Shown,
+    SessionPrompt,
     append_prompt_line,
-    deployment_system_prompt,
+    final_system_prompt,
+    prompt_fingerprint,
+    prompt_header_version,
+    session_prompt,
     friendly_model_name,
     history_events,
     read_history,
@@ -311,7 +316,7 @@ from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
-from .state import ProposalRecord, QuestionOutcome, StateDir
+from .state import PromptRecord, ProposalRecord, QuestionOutcome, StateDir
 from .threads import (
     CLOSE_LOGGING,
     CLOSE_PLAIN,
@@ -335,6 +340,12 @@ from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
+
+# v0.24 §3: said once when a custom prompt file can't be read at a session's start.
+PROMPT_FALLBACK_TEXT = "The custom system prompt could not be read or is empty; this session uses Claude Code's prompt."
+NONE_PROMPT_NOTE = (
+    'system_prompt = "none" is kept for older configs; "custom" with system_prompt_file is the way to set the whole prompt'
+)
 
 HOST = "127.0.0.1"
 # The largest frame the gateway takes from the app (a viewer screenshot is the big one).
@@ -1013,8 +1024,16 @@ class GatewayServer:
         # The file the config came from and its modification time at start:
         # a newer file means the running gateway is not using it (v0.3).
         self.config_path = Path(config_path) if config_path is not None else None
-        self.config_mtime = self._config_mtime()
+        # v0.24: and the ``config.local.toml`` beside it (created, changed or deleted is stale).
+        self.config_mtimes = self._config_mtimes()
         self._config_stale_sent = False
+        # v0.24: the status line has said the custom prompt could not be read.
+        self._prompt_fallback_said = False
+        # v0.24: the engine's version (asked once; tests set their own) and the versions already warned about.
+        self.claude_code_version: Callable[[], str | None] = CachedVersion()
+        self._prompt_versions_warned: set[str] = set()
+        if config.system_prompt == "none":
+            log.info(NONE_PROMPT_NOTE)
         self.started_at = _now()
         # The version the deployment's update check last found, if any.
         self.update_version: str | None = None
@@ -1257,6 +1276,8 @@ class GatewayServer:
             max_size=MAX_INBOUND_BYTES,
         )
         self.port = self._server.sockets[0].getsockname()[1]
+        # v0.24 (sweep #14): prompt files left by chats removed while no gateway ran.
+        self.registry.prune_running_prompts()
         await self._follow_default_folder()
         await self._preview_next_number()
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
@@ -1379,27 +1400,41 @@ class GatewayServer:
 
     # --- the config file and the gateway's status ----------------------------------
 
-    def _config_mtime(self) -> float | None:
-        if self.config_path is None:
-            return None
+    @staticmethod
+    def _mtime(path: Path) -> float | None:
         try:
-            return self.config_path.stat().st_mtime
+            return path.stat().st_mtime
         except OSError:
             return None
 
-    def config_stale(self) -> bool:
-        """Whether the config file is newer than when this gateway started (or appeared since)."""
+    def _config_mtimes(self) -> tuple[float | None, float | None]:
         if self.config_path is None:
-            return False
-        now = self._config_mtime()
-        return now is not None and (self.config_mtime is None or now > self.config_mtime)
+            return (None, None)
+        return (self._mtime(self.config_path), self._mtime(local_config_path(self.config_path)))
+
+    def _stale_file(self) -> Path | None:
+        """The config file that changed since start, if any (v0.24: either one)."""
+        if self.config_path is None:
+            return None
+        base_then, local_then = self.config_mtimes
+        base_now, local_now = self._config_mtimes()
+        if base_now is not None and (base_then is None or base_now > base_then):
+            return self.config_path
+        if local_now != local_then:
+            return local_config_path(self.config_path)
+        return None
+
+    def config_stale(self) -> bool:
+        """Whether ``config.toml`` is newer than at start (or appeared since), or ``config.local.toml`` changed in any way."""
+        return self._stale_file() is not None
 
     async def check_config(self) -> None:
-        """Send ``config.stale`` once, the first time the file is seen newer."""
-        if self._config_stale_sent or not self.config_stale():
+        """Send ``config.stale`` once, the first time a config file is seen changed."""
+        changed = self._stale_file()
+        if self._config_stale_sent or changed is None:
             return
         self._config_stale_sent = True
-        log.info("%s changed after the gateway started; restart the gateway to apply it", self.config_path)
+        log.info("%s changed after the gateway started; restart the gateway to apply it", changed)
         await self.broadcast(ConfigStale(ts=_now()))
 
     async def _watch_config(self) -> None:
@@ -1803,7 +1838,15 @@ class GatewayServer:
         engine = self.engine_factory()
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
-        prompt = deployment_system_prompt(self.config.system_prompt, self.config.system_prompt_append)
+        chosen = session_prompt(
+            self.config.system_prompt,
+            self.config.system_prompt_append,
+            self.config.system_prompt_file,
+            self.state.running_prompt_path(chat.number),
+        )
+        await self._note_prompt_fallback(chosen)
+        resuming = chat.session_id is not None
+        prompt = chosen.prompt
         callbacks = ChatCallbacks(self, chat)
         if chat.thread is not None:
             prompt = append_prompt_line(prompt, thread_prompt(chat.thread.slot))
@@ -1821,6 +1864,7 @@ class GatewayServer:
             chat.folder, chat.session_id, sources, callbacks, extra_servers=extra_servers, plugin_paths=plugin_paths
         )
         chat.engine = engine
+        await self._record_prompt(chat, chosen, final_system_prompt(prompt, callbacks), resuming)
         self.apps.engine_started(chat, engine)
         self._engine_seq += 1
         self._engine_started[chat.number] = self._engine_seq
@@ -1830,6 +1874,42 @@ class GatewayServer:
         await self._report_commands(chat, engine)
         await self._report_models(chat, engine)
         return engine
+
+    async def _record_prompt(self, chat: Chat, chosen: SessionPrompt, final: Any, resuming: bool) -> None:
+        """v0.24 §3 (ruling 5): a new session, or one with no record yet, records the prompt it started with.
+
+        A resumed engine keeps the earlier record: the engine keeps the prompt
+        it recorded at the session's start until it compacts. A custom start
+        also compares the file's captured version with the engine's, logged
+        once per engine version.
+        """
+        if not resuming or chat.prompt is None:
+            chat.prompt = PromptRecord(mode=chosen.mode, source=chosen.source, sha=prompt_fingerprint(final), at=_now())
+            log.info("chat %d: system prompt %s %s %s", chat.number, chat.prompt.mode, chat.prompt.source, chat.prompt.sha)
+        if chosen.mode != "custom":
+            return
+        recorded = prompt_header_version(chosen.source)
+        if recorded is None:
+            return
+        try:
+            current = await asyncio.to_thread(self.claude_code_version)
+        except Exception:
+            current = None
+        if current is None or current == recorded or current in self._prompt_versions_warned:
+            return
+        self._prompt_versions_warned.add(current)
+        log.warning(PROMPT_CHANGED.format(old=recorded, new=current))
+
+    async def _note_prompt_fallback(self, chosen: SessionPrompt) -> None:
+        """v0.24 ruling 13: an unreadable custom prompt is said on the status line once, until it reads again."""
+        if not chosen.fell_back:
+            if self.config.system_prompt == "custom":
+                self._prompt_fallback_said = False
+            return
+        if self._prompt_fallback_said:
+            return
+        self._prompt_fallback_said = True
+        await self.broadcast(StatusSet(ts=_now(), text=PROMPT_FALLBACK_TEXT))
 
     async def _person_mcp(self, chat: Chat, sources: list[str]) -> tuple[dict[str, dict], list[str]]:
         """v0.18 §3.2: the person's MCP servers and plugins for ``chat``'s engine (rulings 2 and 3).

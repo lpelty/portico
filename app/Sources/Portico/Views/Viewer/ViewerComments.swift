@@ -261,7 +261,7 @@ final class ViewerComments: ObservableObject {
 
     /// Send the state to the page.
     func push() {
-        guard let evaluate,
+        guard !away, let evaluate,
             let data = try? JSONSerialization.data(withJSONObject: pageState()),
             let json = String(data: data, encoding: .utf8)
         else { return }
@@ -280,11 +280,36 @@ final class ViewerComments: ObservableObject {
     }
 
     /// The page that posted, so the state can be pushed back to it.
-    func attach(_ view: WKWebView) {
+    /// `world`: where the page's comments script runs (v0.24: the viewer's
+    /// in `ViewerCommentsScript.world`; the editor's in its page).
+    func attach(_ view: WKWebView, world: WKContentWorld = .page) {
+        // A page that posted is a page comments are for (the handler checked
+        // it), so whatever "away" said of an earlier page no longer holds.
+        if webView !== view { away = false }
         webView = view
-        evaluate = { [weak view] script in view?.evaluateJavaScript(script, completionHandler: nil) }
+        scriptWorld = world
+        evaluate = { [weak view] script in view?.evaluateJavaScript(script, in: nil, in: world, completionHandler: nil) }
         installShortcut()
     }
+
+    /// Review round 2 (R4): the pane has left the rendered page (a linked
+    /// file, a site, the failure page). While away, no threads are pushed and
+    /// the comments script there leaves the page's context menu alone;
+    /// coming back resumes and pushes the state again.
+    private(set) var away = false
+
+    func setAway(_ away: Bool) {
+        guard away != self.away else { return }
+        self.away = away
+        if away {
+            evaluate?("window.__porticoComments && (window.__porticoComments.ownMenu = false)")
+        } else {
+            push()
+        }
+    }
+
+    /// The content world the attached page's comments script runs in.
+    private(set) var scriptWorld: WKContentWorld = .page
 
     // MARK: ⌥⌘M (spec §13.2)
 
@@ -318,7 +343,7 @@ final class ViewerComments: ObservableObject {
             : "return window.__porticoComments ? window.__porticoComments.selectionInfo() : null;"
         Task { @MainActor [weak self] in
             guard let self, let focus = self.focus else { return }
-            let value = try? await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+            let value = try? await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: editing ? .page : self.scriptWorld)
             let info = value as? [String: Any]
             if editing {
                 let from = (info?["from"] as? NSNumber)?.intValue ?? 0, to = (info?["to"] as? NSNumber)?.intValue ?? 0

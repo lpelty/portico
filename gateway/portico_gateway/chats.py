@@ -29,6 +29,9 @@ the engine's transcript, which the server replays on ``chat.open``.
 
 from __future__ import annotations
 
+import logging
+import re
+import stat
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,7 +49,7 @@ from .messages import (
     ServerMessage,
     ThreadInfo,
 )
-from .state import ChatRecord, Index, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
+from .state import ChatRecord, Index, PromptRecord, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .engine import Engine
@@ -130,6 +133,7 @@ class Chat:
         work_since_log: bool = False,
         last_reply: str | None = None,
         thread: ThreadInfo | None = None,
+        prompt: PromptRecord | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -190,6 +194,8 @@ class Chat:
         self.last_reply = last_reply
         # v0.16: set when this chat is a thread opened from Main.
         self.thread = thread
+        # v0.24: the prompt the session started with (never sent to the app).
+        self.prompt = prompt
         self.can_log = False
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
@@ -329,6 +335,7 @@ class Chat:
             permissions=dict(self.permissions),
             answers=dict(self.answers),
             work_since_log=self.work_since_log,
+            prompt=self.prompt,
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -357,6 +364,7 @@ class Chat:
             logged_at=record.logged_at,
             last_reply=record.last_reply,
             thread=record.thread,
+            prompt=record.prompt,
             # An index from before v0.4 does not say: a session the engine
             # named has had a turn, and nothing in v0.4 has logged it.
             work_since_log=(
@@ -373,6 +381,26 @@ def _checked_state(word: str) -> ChatStateWord:
     if word not in STATE_WORDS:
         raise ValueError(f"not a chat state: {word!r} (one of {', '.join(sorted(STATE_WORDS))})")
     return word  # type: ignore[return-value]
+
+
+log = logging.getLogger(__name__)
+
+# ``chat-<n>.md`` and the temporary file ``materialize_prompt`` writes it through.
+_RUNNING_PROMPT = re.compile(r"chat-(\d+)\.md(?:\.tmp)?")
+
+
+def _unlink_prompt_file(path: Path) -> None:
+    """Delete one composed prompt file: a regular file only (never a link or a folder), never raising."""
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            if path.exists() or path.is_symlink():
+                log.warning("left %s alone: not a regular file", path)
+            return
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        log.warning("could not delete the prompt file %s: %s", path, e)
 
 
 class ChatRegistry:
@@ -492,7 +520,39 @@ class ChatRegistry:
         del self._chats[number]
         self._index.proposals = [p for p in self._index.proposals if p.chat != number]
         self.persist()
+        # v0.24 (sweep #14): its composed custom prompt goes with it; a failure
+        # here is logged and never undoes or interrupts the removal.
+        if self._running_prompts_inside_state():
+            _unlink_prompt_file(self._state.running_prompt_path(number))
         return chat
+
+    def _running_prompts_inside_state(self) -> bool:
+        """The prompts folder resolves inside the state directory (a link out of it is never pruned)."""
+        try:
+            folder = self._state.running_prompts_path.resolve()
+            state = self._state.path.resolve()
+        except OSError as e:
+            log.warning("could not resolve the prompts folder: %s", e)
+            return False
+        if folder.is_relative_to(state):
+            return True
+        log.warning("left %s alone: it resolves outside the state directory", self._state.running_prompts_path)
+        return False
+
+    def prune_running_prompts(self) -> None:
+        """Delete the composed prompt files of chats no longer in the index (v0.24, sweep #14; at gateway start)."""
+        folder = self._state.running_prompts_path
+        try:
+            if not folder.is_dir() or not self._running_prompts_inside_state():
+                return
+            entries = list(folder.iterdir())
+        except OSError as e:
+            log.warning("could not list the prompts folder %s: %s", folder, e)
+            return
+        for path in entries:
+            match = _RUNNING_PROMPT.fullmatch(path.name)
+            if match and int(match.group(1)) not in self._chats:
+                _unlink_prompt_file(path)
 
     # --- Main and its threads (v0.16) ---------------------------------------------
 

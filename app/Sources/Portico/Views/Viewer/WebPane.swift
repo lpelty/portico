@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -36,16 +37,38 @@ enum MarkdownPage {
         // Present but unreadable: the words in its place (v0.20 §2.3), even with nothing to show.
         let drawn = shownProperties.flatMap { $0.unreadable || !$0.properties.isEmpty ? $0.html(open: propertiesOpen) : nil }
         let properties = (drawn ?? "").replacingOccurrences(of: "{", with: "&#123;")
-        let comments = try resource("viewer-comments.js")
+        // v0.24 (sweep #1): first, so nothing filled in after (the title, the
+        // source, the scripts) can name the placeholders.
+        let nonce = newNonce()
         return template
+            .replacingOccurrences(of: "{{CSP}}", with: contentSecurityPolicy(nonce: nonce))
+            .replacingOccurrences(of: "{{NONCE}}", with: nonce)
             .replacingOccurrences(of: "{{PROPERTIES}}", with: properties)
             .replacingOccurrences(of: "{{BODY_LINE}}", with: String(bodyLine(source)))
             .replacingOccurrences(of: "{{COMMENTS_CSS}}", with: CommentsTheme.css())
-            .replacingOccurrences(of: "{{COMMENTS_JS}}", with: comments)
             .replacingOccurrences(of: "{{TITLE}}", with: escapeHTML(title))
             .replacingOccurrences(of: "{{CSS}}", with: css + scaleRule(scale))
             .replacingOccurrences(of: "{{MARKED}}", with: marked)
             .replacingOccurrences(of: "{{SOURCE}}", with: jsString(sentinelMarkers(source, body: split.body)))
+    }
+
+    /// v0.24 (sweep #1): the rendered page's policy. Only the page's own
+    /// script blocks and its own style block run (they carry `nonce`): no
+    /// inline handler, no injected script, no `eval`, no style from the file
+    /// (review round 1). No script, fetch, frame or form can reach outside the
+    /// page's own scheme. Images (and fonts and media) load as before: there
+    /// is no `img-src`, so remote and relative images still show.
+    static func contentSecurityPolicy(nonce: String) -> String {
+        let own = "\(RenderedPageHandler.scheme):"
+        return "script-src 'nonce-\(nonce)'; style-src 'nonce-\(nonce)'; object-src 'none'; base-uri 'none'; "
+            + "connect-src \(own); frame-src \(own); form-action \(own)"
+    }
+
+    /// 128 random bits, base64: a fresh one for every render.
+    static func newNonce() -> String {
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        return Data(bytes).base64EncodedString()
     }
 
     /// v0.23: the body with each comment marker (outside code and thread
@@ -246,6 +269,28 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         return file
     }
 
+    /// v0.24 (review H1): a file a browser shows as a document that can run
+    /// script: HTML, XHTML, SVG, XML (and web archives).
+    static func isDocument(_ file: URL) -> Bool {
+        let ext = file.pathExtension.lowercased()
+        if ["html", "htm", "shtml", "xhtml", "xht", "svg", "svgz", "xml", "xsl", "xslt", "webarchive", "mht", "mhtml"].contains(ext) {
+            return true
+        }
+        guard let type = UTType(filenameExtension: ext) else { return false }
+        return type.conforms(to: .html) || type.conforms(to: .xml) || type.conforms(to: .svg) || type.conforms(to: .webArchive)
+    }
+
+    /// v0.24 (review H1): the file a URL names when it is a document beside a
+    /// rendered Markdown page, under that page's render id. Such a document is
+    /// never shown there (it would share the rendered page's origin): the
+    /// pane loads it under an id of its own instead.
+    func siblingDocument(for url: URL) -> URL? {
+        guard url.scheme == Self.scheme, let host = url.host, let render = renders[host], render.page != nil,
+              !Self.isRenderedPage(url.path), let file = Self.file(url.path, in: render), Self.isDocument(file)
+        else { return nil }
+        return file
+    }
+
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         let url = task.request.url ?? URL(string: "\(Self.scheme)://missing/")!
         guard let host = url.host, let render = renders[host] else {
@@ -258,7 +303,12 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
         guard let file = Self.file(path, in: render), let body = try? Data(contentsOf: file) else {
             return respond(task, url: url, status: 404, type: "text/plain", body: Data("not found".utf8))
         }
-        respond(task, url: url, status: 200, type: Self.contentType(of: file, body: body), body: body)
+        // v0.24 (review H1): a document beside a rendered Markdown page is
+        // only ever an image or data here (the pane loads it elsewhere to show
+        // it); should it ever be shown as a document, it runs no script and has
+        // an origin of its own.
+        let extra = render.page != nil && Self.isDocument(file) ? ["Content-Security-Policy": "sandbox"] : [:]
+        respond(task, url: url, status: 200, type: Self.contentType(of: file, body: body), body: body, extra: extra)
     }
 
     /// The `Content-Type` for a served file. HTML with no charset of its
@@ -272,10 +322,10 @@ final class RenderedPageHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 
-    private func respond(_ task: any WKURLSchemeTask, url: URL, status: Int, type: String, body: Data) {
+    private func respond(_ task: any WKURLSchemeTask, url: URL, status: Int, type: String, body: Data, extra: [String: String] = [:]) {
         let response = HTTPURLResponse(
             url: url, statusCode: status, httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": type, "Content-Length": String(body.count)])!
+            headerFields: ["Content-Type": type, "Content-Length": String(body.count)].merging(extra) { a, _ in a })!
         task.didReceive(response)
         task.didReceive(body)
         task.didFinish()
@@ -421,6 +471,36 @@ struct WebPane: NSViewRepresentable {
         let fragment: String
     }
 
+    /// v0.24 (sweep #2): the person's real clicks on `space-action:` links,
+    /// as the page's click recorder reports them. A navigation to such a
+    /// link runs its action only when it matches a click on the same link
+    /// from the last second, and each click is used once.
+    struct TrustedClicks {
+        static let window: TimeInterval = 1
+        private var clicks: [(link: String, at: Date)] = []
+
+        mutating func note(_ link: URL, at time: Date) {
+            clicks.append((Self.key(link), time))
+            if clicks.count > 16 { clicks.removeFirst(clicks.count - 16) }
+        }
+
+        /// Whether a click on `link` came at most a second before `now`; the click is used up.
+        mutating func take(_ link: URL, at now: Date) -> Bool {
+            clicks.removeAll { now.timeIntervalSince($0.at) > Self.window }
+            let key = Self.key(link)
+            guard let i = clicks.firstIndex(where: { $0.link == key && now >= $0.at }) else { return false }
+            clicks.remove(at: i)
+            return true
+        }
+
+        /// The link as compared: its scheme without case, as the URL parser has it.
+        private static func key(_ link: URL) -> String {
+            let text = link.absoluteString
+            guard let colon = text.firstIndex(of: ":") else { return text }
+            return text[..<colon].lowercased() + text[colon...]
+        }
+    }
+
     /// The page the pane renders for `load` at a text scale: a Markdown
     /// file's page, scaled (v0.15 §3). An HTML file and a site are shown
     /// as they are, at their true size (`nil`: nothing is rendered).
@@ -511,6 +591,9 @@ struct WebPane: NSViewRepresentable {
         var onSpaceAction: ((URL) -> Void)?
         /// v0.23: the file viewer's comments; the page's `comments` messages go to it.
         weak var comments: ViewerComments?
+        /// v0.24 (sweep #2): the person's recent real clicks on action links.
+        var trustedClicks = TrustedClicks()
+        static let log = Logger(subsystem: "Portico", category: "viewer")
         /// v0.22 (S2): the last fragment request carried out, and one waiting
         /// for the page to finish loading.
         private var doneFragmentKey: String?
@@ -534,8 +617,143 @@ struct WebPane: NSViewRepresentable {
                 configuration.userContentController.addUserScript(script)
             }
             configuration.userContentController.add(PropertiesToggle(self), name: PropertiesToggle.name)
-            configuration.userContentController.add(CommentsMessages(self), name: CommentsMessages.name)
+            // v0.24 (review H1): the comments script and its handler live in a
+            // world of their own; no page script can post to `comments`.
+            if let script = ViewerCommentsScript.userScript() {
+                configuration.userContentController.addUserScript(script)
+            }
+            configuration.userContentController.add(
+                CommentsMessages(self), contentWorld: ViewerCommentsScript.world, name: CommentsMessages.name)
+            // v0.24 (sweep #2): the click recorder lives in a world of its own,
+            // so the page's scripts can neither reach its handler nor fake a click.
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: Self.clickRecorder, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.clickWorld))
+            configuration.userContentController.add(
+                SpaceActionClicks(self), contentWorld: Self.clickWorld, name: Self.spaceActionClickHandler)
             return configuration
+        }
+
+        /// v0.24 (sweep #2): the world the click recorder runs in, apart from the page's own.
+        static let clickWorld = WKContentWorld.world(name: "space-action-clicks")
+        static let spaceActionClickHandler = "spaceActionClick"
+
+        /// Tells the app of each real click (`isTrusted`) on a `space-action:`
+        /// link. A script's `a.click()`, a dispatched event, a timer or a
+        /// redirect is never trusted, so it is never reported.
+        ///
+        /// What it checks, all structural (review rounds 1 and 2):
+        /// - it listens on `window`, capture, from document start, so it sees
+        ///   the link before any listener the page adds;
+        /// - a pointer click counts only when `elementFromPoint` at the click
+        ///   is the link or inside it (for an image map's `area`, the area or
+        ///   its image), and the link is not `visibility: hidden` and not
+        ///   nearly transparent (opacity up the chain above 0.1);
+        /// - a keyboard activation (Return) counts only on the link the
+        ///   person's own Tab (or Option-Tab, Shift-Tab) or click put the
+        ///   focus on since the page loaded; focus set by script or
+        ///   `autofocus` does not count;
+        /// - in the rendered Markdown page, an action link counts only as
+        ///   text: no children but inline text formatting (`strong`, `em`,
+        ///   `b`, `i`, `code`) and at least one letter or digit in it (the
+        ///   Hangul fillers and the blank Braille cell are blank).
+        /// It cannot tell who wrote a link: a space that shows untrusted text
+        /// must not let links from that text through unchanged.
+        static let clickRecorder = """
+            (function () {
+              var XLINK = "http://www.w3.org/1999/xlink";
+              var TEXT_ONLY = { strong: 1, em: 1, b: 1, i: 1, code: 1 };
+              // Characters that draw nothing although they are not spaces: the
+              // Hangul fillers (letters to Unicode) and the blank Braille cell.
+              var BLANK = /[\\u115F\\u1160\\u3164\\uFFA0\\u2800]/g;
+              function hrefOf(a) {
+                var h = a.href;
+                if (typeof h !== "string") h = (h && h.baseVal) || "";
+                return h || a.getAttributeNS(XLINK, "href") || a.getAttribute("href") || "";
+              }
+              function seen(el) {
+                var cs = getComputedStyle(el);
+                if (cs.visibility === "hidden" || cs.visibility === "collapse") return false;
+                var opacity = 1;
+                for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+                  var s = getComputedStyle(n);
+                  if (s.display === "none") return false;
+                  opacity *= parseFloat(s.opacity);
+                }
+                return opacity > 0.1;
+              }
+              // The rendered Markdown page (served at / with its #content and #body).
+              function renderedMarkdown() {
+                return location.protocol === "\(RenderedPageHandler.scheme):"
+                  && (location.pathname === "/" || location.pathname === "/index.html")
+                  && !!document.getElementById("content") && !!document.getElementById("body");
+              }
+              function textOnly(a) {
+                var all = a.querySelectorAll("*");
+                for (var i = 0; i < all.length; i++) if (!TEXT_ONLY[all[i].localName.toLowerCase()]) return false;
+                return /[\\p{L}\\p{N}]/u.test(a.textContent.replace(BLANK, ""));
+              }
+              // What the person sees as the link: the link itself, or for an
+              // image map's area, the image that uses the map.
+              function mapImage(area) {
+                var map = area.closest("map");
+                return map ? document.querySelector('img[usemap="#' + CSS.escape(map.name) + '"]') : null;
+              }
+
+              // The element the person's own Tab or click put the focus on.
+              var personFocus = null, tabbing = false, pointing = false;
+              window.addEventListener("keydown", function (e) {
+                if (e.isTrusted && e.key === "Tab") tabbing = true;
+              }, true);
+              window.addEventListener("keyup", function (e) { if (e.key === "Tab") tabbing = false; }, true);
+              window.addEventListener("mousedown", function (e) { if (e.isTrusted) pointing = true; }, true);
+              window.addEventListener("mouseup", function () { pointing = false; }, true);
+              window.addEventListener("focusin", function (e) {
+                personFocus = tabbing || pointing ? e.target : null;
+                tabbing = false;
+              }, true);
+              window.addEventListener("pageshow", function (e) { if (e.persisted) personFocus = null; });
+
+              // The element shown as the link, when the activation reached it.
+              function shownElement(a, e) {
+                var target = a.localName === "area" ? mapImage(a) : a;
+                if (!target) return null;
+                if (e.detail === 0) return document.activeElement === a && personFocus === a ? target : null;
+                var hit = document.elementFromPoint(e.clientX, e.clientY);
+                // WebKit reports an image map's area itself at a point inside it.
+                return hit && (hit === a || target === hit || target.contains(hit)) ? target : null;
+              }
+              window.addEventListener("click", function (e) {
+                if (!e.isTrusted || !e.target || !e.target.closest) return;
+                var a = e.target.closest("a, area");
+                if (!a) return;
+                if (e.detail > 0) personFocus = a;
+                var href = hrefOf(a);
+                if (!/^\\s*space-action:/i.test(href)) return;
+                if (renderedMarkdown() && (a.localName !== "a" || !textOnly(a))) return;
+                var shown = shownElement(a, e);
+                if (!shown || !seen(shown)) return;
+                window.webkit.messageHandlers.\(spaceActionClickHandler).postMessage({ href: href.trim(), time: Date.now() });
+              }, true);
+            })();
+            """
+
+        /// The person's real click on `link`, reported by the click recorder.
+        func trustedClick(on link: URL, isMainFrame: Bool) {
+            guard isMainFrame else { return }
+            trustedClicks.note(link, at: Date())
+        }
+
+        /// v0.24 (sweep #1): whether a `comments` message comes from the page
+        /// rendered for the file the comments are for: the main frame of a
+        /// rendered Markdown page whose source is that file. An HTML file or
+        /// site shown in the viewer, another Markdown page, or a frame is not.
+        func acceptsComments(isMainFrame: Bool, frameURL: URL?) -> Bool {
+            guard isMainFrame, let frameURL, frameURL.scheme == RenderedPageHandler.scheme,
+                  case .markdown = loaded,
+                  let source = handler.source(for: frameURL),
+                  let file = comments?.file
+            else { return false }
+            return source == file.standardizedFileURL.resolvingSymlinksInPath()
         }
 
         /// A web view wired to this coordinator: navigation failures
@@ -678,6 +896,11 @@ struct WebPane: NSViewRepresentable {
             // Marks are drawn again on every load. WebKit calls this on
             // Back too, from its back-forward cache or not (v0.14).
             agent?.pageLoaded(webView)
+            // Review round 2 (R4): comments pause while the pane is away from
+            // the rendered page, and resume when it is back.
+            if let comments, comments.webView == nil || comments.webView === webView {
+                comments.setAway(isAway(in: webView))
+            }
             rereadIfDrawnForOlder(in: webView)
             if let fragment = pendingFragment, isPage(webView.url) {
                 // The fragment wins over a re-read's old scroll position.
@@ -840,12 +1063,15 @@ struct WebPane: NSViewRepresentable {
             }
             // v0.22 (S1): a space-action link never loads; a click on one in
             // a space's page goes to the model, which checks it and the
-            // gateway's `spaces.act`. One a script follows is not a click,
-            // nor is one in a frame, on a site a link went to, or while the
-            // viewer agent acts (its clicks never run the deployment's actions).
+            // gateway's `spaces.act`. v0.24 (sweep #2): only the person's real
+            // click counts, matched against the click recorder's report; a
+            // script's `a.click()`, a dispatched event, a timer or a redirect
+            // does not. Nor does one in a frame, on a site a link went to, or
+            // while the viewer agent acts (its clicks never run the deployment's actions).
             if let url = navigationAction.request.url, url.scheme?.lowercased() == SpaceActionLink.scheme {
                 decisionHandler(.cancel)
                 let taken = Self.takesSpaceAction(
+                    trustedClick: trustedClicks.take(url, at: Date()),
                     linkActivated: navigationAction.navigationType == .linkActivated,
                     targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
                     sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
@@ -858,16 +1084,34 @@ struct WebPane: NSViewRepresentable {
                 }
                 return
             }
+            // v0.24 (review H1): a document beside a rendered Markdown page (an
+            // HTML file, an SVG) is loaded under an id of its own, never the
+            // page's, so it cannot rewrite its address to the page's or read it.
+            if let url = navigationAction.request.url, let file = handler.siblingDocument(for: url) {
+                decisionHandler(.cancel)
+                guard navigationAction.targetFrame?.isMainFrame == true else {
+                    Self.log.notice("a document beside a rendered page was not loaded in a frame")
+                    return
+                }
+                var fresh = URLComponents(url: handler.register(file: file), resolvingAgainstBaseURL: false)
+                let asked = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                fresh?.percentEncodedQuery = asked?.percentEncodedQuery
+                fresh?.percentEncodedFragment = asked?.percentEncodedFragment
+                if let target = fresh?.url { webView.load(URLRequest(url: target)) }
+                return
+            }
             decisionHandler(.allow)
         }
 
         /// v0.22: whether a `space-action:` navigation runs: a link click,
         /// from and into the main frame, while the pane shows the space's own
-        /// page, and not while the viewer agent acts.
+        /// page, and not while the viewer agent acts. v0.24 (sweep #2): and
+        /// the person really clicked that link within the last second.
         static func takesSpaceAction(
-            linkActivated: Bool, targetIsMainFrame: Bool?, sourceIsMainFrame: Bool, showingOwnPage: Bool, agentActing: Bool
+            trustedClick: Bool, linkActivated: Bool, targetIsMainFrame: Bool?, sourceIsMainFrame: Bool,
+            showingOwnPage: Bool, agentActing: Bool
         ) -> Bool {
-            linkActivated && targetIsMainFrame == true && sourceIsMainFrame && showingOwnPage && !agentActing
+            trustedClick && linkActivated && targetIsMainFrame == true && sourceIsMainFrame && showingOwnPage && !agentActing
         }
 
         /// The pane shows the file it was asked to (a space is a Markdown
@@ -902,7 +1146,11 @@ struct WebPane: NSViewRepresentable {
         static func scrollToFragment(_ fragment: String) -> String {
             """
             (function (id) {
-              var e = document.getElementById(id) || document.getElementsByName(id)[0];
+              // v0.24 (round 4): a rendered Markdown page prefixes the file's ids
+              // and names with "user-content-"; that one first, then the plain one.
+              var p = 'user-content-' + id;
+              var e = document.getElementById(p) || document.getElementsByName(p)[0]
+                || document.getElementById(id) || document.getElementsByName(id)[0];
               if (e) e.scrollIntoView({ block: 'start' });
             })(\(MarkdownPage.jsString(fragment))); true
             """
@@ -964,11 +1212,32 @@ private final class CommentsMessages: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         MainActor.assumeIsolated {
-            guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.scheme == RenderedPageHandler.scheme,
-                let comments = coordinator?.comments, let view = message.webView
-            else { return }
-            comments.attach(view)
+            guard let coordinator, let comments = coordinator.comments, let view = message.webView else { return }
+            // v0.24 (sweep #1): only the page rendered for the comments' file.
+            guard coordinator.acceptsComments(isMainFrame: message.frameInfo.isMainFrame, frameURL: message.frameInfo.request.url)
+            else {
+                WebPane.Coordinator.log.notice("comments message ignored: not from the page rendered for the file")
+                return
+            }
+            comments.attach(view, world: ViewerCommentsScript.world)
             comments.received(message.body)
+        }
+    }
+}
+
+/// v0.24 (sweep #2): the click recorder's handler, reachable only from its
+/// own content world. Holds its pane weakly.
+private final class SpaceActionClicks: NSObject, WKScriptMessageHandler {
+    weak var coordinator: WebPane.Coordinator?
+
+    init(_ coordinator: WebPane.Coordinator) {
+        self.coordinator = coordinator
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            guard let href = (message.body as? [String: Any])?["href"] as? String, let link = URL(string: href) else { return }
+            coordinator?.trustedClick(on: link, isMainFrame: message.frameInfo.isMainFrame)
         }
     }
 }

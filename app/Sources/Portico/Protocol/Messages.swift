@@ -752,13 +752,15 @@ struct HelloServer: Codable, Equatable, Sendable {
     /// The person's real name for their comments (v0.23, config `[person]
     /// name` or a plug-in); absent: the computer's full user name.
     var person: Person? = nil
+    /// The deployment's voice settings (v0.24, config `[voice]`); absent from an older gateway.
+    var voice: HelloVoice? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person
+        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice
         case viewerDefaults = "viewer_defaults"
         case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
@@ -776,6 +778,15 @@ struct HelloServer: Codable, Equatable, Sendable {
 
     /// One live session at a time (S1), rather than the chat list.
     var isSingle: Bool { presentation == "single" }
+}
+
+/// `hello.voice` (v0.24): `read_aloud` shows the Read aloud switch in Settings.
+struct HelloVoice: Codable, Equatable, Sendable {
+    var readAloud: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case readAloud = "read_aloud"
+    }
 }
 
 /// `hello.person` (v0.23): the person using the app, by real name.

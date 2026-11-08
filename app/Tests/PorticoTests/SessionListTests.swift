@@ -177,13 +177,14 @@ final class SessionListTests: XCTestCase {
         XCTAssertTrue(folded.hasPrefix("<details class=\"fm\" "), folded)
         let foldedTag = String(folded[..<folded.range(of: ">")!.lowerBound])
         XCTAssertFalse(foldedTag.contains(" open"), foldedTag)
-        XCTAssertTrue(foldedTag.contains("ontoggle="), foldedTag)
-        XCTAssertTrue(foldedTag.contains("porticoProperties"), foldedTag)
+        // v0.24: no inline handler (the page's policy blocks them); the page's own script listens.
+        XCTAssertFalse(foldedTag.contains("ontoggle="), foldedTag)
+        XCTAssertTrue(foldedTag.contains("data-open=\"false\""), foldedTag)
 
         let open = matter.html(open: true)
         let openTag = String(open[..<open.range(of: ">")!.lowerBound])
         XCTAssertTrue(openTag.contains(" open"), openTag)
-        XCTAssertTrue(openTag.contains("ontoggle="), openTag)
+        XCTAssertFalse(openTag.contains("ontoggle="), openTag)
     }
 
     func test_the_page_carries_the_fold_it_is_given() throws {
@@ -306,9 +307,10 @@ final class SessionListTests: XCTestCase {
         XCTAssertNil(store.propertiesOpen)
     }
 
-    /// Hosted: a frame inside a Markdown page posting to the handler
-    /// changes nothing.
-    func test_a_post_from_a_frame_in_a_markdown_page_changes_nothing() async throws {
+    /// Hosted: a frame inside a Markdown page changes nothing. v0.24 (sweep
+    /// #1): the page drops the frame before it is inserted, so it never
+    /// loads; the handler's own frame check is covered above.
+    func test_a_frame_in_a_markdown_page_is_dropped_and_changes_nothing() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-gate-frame-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
@@ -330,13 +332,12 @@ final class SessionListTests: XCTestCase {
         keepAlive = [view, coordinator]
         coordinator.apply(.markdown(markdown), to: view)
         try await poll("the page renders") { !view.isLoading && view.url?.scheme == RenderedPageHandler.scheme }
-        let framePosted = "(function(){var f=document.querySelector('iframe');return !!(f&&f.contentDocument&&f.contentDocument.title==='posted');})()"
         for _ in 0..<250 {
-            if try await view.evaluateJavaScript(framePosted) as? Bool == true { break }
+            if try await view.evaluateJavaScript("!!document.querySelector('#body h1')") as? Bool == true { break }
             try await Task.sleep(for: .milliseconds(20))
         }
-        let posted = try await view.evaluateJavaScript(framePosted) as? Bool
-        XCTAssertEqual(posted, true, "the frame loaded and posted")
+        let frames = try await view.evaluateJavaScript("document.querySelectorAll('iframe').length") as? Int
+        XCTAssertEqual(frames, 0, "the frame is dropped")
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertNil(store.propertiesOpen)
     }

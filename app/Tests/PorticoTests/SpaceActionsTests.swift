@@ -394,15 +394,17 @@ final class SpaceActionsTests: XCTestCase {
     // MARK: - S1 review fix: only the person's click in the space's own page
 
     private func takes(
-        click: Bool = true, targetMain: Bool? = true, sourceMain: Bool = true, ownPage: Bool = true, agentActing: Bool = false
+        trusted: Bool = true, click: Bool = true, targetMain: Bool? = true, sourceMain: Bool = true, ownPage: Bool = true,
+        agentActing: Bool = false
     ) -> Bool {
         WebPane.Coordinator.takesSpaceAction(
-            linkActivated: click, targetIsMainFrame: targetMain, sourceIsMainFrame: sourceMain,
+            trustedClick: trusted, linkActivated: click, targetIsMainFrame: targetMain, sourceIsMainFrame: sourceMain,
             showingOwnPage: ownPage, agentActing: agentActing)
     }
 
     func test_a_space_action_is_taken_only_from_the_persons_click_in_the_main_frame_of_its_own_page() {
         XCTAssertTrue(takes())
+        XCTAssertFalse(takes(trusted: false), "v0.24: no real click on that link in the last second (a script's a.click())")
         XCTAssertFalse(takes(click: false), "a script's navigation is not a click")
         XCTAssertFalse(takes(targetMain: false), "a link in an iframe")
         XCTAssertFalse(takes(targetMain: nil), "a new window")

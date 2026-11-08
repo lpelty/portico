@@ -100,69 +100,49 @@ is fixed.
 | What | Where |
 |---|---|
 | State: token, ledger, index, lock, gateway log, the agent's last command lists (`commands.json`) | `~/.portico/` (v0.17: `bin/install --home DIR` or `PORTICO_HOME` moves it; see Portico's folder) |
-| Config | `~/.portico/config.toml` (optional; defaults apply when absent) |
+| Config | `~/.portico/config.toml`, the deployment's, and `~/.portico/config.local.toml`, the person's own overrides (both optional; see [CONFIGURATION.md](CONFIGURATION.md)) |
 | Credential file | `~/.portico/env` (optional) |
 | App settings (auto-open, quit behaviour, appearance, gateway address and token file overrides) | the app's Settings window, stored in `UserDefaults` |
 
-`config.toml` keys, all optional:
+Two optional files configure the gateway: `config.toml`, the deployment's, and
+`config.local.toml` beside it (v0.24), the person's own overrides, which
+nothing else writes. Tables merge key by key; any other value, arrays
+included, replaces the deployment's. **[CONFIGURATION.md](CONFIGURATION.md)**
+documents every key (meaning, type, default, example, when a change applies,
+and whether it is usually the deployment's or a personal override), and
+`config.example.toml` is a commented template with every key at its default.
+A deployment that keeps its `config.toml` in a git repository adds
+`config.local.toml` to that repository's `.gitignore`.
 
 ```toml
-setting_sources = ["project"]   # never empty: [] drops the folder's instructions and hooks
-before_first_chat = "bin/prepare"   # run once per launch before the first engine starts
-on_stop = "bin/cleanup"             # run on the way out
-command_timeout_seconds = 120       # at least 1
-default_folder = "/Users/me/work"
-card_hold_seconds = 600             # a card with no app attached waits this long, then is denied; 0 = deny at once
-history_buffer = 2000               # events kept per chat for reattach; at least 1
-presentation = "single"             # the default: one live session at a time; "multiple": a list of chats
-permission_mode = "auto"            # a new session's mode: "auto" (the engine's classifier decides),
-                                    # "acceptEdits" (file edits allowed), "default" (ask each time)
-log_prompt = "/session-close"       # the log step (Log session, /log, and a renewal first); unset = no log step
-plugins = ["my_deployment_plugin"]  # plug-in modules, imported at start (see Plug-ins)
-plugin_paths = ["~/portico-plugins"] # absolute directories put on the import path for them
-services_interval_seconds = 30      # how often the services below are checked; at least 5
-titles = "generated"                # the default: after a session's first clean turn, a small model names it
-                                    # (six words at most; the first line until then, and if the call fails);
-                                    # "first_line": the first line of the first message, no extra model call
-title_model = "my-small-model"      # optional: the model for titles; default "haiku", the provider's small model
-system_prompt = "claude_code"       # the default: Claude Code's own system prompt, so the agent behaves as in a
-                                    # terminal; "none": the SDK's empty prompt (as before v0.10). See Showing
-                                    # the agent's work and The agent's system prompt
-system_prompt_append = "~/my-deployment/prompt.md" # optional absolute path: the deployment's text, after it
-login_shell_path = true             # the default: the engine gets the person's login-shell PATH first (see
-                                    # The engine's environment); false keeps the PATH the gateway inherited
+# config.toml (the deployment's)
+setting_sources = ["project"]
+log_prompt = "/session-close"
 
 [brand]
-name = "Portico"
-agent_name = "Agent"
-accent = "#3B6EF5"                  # optional CSS hex
-icon = "/path/to/icon.png"          # optional; may be a flat square: Portico rounds it in the macOS icon shape
-                                    # (an image whose corners are already transparent is drawn as given)
-header_image = "/path/to/lockup.svg" # optional; replaces the mark and the name in the toolbar, 28 pt tall,
-                                    # width from the image's shape (SVG or PDF stays sharp; a PNG at least 84 px tall)
-version = "0.40.2"                  # optional: the deployment's version; the About panel shows it in place of the app's
-about = """App {app_version} · Built {built}
-Questions: help@example.com"""      # optional: the About panel's text under the version; {app_version} and {built}
-                                    # are filled in, web and email addresses become links, "" shows nothing. Unset:
-                                    # "App <version> · Built <date>" with version set, else "Built <date>"
-app_icon = "~/icons/app.png"        # optional 1024x1024 PNG for the .app bundle (bin/install); never sent to the app
-app_icon_assets = "~/icons/Assets.car" # optional precompiled asset catalog (macOS 26 icon); with app_icon_name
-app_icon_name = "AppIcon"           # the icon's name inside app_icon_assets; neither is sent to the app
+name = "Acme"
+agent_name = "Ace"
 
-[update]                            # optional: the deployment's own update commands, run with /bin/sh -c
-check = "my-tool update --check"    # exit 0 and print the version when an update is available
-run = "my-tool update"              # performs it; the app's "Update available" runs it through portico-gateway update
-
-[deployment]                        # optional (v0.8): one restart and one status for all the services
-restart = "my-tool restart-all"     # /bin/sh -c, bounded by command_timeout_seconds; exit 0 = done;
-                                    # the services menu's Restart all runs it (without it,
-                                    # Restart all restarts the gateway)
-status = "my-tool status --json"    # prints {"services": [{"id", "name", "state": "up"|"down"|"stuck" (or "up": true|false), "detail"?}]} on stdout
-                                    # (stderr is not read as JSON; it only names the reason when it fails);
-                                    # when set, its rows replace the [[services]] checks; a row's
-                                    # context menu offers Restart when a [[services]] entry with the
-                                    # same id gives one
+[[services]]
+id = "memory"
+name = "Memory"
+check = "curl -sf http://localhost:8888/health"   # exit 0 = up, 75 = stuck, other = down
 ```
+
+```toml
+# config.local.toml (a person's own)
+system_prompt = "custom"
+system_prompt_file = "~/prompts/mine.md"
+
+[voice]
+read_aloud = true
+```
+
+`bin/portico-gateway config show` prints every key with its value in force
+and where it came from (`[default]`, `[config.toml]` or
+`[config.local.toml]`); `--changed` shows only what differs from the
+defaults and `--json` gives the same rows to an agent. It reads the files,
+so no gateway needs to be running.
 
 A service is **stuck** when its check exits 75 (`EX_TEMPFAIL`): running but not
 working. The row says "stuck" with the check's first line of output, and the
@@ -177,63 +157,6 @@ command prints it in the row, and the app receives it as
 
 ```json
 {"services": [{"id": "memory", "name": "Memory", "up": true, "detail": "71,946 memories"}]}
-```
-
-```toml
-
-[[actions]]                         # buttons in the input bar; each sends its text
-label = "Review"
-text = "/review"
-
-[[services]]                        # what the deployment depends on, shown in the app's services menu
-id = "memory"                       # unique, lowercase letters, digits and dashes
-name = "Memory"
-check = "curl -sf http://localhost:8888/health"   # /bin/sh -c; exit 0 = up, 75 = stuck, other = down
-restart = "my-tool restart memory"  # optional: the menu offers Restart
-up_detail = "recall and capture"    # optional: shown while it is up
-timeout_seconds = 10                # optional, default 10, at least 1: the check is killed after this
-                                    # (a restart is bounded by command_timeout_seconds)
-
-[[roots]]                           # folders the files pane can browse
-name = "projects"
-path = "~/projects"                 # absolute; a leading ~ is expanded
-
-[sessions]                          # optional (v0.11)
-next_number = "acme-sessions next"  # /bin/sh -c; stdout is the next session's number (see Session numbers)
-lock_folder = false                 # v0.19: true fixes "Works in" to the deployment's folder; Settings shows
-                                    # "Set by <brand>" and a person can't pick another (their own Files folders still work)
-
-[threads]                           # optional (v0.16): threads beside Main (single presentation only)
-max = 2                             # 0 to 2, default 2; 0 turns threads off (no tool, no thread UI)
-
-[files]                             # optional (v0.11): the Files pane
-hide_session_folder = false         # true: the pane lists only the [[roots]], not the session's own folder
-                                    # (it is still where the agent works, and a file in it still shows)
-
-[viewer]                            # optional (v0.12): the agent's view of the viewer
-agent_can_see = true                # default for Settings > Agent can see the viewer (look, scroll, click, type)
-agent_checks_html = true            # default for Settings > Agent checks HTML it creates
-act_hosts = ["figma.com", "lovable.dev"] # outside sites the agent may click and type on; ships empty (see below)
-properties = "folded"               # v0.17: "folded" or "open", how a Markdown page's front-matter Properties start;
-                                    # the person's own fold, once made, is remembered and wins
-
-[links]                             # optional (v0.19): link chips in the person's messages
-sites = { "tracker.acme.example" = "Acme Tracker" }  # host (or a parent domain) -> the name the chip shows;
-                                    # adds to the built-in Slack, Google Docs/Sheets/Slides, GitHub, Figma and Notion
-
-[apps]                              # optional (v0.18): MCP Apps, a tool's page shown in the chat
-enabled = true                      # the default; false keeps every tool a plain tool row
-
-[mcp]                               # optional (v0.18): MCP servers
-core = ["acme-tracker"]             # servers in the folder's .mcp.json that are part of the deployment itself;
-                                    # Settings lists them as "Built into <brand>", not as shipped servers a person may turn off
-
-[spaces]                            # optional (v0.12): files the agent keeps current, in the app's switcher
-folder = "~/Spaces"                 # must exist; one Markdown or HTML file per space. Unset: <state dir>/spaces, created at start
-refresh = "my-tool refresh-space"   # optional: /bin/sh -c, 30 s, $PORTICO_SPACE = the space's id; the app offers Refresh
-remove = "my-tool forget-space"     # optional: runs after the file is moved to the Trash; same environment
-act = "my-tool space-action"        # optional (v0.22): same, plus $PORTICO_ACTION and $PORTICO_ITEM, for space-action: links in a page
-require_folder = true               # optional (v0.21): a page is a space only with a folder of its name beside it
 ```
 
 A title call goes through the Agent SDK to the same provider, with the
@@ -251,10 +174,11 @@ is never replaced.
 A status command that fails, times out or prints something else becomes
 one row in the menu, "status command failed · <reason>".
 
-The gateway reads `config.toml` once, at start. Change it, and the app's
-status strip and Settings say "Settings changed — restart the gateway to
-apply" (`bin/doctor` says the gateway needs a restart):
-`bin/portico-gateway stop`, and the app starts a fresh one.
+The gateway reads `config.toml` and `config.local.toml` once, at start.
+Change, create or delete either, and the app's status strip and Settings say
+"Settings changed — restart the gateway to apply" (`bin/doctor` says the
+gateway needs a restart): `bin/portico-gateway stop`, and the app starts a
+fresh one.
 
 ## One session at a time
 
@@ -451,7 +375,11 @@ Settings › Voice turns each half on or off.
 
 **Read aloud is off by default and hidden** (v0.9): the voices macOS lets
 apps use still sound dated, so the button and the Listen settings are kept
-behind a flag until a better voice is available. Turn it on with
+out of sight until a deployment or a person turns them on. v0.24: put
+`read_aloud = true` under `[voice]` in `config.local.toml` (or the
+deployment's `config.toml`) and restart the gateway; Settings › Voice then
+shows the switch, and the on/off choice stays the person's. The older
+machine flag still works too:
 `defaults write dev.portico.portico voice.readAloudAvailable -bool YES`
 (and off with `-bool NO`), then relaunch.
 
@@ -585,7 +513,11 @@ commands you provide, so a space can be re-run on demand or its source
 dropped when the person removes it. `act` (v0.22) runs for a link
 `space-action:<action>?item=<item>` in a page, with the action and item
 in `$PORTICO_ACTION` and `$PORTICO_ITEM`; the deployment rewrites the
-page. A page can word the notification its change raises (`notice`, and
+page. Only the person's real click or key press on the link runs it
+(v0.24): a page's script following or clicking the link runs nothing. The
+app can't tell who wrote a link, so a space that shows untrusted text
+(email, web pages, other people's notes) must not let links from that
+text through unchanged; see PROTOCOL.md `space.act`. A page can word the notification its change raises (`notice`, and
 `notice_target`, a fragment in the page; `notice: ""` for none) and can be
 fixed (`removable: false`: no Remove, no Rename). `examples/spaces/meeting-prep.md` is a
 starting file. Spaces need an app that lists `spaces.v1`, and the
@@ -626,6 +558,12 @@ bin/portico-gateway stop               # stop the running gateway (its own stop 
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
+bin/portico-gateway config show        # (v0.24) every key, its value in force and [default], [config.toml] or
+                                       # [config.local.toml]; --changed, --json; no gateway needed
+bin/portico-gateway capture-prompt     # (v0.24) copy Claude Code's prompt to <state>/prompts/ (see The agent's
+                                       # system prompt); --out PATH
+bin/portico-gateway sessions           # (v0.24) every session, newest first, with its prompt; --json
+bin/portico-gateway export-config-doc  # (v0.24) regenerate CONFIGURATION.md and config.example.toml
 bin/portico-gateway message "Standup moved" --title Heads-up --notify --space meeting-prep
                                        # (v0.22) leave a message for the open app: a file in <state>/messages/,
                                        # sent within 2 s or on the app's next connect (up to 50 wait)
@@ -657,17 +595,58 @@ install then fails, it says to fix the error and run `bin/install`.
 
 ## The agent's system prompt
 
-The agent starts from Claude Code's own system prompt
-(`system_prompt = "claude_code"`, the default): its tool habits, the date
-and the working folder, so it behaves as it does in a terminal. A
-deployment makes it its own with `system_prompt_append`, a file of its
-text added after Claude Code's (kept outside this checkout). The file is
-read each time a session's engine starts, so an edit applies to the next
-new or renewed session, no gateway restart. A file missing at load is a
-config error; one that can't be read later is logged and the session
-starts without it. `system_prompt = "none"` drops Claude Code's prompt:
-the agent gets only the append file's text (or nothing), as every
-deployment did before v0.10.
+Three modes (`system_prompt`), each with an optional `system_prompt_append`
+file added after it:
+
+- **`"claude_code"`** (the default; `"default"` means the same): Claude Code's
+  own system prompt, which updates with Claude Code: its tool habits, the date
+  and the working folder, so the agent behaves as it does in a terminal.
+- **`"custom"`** (v0.24): `system_prompt_file`'s text is the whole prompt, for
+  a prompt tested over days of use. The file is read at each engine start and
+  passed to the engine as a file, so a long prompt is fine; the append text
+  and Portico's own lines (the viewer line, and the Main or thread line) come
+  after it. A file missing at load is a config error; one that can't be read
+  later, or is empty once its notes are left out, is logged, and that session starts with Claude Code's prompt instead
+  (never an empty one) and the app's status line says so once.
+- **`"none"`** (legacy): the SDK's empty prompt, or the append text alone, as
+  every deployment had before v0.10. The gateway logs a note suggesting
+  `"custom"`.
+
+A prompt change starts with the next new or renewed session: a running
+session keeps the prompt it recorded at its start until it compacts (a change
+of the key itself needs a gateway restart, like any key). Put a personal
+prompt in `config.local.toml`; delete the `system_prompt` line there to go
+back to Claude Code's.
+
+**A starting copy.** `bin/portico-gateway capture-prompt [--out PATH]` runs
+one small engine request in a scratch folder with Claude Code's raw request
+logging on (`OTEL_LOG_RAW_API_BODIES`), takes the system text from the logged
+request, and writes it to `--out` (default
+`<state>/prompts/claude-code-<version>.md`), then deletes the logs. The
+file's first line records the Claude Code version, the model and the date;
+lines naming this computer's folders (the auto-memory location, say) get a
+`<!-- machine-specific: … -->` comment before them. Those comments are left
+out when the file is used as the prompt, as is the engine's own
+`x-anthropic-billing-header:` accounting line, which is never copied. When the
+engine's version can't be read, the first line says "version unknown" and no
+version is compared later. It costs one small model request
+with the deployment's credential, never writes inside this checkout (the text
+is Anthropic's), and never overwrites a file. If the engine doesn't log the
+request, it says capture isn't possible and changes nothing.
+
+**When Claude Code changes.** With `"custom"`, the gateway compares the
+version in the file's first line with the engine's: when they differ,
+`bin/doctor` and the gateway log say (once per engine version) "Claude Code's
+own prompt may have changed since your custom prompt was copied (vX → vY);
+run capture-prompt to compare." A file without that line isn't compared, and
+doctor says so.
+
+**What ran.** When a session's engine starts, the gateway records the mode,
+the file (or `claude_code`) and the first 8 hex digits of a SHA-256 of the
+final prompt text, after Portico's lines (for `claude_code`, of the text
+Portico adds, since Claude Code's own is built inside the engine). It goes in
+the session's record and the gateway log; `bin/portico-gateway sessions`
+lists it, so "that week felt better" can be lined up with what actually ran.
 
 Either way the folder's `CLAUDE.md`, skills and hooks still load through
 `setting_sources`; they are not part of the system prompt. Session titles
