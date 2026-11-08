@@ -1,5 +1,75 @@
 # Changelog
 
+## v0.24.0 (2026-11-07)
+
+Configuration a person can live with: a local override file, two clear
+system prompt modes, Read aloud from config, `config show`, and a generated
+reference for every key.
+
+### What a person gets (app)
+
+- **Read aloud from config.** `[voice] read_aloud = true` shows the Read
+  aloud switch in Settings › Voice; the on/off choice stays the person's.
+  Without it the app keeps the older machine flag
+  (`voice.readAloudAvailable`), so a Mac that already turned it on keeps it.
+  Talk is unchanged.
+- **The restart notice covers the local file.** Creating, changing or
+  deleting `config.local.toml` says a restart is needed, as `config.toml`
+  does.
+
+### The gateway
+
+- **`config.local.toml`** beside `config.toml` holds a person's own
+  overrides; nothing else writes it. Tables merge key by key; any other
+  value, arrays included, replaces the deployment's. The merged result is
+  checked as one file; an error from the local file names it
+  (`config.local.toml: system_prompt_file: … is not a file`), stops the
+  gateway from starting, and `bin/doctor` reports it.
+- **System prompt modes.** `system_prompt = "claude_code"` (also
+  `"default"`) is unchanged. New `"custom"` with `system_prompt_file`: the
+  file's text is the whole prompt, read at each engine start and passed to
+  the engine as a file, with `system_prompt_append` and Portico's own lines
+  after it. An unreadable file at a session's start is logged and that
+  session uses Claude Code's prompt, never an empty one; the status line
+  says so once. `"none"` stays as legacy, with a log note suggesting
+  `"custom"`.
+- **`bin/portico-gateway capture-prompt [--out PATH]`** copies Claude Code's
+  own prompt (one small model request, raw request logging to a temporary
+  folder that is then deleted) to `<state>/prompts/claude-code-<version>.md`,
+  with a header recording the version, the model and the date, and a marker
+  comment before machine-specific lines. It never writes inside the
+  checkout and never overwrites a file.
+- **The change warning.** With `"custom"`, `bin/doctor` and the gateway log
+  (once per engine version) say when the engine's Claude Code version
+  differs from the one the file was captured from.
+- **Each session records its prompt**: the mode, the file (or
+  `claude_code`) and the first 8 hex digits of a SHA-256 of the final
+  prompt text, in the session's record and the gateway log.
+  `bin/portico-gateway sessions` (or `sessions list`, `--json`) lists them.
+- **`bin/portico-gateway config show`**: every key, its value in force and
+  `[default]`, `[config.toml]` or `[config.local.toml]`, by section, with
+  when a change applies; `--changed`, `--json`. No gateway needed.
+- **`CONFIGURATION.md`** and **`config.example.toml`** are generated from
+  the key docs (`bin/portico-gateway export-config-doc`), and a test fails
+  when they are out of date. The README's long config block is now a short
+  example and a link.
+- `hello` gains `voice: {read_aloud}` (additive). Nothing else changes on
+  the wire.
+
+### For deployments
+
+- Keep `config.toml` the deployment's; a person's preferences go in
+  `config.local.toml`. A deployment that keeps its config in git adds
+  `config.local.toml` to that repository's `.gitignore`.
+
+### Owed
+
+- On screen: a `config.local.toml` with `[voice] read_aloud = true` shows the
+  Read aloud switch; a custom prompt session, checked with `config show` and
+  the session's fingerprint, then back to Claude Code's prompt by deleting
+  the line; the restart notice after changing the local file; one real
+  `capture-prompt` run.
+
 ## v0.23.0 (2026-11-07)
 
 Comments in Markdown files, shown and written in the viewer and by the
