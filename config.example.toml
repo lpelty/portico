@@ -165,7 +165,8 @@
 
 # [signin.aws-sso]
 ## Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. Unset:
-## `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired".
+## `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired",
+## `ExpiredToken`, "security token included in the request is expired".
 ## e.g. patterns = ["cloud_credential_error"]  (not set by default)
 ## A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits.
 ## Unset: the AWS SSO token cache (~/.aws/sso/cache), read every 5 s.
@@ -181,9 +182,11 @@
 ## The SSO start URL whose cached token counts as signed in again. Unset: any.
 ## e.g. sso_start_url = "https://example.awsapps.com/start"  (not set by default)
 # [signin.claude]
-## Regular expressions (case-insensitive) that make a failed turn an expired Claude sign-in. Unset:
-## `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired",
-## "Not logged in".
+## Regular expressions (case-insensitive), searched in the engine's own error message only, that
+## make a failed turn an expired Claude sign-in; this kind applies only when the engine signs in
+## with claude.ai (no CLAUDE_CODE_USE_BEDROCK or _VERTEX, no ANTHROPIC_API_KEY or
+## ANTHROPIC_AUTH_TOKEN). Unset: `^authentication_failed$`, "Login expired", "OAuth token revoked",
+## "OAuth token has expired", "Not logged in".
 ## e.g. patterns = ["^authentication_failed$"]  (not set by default)
 ## A command that exits 0 once the sign-in is current again, run every 10 s while a turn waits.
 ## Unset: `claude auth status` (signed in with claude.ai).

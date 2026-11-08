@@ -2206,7 +2206,12 @@ listed it.
 detail (the result's errors and text, and an assistant message's `error`).
 Each sign-in kind has patterns (`[signin.aws-sso] patterns`,
 `[signin.claude] patterns`); the first kind with a match, `aws-sso` before
-`claude`, names the sign-in. It then knows the sign-in is current again by
+`claude`, names the sign-in. The `claude` kind's patterns are searched only
+in the engine's own error message (never a failed result's text), and the
+kind applies only to an engine that signs in with claude.ai: not when its
+environment sets `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX`, or
+an `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` (decided when the engine
+starts, from their presence only). It then knows the sign-in is current again by
 the kind's `check` command (exit 0; every 10 s), or for `aws-sso` with no
 check, by the AWS SSO token cache (a token for the configured start URL,
 written after the error, that hasn't expired; every 5 s). There is no time
@@ -2218,7 +2223,10 @@ short continue message ("Your sign-in was renewed. Continue where you left
 off; don't repeat steps that already finished."). It sends no `user.text`
 for it, and never sends the person's message a second time (the engine's
 transcript already holds it); a transcript replay draws no bubble for it.
-The app notes "Continued after sign-in" in the conversation. Each chat gets
+The app notes "Continued after sign-in" in the conversation. A chat that
+has ended or is busy by then (a log step, a turn the engine began itself)
+gets `state: stopped` instead, and nothing carries on; Start a new session
+and a log step end a running wait. Each chat gets
 one wait, and one more if the continued turn fails on the sign-in again;
 after that the turn ends with the reason. A `message.send` while waiting
 stops the wait (`state: stopped`) and resets the count; so does a turn
@@ -2263,8 +2271,11 @@ turn stays ended.
 ### `signin.code` — `SigninCode`
 `chat`, `code`. App → gateway, only to a gateway that declared `signin.v1`:
 a code the person pasted from the browser, written with a newline to the
-running sign-in command's standard input. Never logged. Ignored when no
-command is running.
+running sign-in command's standard input. Never logged. Refused with an
+`error`: `signin.not_waiting` (no wait runs in the chat), `signin.no_code`
+(the wait's kind takes no pasted code: only `wants_code` kinds do),
+`signin.invalid_code` (not one line of printable ASCII, or over 256
+characters), `signin.not_running` (no sign-in command is running).
 
 ## Services *(v0.4)*
 

@@ -126,6 +126,7 @@ async def make_server(state_dir: StateDir, factory: EngineFactory, signed_in: Si
     srv.signin_is_current = signed_in
     srv.signin_interval = lambda kind: 0.01
     srv.sso_folder = state_dir.path / "no-sso-cache"
+    srv.engine_environ = {}  # a claude.ai login, whatever this machine's own environment holds
     await srv.serve(0)
     return srv
 
@@ -605,3 +606,152 @@ async def test_the_persons_message_appears_once_in_replay_after_a_continue(
     finally:
         await again.close()
         await restarted.shutdown()
+
+
+# --- review fixes -------------------------------------------------------------------------
+
+
+async def test_review_m1_a_bedrock_engine_never_waits_on_the_claude_sign_in(
+    state_dir: StateDir, factory: EngineFactory, signed_in: SignedIn, folder: Path
+) -> None:
+    srv = await make_server(state_dir, factory, signed_in)
+    srv.engine_environ = {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "us-east-1"}
+    conn = await attach_with(srv, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*claude_failure())
+        await send(conn, chat, "go")
+        _, finished = await until(conn, lambda m: isinstance(m, TurnFinished))
+        assert isinstance(finished, TurnFinished) and finished.reason is None
+        assert not any(isinstance(m, SigninWait) for m in await quiet(conn))
+        assert srv.registry.get(chat).signin is None
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_renew_during_a_wait_ends_it(
+    server: GatewayServer, factory: EngineFactory, folder: Path, signed_in: SignedIn
+) -> None:
+    """Review M3 (the reviewer's proof, now passing): Start a new session ends the wait; nothing says current."""
+    from portico_gateway.messages import SessionRenew, SessionRenewed
+
+    conn = await attach_with(server, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        await send(conn, chat, "go")
+        await failed_and_waiting(conn)
+        task = server.registry.get(chat).signin.task  # type: ignore[union-attr]
+        await conn.send(dump(SessionRenew(ts=TS, id="req-r", chat=chat, log=False)))
+        seen, _ = await until(conn, lambda m: isinstance(m, SessionRenewed))
+        assert any(isinstance(m, SigninWait) and m.state == "stopped" for m in seen)
+        assert server.registry.get(chat).signin is None
+        await asyncio.sleep(0.02)
+        assert task.done()
+        signed_in.now()
+        assert not any(isinstance(m, SigninWait) for m in await quiet(conn))
+    finally:
+        await conn.close()
+
+
+async def test_a_log_step_ends_the_wait(
+    state_dir: StateDir, factory: EngineFactory, signed_in: SignedIn, folder: Path
+) -> None:
+    from portico_gateway.messages import SessionLog
+
+    srv = await make_server(state_dir, factory, signed_in, make_config(setting_sources=["project"], log_prompt="/log"))
+    conn = await attach_with(srv, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        await send(conn, chat, "go")
+        await failed_and_waiting(conn)
+        await conn.send(dump(SessionLog(ts=TS, id="req-l", chat=chat)))
+        _, stopped = await until(conn, wait_in("stopped"))
+        assert isinstance(stopped, SigninWait)
+        assert srv.registry.get(chat).signin is None
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_current_when_it_cannot_carry_on_says_stopped(
+    server: GatewayServer, factory: EngineFactory, folder: Path, signed_in: SignedIn
+) -> None:
+    """Review M3: a busy chat at "current" hears ``stopped``, never ``current`` with nothing following."""
+    from portico_gateway.server import TurnRun
+
+    conn = await attach_with(server, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        await send(conn, chat, "go")
+        await failed_and_waiting(conn)
+        record = server.registry.get(chat)
+        server._runs[chat] = TurnRun(turn=99, collector=None)  # type: ignore[arg-type]  # a turn the engine began itself
+        signed_in.now()
+        _, stopped = await until(conn, lambda m: isinstance(m, SigninWait) and m.state != "waiting")
+        assert isinstance(stopped, SigninWait) and stopped.state == "stopped"
+        assert record.signin is None
+        server._runs.pop(chat)
+        assert [args for name, args in factory.last.calls if name == "send"] == ["go"]
+    finally:
+        await conn.close()
+
+
+async def _code_refusal(conn: ClientConnection, chat: int, code: str) -> str:
+    from portico_gateway.messages import Error
+
+    await conn.send(dump(SigninCode(ts=TS, chat=chat, code=code)))
+    _, error = await until(conn, lambda m: isinstance(m, Error))
+    assert isinstance(error, Error)
+    return error.code
+
+
+async def test_review_l8_a_code_is_checked(
+    server: GatewayServer, factory: EngineFactory, folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(signin, "cli_path", lambda: str(FAKE_CLAUDE))
+    monkeypatch.setenv("FAKE_CLAUDE_CODE_FILE", str(tmp_path / "pasted"))
+    conn = await attach_with(server, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        # No wait yet.
+        assert await _code_refusal(conn, chat, "abc") == "signin.not_waiting"
+        factory.last.script(*claude_failure())
+        await send(conn, chat, "go")
+        await failed_and_waiting(conn)
+        await conn.send(dump(SigninOpen(ts=TS, chat=chat)))
+        await until(conn, lambda m: isinstance(m, SigninWait) and m.url is not None)
+        assert await _code_refusal(conn, chat, "x" * 257) == "signin.invalid_code"
+        assert await _code_refusal(conn, chat, "ab\ncd") == "signin.invalid_code"
+        assert await _code_refusal(conn, chat, "café") == "signin.invalid_code"
+        assert not (tmp_path / "pasted").exists()
+        await conn.send(dump(SigninCode(ts=TS, chat=chat, code="y" * 256)))
+        deadline = time.monotonic() + 3
+        while not ((tmp_path / "pasted").exists() and (tmp_path / "pasted").read_text() == "y" * 256):
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.02)
+    finally:
+        await conn.close()
+
+
+async def test_review_l8_aws_takes_no_pasted_code(
+    state_dir: StateDir, factory: EngineFactory, signed_in: SignedIn, folder: Path, tmp_path: Path
+) -> None:
+    opener = _script(tmp_path, "aws_login", "echo 'https://device.example/start'\nread line\necho \"$line\" > got\nsleep 30\n")
+    config = make_config(setting_sources=["project"], signin={"aws-sso": {"open": opener}})
+    srv = await make_server(state_dir, factory, signed_in, config)
+    conn = await attach_with(srv, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        await send(conn, chat, "go")
+        await failed_and_waiting(conn)
+        await conn.send(dump(SigninOpen(ts=TS, chat=chat)))
+        await until(conn, lambda m: isinstance(m, SigninWait) and m.url is not None)
+        assert await _code_refusal(conn, chat, "abc") == "signin.no_code"
+    finally:
+        await conn.close()
+        await srv.shutdown()

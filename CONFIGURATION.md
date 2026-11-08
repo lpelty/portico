@@ -639,7 +639,7 @@ Read aloud on each reply: true shows the switch in Settings; the person's on/off
 
 ### `signin.aws-sso.patterns`
 
-Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. Unset: `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired".
+Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. Unset: `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired", `ExpiredToken`, "security token included in the request is expired".
 
 - **Type:** list of text (optional) · **Default:** `not set`
 - **Example:** `patterns = ["cloud_credential_error"]`
@@ -693,7 +693,7 @@ The SSO start URL whose cached token counts as signed in again. Unset: any.
 
 ### `signin.claude.patterns`
 
-Regular expressions (case-insensitive) that make a failed turn an expired Claude sign-in. Unset: `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired", "Not logged in".
+Regular expressions (case-insensitive), searched in the engine's own error message only, that make a failed turn an expired Claude sign-in; this kind applies only when the engine signs in with claude.ai (no CLAUDE_CODE_USE_BEDROCK or _VERTEX, no ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN). Unset: `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired", "Not logged in".
 
 - **Type:** list of text (optional) · **Default:** `not set`
 - **Example:** `patterns = ["^authentication_failed$"]`

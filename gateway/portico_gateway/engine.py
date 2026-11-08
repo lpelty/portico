@@ -419,22 +419,31 @@ def error_detail(msg: Message) -> list[str]:
 
 
 class TurnErrors:
-    """A turn's error detail as the engine's messages arrive; attached to the turn's ``turn.finished`` (v0.25)."""
+    """A turn's error detail as the engine's messages arrive; attached to the turn's ``turn.finished`` (v0.25).
+
+    ``assistant`` keeps apart what came in the engine's own error message
+    (``AssistantMessage.error`` and its text), which alone names the Claude sign-in (review M1).
+    """
 
     def __init__(self) -> None:
         self.detail: list[str] = []
+        self.assistant: list[str] = []
 
     def reset(self) -> None:
         self.detail = []
+        self.assistant = []
 
     def note(self, msg: Message) -> None:
-        self.detail += error_detail(msg)
+        found = error_detail(msg)
+        self.detail += found
+        if isinstance(msg, AssistantMessage):
+            self.assistant += found
 
     def attach(self, event: ServerMessage) -> ServerMessage:
         """``event``, and when it is a ``turn.finished``, carrying the detail so far (which then starts afresh)."""
         if isinstance(event, TurnFinished):
-            event.with_error_detail(self.detail)
-            self.detail = []
+            event.with_error_detail(self.detail, assistant=self.assistant)
+            self.reset()
         return event
 
 

@@ -158,7 +158,8 @@ KEY_DOCS: dict[str, KeyDoc] = {
     # --- signin -----------------------------------------------------------------------
     "signin.aws-sso.patterns": KeyDoc(
         "Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. "
-        'Unset: `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired".',
+        'Unset: `cloud_credential_error`, "Could not load AWS credentials", "SSO session .* has expired", '
+        '`ExpiredToken`, "security token included in the request is expired".',
         'patterns = ["cloud_credential_error"]',
     ),
     "signin.aws-sso.check": KeyDoc(
@@ -180,7 +181,9 @@ KEY_DOCS: dict[str, KeyDoc] = {
         'body = "Your sign-in to AWS has run out."',
     ),
     "signin.claude.patterns": KeyDoc(
-        "Regular expressions (case-insensitive) that make a failed turn an expired Claude sign-in. "
+        "Regular expressions (case-insensitive), searched in the engine's own error message only, that make a failed turn an "
+        "expired Claude sign-in; this kind applies only when the engine signs in with claude.ai (no CLAUDE_CODE_USE_BEDROCK or "
+        "_VERTEX, no ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN). "
         'Unset: `^authentication_failed$`, "Login expired", "OAuth token revoked", "OAuth token has expired", "Not logged in".',
         'patterns = ["^authentication_failed$"]',
     ),

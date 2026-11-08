@@ -83,12 +83,13 @@ def test_error_detail_ignores_what_is_not_an_error() -> None:
     ],
 )
 def test_match_kind(text: str, kind: str | None) -> None:
-    found = match_kind([text], kinds_for(Config()))
+    # As the engine's own error message carries it (review M1: the only place the claude kind reads).
+    found = match_kind([text], kinds_for(Config()), assistant=[text])
     assert (found.name if found else None) == kind
 
 
 def test_aws_sso_is_matched_before_claude() -> None:
-    found = match_kind(["authentication_failed", "cloud_credential_error"], kinds_for(Config()))
+    found = match_kind(["cloud_credential_error"], kinds_for(Config()), assistant=["authentication_failed"])
     assert found is not None and found.name == "aws-sso"
 
 
@@ -347,3 +348,47 @@ async def test_close_kills_a_hung_command(tmp_path: Path) -> None:
     took = time.monotonic() - began
     assert 1.5 < took < 3.0, "it ignores a terminate, so it is killed after 2 s"
     assert not cmd.running
+
+
+# --- review fixes (M1) -------------------------------------------------------------------
+
+
+def test_review_m1_an_expired_sts_token_is_aws_not_claude() -> None:
+    """The reviewer's first proof case: an AWS credential worded as an expired security token."""
+    msg = AssistantMessage(
+        content=[TextBlock(text="The security token included in the request is expired")], model="m",
+        error="authentication_failed",
+    )
+    detail = error_detail(msg)
+    found = match_kind(detail, kinds_for(Config()), assistant=detail)
+    assert found is not None and found.name == "aws-sso"
+    assert match_kind(["ExpiredToken"], kinds_for(Config())).name == "aws-sso"  # type: ignore[union-attr]
+
+
+def test_review_m1_claude_patterns_never_read_the_result_text() -> None:
+    """The reviewer's second proof case: a failed result that merely says "Not logged in"."""
+    detail = error_detail(result(result="The site says: Not logged in, so I stopped."))
+    assert match_kind(detail, kinds_for(Config()), assistant=[]) is None
+    # The same words from the engine's own error message do name it.
+    assert match_kind([], kinds_for(Config()), assistant=["Not logged in · Please run /login"]).name == "claude"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("env", "claude"),
+    [
+        ({}, True),
+        ({"CLAUDE_CODE_USE_BEDROCK": "1"}, False),
+        ({"CLAUDE_CODE_USE_VERTEX": "1"}, False),
+        ({"ANTHROPIC_API_KEY": "x"}, False),
+        ({"ANTHROPIC_AUTH_TOKEN": "x"}, False),
+        ({"CLAUDE_CODE_USE_BEDROCK": ""}, True),
+        ({"CLAUDE_CODE_USE_BEDROCK": "0"}, True),
+        ({"CLAUDE_CODE_OAUTH_TOKEN": "x"}, True),
+    ],
+)
+def test_the_claude_kind_only_with_a_claude_login(env: dict[str, str], claude: bool) -> None:
+    from portico_gateway.signin import claude_login
+
+    assert claude_login(env) is claude
+    names = [k.name for k in kinds_for(Config(), claude=claude_login(env))]
+    assert names == (["aws-sso", "claude"] if claude else ["aws-sso"])

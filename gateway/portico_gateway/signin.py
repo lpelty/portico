@@ -20,7 +20,7 @@ import os
 import re
 import signal
 import shlex
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +38,7 @@ __all__ = [
     "SigninCommand",
     "SigninKind",
     "SigninWaitState",
+    "claude_login",
     "claude_status_current",
     "cli_path",
     "command_current",
@@ -61,7 +62,14 @@ CLAUDE_BODY = f"Your Claude sign-in has run out. {_CARRIES_ON}"
 
 # Ruling 19: regular expressions, searched case-insensitively. ``cloud_credential_error``
 # is the SDK's structured code for an AWS (or Google Cloud) credential failure.
-AWS_PATTERNS: tuple[str, ...] = ("cloud_credential_error", "Could not load AWS credentials", "SSO session .* has expired")
+AWS_PATTERNS: tuple[str, ...] = (
+    "cloud_credential_error",
+    "Could not load AWS credentials",
+    "SSO session .* has expired",
+    # Review M1: an expired STS session token, however the engine words the error around it.
+    "ExpiredToken",
+    "security token included in the request is expired",
+)
 # ``authentication_failed`` is ``AssistantMessage.error``'s own value, matched whole.
 CLAUDE_PATTERNS: tuple[str, ...] = (
     "^authentication_failed$",
@@ -92,14 +100,34 @@ class SigninKind:
     sso_start_url: str | None
     # Its open command reads a code pasted from the browser on its standard input.
     wants_code: bool
+    # Review M1: its patterns are searched only in the engine's own error message
+    # (``AssistantMessage.error`` and its text), never in a failed result's text.
+    assistant_only: bool = False
 
 
-def kinds_for(config: Config) -> list[SigninKind]:
-    """The sign-in kinds, ``aws-sso`` first (ruling 19), with ``[signin.*]`` over the defaults (ruling 9)."""
+# Review M1: the engine authenticates some other way than a claude.ai login when one of
+# these is set (non-empty, not "0") in its environment. Presence only: never the value.
+_NOT_CLAUDE_LOGIN = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def claude_login(environ: Mapping[str, str]) -> bool:
+    """Whether an engine started with ``environ`` signs in with claude.ai (so the ``claude`` kind applies)."""
+    for name in _NOT_CLAUDE_LOGIN:
+        value = environ.get(name)
+        if value is not None and value.strip() not in ("", "0"):
+            return False
+    return True
+
+
+def kinds_for(config: Config, claude: bool = True) -> list[SigninKind]:
+    """The sign-in kinds, ``aws-sso`` first (ruling 19), with ``[signin.*]`` over the defaults (ruling 9).
+
+    ``claude`` False (review M1: the engine doesn't sign in with claude.ai) leaves the ``claude`` kind out.
+    """
     aws = config.signin.aws_sso
-    claude = config.signin.claude
+    claude_config = config.signin.claude
     cli = shlex.quote(cli_path())
-    return [
+    kinds = [
         SigninKind(
             name="aws-sso",
             patterns=tuple(aws.patterns) if aws.patterns is not None else AWS_PATTERNS,
@@ -112,26 +140,35 @@ def kinds_for(config: Config) -> list[SigninKind]:
         ),
         SigninKind(
             name="claude",
-            patterns=tuple(claude.patterns) if claude.patterns is not None else CLAUDE_PATTERNS,
-            check=claude.check or f"{cli} auth status",
-            open=claude.open or f"{cli} auth login",
-            title=claude.title or TITLE,
-            body=claude.body or CLAUDE_BODY,
+            patterns=tuple(claude_config.patterns) if claude_config.patterns is not None else CLAUDE_PATTERNS,
+            check=claude_config.check or f"{cli} auth status",
+            open=claude_config.open or f"{cli} auth login",
+            title=claude_config.title or TITLE,
+            body=claude_config.body or CLAUDE_BODY,
             sso_start_url=None,
             wants_code=True,
+            assistant_only=True,
         ),
     ]
+    return kinds if claude else [k for k in kinds if k.name != "claude"]
 
 
-def match_kind(detail: Sequence[str], kinds: Sequence[SigninKind]) -> SigninKind | None:
-    """The first kind (in ``kinds`` order) one of whose patterns is found in a piece of ``detail``."""
+def match_kind(
+    detail: Sequence[str], kinds: Sequence[SigninKind], assistant: Sequence[str] | None = None
+) -> SigninKind | None:
+    """The first kind (in ``kinds`` order) one of whose patterns is found in a piece of the detail.
+
+    ``detail`` is everything the engine said about the error; ``assistant`` the part that
+    came in its own error message. A kind with ``assistant_only`` reads only ``assistant``.
+    """
     for kind in kinds:
+        pieces = list(assistant or []) if kind.assistant_only else [*detail, *(assistant or [])]
         for pattern in kind.patterns:
             try:
                 compiled = re.compile(pattern, re.IGNORECASE)
             except re.error:
                 continue
-            if any(compiled.search(piece) for piece in detail):
+            if any(compiled.search(piece) for piece in pieces):
                 return kind
     return None
 

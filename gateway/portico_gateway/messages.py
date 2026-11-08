@@ -1011,14 +1011,21 @@ class TurnFinished(Envelope):
     # The engine's error detail for the turn (``engine.error_detail``): the
     # gateway reads it to recognise a sign-in error. Never sent, never logged.
     _error_detail: list[str] = PrivateAttr(default_factory=list)
+    # The part of it the engine's own error message carried (review M1).
+    _assistant_detail: list[str] = PrivateAttr(default_factory=list)
 
     @property
     def error_detail(self) -> list[str]:
         return list(self._error_detail)
 
-    def with_error_detail(self, detail: list[str]) -> TurnFinished:
-        """``self`` carrying ``detail`` (set in place; returned for chaining)."""
+    @property
+    def assistant_detail(self) -> list[str]:
+        return list(self._assistant_detail)
+
+    def with_error_detail(self, detail: list[str], assistant: list[str] | None = None) -> TurnFinished:
+        """``self`` carrying ``detail`` and its ``assistant`` part (set in place; returned for chaining)."""
         self._error_detail = list(detail)
+        self._assistant_detail = list(assistant or [])
         return self
 
 

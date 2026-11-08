@@ -152,7 +152,7 @@ import secrets
 import time
 import unicodedata
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1012,6 +1012,10 @@ def folder_missing_message(folder: Path | str) -> str:
     return f"This conversation's folder no longer exists: {folder}. Start a new conversation in another folder."
 
 
+# Review L8: the longest code ``signin.code`` takes.
+SIGNIN_CODE_MAX = 256
+
+
 class GatewayServer:
     """The WebSocket server, the HTTP routes, and the attached app."""
 
@@ -1162,6 +1166,8 @@ class GatewayServer:
         self.signin_is_current: Callable[[signin_mod.SigninKind, float, Path], Awaitable[bool]] = signin_mod.is_current
         self.signin_interval: Callable[[signin_mod.SigninKind], float] = poll_interval
         self.sso_folder = Path.home() / ".aws" / "sso" / "cache"
+        # Review M1: the environment the engines start with (they inherit the gateway's); tests set their own.
+        self.engine_environ: Mapping[str, str] = os.environ
         # Runs Spotlight for ``files.search`` (``search.run_command``); replaceable for tests.
         self.search_runner: Runner = run_command
         self.http_routes: dict[tuple[str, str], HttpHandler] = {
@@ -1871,6 +1877,9 @@ class GatewayServer:
         not ``chat.new``, and the preflight guards that path too.
         """
         await self._preflight()
+        # Review M1: whether this engine signs in with claude.ai, decided once, from
+        # the environment it gets (presence of the provider switches and keys only).
+        chat.claude_login = signin_mod.claude_login(self.engine_environ)
         engine = self.engine_factory()
         engine.chat = chat.number
         engine.permission_mode = chat.mode or self.config.permission_mode
@@ -2267,7 +2276,7 @@ class GatewayServer:
             event = event.model_copy(update={"outcome": "stopped"})
         run.outcome = event.outcome
         # v0.25 §4.3: a failure on an expired sign-in says so, and may wait for it.
-        kind = self._signin_kind(event)
+        kind = self._signin_kind(chat, event)
         if kind is not None:
             event = event.model_copy(update={"reason": SIGNIN_EXPIRED})
         await self._report_artifacts(chat, run)
@@ -2286,11 +2295,16 @@ class GatewayServer:
 
     # --- v0.25: waiting for a sign-in -----------------------------------------------
 
-    def _signin_kind(self, event: TurnFinished) -> signin_mod.SigninKind | None:
-        """The sign-in kind a failed turn's error detail names (§4.3), or None."""
-        if event.outcome != "error" or not event.error_detail:
+    def _signin_kind(self, chat: Chat, event: TurnFinished) -> signin_mod.SigninKind | None:
+        """The sign-in kind a failed turn's error detail names (§4.3), or None.
+
+        Review M1: the ``claude`` kind only when the chat's engine signs in with
+        claude.ai, and its patterns only over the engine's own error message.
+        """
+        if event.outcome != "error" or not (event.error_detail or event.assistant_detail):
             return None
-        return match_kind(event.error_detail, kinds_for(self.config))
+        login = chat.claude_login if chat.claude_login is not None else signin_mod.claude_login(self.engine_environ)
+        return match_kind(event.error_detail, kinds_for(self.config, claude=login), assistant=event.assistant_detail)
 
     def _app_signs_in(self) -> bool:
         """A connected app declared ``signin.v1`` (ruling 17)."""
@@ -2340,11 +2354,14 @@ class GatewayServer:
         already holds it, and a re-send showed it twice in a replay).
         """
         chat.signin = None
-        await self.broadcast(self._signin_frame(chat, state, "current"))
         if state.command is not None:
             await state.command.close()
+        # Review M3: decided before anything is said. A chat that ended, or is busy (a log
+        # step, a turn the engine began itself), hears ``stopped``; never "Continuing" with nothing after.
         if chat.ended is not None or self._busy(chat) or chat not in self.registry.chats():
+            await self.broadcast(self._signin_frame(chat, state, "stopped"))
             return
+        await self.broadcast(self._signin_frame(chat, state, "current"))
         log.info("chat %d: signed in again; carrying turn %d on", chat.number, state.turn)
         run = await self._echo_turn(chat, CONTINUE_TEXT, echo_user=False)
         try:
@@ -2393,10 +2410,23 @@ class GatewayServer:
         await self._end_signin(self.registry.get(msg.chat))
 
     async def on_signin_code(self, msg: SigninCode, conn: ServerConnection) -> None:
-        """A code pasted from the browser, for the running sign-in command (never logged)."""
+        """A code pasted from the browser, for the running sign-in command (never logged).
+
+        Review L8: only while a wait of a kind that reads a code runs, and only
+        one line of printable ASCII, at most ``SIGNIN_CODE_MAX`` characters.
+        """
         state = self.registry.get(msg.chat).signin
-        if state is not None and state.command is not None:
-            await state.command.write_code(msg.code)
+        if state is None:
+            raise ProtocolError("signin.not_waiting", "no sign-in wait is running in this chat")
+        if not state.kind.wants_code:
+            raise ProtocolError("signin.no_code", "this sign-in takes no pasted code")
+        code = msg.code.strip()
+        if not code or len(code) > SIGNIN_CODE_MAX or not all(" " <= c <= "~" for c in code):
+            raise ProtocolError(
+                "signin.invalid_code", f"a code is one line of printable ASCII, at most {SIGNIN_CODE_MAX} characters"
+            )
+        if state.command is None or not await state.command.write_code(code):
+            raise ProtocolError("signin.not_running", "the sign-in command isn't running; choose Open sign-in page")
 
     def _with_permission(self, chat: Chat, event: ToolFinished) -> ToolFinished:
         """``event`` with what became of its permission (v0.3), recorded on the chat.
@@ -3430,6 +3460,8 @@ class GatewayServer:
         is happening, at once, in the ending session; that it ended and
         which session follows; and, first in the next, which one it continues.
         """
+        # Review M3: the session is ending; a sign-in wait goes with it.
+        await self._end_signin(chat)
         logging = log_first and self.has_log_step()
         text = "New — logging, then ending this session" if logging else "New — ending this session"
         await self.notice(chat, text)
@@ -3468,6 +3500,10 @@ class GatewayServer:
         return following
 
     async def _run_log_step(self, chat: Chat, ending: bool, raise_refusal: bool = False) -> bool:
+        await self._end_signin(chat)  # review M3: a log step is a turn; the wait doesn't outlive it
+        return await self._log_step_body(chat, ending, raise_refusal)
+
+    async def _log_step_body(self, chat: Chat, ending: bool, raise_refusal: bool = False) -> bool:
         """The plug-in's ``on_renew``, else ``log_prompt`` as a message; whether it finished cleanly.
 
         ``ending`` tells the plug-in whether a renewal ends the session

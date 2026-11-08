@@ -203,6 +203,8 @@ class Chat:
         # person's last message (ruling 18: a third is not started). Not stored.
         self.signin: SigninWaitState | None = None
         self.signin_waits = 0
+        # Review M1: whether this chat's engine signs in with claude.ai (set when it starts).
+        self.claude_login: bool | None = None
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
         # cannot hold what happened before this launch, so a replay from
