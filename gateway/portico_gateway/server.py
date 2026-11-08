@@ -1276,6 +1276,8 @@ class GatewayServer:
             max_size=MAX_INBOUND_BYTES,
         )
         self.port = self._server.sockets[0].getsockname()[1]
+        # v0.24 (sweep #14): prompt files left by chats removed while no gateway ran.
+        self.registry.prune_running_prompts()
         await self._follow_default_folder()
         await self._preview_next_number()
         self.state.write_ledger(HOST, self.port, os.getpid(), self.epoch)
@@ -1840,7 +1842,7 @@ class GatewayServer:
             self.config.system_prompt,
             self.config.system_prompt_append,
             self.config.system_prompt_file,
-            self.state.path / "prompts" / "running" / f"chat-{chat.number}.md",
+            self.state.running_prompt_path(chat.number),
         )
         await self._note_prompt_fallback(chosen)
         resuming = chat.session_id is not None

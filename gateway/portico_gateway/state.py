@@ -285,6 +285,14 @@ class StateDir:
     def config_path(self) -> Path:
         return self.path / "config.toml"
 
+    @property
+    def running_prompts_path(self) -> Path:
+        """v0.24: where each chat's composed custom prompt is written (``chat-<n>.md``)."""
+        return self.path / "prompts" / "running"
+
+    def running_prompt_path(self, chat: int) -> Path:
+        return self.running_prompts_path / f"chat-{chat}.md"
+
     # --- token ----------------------------------------------------------------
 
     def write_token(self) -> str:

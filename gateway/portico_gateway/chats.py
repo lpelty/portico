@@ -29,6 +29,7 @@ the engine's transcript, which the server replays on ``chat.open``.
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -380,6 +381,10 @@ def _checked_state(word: str) -> ChatStateWord:
     return word  # type: ignore[return-value]
 
 
+# ``chat-<n>.md`` and the temporary file ``materialize_prompt`` writes it through.
+_RUNNING_PROMPT = re.compile(r"chat-(\d+)\.md(?:\.tmp)?")
+
+
 class ChatRegistry:
     """The chats, in number order, backed by the index. Numbers come from ``index.next_chat``."""
 
@@ -497,7 +502,19 @@ class ChatRegistry:
         del self._chats[number]
         self._index.proposals = [p for p in self._index.proposals if p.chat != number]
         self.persist()
+        # v0.24 (sweep #14): its composed custom prompt goes with it.
+        self._state.running_prompt_path(number).unlink(missing_ok=True)
         return chat
+
+    def prune_running_prompts(self) -> None:
+        """Delete the composed prompt files of chats no longer in the index (v0.24, sweep #14; at gateway start)."""
+        folder = self._state.running_prompts_path
+        if not folder.is_dir():
+            return
+        for path in folder.iterdir():
+            match = _RUNNING_PROMPT.fullmatch(path.name)
+            if match and int(match.group(1)) not in self._chats:
+                path.unlink(missing_ok=True)
 
     # --- Main and its threads (v0.16) ---------------------------------------------
 

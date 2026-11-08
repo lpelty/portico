@@ -448,3 +448,82 @@ def test_an_unknown_version_header_is_no_recorded_version(tmp_path: Path) -> Non
     path = _prompt_file(tmp_path, raw)
     assert prompt_header_version(path) is None
     assert custom_prompt_text(raw) == "Invented."
+
+
+# --- running prompt files are cleaned up (v0.24 §11.3, sweep #14) ---------------------
+
+
+def _running(state: StateDir, number: int) -> Path:
+    return state.path / "prompts" / "running" / f"chat-{number}.md"
+
+
+def _write_running(state: StateDir, number: int) -> Path:
+    path = _running(state, number)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("A composed prompt.", encoding="utf-8")
+    return path
+
+
+def test_a_removed_chats_prompt_file_is_deleted(state_dir: StateDir, folder: Path) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    gone, kept = registry.create(folder), registry.create(folder)
+    gone_file, kept_file = _write_running(state_dir, gone.number), _write_running(state_dir, kept.number)
+    registry.remove(gone.number)
+    assert not gone_file.exists()
+    assert kept_file.exists(), "another chat's file stays"
+    # A chat whose engine never wrote one is removed without complaint.
+    third = registry.create(folder)
+    registry.remove(third.number)
+
+
+async def test_chat_remove_deletes_its_prompt_file(
+    state_dir: StateDir, factory: EngineFactory, folder: Path, tmp_path: Path
+) -> None:
+    from portico_gateway.messages import ChatList, ChatRemove, dump
+    from tests.test_turns import TS, recv
+
+    srv = await start_server(state_dir, factory, system_prompt="custom", system_prompt_file=str(_prompt_file(tmp_path)))
+    conn = await attach(srv)
+    try:
+        number = await new_chat(conn, folder)
+        path = _write_running(state_dir, number)
+        await conn.send(dump(ChatRemove(ts=TS, chat=number)))
+        assert isinstance(await recv(conn), ChatList)
+        assert not path.exists()
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_gateway_start_deletes_prompt_files_of_chats_not_in_the_index(
+    state_dir: StateDir, factory: EngineFactory, folder: Path
+) -> None:
+    registry = ChatRegistry(index=state_dir.load_index(), state=state_dir, history_buffer=3)
+    live = registry.create(folder)
+    registry.persist()
+    kept = _write_running(state_dir, live.number)
+    stale = _write_running(state_dir, live.number + 40)
+    other = state_dir.path / "prompts" / "running" / "notes.md"
+    other.write_text("Not a chat's file.", encoding="utf-8")
+    srv = await start_server(state_dir, factory)
+    try:
+        assert kept.exists(), "a chat still in the index keeps its file"
+        assert not stale.exists(), "a chat no longer in the index loses its file"
+        assert other.exists(), "only chat-<n>.md files are touched"
+    finally:
+        await srv.shutdown()
+
+
+def test_sessions_clear_command_deletes_the_cleared_prompt_files(tmp_path: Path) -> None:
+    from portico_gateway.__main__ import main
+
+    home = tmp_path / "home"
+    state = StateDir(home)
+    registry = ChatRegistry(index=state.load_index(), state=state, history_buffer=3)
+    ended, live = registry.create(home), registry.create(home)
+    ended.ended = "2026-10-01T00:00:00Z"
+    registry.persist()
+    ended_file, live_file = _write_running(state, ended.number), _write_running(state, live.number)
+    assert main(["sessions", "clear", "--yes", "--state", str(home)]) == 0
+    assert not ended_file.exists()
+    assert live_file.exists()
