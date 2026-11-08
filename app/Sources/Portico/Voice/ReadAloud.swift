@@ -147,7 +147,9 @@ final class ReadAloud: ObservableObject {
         reading = key ?? reply
         escape.watch { [weak self] in self?.stop() }
         if settings.speaksWithElevenLabs, let account {
-            speakWithElevenLabs(speech, key: key ?? reply, account: account, token: token)
+            // Review L2: with its paragraphs, so the chunks split there.
+            let paragraphs = SpeakableText.speech(fromMarkdown: reply, paragraphs: true)
+            speakWithElevenLabs(paragraphs, key: key ?? reply, account: account, token: token)
         } else {
             synthesizer.speak(speech, voiceIdentifier: voice, rate: settings.speechRate.utteranceRate, token: token)
         }

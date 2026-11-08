@@ -29,14 +29,18 @@ enum SpeakableText {
 
     /// The string to speak for a reply's Markdown; empty when there is
     /// nothing to say.
-    static func speech(fromMarkdown markdown: String) -> String {
+    /// v0.26 (review L2): `paragraphs` keeps a blank line between the reply's
+    /// pieces (paragraphs, headings, list items, pointers), so ElevenLabs'
+    /// chunks split there; the Mac voice gets one line, as before.
+    static func speech(fromMarkdown markdown: String, paragraphs: Bool = false) -> String {
+        let separator = paragraphs ? "\n\n" : " "
         let tokens = self.tokens(markdown)
         if let parts = markedParts(tokens) {
-            let spoken = parts.map(prose).filter { !$0.isEmpty }
+            let spoken = parts.map { prose($0, separator: separator) }.filter { !$0.isEmpty }
             // Markers around nothing: the reply's prose, rather than silence.
-            if !spoken.isEmpty { return spoken.joined(separator: " ") }
+            if !spoken.isEmpty { return spoken.joined(separator: separator) }
         }
-        return prose(displayed(tokens))
+        return prose(displayed(tokens), separator: separator)
     }
 
     /// The reply as drawn (decision 3): the `[TTS]`, `[/TTS]` and `[TTS: …]`
@@ -101,14 +105,14 @@ enum SpeakableText {
     // MARK: prose
 
     /// Markdown as sentences: one string, pieces joined by a space.
-    static func prose(_ markdown: String) -> String {
+    static func prose(_ markdown: String, separator: String = " ") -> String {
         var pieces: [String] = []
         for piece in self.pieces(MarkdownParser.parse(markdown)) where !piece.isEmpty {
             // A pointer straight after the same pointer says nothing new.
             if isPointer(piece), pieces.last == piece { continue }
             pieces.append(piece)
         }
-        return pieces.joined(separator: " ")
+        return pieces.joined(separator: separator)
     }
 
     private static func pieces(_ blocks: [MarkdownBlock]) -> [String] {
