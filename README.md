@@ -380,7 +380,7 @@ as agents. Nothing to configure.
 
 Voice is all in the app and all on the Mac (macOS 26 or later): nothing
 said or read goes to a server, and the gateway and protocol stay text.
-Settings › Voice turns each half on or off.
+Settings › Voice turns Talk on or off; Read aloud, while it is tried out, is in Settings › Labs.
 
 **Read aloud is off by default and hidden** (v0.9): the voices macOS lets
 apps use still sound dated, so the button and the Listen settings are kept

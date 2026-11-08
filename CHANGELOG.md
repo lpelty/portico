@@ -1,5 +1,99 @@
 # Changelog
 
+## v0.25.0 (2026-11-08)
+
+Labs for features being tried out, the date and time on every message, and
+a turn that pauses when a sign-in runs out and carries on by itself once
+the person signs in again. Plus the sweep's 26 smaller fixes.
+
+### What a person gets (app)
+
+- **Settings › Labs.** A tab, last in Settings, shown only while a feature
+  being tried out on this Mac is on. Each row says what it is, whether it is
+  a **Preview** (built into the app, not yet released) or **Local** (added by
+  this Mac's plug-in, not part of the app), where it was turned on, and for
+  a Preview, the tab it moves to when released. **Read aloud moves there**
+  from Settings › Voice, with its switch, voice, speed and sample unchanged;
+  it is turned on as before (`[voice] read_aloud = true`, or the machine
+  flag `voice.readAloudAvailable`). On a stock install there is no Labs tab.
+- **Date and time on hover.** Beside Copy under each of the agent's
+  replies, and now under the person's own messages too (with a Copy of its
+  own): "3:42 PM" today, "Yesterday 3:42 PM", "Nov 6, 3:42 PM", or with the
+  year; the full date and time as a tooltip. A conversation restored after a
+  gateway restart shows its real times. Where no real time is known, nothing
+  is shown.
+- **Signing in again carries the turn on.** When a turn fails because the
+  sign-in ran out (AWS SSO, or the Claude subscription login), the turn's
+  marker reads "Paused: sign-in ran out" and a card docks above the
+  composer: "Sign in again to continue", the deployment's words for which
+  sign-in, "Waiting for sign-in… since 9:14 PM", Don't wait, and Open
+  sign-in page when the deployment has a command for it. Once the sign-in is
+  current again the card says "Signed in. Continuing…", the turn carries on
+  in the same session, and the conversation notes "Continued after sign-in"
+  (the person's message is not sent again). "Trouble signing in?" shows the
+  sign-in link and code, or a field to paste the browser's code. Don't wait
+  (or ×) leaves the turn ended: "Sign-in ran out". There is no time limit;
+  each conversation waits at most twice in a row.
+
+### The gateway
+
+- **`[signin.aws-sso]` and `[signin.claude]`**, every key optional:
+  `patterns` (regular expressions over the turn's error detail), `check` (a
+  command that exits 0 once signed in again; without it, `aws-sso` reads the
+  AWS SSO token cache every 5 s, `claude` runs `claude auth status` every
+  10 s), `open` (the card's Open sign-in page; `claude auth login` by
+  default for `claude`), `sso_start_url` (`aws-sso` only), `title`, `body`.
+  `bin/doctor` says what each kind would use. Nothing about a credential is
+  logged: not the command's output, the link, the code or a pasted code.
+- **Real times for restored conversations.** A replay from the engine's
+  transcript carries each entry's own time (found the way the SDK finds the
+  transcript); an event with no match is marked as having none.
+- **`config show --json`** writes a table key (`links.sites`) as one row
+  with a nested `value`, its `default` object, and a `source` per entry. The
+  text output is unchanged.
+- Plug-ins may add their own Labs rows in `on_hello`
+  (`hello.labs`); the gateway marks them Local, from `plugin:<module>`.
+
+### Protocol (additive)
+
+- `hello.labs?: [{key, title, detail, tag, source, home?}]`.
+- `user.text.no_time?` and `text.delta.no_time?`; capability
+  `history.times.v1` (a transcript replay's times are real).
+- `signin.wait` (gateway → app), `signin.open`, `signin.stop`,
+  `signin.code` (app → gateway), all under capability `signin.v1` on both
+  sides; `turn.finished.reason?` (`signin.expired`), sent to every app.
+
+### Fixes (the 2026-11-08 sweep)
+
+- #3 A comment can't be anchored inside a link or an HTML entity any more
+  (its markers would break the link or the text); the selection is refused.
+- #4 Edit mode no longer offers a recovery copy older than the saved file.
+- #5 "Exited before it was ready" names this run's exit code, not an
+  earlier run's last log line.
+- #6 Renaming a space keeps the file's line endings and a leading BOM.
+- #7 Deleting (or replacing) `config.toml` while the gateway runs says
+  "Settings changed", as the README says.
+- #8 `test_fixture_finds` checks where each match ends.
+- #9 Resolving an indented thread block with no `at:` keeps its ID.
+- #10 Reading a file no longer deletes a save in progress; only leftover
+  temporaries older than 10 s are swept.
+- #11 A name with a colon keeps its authorship (written as `∶` on the reply
+  line), and the person can edit their own comments.
+- #12 A comment draft that lost its place across Edit on/off keeps its
+  text and asks to select the text again.
+- #13 A file named `{{SOURCE}}.md` no longer gets its body as the page title.
+- #17 The CLI docs name only flags the commands take.
+- #18 The refusal no longer says comments can't go in tables.
+- #19 The `host_allowed` docstring no longer claims the doctor uses it.
+- #20 The `[update] check` docs say what exit 1 and other exits mean.
+- #21–#30 Test-only and dead code removed: `GatewaySupervisor.stop(using:)`,
+  `EditableText.lineEnding`/`trailingNewline`, two `CommentFormat` helpers,
+  `comments.ignored_regions`/`live_markers`, `threads.files_phrase`,
+  `images.image_block`; the zoom label renders `percentText`; one Markdown
+  render path in `WebPane`; `ViewerAgent.detachPane`; the editor uses
+  `anchorAwareMarkdown`.
+- #31 `test_non_utf8_is_not_parsed_here` is named for what it tests.
+
 ## v0.24.0 (2026-11-08)
 
 Configuration a person can live with: a local override file, two clear
