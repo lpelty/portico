@@ -1403,7 +1403,7 @@ extension ConversationRoundTripTests {
         let box = Box()
         let width = min(ColumnWidths.focusConversationMinimum, ColumnWidths.conversationMinimum)  // the narrowest chat pane
         let rail = MarkerRail(
-            markers: (1...5).map { ConversationMarker(id: "m\($0)", snippet: "Message \($0)", at: nil) },
+            markers: (1...5).map { ConversationMarker(id: "m\($0)", text: "Message \($0)", at: nil) },
             inView: MarkersInView(), onJump: { _ in })
             .padding(.leading, ConversationView.railLeading)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { box.frame = $0 }

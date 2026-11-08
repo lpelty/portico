@@ -39,6 +39,8 @@ struct ConversationView: View {
     /// the markers. A reference the rail observes, so a change redraws only
     /// the rail: redrawing the conversation inside a scroll moved the place.
     @State private var inViewMarkers = MarkersInView()
+    /// Review H2: the markers, worked out once per transcript change.
+    @State private var markerIndex = MarkerIndex()
 
     /// How long a marker's jump highlights the message (ruling 19).
     static let highlightDuration: Duration = .milliseconds(1200)
@@ -53,7 +55,7 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             transcript
-                // v0.26 (PORT-12, ZG3): the markers, just left of the reading column.
+                // v0.26 (PORT-12, ZG3): the markers, in the pane's left margin.
                 .overlay(alignment: .topLeading) { markerRail }
                 // Y2: pinned over an earlier session's transcript, so the
                 // way back is in view however long it is (v0.6; it used to
@@ -318,16 +320,18 @@ struct ConversationView: View {
         }
     }
 
-    /// The person's messages as markers (the brief left out).
+    /// The person's messages as markers (the brief left out), kept until the transcript changes.
     private var markers: [ConversationMarker] {
-        ConversationMarkers.markers(drawn, briefID: briefItem)
+        markerIndex.markers(key: itemsKey + ":\(items.count)", entries: { drawn }, briefID: briefItem)
     }
 
     @ViewBuilder
     private var markerRail: some View {
         let markers = self.markers
         if ConversationMarkers.shown(count: markers.count) {
-            MarkerRail(markers: markers, inView: inViewMarkers) { id in model.jumpToMessage(id, chat: chat) }
+            MarkerRail(markers: markers, positions: markerIndex.positions, inView: inViewMarkers) { id in
+                model.jumpToMessage(id, chat: chat)
+            }
                 .padding(.leading, Self.railLeading)
         }
     }
@@ -342,8 +346,7 @@ struct ConversationView: View {
     private func noteMarkersInView(visible: CGFloat) {
         let markers = self.markers
         if ConversationProbe.enabled { ConversationProbe.railShown[chat] = ConversationMarkers.shown(count: markers.count) }
-        let ids = Set(markers.map(\.id))
-        let shown = Set(rows.frames.filter { ids.contains($0.key) && $0.value.maxY > 0 && $0.value.minY < visible }.keys)
+        let shown = markerIndex.inView(frames: rows.frames, visible: visible)
         if shown != inViewMarkers.ids { inViewMarkers.ids = shown }
         if ConversationProbe.enabled { ConversationProbe.inView[chat] = shown }
     }

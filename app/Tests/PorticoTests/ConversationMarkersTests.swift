@@ -125,4 +125,48 @@ final class ConversationMarkersTests: XCTestCase {
         XCTAssertEqual(ConversationView.railLeading, 10)
         XCTAssertEqual(ConversationView.railLeading + MarkerSlot.Style.hovered.length, ConversationView.sideInset)
     }
+
+    // MARK: - review H2: cheap on long conversations
+
+    @MainActor
+    func testFiveThousandExchangesStayCheap() {
+        let reply = String(repeating: "A long reply line that goes on for a while.\n", count: 120)  // ~5 KB
+        var entries: [TranscriptEntry] = []
+        for turn in 1...5_000 {
+            entries.append(user(turn, "Question \(turn)\nwith a second line\nand a third"))
+            entries.append(.item(.assistantText(id: "a\(turn)", text: reply)))
+        }
+        let index = MarkerIndex()
+        var asked = 0
+        let first = Date()
+        let markers = index.markers(key: "r1", entries: { asked += 1; return entries }, briefID: nil)
+        let built = Date().timeIntervalSince(first)
+        XCTAssertEqual(markers.count, 5_000)
+        XCTAssertLessThan(built, 0.25, "one pass over 10,000 items, no text split")
+        // A scroll reading or a redraw at the same revision does no work.
+        let again = Date()
+        for _ in 0..<100 {
+            _ = index.markers(key: "r1", entries: { asked += 1; return entries }, briefID: nil)
+        }
+        let frames = Dictionary(uniqueKeysWithValues: (0..<40).map { (markers[$0 * 10].id, CGRect(x: 0, y: CGFloat($0) * 20, width: 10, height: 18)) })
+        for _ in 0..<100 { _ = index.inView(frames: frames, visible: 600) }
+        XCTAssertLessThan(Date().timeIntervalSince(again), 0.05)
+        XCTAssertEqual(asked, 1)
+        XCTAssertEqual(index.builds, 1)
+        _ = index.markers(key: "r2", entries: { asked += 1; return entries }, briefID: nil)
+        XCTAssertEqual(index.builds, 2, "a new revision rebuilds")
+    }
+
+    func testTheSnippetReadsOnlyTheStart() {
+        let huge = String(repeating: "word ", count: 400_000)  // 2 MB on one line
+        let start = Date()
+        let snippet = ConversationMarkers.snippet(huge)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.05)
+        XCTAssertLessThanOrEqual(snippet.count, ConversationMarkers.maxSnippetLength)
+        XCTAssertTrue(snippet.hasPrefix("word word"))
+        let marker = ConversationMarker(id: "u", text: "One\n\nTwo\nThree", replyText: "R1\nR2\nR3", at: nil)
+        XCTAssertEqual(marker.snippet, "One Two Three")
+        XCTAssertEqual(marker.reply, "R1 R2")
+        XCTAssertEqual(MarkerRail.spokenLabel(index: 2, count: 40), "Your message 3 of 40")
+    }
 }

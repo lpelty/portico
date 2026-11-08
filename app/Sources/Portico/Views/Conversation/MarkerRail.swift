@@ -21,6 +21,8 @@ final class MarkersInView: ObservableObject {
 /// click goes back to it. Laid over the transcript, so it never moves the text.
 struct MarkerRail: View {
     let markers: [ConversationMarker]
+    /// Each marker's position by id (`MarkerIndex.positions`).
+    var positions: [String: Int] = [:]
     @ObservedObject var inView: MarkersInView
     let onJump: (String) -> Void
     /// The tip's width at most, and how far right of the stack it sits.
@@ -34,9 +36,10 @@ struct MarkerRail: View {
     var body: some View {
         GeometryReader { geometry in
             let height = geometry.size.height
-            let inViewIndices = Set(markers.indices.filter { inView.ids.contains(markers[$0].id) })
+            let inViewIndices = Set(inView.ids.compactMap { positions[$0] })
             let slots = ConversationMarkers.slots(
                 count: markers.count, height: height, inView: inViewIndices, hovered: hovered)
+            let drawn = slots.filter(\.drawn)
             ZStack(alignment: .topLeading) {
                 // The hit area: the stack's column, the whole height.
                 Color.clear
@@ -56,23 +59,17 @@ struct MarkerRail: View {
                     }
                     .pointerStyle(hovered == nil ? nil : .link)
                     .accessibilityHidden(true)
-                ForEach(slots.filter(\.drawn), id: \.index) { slot in
+                // The drawn marks only (review H2), each one VoiceOver button.
+                ForEach(drawn, id: \.index) { slot in
                     Rectangle()
                         .fill(Self.colour(slot.style))
                         .frame(width: slot.style.length, height: ConversationMarkers.thickness)
                         .position(x: slot.style.length / 2, y: slot.y)
                         .allowsHitTesting(false)
-                }
-                // VoiceOver: every message, drawn or thinned out, is a button.
-                ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .position(x: 0, y: slots[index].y)
-                        .allowsHitTesting(false)
                         .accessibilityElement()
-                        .accessibilityLabel("Your message: \(marker.snippet)")
+                        .accessibilityLabel(Self.spokenLabel(index: slot.index, count: markers.count))
                         .accessibilityAddTraits(.isButton)
-                        .accessibilityAction { onJump(marker.id) }
+                        .accessibilityAction { onJump(markers[slot.index].id) }
                 }
                 if let hovered, markers.indices.contains(hovered) {
                     MarkerTip(marker: markers[hovered])
@@ -90,6 +87,11 @@ struct MarkerRail: View {
             }
         }
         .frame(width: ConversationMarkers.railWidth)
+    }
+
+    /// What VoiceOver reads for a mark: its place, not the message (worked out only on hover).
+    static func spokenLabel(index: Int, count: Int) -> String {
+        "Your message \(index + 1) of \(count)"
     }
 
     /// Normal `text3`, in view `text2`, hovered `text` (Larry's reference).
