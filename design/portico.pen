@@ -243257,7 +243257,7 @@
         {
           "type": "frame",
           "id": "cQAJz",
-          "x": 132,
+          "x": 10,
           "y": 300,
           "name": "Marker rail",
           "width": 22,
@@ -243451,7 +243451,7 @@
         {
           "type": "frame",
           "id": "qAMab",
-          "x": 166,
+          "x": 44,
           "y": 322,
           "name": "Marker tooltip",
           "width": 330,
@@ -243604,6 +243604,286 @@
       "fontFamily": "$font",
       "fontSize": 28,
       "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "SXExe",
+      "x": 8540,
+      "y": 52860,
+      "name": "ZG3b · Markers in the narrowest chat: the rail fits the 32 pt side margin",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 440,
+      "height": 600,
+      "fill": "$window",
+      "cornerRadius": 12,
+      "stroke": "$border",
+      "strokeWidth": 1,
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "vFj2O",
+          "x": 10,
+          "y": 240,
+          "name": "Marker rail",
+          "width": 22,
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "frame",
+              "id": "d6sDwB",
+              "name": "Marker",
+              "width": 10,
+              "height": 2,
+              "fill": "$text-3",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "cuAmC",
+              "name": "Marker",
+              "width": 10,
+              "height": 2,
+              "fill": "$text-3",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "SNf8H",
+              "name": "Marker (in view)",
+              "width": 14,
+              "height": 2,
+              "fill": "$text-2",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "deRhD",
+              "name": "Marker (in view)",
+              "width": 14,
+              "height": 2,
+              "fill": "$text-2",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "yg0Mp",
+              "name": "Marker",
+              "width": 10,
+              "height": 2,
+              "fill": "$text-3",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "fhJOe",
+              "name": "Marker (hovered)",
+              "width": 22,
+              "height": 2,
+              "fill": "$text",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "mNpRs",
+              "name": "Marker",
+              "width": 10,
+              "height": 2,
+              "fill": "$text-3",
+              "cornerRadius": 1
+            },
+            {
+              "type": "frame",
+              "id": "xr7Wb",
+              "name": "Marker",
+              "width": 10,
+              "height": 2,
+              "fill": "$text-3",
+              "cornerRadius": 1
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "nWTLf",
+          "x": 32,
+          "y": 24,
+          "name": "Reading column",
+          "width": 376,
+          "layout": "vertical",
+          "gap": 14,
+          "children": [
+            {
+              "type": "frame",
+              "id": "ej74H",
+              "name": "You",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mTKze",
+                  "name": "Bubble",
+                  "width": 300,
+                  "fill": "$surface",
+                  "cornerRadius": 14,
+                  "padding": [
+                    10,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ydaVs",
+                      "name": "Text",
+                      "fill": "$text",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Now compare the two drafts against the brand guidelines and tell me which one fits.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "NPsjP",
+              "name": "Reply",
+              "fill": "$text",
+              "textGrowth": "fixed-width",
+              "width": 376,
+              "content": "Draft B fits better. It keeps the guidelines' plain tone and avoids the two phrases they ask us not to use.",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 15,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "DCfHy",
+              "name": "You",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "i20m7",
+                  "name": "Bubble",
+                  "width": 300,
+                  "fill": "$surface",
+                  "cornerRadius": 14,
+                  "padding": [
+                    10,
+                    16
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "QeUCh",
+                      "name": "Text",
+                      "fill": "$text",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Good. Shorten it to two sentences and put it in onboarding-copy.md.",
+                      "lineHeight": 1.5,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "gwzYB",
+              "name": "Reply",
+              "fill": "$text",
+              "textGrowth": "fixed-width",
+              "width": 376,
+              "content": "Done. It's in onboarding-copy.md under Step 2.",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 15,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "f5BSUL",
+          "x": 42,
+          "y": 262,
+          "name": "Marker tooltip",
+          "width": 300,
+          "fill": "$control",
+          "cornerRadius": 10,
+          "stroke": "$border",
+          "strokeWidth": 1,
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            10,
+            12
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "aWQ4i",
+              "name": "Your message",
+              "fill": "$text",
+              "content": "Rewrite onboarding step 2 so it says what Pick…",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "H0XDI",
+              "name": "Reply start",
+              "fill": "$text-2",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Two drafts are ready. One is plain and short; one explains why the interests are asked…",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "A4xW6q",
+              "name": "Meta",
+              "fill": "$text-3",
+              "content": "Yesterday 2:05 PM  ·  Click to go back",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "JZh07",
+          "x": 0,
+          "y": 0,
+          "name": "Margin guide",
+          "opacity": 0.35,
+          "width": 32,
+          "height": 600,
+          "fill": "$accent-soft"
+        }
+      ]
     }
   ],
   "themes": {
