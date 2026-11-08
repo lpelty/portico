@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``sessions`` (list, clear), ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
+``sessions`` (list, clear), ``config show``, ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -180,6 +180,29 @@ def cmd_config_value(args: argparse.Namespace) -> int:
         print(value)
     else:
         print(json.dumps(value, default=lambda o: o.model_dump(mode="json")))
+    return 0
+
+
+def cmd_config_show(args: argparse.Namespace) -> int:
+    """v0.24 §5: every key with its value in force and where it came from; no gateway needed."""
+    import json
+
+    from portico_gateway.config import ConfigError, load_config, read_config_layers
+    from portico_gateway.config_doc import format_show, rows_json, show_rows
+
+    _, config_path = _state_and_config_path(args)
+    try:
+        layers = read_config_layers(config_path)
+        config = load_config(config_path)
+    except ConfigError as e:
+        print(f"portico-gateway: {e}", file=sys.stderr)
+        return 1
+    rows = show_rows(layers, config)
+    if args.json:
+        print(json.dumps(rows_json(rows, changed=args.changed), ensure_ascii=False))
+    else:
+        print(f"# {layers.base_path} with {layers.local_path.name} over it" + ("" if layers.local_path.exists() else " (absent)"))
+        print(format_show(rows, changed=args.changed))
     return 0
 
 
@@ -448,6 +471,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--config", help="config file (default: <state>/config.toml)")
     p.set_defaults(func=cmd_config_value)
+
+    p = sub.add_parser("config", help="config commands (v0.24): show")
+    config_sub = p.add_subparsers(dest="config_command", required=True)
+    c = config_sub.add_parser("show", help="every config key, its value in force and [default], [config.toml] or [config.local.toml]")
+    c.add_argument("--changed", action="store_true", help="only the keys not at their defaults")
+    c.add_argument("--json", action="store_true", help="the same rows as one JSON list, for agents")
+    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--config", help="config file (default: <state>/config.toml)")
+    c.set_defaults(func=cmd_config_show)
 
     p = sub.add_parser("message", help="leave a message from the deployment for the open app (a file in <state>/messages/)")
     p.add_argument("text", help="the message (Markdown)")
