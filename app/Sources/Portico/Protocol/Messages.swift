@@ -1616,8 +1616,12 @@ struct StatusSet: Codable, Equatable, Sendable {
 /// A quiet line in the conversation from the gateway, e.g. an unknown command.
 struct ChatNotice: Codable, Equatable, Sendable {
     static let messageType = "chat.notice"
+    /// v0.26 (review L5): the turn carried on after a sign-in wait.
+    static let signinContinued = "signin.continued"
     var chat: Int
     var text: String
+    /// v0.19: what the notice is about (`attachment.not_image`, v0.26 `signin.continued`); nil for a plain line.
+    var kind: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()

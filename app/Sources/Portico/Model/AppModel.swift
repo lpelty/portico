@@ -1730,6 +1730,13 @@ final class AppModel: ObservableObject {
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
 
+        case .chatNotice(let notice) where notice.kind == ChatNotice.signinContinued:
+            // v0.26 (review L5): the continue's note, live, from the ring or from a replayed
+            // transcript; at most one per turn (the live path may have drawn it on `current`).
+            if !Self.hasSigninNoteSinceLastReply(items) {
+                items.append(.signinContinued(id: "\(chat):\(notice.ts):\(items.count)", at: notice.ts))
+            }
+
         case .chatNotice(let notice):
             items.append(.notice(id: Self.itemId(&nextItemId), text: notice.text))
 
@@ -3422,8 +3429,22 @@ extension AppModel {
         transcripts[chat] = items
     }
 
+    /// A "Continued after sign-in" line already stands after the person's last
+    /// message with no reply text after it: a second is the same continue.
+    static func hasSigninNoteSinceLastReply(_ items: [TranscriptItem]) -> Bool {
+        for item in items.reversed() {
+            switch item {
+            case .signinContinued: return true
+            case .assistantText, .userText: return false
+            default: continue
+            }
+        }
+        return false
+    }
+
     private func appendSigninNote(chat: Int, at: String) {
         var items = transcripts[chat] ?? []
+        if Self.hasSigninNoteSinceLastReply(items) { return }
         items.append(.signinContinued(id: "\(chat):\(at):\(items.count)", at: at))
         transcripts[chat] = items
     }

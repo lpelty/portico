@@ -211,6 +211,9 @@ async def test_a_signin_error_before_anything_ran_continues_without_resending(
         signed_in.now()
         _, current = await until(conn, wait_in("current"))
         assert isinstance(current, SigninWait) and current.turn == 1
+        # v0.26 (review L5): the continue's note, then the continued turn.
+        note = await recv(conn)
+        assert getattr(note, "kind", None) == "signin.continued"
         started = await recv(conn)
         assert isinstance(started, TurnStarted) and started.turn == 2
         rest, _ = await until(conn, lambda m: isinstance(m, TurnFinished))
@@ -826,3 +829,30 @@ async def test_a_command_started_after_the_wait_ended_is_closed(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+async def test_the_ring_keeps_the_continue_note(
+    server: GatewayServer, factory: EngineFactory, folder: Path, signed_in: SignedIn
+) -> None:
+    """L5: the continue puts a ``chat.notice`` (kind ``signin.continued``) in the ring, so a reconnect replays it."""
+    from portico_gateway.messages import ChatNotice
+
+    conn = await attach_with(server, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        factory.last.script(text_delta("Here is the summary."), fake_result())
+        await send(conn, chat, "Summarise the notes")
+        await failed_and_waiting(conn)
+        signed_in.now()
+        seen, _ = await until(conn, lambda m: isinstance(m, TurnFinished) and m.outcome == "done")
+        live = [m for m in seen if isinstance(m, ChatNotice) and m.kind == "signin.continued"]
+        assert len(live) == 1 and live[0].text == "Continued after sign-in"
+        ring = server.registry.get(chat).events_since(None)[0]
+        kinds = [type(e).__name__ for e in ring]
+        notices = [e for e in ring if isinstance(e, ChatNotice) and e.kind == "signin.continued"]
+        assert len(notices) == 1, kinds
+        at = ring.index(notices[0])
+        assert any(isinstance(e, TurnStarted) and e.turn == 2 for e in ring[at:]), "before the continued turn"
+    finally:
+        await conn.close()

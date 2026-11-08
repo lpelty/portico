@@ -186,6 +186,8 @@ from .engine import (
     session_prompt,
     friendly_model_name,
     CONTINUE_TEXT,
+    SIGNIN_CONTINUED_NOTICE,
+    SIGNIN_CONTINUED_TEXT,
     history_events,
     read_history,
     transcript_times,
@@ -2367,6 +2369,8 @@ class GatewayServer:
             await self.broadcast(self._signin_frame(chat, state, "stopped"))
             return
         await self.broadcast(self._signin_frame(chat, state, "current"))
+        # Review L5: the note goes in the ring too, so a reconnect replays it.
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=SIGNIN_CONTINUED_TEXT, kind=SIGNIN_CONTINUED_NOTICE))
         log.info("chat %d: signed in again; carrying turn %d on", chat.number, state.turn)
         run = await self._echo_turn(chat, CONTINUE_TEXT, echo_user=False)
         try:
@@ -3267,6 +3271,8 @@ class GatewayServer:
         notices: list[tuple[ServerMessage, int | None, int | None]] = []
         last_turn: int | None = None
         for e in ring:
+            if isinstance(e, ChatNotice) and e.kind == SIGNIN_CONTINUED_NOTICE:
+                continue  # the transcript marks its continues itself (``history_events``)
             if isinstance(e, ChatNotice):
                 notices.append((e.model_copy(update={"seq": None}), last_turn, None))
             elif isinstance(e, TurnStarted):

@@ -1021,6 +1021,14 @@ restart) gets the notices of the current gateway run put back in, after
 the turn each followed and without `seq`; only notices from before the
 restart are lost.
 
+v0.26: `kind: "signin.continued"` (text "Continued after sign-in") marks
+where a turn carried on after a sign-in wait (`signin.wait` `current`). The
+gateway emits it at the continue, so it is in the ring, and `chat.history`
+from the engine's transcript has one where the continue message was (the
+message itself is never drawn), between the two replies. The app draws it
+as its "Continued after sign-in" line, at most one per turn (it may already
+have drawn one on `current`). An older app shows it as a plain line.
+
 ### `config.stale` — `ConfigStale` *(v0.3)*
 No fields. `config.toml` is newer than when the gateway started (or it
 appeared; v0.25: or it changed in any way, or was deleted), or (v0.24) the
