@@ -168,6 +168,7 @@ from .apps import AppHost, build_ui_map
 from .artifacts import TurnCollector, artifact_for_location, from_tool, is_url, is_viewable, media_for
 from .cards import CardBroker
 from .chats import Chat, ChatRegistry, UnknownChat, title_from
+from .cc_version import PROMPT_CHANGED, CachedVersion
 from .config import MODELS_CAPABILITY, SPACES_CAPABILITY, Config, hello_for, local_config_path, with_default_spaces
 from .engine import (
     READ_ONLY_TOOLS,
@@ -178,6 +179,9 @@ from .engine import (
     Shown,
     SessionPrompt,
     append_prompt_line,
+    final_system_prompt,
+    prompt_fingerprint,
+    prompt_header_version,
     session_prompt,
     friendly_model_name,
     history_events,
@@ -312,7 +316,7 @@ from .plugins import Plugins, RenewContext
 from .search import Runner, clean_hits, run_command, search_files
 from .services import ServiceMonitor, command_restart, command_status, hook_restart, hook_status
 from .session_numbers import NEXT_NUMBER_TIMEOUT, next_session_number
-from .state import ProposalRecord, QuestionOutcome, StateDir
+from .state import PromptRecord, ProposalRecord, QuestionOutcome, StateDir
 from .threads import (
     CLOSE_LOGGING,
     CLOSE_PLAIN,
@@ -1025,6 +1029,9 @@ class GatewayServer:
         self._config_stale_sent = False
         # v0.24: the status line has said the custom prompt could not be read.
         self._prompt_fallback_said = False
+        # v0.24: the engine's version (asked once; tests set their own) and the versions already warned about.
+        self.claude_code_version: Callable[[], str | None] = CachedVersion()
+        self._prompt_versions_warned: set[str] = set()
         if config.system_prompt == "none":
             log.info(NONE_PROMPT_NOTE)
         self.started_at = _now()
@@ -1836,6 +1843,7 @@ class GatewayServer:
             self.state.path / "prompts" / "running" / f"chat-{chat.number}.md",
         )
         await self._note_prompt_fallback(chosen)
+        resuming = chat.session_id is not None
         prompt = chosen.prompt
         callbacks = ChatCallbacks(self, chat)
         if chat.thread is not None:
@@ -1854,6 +1862,7 @@ class GatewayServer:
             chat.folder, chat.session_id, sources, callbacks, extra_servers=extra_servers, plugin_paths=plugin_paths
         )
         chat.engine = engine
+        await self._record_prompt(chat, chosen, final_system_prompt(prompt, callbacks), resuming)
         self.apps.engine_started(chat, engine)
         self._engine_seq += 1
         self._engine_started[chat.number] = self._engine_seq
@@ -1863,6 +1872,31 @@ class GatewayServer:
         await self._report_commands(chat, engine)
         await self._report_models(chat, engine)
         return engine
+
+    async def _record_prompt(self, chat: Chat, chosen: SessionPrompt, final: Any, resuming: bool) -> None:
+        """v0.24 §3 (ruling 5): a new session, or one with no record yet, records the prompt it started with.
+
+        A resumed engine keeps the earlier record: the engine keeps the prompt
+        it recorded at the session's start until it compacts. A custom start
+        also compares the file's captured version with the engine's, logged
+        once per engine version.
+        """
+        if not resuming or chat.prompt is None:
+            chat.prompt = PromptRecord(mode=chosen.mode, source=chosen.source, sha=prompt_fingerprint(final), at=_now())
+            log.info("chat %d: system prompt %s %s %s", chat.number, chat.prompt.mode, chat.prompt.source, chat.prompt.sha)
+        if chosen.mode != "custom":
+            return
+        recorded = prompt_header_version(chosen.source)
+        if recorded is None:
+            return
+        try:
+            current = await asyncio.to_thread(self.claude_code_version)
+        except Exception:
+            current = None
+        if current is None or current == recorded or current in self._prompt_versions_warned:
+            return
+        self._prompt_versions_warned.add(current)
+        log.warning(PROMPT_CHANGED.format(old=recorded, new=current))
 
     async def _note_prompt_fallback(self, chosen: SessionPrompt) -> None:
         """v0.24 ruling 13: an unreadable custom prompt is said on the status line once, until it reads again."""

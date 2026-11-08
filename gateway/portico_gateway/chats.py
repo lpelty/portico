@@ -46,7 +46,7 @@ from .messages import (
     ServerMessage,
     ThreadInfo,
 )
-from .state import ChatRecord, Index, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
+from .state import ChatRecord, Index, PromptRecord, ProposalRecord, QuestionOutcome, StateDir, ToolPermission
 
 if TYPE_CHECKING:
     from .engine import Engine
@@ -130,6 +130,7 @@ class Chat:
         work_since_log: bool = False,
         last_reply: str | None = None,
         thread: ThreadInfo | None = None,
+        prompt: PromptRecord | None = None,
     ) -> None:
         if number < 1:
             raise ValueError(f"chat numbers start at 1, got {number}")
@@ -190,6 +191,8 @@ class Chat:
         self.last_reply = last_reply
         # v0.16: set when this chat is a thread opened from Main.
         self.thread = thread
+        # v0.24: the prompt the session started with (never sent to the app).
+        self.prompt = prompt
         self.can_log = False
         self.engine: Engine | None = None
         # True for a chat restored from the index with a session: the ring
@@ -329,6 +332,7 @@ class Chat:
             permissions=dict(self.permissions),
             answers=dict(self.answers),
             work_since_log=self.work_since_log,
+            prompt=self.prompt,
             **self._session_facts(),  # type: ignore[arg-type]
         )
 
@@ -357,6 +361,7 @@ class Chat:
             logged_at=record.logged_at,
             last_reply=record.last_reply,
             thread=record.thread,
+            prompt=record.prompt,
             # An index from before v0.4 does not say: a session the engine
             # named has had a turn, and nothing in v0.4 has logged it.
             work_since_log=(

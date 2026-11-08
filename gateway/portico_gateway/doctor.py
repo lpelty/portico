@@ -265,6 +265,33 @@ def check_config(config_path: Path) -> Check:
     return Check("config", True, f"{config_path} loads{with_local}")
 
 
+def check_system_prompt(config_path: Path, version: Callable[[], str | None] | None = None) -> Check:
+    """v0.24 §3: which prompt runs; with ``custom``, whether Claude Code changed since the file was captured.
+
+    The engine's version is asked only when there is a recorded one to compare.
+    """
+    from .cc_version import PROMPT_CHANGED, claude_code_version
+    from .engine import prompt_header_version
+
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return Check("system prompt", True, "skipped: the config does not load (see the config check)")
+    if config.system_prompt == "none":
+        return Check("system prompt", True, 'system_prompt = "none" (legacy): use "custom" with system_prompt_file for the whole prompt')
+    if config.system_prompt != "custom" or not config.system_prompt_file:
+        return Check("system prompt", True, "Claude Code's own prompt (follows Claude Code)")
+    recorded = prompt_header_version(config.system_prompt_file)
+    if recorded is None:
+        return Check("system prompt", True, f"custom: {config.system_prompt_file} has no capture header, so no version is compared")
+    current = (version or claude_code_version)()
+    if current is None:
+        return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}; the engine's version is unknown)")
+    if current != recorded:
+        return Check("system prompt", True, PROMPT_CHANGED.format(old=recorded, new=current), warn=True)
+    return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}, the engine's version)")
+
+
 def check_setting_sources(config_path: Path) -> Check:
     """Read the raw key so an empty list is reported in the exact words, independent of the config check."""
     try:
@@ -668,6 +695,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT, *, state_
         check_credential(),
         check_config(config_path),
         check_setting_sources(config_path),
+        check_system_prompt(config_path),
         *check_plugins(config_path),
         check_services(config_path),
         check_viewer(config_path),

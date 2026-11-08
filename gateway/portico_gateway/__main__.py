@@ -257,6 +257,26 @@ def cmd_sessions_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sessions_list(args: argparse.Namespace) -> int:
+    """v0.24: every session in the index, newest first, with the prompt it started with; ``--json`` for agents."""
+    import json
+
+    from portico_gateway.state import StateDir
+
+    state = StateDir(Path(args.state).expanduser() if getattr(args, "state", None) else None)
+    records = sorted(state.load_index().chats, key=lambda r: r.chat, reverse=True)
+    if getattr(args, "json", False):
+        print(json.dumps([r.model_dump(mode="json", include={"chat", "folder", "title", "created", "ended", "prompt"}) for r in records]))
+        return 0
+    for r in records:
+        parts = [f"#{r.chat}", r.created[:10], "ended" if r.ended else r.state, r.title or r.folder]
+        if r.prompt is not None:
+            name = Path(r.prompt.source).name if r.prompt.mode == "custom" else r.prompt.source
+            parts.append(f"prompt {r.prompt.mode} {name} {r.prompt.sha}")
+        print("  ".join(parts))
+    return 0
+
+
 # Exit code of the ``update`` commands when the deployment configured no update command.
 EXIT_NOT_CONFIGURED = 2
 # ``update --check``: the check command failed (another exit, a timeout, could not start).
@@ -380,8 +400,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("sessions", help="admin commands on the session list")
-    sessions_sub = p.add_subparsers(dest="sessions_command", required=True)
+    p = sub.add_parser("sessions", help="list sessions with the prompt each started with (v0.24), or clear earlier ones")
+    p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    p.add_argument("--json", action="store_true", help="one JSON list for programs")
+    p.set_defaults(func=cmd_sessions_list)
+    sessions_sub = p.add_subparsers(dest="sessions_command", required=False)
+    c = sessions_sub.add_parser("list", help="every session, newest first, with its prompt (mode, file, fingerprint)")
+    c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+    c.add_argument("--json", action="store_true", help="one JSON list for programs")
+    c.set_defaults(func=cmd_sessions_list)
     c = sessions_sub.add_parser("clear", help="forget every earlier session (the gateway must be stopped; transcripts stay)")
     c.add_argument("--yes", action="store_true", help="do not ask first")
     c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
