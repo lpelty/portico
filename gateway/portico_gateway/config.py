@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -554,20 +555,126 @@ class Config(BaseModel):
         return out
 
 
-def _describe(path: Path, e: ValidationError) -> str:
+LOCAL_CONFIG_NAME = "config.local.toml"
+DEFAULT_SOURCE = "default"
+
+
+def local_config_path(config_path: Path) -> Path:
+    """v0.24: the person's own overrides, beside whichever ``config.toml`` the gateway reads."""
+    return Path(config_path).with_name(LOCAL_CONFIG_NAME)
+
+
+def merge_tables(base: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    """``local`` over ``base``: tables merge key by key, recursively; any other value (arrays too) replaces.
+
+    Neither argument is changed.
+    """
+    out = dict(base)
+    for key, value in local.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merge_tables(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _read_toml(path: Path, label: str) -> dict[str, Any]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ConfigError(f"{label}: cannot read: {e}") from e
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{label}: not valid TOML: {e}") from e
+
+
+@dataclass
+class ConfigLayers:
+    """v0.24: the deployment's file and the person's local file, as read (each ``{}`` when absent)."""
+
+    base: dict[str, Any]
+    local: dict[str, Any]
+    base_path: Path
+    local_path: Path
+
+    @property
+    def base_label(self) -> str:
+        return self.base_path.name
+
+    def merged(self) -> dict[str, Any]:
+        return merge_tables(self.base, self.local)
+
+    def _has(self, data: dict[str, Any], parts: list[str]) -> bool:
+        node: Any = data
+        for part in parts:
+            if not isinstance(node, dict) or part not in node:
+                return False
+            node = node[part]
+        return True
+
+    def source_of(self, dotted: str) -> str:
+        """Where the value at ``dotted`` comes from: ``config.local.toml``, the base file's name, or ``default``.
+
+        The deepest path either file sets wins: ``brand.accent`` set only
+        locally is the local file's even when ``[brand]`` is in both.
+        """
+        parts = [p for p in dotted.split(".") if p]
+        for depth in range(len(parts), 0, -1):
+            prefix = parts[:depth]
+            if self._has(self.local, prefix) and (
+                depth == len(parts) or not isinstance(self._get(self.local, prefix), dict)
+            ):
+                return LOCAL_CONFIG_NAME
+            if self._has(self.base, prefix) and (
+                depth == len(parts) or not isinstance(self._get(self.base, prefix), dict)
+            ):
+                return self.base_label
+        return DEFAULT_SOURCE
+
+    @staticmethod
+    def _get(data: dict[str, Any], parts: list[str]) -> Any:
+        node: Any = data
+        for part in parts:
+            node = node[part]
+        return node
+
+
+def read_config_layers(config_path: Path) -> ConfigLayers:
+    """Read ``config.toml`` and the ``config.local.toml`` beside it; a missing file is ``{}``.
+
+    A file that can't be read or isn't TOML is a ``ConfigError``; the local
+    file's names it as ``config.local.toml``.
+    """
+    path = Path(config_path)
+    local_path = local_config_path(path)
+    base = _read_toml(path, str(path)) if path.exists() else {}
+    local = _read_toml(local_path, LOCAL_CONFIG_NAME) if local_path.exists() else {}
+    return ConfigLayers(base=base, local=local, base_path=path, local_path=local_path)
+
+
+def _describe(label: str, e: ValidationError) -> str:
     parts = []
     for err in e.errors():
         loc = ".".join(str(p) for p in err["loc"]) or "<root>"
         parts.append(f"{loc}: {err['msg']}")
-    return f"{path}: " + "; ".join(parts)
+    return f"{label}: " + "; ".join(parts)
 
 
-def _validate(path: Path, data: dict[str, Any]) -> Config:
+def _from_local(layers: ConfigLayers | None, errors: Any) -> bool:
+    """Whether every located error points at a value the local file set (v0.24 ruling 6)."""
+    if layers is None or not layers.local:
+        return False
+    locs = [".".join(str(p) for p in err["loc"] if not isinstance(p, int)) for err in errors if err.get("loc")]
+    return bool(locs) and all(layers.source_of(loc) == LOCAL_CONFIG_NAME for loc in locs)
+
+
+def _validate(path: Path, data: dict[str, Any], layers: ConfigLayers | None = None) -> Config:
     try:
         return Config.model_validate(data)
     except ConfigError:
         raise
     except ValidationError as e:
+        local = _from_local(layers, e.errors())
+        prefix = f"{LOCAL_CONFIG_NAME}: " if local else ""
         # A ConfigError raised inside a field validator is wrapped by
         # pydantic; surface its exact text rather than the wrapped form,
         # naming the top-level key it was raised for.
@@ -575,8 +682,9 @@ def _validate(path: Path, data: dict[str, Any]) -> Config:
             ctx = err.get("ctx") or {}
             inner = ctx.get("error")
             if isinstance(inner, ConfigError):
-                raise ConfigError(str(inner), keys=_top_keys([err])) from None
-        raise ConfigError(_describe(path, e), keys=_top_keys(e.errors())) from e
+                raise ConfigError(prefix + str(inner), keys=_top_keys([err])) from None
+        label = LOCAL_CONFIG_NAME if local else str(path)
+        raise ConfigError(_describe(label, e), keys=_top_keys(e.errors())) from e
 
 
 def _top_keys(errors: Any) -> frozenset[str]:
@@ -585,17 +693,11 @@ def _top_keys(errors: Any) -> frozenset[str]:
 
 
 def load_config(path: Path) -> Config:
-    """Read ``config.toml``; a missing file means defaults."""
-    path = Path(path)
-    if not path.exists():
+    """Read ``config.toml`` with the ``config.local.toml`` beside it merged over it (v0.24); missing files mean defaults."""
+    layers = read_config_layers(Path(path))
+    if not layers.base and not layers.local and not layers.base_path.exists() and not layers.local_path.exists():
         return Config()
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except OSError as e:
-        raise ConfigError(f"{path}: cannot read: {e}") from e
-    except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"{path}: not valid TOML: {e}") from e
-    return _validate(path, data)
+    return _validate(Path(path), layers.merged(), layers)
 
 
 def _now() -> str:

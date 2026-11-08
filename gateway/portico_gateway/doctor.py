@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import REPO_ROOT
-from .config import EMPTY_SETTING_SOURCES_MESSAGE, ConfigError, load_config
+from .config import EMPTY_SETTING_SOURCES_MESSAGE, LOCAL_CONFIG_NAME, ConfigError, load_config, local_config_path, read_config_layers
 from .plugins import check_plugin
 from .state import ENV_HOME, ENV_HOME_SOURCE, StateDir
 
@@ -252,23 +252,28 @@ def check_credential(env: Mapping[str, str] | None = None) -> Check:
 
 
 def check_config(config_path: Path) -> Check:
-    if not config_path.exists():
+    local = local_config_path(config_path)
+    if not config_path.exists() and not local.exists():
         return Check("config", True, f"{config_path} absent, using defaults")
     try:
         load_config(config_path)
     except ConfigError as e:
         return Check("config", False, _one_line(str(e)))
-    return Check("config", True, f"{config_path} loads")
+    with_local = f" with {LOCAL_CONFIG_NAME}" if local.exists() else ""
+    if not config_path.exists():
+        return Check("config", True, f"{config_path} absent; {LOCAL_CONFIG_NAME} loads over the defaults")
+    return Check("config", True, f"{config_path} loads{with_local}")
 
 
 def check_setting_sources(config_path: Path) -> Check:
     """Read the raw key so an empty list is reported in the exact words, independent of the config check."""
-    if not config_path.exists():
-        return Check("setting_sources", True, "default [project]")
     try:
-        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
+        layers = read_config_layers(config_path)
+    except ConfigError as e:
         return Check("setting_sources", False, f"{config_path} could not be read: {_one_line(str(e))}")
+    data = layers.merged()
+    if layers.source_of("setting_sources") == LOCAL_CONFIG_NAME:
+        config_path = layers.local_path
     if "setting_sources" not in data:
         return Check("setting_sources", True, "default [project]")
     value = data["setting_sources"]
