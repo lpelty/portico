@@ -7,29 +7,31 @@ import XCTest
 final class SecretStoreTests: XCTestCase {
     func testMemoryStoreRoundTrips() throws {
         let store = MemorySecretStore()
-        XCTAssertNil(store.read())
+        XCTAssertNil(try store.read())
+        XCTAssertFalse(store.exists())
         try store.save("test-key-not-real")
-        XCTAssertEqual(store.read(), "test-key-not-real")
+        XCTAssertEqual(try store.read(), "test-key-not-real")
         try store.remove()
-        XCTAssertNil(store.read())
+        XCTAssertNil(try store.read())
         XCTAssertThrowsError(try store.save("")) { XCTAssertEqual($0 as? SecretStoreError, .empty) }
     }
 
     func testKeychainStoreRoundTripsUnderATestService() throws {
         let store = KeychainStore(service: "tests.elevenlabs.\(UUID().uuidString)")
         defer { try? store.remove() }
-        XCTAssertNil(store.read())
+        XCTAssertNil(try store.read())
         do {
             try store.save("test-key-not-real")
         } catch SecretStoreError.status(let status)
             where status == errSecMissingEntitlement || status == errSecInteractionNotAllowed {
             throw XCTSkip("the Keychain refused this test runner (\(status)); the in-memory store covers the logic")
         }
-        XCTAssertEqual(store.read(), "test-key-not-real")
+        XCTAssertEqual(try store.read(), "test-key-not-real")
+        XCTAssertTrue(store.exists(), "an attributes-only query finds it")
         try store.save("test-key-2")
-        XCTAssertEqual(store.read(), "test-key-2")
+        XCTAssertEqual(try store.read(), "test-key-2")
         try store.remove()
-        XCTAssertNil(store.read())
+        XCTAssertNil(try store.read())
         try store.remove()  // removing nothing is fine
         XCTAssertThrowsError(try store.save("")) { XCTAssertEqual($0 as? SecretStoreError, .empty) }
     }

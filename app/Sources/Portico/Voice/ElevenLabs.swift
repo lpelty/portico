@@ -46,10 +46,13 @@ enum ElevenLabsModels {
 /// Mac voice, with its note under the reply. Never carries the key.
 enum ElevenLabsFailure: Error, Equatable, Sendable {
     case noKey, noVoice, key, voice, quota, network, audio, http(Int)
+    /// Review M3: a key is saved but couldn't be read (Keychain access denied).
+    case keyUnreadable
 
     var note: String {
         let reason = switch self {
         case .noKey: "no ElevenLabs API key is saved."
+        case .keyUnreadable: "the saved ElevenLabs key couldn't be read."
         case .noVoice: "no ElevenLabs voice is chosen."
         case .key: "ElevenLabs didn't accept the API key."
         case .voice: "ElevenLabs doesn't know this voice."

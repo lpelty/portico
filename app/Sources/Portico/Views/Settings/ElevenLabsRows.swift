@@ -12,15 +12,20 @@ struct ElevenLabsKeyRow: View {
 
     static let subtitle = "Kept in this Mac's Keychain. Never in a config file, and never seen by the agent."
 
+    /// What the saved state says (review M3): a denied read isn't "no key".
+    static func status(hasKey: Bool, unreadable: Bool) -> String {
+        hasKey && unreadable ? "Couldn't read the saved key" : "Saved"
+    }
+
     var body: some View {
         SettingsRow("API key", help: error ?? Self.subtitle) {
             if account.hasKey && !replacing {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle")
+                    Image(systemName: account.keyUnreadable ? "exclamationmark.circle" : "checkmark.circle")
                         .font(Theme.iconFont(12))
-                        .foregroundStyle(Theme.working)
+                        .foregroundStyle(account.keyUnreadable ? Theme.wait : Theme.working)
                         .accessibilityHidden(true)
-                    Text("Saved")
+                    Text(Self.status(hasKey: account.hasKey, unreadable: account.keyUnreadable))
                         .scaledFont(13)
                         .foregroundStyle(Theme.text2)
                     Button("Replace…") { replacing = true; typed = ""; error = nil }

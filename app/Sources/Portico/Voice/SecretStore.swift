@@ -5,7 +5,12 @@ import Security
 /// app; in memory in tests. The key is never logged, never written to a
 /// config file or user defaults, never sent to the gateway.
 protocol SecretStore: AnyObject {
-    func read() -> String?
+    /// Whether a secret is saved, without reading it (review M3: an attributes-only
+    /// query, which never asks the person for Keychain access).
+    func exists() -> Bool
+    /// The secret; nil when none is saved. Throws when one is there but can't be read
+    /// (the person denied access, for example).
+    func read() throws -> String?
     func save(_ secret: String) throws
     func remove() throws
 }
@@ -47,14 +52,22 @@ final class KeychainStore: SecretStore {
          kSecAttrAccount as String: account]
     }
 
-    func read() -> String? {
+    func exists() -> Bool {
+        var query = self.query
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
+    }
+
+    func read() throws -> String? {
         var query = self.query
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw SecretStoreError.status(status) }
         return String(data: data, encoding: .utf8)
     }
 
@@ -86,7 +99,9 @@ final class MemorySecretStore: SecretStore {
 
     init(_ secret: String? = nil) { self.secret = secret }
 
-    func read() -> String? { secret }
+    func exists() -> Bool { secret != nil }
+
+    func read() throws -> String? { secret }
 
     func save(_ secret: String) throws {
         guard !secret.isEmpty else { throw SecretStoreError.empty }

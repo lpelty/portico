@@ -162,7 +162,7 @@ final class ReadAloud: ObservableObject {
         let model = settings.elevenLabsModel
         let chunks = SpeechChunks.split(speech, limit: ElevenLabsModels.limit(for: model, live: account.models))
         guard let client = account.speechClient() else {
-            return fallBack(chunks, from: 0, failure: .noKey, key: key, token: token)
+            return fallBack(chunks, from: 0, failure: account.keyUnreadable ? .keyUnreadable : .noKey, key: key, token: token)
         }
         guard let voiceID = settings.elevenLabsVoiceID, !voiceID.isEmpty else {
             return fallBack(chunks, from: 0, failure: .noVoice, key: key, token: token)

@@ -134,4 +134,66 @@ final class ElevenLabsSettingsTests: XCTestCase {
             XCTAssertGreaterThan(host.fittingSize.height, 150)
         }
     }
+
+    // MARK: - review M3: the secret is read only when it's used, once
+
+    final class CountingStore: SecretStore {
+        var secret: String?
+        var denied = false
+        private(set) var reads = 0
+        private(set) var existsCalls = 0
+        init(_ secret: String?) { self.secret = secret }
+        func exists() -> Bool { existsCalls += 1; return secret != nil }
+        func read() throws -> String? {
+            reads += 1
+            if denied { throw SecretStoreError.status(-128) }  // errSecUserCanceled: the person chose Deny
+            return secret
+        }
+        func save(_ secret: String) throws { self.secret = secret }
+        func remove() throws { secret = nil }
+    }
+
+    func testLaunchingReadsNoSecret() {
+        let store = CountingStore("test-key-not-real")
+        let account = ElevenLabsAccount(store: store)
+        XCTAssertTrue(account.hasKey, "from an attributes-only query")
+        XCTAssertEqual(store.reads, 0, "nothing reads the key at launch")
+        XCTAssertEqual(account.key, "test-key-not-real")
+        XCTAssertEqual(account.key, "test-key-not-real")
+        XCTAssertNotNil(account.speechClient())
+        XCTAssertEqual(store.reads, 1, "read once, then kept in memory for the session")
+    }
+
+    func testModelsLoadOnlyWithElevenLabsChosen() {
+        let settings = Settings(defaults: defaults)
+        settings.elevenLabsAvailable = true
+        settings.voiceSource = .thisMac
+        XCTAssertFalse(ReadAloudControls.loadsModels(settings: settings, hasKey: true))
+        settings.voiceSource = .elevenLabs
+        XCTAssertTrue(ReadAloudControls.loadsModels(settings: settings, hasKey: true))
+        XCTAssertFalse(ReadAloudControls.loadsModels(settings: settings, hasKey: false))
+    }
+
+    func testADeniedReadSaysSoAndKeepsTheKeySaved() async {
+        let store = CountingStore("test-key-not-real")
+        store.denied = true
+        let account = ElevenLabsAccount(store: store)
+        XCTAssertNil(account.speechClient())
+        XCTAssertTrue(account.hasKey, "the key may still be saved")
+        XCTAssertTrue(account.keyUnreadable)
+        XCTAssertEqual(ElevenLabsKeyRow.status(hasKey: account.hasKey, unreadable: account.keyUnreadable),
+                       "Couldn't read the saved key")
+        XCTAssertEqual(ElevenLabsKeyRow.status(hasKey: true, unreadable: false), "Saved")
+        do {
+            _ = try await account.voices()
+            XCTFail("denied")
+        } catch {
+            XCTAssertEqual(error, .keyUnreadable)
+        }
+        XCTAssertEqual(ElevenLabsFailure.keyUnreadable.note, "Read with this Mac's voice: the saved ElevenLabs key couldn't be read.")
+        store.denied = false
+        try? account.saveKey("test-key-2")
+        XCTAssertFalse(account.keyUnreadable)
+        XCTAssertEqual(account.key, "test-key-2")
+    }
 }

@@ -161,6 +161,11 @@ struct ReadAloudControls: View {
         return rows
     }
 
+    /// Whether opening the block fetches the model list (which reads the key).
+    static func loadsModels(settings: Settings, hasKey: Bool) -> Bool {
+        settings.speaksWithElevenLabs && hasKey
+    }
+
     static func footnote(elevenLabsAvailable: Bool, source: VoiceSource) -> String {
         elevenLabsAvailable && source == .elevenLabs ? elevenLabsFootnote : thisMacFootnote
     }
@@ -197,9 +202,12 @@ struct ReadAloudControls: View {
             }
         }
         .onAppear(perform: refresh)
-        .task(id: reader.account?.hasKey) {
-            // Load the models when the Labs tab appears and a key is saved.
-            if settings.elevenLabsAvailable, let account = reader.account, account.hasKey { await account.loadModels() }
+        .task(id: "\(reader.account?.hasKey ?? false)\(settings.voiceSource.rawValue)") {
+            // Load the models only with ElevenLabs chosen and a key saved (review M3: nothing
+            // reads the key otherwise).
+            if let account = reader.account, Self.loadsModels(settings: settings, hasKey: account.hasKey) {
+                await account.loadModels()
+            }
         }
     }
 

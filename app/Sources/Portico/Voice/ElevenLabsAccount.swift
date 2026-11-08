@@ -15,7 +15,8 @@ final class ElevenLabsAccount: ObservableObject {
     init(store: SecretStore, client: @escaping (String) -> ElevenLabsClient = { ElevenLabsClient(key: $0) }) {
         self.store = store
         self.client = client
-        hasKey = store.read() != nil
+        // Review M3: an attributes-only query; the secret itself is read only when it's used.
+        hasKey = store.exists()
         models = Self.offlineModels
     }
 
@@ -23,8 +24,26 @@ final class ElevenLabsAccount: ObservableObject {
         ElevenLabsModels.offline.map { ElevenLabsModel(id: $0, name: $0, limit: nil) }
     }
 
+    /// The key once read this session (review M3: read once, when first used).
+    private var cachedKey: String?
+    /// A key is saved but couldn't be read (the person denied Keychain access).
+    @Published private(set) var keyUnreadable = false
+
     /// The saved key, for Read aloud only. Never shown, logged or sent anywhere but ElevenLabs.
-    var key: String? { store.read() }
+    /// Read from the store the first time it's needed, then kept in memory for the session.
+    var key: String? {
+        if let cachedKey { return cachedKey }
+        do {
+            let read = try store.read()
+            cachedKey = read
+            keyUnreadable = false
+            if read == nil { hasKey = false }
+            return read
+        } catch {
+            keyUnreadable = true
+            return nil
+        }
+    }
 
     /// Saves `key` trimmed; an empty one is refused (`SecretStoreError.empty`).
     func saveKey(_ key: String) throws {
@@ -32,11 +51,15 @@ final class ElevenLabsAccount: ObservableObject {
         guard !trimmed.isEmpty else { throw SecretStoreError.empty }
         try store.save(trimmed)
         hasKey = true
+        cachedKey = trimmed
+        keyUnreadable = false
     }
 
     func removeKey() throws {
         try store.remove()
         hasKey = false
+        cachedKey = nil
+        keyUnreadable = false
         models = Self.offlineModels
     }
 
@@ -48,7 +71,7 @@ final class ElevenLabsAccount: ObservableObject {
 
     /// The account's voices, by name, for Choose….
     func voices() async throws(ElevenLabsFailure) -> [ElevenLabsVoice] {
-        guard let key else { throw .noKey }
+        guard let key else { throw keyUnreadable ? .keyUnreadable : .noKey }
         return try await client(key).voices()
     }
 
