@@ -7,20 +7,7 @@ import SwiftUI
 // rows that act on a tap and menus get the hand and the hover tint from
 // `.hoverHighlight()`.
 
-extension Theme {
-    /// Laid over a clickable thing while the pointer is on it.
-    static let hoverTint = tint(lightAlpha: 0.05, darkAlpha: 0.07)
-    /// Laid over it while it is pressed.
-    static let pressTint = tint(lightAlpha: 0.10, darkAlpha: 0.13)
-
-    private static func tint(lightAlpha: CGFloat, darkAlpha: CGFloat) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: darkAlpha)
-                : NSColor(white: 0, alpha: lightAlpha)
-        })
-    }
-}
+// The tints are `Theme.hoverTint` and `Theme.pressTint` (tokens).
 
 /// The plain button of the app: the label as drawn, plus the pointing hand,
 /// the hover tint and the press tint in `shape`. `.text` is for a button

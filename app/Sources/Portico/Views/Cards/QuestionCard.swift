@@ -421,7 +421,7 @@ struct QuestionCard: View {
         } else {
             Text("\(index + 1)")
                 .scaledFont(12, weight: .medium, monospacedDigit: true)
-                .foregroundStyle(recommended ? Color.white : Theme.text2)
+                .foregroundStyle(recommended ? Theme.onAccent : Theme.text2)
                 .frame(width: 24, height: 24)
                 .background(recommended ? accent : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(

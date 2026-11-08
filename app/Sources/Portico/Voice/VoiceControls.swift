@@ -73,7 +73,7 @@ struct LevelMeter: View {
             HStack(alignment: .center, spacing: geometry.size.width * 0.12) {
                 ForEach(Array(Self.weights.enumerated()), id: \.offset) { _, weight in
                     Capsule()
-                        .fill(.white)
+                        .fill(Theme.onAccent)
                         .frame(height: max(geometry.size.height * 0.18, geometry.size.height * CGFloat(starting ? 0 : level) * weight))
                 }
             }

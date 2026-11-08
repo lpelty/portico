@@ -21,10 +21,10 @@ enum Tip {
     static let maxTextWidth: CGFloat = 320
 
     // AR7's v0.18 tooltip node (`rm4j7`): one style in light and dark.
-    static let fillHex = "#2B2B2E"
-    static let textHex = "#E6E6E8"
-    static let strokeHex = "#FFFFFF1F"
-    static let shadowHex = "#00000066"
+    static let fillHex = Theme.hex(.tipFill).light
+    static let textHex = Theme.hex(.tipText).light
+    static let strokeHex = Theme.hex(.tipStroke).light
+    static let shadowHex = Theme.hex(.tipShadow).light
     static let fontSize: CGFloat = 11.5
     static let cornerRadius: CGFloat = 5
     static let padding = EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
@@ -401,14 +401,6 @@ final class TipAnchorView: NSView, TipTarget {
             }
         }
     }
-}
-
-extension Theme {
-    /// AR7's tooltip: the same dark bubble in light and dark appearance.
-    static let tipFill = dynamic(Tip.fillHex, Tip.fillHex)
-    static let tipText = dynamic(Tip.textHex, Tip.textHex)
-    static let tipStroke = dynamic(Tip.strokeHex, Tip.strokeHex)
-    static let tipShadow = dynamic(Tip.shadowHex, Tip.shadowHex)
 }
 
 /// The tip's window: borderless, non-activating, never key, and the mouse

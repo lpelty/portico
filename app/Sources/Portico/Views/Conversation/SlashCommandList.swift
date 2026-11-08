@@ -133,7 +133,7 @@ struct SlashCommandList: View {
         }
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.borderStrong, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .shadow(color: Theme.shadowSoft, radius: 12, y: 4)
         .fixedSize(horizontal: false, vertical: true)
     }
 

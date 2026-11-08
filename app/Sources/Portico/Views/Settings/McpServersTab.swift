@@ -37,7 +37,7 @@ enum McpServersPresentation {
     }
 
     /// AR1's logo fills, chosen by the name so a row keeps its colour.
-    static let logoFills = ["#4F7DF3", "#E07A3F", "#2F9E8F", "#8A6BD1", "#C9A227", "#D1567A", "#3F6FD8", "#5D6874"]
+    static let logoFills = Theme.mcpLogoFills.map { Theme.hex($0).light }
 
     static func logoFill(for name: String) -> String {
         let sum = name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
@@ -701,7 +701,7 @@ struct McpLogo: View {
     var body: some View {
         Text(initial)
             .scaledFont(13, weight: .semibold)
-            .foregroundStyle(.white)
+            .foregroundStyle(Theme.onAccent)
             .frame(width: size, height: size)
             .background(
                 BrandPresentation.color(hex: fill) ?? Theme.accent,

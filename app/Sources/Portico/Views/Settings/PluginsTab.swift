@@ -50,7 +50,7 @@ enum PluginsPresentation {
     }
 
     /// AR4's logo fills (Design review, Meeting notes, Release helper) and AR1's, chosen by the id.
-    static let logoFills = ["#D1567A", "#3F8CD1", "#7A8A3F", "#4F7DF3", "#E07A3F", "#2F9E8F", "#8A6BD1", "#C9A227"]
+    static let logoFills = Theme.pluginLogoFills.map { Theme.hex($0).light }
 
     static func logoFill(for id: String) -> String {
         let sum = id.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }

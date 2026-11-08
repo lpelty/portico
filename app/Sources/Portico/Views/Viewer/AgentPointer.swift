@@ -75,7 +75,7 @@ final class AgentPointer: NSView {
         glyph.lineJoin = .round
         glyph.position = CGPoint(x: Self.half, y: Self.half)
         glyph.shadowOpacity = Self.shadowOpacity
-        glyph.shadowColor = NSColor.black.cgColor
+        glyph.shadowColor = Theme.nsColor(.pointerShadow).cgColor
         glyph.shadowOffset = CGSize(width: 0, height: Self.shadowOffsetDown)
         glyph.shadowRadius = Self.shadowBlur / 2
         layer?.addSublayer(glyph)
@@ -234,7 +234,7 @@ final class AgentPointer: NSView {
     private func applyColours() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             glyph.fillColor = accent.cgColor
-            glyph.strokeColor = NSColor.white.cgColor
+            glyph.strokeColor = Theme.nsColor(.onAccent).cgColor
         }
     }
 

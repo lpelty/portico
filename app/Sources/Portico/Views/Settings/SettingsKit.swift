@@ -241,8 +241,8 @@ struct SettingsSwitch: View {
                     .fill(isOn ? Theme.accent : Theme.control)
                     .overlay(Capsule().stroke(isOn ? Color.clear : Theme.borderStrong, lineWidth: 1))
                 Circle()
-                    .fill(Color.white)
-                    .shadow(color: .black.opacity(0.18), radius: 0.5, y: 0.5)
+                    .fill(Theme.knob)
+                    .shadow(color: Theme.shadowSoft, radius: 0.5, y: 0.5)
                     .padding(1.5)
             }
             .frame(width: 26, height: 15)
@@ -305,7 +305,7 @@ struct SettingsCheckboxBox: View {
                 if isOn {
                     Image(systemName: "checkmark")
                         .font(Theme.iconFont(9, weight: .bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.onAccent)
                 }
             }
             .frame(width: 14, height: 14)
@@ -470,7 +470,7 @@ struct SettingsButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .scaledFont(12, weight: kind == .accent ? .medium : .regular)
-                .foregroundStyle(kind == .accent ? Color.white : kind == .destructive ? Theme.deny : Theme.text)
+                .foregroundStyle(kind == .accent ? Theme.onAccent : kind == .destructive ? Theme.deny : Theme.text)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 9)
                 .background(kind == .accent ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))

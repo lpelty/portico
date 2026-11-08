@@ -13,6 +13,26 @@ final class SolidColourTests: XCTestCase {
             .selected: ("#E0E0E5", "#34343A"),
             .agentAvatar: ("#2F7A6B", "#3E8E7E"),
             .dangerStrong: ("#B3261E", "#C4362E"),
+            .accent: ("#3B6BE0", "#6B8FF2"), .accentSoft: ("#EBF0FC", "#26304A"),
+            .onAccent: ("#FFFFFF", "#FFFFFF"),
+            .wait: ("#B86E00", "#F0B24A"), .waitSoft: ("#FFF3DE", "#3B2E16"),
+            .onWait: ("#FFFFFF", "#1C1C1E"),
+            .working: ("#2DA44E", "#4CC86A"), .deny: ("#C93C37", "#F0706A"),
+            .idle: ("#B5B5BB", "#6A6A70"), .stopped: ("#8E8E93", "#8E8E93"),
+            .meterTrack: ("#E4E4E7", "#3A3A3E"), .meterFill: ("#A3A3A8", "#A3A3A9"),
+            .hoverTint: ("#0000000D", "#FFFFFF12"), .pressTint: ("#0000001A", "#FFFFFF21"),
+            .scrim: ("#00000040", "#00000040"), .shadowStrong: ("#0000004D", "#0000004D"),
+            .shadowSoft: ("#0000002E", "#0000002E"), .knob: ("#FFFFFF", "#FFFFFF"),
+            .pointerShadow: ("#000000", "#000000"),
+            .tipFill: ("#2B2B2E", "#2B2B2E"), .tipText: ("#E6E6E8", "#E6E6E8"),
+            .tipStroke: ("#FFFFFF1F", "#FFFFFF1F"), .tipShadow: ("#00000066", "#00000066"),
+            .shadow: ("#00000022", "#00000066"),
+            .windowClose: ("#FF5F57", "#FF5F57"), .windowMinimize: ("#FEBC2E", "#FEBC2E"),
+            .windowZoom: ("#28C840", "#28C840"),
+            .logo1: ("#4F7DF3", "#4F7DF3"), .logo2: ("#E07A3F", "#E07A3F"), .logo3: ("#2F9E8F", "#2F9E8F"),
+            .logo4: ("#8A6BD1", "#8A6BD1"), .logo5: ("#C9A227", "#C9A227"), .logo6: ("#D1567A", "#D1567A"),
+            .logo7: ("#3F6FD8", "#3F6FD8"), .logo8: ("#5D6874", "#5D6874"), .logo9: ("#3F8CD1", "#3F8CD1"),
+            .logo10: ("#7A8A3F", "#7A8A3F"),
         ]
         XCTAssertEqual(spec.count, Theme.Token.allCases.count)
         for (token, want) in spec {
@@ -98,5 +118,45 @@ final class SolidColourTests: XCTestCase {
         for hex in [Theme.hex(.dangerStrong).light, Theme.hex(.dangerStrong).dark] {
             XCTAssertGreaterThanOrEqual(Self.contrast("#FFFFFF", hex), 4.5, hex)
         }
+    }
+
+    /// v0.26 (PORT-25): no white, black or hex literal outside `Theme.swift`.
+    func testNoLiteralColourOutsideTheme() throws {
+        let pattern = try NSRegularExpression(
+            pattern: ##"Color\.(white|black)\b|NSColor\.(white|black)\b|NSColor\(white:|[(:,]\s*\.(white|black)\b|"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?""##)
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: ListFontSweepTests.sources, includingPropertiesForKeys: nil))
+        var offenders: [String] = []
+        var scanned = 0
+        for case let url as URL in files where url.pathExtension == "swift" {
+            if url.path.hasSuffix("Views/Theme.swift") { continue }
+            scanned += 1
+            let text = ListFontSweepTests.withoutComments(try String(contentsOf: url, encoding: .utf8))
+            for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                offenders.append("\(url.lastPathComponent): \((text as NSString).substring(with: match.range))")
+            }
+        }
+        XCTAssertGreaterThan(scanned, 20)
+        XCTAssertEqual(offenders, [])
+    }
+
+    func testPenNamesAreKebabCase() {
+        XCTAssertEqual(Theme.penName(.borderSubtle), "border-subtle")
+        XCTAssertEqual(Theme.penName(.text2), "text-2")
+        XCTAssertEqual(Theme.penName(.logo10), "logo-10")
+        XCTAssertEqual(Theme.penName(.onAccent), "on-accent")
+        XCTAssertEqual(Theme.penName(.window), "window")
+    }
+
+    func testLogoOrdersAreTodays() {
+        XCTAssertEqual(Theme.mcpLogoFills.map { Theme.hex($0).light },
+            ["#4F7DF3", "#E07A3F", "#2F9E8F", "#8A6BD1", "#C9A227", "#D1567A", "#3F6FD8", "#5D6874"])
+        XCTAssertEqual(Theme.pluginLogoFills.map { Theme.hex($0).light },
+            ["#D1567A", "#3F8CD1", "#7A8A3F", "#4F7DF3", "#E07A3F", "#2F9E8F", "#8A6BD1", "#C9A227"])
+    }
+
+    func testCommentsThemeReadsTheTokens() {
+        let css = CommentsTheme.css()
+        XCTAssertTrue(css.contains("--pc-wait: #B86E00"))
+        XCTAssertTrue(css.contains("--pc-on-wait: #1C1C1E"))
     }
 }
