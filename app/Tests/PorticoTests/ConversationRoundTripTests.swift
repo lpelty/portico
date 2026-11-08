@@ -1306,3 +1306,143 @@ final class ConversationRoundTripTests: XCTestCase {
         assertTheEndIsInView(hosted, "after the turn ended mid-scroll")
     }
 }
+
+// MARK: - v0.26 (PORT-12, ZG3): conversation markers, hosted
+
+extension ConversationRoundTripTests {
+    private func probe() {
+        ConversationProbe.enabled = true
+        ConversationProbe.rows = [:]
+        ConversationProbe.railShown = [:]
+        addTeardownBlock { @MainActor in
+            ConversationProbe.enabled = false
+            ConversationProbe.rows = [:]
+            ConversationProbe.railShown = [:]
+        }
+    }
+
+    /// The id of the `n`th (1-based) person message in `chat`'s transcript.
+    private func personMessage(_ n: Int, in model: AppModel, chat: Int = 3) throws -> String {
+        let users = (model.transcripts[chat] ?? []).filter { if case .userText = $0 { true } else { false } }
+        return try XCTUnwrap(users.dropFirst(n - 1).first).id
+    }
+
+    private func frame(_ id: String, chat: Int = 3) -> CGRect? { ConversationProbe.rows[chat]?.frames[id] }
+
+    func testClickingAMarkerScrollsToTheMessageAndHighlightsIt() throws {
+        probe()
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        XCTAssertTrue(atBottom(hosted))
+        XCTAssertEqual(ConversationProbe.railShown[3], true)
+        let third = try personMessage(3, in: model)
+        model.jumpToMessage(third, chat: 3)
+        spin(0.5)
+        let row = try XCTUnwrap(frame(third), "the message's row is laid out")
+        XCTAssertEqual(row.minY, ConversationView.topInset, accuracy: 1)
+        XCTAssertEqual(model.highlightedMessage[3], third)
+        XCTAssertTrue(ConversationProbe.inView[3]?.contains(third) == true, "its mark reads as in view")
+        XCTAssertFalse(ConversationProbe.inView[3]?.contains(try personMessage(40, in: model)) == true)
+        spin(1.0)
+        XCTAssertNil(model.highlightedMessage[3], "the highlight is brief")
+        XCTAssertEqual(try XCTUnwrap(frame(third)).minY, ConversationView.topInset, accuracy: 1, "and the place holds")
+    }
+
+    func testAfterAJumpAStreamingReplyDoesNotPullDown() throws {
+        probe()
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let third = try personMessage(3, in: model)
+        model.jumpToMessage(third, chat: 3)
+        spin(0.5)
+        for step in 1...8 {
+            model.apply(.textDelta(TextDelta(chat: 3, turn: 40, text: " More of the reply, part \(step).", seq: 80 + step)))
+            spin(0.05)
+        }
+        spin()
+        XCTAssertFalse(atBottom(hosted))
+        XCTAssertEqual(try XCTUnwrap(frame(third)).minY, ConversationView.topInset, accuracy: 2)
+    }
+
+    func testEachConversationKeepsItsPlaceAfterAJump() throws {
+        probe()
+        let model = try model(chats: [3, 5])
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        let third = try personMessage(3, in: model)
+        model.jumpToMessage(third, chat: 3)
+        spin(0.5)
+        let before = try XCTUnwrap(Self.topReply(in: hosted.scroll))
+        model.selected = 5
+        spin()
+        model.selected = 3
+        spin()
+        let three = try XCTUnwrap(Self.transcriptScroll(in: hosted.host))
+        let after = try XCTUnwrap(Self.topReply(in: three))
+        XCTAssertEqual(after.text, before.text, "the same reply at the top")
+        XCTAssertEqual(after.dy, before.dy, accuracy: 2, "at the same point in it")
+    }
+
+    func testAJumpInAnotherChatDoesNothingHere() throws {
+        probe()
+        let model = try model()
+        let hosted = try host(model, width: 900)
+        defer { hosted.window.close() }
+        model.jumpToMessage(try personMessage(3, in: model), chat: 9)
+        spin(0.4)
+        XCTAssertTrue(atBottom(hosted))
+    }
+
+    /// At the minimum window width the rail's frame lies inside the side inset.
+    func testTheRailStaysInsideTheSideInsetAtTheMinimumWidth() throws {
+        let model = try model()
+        let settings = Settings(defaults: defaults)
+        final class Box { var frame = CGRect.zero }
+        let box = Box()
+        let width = min(ColumnWidths.focusConversationMinimum, ColumnWidths.conversationMinimum)  // the narrowest chat pane
+        let rail = MarkerRail(
+            markers: (1...5).map { ConversationMarker(id: "m\($0)", snippet: "Message \($0)", at: nil) },
+            inView: MarkersInView(), onJump: { _ in })
+            .padding(.leading, ConversationView.railLeading)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { box.frame = $0 }
+            .frame(width: width, height: 600, alignment: .topLeading)
+        let host = NSHostingView(rootView: rail.environmentObject(model).environmentObject(settings))
+        host.frame = NSRect(x: 0, y: 0, width: width, height: 600)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        spin(0.2)
+        XCTAssertGreaterThan(box.frame.width, 0)
+        XCTAssertGreaterThanOrEqual(box.frame.minX, 0)
+        XCTAssertLessThanOrEqual(box.frame.maxX, ConversationView.sideInset, "the rail stays in the margin")
+    }
+
+    func testNoRailBelowThreePersonMessages() throws {
+        probe()
+        let model = try model()
+        model.apply(.chatList(ChatList(chats: [3, 7].map { ChatSummary(
+            chat: $0, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z") })))
+        var events: [ServerMessage] = []
+        for turn in 1...2 {
+            events.append(.userText(UserText(chat: 7, turn: turn, text: "Question \(turn)", seq: turn * 2 - 1)))
+            events.append(.textDelta(TextDelta(chat: 7, turn: turn, text: "Answer \(turn).", seq: turn * 2)))
+        }
+        model.apply(.chatHistory(ChatHistory(chat: 7, events: events, truncated: false)))
+        model.apply(.chatLive(ChatLive(chat: 7)))
+        model.selected = 7
+        let settings = Settings(defaults: defaults)
+        let host = NSHostingView(rootView: ConversationView(chat: 7)
+            .environmentObject(model).environmentObject(settings)
+            .environmentObject(ReadAloud(settings: settings)).environmentObject(Dictation(settings: settings)))
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        spin()
+        XCTAssertEqual(ConversationProbe.railShown[7], false)
+    }
+}

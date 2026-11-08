@@ -99,4 +99,30 @@ final class ConversationMarkersTests: XCTestCase {
             ConversationMarkers.tipFooter(at, now: now, calendar: calendar, locale: Locale(identifier: "en_US")),
             "Yesterday 2:05 PM · Click to go back")
     }
+
+    func testAJumpLeavesTheBottom() {
+        var memory = ConversationScrollMemory()
+        memory.followed()
+        memory.jumped()
+        XCTAssertFalse(memory.atBottom)
+    }
+
+    func testTheHighlightIsTheSoftAccentForABriefMoment() {
+        XCTAssertEqual(UserBubble.fill(highlighted: true), Theme.accentSoft)
+        XCTAssertEqual(UserBubble.fill(highlighted: false), Theme.surface)
+        XCTAssertEqual(ConversationView.highlightDuration, .milliseconds(1200))
+    }
+
+    func testMarkColoursAreTheReferences() {
+        XCTAssertEqual(MarkerRail.colour(.normal), Theme.text3)
+        XCTAssertEqual(MarkerRail.colour(.inView), Theme.text2)
+        XCTAssertEqual(MarkerRail.colour(.hovered), Theme.text)
+    }
+
+    /// Larry 2026-11-08 (ZG3/ZG3b): 10 pt from the pane's edge, the hovered mark ending at the
+    /// 32 pt side margin, so the rail never covers the reading column.
+    func testTheRailSitsInTheSideMargin() {
+        XCTAssertEqual(ConversationView.railLeading, 10)
+        XCTAssertEqual(ConversationView.railLeading + MarkerSlot.Style.hovered.length, ConversationView.sideInset)
+    }
 }

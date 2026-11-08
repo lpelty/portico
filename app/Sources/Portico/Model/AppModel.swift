@@ -160,6 +160,15 @@ final class AppModel: ObservableObject {
 
     /// `chat`'s conversation is left at `place`.
     func notePlace(_ place: ConversationPlace, chat: Int) { scrollPlaces[chat] = place }
+    /// v0.26 (PORT-12): a conversation marker was clicked: the conversation
+    /// on screen scrolls to that message (`ConversationView`).
+    @Published private(set) var markerJump: MarkerJumpRequest?
+    /// Per chat, the person's message briefly highlighted after a marker's jump.
+    @Published var highlightedMessage: [Int: String] = [:]
+
+    func jumpToMessage(_ id: String, chat: Int) {
+        markerJump = MarkerJumpRequest(chat: chat, id: id, serial: (markerJump?.serial ?? 0) + 1)
+    }
     /// Per chat, the cards still waiting for an answer, in arrival order.
     @Published private(set) var openCards: [Int: [CardAsk]] = [:]
     /// Per chat, every artifact reported, oldest first, one per id.

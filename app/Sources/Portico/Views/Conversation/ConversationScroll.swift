@@ -85,6 +85,12 @@ struct ConversationScrollMemory: Equatable, Sendable {
         atBottom = true
     }
 
+    /// v0.26 (PORT-12): a marker's click took the conversation to a message:
+    /// it is no longer at its bottom, so a streaming reply doesn't pull it down.
+    mutating func jumped() {
+        atBottom = false
+    }
+
     /// One scroll-geometry reading, as the view gets it: its width, whether
     /// it is at the end, and whether the person is scrolling (the scroll
     /// view's phase). Returns where to scroll, if anywhere.
