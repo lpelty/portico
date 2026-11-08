@@ -654,13 +654,17 @@ struct WebPane: NSViewRepresentable {
         ///   `autofocus` does not count;
         /// - in the rendered Markdown page, an action link counts only as
         ///   text: no children but inline text formatting (`strong`, `em`,
-        ///   `b`, `i`, `code`, `span`) and some text in it.
+        ///   `b`, `i`, `code`) and at least one letter or digit in it (the
+        ///   Hangul fillers and the blank Braille cell are blank).
         /// It cannot tell who wrote a link: a space that shows untrusted text
         /// must not let links from that text through unchanged.
         static let clickRecorder = """
             (function () {
               var XLINK = "http://www.w3.org/1999/xlink";
-              var TEXT_ONLY = { strong: 1, em: 1, b: 1, i: 1, code: 1, span: 1 };
+              var TEXT_ONLY = { strong: 1, em: 1, b: 1, i: 1, code: 1 };
+              // Characters that draw nothing although they are not spaces: the
+              // Hangul fillers (letters to Unicode) and the blank Braille cell.
+              var BLANK = /[\\u115F\\u1160\\u3164\\uFFA0\\u2800]/g;
               function hrefOf(a) {
                 var h = a.href;
                 if (typeof h !== "string") h = (h && h.baseVal) || "";
@@ -686,7 +690,7 @@ struct WebPane: NSViewRepresentable {
               function textOnly(a) {
                 var all = a.querySelectorAll("*");
                 for (var i = 0; i < all.length; i++) if (!TEXT_ONLY[all[i].localName.toLowerCase()]) return false;
-                return a.textContent.trim().length > 0;
+                return /[\\p{L}\\p{N}]/u.test(a.textContent.replace(BLANK, ""));
               }
               // What the person sees as the link: the link itself, or for an
               // image map's area, the image that uses the map.

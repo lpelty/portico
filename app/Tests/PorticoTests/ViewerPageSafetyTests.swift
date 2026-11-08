@@ -116,6 +116,7 @@ final class ViewerPageSafetyTests: XCTestCase {
 
     // MARK: - §11.1 the page runs only its own scripts
 
+    // The file's ids are dropped (round 3): its elements are found by data-t.
     func testInjectedScriptInMarkdownRunsNothingPostsNothingWritesNothing() async throws {
         let source = Self.thread + """
             <img src="missing.png" onerror="window.__ran = 'img'; window.webkit.messageHandlers.comments.postMessage({type: 'reply', id: 'ab12c', text: 'forged'})">
@@ -126,9 +127,9 @@ final class ViewerPageSafetyTests: XCTestCase {
 
             <iframe srcdoc="<script>parent.__ran = 'frame'</script>"></iframe>
 
-            <a id="js" href="javascript:window.__ran='link'">a link</a> <a id="vb" href=" VBScript:x">vb</a> <a id="data" href="data:text/html,hi">data</a>
+            <a data-t="js" href="javascript:window.__ran='link'">a link</a> <a data-t="vb" href=" VBScript:x">vb</a> <a data-t="data" href="data:text/html,hi">data</a>
 
-            <form id="f" action="javascript:window.__ran='form'"><button id="b" formaction="javascript:window.__ran='button'">Go</button></form>
+            <form data-t="f" action="javascript:window.__ran='form'"><button data-t="b" formaction="javascript:window.__ran='button'">Go</button></form>
 
             <object data="x.swf"></object><embed src="x.swf">
 
@@ -146,11 +147,11 @@ final class ViewerPageSafetyTests: XCTestCase {
                   return Array.prototype.some.call(e.attributes, function (a) { return /^on/i.test(a.name); });
                 }).length,
               scripts: document.querySelectorAll('#body script, #body iframe, #body object, #body embed').length,
-              js: document.getElementById('js').getAttribute('href'),
-              vb: document.getElementById('vb').getAttribute('href'),
-              data: document.getElementById('data').getAttribute('href'),
-              action: document.getElementById('f').getAttribute('action'),
-              formaction: document.getElementById('b').getAttribute('formaction'),
+              js: document.querySelector('[data-t=js]').getAttribute('href'),
+              vb: document.querySelector('[data-t=vb]').getAttribute('href'),
+              data: document.querySelector('[data-t=data]').getAttribute('href'),
+              action: document.querySelector('[data-t=f]').getAttribute('action'),
+              formaction: document.querySelector('[data-t=b]').getAttribute('formaction'),
               img: !!document.querySelector('#body img'),
               svg: !!document.querySelector('#body svg circle')
             };
@@ -215,6 +216,7 @@ final class ViewerPageSafetyTests: XCTestCase {
         XCTAssertEqual(directive, "connect-src")
     }
 
+    // The file's ids are dropped (round 3): its elements are found by data-t.
     func testOrdinaryRawHTMLStillRenders() async throws {
         let png = WebPaneRenderTests.tinyPNG(width: 7, height: 5)
         let source = """
@@ -232,9 +234,9 @@ final class ViewerPageSafetyTests: XCTestCase {
             |---|---|
             | 1 | 2 |
 
-            ![chart](chart.png) <img id="raw" src="chart.png" width="7"> <img id="inline" src="data:image/png;base64,\(png.base64EncodedString())">
+            ![chart](chart.png) <img data-t="raw" src="chart.png" width="7"> <img data-t="inline" src="data:image/png;base64,\(png.base64EncodedString())">
 
-            [site](https://example.com/) and <a id="raw-link" href="other.md#part">raw</a>
+            [site](https://example.com/) and <a data-t="raw-link" href="other.md#part">raw</a>
 
             """
         let svg = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="9" height="4"><rect width="9" height="4" fill="red"/></svg>"#.utf8)
@@ -247,11 +249,11 @@ final class ViewerPageSafetyTests: XCTestCase {
               br: document.querySelectorAll('#body br').length,
               cells: document.querySelectorAll('#body table td').length,
               chart: document.querySelector('#body img[alt=chart]').naturalWidth,
-              raw: document.getElementById('raw').naturalWidth,
-              inline: document.getElementById('inline').naturalWidth,
+              raw: document.querySelector('[data-t=raw]').naturalWidth,
+              inline: document.querySelector('[data-t=inline]').naturalWidth,
               svg: document.querySelector('#body img[alt=pic]').naturalWidth,
               link: document.querySelector('#body a[href^=https]').getAttribute('href'),
-              rawLink: document.getElementById('raw-link').getAttribute('href')
+              rawLink: document.querySelector('[data-t=raw-link]').getAttribute('href')
             };
             """, in: rig.view) as? [String: Any]
         XCTAssertEqual(state?["details"] as? Bool, true)
@@ -615,11 +617,12 @@ final class ViewerPageSafetyTests: XCTestCase {
 
     // MARK: - Round 1 (review M1, L2): the page's own styles only; the cleaning covers SVG animation
 
+    // The file's ids are dropped (round 3): its elements are found by data-t.
     func testRawStylesAreDroppedAndThePagesOwnStylesStillApply() async throws {
         let source = """
             # Notes
 
-            <p id="s" style="color: rgb(255, 0, 0)">styled</p>
+            <p data-t="s" style="color: rgb(255, 0, 0)">styled</p>
 
             <style>#body h1 { color: rgb(0, 255, 0) !important }</style>
 
@@ -637,7 +640,7 @@ final class ViewerPageSafetyTests: XCTestCase {
         }
         let state = try await js("""
             return {
-              styleAttr: document.getElementById('s').getAttribute('style'),
+              styleAttr: document.querySelector('[data-t=s]').getAttribute('style'),
               styles: document.querySelectorAll('#body style, #body link').length,
               h1: getComputedStyle(document.querySelector('#body h1')).color,
               font: getComputedStyle(document.body).fontSize,
@@ -670,21 +673,22 @@ final class ViewerPageSafetyTests: XCTestCase {
         XCTAssertEqual(position, "absolute", "the marks' own stylesheet applies")
     }
 
+    // The file's ids are dropped (round 3): its elements are found by data-t.
     func testReviewP3_svgAnimationAndDataLinksAreCleaned() async throws {
         let source = """
             # Note
 
-            <svg width="20" height="20"><a id="anim"><set attributeName="href" to="javascript:window.__ran='set'"/><animate attributeName="href" values="javascript:1"/><animateMotion dur="1s"/><animateTransform attributeName="transform"/><rect width="20" height="20"/></a></svg>
+            <svg width="20" height="20"><a data-t="anim"><set attributeName="href" to="javascript:window.__ran='set'"/><animate attributeName="href" values="javascript:1"/><animateMotion dur="1s"/><animateTransform attributeName="transform"/><rect width="20" height="20"/></a></svg>
 
-            <a id="dl" href="data:image/svg+xml,%3Csvg%3E%3C/svg%3E">pic</a> <svg><a id="xl" xlink:href="data:image/png;base64,AA"><text>x</text></a></svg>
+            <a data-t="dl" href="data:image/svg+xml,%3Csvg%3E%3C/svg%3E">pic</a> <svg><a data-t="xl" xlink:href="data:image/png;base64,AA"><text>x</text></a></svg>
 
             """
         let rig = try await rig(source)
         let state = try await js("""
             return {
               animations: document.querySelectorAll('#body set, #body animate, #body animateMotion, #body animateTransform').length,
-              dl: document.getElementById('dl').getAttribute('href'),
-              xl: document.getElementById('xl').getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+              dl: document.querySelector('[data-t=dl]').getAttribute('href'),
+              xl: document.querySelector('[data-t=xl]').getAttributeNS('http://www.w3.org/1999/xlink', 'href')
             };
             """, in: rig.view) as? [String: Any]
         XCTAssertEqual(state?["animations"] as? Int, 0, "\(state ?? [:])")
@@ -694,16 +698,17 @@ final class ViewerPageSafetyTests: XCTestCase {
 
     // MARK: - Round 1 (review M1, L1, N1): the click recorder
 
+    // The file's ids are dropped (round 3): its elements are found by data-t.
     func testReviewP2_anInvisibleOverlayActionLinkInAMarkdownSpaceTakesNoClick() async throws {
         let (rig, activated) = try await spaceRig("""
             # Notes
 
             <a href="space-action:delete?item=9" style="position:fixed;inset:0;opacity:0;z-index:99"></a>
 
-            <a id="more" href="#notes">Read more</a>
+            <a data-t="more" href="#notes">Read more</a>
 
             """, name: "notes.md")
-        try click(try await center(of: "#more", in: rig), in: rig)
+        try click(try await center(of: "[data-t=more]", in: rig), in: rig)
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(activated(), [], "a click meant for Read more runs nothing")
     }
@@ -914,5 +919,83 @@ final class ViewerPageSafetyTests: XCTestCase {
         try await poll("the margin draws again") {
             (try? await self.js("return document.querySelectorAll('.pc-card').length", in: rig.view) as? Int) ?? 0 > 0
         }
+    }
+
+    // MARK: - Round 3 (re-review 2: L-A, L-B)
+
+    func testReReview2LB_theFileCannotBorrowTheAppsClassesForAnActionLink() async throws {
+        let (rig, activated) = try await spaceRig("""
+            # Notes
+
+            <a href="space-action:delete?item=5"><span class="pc-menu">Delete this thread</span></a>
+
+            """, name: "notes.md")
+        let kept = try await js("return document.querySelector('#body a span').getAttribute('class')", in: rig.view)
+        XCTAssertTrue(kept is NSNull, "file classes are dropped: \(String(describing: kept))")
+        try click(try await center(of: "#body a span", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "a span is not text formatting Markdown makes; the link does not count")
+    }
+
+    func testReReview2LB_fileClassesAndIdsNoLongerCollideWithTheComments() async throws {
+        let source = Self.thread + """
+            <span class="pc-show-resolved">kept words</span> and <div id="pc-margin">file block</div>
+
+            ```swift
+            let x = 1
+            ```
+
+            <code class="language-js evil">raw</code>
+
+            """
+        let rig = try await rig(source)
+        try await poll("the comments script is ready") { rig.comments.webView === rig.view }
+        rig.comments.setShown(true, chat: 1, focus: FakeFocus())
+        try await poll("the margin draws") {
+            (try? await self.js("return document.querySelectorAll('.pc-card').length", in: rig.view) as? Int) ?? 0 > 0
+        }
+        let state = try await js("""
+            var margin = document.getElementById('pc-margin');
+            return {
+              text: document.getElementById('body').textContent.indexOf('kept words') >= 0,
+              block: document.getElementById('body').textContent.indexOf('file block') >= 0,
+              fileIds: document.querySelectorAll('#body [id]').length,
+              fileClasses: Array.prototype.filter.call(document.querySelectorAll('#body [class]'), function (e) {
+                return !e.classList.contains('pc-anchor') && !e.classList.contains('pc-open') && !e.classList.contains('pc-hot');
+              }).map(function (e) { return e.localName + '.' + e.className; }),
+              marginIsTheApps: !!margin && !document.getElementById('body').contains(margin)
+            };
+            """, in: rig.view) as? [String: Any]
+        XCTAssertEqual(state?["text"] as? Bool, true, "the comments script no longer removes a file span: \(state ?? [:])")
+        XCTAssertEqual(state?["block"] as? Bool, true)
+        XCTAssertEqual(state?["fileIds"] as? Int, 0)
+        XCTAssertEqual(state?["fileClasses"] as? [String], ["code.language-swift"], "only marked's language class stays")
+        XCTAssertEqual(state?["marginIsTheApps"] as? Bool, true)
+    }
+
+    func testReReview2LA_aBrailleBlankActionLinkTakesNoClick() async throws {
+        let blanks = String(repeating: "\u{2800}", count: 20)
+        let (rig, activated) = try await spaceRig("# [\(blanks)](space-action:delete?item=4)\n\nAfter.\n", name: "notes.md")
+        try click(try await center(of: "#body a", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "no letter or digit: the link does not count")
+    }
+
+    func testReReview2LA_aHangulFillerActionLinkTakesNoClick() async throws {
+        // WebKit draws the fillers with no width; non-breaking spaces between them
+        // give the link room, and trim() keeps the fillers at its ends.
+        let fillers = "\u{3164}" + String(repeating: "\u{00A0}", count: 30) + "\u{115F}\u{1160}\u{FFA0}"
+        let (rig, activated) = try await spaceRig("# [\(fillers)](space-action:delete?item=3)\n\nAfter.\n", name: "notes.md")
+        let width = try await js("return document.querySelector('#body a').getBoundingClientRect().width", in: rig.view) as? Double
+        XCTAssertGreaterThan(width ?? 0, 40, "the fillers take up room, so the click lands on the link")
+        try click(try await center(of: "#body a", in: rig), in: rig)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(activated(), [], "Hangul fillers are blank")
+    }
+
+    func testAnActionLinkWithANumberOrNonLatinTextStillTakesAClick() async throws {
+        let (rig, activated) = try await spaceRig("# Brief\n\n[完了 2](space-action:mark-done?item=t3)\n", name: "brief.md")
+        try click(try await center(of: "#body a", in: rig), in: rig)
+        try await poll("a CJK text link runs") { activated().count == 1 }
     }
 }

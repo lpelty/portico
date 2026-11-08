@@ -53,6 +53,13 @@
     color: 1, bgcolor: 1, background: 1, text: 1, link: 1, vlink: 1, alink: 1
   };
   var UNWRAP = { font: 1 };
+  // Review round 3: no id or class from the file, so it cannot borrow the
+  // app's own styles (.pc-menu) or collide with what the comments script
+  // looks up (#pc-margin, .pc-show-resolved). Only marked's fenced-code
+  // class stays. The app's own margin, cards and Properties are added
+  // outside this pass (Properties are not in the rendered fragment; the
+  // margin and highlights come after insertion), so they keep theirs.
+  var LANGUAGE = /^language-[\w-]+$/;
   var unsafeURL = function (attr, value) {
     // Browsers ignore spaces and control characters in a scheme.
     var v = String(value).replace(/[\u0000-\u0020\u007f-\u009f]+/g, "").toLowerCase();
@@ -67,7 +74,8 @@
       if (name === "template") cleanFragment(el.content);
       Array.prototype.slice.call(el.attributes).forEach(function (a) {
         var attr = a.name.toLowerCase();
-        if (attr.indexOf("on") === 0 || DROP_ATTRS[attr] || (URL_ATTRS[attr] && unsafeURL(attr, a.value))) el.removeAttributeNode(a);
+        if (attr.indexOf("on") === 0 || DROP_ATTRS[attr] || (URL_ATTRS[attr] && unsafeURL(attr, a.value))
+            || attr === "id" || (attr === "class" && !(name === "code" && LANGUAGE.test(a.value)))) el.removeAttributeNode(a);
       });
       if (UNWRAP[name] && el.parentNode) {
         while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
