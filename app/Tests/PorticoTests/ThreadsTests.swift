@@ -762,4 +762,39 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(row.answers?["Which tone for step 2?"], .one("Plain"))
         XCTAssertEqual(row.answers?["Which steps?"]?.labels, ["One", "Two"])
     }
+
+    // MARK: - v0.26 (PORT-19, ZG2): the agent's name on Main
+
+    func testMainLabelTrimsAndKeepsMainForNoRealName() {
+        XCTAssertEqual(MainLabel.make(agentName: "Wren").text, "Wren (Main)")
+        XCTAssertEqual(MainLabel.make(agentName: " Wren ").text, "Wren (Main)")
+        XCTAssertEqual(MainLabel.make(agentName: " Wren ").name, "Wren")
+        for none in [nil, "", "  ", "Agent", "agent", " AGENT "] {
+            XCTAssertEqual(MainLabel.make(agentName: none).text, "Main", "\(String(describing: none))")
+            XCTAssertNil(MainLabel.make(agentName: none).name)
+        }
+    }
+
+    func testMainRowAndMenuCarryTheName() throws {
+        let now = try XCTUnwrap(SessionTime.parse("2026-11-02T14:05:00Z"))
+        let presentation = ThreadsPresentation(chats: [Self.main(3), Self.thread(5, slot: 1)], current: 5)
+        let rows = presentation.rows(now: now, agentName: "Wren")
+        XCTAssertEqual(rows[0].label, "Wren (Main)")
+        XCTAssertEqual(rows[0].mainName, "Wren")
+        XCTAssertEqual(rows[0].help, "Go to Wren (Main) (Control-0)")
+        XCTAssertEqual(rows[1].label, "Thread 1")
+        XCTAssertNil(rows[1].mainName)
+        XCTAssertEqual(presentation.rows(now: now, agentName: "Agent")[0].label, "Main")
+        XCTAssertNil(presentation.rows(now: now)[0].mainName)
+        XCTAssertEqual(
+            ThreadMenuItem.items(threads: presentation, threadsOn: true, agentName: "Wren").map(\.title),
+            ["Wren (Main)", "Thread 1"])
+    }
+
+    @MainActor
+    func testCardTitle() {
+        XCTAssertEqual(SessionCard.title(summary: Self.main(4), threadsOn: true, agentName: "Wren"), "Wren (Main)")
+        XCTAssertEqual(SessionCard.title(summary: Self.main(4), threadsOn: false, agentName: "Wren"), "Session 4")
+        XCTAssertEqual(SessionCard.title(summary: Self.thread(5, slot: 1), threadsOn: true, agentName: "Wren"), "Thread 1")
+    }
 }

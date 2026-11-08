@@ -59,10 +59,16 @@ struct ThreadsPresentation: Equatable {
     /// The sidebar's list (§9.6): Main, then Thread 1, Thread 2, always in
     /// that order, so nothing moves when you switch. The conversation in
     /// `current` is the open row, drawn as its card.
-    func rows(now: Date, calendar: Calendar = .current, locale: Locale = .current) -> [ThreadRowPresentation] {
+    /// v0.26 (PORT-19): Main's row reads "<agent name> (Main)" when the
+    /// gateway sent a real agent name (`MainLabel`).
+    func rows(
+        now: Date, agentName: String? = nil, calendar: Calendar = .current, locale: Locale = .current
+    ) -> [ThreadRowPresentation] {
         var rows: [ThreadRowPresentation] = []
         if let main {
-            var shown = row(main, label: "Main", slot: 0, now: now)
+            let mainLabel = MainLabel.make(agentName: agentName)
+            var shown = row(main, label: mainLabel.text, slot: 0, now: now)
+            shown.mainName = mainLabel.name
             shown.subtitle = Self.mainSubtitle(main, open: shown.isOpen, calendar: calendar, locale: locale)
             rows.append(shown)
         }
@@ -171,6 +177,21 @@ struct LimitChoice: Equatable, Identifiable {
     var id: Int { chat }
 }
 
+/// v0.26 (PORT-19, ruling 18): what Main is called. The agent's name from
+/// `hello` (trimmed) with "(Main)": "Wren (Main)". No real name (missing,
+/// blank, or the default "Agent" in any case) keeps "Main".
+struct MainLabel: Equatable {
+    /// The trimmed agent name, nil when there is none.
+    let name: String?
+    var text: String { name.map { "\($0) (Main)" } ?? "Main" }
+
+    static func make(agentName: String?) -> MainLabel {
+        let trimmed = (agentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.lowercased() == "agent" { return MainLabel(name: nil) }
+        return MainLabel(name: trimmed)
+    }
+}
+
 /// The View menu's conversations (§2.4): "Main" Control-0 and each open thread
 /// with its slot's key, only with threads on.
 struct ThreadMenuItem: Equatable, Identifiable {
@@ -181,9 +202,9 @@ struct ThreadMenuItem: Equatable, Identifiable {
     var key: String { "\(slot)" }
     var id: Int { slot }
 
-    static func items(threads: ThreadsPresentation, threadsOn: Bool) -> [ThreadMenuItem] {
+    static func items(threads: ThreadsPresentation, threadsOn: Bool, agentName: String? = nil) -> [ThreadMenuItem] {
         guard threadsOn else { return [] }
-        return [ThreadMenuItem(title: "Main", slot: 0)]
+        return [ThreadMenuItem(title: MainLabel.make(agentName: agentName).text, slot: 0)]
             + threads.open.compactMap { $0.thread.map { ThreadMenuItem(title: $0.label, slot: $0.slot) } }
     }
 }
@@ -216,6 +237,10 @@ struct ThreadRowPresentation: Equatable, Identifiable {
     var isOpen: Bool = false
     /// The line under the name: Main's "Session 4 · …", a thread's title.
     var subtitle: String? = nil
+    /// v0.26: the agent's name on Main's row ("Wren" in "Wren (Main)"), so
+    /// the row can truncate the name and keep "(Main)"; nil on a thread's
+    /// row and on a Main with no real name.
+    var mainName: String? = nil
 
     var id: Int { chat }
 

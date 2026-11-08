@@ -17,7 +17,7 @@ struct ConversationList: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
             VStack(spacing: 2) {
-                ForEach(model.sidebarThreads.rows(now: context.date)) { row in
+                ForEach(model.sidebarThreads.rows(now: context.date, agentName: model.hello?.brand.agentName)) { row in
                     if row.isOpen, let card = model.sidebarCard, card.chat == row.chat {
                         SessionCard(summary: card)
                             .padding(.vertical, 2)
@@ -34,6 +34,42 @@ struct ConversationList: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// A conversation's name in the list or on the open card. Main with the
+/// agent's name (v0.26, ZG2) draws the name and " (Main)" apart, so a long
+/// name truncates and "(Main)" stays.
+struct ConversationName: View {
+    let label: String
+    let mainName: String?
+    let weight: Font.Weight
+    /// Tests: the frames of the whole name and of " (Main)", in global coordinates.
+    var onFrames: ((_ whole: CGRect, _ main: CGRect) -> Void)? = nil
+    @State private var mainFrame: CGRect = .zero
+    @State private var wholeFrame: CGRect = .zero
+
+    var body: some View {
+        if let mainName {
+            HStack(spacing: 0) {
+                Text(mainName).lineLimit(1).truncationMode(.tail)
+                Text(" (Main)").fixedSize()
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        mainFrame = $0
+                        onFrames?(wholeFrame, mainFrame)
+                    }
+            }
+            .scaledFont(13, weight: weight)
+            .foregroundStyle(Theme.text)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                wholeFrame = $0
+                onFrames?(wholeFrame, mainFrame)
+            }
+        } else {
+            Text(label)
+                .scaledFont(13, weight: weight)
+                .foregroundStyle(Theme.text)
         }
     }
 }
@@ -62,9 +98,7 @@ private struct ThreadRow: View {
             HStack(spacing: 8) {
                 ConversationIcon(isThread: row.isThread)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(row.label)
-                        .scaledFont(13, weight: .medium)
-                        .foregroundStyle(Theme.text)
+                    ConversationName(label: row.label, mainName: row.mainName, weight: .medium)
                     if let subtitle = row.subtitle {
                         Text(subtitle)
                             .scaledFont(11)

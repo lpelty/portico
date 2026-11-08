@@ -226,7 +226,8 @@ struct PorticoApp: App {
                         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
                 // v0.16 §2.4: Main and the open threads take ⌃0–⌃2 (⌘ is the spaces').
-                let conversations = ThreadMenuItem.items(threads: model.threads, threadsOn: model.threadsOn)
+                let conversations = ThreadMenuItem.items(
+                    threads: model.threads, threadsOn: model.threadsOn, agentName: model.hello?.brand.agentName)
                 if !conversations.isEmpty {
                     Divider()
                     ForEach(conversations) { item in

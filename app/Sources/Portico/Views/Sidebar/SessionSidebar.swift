@@ -152,9 +152,9 @@ struct SessionCard: View {
 
     /// The card's name: "Main" or "Thread 1" in the conversation list;
     /// with threads off, the shipped "Session N".
-    static func title(summary: ChatSummary, threadsOn: Bool) -> String {
+    static func title(summary: ChatSummary, threadsOn: Bool, agentName: String? = nil) -> String {
         if let label = summary.thread?.label { return label }
-        return threadsOn ? "Main" : SessionPresentation(summary: summary).number
+        return threadsOn ? MainLabel.make(agentName: agentName).text : SessionPresentation(summary: summary).number
     }
     /// A thread's card (v0.16, AM3): Log session and Close thread, never New.
     private var info: ThreadInfo? { summary.thread }
@@ -172,7 +172,7 @@ struct SessionCard: View {
     private var goesBack: Bool { opensLive && model.selected.map { model.isEnded(chat: $0) } == true }
     private var cardHelp: String {
         guard opensLive else { return "" }
-        let name = Self.title(summary: summary, threadsOn: listed)
+        let name = Self.title(summary: summary, threadsOn: listed, agentName: model.hello?.brand.agentName)
         return goesBack ? "Go back to \(name)" : "Show \(name)"
     }
 
@@ -287,9 +287,10 @@ struct SessionCard: View {
         HStack(spacing: 8) {
             ConversationIcon(isThread: info != nil)
             VStack(alignment: .leading, spacing: 1) {
-                Text(Self.title(summary: summary, threadsOn: true))
-                    .scaledFont(13, weight: .semibold)
-                    .foregroundStyle(Theme.text)
+                ConversationName(
+                    label: Self.title(summary: summary, threadsOn: true, agentName: model.hello?.brand.agentName),
+                    mainName: info == nil ? MainLabel.make(agentName: model.hello?.brand.agentName).name : nil,
+                    weight: .semibold)
                 if let subtitle = listedSubtitle {
                     Text(subtitle)
                         .scaledFont(11)
