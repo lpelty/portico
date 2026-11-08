@@ -413,6 +413,16 @@ Settings › Labs (the system voices, and your Personal Voice once you
 allow it there). Code is never read: a code block is "See the code below.",
 a table "See the table below."; links are read as their text.
 
+**ElevenLabs voices** (v0.26, Labs). With `[voice.elevenlabs] enabled = true`
+(normally in `config.local.toml`, and with `[voice] read_aloud = true`),
+Read aloud's block in Settings › Labs gains a Voice source: This Mac or
+ElevenLabs. With ElevenLabs, paste an API key (it is kept in this Mac's
+Keychain, never in a config file and never seen by the agent), set a voice
+ID or choose one of the account's voices, and pick a model
+(`eleven_v4_turbo` by default). Replies are sent to ElevenLabs to be spoken
+and count against the ElevenLabs plan. If ElevenLabs can't speak a reply,
+it is read with this Mac's voice and a note under the reply says why.
+
 **Spoken parts.** When a reply holds `[TTS]…[/TTS]` parts, or the
 shorthand `[TTS: …]`, Read aloud speaks only those, in order. The tags are never shown; the text inside
 them reads as part of the reply. Portico only honours the tags: asking the

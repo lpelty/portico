@@ -12,7 +12,7 @@ from pen_tokens import hex_in_ui_frames, load_rules, main  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 # True until the controller's Pen sync converts what the scan still lists.
-AWAITING_PEN_SYNC = True
+AWAITING_PEN_SYNC = False
 
 
 def test_hex_in_a_ui_frame_is_listed():

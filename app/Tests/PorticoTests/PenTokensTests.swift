@@ -11,7 +11,7 @@ import XCTest
 final class PenTokensTests: XCTestCase {
     /// True until the controller's Pen sync adds the v0.26 variables
     /// (the list they need is written by the build, not by this test).
-    static let awaitingPenSync = true
+    static let awaitingPenSync = false
 
     static var penFile: URL {
         URL(fileURLWithPath: #filePath)

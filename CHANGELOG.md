@@ -1,5 +1,102 @@
 # Changelog
 
+## v0.26.0 (2026-11-08)
+
+ElevenLabs voices for Read aloud (in Labs), the agent's name on Main,
+markers down the chat's left edge, quieter Settings lines, one colour token
+set across the app, the viewer and the design file, and the v0.25 review's
+low findings and nits.
+
+### What a person gets (app)
+
+- **ElevenLabs voices for Read aloud** (Labs, Preview). Turned on with
+  `[voice.elevenlabs] enabled = true`, normally in `config.local.toml`, with
+  `[voice] read_aloud = true`. Read aloud's block gains a Voice source: This
+  Mac or ElevenLabs. With ElevenLabs: an API key, kept in this Mac's
+  Keychain (never in a config file, a log, the gateway, or anything the
+  agent sees; Replace… and Remove); a voice ID with Choose…, the account's
+  voices by name; and a model (`eleven_v4_turbo` by default; the documented
+  models when the list can't be fetched). Long replies are split at
+  paragraphs, then sentences, under the model's limit and played in order;
+  Stop stops them all. When ElevenLabs can't speak a reply (no key, no
+  voice, a key it refuses, an unknown voice, the plan's limit, no network,
+  audio this Mac can't play) the reply is read with this Mac's voice and a
+  one-line note in its hover row says why.
+- **"Wren (Main)".** Main's row in the conversation list, its open card and
+  the View menu read "<agent name> (Main)" when the deployment names its
+  agent; a long name truncates before "(Main)". With no real name (unset,
+  blank or "Agent") it stays "Main"; threads and "Brief from Main" are
+  unchanged.
+- **Conversation markers.** A short mark per message you sent, in a tight
+  stack in the chat's left margin, never over the text. Marks for messages
+  on screen are longer and brighter, the hovered one longest; hover shows
+  your message, the start of the reply and its time with "Click to go
+  back"; a click scrolls to the message and highlights it for a moment.
+  Long conversations thin the marks (every other one, then every fourth);
+  fewer than three messages, no rail. Keeping your place is unchanged.
+- **Settings lines.** Section outlines and the lines between rows (MCP
+  servers and Plugins lists too) use the quieter `border-subtle`; controls
+  keep their borders.
+- **The viewer's colours match the app.** Its palette is the app's tokens,
+  set when the page is built; in dark mode its background is the window's.
+
+### The gateway
+
+- **`[voice.elevenlabs] enabled`** lists the Labs item `voice.elevenlabs`
+  after Read aloud (only with it). The key never goes in config (an
+  `api_key` there is refused). With it on and Read aloud off,
+  `bin/doctor`'s config check says so.
+- **`chat.notice` kind `signin.continued`** marks where a turn carried on
+  after a sign-in, live, in the ring and in a replay from the transcript.
+- **`bin/doctor`** lists only the sign-in kinds this environment allows.
+
+### Protocol (additive)
+
+- `hello.labs` built-in item `voice.elevenlabs`.
+- `chat.notice.kind` value `signin.continued`.
+
+### Fixes (the v0.25 review)
+
+- L1 A plug-in can no longer rewrite, drop or relabel a Labs item that was
+  there before its hook ran; its own items are always Local.
+- L2 An AWS sign-in made while the turn was still failing counts.
+- L3 SSO start URLs match with a trailing `/`, a `#/` or another host case.
+- L4 A comment can quote a URL followed by `,` `.` `)` and an autolink's
+  address; the agent's refusal no longer asks for the whole link.
+- L5 A conversation replayed after a continue shows "Continued after
+  sign-in" between the replies, also after a reconnect.
+- L6 The SDK's private transcript lookup is imported where it's used, so an
+  SDK that moves it can't stop the gateway from starting.
+- L7 Restoring a conversation reads its transcript once more as a stream,
+  and never parses an image-sized line whole.
+- L9 A sign-in command started just as the wait ended is closed.
+- L10 A sign-in check that times out ends everything it started.
+- L11 A Labs tag the app doesn't know decodes (and draws no pill).
+- L12 Read aloud's Labs controls show only where Read aloud is available.
+- L13 Closed: fixed by v0.25's M3 and pinned by its test.
+- N1 Only the exact continue text is hidden in a replay.
+- N2 v0.25.0's #5 says what the status really shows.
+- N3 The sign-in command's exit report is kept until it logs.
+- N4 The sign-in command's output stops being parsed once its link and
+  code are found, and its buffer is capped.
+- N5 The three comment scanners use one whitespace class.
+- N6 Closed by design: a `∶` in a reply's author isn't turned back into
+  `:` (it would merge a real `∶` with `:`); documented in COMMENTS.md.
+- N7 "Moves to … when released" is said only for Preview items.
+- N8 An older gateway's Read aloud row says "the gateway's config", not a
+  file it can't know.
+
+### Design system
+
+- **One token set.** Every colour the app draws is a `Theme` token: no
+  white, black or hex outside `Theme.swift`. New tokens for white on colour,
+  the scrim, shadows, the switch knob, the agent pointer's shadow, the
+  tooltip, the window buttons (Pen only) and the MCP and Plugins badges.
+- **The Pen check.** `PenTokensTests` compares `Theme` with
+  `design/portico.pen`'s variables (names in kebab case);
+  `tests/pen_tokens.py` lists hex in the design file's UI frames, with its
+  exemptions in `design/token-check.json`.
+
 ## v0.25.0 (2026-11-08)
 
 Labs for features being tried out, the date and time on every message, and
