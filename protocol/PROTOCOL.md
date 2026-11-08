@@ -2023,7 +2023,8 @@ action link counts only when it is text (no children but `strong`, `em`,
 and the blank Braille cell are blank), and the page drops the file's
 styles, `class` attributes (marked's `language-…` on code stays), colour
 attributes, `<font>`, `autofocus` and `tabindex`, and prefixes the file's
-`id` and `name` with `user-content-` (fragments still find them). A
+`id` and `name` with `user-content-` (fragments, and references within
+the file such as label `for` and SVG `url(#…)`, still find them). A
 script's `a.click()`, a dispatched event, a timer, a redirect to a
 `space-action:` URL, or keyboard focus set by script or `autofocus` runs
 nothing (the app logs and ignores it), in Markdown and HTML spaces alike.

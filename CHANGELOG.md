@@ -78,7 +78,9 @@ reference for every key.
   file's `id` and `name` attributes are kept with a `user-content-`
   prefix in the rendered page, as on GitHub, so a deployment's CSS or
   script can't rely on them; in-page `#links`, the address's fragment and
-  a space's `notice_target` still find them. Ordinary raw HTML (`<details>`,
+  a space's `notice_target` still find them, and references within the
+  file (label `for`, image maps, ARIA id lists, SVG `url(#…)` and
+  `<use href="#…">`) are rewritten to match. Ordinary raw HTML (`<details>`,
   `<kbd>`, `<br>`, tables, images, links) renders as before, without
   inline styles. The Properties block's fold is now wired by the page's
   script rather than an inline handler.
