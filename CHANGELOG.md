@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.26.1 (2026-11-09)
+
+A fix for a freeze and for jumpy scrolling in the conversation, both found
+in the field on v0.25.
+
+### Fixes
+
+- **The app froze in some conversations** (main thread at 100%, needing a
+  force quit). At the end of the conversation, a 1 pt marker the app scrolls
+  to sat on the view's bottom edge inside the lazy list: it was laid out at
+  its real height, then dropped and estimated about 200 pt taller, then laid
+  out again, every frame. The end of the transcript (the bottom marker, the
+  working line, a thread calling or done) is now always laid out, outside the
+  lazy part; messages stay lazy.
+- **Scrolling jumped.** The view kept the content's bottom still through every
+  size change, so each row measured as it scrolled into view moved the view
+  by the difference between its estimated and real height. While you scroll,
+  size changes no longer hold the bottom; otherwise it holds as before, so a
+  streaming reply is still followed at the end and a kept place still holds.
+
+### Diagnostics
+
+- **A scroll trace, off by default.** Create `scroll-trace` in the app's home
+  folder (where the gateway keeps its state) and restart: each scroll reading
+  and each move the app makes is written to `scroll-trace.log` beside it, with
+  why. No message text is written. Remove the file to turn it off.
+
 ## v0.26.0 (2026-11-08)
 
 ElevenLabs voices for Read aloud (in Labs), the agent's name on Main,
