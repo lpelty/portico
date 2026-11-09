@@ -18,7 +18,11 @@ enum MessageTime {
             relative.doesRelativeDateFormatting = true
             relative.dateStyle = .medium
             relative.timeStyle = .none
-            return "\(relative.string(from: date)) \(time)"
+            // Relative formatting judges "yesterday" by the real clock, not
+            // `now`, so ask it for the real yesterday: the locale's word,
+            // whatever `now` is (the tests pin it).
+            let word = calendar.date(byAdding: .day, value: -1, to: Date()) ?? date
+            return "\(relative.string(from: word)) \(time)"
         }
         let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
         // The locale's short day ("Nov 6", "6 Nov"), a comma, then its time:

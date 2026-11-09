@@ -77,6 +77,9 @@ low findings and nits.
 - L11 A Labs tag the app doesn't know decodes (and draws no pill).
 - L12 Read aloud's Labs controls show only where Read aloud is available.
 - L13 Closed: fixed by v0.25's M3 and pinned by its test.
+- "Yesterday" no longer depends on the real date in tests: relative
+  formatting judged yesterday by the clock, not the time passed in. People
+  always saw the right word; the tests only passed on the day they were written.
 - N1 Only the exact continue text is hidden in a replay.
 - N2 v0.25.0's #5 says what the status really shows.
 - N3 The sign-in command's exit report is kept until it logs.
