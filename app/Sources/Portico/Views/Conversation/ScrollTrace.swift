@@ -1,12 +1,13 @@
 import Foundation
 
 /// v0.26.1 field diagnostic for jumpy scrolling: off unless the file
-/// `~/.portico/scroll-trace` exists, then one line per scroll reading and per
-/// move the app makes itself, with why, appended to `~/.portico/scroll-trace.log`.
+/// `scroll-trace` exists in the app's home (the folder the gateway's state
+/// lives in), then one line per scroll reading and per move the app makes
+/// itself, with why, appended to `scroll-trace.log` there.
 /// No message text is written, only ids, offsets and reasons.
 @MainActor
 enum ScrollTrace {
-    private static let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".portico")
+    private static let directory = GatewaySupervisor.resolveHome().url
     static let enabled = FileManager.default.fileExists(atPath: directory.appendingPathComponent("scroll-trace").path)
     private static let start = Date()
     private static let handle: FileHandle? = {

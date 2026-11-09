@@ -156,62 +156,72 @@ struct ConversationView: View {
             let calling = model.callingCards(in: chat)
             let done = model.doneCards(in: chat)
             let headed = sessionDivider != nil || items.isEmpty
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if let divider = sessionDivider {
-                    divider
-                }
-                if items.isEmpty {
-                    emptyState
-                        .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
-                }
-                ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
-                    let gap: CGFloat = index == 0
-                        ? (headed ? TranscriptSpacing.itemGap : 0)
-                        : standsApart(entry) || standsApart(drawn[index - 1])
-                            ? TranscriptSpacing.itemGap
-                            : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
-                    Group {
-                        if entry.id == briefItem, let info = model.thread(of: chat) {
-                            BriefBlock(info: info)
-                                .atReplyWidth()
-                        } else {
-                            TranscriptEntryView(entry: entry, folder: folder, chat: chat)
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let divider = sessionDivider {
+                        divider
                     }
-                        .padding(.top, gap)
-                        .id(entry.id)
-                        .modifier(MarksVoiceOverFocus(input: personInput))
-                        .modifier(ReportsRowFrame(rows: rows, id: entry.id))
+                    if items.isEmpty {
+                        emptyState
+                            .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
+                    }
+                    ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
+                        let gap: CGFloat = index == 0
+                            ? (headed ? TranscriptSpacing.itemGap : 0)
+                            : standsApart(entry) || standsApart(drawn[index - 1])
+                                ? TranscriptSpacing.itemGap
+                                : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
+                        Group {
+                            if entry.id == briefItem, let info = model.thread(of: chat) {
+                                BriefBlock(info: info)
+                                    .atReplyWidth()
+                            } else {
+                                TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                            }
+                        }
+                            .padding(.top, gap)
+                            .id(entry.id)
+                            .modifier(MarksVoiceOverFocus(input: personInput))
+                            .modifier(ReportsRowFrame(rows: rows, id: entry.id))
+                    }
                 }
-                // A thread calling you (AM1): Main only, after the last
-                // item, drawn by the app and never part of the transcript.
-                ForEach(calling) { card in
-                    CallingCardView(card: card)
-                        .atReplyWidth()
-                        .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
-                        .id("calling:\(card.id)")
-                        .modifier(ReportsRowFrame(rows: rows, id: "calling:\(card.id)", isRow: false))
+                .scrollTargetLayout()
+                // v0.26.1: what comes after the rows (a thread calling, a thread
+                // done, the working line, the bottom marker) is laid out always,
+                // outside the lazy stack. Found in the field: the 1 pt bottom marker
+                // on the view's bottom edge was laid out (1 pt), then dropped and
+                // estimated (about 200 pt), then laid out again, every frame, and
+                // the app froze; nothing small at the end is ever estimated now.
+                VStack(alignment: .leading, spacing: 0) {
+                    // A thread calling you (AM1): Main only, after the last
+                    // item, drawn by the app and never part of the transcript.
+                    ForEach(calling) { card in
+                        CallingCardView(card: card)
+                            .atReplyWidth()
+                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id("calling:\(card.id)")
+                            .modifier(ReportsRowFrame(rows: rows, id: "calling:\(card.id)", isRow: false))
+                    }
+                    // A thread that finished while you were here (§9.3): the
+                    // same app-drawn kind, after the calls.
+                    ForEach(done) { card in
+                        DoneCardView(card: card)
+                            .atReplyWidth()
+                            .padding(.top, headed || !drawn.isEmpty || !calling.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id(card.id)
+                            .modifier(ReportsRowFrame(rows: rows, id: card.id, isRow: false))
+                    }
+                    if working {
+                        WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
+                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id("working")
+                            .modifier(ReportsRowFrame(rows: rows, id: "working", isRow: false))
+                    }
+                    Color.clear.frame(height: 1)
+                        .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
+                        .id("bottom")
                 }
-                // A thread that finished while you were here (§9.3): the
-                // same app-drawn kind, after the calls.
-                ForEach(done) { card in
-                    DoneCardView(card: card)
-                        .atReplyWidth()
-                        .padding(.top, headed || !drawn.isEmpty || !calling.isEmpty ? TranscriptSpacing.itemGap : 0)
-                        .id(card.id)
-                        .modifier(ReportsRowFrame(rows: rows, id: card.id, isRow: false))
-                }
-                if working {
-                    WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
-                        .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
-                        .id("working")
-                        .modifier(ReportsRowFrame(rows: rows, id: "working", isRow: false))
-                }
-                Color.clear.frame(height: 1)
-                    .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
-                    .id("bottom")
             }
-            .scrollTargetLayout()
             // v0.11 (58): the reading column, centred; its items size
             // themselves from its width (`conversationColumn`).
             .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
