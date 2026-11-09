@@ -289,7 +289,15 @@ struct ConversationView: View {
         // the scroll ran before the lazy stack had laid it out, leaving
         // the view near the top). Anchor at the bottom, and scroll again
         // once the new rows are laid out.
-        .defaultScrollAnchor(.bottom)
+        // v0.26.1: not through size changes while the person scrolls. Then
+        // the lazy stack measures each row coming into view (its estimate
+        // corrected), and the bottom anchor held the content's bottom still,
+        // so the view moved by the difference under the person's hand: the
+        // jumps in the field trace. Otherwise the bottom holds as before
+        // (a place put back keeps through a delta or a space).
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .alignment)
+        .defaultScrollAnchor(personScrolling ? nil : .bottom, for: .sizeChanges)
         .onScrollPhaseChange { _, phase in
             // `.animating` too (fix round 2): the app's own scrolls are not animated.
             personScrolling = phase != .idle
