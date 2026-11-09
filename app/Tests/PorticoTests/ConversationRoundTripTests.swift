@@ -1464,4 +1464,26 @@ extension ConversationRoundTripTests {
         spin()
         XCTAssertEqual(ConversationProbe.railShown[7], false)
     }
+
+    /// v0.26.1 (found live): the marker rail's hover area sat under the
+    /// transcript's scroll view and never saw the pointer. The pointer over a
+    /// mark must reach the rail, and a hover there must show its tip.
+    func testThePointerOverTheMarkerRailReachesIt() throws {
+        _ = NSApplication.shared
+        let hosted = try host(try model(), width: 900)
+        defer { hosted.window.close() }
+        spin(0.3)
+        func find(_ view: NSView) -> RailPointerView? {
+            if let rail = view as? RailPointerView { return rail }
+            for sub in view.subviews { if let found = find(sub) { return found } }
+            return nil
+        }
+        let rail = try XCTUnwrap(find(hosted.host), "the rail's pointer area")
+        XCTAssertGreaterThan(rail.bounds.height, 0)
+        let middle = NSPoint(x: rail.bounds.midX, y: rail.bounds.midY)
+        let inWindow = rail.convert(middle, to: nil)
+        let content = try XCTUnwrap(hosted.window.contentView)
+        let hit = try XCTUnwrap(content.hitTest(try XCTUnwrap(content.superview).convert(inWindow, from: nil)))
+        XCTAssertTrue(hit === rail, "the pointer over the rail reaches it, not \(type(of: hit))")
+    }
 }

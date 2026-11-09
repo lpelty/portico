@@ -357,7 +357,10 @@ struct ConversationView: View {
     private var markerRail: some View {
         let markers = self.markers
         if ConversationMarkers.shown(count: markers.count) {
-            MarkerRail(markers: markers, positions: markerIndex.positions, inView: inViewMarkers) { id in
+            MarkerRail(
+                markers: markers, positions: markerIndex.positions, inView: inViewMarkers,
+                scrollView: { [personInput] in personInput.scrollView }
+            ) { id in
                 model.jumpToMessage(id, chat: chat)
             }
                 .padding(.leading, Self.railLeading)
