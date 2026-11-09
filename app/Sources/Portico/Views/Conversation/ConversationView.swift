@@ -156,62 +156,72 @@ struct ConversationView: View {
             let calling = model.callingCards(in: chat)
             let done = model.doneCards(in: chat)
             let headed = sessionDivider != nil || items.isEmpty
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if let divider = sessionDivider {
-                    divider
-                }
-                if items.isEmpty {
-                    emptyState
-                        .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
-                }
-                ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
-                    let gap: CGFloat = index == 0
-                        ? (headed ? TranscriptSpacing.itemGap : 0)
-                        : standsApart(entry) || standsApart(drawn[index - 1])
-                            ? TranscriptSpacing.itemGap
-                            : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
-                    Group {
-                        if entry.id == briefItem, let info = model.thread(of: chat) {
-                            BriefBlock(info: info)
-                                .atReplyWidth()
-                        } else {
-                            TranscriptEntryView(entry: entry, folder: folder, chat: chat)
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let divider = sessionDivider {
+                        divider
                     }
-                        .padding(.top, gap)
-                        .id(entry.id)
-                        .modifier(MarksVoiceOverFocus(input: personInput))
-                        .modifier(ReportsRowFrame(rows: rows, id: entry.id))
+                    if items.isEmpty {
+                        emptyState
+                            .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
+                    }
+                    ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
+                        let gap: CGFloat = index == 0
+                            ? (headed ? TranscriptSpacing.itemGap : 0)
+                            : standsApart(entry) || standsApart(drawn[index - 1])
+                                ? TranscriptSpacing.itemGap
+                                : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
+                        Group {
+                            if entry.id == briefItem, let info = model.thread(of: chat) {
+                                BriefBlock(info: info)
+                                    .atReplyWidth()
+                            } else {
+                                TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                            }
+                        }
+                            .padding(.top, gap)
+                            .id(entry.id)
+                            .modifier(MarksVoiceOverFocus(input: personInput))
+                            .modifier(ReportsRowFrame(rows: rows, id: entry.id))
+                    }
                 }
-                // A thread calling you (AM1): Main only, after the last
-                // item, drawn by the app and never part of the transcript.
-                ForEach(calling) { card in
-                    CallingCardView(card: card)
-                        .atReplyWidth()
-                        .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
-                        .id("calling:\(card.id)")
-                        .modifier(ReportsRowFrame(rows: rows, id: "calling:\(card.id)", isRow: false))
+                .scrollTargetLayout()
+                // v0.26.1: what comes after the rows (a thread calling, a thread
+                // done, the working line, the bottom marker) is laid out always,
+                // outside the lazy stack. Found in the field: the 1 pt bottom marker
+                // on the view's bottom edge was laid out (1 pt), then dropped and
+                // estimated (about 200 pt), then laid out again, every frame, and
+                // the app froze; nothing small at the end is ever estimated now.
+                VStack(alignment: .leading, spacing: 0) {
+                    // A thread calling you (AM1): Main only, after the last
+                    // item, drawn by the app and never part of the transcript.
+                    ForEach(calling) { card in
+                        CallingCardView(card: card)
+                            .atReplyWidth()
+                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id("calling:\(card.id)")
+                            .modifier(ReportsRowFrame(rows: rows, id: "calling:\(card.id)", isRow: false))
+                    }
+                    // A thread that finished while you were here (§9.3): the
+                    // same app-drawn kind, after the calls.
+                    ForEach(done) { card in
+                        DoneCardView(card: card)
+                            .atReplyWidth()
+                            .padding(.top, headed || !drawn.isEmpty || !calling.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id(card.id)
+                            .modifier(ReportsRowFrame(rows: rows, id: card.id, isRow: false))
+                    }
+                    if working {
+                        WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
+                            .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
+                            .id("working")
+                            .modifier(ReportsRowFrame(rows: rows, id: "working", isRow: false))
+                    }
+                    Color.clear.frame(height: 1)
+                        .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
+                        .id("bottom")
                 }
-                // A thread that finished while you were here (§9.3): the
-                // same app-drawn kind, after the calls.
-                ForEach(done) { card in
-                    DoneCardView(card: card)
-                        .atReplyWidth()
-                        .padding(.top, headed || !drawn.isEmpty || !calling.isEmpty ? TranscriptSpacing.itemGap : 0)
-                        .id(card.id)
-                        .modifier(ReportsRowFrame(rows: rows, id: card.id, isRow: false))
-                }
-                if working {
-                    WorkingLine(activity: model.activity(for: chat), since: model.turnStartedAt[chat])
-                        .padding(.top, headed || !drawn.isEmpty ? TranscriptSpacing.itemGap : 0)
-                        .id("working")
-                        .modifier(ReportsRowFrame(rows: rows, id: "working", isRow: false))
-                }
-                Color.clear.frame(height: 1)
-                    .padding(.top, headed || !drawn.isEmpty || working ? TranscriptSpacing.itemGap : 0)
-                    .id("bottom")
             }
-            .scrollTargetLayout()
             // v0.11 (58): the reading column, centred; its items size
             // themselves from its width (`conversationColumn`).
             .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
@@ -242,6 +252,7 @@ struct ConversationView: View {
                     content: geometry.contentSize.height),
                 visible: geometry.containerSize.height)
         } action: { _, now in
+            if ConversationProbe.enabled { ConversationProbe.geometryReadings[chat, default: 0] += 1 }
             noteMarkersInView(visible: now.visible)
             // The marked input's direction decides which readings are
             // the person's (fix round 4; no longer spent by the first).
@@ -251,7 +262,9 @@ struct ConversationView: View {
             let target = scrollMemory.observe(
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
+            ScrollTrace.note("read chat=\(chat) offset=\(Int(now.offset)) content=\(Int(now.content)) visible=\(Int(now.visible)) width=\(Int(now.width)) atBottom=\(now.atBottom) scrolling=\(personScrolling) marked=\(String(describing: personInput.recent)) memoryAtBottom=\(scrollMemory.atBottom) target=\(String(describing: target)) edge=\(String(describing: position.edge)) viewID=\(position.viewID(type: String.self) ?? "-")")
             if target == .bottom {
+                if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
                 toBottomThroughLastRow()
             } else if !scrollMemory.atBottom, position.edge == .bottom {
                 // The person left the end by input with no scroll phase (a
@@ -259,12 +272,14 @@ struct ConversationView: View {
                 // still says the bottom edge, and SwiftUI would put it
                 // back there when the content next grows (found hosted).
                 // An empty position leaves the view where it is.
+                ScrollTrace.note("move chat=\(chat) clear-position (left the end by input)")
                 position = ScrollPosition(idType: String.self)
             } else if let top = restoredTop, position.viewID(type: String.self) == top,
                       personInput.recent != nil, !personScrolling {
                 // Fix round 1: the same for the row a restore scrolled to,
                 // on any recent person-input mark (key, wheel or VoiceOver);
                 // SwiftUI put the view back on it at the next delta.
+                ScrollTrace.note("move chat=\(chat) clear-position (restored row released)")
                 position = ScrollPosition(idType: String.self)
                 restoredTop = nil
             }
@@ -274,10 +289,19 @@ struct ConversationView: View {
         // the scroll ran before the lazy stack had laid it out, leaving
         // the view near the top). Anchor at the bottom, and scroll again
         // once the new rows are laid out.
-        .defaultScrollAnchor(.bottom)
+        // v0.26.1: not through size changes while the person scrolls. Then
+        // the lazy stack measures each row coming into view (its estimate
+        // corrected), and the bottom anchor held the content's bottom still,
+        // so the view moved by the difference under the person's hand: the
+        // jumps in the field trace. Otherwise the bottom holds as before
+        // (a place put back keeps through a delta or a space).
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .alignment)
+        .defaultScrollAnchor(personScrolling ? nil : .bottom, for: .sizeChanges)
         .onScrollPhaseChange { _, phase in
             // `.animating` too (fix round 2): the app's own scrolls are not animated.
             personScrolling = phase != .idle
+            ScrollTrace.note("phase chat=\(chat) \(phase)")
             scrollPhaseName = "\(phase)"
         }
         // v0.15 task 2b fix round 1: the newest message is followed only
@@ -286,6 +310,7 @@ struct ConversationView: View {
         // reading above catches the rows laid out after it. The person's
         // own message always goes to the bottom.
         .onChange(of: followKey) { old, new in
+            ScrollTrace.note("follow chat=\(chat) sent-changed=\(new.sent != old.sent) memoryAtBottom=\(scrollMemory.atBottom) byPerson=\(byPerson)")
             if new.sent != old.sent {
                 scrollToBottom()
             } else if scrollMemory.atBottom && !byPerson {
@@ -293,6 +318,9 @@ struct ConversationView: View {
             }
         }
         .task(id: chat) { await watchForBlankSpace() }
+        .onChange(of: position) { _, now in
+            ScrollTrace.note("position chat=\(chat) edge=\(String(describing: now.edge)) viewID=\(now.viewID(type: String.self) ?? "-") byUser=\(now.isPositionedByUser)")
+        }
         .onChange(of: model.markerJump) { _, request in
             if let request, request.chat == chat { jump(to: request.id) }
         }
@@ -356,6 +384,7 @@ struct ConversationView: View {
     /// so the person's next input releases it and a streaming reply below
     /// doesn't pull the view down; the bubble is highlighted briefly.
     private func jump(to id: String) {
+        ScrollTrace.note("move chat=\(chat) marker-jump id=\(id)")
         scrollMemory.jumped()
         position.scrollTo(id: id, anchor: .top)
         restoredTop = id
@@ -423,6 +452,7 @@ struct ConversationView: View {
     /// Recorded as at the bottom (v0.15 fix round 1): the jump's own
     /// reading is the layout's, so the memory would not see it.
     private func scrollToBottom() {
+        ScrollTrace.note("move chat=\(chat) scrollToBottom")
         scrollMemory.followed()
         toBottom()
         Task { @MainActor in
@@ -437,6 +467,7 @@ struct ConversationView: View {
     /// back once after the person's first scroll (v0.15 R10, found again
     /// hosted here).
     private func toBottom() {
+        ScrollTrace.note("move chat=\(chat) toBottom (edge)")
         position.scrollTo(edge: .bottom)
     }
 
@@ -450,6 +481,7 @@ struct ConversationView: View {
     /// that row out where the view is; the edge after it keeps v0.16's
     /// target, which SwiftUI drops when the person scrolls.
     private func toBottomThroughLastRow() {
+        ScrollTrace.note("move chat=\(chat) toBottomThroughLastRow")
         position.scrollTo(id: "bottom", anchor: .bottom)
         Task { @MainActor in
             await Task.yield()
@@ -460,6 +492,7 @@ struct ConversationView: View {
     /// Back to the place this conversation was left at (v0.16 §5): the row
     /// that was at the top, then the point in it, once that row is laid out.
     private func restore(top: String, at offset: CGFloat) {
+        ScrollTrace.note("move chat=\(chat) restore top=\(top) at=\(Int(offset))")
         scrollMemory.restored(atBottom: false)
         position.scrollTo(id: top, anchor: .top)
         restoredTop = top
@@ -479,6 +512,7 @@ struct ConversationView: View {
                 if abs(off) < 0.5 { return }
                 guard let scroll = personInput.scrollView else { continue }
                 let clip = scroll.contentView
+                ScrollTrace.note("move chat=\(chat) settle top=\(top) by=\(Int(off))")
                 clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + off))
                 scroll.reflectScrolledClipView(clip)
             }
@@ -1051,4 +1085,6 @@ enum ConversationProbe {
     static var rows: [Int: TranscriptRowFrames] = [:]
     static var railShown: [Int: Bool] = [:]
     static var inView: [Int: Set<String>] = [:]
+    static var bottomCorrections: [Int: Int] = [:]
+    static var geometryReadings: [Int: Int] = [:]
 }
