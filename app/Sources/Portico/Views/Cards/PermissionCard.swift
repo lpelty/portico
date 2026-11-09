@@ -258,7 +258,7 @@ struct PermissionCard: View {
             HStack(alignment: .center, spacing: 12) {
                 Text("\(index + 1)")
                     .scaledFont(12, weight: .medium, monospacedDigit: true)
-                    .foregroundStyle(primary ? Color.white : Theme.text2)
+                    .foregroundStyle(primary ? Theme.onAccent : Theme.text2)
                     .frame(width: 24, height: 24)
                     .background(primary ? accent : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .overlay(

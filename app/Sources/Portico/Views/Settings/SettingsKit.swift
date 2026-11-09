@@ -2,8 +2,9 @@ import SwiftUI
 
 // Settings drawn one way (v0.19 §3): every tab the MCP servers way. A
 // section's title sits on the panel's left edge; its rows sit in one solid
-// `Theme.panel` box, radius 9, a `Theme.border` hairline, hairlines between
-// the rows; the words and the control share a row, help under the words in
+// `Theme.panel` box, radius 9, a `Theme.borderSubtle` outline, hairlines
+// between the rows in `Theme.borderSubtle` too (v0.26, ZF1b: controls keep
+// `Theme.border`); the words and the control share a row, help under the words in
 // text3. Every control answers the pointer: the hover tint on its hit area,
 // the press tint while it is held.
 
@@ -63,7 +64,7 @@ struct SettingsSection<Content: View>: View {
     }
 }
 
-/// A grouped panel: the panel colour, radius 9, a border (AR1).
+/// A grouped panel: the panel colour, radius 9, a `border-subtle` outline (AR1; ZF1b).
 struct SettingsPanel<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -72,20 +73,24 @@ struct SettingsPanel<Content: View>: View {
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: SettingsKit.panelRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: SettingsKit.panelRadius, style: .continuous)
-                    .stroke(Theme.border, lineWidth: 1))
+                    .stroke(SettingsKit.panelOutline, lineWidth: 1))
     }
 }
 
 /// The hairline between two rows of a panel.
 struct SettingsDivider: View {
     var body: some View {
-        Rectangle().fill(Theme.border).frame(height: 1)
+        Rectangle().fill(SettingsKit.rowLine).frame(height: 1)
     }
 }
 
 /// The measures the kit shares.
 enum SettingsKit {
     static let panelRadius: CGFloat = 9
+    /// v0.26 (PORT-24, ZF1b): a section panel's outline and the lines
+    /// between its rows are the quieter `borderSubtle`; controls keep `border`.
+    static let panelOutline: Color = Theme.borderSubtle
+    static let rowLine: Color = Theme.borderSubtle
     /// A row's inset: 14 across, 10 down, as the MCP servers rows.
     static let rowHorizontal: CGFloat = 14
     static let rowVertical: CGFloat = 10
@@ -241,8 +246,8 @@ struct SettingsSwitch: View {
                     .fill(isOn ? Theme.accent : Theme.control)
                     .overlay(Capsule().stroke(isOn ? Color.clear : Theme.borderStrong, lineWidth: 1))
                 Circle()
-                    .fill(Color.white)
-                    .shadow(color: .black.opacity(0.18), radius: 0.5, y: 0.5)
+                    .fill(Theme.knob)
+                    .shadow(color: Theme.shadowSoft, radius: 0.5, y: 0.5)
                     .padding(1.5)
             }
             .frame(width: 26, height: 15)
@@ -305,7 +310,7 @@ struct SettingsCheckboxBox: View {
                 if isOn {
                     Image(systemName: "checkmark")
                         .font(Theme.iconFont(9, weight: .bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Theme.onAccent)
                 }
             }
             .frame(width: 14, height: 14)
@@ -470,7 +475,7 @@ struct SettingsButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .scaledFont(12, weight: kind == .accent ? .medium : .regular)
-                .foregroundStyle(kind == .accent ? Color.white : kind == .destructive ? Theme.deny : Theme.text)
+                .foregroundStyle(kind == .accent ? Theme.onAccent : kind == .destructive ? Theme.deny : Theme.text)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 9)
                 .background(kind == .accent ? Theme.accent : Theme.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))

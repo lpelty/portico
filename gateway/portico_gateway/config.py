@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, READ_ALOUD_LAB
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, ELEVENLABS_LAB, READ_ALOUD_LAB
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -409,6 +409,20 @@ class PersonConfig(BaseModel):
     name: str | None = None
 
 
+class ElevenLabsConfig(BaseModel):
+    """v0.26 (PORT-23): ``[voice.elevenlabs] enabled``, ElevenLabs voices for Read aloud (a Labs item; needs ``read_aloud``).
+
+    Only the switch lives here. The API key is never in config: the app keeps
+    it in the macOS Keychain and calls ElevenLabs itself, so the gateway never
+    sees the key, the voice or the text (``extra="forbid"`` refuses an
+    ``api_key``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+
+
 class VoiceConfig(BaseModel):
     """v0.24: ``[voice] read_aloud``, Read aloud on each reply, shown in Settings when true (sent in ``hello``).
 
@@ -419,6 +433,7 @@ class VoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     read_aloud: bool = False
+    elevenlabs: ElevenLabsConfig = Field(default_factory=lambda: ElevenLabsConfig())
 
 
 class SigninKindConfig(BaseModel):
@@ -868,6 +883,10 @@ def hello_for(
     return plugins.on_hello(hello) if plugins is not None else hello
 
 
+# v0.26: the config key that turns on ElevenLabs voices.
+ELEVENLABS_ENABLED_KEY = "voice.elevenlabs.enabled"
+
+
 def _labs(config: Config, layers: ConfigLayers | None) -> list[LabItem]:
     """v0.25: the built-in Preview features this config turns on, as Labs items."""
     items: list[LabItem] = []
@@ -882,6 +901,21 @@ def _labs(config: Config, layers: ConfigLayers | None) -> list[LabItem]:
                 home="voice",
             )
         )
+        # v0.26 (PORT-23): listed only with Read aloud, which it needs; the app draws it inside Read aloud's block.
+        if config.voice.elevenlabs.enabled:
+            items.append(
+                LabItem(
+                    key=ELEVENLABS_LAB,
+                    title="ElevenLabs voices",
+                    detail=(
+                        "Read aloud can use an ElevenLabs voice. The app calls ElevenLabs itself, "
+                        "with a key kept in this Mac's Keychain."
+                    ),
+                    tag="preview",
+                    source=layers.source_of(ELEVENLABS_ENABLED_KEY) if layers is not None else "config.toml",
+                    home="voice",
+                )
+            )
     return items
 
 

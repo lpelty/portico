@@ -60,7 +60,6 @@ from claude_agent_sdk import (
     get_session_messages,
     tool,
 )
-from claude_agent_sdk._internal.sessions import _read_session_file
 
 from .artifacts import paths_in
 from .images import split_attachments, split_edited_note, user_message
@@ -69,6 +68,7 @@ from .threads import EMPTY_BRIEF, REFUSAL_PREFIX, TOOL_DESCRIPTION
 from .comment_tools import COMMENT_TOOL_NAMES, build_comment_tools
 from .viewer import QUEUE_NOTE, STOPPED, VIEWER_TOOL_NAMES, build_viewer_tools
 from .messages import (
+    ChatNotice,
     AgentCommand,
     ModelChoice,
     AgentFinished,
@@ -1646,13 +1646,16 @@ TASK_NOTIFICATION_PREFIX = "<task-notification>"
 # v0.25 §4.4: what the gateway sends to carry a turn on after the person signed
 # in again. Never the person's words: a replay draws no bubble for it.
 CONTINUE_TEXT = "Your sign-in was renewed. Continue where you left off; don't repeat steps that already finished."
+# v0.26 (review L5): the ``chat.notice`` kind, and its words, that mark where a
+# turn carried on after the sign-in (live, in the ring, and in a replay).
+SIGNIN_CONTINUED_NOTICE = "signin.continued"
+SIGNIN_CONTINUED_TEXT = "Continued after sign-in"
 _HIDDEN_USER_TEXT_PREFIXES = (
     "<system-reminder>",
     "<local-command-",
     "<command-",
     "[Request interrupted by user",
     TASK_NOTIFICATION_PREFIX,
-    CONTINUE_TEXT,
 )
 
 
@@ -1673,36 +1676,83 @@ def read_history(session_id: str | None, folder: Path) -> list[dict[str, Any]]:
     return [dataclasses.asdict(m) for m in messages]
 
 
+# v0.26 (review L7): transcript lines longer than this (image blocks) are not
+# parsed whole: their ``uuid`` and ``timestamp`` are looked for at their ends.
+TRANSCRIPT_LINE_PARSE_MAX = 256 * 1024
+_LINE_END_SCAN = 4 * 1024
+_UUID_FIELD = re.compile(rb'"uuid"\s*:\s*"([^"]+)"')
+_TIMESTAMP_FIELD = re.compile(rb'"timestamp"\s*:\s*"([^"]+)"')
+
+
+def _session_file(session_id: str, folder: Path) -> Path | None:
+    """The transcript's path, found as the SDK finds it for ``get_session_messages`` (ruling 7).
+
+    Review L6: the SDK's private function is imported here, not at module
+    level, so an SDK that moved it fails this lookup, never the gateway's start.
+    """
+    from claude_agent_sdk._internal.sessions import _resolve_session_file_path
+
+    return _resolve_session_file_path(session_id, str(folder))
+
+
+def _line_time(raw: bytes) -> tuple[str, str] | None:
+    """One transcript line's ``(uuid, timestamp)``, or None.
+
+    A line of ``TRANSCRIPT_LINE_PARSE_MAX`` bytes or less is parsed; a longer
+    one is searched for the two keys (exact names) in its first and last 4 KB
+    only, and gets nothing when either isn't there: no time beats a wrong one.
+    """
+    if len(raw) <= TRANSCRIPT_LINE_PARSE_MAX:
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            return None
+        if not isinstance(entry, dict):
+            return None
+        uid, stamp = entry.get("uuid"), entry.get("timestamp")
+        return (uid, stamp) if isinstance(uid, str) and isinstance(stamp, str) else None
+    ends = (raw[:_LINE_END_SCAN], raw[-_LINE_END_SCAN:])
+
+    def field(pattern: re.Pattern[bytes]) -> str | None:
+        for part in ends:
+            found = pattern.search(part)
+            if found:
+                return found.group(1).decode("utf-8", "replace")
+        return None
+
+    uid, stamp = field(_UUID_FIELD), field(_TIMESTAMP_FIELD)
+    return (uid, stamp) if uid is not None and stamp is not None else None
+
+
 def transcript_times(session_id: str | None, folder: Path) -> dict[str, str]:
     """v0.25 §3.2: each transcript entry's time by its ``uuid``, in the gateway's format; ``{}`` on any failure.
 
     The transcript is found the way the SDK finds it for ``get_session_messages``
     (ruling 7), so the ``uuid`` of a session message is its entry's. If the
     SDK changes its layout, the lookup fails quietly and the times are left
-    out: the app then shows none, never a wrong one.
+    out: the app then shows none, never a wrong one. v0.26 (review L7): the
+    file is streamed line by line, and huge lines are never parsed whole.
     """
     if not session_id:
         return {}
     try:
-        content = _read_session_file(session_id, str(folder))
+        path = _session_file(session_id, folder)
     except Exception:
         return {}
-    if not content:
+    if path is None:
         return {}
     times: dict[str, str] = {}
-    for line in content.splitlines():
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(entry, dict):
-            continue
-        uid, stamp = entry.get("uuid"), entry.get("timestamp")
-        if not isinstance(uid, str) or not isinstance(stamp, str):
-            continue
-        normal = _normal_time(stamp)
-        if normal is not None:
-            times[uid] = normal
+    try:
+        with open(path, "rb") as f:
+            for raw in f:
+                found = _line_time(raw.rstrip(b"\r\n"))
+                if found is None:
+                    continue
+                normal = _normal_time(found[1])
+                if normal is not None:
+                    times[found[0]] = normal
+    except OSError:
+        return {}
     return times
 
 
@@ -1745,10 +1795,17 @@ def _user_text(blocks: list[dict[str, Any]]) -> str:
         if block.get("type") != "text" or not isinstance(block.get("text"), str):
             continue
         text = block["text"].strip()
-        if not text or text.startswith(_HIDDEN_USER_TEXT_PREFIXES):
+        # Review N1: the continue is hidden only when it is the whole text, never a person's message that starts with it.
+        if not text or text.startswith(_HIDDEN_USER_TEXT_PREFIXES) or text == CONTINUE_TEXT:
             continue
         parts.append(text)
     return "\n\n".join(parts)
+
+
+def _is_continue(blocks: list[dict[str, Any]]) -> bool:
+    """Whether a user message is the gateway's continue after a sign-in, and nothing else."""
+    texts = [b["text"].strip() for b in blocks if b.get("type") == "text" and isinstance(b.get("text"), str)]
+    return [t for t in texts if t] == [CONTINUE_TEXT]
 
 
 def _is_task_notification(blocks: list[dict[str, Any]]) -> bool:
@@ -1836,6 +1893,9 @@ def history_events(
         blocks = _blocks(message.get("content"))
         if role == "user":
             text = _user_text(blocks)
+            if not text and _is_continue(blocks):
+                # Review L5: the gateway carried the turn on after a sign-in: its note, between the replies.
+                out.append(ChatNotice(ts=ts, chat=chat, text=SIGNIN_CONTINUED_TEXT, kind=SIGNIN_CONTINUED_NOTICE))
             if text:
                 end()
                 begin()

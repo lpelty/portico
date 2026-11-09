@@ -42,7 +42,8 @@ struct PorticoApp: App {
         _settings = StateObject(wrappedValue: settings)
         _supervisor = StateObject(wrappedValue: supervisor)
         _model = StateObject(wrappedValue: model)
-        _reader = StateObject(wrappedValue: ReadAloud(settings: settings))
+        // v0.26 (PORT-23): one ElevenLabs account, its key in the Keychain, reached through Read aloud.
+        _reader = StateObject(wrappedValue: ReadAloud(settings: settings, account: ElevenLabsAccount(store: KeychainStore.elevenLabs())))
         _dictation = StateObject(wrappedValue: Dictation(settings: settings))
     }
 
@@ -226,7 +227,8 @@ struct PorticoApp: App {
                         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
                 // v0.16 §2.4: Main and the open threads take ⌃0–⌃2 (⌘ is the spaces').
-                let conversations = ThreadMenuItem.items(threads: model.threads, threadsOn: model.threadsOn)
+                let conversations = ThreadMenuItem.items(
+                    threads: model.threads, threadsOn: model.threadsOn, agentName: model.hello?.brand.agentName)
                 if !conversations.isEmpty {
                     Divider()
                     ForEach(conversations) { item in

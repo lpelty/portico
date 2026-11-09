@@ -44,7 +44,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from .messages import ChatSummary, HelloServer, Hit, Outcome
+from .messages import LabItem, ChatSummary, HelloServer, Hit, Outcome
 
 log = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ class Plugins:
             hook = getattr(module, "on_hello", None)
             if hook is None:
                 continue
-            before = {item.key for item in hello.labs or []}
+            before = list(hello.labs or [])
             try:
                 changed = hook(hello)
             except Exception as e:
@@ -169,21 +169,26 @@ class Plugins:
         return [h if isinstance(h, Hit) else Hit.model_validate(h) for h in (raw or [])]
 
 
-def _stamp_labs(hello: HelloServer, before: set[str], module: str) -> HelloServer:
+def _stamp_labs(hello: HelloServer, before: list[LabItem], module: str) -> HelloServer:
     """v0.25 ruling 4: the Labs items a plug-in's ``on_hello`` added are ``local`` from ``plugin:<module>``.
 
-    A plug-in can't present its item as a built-in Preview or as config.
-    Items that were there before the hook ran keep what they said.
+    v0.26 (review L1): kept by value. Every item that isn't ``==`` one that
+    was there before the hook ran is the plug-in's, and stamped. A pre-hook
+    item the hook changed or dropped is put back as it was, at its old
+    position; a changed copy under its key is left out. So a plug-in can't
+    present its item as a built-in Preview or as config, nor relabel another's.
     """
-    if not hello.labs:
+    after = list(hello.labs or [])
+    if not after and not before:
         return hello
-    labs = [
-        item
-        if item.key in before
-        else item.model_copy(update={"tag": "local", "source": f"plugin:{module}"})
-        for item in hello.labs
+    keys = {item.key for item in before}
+    added = [
+        item.model_copy(update={"tag": "local", "source": f"plugin:{module}"})
+        for item in after
+        if item not in before and item.key not in keys
     ]
-    return hello.model_copy(update={"labs": labs})
+    labs = [*before, *added]
+    return hello.model_copy(update={"labs": labs or None})
 
 
 async def call_hook(hook: ServicesHook) -> Any:

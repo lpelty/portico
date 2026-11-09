@@ -211,6 +211,9 @@ async def test_a_signin_error_before_anything_ran_continues_without_resending(
         signed_in.now()
         _, current = await until(conn, wait_in("current"))
         assert isinstance(current, SigninWait) and current.turn == 1
+        # v0.26 (review L5): the continue's note, then the continued turn.
+        note = await recv(conn)
+        assert getattr(note, "kind", None) == "signin.continued"
         started = await recv(conn)
         assert isinstance(started, TurnStarted) and started.turn == 2
         rest, _ = await until(conn, lambda m: isinstance(m, TurnFinished))
@@ -755,3 +758,101 @@ async def test_review_l8_aws_takes_no_pasted_code(
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+# --- v0.26: the v0.25 review's leftovers (PORT-22) -------------------------------------
+
+
+async def test_the_wait_counts_a_sign_in_from_the_turns_start(
+    server: GatewayServer, factory: EngineFactory, folder: Path
+) -> None:
+    """L2: the wait's ``since`` is the failed turn's start, not the moment the wait began."""
+    from tests.conftest import Pause
+
+    conn = await attach_with(server, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        pause = Pause()
+        factory.last.script(pause, *aws_failure())
+        await send(conn, chat, "go")
+        await asyncio.wait_for(pause.reached.wait(), 5)
+        mid_turn = time.time()  # the person signs in here, while the turn is still failing
+        await asyncio.sleep(0.05)
+        pause.go.set()
+        await failed_and_waiting(conn)
+        state = server.registry.get(chat).signin
+        assert state is not None
+        assert state.since < mid_turn, "a token written mid-turn counts"
+    finally:
+        await conn.close()
+
+
+async def test_a_command_started_after_the_wait_ended_is_closed(
+    state_dir: StateDir, factory: EngineFactory, signed_in: SignedIn, folder: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L9: the wait ends while Open sign-in page's command is starting: the command is closed, not orphaned."""
+    opener = _script(tmp_path, "aws_login", "sleep 30\n")
+    config = make_config(setting_sources=["project"], signin={"aws-sso": {"open": opener}})
+    srv = await make_server(state_dir, factory, signed_in, config)
+    conn = await attach_with(srv, [SIGNIN_CAPABILITY])
+    started: list[signin.SigninCommand] = []
+    closed: list[signin.SigninCommand] = []
+    real_start = signin.SigninCommand.start
+    real_close = signin.SigninCommand.close
+
+    async def start(self, command, on_link):  # type: ignore[no-untyped-def]
+        # The wait ends while start() is still creating the process: close() finds none yet.
+        await srv._end_signin(srv.registry.get(chat))
+        await real_start(self, command, on_link)
+        started.append(self)
+
+    async def close(self):  # type: ignore[no-untyped-def]
+        closed.append(self)
+        await real_close(self)
+
+    monkeypatch.setattr(signin.SigninCommand, "start", start)
+    monkeypatch.setattr(signin.SigninCommand, "close", close)
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        await send(conn, chat, "go")
+        await failed_and_waiting(conn)
+        await conn.send(dump(SigninOpen(ts=TS, chat=chat)))
+        await until(conn, wait_in("stopped"))
+        for _ in range(100):
+            if started and started[0] in closed and not started[0].running:
+                break
+            await asyncio.sleep(0.02)
+        assert started and started[0] in closed
+        assert not started[0].running
+    finally:
+        await conn.close()
+        await srv.shutdown()
+
+
+async def test_the_ring_keeps_the_continue_note(
+    server: GatewayServer, factory: EngineFactory, folder: Path, signed_in: SignedIn
+) -> None:
+    """L5: the continue puts a ``chat.notice`` (kind ``signin.continued``) in the ring, so a reconnect replays it."""
+    from portico_gateway.messages import ChatNotice
+
+    conn = await attach_with(server, [SIGNIN_CAPABILITY])
+    try:
+        chat = await new_chat(conn, folder)
+        factory.last.script(*aws_failure())
+        factory.last.script(text_delta("Here is the summary."), fake_result())
+        await send(conn, chat, "Summarise the notes")
+        await failed_and_waiting(conn)
+        signed_in.now()
+        seen, _ = await until(conn, lambda m: isinstance(m, TurnFinished) and m.outcome == "done")
+        live = [m for m in seen if isinstance(m, ChatNotice) and m.kind == "signin.continued"]
+        assert len(live) == 1 and live[0].text == "Continued after sign-in"
+        ring = server.registry.get(chat).events_since(None)[0]
+        kinds = [type(e).__name__ for e in ring]
+        notices = [e for e in ring if isinstance(e, ChatNotice) and e.kind == "signin.continued"]
+        assert len(notices) == 1, kinds
+        at = ring.index(notices[0])
+        assert any(isinstance(e, TurnStarted) and e.turn == 2 for e in ring[at:]), "before the continued turn"
+    finally:
+        await conn.close()

@@ -149,7 +149,7 @@ struct MarksList: View {
             HStack(spacing: 10) {
                 Text("\(mark.number)")
                     .scaledFont(11, weight: .semibold, monospacedDigit: true)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
                     .frame(width: 18, height: 18)
                     .background(accent, in: Circle())
                 VStack(alignment: .leading, spacing: 1) {

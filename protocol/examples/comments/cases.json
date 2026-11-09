@@ -1079,6 +1079,48 @@
    "expect": "table-crlf.add.after.md"
   },
   {
+   "name": "add-autolink-https",
+   "file": "autolink.md",
+   "op": "add",
+   "args": {
+    "quote": "https://alpha.example/x",
+    "id": "al001",
+    "author": "Sam Rivera",
+    "at": "2026-11-08T10:00:00.000Z",
+    "body": "Which page?"
+   },
+   "expect": "autolink-https.add.after.md",
+   "expect_link": "<https://alpha.example/x>"
+  },
+  {
+   "name": "add-autolink-email",
+   "file": "autolink.md",
+   "op": "add",
+   "args": {
+    "quote": "me@x.com",
+    "id": "al002",
+    "author": "Sam Rivera",
+    "at": "2026-11-08T10:00:00.000Z",
+    "body": "Whose address?"
+   },
+   "expect": "autolink-email.add.after.md",
+   "expect_link": "<me@x.com>"
+  },
+  {
+   "name": "add-autolink-obsidian",
+   "file": "autolink.md",
+   "op": "add",
+   "args": {
+    "quote": "obsidian://open?vault=V",
+    "id": "al003",
+    "author": "Sam Rivera",
+    "at": "2026-11-08T10:00:00.000Z",
+    "body": "Which vault?"
+   },
+   "expect": "autolink-obsidian.add.after.md",
+   "expect_link": "<obsidian://open?vault=V>"
+  },
+  {
    "name": "table-cells",
    "file": "table-cells.md",
    "parse": {
@@ -1203,6 +1245,60 @@
    },
    "expect_prefix": "| a | b |\n|---|---|\n| `",
    "expect_text": "c"
+  },
+  {
+   "name": "find-url-before-comma",
+   "text": "Visit https://alpha.com/x, today.\n",
+   "find": {
+    "quote": "https://alpha.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "Visit "
+  },
+  {
+   "name": "find-url-in-parens",
+   "text": "(see https://a.com/x)\n",
+   "find": {
+    "quote": "https://a.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "(see "
+  },
+  {
+   "name": "find-autolink-inner",
+   "text": "<https://alpha.example/x>\n",
+   "find": {
+    "quote": "https://alpha.example/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "<"
+  },
+  {
+   "name": "find-link-text-url",
+   "text": "[https://a.com/x](https://a.com/x)\n",
+   "find": {
+    "quote": "https://a.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "["
+  },
+  {
+   "name": "find-email-autolink-inner",
+   "text": "<me@x.com>\n",
+   "find": {
+    "quote": "me@x.com",
+    "occurrence": 1
+   },
+   "expect_prefix": "<"
+  },
+  {
+   "name": "find-url-vertical-tab",
+   "text": "Visit https://alpha.com/x\u000bnow.\n",
+   "find": {
+    "quote": "https://alpha.com/x",
+    "occurrence": 1
+   },
+   "expect_prefix": "Visit "
   },
   {
    "name": "table-pipe-code",

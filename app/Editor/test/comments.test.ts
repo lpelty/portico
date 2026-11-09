@@ -24,7 +24,7 @@ const { EditorState, EditorSelection } = await import("@codemirror/state");
 const { ensureSyntaxTree } = await import("@codemirror/language");
 const { markdown, markdownLanguage } = await import("@codemirror/lang-markdown");
 const { yamlFrontmatter } = await import("@codemirror/lang-yaml");
-const { scanComments, commentsExtension, commentDecorations, selectionRefusal } = await import("../src/comments.ts");
+const { scanComments, commentsExtension, commentDecorations, selectionRefusal, widenToAutolink } = await import("../src/comments.ts");
 const { createEditor } = await import("../src/editor.ts");
 type Message = import("../src/bridge.ts").Message;
 
@@ -174,6 +174,51 @@ test("a selection inside a link or an entity is refused (v0.25 #3)", () => {
   assert.equal(selectionRefusal(s, at("Tom"), at("&amp;") + 1), "atom", "ends inside an entity");
   assert.equal(selectionRefusal(s, at("https://beta"), at("https://beta") + "https://beta.example/y".length), null, "the whole bare URL");
   assert.equal(selectionRefusal(s, at("Jerry"), at("Jerry") + 5), null);
+});
+
+// v0.26 (review L4): the shared find-* fixtures, through Edit mode's selection check, so
+// the editor's atoms agree with the gateway's and the app's.
+test("find fixtures agree on links and entities", () => {
+  let checked = 0;
+  for (const c of cases.filter((c: any) => c.find)) {
+    const text: string = c.text ?? read(c.file);
+    const s = state(text);
+    if (c.expect_prefix !== undefined) {
+      const target: string = c.expect_text ?? c.find.quote;
+      const from = c.expect_prefix.length;
+      if (text.slice(from, from + target.length) !== target) continue; // quoted as rendered: no one source span
+      assert.notEqual(selectionRefusal(s, from, from + target.length), "atom", c.name);
+      checked++;
+    } else if (c.expect_refusal === "inside a link or entity") {
+      const from = text.indexOf(c.find.quote);
+      assert.equal(selectionRefusal(s, from, from + c.find.quote.length), "atom", c.name);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 20, `checked ${checked}`);
+});
+
+// v0.26 review M1: an autolink's address, selected, anchors around the whole <…>, so the
+// written markers sit outside the brackets and the link still renders.
+test("an autolink's address anchors outside its brackets", async () => {
+  const { createRequire } = await import("node:module");
+  const { marked } = createRequire(import.meta.url)("../../Sources/Portico/Resources/marked.min.js");
+  const linkCases = cases.filter((c: any) => c.expect_link);
+  assert.equal(linkCases.length, 3);
+  for (const c of linkCases) {
+    const text = read(c.file);
+    const from = text.indexOf(c.args.quote);
+    assert.equal(selectionRefusal(state(text), from, from + c.args.quote.length), null, c.name);
+    const [a, b] = widenToAutolink(text, from, from + c.args.quote.length);
+    assert.equal(text.slice(a, b), c.expect_link, c.name);
+    const written = read(c.expect);
+    assert.ok(written.includes(`<!--c:${c.args.id}-->${c.expect_link}<!--/c:${c.args.id}-->`), c.name);
+    const html: string = marked.parse(written);
+    const href = c.expect_link.slice(1, -1);
+    assert.ok(html.includes(`<!--c:${c.args.id}--><a href="${href.includes("@") && !href.includes(":") ? "mailto:" + href : href}">`), `${c.name}: ${html}`);
+  }
+  const other = "See https://b.com/y and words.\n";
+  assert.deepEqual(widenToAutolink(other, 4, 19), [4, 19], "a bare URL is not widened");
 });
 
 test("emoji offsets", () => {

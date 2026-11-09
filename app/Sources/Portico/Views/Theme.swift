@@ -15,6 +15,16 @@ enum Theme {
         case agentAvatar
         /// v0.23: a destructive confirm (Delete) with white text, 4.5:1 or more; darker than `deny`.
         case dangerStrong
+        /// v0.26 (PORT-25): every colour the app draws is a token.
+        case accent, accentSoft, onAccent
+        case wait, waitSoft, onWait, working, deny, idle, stopped, meterTrack, meterFill
+        case hoverTint, pressTint, scrim, shadowStrong, shadowSoft, knob, pointerShadow
+        case tipFill, tipText, tipStroke, tipShadow
+        /// v0.26: a tip's second and third lines (the marker tip's reply and time).
+        case tipText2, tipText3
+        /// Pen only (ruling 15): the code never draws these; AppKit draws the real window buttons.
+        case shadow, windowClose, windowMinimize, windowZoom
+        case logo1, logo2, logo3, logo4, logo5, logo6, logo7, logo8, logo9, logo10
     }
 
     static let palette: [Token: (light: String, dark: String)] = [
@@ -34,13 +44,84 @@ enum Theme {
         .selected: ("#E0E0E5", "#34343A"),
         .agentAvatar: ("#2F7A6B", "#3E8E7E"),
         .dangerStrong: ("#B3261E", "#C4362E"),
+        .accent: ("#3B6BE0", "#6B8FF2"),
+        .accentSoft: ("#EBF0FC", "#26304A"),
+        // White text or glyph on any coloured fill (accent, brand, logo, level bars).
+        .onAccent: ("#FFFFFF", "#FFFFFF"),
+        .wait: ("#B86E00", "#F0B24A"),
+        .waitSoft: ("#FFF3DE", "#3B2E16"),
+        // Text on the bright `wait` highlight (an active comment anchor or a draft).
+        .onWait: ("#FFFFFF", "#1C1C1E"),
+        .working: ("#2DA44E", "#4CC86A"),
+        // Deny and decline (V1): the Deny button, a declined or blocked step.
+        .deny: ("#C93C37", "#F0706A"),
+        .idle: ("#B5B5BB", "#6A6A70"),
+        .stopped: ("#8E8E93", "#8E8E93"),
+        // The context meter's empty track (S1) and its fill below the nudge.
+        .meterTrack: ("#E4E4E7", "#3A3A3E"),
+        .meterFill: ("#A3A3A8", "#A3A3A9"),
+        // Laid over a clickable thing while the pointer is on it / while it is pressed.
+        .hoverTint: ("#0000000D", "#FFFFFF12"),
+        .pressTint: ("#0000001A", "#FFFFFF21"),
+        // Behind the quick-open palette.
+        .scrim: ("#00000040", "#00000040"),
+        .shadowStrong: ("#0000004D", "#0000004D"),
+        .shadowSoft: ("#0000002E", "#0000002E"),
+        // The switch's knob.
+        .knob: ("#FFFFFF", "#FFFFFF"),
+        // The agent pointer's shadow colour (its opacity is the layer's).
+        .pointerShadow: ("#000000", "#000000"),
+        // AR7's tooltip (`rm4j7`): one style in light and dark.
+        .tipFill: ("#2B2B2E", "#2B2B2E"),
+        .tipText: ("#E6E6E8", "#E6E6E8"),
+        .tipStroke: ("#FFFFFF1F", "#FFFFFF1F"),
+        .tipShadow: ("#00000066", "#00000066"),
+        // The tip's secondary lines: text2's and text3's dark values, on the dark bubble in either appearance.
+        .tipText2: ("#B6B6BC", "#B6B6BC"),
+        .tipText3: ("#8A8A91", "#8A8A91"),
+        .shadow: ("#00000022", "#00000066"),
+        .windowClose: ("#FF5F57", "#FF5F57"),
+        .windowMinimize: ("#FEBC2E", "#FEBC2E"),
+        .windowZoom: ("#28C840", "#28C840"),
+        // AR1/AR4's initial badges (MCP servers, Plugins).
+        .logo1: ("#4F7DF3", "#4F7DF3"),
+        .logo2: ("#E07A3F", "#E07A3F"),
+        .logo3: ("#2F9E8F", "#2F9E8F"),
+        .logo4: ("#8A6BD1", "#8A6BD1"),
+        .logo5: ("#C9A227", "#C9A227"),
+        .logo6: ("#D1567A", "#D1567A"),
+        .logo7: ("#3F6FD8", "#3F6FD8"),
+        .logo8: ("#5D6874", "#5D6874"),
+        .logo9: ("#3F8CD1", "#3F8CD1"),
+        .logo10: ("#7A8A3F", "#7A8A3F"),
     ]
+
+    /// MCP servers' badge colours, in AR1's order.
+    static let mcpLogoFills: [Token] = [.logo1, .logo2, .logo3, .logo4, .logo5, .logo6, .logo7, .logo8]
+    /// Plugins' badge colours (AR4's, then AR1's), in today's order.
+    static let pluginLogoFills: [Token] = [.logo6, .logo9, .logo10, .logo1, .logo2, .logo3, .logo4, .logo5]
+
+    /// The token's variable name in `design/portico.pen`: the case name in
+    /// kebab case, a digit run split off (`borderSubtle` → `border-subtle`,
+    /// `text2` → `text-2`, `logo10` → `logo-10`).
+    static func penName(_ token: Token) -> String {
+        var out = ""
+        var previous: Character?
+        for c in String(describing: token) {
+            if let p = previous {
+                if c.isUppercase || (c.isNumber && !p.isNumber) { out.append("-") }
+            }
+            out.append(contentsOf: c.lowercased())
+            previous = c
+        }
+        return out
+    }
 
     static func hex(_ token: Token) -> (light: String, dark: String) {
         palette[token] ?? ("#FF00FF", "#FF00FF")
     }
 
-    private static func color(_ token: Token) -> Color {
+    static func color(_ token: Token) -> Color {
         Color(nsColor: nsColor(token))
     }
 
@@ -63,18 +144,37 @@ enum Theme {
     static let text2 = color(.text2)
     static let text3 = color(.text3)
     static let selected = color(.selected)
-    static let accent = dynamic("#3B6BE0", "#6B8FF2")
-    static let accentSoft = dynamic("#EBF0FC", "#26304A")
-    static let wait = dynamic("#B86E00", "#F0B24A")
-    static let waitSoft = dynamic("#FFF3DE", "#3B2E16")
-    static let working = dynamic("#2DA44E", "#4CC86A")
+    static let accent = color(.accent)
+    static let accentSoft = color(.accentSoft)
+    /// White text or glyph on a coloured fill.
+    static let onAccent = color(.onAccent)
+    static let wait = color(.wait)
+    static let waitSoft = color(.waitSoft)
+    static let onWait = color(.onWait)
+    static let working = color(.working)
     /// Deny and decline (V1): the Deny button, a declined or blocked step.
-    static let deny = dynamic("#C93C37", "#F0706A")
-    static let idle = dynamic("#B5B5BB", "#6A6A70")
-    static let stopped = dynamic("#8E8E93", "#8E8E93")
+    static let deny = color(.deny)
+    static let idle = color(.idle)
+    static let stopped = color(.stopped)
     /// The context meter's empty track (S1) and its fill below the nudge.
-    static let meterTrack = dynamic("#E4E4E7", "#3A3A3E")
-    static let meterFill = dynamic("#A3A3A8", "#A3A3A9")
+    static let meterTrack = color(.meterTrack)
+    static let meterFill = color(.meterFill)
+    /// Laid over a clickable thing while the pointer is on it.
+    static let hoverTint = color(.hoverTint)
+    /// Laid over it while it is pressed.
+    static let pressTint = color(.pressTint)
+    static let scrim = color(.scrim)
+    static let shadowStrong = color(.shadowStrong)
+    static let shadowSoft = color(.shadowSoft)
+    static let knob = color(.knob)
+    static let pointerShadow = color(.pointerShadow)
+    /// AR7's tooltip: the same dark bubble in light and dark appearance.
+    static let tipFill = color(.tipFill)
+    static let tipText = color(.tipText)
+    static let tipStroke = color(.tipStroke)
+    static let tipShadow = color(.tipShadow)
+    static let tipText2 = color(.tipText2)
+    static let tipText3 = color(.tipText3)
 
     // MARK: measures
 

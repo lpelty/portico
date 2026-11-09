@@ -235,5 +235,5 @@ async def test_add_refuses_text_inside_a_link_or_entity(folder: Path) -> None:
     before = p.read_bytes()
     out = await tools(folder)["comment_add"].handler({"path": "u.md", "quote": "alpha", "text": "x"})
     assert out.get("is_error") is True
-    assert text_of(out) == '"alpha" is inside a link or an HTML entity in u.md; quote text outside it, or the whole link.'
+    assert text_of(out) == "\"alpha\" is inside a link or an HTML entity in u.md; quote text outside the link, or the link's address."
     assert p.read_bytes() == before

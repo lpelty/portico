@@ -761,10 +761,10 @@ def test_transcript_times_fail_quietly(tmp_path: Path, monkeypatch: pytest.Monke
     assert transcript_times(SESSION, tmp_path) == {}
     assert transcript_times(None, tmp_path) == {}
 
-    def boom(session_id: str, directory: str | None) -> str | None:
+    def boom(session_id: str, directory: Path) -> Path | None:
         raise RuntimeError("the SDK changed")
 
-    monkeypatch.setattr(engine, "_read_session_file", boom)
+    monkeypatch.setattr(engine, "_session_file", boom)
     assert transcript_times(SESSION, tmp_path) == {}
 
 
@@ -821,3 +821,96 @@ def test_hello_lists_history_times() -> None:
 
     assert HISTORY_TIMES_CAPABILITY == "history.times.v1"
     assert HISTORY_TIMES_CAPABILITY in hello_for(Config(), epoch="e", gateway_version="0.25.0").capabilities
+
+
+# --- v0.26: the v0.25 review's leftovers (PORT-22) --------------------------------------
+
+
+def test_replay_marks_the_continue() -> None:
+    """L5: a continue message replays as a ``chat.notice`` of kind ``signin.continued`` between the two replies."""
+    from portico_gateway.engine import CONTINUE_TEXT, SIGNIN_CONTINUED_NOTICE
+    from portico_gateway.messages import ChatNotice
+
+    events = history_events(
+        [user("Summarise"), assistant(text("Could not load AWS credentials")), user(CONTINUE_TEXT),
+         assistant(text("Here is the summary."))],
+        chat=1,
+    )
+    kinds = [(type(e).__name__, getattr(e, "text", None)) for e in events]
+    notice_at = next(i for i, e in enumerate(events) if isinstance(e, ChatNotice))
+    first = next(i for i, e in enumerate(events) if isinstance(e, TextDelta) and e.text.startswith("Could"))
+    second = next(i for i, e in enumerate(events) if isinstance(e, TextDelta) and e.text.startswith("Here"))
+    assert first < notice_at < second, kinds
+    notice = events[notice_at]
+    assert isinstance(notice, ChatNotice) and notice.kind == SIGNIN_CONTINUED_NOTICE == "signin.continued"
+    assert notice.text == "Continued after sign-in"
+    assert [e.text for e in events if isinstance(e, UserText)] == ["Summarise"]
+
+
+def test_only_the_exact_continue_text_is_hidden() -> None:
+    """N1: the person's own message that starts with the continue text is theirs, and shown."""
+    from portico_gateway.engine import CONTINUE_TEXT
+    from portico_gateway.messages import ChatNotice
+
+    events = history_events([user(CONTINUE_TEXT + " please"), assistant(text("OK."))], chat=1)
+    assert [e.text for e in events if isinstance(e, UserText)] == [CONTINUE_TEXT + " please"]
+    assert not any(isinstance(e, ChatNotice) for e in events)
+
+
+def test_engine_imports_without_the_private_sdk_function(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """L6: the private SDK function is imported where it's used, inside the try: a missing one fails quietly."""
+    import ast
+    import sys
+    import types
+
+    from portico_gateway import engine
+
+    tree = ast.parse(Path(engine.__file__).read_text(encoding="utf-8"))
+    top_level = [n for n in tree.body if isinstance(n, ast.ImportFrom) and (n.module or "").startswith("claude_agent_sdk._internal")]
+    assert top_level == [], "no module-level import of the SDK's private modules"
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk._internal.sessions", types.ModuleType("renamed"))
+    assert engine.transcript_times(SESSION, tmp_path) == {}
+
+
+def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    import re
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
+    folder = tmp_path / "work"
+    folder.mkdir()
+    proj = tmp_path / "cc" / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", str(folder.resolve()))
+    proj.mkdir(parents=True)
+    return folder, proj
+
+
+def test_huge_lines_are_not_parsed_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """L7: a 2 MB line (an image block) gets its time from its ends; ``json.loads`` never sees it."""
+    from portico_gateway import engine
+
+    folder, proj = _project(tmp_path, monkeypatch)
+    image = "A" * (2 * 1024 * 1024)
+    huge = ('{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"data":"' + image + '"}}]},'
+            '"parentUuid":"u1","uuid":"u2","timestamp":"2026-11-06T21:43:00.000Z"}')
+    small = json.dumps({"type": "user", "uuid": "u1", "timestamp": "2026-11-06T21:42:10.123Z"})
+    (proj / f"{SESSION}.jsonl").write_text(small + "\n" + huge + "\n")
+    real = json.loads
+    sizes: list[int] = []
+
+    def loads(s, *a, **k):  # type: ignore[no-untyped-def]
+        sizes.append(len(s))
+        return real(s, *a, **k)
+
+    monkeypatch.setattr(engine.json, "loads", loads)
+    assert engine.transcript_times(SESSION, folder) == {"u1": "2026-11-06T21:42:10Z", "u2": "2026-11-06T21:43:00Z"}
+    assert sizes and max(sizes) <= engine.TRANSCRIPT_LINE_PARSE_MAX
+
+
+def test_a_huge_line_without_keys_at_its_ends_gets_no_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from portico_gateway import engine
+
+    folder, proj = _project(tmp_path, monkeypatch)
+    middle = "B" * (300 * 1024)
+    huge = ('{"type":"user","message":{"content":"' + middle + '","uuid":"inner","timestamp":"2026-11-06T21:00:00Z","x":"'
+            + middle + '"}}')
+    (proj / f"{SESSION}.jsonl").write_text(huge + "\n")
+    assert engine.transcript_times(SESSION, folder) == {}

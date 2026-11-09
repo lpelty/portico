@@ -246,3 +246,30 @@ def test_a_match_inside_a_link_or_entity_is_refused():
     assert cm.find_quote("A &#123; B &#x1F; C\n", "#1", 1) == "inside a link or entity"
     assert cm.find_quote("Tom &amp; Jerry.\n", "Tom &amp; Jerry", 1) == (0, 15), "a match holding the whole entity is fine"
     assert cm.find_quote("`https://alpha.com` text\n", "alpha", 1) == "inside code or front matter"
+
+
+# --- v0.26 review M1: an autolink's address quoted, the markers outside its brackets ----------
+
+LINK_CASES = [c for c in CASES if "expect_link" in c]
+
+
+@pytest.mark.parametrize("case", LINK_CASES, ids=[c["name"] for c in LINK_CASES])
+def test_quoting_an_autolinks_address_keeps_the_link(case):
+    text = read(case["file"])
+    written = apply_op(text, case)
+    link = case["expect_link"]
+    a = case["args"]
+    assert f"<!--c:{a['id']}-->{link}<!--/c:{a['id']}-->" in written, "the markers go around the whole <…>"
+    assert f'quote:"{a["quote"]}"' in written, "the quote stays the address"
+    thread = next(t for t in cm.parse(written).threads if t.id == a["id"])
+    assert cm.anchored_text(written, thread) == link
+
+
+def test_widen_to_autolink_leaves_other_spans_alone():
+    text = "See <https://a.com/x> and https://b.com/y.\n"
+    i = text.index("https://a")
+    assert cm.widen_to_autolink(text, i, i + len("https://a.com/x")) == (4, 21)
+    j = text.index("https://b")
+    assert cm.widen_to_autolink(text, j, j + len("https://b.com/y")) == (j, j + len("https://b.com/y"))
+    k = text.index("See")
+    assert cm.widen_to_autolink(text, k, k + 3) == (k, k + 3)

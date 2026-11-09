@@ -556,7 +556,7 @@ def test_doctor_reports_signin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(signin, "cli_path", lambda: "/opt/sdk/_bundled/claude")
     path = tmp_path / "config.toml"
-    check = check_signin(path)
+    check = check_signin(path, environ={})
     assert check.ok and check.name == "signin"
     assert check.line == "aws-sso: AWS SSO token cache every 5 s; open: not set · claude: `claude auth status` every 10 s; open: `claude auth login`"
     path.write_text('[signin.aws-sso]\ncheck = "my-check"\nopen = "aws sso login"\n')
@@ -565,3 +565,31 @@ def test_doctor_reports_signin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     skipped = check_signin(path)
     assert skipped.ok and "skipped" in skipped.line
     assert any(c.name == "signin" for c in doctor(StateDir(tmp_path / "state"), tmp_path / "missing.toml"))
+
+
+# --- v0.26: ElevenLabs voices (PORT-23) ----------------------------------------
+
+
+def test_elevenlabs_without_read_aloud_the_doctor_says_so(tmp_path: Path) -> None:
+    from portico_gateway.doctor import check_config
+
+    path = tmp_path / "config.toml"
+    path.write_text("[voice.elevenlabs]\nenabled = true\n")
+    check = check_config(path)
+    assert check.ok and check.warn
+    assert "voice.elevenlabs needs [voice] read_aloud = true" in check.line
+    path.write_text("[voice]\nread_aloud = true\n[voice.elevenlabs]\nenabled = true\n")
+    assert "voice.elevenlabs" not in check_config(path).line
+    assert not check_config(path).warn
+
+
+def test_doctor_leaves_out_claude_on_bedrock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The builder's follow-up to review M1: only the kinds the engine's environment allows."""
+    from portico_gateway import signin
+    from portico_gateway.doctor import check_signin
+
+    monkeypatch.setattr(signin, "cli_path", lambda: "/opt/sdk/_bundled/claude")
+    cfg = tmp_path / "config.toml"
+    check = check_signin(cfg, environ={"CLAUDE_CODE_USE_BEDROCK": "1"})
+    assert "aws-sso" in check.line and "claude:" not in check.line
+    assert "claude:" in check_signin(cfg, environ={}).line

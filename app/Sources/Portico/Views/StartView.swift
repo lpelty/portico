@@ -125,7 +125,7 @@ struct StartView: View {
                     .fill(model.brand.accent ?? Theme.accent)
                 Image(systemName: "sparkle")
                     .font(Theme.iconFont(Self.sparkleSize, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
             }
             .frame(width: Self.markSize, height: Self.markSize)
             .accessibilityHidden(true)
@@ -232,7 +232,7 @@ struct StartView: View {
                 Button(action: send) {
                     Image(systemName: "arrow.up")
                         .font(Theme.iconFont(15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.onAccent)
                         .frame(width: 32, height: 32)
                         .background(model.brand.accent ?? Theme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                         .opacity(canSend ? 1 : 0.5)

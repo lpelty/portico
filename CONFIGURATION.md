@@ -635,6 +635,15 @@ Read aloud on each reply: true shows the switch in Settings; the person's on/off
 - **Applies:** gateway restart (the app follows when it reconnects)
 - **Belongs in:** commonly a personal override in `config.local.toml`
 
+### `voice.elevenlabs.enabled`
+
+ElevenLabs voices for Read aloud (Labs); needs [voice] read_aloud = true. The API key is never in config: it's saved in the app, in the macOS Keychain. Reply text is sent to ElevenLabs to be spoken.
+
+- **Type:** true/false · **Default:** `false`
+- **Example:** `enabled = true`
+- **Applies:** gateway restart (the app follows when it reconnects)
+- **Belongs in:** commonly a personal override in `config.local.toml`
+
 ## [signin]
 
 ### `signin.aws-sso.patterns`

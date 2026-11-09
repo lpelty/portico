@@ -474,7 +474,10 @@ struct MarkdownText: View {
                 .environment(\.codeWrapControl, CodeWrapControl(on: settings.wrapCode, toggle: { settings.wrapCode.toggle() }))
                 .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
-            MessageHoverRow(at: at, help: "Copy this message as Markdown", copy: { MarkdownCopy.message(shown) }) {
+            MessageHoverRow(
+                at: at, help: "Copy this message as Markdown", note: reader.note(for: id ?? text),
+                copy: { MarkdownCopy.message(shown) }
+            ) {
                 if settings.readAloudShown {
                     ReadAloudButton(reply: text, key: id)
                 }

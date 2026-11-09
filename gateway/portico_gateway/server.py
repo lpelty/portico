@@ -186,6 +186,8 @@ from .engine import (
     session_prompt,
     friendly_model_name,
     CONTINUE_TEXT,
+    SIGNIN_CONTINUED_NOTICE,
+    SIGNIN_CONTINUED_TEXT,
     history_events,
     read_history,
     transcript_times,
@@ -703,6 +705,9 @@ class TurnRun:
     title_message: str | None = None
     first_line_title: str | None = None
     reply: str = ""
+    # v0.26 (review L2): when the turn began, as epoch seconds (``_begin_turn``): a
+    # sign-in wait after it fails counts a token written from then on.
+    started_epoch: float | None = None
 
 
 class ChatCallbacks:
@@ -2317,7 +2322,9 @@ class GatewayServer:
         if chat.ended is not None or self._busy(chat) or self._queues.get(chat.number):
             return  # what the person queued goes instead; the turn stays ended
         chat.signin_waits += 1
-        state = SigninWaitState(kind=kind, turn=run.turn, started=_now(), since=time.time())
+        # Review L2: since the failed turn began, so a sign-in made while it was failing counts.
+        since = run.started_epoch if run.started_epoch is not None else time.time()
+        state = SigninWaitState(kind=kind, turn=run.turn, started=_now(), since=since)
         chat.signin = state
         log.info("chat %d: turn %d ended on an expired %s sign-in; waiting", chat.number, run.turn, kind.name)
         await self.broadcast(self._signin_frame(chat, state, "waiting"))
@@ -2362,6 +2369,8 @@ class GatewayServer:
             await self.broadcast(self._signin_frame(chat, state, "stopped"))
             return
         await self.broadcast(self._signin_frame(chat, state, "current"))
+        # Review L5: the note goes in the ring too, so a reconnect replays it.
+        await self.emit(chat, ChatNotice(ts=_now(), chat=chat.number, text=SIGNIN_CONTINUED_TEXT, kind=SIGNIN_CONTINUED_NOTICE))
         log.info("chat %d: signed in again; carrying turn %d on", chat.number, state.turn)
         run = await self._echo_turn(chat, CONTINUE_TEXT, echo_user=False)
         try:
@@ -2404,6 +2413,11 @@ class GatewayServer:
             await command.start(state.kind.open, on_link)
         except OSError as e:
             log.warning("chat %d: the sign-in command could not start: %s", chat.number, type(e).__name__)
+            return
+        # Review L9: the wait ended while the command was starting (its close found no
+        # process yet): nothing else will ever close it, so close it now.
+        if chat.signin is not state or state.command is not command:
+            await command.close()
 
     async def on_signin_stop(self, msg: SigninStop, conn: ServerConnection) -> None:
         """Don't wait: the wait stops, the turn stays ended."""
@@ -3257,6 +3271,8 @@ class GatewayServer:
         notices: list[tuple[ServerMessage, int | None, int | None]] = []
         last_turn: int | None = None
         for e in ring:
+            if isinstance(e, ChatNotice) and e.kind == SIGNIN_CONTINUED_NOTICE:
+                continue  # the transcript marks its continues itself (``history_events``)
             if isinstance(e, ChatNotice):
                 notices.append((e.model_copy(update={"seq": None}), last_turn, None))
             elif isinstance(e, TurnStarted):
@@ -4328,6 +4344,7 @@ class GatewayServer:
 
     async def _begin_turn(self, chat: Chat, run: TurnRun, text: str, images: list[dict[str, Any]] | None = None) -> None:
         """Start or resume the engine for an echoed ``run`` and send ``text``, unless the turn ended meanwhile."""
+        run.started_epoch = time.time()
         try:
             engine = await self._ensure_engine(chat)
         except ProtocolError:

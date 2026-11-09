@@ -251,8 +251,9 @@ final class ProtocolExamplesTests: XCTestCase {
         guard case .hello(let hello) = try JSONDecoder().decode(ServerMessage.self, from: data) else {
             return XCTFail("hello")
         }
-        XCTAssertEqual(hello.labs?.map(\.key), ["voice.read_aloud", "digest.daily"])
-        XCTAssertEqual(hello.labs?.map(\.tag), [.preview, .local])
+        // v0.26: and `voice.elevenlabs` after Read aloud.
+        XCTAssertEqual(hello.labs?.map(\.key), ["voice.read_aloud", "voice.elevenlabs", "digest.daily"])
+        XCTAssertEqual(hello.labs?.map(\.tag), [.preview, .preview, .local])
         XCTAssertEqual(hello.labs?.first?.home, "voice")
         XCTAssertNil(hello.labs?.last?.home)
     }
@@ -317,5 +318,15 @@ final class ProtocolExamplesTests: XCTestCase {
     func testUnknownServerTypeFailsToDecode() {
         let data = Data(#"{"type":"nope","ts":"2026-10-27T12:00:00Z"}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ServerMessage.self, from: data))
+    }
+
+    /// v0.26 review L8: the `signin.continued` notice's example decodes with its kind.
+    func testTheSigninContinuedNoticeExampleDecodes() throws {
+        let data = try Data(contentsOf: Self.examplesDir.appendingPathComponent("server.chat.notice.signin-continued.json"))
+        guard case .chatNotice(let notice) = try JSONDecoder().decode(ServerMessage.self, from: data) else {
+            return XCTFail("chat.notice")
+        }
+        XCTAssertEqual(notice.kind, ChatNotice.signinContinued)
+        XCTAssertEqual(notice.text, "Continued after sign-in")
     }
 }

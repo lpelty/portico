@@ -160,6 +160,15 @@ final class AppModel: ObservableObject {
 
     /// `chat`'s conversation is left at `place`.
     func notePlace(_ place: ConversationPlace, chat: Int) { scrollPlaces[chat] = place }
+    /// v0.26 (PORT-12): a conversation marker was clicked: the conversation
+    /// on screen scrolls to that message (`ConversationView`).
+    @Published private(set) var markerJump: MarkerJumpRequest?
+    /// Per chat, the person's message briefly highlighted after a marker's jump.
+    @Published var highlightedMessage: [Int: String] = [:]
+
+    func jumpToMessage(_ id: String, chat: Int) {
+        markerJump = MarkerJumpRequest(chat: chat, id: id, serial: (markerJump?.serial ?? 0) + 1)
+    }
     /// Per chat, the cards still waiting for an answer, in arrival order.
     @Published private(set) var openCards: [Int: [CardAsk]] = [:]
     /// Per chat, every artifact reported, oldest first, one per id.
@@ -1076,6 +1085,9 @@ final class AppModel: ObservableObject {
             settings.deploymentReadAloud = hello.voice?.readAloud ?? false
             // v0.25: Labs; a Labs tab left with nothing in it falls back to General.
             labs = hello.labs ?? []
+            // v0.26: ElevenLabs voices are part of Read aloud, so they need its item too.
+            settings.elevenLabsAvailable = labs.contains { $0.key == LabItem.elevenLabsKey }
+                && labs.contains { $0.key == LabItem.readAloudKey }
             if settingsTab == .labs && labItems.isEmpty { settingsTab = .general }
             // Services are checked afresh too: "Checking…" until it says.
             // A gateway older than v0.4 never will: the Gateway row alone.
@@ -1717,6 +1729,13 @@ final class AppModel: ObservableObject {
 
         case .chatCompacted(let compacted):
             items.append(.compacted(id: Self.itemId(&nextItemId), trigger: compacted.trigger))
+
+        case .chatNotice(let notice) where notice.kind == ChatNotice.signinContinued:
+            // v0.26 (review L5): the continue's note, live, from the ring or from a replayed
+            // transcript; at most one per turn (the live path may have drawn it on `current`).
+            if !Self.hasSigninNoteSinceLastReply(items) {
+                items.append(.signinContinued(id: "\(chat):\(notice.ts):\(items.count)", at: notice.ts))
+            }
 
         case .chatNotice(let notice):
             items.append(.notice(id: Self.itemId(&nextItemId), text: notice.text))
@@ -3410,8 +3429,22 @@ extension AppModel {
         transcripts[chat] = items
     }
 
+    /// A "Continued after sign-in" line already stands after the person's last
+    /// message with no reply text after it: a second is the same continue.
+    static func hasSigninNoteSinceLastReply(_ items: [TranscriptItem]) -> Bool {
+        for item in items.reversed() {
+            switch item {
+            case .signinContinued: return true
+            case .assistantText, .userText: return false
+            default: continue
+            }
+        }
+        return false
+    }
+
     private func appendSigninNote(chat: Int, at: String) {
         var items = transcripts[chat] ?? []
+        if Self.hasSigninNoteSinceLastReply(items) { return }
         items.append(.signinContinued(id: "\(chat):\(at):\(items.count)", at: at))
         transcripts[chat] = items
     }

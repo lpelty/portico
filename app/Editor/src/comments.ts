@@ -698,17 +698,63 @@ export function anchorAwareMarkdown(codeLanguages?: (info: string) => Language |
 // v0.25 (#3, ruling 22): what a comment's markers must never split: an
 // autolink with its brackets, a bare URL (up to whitespace or "<"), an HTML
 // entity. The same atoms as CommentFormat.swift and comments.py.
-const ATOM_RES = [
-  /<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^\s<>]*>/g,
-  /<[^\s<>@]+@[^\s<>@]+>/g,
-  /(?:https?:\/\/|www\.)[^\s<]*/g,
-  /&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});/g,
+// v0.26 (review L4, N5): one whitespace class in all three scanners (this, the
+// gateway's comments.py, the app's CommentFormat.swift): space, tab, LF, CR, FF, VT.
+const AUTOLINK_RES = [
+  /<[A-Za-z][A-Za-z0-9+.\-]{1,31}:[^ \t\n\r\f\x0b<>]*>/g,
+  /<[^ \t\n\r\f\x0b<>@]+@[^ \t\n\r\f\x0b<>@]+>/g,
 ];
+// A bare URL stops at whitespace, `<` or `]`, and leaves trailing punctuation out (as GFM does).
+const BARE_URL_RE = /(?:https?:\/\/|www\.)[^ \t\n\r\f\x0b<\]]*/g;
+const URL_TRAILING = ".,:;!?)]'\"";
+const ENTITY_RE = /&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});/g;
 
-export function atoms(text: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (const re of ATOM_RES) for (const m of text.matchAll(re)) out.push([m.index!, m.index! + m[0].length]);
+// An atom's source span and the part a selection may cover in its place (an autolink's address).
+export type Atom = { from: number; to: number; innerFrom: number; innerTo: number };
+
+export function atoms(text: string): Atom[] {
+  const out: Atom[] = [];
+  for (const re of AUTOLINK_RES) {
+    for (const m of text.matchAll(re)) {
+      const from = m.index!, to = from + m[0].length;
+      out.push({ from, to, innerFrom: from + 1, innerTo: to - 1 });
+    }
+  }
+  const autolinks = out.slice();
+  for (const m of text.matchAll(BARE_URL_RE)) {
+    const from = m.index!;
+    if (autolinks.some((a) => a.from <= from && from < a.to)) continue; // the autolink's own address
+    let to = from + m[0].length;
+    while (to > from && URL_TRAILING.includes(text[to - 1])) to--;
+    if (to > from) out.push({ from, to, innerFrom: from, innerTo: to });
+  }
+  for (const m of text.matchAll(ENTITY_RE)) {
+    const from = m.index!, to = from + m[0].length;
+    out.push({ from, to, innerFrom: from, innerTo: to });
+  }
   return out;
+}
+
+// v0.26 review M1: a range that covers an autolink's address but not its brackets, widened to
+// the whole <…>, so a comment's markers go outside the brackets and the link still renders.
+// The same rule as comments.py's widen_to_autolink and CommentFormat.widenToAutolink.
+export function widenToAutolink(text: string, from: number, to: number): [number, number] {
+  for (const a of atoms(text)) {
+    if (a.innerFrom === a.from && a.innerTo === a.to) continue;
+    const splits = (a.from < from && from < a.to) || (a.from < to && to < a.to);
+    if (from <= a.innerFrom && a.innerTo <= to && splits) {
+      from = Math.min(from, a.from);
+      to = Math.max(to, a.to);
+    }
+  }
+  return [from, to];
+}
+
+// Whether [from, to) starts or ends strictly inside an atom; covering a whole one, or an
+// autolink's address, is fine.
+function splitsAtom(a: Atom, from: number, to: number): boolean {
+  const inside = (a.from < from && from < a.to) || (a.from < to && to < a.to);
+  return inside && !(from <= a.innerFrom && a.innerTo <= to);
 }
 
 // Why a selection can't be anchored: "ignored" (code or front matter),
@@ -720,7 +766,7 @@ export function selectionRefusal(state: EditorState, from: number, to: number): 
   const scan = scanComments(text);
   if (scan.ignored.some(([a, b]) => from < b && to > a)) return "ignored";
   if (scan.blocks.some((b) => from < b.to && to > b.from)) return "crosses";
-  if (atoms(text).some(([a, b]) => (a < from && from < b) || (a < to && to < b))) return "atom";
+  if (atoms(text).some((a) => splitsAtom(a, from, to))) return "atom";
   const tree = syntaxTree(state);
   const ancestors = (pos: number, side: -1 | 1) => {
     const names: Array<{ name: string; from: number }> = [];

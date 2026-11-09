@@ -223,3 +223,65 @@ def test_a_plugin_keeps_earlier_lab_items_as_they_were(tmp_path: Path) -> None:
         ("voice.read_aloud", "preview", "config.toml"),
         ("x.y", "local", "plugin:pp_lab2"),
     ]
+
+
+# --- v0.26: review L1 -----------------------------------------------------------------
+
+
+def test_a_plugin_cannot_rewrite_an_item_that_was_there_before(tmp_path: Path) -> None:
+    """L1: items are kept by value: a hook that edits the built-in item gets it restored; its own is stamped."""
+    write_module(
+        tmp_path,
+        "pp_rewrite",
+        "PORTICO_PLUGIN_API = 1\n"
+        "from portico_gateway.messages import LabItem\n"
+        "def on_hello(hello):\n"
+        "    edited = [i.model_copy(update={'tag': 'local', 'title': 'Mine now'}) for i in hello.labs or []]\n"
+        "    own = LabItem(key='mine', title='Mine', detail='d', tag='preview', source='config.toml')\n"
+        "    return hello.model_copy(update={'labs': [own, *edited]})\n",
+    )
+    plugins = load_plugins(["pp_rewrite"], [str(tmp_path)])
+    config = Config.model_validate({"voice": {"read_aloud": True}})
+    hello = hello_for(config, epoch="e", gateway_version="0.26.0", plugins=plugins)
+    assert hello.labs is not None
+    assert [(i.key, i.tag, i.source, i.title) for i in hello.labs] == [
+        ("voice.read_aloud", "preview", "config.toml", "Read aloud"),
+        ("mine", "local", "plugin:pp_rewrite", "Mine"),
+    ]
+
+
+def test_a_plugin_cannot_drop_an_item_that_was_there_before(tmp_path: Path) -> None:
+    write_module(
+        tmp_path,
+        "pp_drop",
+        "PORTICO_PLUGIN_API = 1\n"
+        "def on_hello(hello):\n"
+        "    return hello.model_copy(update={'labs': []})\n",
+    )
+    plugins = load_plugins(["pp_drop"], [str(tmp_path)])
+    config = Config.model_validate({"voice": {"read_aloud": True}})
+    hello = hello_for(config, epoch="e", gateway_version="0.26.0", plugins=plugins)
+    assert [i.key for i in hello.labs or []] == ["voice.read_aloud"]
+
+
+def test_a_plugin_cannot_relabel_an_earlier_plugins_item(tmp_path: Path) -> None:
+    write_module(
+        tmp_path,
+        "pp_first",
+        "PORTICO_PLUGIN_API = 1\n"
+        "from portico_gateway.messages import LabItem\n"
+        "def on_hello(hello):\n"
+        "    item = LabItem(key='first.item', title='First', detail='d', tag='local', source='')\n"
+        "    return hello.model_copy(update={'labs': [*(hello.labs or []), item]})\n",
+    )
+    write_module(
+        tmp_path,
+        "pp_second",
+        "PORTICO_PLUGIN_API = 1\n"
+        "def on_hello(hello):\n"
+        "    labs = [i.model_copy(update={'tag': 'preview', 'source': 'config.toml'}) for i in hello.labs or []]\n"
+        "    return hello.model_copy(update={'labs': labs})\n",
+    )
+    plugins = load_plugins(["pp_first", "pp_second"], [str(tmp_path)])
+    hello = hello_for(Config(), epoch="e", gateway_version="0.26.0", plugins=plugins)
+    assert [(i.key, i.tag, i.source) for i in hello.labs or []] == [("first.item", "local", "plugin:pp_first")]

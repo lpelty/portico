@@ -35,6 +35,17 @@ struct ConversationView: View {
     @State private var conversationHeight: CGFloat?
     /// The column grows with the text (v0.15 §3).
     @Environment(\.textScale) private var textScale
+    /// v0.26 (PORT-12): the person's messages whose rows are on screen, for
+    /// the markers. A reference the rail observes, so a change redraws only
+    /// the rail: redrawing the conversation inside a scroll moved the place.
+    @State private var inViewMarkers = MarkersInView()
+    /// Review H2: the markers, worked out once per transcript change.
+    @State private var markerIndex = MarkerIndex()
+
+    /// How long a marker's jump highlights the message (ruling 19).
+    static let highlightDuration: Duration = .milliseconds(1200)
+    /// The transcript's top inset: a jump puts the message's row this far below the top.
+    static let topInset: CGFloat = 24
 
     private var items: [TranscriptItem] { model.transcripts[chat] ?? [] }
 
@@ -44,6 +55,8 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             transcript
+                // v0.26 (PORT-12, ZG3): the markers, in the pane's left margin.
+                .overlay(alignment: .topLeading) { markerRail }
                 // Y2: pinned over an earlier session's transcript, so the
                 // way back is in view however long it is (v0.6; it used to
                 // sit at the end, where the composer would be). An inset,
@@ -203,11 +216,12 @@ struct ConversationView: View {
             // themselves from its width (`conversationColumn`).
             .frame(maxWidth: ConversationColumn.maxWidth(scale: textScale), alignment: .leading)
             .padding(.horizontal, Self.sideInset)
-            .padding(.top, 24)
+            .padding(.top, Self.topInset)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity)
             .background(TranscriptScrollViewProbe(input: personInput))
         }
+        .environment(\.highlightedMessage, model.highlightedMessage[chat])
         // Fix I-1: the scroller keeps clear of the viewer divider's grip.
         .clearOfViewerGrip()
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
@@ -225,8 +239,10 @@ struct ConversationView: View {
                 offset: geometry.contentOffset.y,
                 atBottom: ConversationScrollMemory.isAtBottom(
                     offset: geometry.contentOffset.y, visible: geometry.containerSize.height,
-                    content: geometry.contentSize.height))
+                    content: geometry.contentSize.height),
+                visible: geometry.containerSize.height)
         } action: { _, now in
+            noteMarkersInView(visible: now.visible)
             // The marked input's direction decides which readings are
             // the person's (fix round 4; no longer spent by the first).
             // v0.16 spike: `position.isPositionedByUser` stays false for
@@ -277,9 +293,13 @@ struct ConversationView: View {
             }
         }
         .task(id: chat) { await watchForBlankSpace() }
+        .onChange(of: model.markerJump) { _, request in
+            if let request, request.chat == chat { jump(to: request.id) }
+        }
         // VoiceOver's page scroll is the person's (fix round 2).
         .accessibilityScrollAction { edge in personInput.page(toward: edge) }
         .onAppear {
+            if ConversationProbe.enabled { ConversationProbe.rows[chat] = rows }
             personInput.install()
             if let place = model.place(of: chat), !place.atBottom, let saved = place.topItem,
                 let top = TranscriptEntry.anchor(saved, in: drawn)
@@ -297,6 +317,54 @@ struct ConversationView: View {
             model.notePlace(
                 ConversationPlace(atBottom: scrollMemory.atBottom, topItem: top?.id, topOffset: top?.offset ?? 0),
                 chat: chat)
+        }
+    }
+
+    /// The person's messages as markers (the brief left out), kept until the transcript changes.
+    private var markers: [ConversationMarker] {
+        markerIndex.markers(key: itemsKey + ":\(items.count)", entries: { drawn }, briefID: briefItem)
+    }
+
+    @ViewBuilder
+    private var markerRail: some View {
+        let markers = self.markers
+        if ConversationMarkers.shown(count: markers.count) {
+            MarkerRail(markers: markers, positions: markerIndex.positions, inView: inViewMarkers) { id in
+                model.jumpToMessage(id, chat: chat)
+            }
+                .padding(.leading, Self.railLeading)
+        }
+    }
+
+    /// The rail sits this far from the chat pane's leading edge, inside the
+    /// 32 pt side margin: the hovered (longest) mark ends at the margin, so the
+    /// rail fits at every width and the reading column never moves for it
+    /// (Larry 2026-11-08, ZG3/ZG3b).
+    static let railLeading: CGFloat = sideInset - ConversationMarkers.railWidth
+
+    /// The person's messages whose rows intersect the visible area.
+    private func noteMarkersInView(visible: CGFloat) {
+        let markers = self.markers
+        if ConversationProbe.enabled { ConversationProbe.railShown[chat] = ConversationMarkers.shown(count: markers.count) }
+        let shown = markerIndex.inView(frames: rows.frames, visible: visible)
+        if shown != inViewMarkers.ids { inViewMarkers.ids = shown }
+        if ConversationProbe.enabled { ConversationProbe.inView[chat] = shown }
+    }
+
+    /// v0.26 (PORT-12): a marker's click. The message's row goes to the top
+    /// of the view (the transcript's top inset below it), as a restore does,
+    /// so the person's next input releases it and a streaming reply below
+    /// doesn't pull the view down; the bubble is highlighted briefly.
+    private func jump(to id: String) {
+        scrollMemory.jumped()
+        position.scrollTo(id: id, anchor: .top)
+        restoredTop = id
+        settle(top: id, at: Self.topInset)
+        model.highlightedMessage[chat] = id
+        let chat = chat
+        Task { @MainActor [model] in
+            try? await Task.sleep(for: Self.highlightDuration)
+            if model.highlightedMessage[chat] == id { model.highlightedMessage[chat] = nil }
         }
     }
 
@@ -395,6 +463,12 @@ struct ConversationView: View {
         scrollMemory.restored(atBottom: false)
         position.scrollTo(id: top, anchor: .top)
         restoredTop = top
+        settle(top: top, at: offset)
+    }
+
+    /// Once `top`'s row is laid out, moves the view so its top sits `offset`
+    /// below the view's top (a restore, a marker's jump).
+    private func settle(top: String, at offset: CGFloat) {
         Task { @MainActor in
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(16))
@@ -486,6 +560,7 @@ private struct TranscriptGeometry: Equatable {
     var content: CGFloat
     var offset: CGFloat
     var atBottom: Bool
+    var visible: CGFloat = 0
 }
 
 /// One transcript item, by kind.
@@ -498,6 +573,8 @@ struct TranscriptItemView: View {
     @EnvironmentObject private var model: AppModel
     /// The reading column's width, once measured (v0.11, item 58).
     @Environment(\.conversationColumn) private var column
+    /// v0.26: the message a marker's jump highlights.
+    @Environment(\.highlightedMessage) private var highlighted
 
     /// Replies and tool rows: 92% of the column, the whole width until it is measured.
     private var replyWidth: CGFloat {
@@ -511,7 +588,8 @@ struct TranscriptItemView: View {
                 content: BubbleContent(user), maxWidth: column.map(ConversationColumn.bubbleMaxWidth) ?? UserBubble.fallbackMaxWidth,
                 via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) },
                 linkSites: model.hello?.linkSites ?? [:],
-                at: user.noTime == true ? nil : SessionTime.parse(user.ts), copyText: user.text)
+                at: user.noTime == true ? nil : SessionTime.parse(user.ts), copyText: user.text,
+                highlighted: highlighted == item.id)
         case .assistantText(let id, let text, let at):
             MarkdownText(text: text, id: id, at: SessionTime.parse(at))
                 .frame(maxWidth: replyWidth, alignment: .leading)
@@ -599,6 +677,11 @@ struct UserBubble: View {
     var at: Date? = nil
     /// What Copy under the bubble takes: the text as typed. Nil draws no hover row.
     var copyText: String? = nil
+    /// v0.26 (PORT-12): a marker's jump landed here; the bubble is `accentSoft` for a moment.
+    var highlighted: Bool = false
+
+    /// The bubble's fill: `surface`, or `accentSoft` while highlighted (solid, no fade).
+    static func fill(highlighted: Bool) -> Color { highlighted ? Theme.accentSoft : Theme.surface }
 
     @State private var hovering = false
     @Environment(\.textScale) private var textScale
@@ -651,7 +734,7 @@ struct UserBubble: View {
             }
             .padding(.horizontal, content.images.isEmpty ? 16 : 10)
             .padding(.vertical, 10)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Self.fill(highlighted: highlighted), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .frame(maxWidth: maxWidth, alignment: .trailing)
             if let via {
                 Text("via \(via)")
@@ -946,4 +1029,26 @@ private struct InConversationColumn: ViewModifier {
             .frame(maxWidth: ConversationColumn.outerWidth(sideInset: sideInset, scale: textScale))
             .frame(maxWidth: .infinity)
     }
+}
+
+extension EnvironmentValues {
+    /// v0.26 (PORT-12): the person's message a marker's jump highlights, by transcript id.
+    var highlightedMessage: String? {
+        get { self[HighlightedMessageKey.self] }
+        set { self[HighlightedMessageKey.self] = newValue }
+    }
+}
+
+private struct HighlightedMessageKey: EnvironmentKey {
+    static var defaultValue: String? { nil }
+}
+
+/// Tests only: what a hosted `ConversationView` measured (its rows' frames in
+/// the scroll view, whether its marker rail is drawn). Off unless a test turns it on.
+@MainActor
+enum ConversationProbe {
+    static var enabled = false
+    static var rows: [Int: TranscriptRowFrames] = [:]
+    static var railShown: [Int: Bool] = [:]
+    static var inView: [Int: Set<String>] = [:]
 }

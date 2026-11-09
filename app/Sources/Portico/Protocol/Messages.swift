@@ -787,12 +787,31 @@ struct HelloServer: Codable, Equatable, Sendable {
 /// plug-in); `source` says where it was turned on; `home` is the tab it
 /// moves to once released, when known.
 struct LabItem: Codable, Equatable, Sendable, Identifiable {
-    enum Tag: String, Codable, Equatable, Sendable {
-        case preview, local
+    /// `preview` or `local`; v0.26 (review L11): any other tag a later
+    /// gateway sends is kept as it came, so `hello` never fails to decode.
+    struct Tag: RawRepresentable, Codable, Equatable, Sendable, Hashable {
+        let rawValue: String
+        init(rawValue: String) { self.rawValue = rawValue }
+        static let preview = Tag(rawValue: "preview")
+        static let local = Tag(rawValue: "local")
+
+        init(from decoder: Decoder) throws {
+            rawValue = try decoder.singleValueContainer().decode(String.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
     }
+
+    /// v0.26 (review N8): an older (v0.24) gateway's Read aloud row: it can't tell which file turned it on.
+    static let olderGatewaySource = "the gateway's config"
 
     /// The key the app draws Read aloud's controls for.
     static let readAloudKey = "voice.read_aloud"
+    /// v0.26 (PORT-23): the third-party voices item, drawn inside Read aloud's block (the app calls the service).
+    static let elevenLabsKey = "voice.elevenlabs"
 
     var key: String
     var title: String
@@ -1614,8 +1633,12 @@ struct StatusSet: Codable, Equatable, Sendable {
 /// A quiet line in the conversation from the gateway, e.g. an unknown command.
 struct ChatNotice: Codable, Equatable, Sendable {
     static let messageType = "chat.notice"
+    /// v0.26 (review L5): the turn carried on after a sign-in wait.
+    static let signinContinued = "signin.continued"
     var chat: Int
     var text: String
+    /// v0.19: what the notice is about (`attachment.not_image`, v0.26 `signin.continued`); nil for a plain line.
+    var kind: String? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()

@@ -18,7 +18,11 @@ enum MessageTime {
             relative.doesRelativeDateFormatting = true
             relative.dateStyle = .medium
             relative.timeStyle = .none
-            return "\(relative.string(from: date)) \(time)"
+            // Relative formatting judges "yesterday" by the real clock, not
+            // `now`, so ask it for the real yesterday: the locale's word,
+            // whatever `now` is (the tests pin it).
+            let word = calendar.date(byAdding: .day, value: -1, to: Date()) ?? date
+            return "\(relative.string(from: word)) \(time)"
         }
         let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
         // The locale's short day ("Nov 6", "6 Nov"), a comma, then its time:
@@ -62,8 +66,18 @@ enum MessageTime {
 struct MessageHoverRow<Extra: View>: View {
     let at: Date?
     let help: String
+    /// v0.26 (PORT-23): why Read aloud used the Mac voice for this reply, one line before Copy.
+    var note: String? = nil
     let copy: () -> String
     @ViewBuilder var extra: Extra
+
+    init(at: Date?, help: String, note: String? = nil, copy: @escaping () -> String, @ViewBuilder extra: () -> Extra) {
+        self.at = at
+        self.help = help
+        self.note = note
+        self.copy = copy
+        self.extra = extra()
+    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -73,6 +87,15 @@ struct MessageHoverRow<Extra: View>: View {
                     .foregroundStyle(Theme.text3)
                     .padding(.horizontal, 6)
                     .tip(MessageTime.full(at))
+            }
+            if let note {
+                Text(note)
+                    .scaledFont(11)
+                    .foregroundStyle(Theme.text3)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 6)
+                    .tip(note)
             }
             CopyButton(help: help, text: copy)
             extra

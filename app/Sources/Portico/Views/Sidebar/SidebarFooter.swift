@@ -67,11 +67,11 @@ struct SidebarFooter: View {
             if let initial = person.initial {
                 Text(initial)
                     .scaledFont(12, weight: .semibold)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
             } else {
                 Image(systemName: "person.fill")
                     .font(Theme.iconFont(11))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
             }
         }
         .frame(width: Self.markSize, height: Self.markSize)

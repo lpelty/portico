@@ -256,13 +256,17 @@ def check_config(config_path: Path) -> Check:
     if not config_path.exists() and not local.exists():
         return Check("config", True, f"{config_path} absent, using defaults")
     try:
-        load_config(config_path)
+        config = load_config(config_path)
     except ConfigError as e:
         return Check("config", False, _one_line(str(e)))
     with_local = f" with {LOCAL_CONFIG_NAME}" if local.exists() else ""
+    # v0.26 (PORT-23): ElevenLabs voices are part of Read aloud; on alone, nothing shows.
+    note = ""
+    if config.voice.elevenlabs.enabled and not config.voice.read_aloud:
+        note = "; voice.elevenlabs needs [voice] read_aloud = true, so ElevenLabs voices are off"
     if not config_path.exists():
-        return Check("config", True, f"{config_path} absent; {LOCAL_CONFIG_NAME} loads over the defaults")
-    return Check("config", True, f"{config_path} loads{with_local}")
+        return Check("config", True, f"{config_path} absent; {LOCAL_CONFIG_NAME} loads over the defaults{note}", warn=bool(note))
+    return Check("config", True, f"{config_path} loads{with_local}{note}", warn=bool(note))
 
 
 def check_system_prompt(config_path: Path, version: Callable[[], str | None] | None = None) -> Check:
@@ -294,8 +298,13 @@ def check_system_prompt(config_path: Path, version: Callable[[], str | None] | N
     return Check("system prompt", True, f"custom: {config.system_prompt_file} (copied from v{recorded}, the engine's version)")
 
 
-def check_signin(config_path: Path) -> Check:
-    """v0.25 §4.5: what a turn that fails on an expired sign-in would wait on, per kind. Runs nothing."""
+def check_signin(config_path: Path, environ: Mapping[str, str] = os.environ) -> Check:
+    """v0.25 §4.5: what a turn that fails on an expired sign-in would wait on, per kind. Runs nothing.
+
+    v0.26: only the kinds ``environ`` allows (the ``claude`` kind only with a
+    claude.ai login, review M1). The doctor runs as the person, so it reads
+    their environment; the service's own environment can differ.
+    """
     from . import signin
 
     try:
@@ -309,7 +318,7 @@ def check_signin(config_path: Path) -> Check:
         return "claude" + command[len(cli):] if command.startswith(cli + " ") else command
 
     parts = []
-    for kind in signin.kinds_for(config):
+    for kind in signin.kinds_for(config, claude=signin.claude_login(environ)):
         how = f"`{shown(kind.check)}`" if kind.check else "AWS SSO token cache"
         opener = f"`{shown(kind.open)}`" if kind.open else "not set"
         parts.append(f"{kind.name}: {how} every {signin.poll_interval(kind):g} s; open: {opener}")

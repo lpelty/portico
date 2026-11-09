@@ -16,7 +16,7 @@ import WebKit
 enum EditorPage {
     static func html() throws -> String {
         let template = try resource("editor", "html")
-        let css = try resource("viewer", "css")
+        let css = ViewerTheme.css() + (try resource("viewer", "css"))
         let script = try resource("editor", "js")
         let comments = try resource("viewer-comments", "js")
         // The stylesheet first: the script is the large part, and nothing

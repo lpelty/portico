@@ -50,7 +50,7 @@ enum PluginsPresentation {
     }
 
     /// AR4's logo fills (Design review, Meeting notes, Release helper) and AR1's, chosen by the id.
-    static let logoFills = ["#D1567A", "#3F8CD1", "#7A8A3F", "#4F7DF3", "#E07A3F", "#2F9E8F", "#8A6BD1", "#C9A227"]
+    static let logoFills = Theme.pluginLogoFills.map { Theme.hex($0).light }
 
     static func logoFill(for id: String) -> String {
         let sum = id.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
@@ -364,7 +364,7 @@ struct PluginsTab: View {
             } else {
                 SettingsPanel {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         installedRow(row)
                     }
                 }
@@ -374,7 +374,7 @@ struct PluginsTab: View {
                 sectionTitle(PluginsPresentation.marketplacesTitle(model.plugins))
                 SettingsPanel {
                     ForEach(Array(markets.enumerated()), id: \.element.id) { index, market in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         marketplaceRow(market)
                     }
                 }
@@ -488,7 +488,7 @@ struct PluginsTab: View {
             } else {
                 SettingsPanel {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Rectangle().fill(Theme.border).frame(height: 1) }
+                        if index > 0 { SettingsDivider() }
                         browseRow(row)
                     }
                 }

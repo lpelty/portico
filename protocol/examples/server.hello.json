@@ -42,6 +42,14 @@
       "title": "Read aloud"
     },
     {
+      "detail": "Read aloud can use an ElevenLabs voice. The app calls ElevenLabs itself, with a key kept in this Mac's Keychain.",
+      "home": "voice",
+      "key": "voice.elevenlabs",
+      "source": "config.local.toml",
+      "tag": "preview",
+      "title": "ElevenLabs voices"
+    },
+    {
       "detail": "A summary of yesterday's sessions each morning.",
       "key": "digest.daily",
       "source": "plugin:digest",

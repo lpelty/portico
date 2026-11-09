@@ -621,6 +621,14 @@ any other. Absent when there are no items. An older app ignores it; an
 older gateway sends none, so the app shows Labs only for its own machine
 flag.
 
+v0.26: the built-in items gain `voice.elevenlabs` ("ElevenLabs voices"),
+listed after `voice.read_aloud` when `[voice.elevenlabs] enabled = true` and
+Read aloud is on (it needs it; on alone, nothing is listed and the doctor
+says so). The app draws it inside Read aloud's block (a Voice source
+control), not as its own row. The gateway never sees the ElevenLabs key,
+voice or text: the app keeps the key in the macOS Keychain and calls
+ElevenLabs itself.
+
 v0.11: `hide_session_folder: bool` (default `false`; config `[files]
 hide_session_folder`): the app's Files pane leaves out the chat's own
 folder (the `chat` root) when the deployment has roots of its own to show.
@@ -1012,6 +1020,14 @@ replayed from the engine's transcript (one restored after a gateway
 restart) gets the notices of the current gateway run put back in, after
 the turn each followed and without `seq`; only notices from before the
 restart are lost.
+
+v0.26: `kind: "signin.continued"` (text "Continued after sign-in") marks
+where a turn carried on after a sign-in wait (`signin.wait` `current`). The
+gateway emits it at the continue, so it is in the ring, and `chat.history`
+from the engine's transcript has one where the continue message was (the
+message itself is never drawn), between the two replies. The app draws it
+as its "Continued after sign-in" line, at most one per turn (it may already
+have drawn one on `current`). An older app shows it as a plain line.
 
 ### `config.stale` — `ConfigStale` *(v0.3)*
 No fields. `config.toml` is newer than when the gateway started (or it

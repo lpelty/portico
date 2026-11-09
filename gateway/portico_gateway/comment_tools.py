@@ -227,7 +227,7 @@ def build_comment_tools(owner: Any) -> list[SdkMcpTool[Any]]:
             if found == "not shown in the table":
                 return _error("That text isn't shown in the table.")
             if found == cm.INSIDE_ATOM:
-                return _error(f'"{quote}" is inside a link or an HTML entity in {raw}; quote text outside it, or the whole link.')
+                return _error(f"\"{quote}\" is inside a link or an HTML entity in {raw}; quote text outside the link, or the link's address.")
             if found.startswith("occurs "):
                 n = found.split()[1]
                 return _error(f'"{quote}" occurs {n} times in {raw}; there is no occurrence {occurrence}.')

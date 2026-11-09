@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import Portico
@@ -294,5 +296,38 @@ final class ThreadViewsTests: XCTestCase {
         write(5, "t", "/tmp/acme/pricing.html", seq: 1)
         XCTAssertEqual(model.changedThisSession(chat: 5).map(\.path), ["/tmp/acme/pricing.html"])
         XCTAssertEqual(model.changedThisSession(chat: 3).map(\.path), ["/tmp/acme/plan.md"])
+    }
+
+    // MARK: - v0.26 (PORT-19, ZG2)
+
+    /// A 60-character name in a 240 pt sidebar still shows "(Main)": the
+    /// name truncates, "(Main)" stays inside the row.
+    func testALongNameTruncatesBeforeMain() {
+        let name = String(repeating: "Wren the very long agent name ", count: 2)
+        XCTAssertEqual(name.count, 60)
+        final class Box { var whole = CGRect.zero; var main = CGRect.zero }
+        let box = Box()
+        let view = ConversationName(label: MainLabel.make(agentName: name).text,
+                                    mainName: MainLabel.make(agentName: name).name, weight: .medium,
+                                    onFrames: { box.whole = $0; box.main = $1 })
+            .frame(width: 240, alignment: .leading)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 40), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: view)
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 240, height: 40)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(box.main.width, 20, "(Main) is drawn")
+        XCTAssertLessThanOrEqual(box.whole.width, 240.5)
+        XCTAssertLessThanOrEqual(box.main.maxX, box.whole.maxX + 0.5, "(Main) lies inside the row")
+        XCTAssertGreaterThanOrEqual(box.main.minX, box.whole.minX)
+    }
+
+    func testThreadsKeepTheirLabelsWithAName() {
+        let (model, _) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
+        let rows = model.sidebarThreads.rows(now: Date(), agentName: model.hello?.brand.agentName)
+        XCTAssertEqual(rows.map(\.label), ["Acme (Main)", "Thread 1"])
     }
 }

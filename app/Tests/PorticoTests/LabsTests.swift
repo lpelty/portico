@@ -72,7 +72,7 @@ final class LabsTests: XCTestCase {
         older.voice = HelloVoice(readAloud: true)
         model.apply(.hello(older))
         XCTAssertEqual(model.labItems.map(\.key), ["voice.read_aloud"])
-        XCTAssertEqual(model.labItems.first?.source, "config.toml")
+        XCTAssertEqual(model.labItems.first?.source, LabItem.olderGatewaySource, "v0.26 (N8): it can't tell which file")
     }
 
     func testLabsTabFallsBackWhenItsItemsGo() {
@@ -119,5 +119,80 @@ final class LabsTests: XCTestCase {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Portico/\(relative)")
+    }
+
+    // MARK: - v0.26 (PORT-23, ruling 5): ElevenLabs voices fold into Read aloud's block
+
+    func testElevenLabsItemIsFoldedIntoReadAloudsNote() {
+        let model = AppModel(settings: settings(flag: false))
+        let readAloud = item(source: "config.local.toml", home: "voice")
+        let eleven = item(key: "voice.elevenlabs", title: "ElevenLabs voices", source: "config.local.toml", home: "voice")
+        model.apply(.hello(hello(labs: [readAloud, eleven])))
+        XCTAssertEqual(model.labItems.map(\.key), ["voice.read_aloud"])
+        XCTAssertEqual(model.elevenLabsItem, eleven)
+        XCTAssertEqual(
+            LabPresentation.note(readAloud, elevenLabs: eleven),
+            "Turned on in config.local.toml · ElevenLabs voices turned on in config.local.toml · Moves to Voice when released")
+        XCTAssertEqual(LabPresentation.note(readAloud), "Turned on in config.local.toml · Moves to Voice when released")
+    }
+
+    func testHelloSetsElevenLabsAvailable() {
+        let model = AppModel(settings: settings(flag: false))
+        XCTAssertFalse(model.settings.elevenLabsAvailable)
+        model.apply(.hello(hello(labs: [item(source: "config.toml", home: "voice"),
+                                        item(key: LabItem.elevenLabsKey, source: "config.toml")])))
+        XCTAssertTrue(model.settings.elevenLabsAvailable)
+        model.apply(.hello(hello(labs: [item(source: "config.toml", home: "voice")])))
+        XCTAssertFalse(model.settings.elevenLabsAvailable)
+    }
+
+    func testAnElevenLabsItemAloneShowsNoLabsTab() {
+        let model = AppModel(settings: settings(flag: false))
+        model.apply(.hello(hello(labs: [item(key: LabItem.elevenLabsKey, source: "config.toml")])))
+        XCTAssertEqual(model.labItems, [])
+        XCTAssertFalse(SettingsTab.visible(labs: !model.labItems.isEmpty).contains(.labs))
+        XCTAssertFalse(model.settings.elevenLabsAvailable, "ElevenLabs needs Read aloud")
+    }
+
+    // MARK: - v0.26: the v0.25 review's Labs leftovers (L11, L12, N7, N8)
+
+    func testAnUnknownTagDecodesAndDrawsNoPill() throws {
+        let json = #"{"key":"x.y","title":"X","detail":"d","tag":"beta","source":"plugin:x"}"#
+        let item = try JSONDecoder().decode(LabItem.self, from: Data(json.utf8))
+        XCTAssertEqual(item.tag.rawValue, "beta")
+        XCTAssertNil(LabTagPill.label(for: item.tag))
+        XCTAssertEqual(LabTagPill.label(for: .preview), "Preview")
+        XCTAssertEqual(LabTagPill.label(for: .local), "Local")
+        // A whole hello with a new tag still decodes (the app can connect).
+        let hello = #"{"type":"hello","protocol":1,"gateway_version":"0.27.0","epoch":"e","brand":{"name":"Front","agent_name":"Agent"},"actions":[],"roots":[],"commands":[],"capabilities":[],"ts":"2026-11-08T12:00:00Z","labs":[{"key":"x.y","title":"X","detail":"d","tag":"beta","source":"config.toml"}]}"#
+        guard case .hello(let decoded) = try JSONDecoder().decode(ServerMessage.self, from: Data(hello.utf8)) else {
+            return XCTFail("hello")
+        }
+        XCTAssertEqual(decoded.labs?.first?.tag, LabItem.Tag(rawValue: "beta"))
+        XCTAssertEqual(try JSONEncoder().encode(LabItem.Tag.preview), Data(#""preview""#.utf8))
+    }
+
+    func testReadAloudControlsNeedReadAloudAvailable() {
+        let readAloud = item(source: "plugin:x", home: "voice")
+        XCTAssertEqual(LabItemContent.for(readAloud, readAloudAvailable: false), .unavailable)
+        XCTAssertEqual(LabItemContent.for(readAloud, readAloudAvailable: true), .readAloudControls)
+        XCTAssertEqual(LabItemContent.for(item(key: "digest"), readAloudAvailable: true), .info)
+        XCTAssertEqual(LabItemContent.unavailableLine, "Read aloud isn't available here.")
+    }
+
+    func testMovesToOnlyForPreview() {
+        let localWithHome = item(key: "digest", tag: .local, source: "plugin:digest", home: "voice")
+        XCTAssertFalse(LabPresentation.note(localWithHome).contains("Moves to"))
+        XCTAssertTrue(LabPresentation.note(item(source: "config.toml", home: "voice")).contains("Moves to Voice"))
+    }
+
+    func testAnOlderGatewaysRowDoesNotNameAFile() {
+        let model = AppModel(settings: settings(flag: false))
+        var older = hello(labs: nil)
+        older.voice = HelloVoice(readAloud: true)
+        model.apply(.hello(older))
+        XCTAssertEqual(model.labItems.first?.source, LabItem.olderGatewaySource)
+        XCTAssertEqual(LabPresentation.note(model.labItems[0]),
+                       "Turned on in the gateway's config · Moves to Voice when released")
     }
 }

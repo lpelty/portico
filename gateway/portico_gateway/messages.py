@@ -830,6 +830,8 @@ class Voice(Strict):
 
 # v0.25: the key of the Read aloud Labs item (the app draws its controls for it).
 READ_ALOUD_LAB = "voice.read_aloud"
+# v0.26 (PORT-23): ElevenLabs voices for Read aloud; listed after Read aloud and only with it.
+ELEVENLABS_LAB = "voice.elevenlabs"
 
 
 class LabItem(Strict):
@@ -2004,6 +2006,11 @@ def example_messages() -> dict[str, BaseModel]:
                     tag="preview", source="config.local.toml", home="voice",
                 ),
                 LabItem(
+                    key="voice.elevenlabs", title="ElevenLabs voices",
+                    detail="Read aloud can use an ElevenLabs voice. The app calls ElevenLabs itself, with a key kept in this Mac's Keychain.",
+                    tag="preview", source="config.local.toml", home="voice",
+                ),
+                LabItem(
                     key="digest.daily", title="Daily digest", detail="A summary of yesterday's sessions each morning.",
                     tag="local", source="plugin:digest",
                 ),
@@ -2368,6 +2375,16 @@ def example_messages() -> dict[str, BaseModel]:
             raise RuntimeError(f"duplicate example for {key}")
         out[key] = msg
     return out
+
+
+def example_variants() -> dict[str, BaseModel]:
+    """Another shape of a type that already has its example, keyed ``<direction>.<type>.<variant>``."""
+    return {
+        # v0.26 (review L5, L8): the note where a turn carried on after a sign-in.
+        "server.chat.notice.signin-continued": ChatNotice(
+            ts=_TS, chat=1, seq=54, text="Continued after sign-in", kind="signin.continued"
+        ),
+    }
 
 
 def canonical_json(obj: Any) -> str:

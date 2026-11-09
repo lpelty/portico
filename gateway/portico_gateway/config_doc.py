@@ -155,6 +155,11 @@ KEY_DOCS: dict[str, KeyDoc] = {
         "Read aloud on each reply: true shows the switch in Settings; the person's on/off choice stays in the app.",
         "read_aloud = true", applies="gateway restart (the app follows when it reconnects)", scope="personal",
     ),
+    "voice.elevenlabs.enabled": KeyDoc(
+        "ElevenLabs voices for Read aloud (Labs); needs [voice] read_aloud = true. The API key is never in config: "
+        "it's saved in the app, in the macOS Keychain. Reply text is sent to ElevenLabs to be spoken.",
+        "enabled = true", applies="gateway restart (the app follows when it reconnects)", scope="personal",
+    ),
     # --- signin -----------------------------------------------------------------------
     "signin.aws-sso.patterns": KeyDoc(
         "Regular expressions (case-insensitive) that make a failed turn an expired AWS sign-in. "

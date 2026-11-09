@@ -88,7 +88,7 @@ private final class FakePermissions: VoicePermissions {
 }
 
 @MainActor
-private final class FakeSynthesizer: SpeechSynthesizing {
+final class FakeSynthesizer: SpeechSynthesizing {
     var onFinish: ((Int) -> Void)?
     private(set) var spoken: [(text: String, voice: String?, rate: Float, token: Int)] = []
     private(set) var stops = 0

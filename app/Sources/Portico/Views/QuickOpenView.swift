@@ -16,7 +16,7 @@ struct QuickOpenView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.opacity(0.25)
+            Theme.scrim
                 .ignoresSafeArea()
                 .onTapGesture { close() }
             panel
@@ -60,7 +60,7 @@ struct QuickOpenView: View {
         }
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.borderStrong, lineWidth: 1))
-        .shadow(color: .black.opacity(0.3), radius: 24, y: 10)
+        .shadow(color: Theme.shadowStrong, radius: 24, y: 10)
     }
 
     @ViewBuilder
