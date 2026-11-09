@@ -29,7 +29,7 @@ import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { livePreview, type LinkOpener } from "./livePreview.ts";
 import { Bridge, type Post } from "./bridge.ts";
-import { anchorAwareMarkdown, commentsExtension, draftField, scanComments, selectionRefusal, setDraft, widenToAutolink } from "./comments.ts";
+import { anchorAwareMarkdown, commentsExtension, draftField, scanComments, selectionRefusal, setDraft, trimSelection, widenToAutolink } from "./comments.ts";
 
 export type Mode = "markdown" | "code";
 
@@ -407,7 +407,8 @@ export function createEditor(parent: HTMLElement, post?: Post, openLink?: LinkOp
       },
     },
     selectionRange() {
-      const { from, to } = view.state.selection.main;
+      const main = view.state.selection.main;
+      const [from, to] = trimSelection(view.state.doc.toString(), main.from, main.to);
       return { from, to, refusal: to > from ? selectionRefusal(view.state, from, to) : null };
     },
   };

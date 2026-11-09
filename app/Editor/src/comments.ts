@@ -757,6 +757,17 @@ function splitsAtom(a: Atom, from: number, to: number): boolean {
   return inside && !(from <= a.innerFrom && a.innerTo <= to);
 }
 
+// v0.26.2 follow-up: a whole line selected (a triple click, a drag past its
+// end) takes the line break, and the next block's start, and read as crossing
+// blocks. The edges come in past whitespace to the text; a selection of only
+// whitespace is left as it is.
+export function trimSelection(text: string, from: number, to: number): [number, number] {
+  let a = from, b = to;
+  while (a < b && /\s/.test(text[a])) a++;
+  while (b > a && /\s/.test(text[b - 1])) b--;
+  return a < b ? [a, b] : [from, to];
+}
+
 // Why a selection can't be anchored: "ignored" (code or front matter),
 // "crosses" (more than one paragraph or list item), "cell" (across table
 // cells), "atom" (it starts or ends inside a link or an entity), or null.

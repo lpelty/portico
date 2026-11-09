@@ -160,6 +160,50 @@ final class CommentsPageScriptTests: XCTestCase {
         XCTAssertEqual(info?["refusal"] as? String, "crosses")
     }
 
+    /// v0.26.2 follow-up (Larry, 11-09 demos): selecting a whole line (a
+    /// triple click, or a drag past its end) left Comment greyed out; one
+    /// word worked. WebKit ends such a selection at the start of the next
+    /// block, so it read as crossing blocks.
+    func testAWholeParagraphSelectedToTheNextBlocksStartCanBeCommented() async throws {
+        let view = try await page("Intro.\n\nthe permission prompt stays\n\nNext one.\n")
+        _ = try await js("""
+            var ps = document.querySelectorAll('#body p');
+            var r = document.createRange(); r.setStart(ps[1].firstChild, 0); r.setEnd(ps[2], 0);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertNil(info?["refusal"] as? String)
+        XCTAssertEqual(info?["text"] as? String, "the permission prompt stays")
+        XCTAssertEqual(info?["lines"] as? [Int], [2, 2])
+    }
+
+    func testAWholeListItemSelectedToTheNextItemsStartCanBeCommented() async throws {
+        let view = try await page("- one item\n- two item\n")
+        _ = try await js("""
+            var lis = document.querySelectorAll('li');
+            var r = document.createRange(); r.setStart(lis[0].firstChild, 0); r.setEnd(lis[1].firstChild, 0);
+            var s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertNil(info?["refusal"] as? String)
+        XCTAssertEqual(info?["text"] as? String, "one item")
+    }
+
+    /// A real triple click, as WebKit selects a paragraph.
+    func testATripleClickedParagraphCanBeCommented() async throws {
+        let view = try await page("Intro.\n\nthe permission prompt stays\n\nNext one.\n")
+        _ = try await js("""
+            var p = document.querySelectorAll('#body p')[1];
+            var s = getSelection(); s.removeAllRanges();
+            s.setPosition(p.firstChild, 3); s.modify('move', 'backward', 'paragraphboundary');
+            s.modify('extend', 'forward', 'paragraphboundary');
+            return true;
+            """, in: view)
+        let info = try await js("return window.__porticoComments.selectionInfo();", in: view) as? [String: Any]
+        XCTAssertNil(info?["refusal"] as? String)
+        XCTAssertEqual(info?["text"] as? String, "the permission prompt stays")
+    }
+
     func testCRLFSourceLinesMatch() async throws {
         let view = try await page("A\r\n\r\nB para\r\nnext\r\n")
         let lines = try await js("return [...document.querySelectorAll('#body p')].map(p => p.getAttribute('data-lines'));", in: view) as? [String]
