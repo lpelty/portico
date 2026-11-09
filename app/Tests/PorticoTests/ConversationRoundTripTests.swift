@@ -19,7 +19,7 @@ import XCTest
 final class ConversationRoundTripTests: XCTestCase {
     private var defaults: UserDefaults!
 
-    private func model(chats: [Int] = [3]) throws -> AppModel {
+    private func model(chats: [Int] = [3], varied: Bool = false) throws -> AppModel {
         let suite = "portico-roundtrip-\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         addTeardownBlock { [defaults] in defaults?.removePersistentDomain(forName: suite) }
@@ -44,7 +44,12 @@ final class ConversationRoundTripTests: XCTestCase {
                 seq += 1
                 events.append(.userText(UserText(chat: chat, turn: turn, text: "Question \(turn) from Jordan", seq: seq)))
                 seq += 1
-                events.append(.textDelta(TextDelta(chat: chat, turn: turn, text: "Answer \(turn). \(reply)", seq: seq)))
+                // `varied`: rows very unlike each other, as in the field (a
+                // one-line answer, then one forty times as long), so the lazy
+                // stack's estimate for rows not laid out is far off.
+                let text = !varied ? reply
+                    : turn % 3 == 0 ? Array(repeating: reply, count: 8).joined(separator: "\n\n") : "Done."
+                events.append(.textDelta(TextDelta(chat: chat, turn: turn, text: "Answer \(turn). \(text)", seq: seq)))
             }
             model.apply(.chatHistory(ChatHistory(chat: chat, events: events, truncated: false)))
             model.apply(.chatLive(ChatLive(chat: chat)))
@@ -178,6 +183,95 @@ final class ConversationRoundTripTests: XCTestCase {
     /// Only the snap is checked here: near the end SwiftUI's own anchoring
     /// moves the reply by up to a bubble's height (22 pt seen), before and
     /// after this fix alike.
+    /// The column's width, animated by SwiftUI as the main window animates
+    /// the sidebar and viewer opening (`MainWindow`'s `.animation`).
+    @MainActor
+    private final class ColumnWidth: ObservableObject {
+        @Published var width: CGFloat
+        init(_ width: CGFloat) { self.width = width }
+    }
+
+    private struct AnimatedColumn: View {
+        @ObservedObject var column: ColumnWidth
+
+        var body: some View {
+            HStack(spacing: 0) {
+                Selected().frame(width: column.width)
+                Spacer(minLength: 0)
+            }
+            .animation(.easeOut(duration: 0.22), value: column.width)
+        }
+    }
+
+    /// v0.26.2 (a field trace, 11-09): scrolled up near the end of
+    /// a conversation whose rows are very unlike, the side panel or viewer
+    /// changing the column's width left the view past the end of the
+    /// content, so nothing was drawn until the person scrolled.
+    func testAnAnimatedWidthChangeScrolledUpNeverLeavesTheViewPastTheEnd() throws {
+        let model = try model(varied: true)
+        let settings = Settings(defaults: defaults)
+        let column = ColumnWidth(640)
+        let host = NSHostingView(rootView:
+            AnimatedColumn(column: column)
+                .environmentObject(model)
+                .environmentObject(settings)
+                .environmentObject(ReadAloud(settings: settings))
+                .environmentObject(Dictation(settings: settings)))
+        let frame = NSRect(x: 0, y: 0, width: 1000, height: 600)
+        host.frame = frame
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        spin()
+        let scroll = try XCTUnwrap(Self.transcriptScroll(in: host))
+        let clip = scroll.contentView
+        let height = try XCTUnwrap(scroll.documentView).frame.height
+        let screen = clip.bounds.height
+        for _ in 0..<40 where clip.bounds.maxY > height - 2 * screen {
+            Self.wheel(scroll, pixels: 200)
+            spin(0.05)
+        }
+        spin(0.3)
+        var worst: CGFloat = 0
+        for to in [900.0, 640.0, 900.0, 700.0, 960.0] {
+            column.width = to
+            let until = Date().addingTimeInterval(0.6)
+            while Date() < until {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+                worst = max(worst, clip.bounds.maxY - (scroll.documentView?.frame.height ?? 0))
+            }
+            spin(0.6)
+            let end = try XCTUnwrap(scroll.documentView).frame.height
+            XCTAssertLessThanOrEqual(clip.bounds.maxY, end + 1, "inside the content once the width settles (to \(to))")
+            XCTAssertNotNil(Self.topReply(in: scroll), "a reply on screen (to \(to))")
+        }
+        print("BLANK worst past the end during the animation: \(Int(worst))")
+    }
+
+    /// v0.26.2: the state the field trace shows, forced: the view left past
+    /// the end of the content, no scroll phase. It comes back inside with a
+    /// reply on screen, without the person scrolling. A guard: hosted,
+    /// SwiftUI also puts this view back itself (the field's case it did not
+    /// is not reproduced here); `TranscriptBlankSpaceTests` holds the rule.
+    func testAViewLeftPastTheEndComesBackInside() throws {
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        for _ in 0..<6 {
+            Self.wheel(hosted.scroll, pixels: 300)
+            spin(0.05)
+        }
+        spin(0.3)
+        let end = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        clip.setBoundsOrigin(NSPoint(x: clip.bounds.origin.x, y: end + 1500))
+        hosted.scroll.reflectScrolledClipView(clip)
+        spin(1.2)
+        let now = try XCTUnwrap(hosted.scroll.documentView).frame.height
+        XCTAssertLessThanOrEqual(clip.bounds.maxY, now + 1, "back inside the content")
+        XCTAssertNotNil(Self.topReply(in: hosted.scroll), "a reply on screen")
+    }
+
     func testASpaceAndBackLeavesAConversationScrolledUpNearTheEndInPlace() throws {
         let hosted = try host(try model(), width: 900)
         defer { hosted.window.close() }
