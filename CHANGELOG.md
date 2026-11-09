@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.26.3 (2026-11-09)
+
+### Fixes
+
+- **Comment was greyed out when a whole line was selected** (found in demos;
+  one word worked). A triple click, or a drag past the end of a line, ends
+  the selection at the start of the next paragraph or list item, so it read
+  as crossing two blocks. The selection's edges now come in to the text it
+  actually covers, in reading mode and in Edit mode. A selection that really
+  spans two paragraphs is still refused, as is one that starts or ends inside
+  bold, a link or code (the comment's markers can't go there).
+
 ## v0.26.2 (2026-11-09)
 
 ### Fixes

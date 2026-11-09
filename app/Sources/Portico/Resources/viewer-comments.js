@@ -224,8 +224,32 @@
     return graphemeSnap(t, s, e);
   }
 
-  function snapRange(range) {
+  // v0.26.2 follow-up: a whole line selected (a triple click, a drag past
+  // its end) ends at the start of the next block, with nothing of it
+  // selected, and read as crossing blocks. The range's edges move in to the
+  // first and last text it actually selects.
+  function trimRange(range) {
     var r = range.cloneRange();
+    var root = r.commonAncestorContainer;
+    if (root.nodeType === Node.TEXT_NODE) return r;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var first = null, last = null, node;
+    while ((node = walker.nextNode())) {
+      if (!r.intersectsNode(node)) continue;
+      var from = node === r.startContainer ? r.startOffset : 0;
+      var to = node === r.endContainer ? r.endOffset : node.data.length;
+      if (!node.data.slice(from, to).trim()) continue;
+      if (!first) first = { node: node, at: from };
+      last = { node: node, at: to };
+    }
+    if (!first) return r;
+    r.setStart(first.node, first.at);
+    r.setEnd(last.node, last.at);
+    return r;
+  }
+
+  function snapRange(range) {
+    var r = trimRange(range);
     if (r.startContainer.nodeType === Node.TEXT_NODE) {
       var t = r.startContainer.data;
       r.setStart(r.startContainer, snapEdges(t, r.startOffset, r.startOffset)[0]);

@@ -24,7 +24,7 @@ const { EditorState, EditorSelection } = await import("@codemirror/state");
 const { ensureSyntaxTree } = await import("@codemirror/language");
 const { markdown, markdownLanguage } = await import("@codemirror/lang-markdown");
 const { yamlFrontmatter } = await import("@codemirror/lang-yaml");
-const { scanComments, commentsExtension, commentDecorations, selectionRefusal, widenToAutolink } = await import("../src/comments.ts");
+const { scanComments, commentsExtension, commentDecorations, selectionRefusal, trimSelection, widenToAutolink } = await import("../src/comments.ts");
 const { createEditor } = await import("../src/editor.ts");
 type Message = import("../src/bridge.ts").Message;
 
@@ -485,4 +485,29 @@ test("GFM: a pipe splits a table row before inline code, so `c|d` is plain text 
   const c = text.indexOf("c|");
   assert.equal(selectionRefusal(s, c, c + 1), null);
   assert.equal(selectionRefusal(s, c + 2, c + 3), null);
+});
+
+// v0.26.2 follow-up (Larry, 11-09 demos): a whole line selected (a triple
+// click, a drag past its end) takes the line break and reads as crossing
+// into the next block; its edges come in to the text.
+test("a whole line selected with its line break can be commented", () => {
+  const text = "Intro.\n\nthe permission prompt stays\n\nNext one.\n";
+  const s = state(text);
+  const start = text.indexOf("the permission");
+  const end = text.indexOf("Next");
+  const [from, to] = trimSelection(text, start, end);
+  assert.equal(text.slice(from, to), "the permission prompt stays");
+  assert.equal(selectionRefusal(s, from, to), null);
+});
+
+test("a list item selected to the next item's start can be commented", () => {
+  const text = "- one item\n- two item\n";
+  const s = state(text);
+  const [from, to] = trimSelection(text, text.indexOf("one"), text.indexOf("- two"));
+  assert.equal(text.slice(from, to), "one item");
+  assert.equal(selectionRefusal(s, from, to), null);
+});
+
+test("trimming leaves a selection of only spaces alone", () => {
+  assert.deepEqual(trimSelection("a   b", 1, 4), [1, 4]);
 });
