@@ -242,6 +242,7 @@ struct ConversationView: View {
                     content: geometry.contentSize.height),
                 visible: geometry.containerSize.height)
         } action: { _, now in
+            if ConversationProbe.enabled { ConversationProbe.geometryReadings[chat, default: 0] += 1 }
             noteMarkersInView(visible: now.visible)
             // The marked input's direction decides which readings are
             // the person's (fix round 4; no longer spent by the first).
@@ -251,7 +252,9 @@ struct ConversationView: View {
             let target = scrollMemory.observe(
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
+            ScrollTrace.note("read chat=\(chat) offset=\(Int(now.offset)) content=\(Int(now.content)) visible=\(Int(now.visible)) width=\(Int(now.width)) atBottom=\(now.atBottom) scrolling=\(personScrolling) marked=\(String(describing: personInput.recent)) memoryAtBottom=\(scrollMemory.atBottom) target=\(String(describing: target)) edge=\(String(describing: position.edge)) viewID=\(position.viewID(type: String.self) ?? "-")")
             if target == .bottom {
+                if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
                 toBottomThroughLastRow()
             } else if !scrollMemory.atBottom, position.edge == .bottom {
                 // The person left the end by input with no scroll phase (a
@@ -259,12 +262,14 @@ struct ConversationView: View {
                 // still says the bottom edge, and SwiftUI would put it
                 // back there when the content next grows (found hosted).
                 // An empty position leaves the view where it is.
+                ScrollTrace.note("move chat=\(chat) clear-position (left the end by input)")
                 position = ScrollPosition(idType: String.self)
             } else if let top = restoredTop, position.viewID(type: String.self) == top,
                       personInput.recent != nil, !personScrolling {
                 // Fix round 1: the same for the row a restore scrolled to,
                 // on any recent person-input mark (key, wheel or VoiceOver);
                 // SwiftUI put the view back on it at the next delta.
+                ScrollTrace.note("move chat=\(chat) clear-position (restored row released)")
                 position = ScrollPosition(idType: String.self)
                 restoredTop = nil
             }
@@ -278,6 +283,7 @@ struct ConversationView: View {
         .onScrollPhaseChange { _, phase in
             // `.animating` too (fix round 2): the app's own scrolls are not animated.
             personScrolling = phase != .idle
+            ScrollTrace.note("phase chat=\(chat) \(phase)")
             scrollPhaseName = "\(phase)"
         }
         // v0.15 task 2b fix round 1: the newest message is followed only
@@ -286,6 +292,7 @@ struct ConversationView: View {
         // reading above catches the rows laid out after it. The person's
         // own message always goes to the bottom.
         .onChange(of: followKey) { old, new in
+            ScrollTrace.note("follow chat=\(chat) sent-changed=\(new.sent != old.sent) memoryAtBottom=\(scrollMemory.atBottom) byPerson=\(byPerson)")
             if new.sent != old.sent {
                 scrollToBottom()
             } else if scrollMemory.atBottom && !byPerson {
@@ -293,6 +300,9 @@ struct ConversationView: View {
             }
         }
         .task(id: chat) { await watchForBlankSpace() }
+        .onChange(of: position) { _, now in
+            ScrollTrace.note("position chat=\(chat) edge=\(String(describing: now.edge)) viewID=\(now.viewID(type: String.self) ?? "-") byUser=\(now.isPositionedByUser)")
+        }
         .onChange(of: model.markerJump) { _, request in
             if let request, request.chat == chat { jump(to: request.id) }
         }
@@ -356,6 +366,7 @@ struct ConversationView: View {
     /// so the person's next input releases it and a streaming reply below
     /// doesn't pull the view down; the bubble is highlighted briefly.
     private func jump(to id: String) {
+        ScrollTrace.note("move chat=\(chat) marker-jump id=\(id)")
         scrollMemory.jumped()
         position.scrollTo(id: id, anchor: .top)
         restoredTop = id
@@ -423,6 +434,7 @@ struct ConversationView: View {
     /// Recorded as at the bottom (v0.15 fix round 1): the jump's own
     /// reading is the layout's, so the memory would not see it.
     private func scrollToBottom() {
+        ScrollTrace.note("move chat=\(chat) scrollToBottom")
         scrollMemory.followed()
         toBottom()
         Task { @MainActor in
@@ -437,6 +449,7 @@ struct ConversationView: View {
     /// back once after the person's first scroll (v0.15 R10, found again
     /// hosted here).
     private func toBottom() {
+        ScrollTrace.note("move chat=\(chat) toBottom (edge)")
         position.scrollTo(edge: .bottom)
     }
 
@@ -450,6 +463,7 @@ struct ConversationView: View {
     /// that row out where the view is; the edge after it keeps v0.16's
     /// target, which SwiftUI drops when the person scrolls.
     private func toBottomThroughLastRow() {
+        ScrollTrace.note("move chat=\(chat) toBottomThroughLastRow")
         position.scrollTo(id: "bottom", anchor: .bottom)
         Task { @MainActor in
             await Task.yield()
@@ -460,6 +474,7 @@ struct ConversationView: View {
     /// Back to the place this conversation was left at (v0.16 §5): the row
     /// that was at the top, then the point in it, once that row is laid out.
     private func restore(top: String, at offset: CGFloat) {
+        ScrollTrace.note("move chat=\(chat) restore top=\(top) at=\(Int(offset))")
         scrollMemory.restored(atBottom: false)
         position.scrollTo(id: top, anchor: .top)
         restoredTop = top
@@ -479,6 +494,7 @@ struct ConversationView: View {
                 if abs(off) < 0.5 { return }
                 guard let scroll = personInput.scrollView else { continue }
                 let clip = scroll.contentView
+                ScrollTrace.note("move chat=\(chat) settle top=\(top) by=\(Int(off))")
                 clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + off))
                 scroll.reflectScrolledClipView(clip)
             }
@@ -1051,4 +1067,6 @@ enum ConversationProbe {
     static var rows: [Int: TranscriptRowFrames] = [:]
     static var railShown: [Int: Bool] = [:]
     static var inView: [Int: Set<String>] = [:]
+    static var bottomCorrections: [Int: Int] = [:]
+    static var geometryReadings: [Int: Int] = [:]
 }
