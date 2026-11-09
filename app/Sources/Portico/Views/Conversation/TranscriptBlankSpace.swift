@@ -5,7 +5,7 @@ import os
 /// A field diagnostic for "empty space under the conversation" (v0.16,
 /// a deployment's field report, 11-02 item 11): not reproduced hosted, so the app
 /// logs the one line that would show it when it happens on a person's
-/// screen. Logs only; it changes nothing on screen.
+/// screen. v0.26.2: a view left past the content's end is also put back (`pastEnd`).
 enum TranscriptBlankSpace {
     /// How long the view must stay blank, with no scroll phase, before it is reported.
     static let grace: TimeInterval = 1
@@ -25,6 +25,17 @@ enum TranscriptBlankSpace {
         let visible = CGRect(x: 0, y: 0, width: clip.width, height: clip.height)
         if !rowFrames.contains(where: { $0.intersects(visible) }) { return true }
         return clip.maxY > documentHeight + slack
+    }
+
+    /// v0.26.2 (a field trace, 11-09): where to put a view left past
+    /// the document's end, or nil when it isn't. A column-width animation
+    /// re-estimated the lazy stack's content shorter under a view scrolled up
+    /// near the end, and the clip stayed where it was: nothing drawn until the
+    /// person scrolled. The view goes to the end of the content (its top at
+    /// the document's height less the view's), the nearest place with rows.
+    static func pastEnd(clip: CGRect, documentHeight: CGFloat) -> CGFloat? {
+        guard clip.height > 0, clip.maxY > documentHeight + slack else { return nil }
+        return max(0, documentHeight - clip.height)
     }
 
     /// Reports once per occurrence: after `grace` seconds of blank readings, and not

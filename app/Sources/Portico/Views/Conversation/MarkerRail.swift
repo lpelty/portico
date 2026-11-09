@@ -24,6 +24,8 @@ struct MarkerRail: View {
     /// Each marker's position by id (`MarkerIndex.positions`).
     var positions: [String: Int] = [:]
     @ObservedObject var inView: MarkersInView
+    /// Where a wheel over the rail goes: the transcript's scroll view.
+    var scrollView: () -> NSScrollView? = { nil }
     let onJump: (String) -> Void
     /// The tip's width at most, and how far right of the stack it sits.
     static let tipWidth: CGFloat = 330
@@ -44,24 +46,22 @@ struct MarkerRail: View {
             ZStack(alignment: .topLeading) {
                 // The hit area: only the stack (review M2), from the first drawn mark minus
                 // `reach` to the last plus `reach`; elsewhere the margin is the transcript's.
-                Color.clear
-                    .frame(width: ConversationMarkers.railWidth, height: band.height)
-                    .contentShape(Rectangle())
-                    .offset(y: band.minY)
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let local):
-                            let point = CGPoint(x: local.x, y: local.y + band.minY)
-                            let index = ConversationMarkers.nearest(point.y, in: slots)
-                            hovered = index.flatMap { abs(slots[$0].y - point.y) <= Self.reach ? $0 : nil }
-                        case .ended:
-                            hovered = nil
-                        }
-                    }
-                    .onTapGesture {
+                // v0.26.1: an AppKit view, so the pointer reaches it. A SwiftUI hover
+                // area here sat under the transcript's scroll view (an NSView, always
+                // above SwiftUI's own drawing) and never saw the pointer (found live).
+                RailPointerArea(
+                    onMove: { local in
+                        guard let local else { hovered = nil; return false }
+                        let index = ConversationMarkers.nearest(local.y + band.minY, in: slots)
+                        hovered = index.flatMap { abs(slots[$0].y - (local.y + band.minY)) <= Self.reach ? $0 : nil }
+                        return hovered != nil
+                    },
+                    onClick: {
                         if let hovered, markers.indices.contains(hovered) { onJump(markers[hovered].id) }
-                    }
-                    .pointerStyle(hovered == nil ? nil : .link)
+                    },
+                    scrollView: scrollView)
+                    .frame(width: ConversationMarkers.railWidth, height: band.height)
+                    .offset(y: band.minY)
                     .accessibilityHidden(true)
                 // The drawn marks only (review H2), each one VoiceOver button.
                 ForEach(drawn, id: \.index) { slot in
@@ -156,5 +156,69 @@ struct MarkerTip: View {
             RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
                 .strokeBorder(Theme.tipStroke, lineWidth: 1))
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The rail's hit area as an AppKit view (v0.26.1): the pointer's place in it
+/// (nil when it leaves) and a click; `onMove` says whether a mark is under it,
+/// for the pointing hand. A wheel goes on to the transcript.
+struct RailPointerArea: NSViewRepresentable {
+    let onMove: (CGPoint?) -> Bool
+    let onClick: () -> Void
+    let scrollView: () -> NSScrollView?
+
+    func makeNSView(context: Context) -> RailPointerView {
+        let view = RailPointerView()
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ view: RailPointerView, context: Context) { update(view) }
+
+    private func update(_ view: RailPointerView) {
+        view.onMove = onMove
+        view.onClick = onClick
+        view.scrollTarget = scrollView
+    }
+}
+
+final class RailPointerView: NSView {
+    var onMove: (CGPoint?) -> Bool = { _ in false }
+    var onClick: () -> Void = {}
+    var scrollTarget: () -> NSScrollView? = { nil }
+    private var overMark = false
+
+    override var isFlipped: Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { moved(event) }
+    override func mouseMoved(with event: NSEvent) { moved(event) }
+
+    override func mouseExited(with event: NSEvent) {
+        overMark = false
+        _ = onMove(nil)
+        NSCursor.arrow.set()
+    }
+
+    override func mouseDown(with event: NSEvent) { onClick() }
+
+    override func scrollWheel(with event: NSEvent) {
+        if let scroll = scrollTarget() { scroll.scrollWheel(with: event) } else { super.scrollWheel(with: event) }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        (overMark ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+
+    private func moved(_ event: NSEvent) {
+        overMark = onMove(convert(event.locationInWindow, from: nil))
+        (overMark ? NSCursor.pointingHand : NSCursor.arrow).set()
     }
 }

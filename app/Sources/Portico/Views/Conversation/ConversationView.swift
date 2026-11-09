@@ -357,7 +357,10 @@ struct ConversationView: View {
     private var markerRail: some View {
         let markers = self.markers
         if ConversationMarkers.shown(count: markers.count) {
-            MarkerRail(markers: markers, positions: markerIndex.positions, inView: inViewMarkers) { id in
+            MarkerRail(
+                markers: markers, positions: markerIndex.positions, inView: inViewMarkers,
+                scrollView: { [personInput] in personInput.scrollView }
+            ) { id in
                 model.jumpToMessage(id, chat: chat)
             }
                 .padding(.leading, Self.railLeading)
@@ -408,6 +411,15 @@ struct ConversationView: View {
             guard let scroll = personInput.scrollView, let document = scroll.documentView else { continue }
             let clip = scroll.contentView.bounds
             let frames = rows.allFrames
+            // v0.26.2: past the end with no scroll phase, back to the end.
+            if !byPerson, let top = TranscriptBlankSpace.pastEnd(clip: clip, documentHeight: document.frame.height) {
+                ScrollTrace.note("move chat=\(chat) past-end clip=\(Int(clip.maxY)) content=\(Int(document.frame.height))")
+                if ConversationProbe.enabled { ConversationProbe.pastEndCorrections[chat, default: 0] += 1 }
+                let view = scroll.contentView
+                view.scroll(to: NSPoint(x: view.bounds.origin.x, y: top))
+                scroll.reflectScrolledClipView(view)
+                continue
+            }
             let blank = TranscriptBlankSpace.isBlank(
                 hasRows: !drawn.isEmpty, rowFrames: frames, clip: clip, documentHeight: document.frame.height)
             if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {
@@ -1087,4 +1099,5 @@ enum ConversationProbe {
     static var inView: [Int: Set<String>] = [:]
     static var bottomCorrections: [Int: Int] = [:]
     static var geometryReadings: [Int: Int] = [:]
+    static var pastEndCorrections: [Int: Int] = [:]
 }

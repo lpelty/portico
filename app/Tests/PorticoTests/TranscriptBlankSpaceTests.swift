@@ -85,4 +85,20 @@ final class TranscriptBlankSpaceTests: XCTestCase {
             TranscriptBlankSpace.line(chat: 1, documentHeight: 0, clip: .zero, lastRow: nil, phase: "idle", atBottomEdge: false)
                 .contains("last row none"))
     }
+
+    /// v0.26.2: a view left past the document's end goes back to the end.
+    func testAViewPastTheEndGoesBackToTheEnd() {
+        let clip = CGRect(x: 0, y: 10017, width: 792, height: 700)
+        XCTAssertEqual(TranscriptBlankSpace.pastEnd(clip: clip, documentHeight: 7754), 7054)
+    }
+
+    func testAViewInsideTheContentStays() {
+        XCTAssertNil(TranscriptBlankSpace.pastEnd(clip: CGRect(x: 0, y: 1300, width: 792, height: 700), documentHeight: 2000))
+        // Rubber-banding and rounding: within the slack.
+        XCTAssertNil(TranscriptBlankSpace.pastEnd(clip: CGRect(x: 0, y: 1300.5, width: 792, height: 700), documentHeight: 2000))
+    }
+
+    func testShortContentGoesToTheTop() {
+        XCTAssertEqual(TranscriptBlankSpace.pastEnd(clip: CGRect(x: 0, y: 900, width: 792, height: 700), documentHeight: 400), 0)
+    }
 }

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.26.2 (2026-11-09)
+
+### Fixes
+
+- **The conversation markers didn't respond to the pointer** (v0.26). Their
+  hover area was SwiftUI drawing under the transcript's scroll view, an
+  AppKit view, which took every pointer event. The area is now an AppKit
+  view above it: hovering a mark shows its tip again, clicking jumps back,
+  and a wheel over the rail still scrolls the conversation.
+- **The conversation went blank until scrolled** (found in the field on
+  v0.26.1). Scrolled up near the end, a column-width change (a side panel
+  or the viewer opening) re-estimated the transcript shorter under the view
+  and left the view past its end, with nothing drawn. The app's twice-a-second
+  check for this now puts the view back at the end of the conversation when
+  the person isn't scrolling, instead of only logging it. The trigger itself
+  wasn't reproduced off the field; the opt-in scroll trace notes each
+  correction (`past-end`).
+
 ## v0.26.1 (2026-11-09)
 
 A fix for a freeze and for jumpy scrolling in the conversation, both found
