@@ -39,7 +39,7 @@ final class RecorderTests: XCTestCase {
     func testFileNameIsChatAndFileSafeStartTime() {
         let recorder = Recorder(chat: 3, directory: recordings, startedAt: Date(timeIntervalSince1970: 1_794_344_700))
         defer { recorder.close() }
-        XCTAssertEqual(recorder.url.lastPathComponent, "3-2026-11-10T21-05-00Z.jsonl")
+        XCTAssertEqual(recorder.url.lastPathComponent, "3-2026-11-10T21-05-00.000Z.jsonl")
     }
 
     func testFileIsCreated0600UnderRecordings() throws {
@@ -125,8 +125,8 @@ final class RecorderTests: XCTestCase {
             .open(chat: 1, appVersion: "v", macOS: "m", window: [1, 2], column: 3, viewerVisible: true, viewerWidth: 4, sidebarVisible: true, textScale: 1),
             .shape(EntryShape(id: "id-1", kind: .person)), .removed(id: "id-2"), .imageLoaded(id: "id-3", index: 0, height: 9),
             .window(width: 1, height: 2), .column(width: 3), .viewer(visible: true, width: 4, shown: "id-4"), .sidebar(visible: false),
-            .textScale(1.2), .wheel(deltaY: 1, precise: false, phase: 0, momentum: 0), .key("pageUp"), .jump(id: "id-5"),
-            .phase("idle"), .delta(turn: 1, chars: 5), .turnFinished(turn: 1), .toolRow(id: "id-6"), .card(id: "id-7", docked: true), .capped(bytes: 1),
+            .textScale(1.2), .wheel(deltaY: 1, precise: false, phase: 0, momentum: 0), .key(.pageUp), .jump(id: "id-5"),
+            .phase(.idle), .delta(turn: 1, chars: 5), .turnFinished(turn: 1), .toolRow(id: "id-6"), .card(id: "id-7", docked: true), .capped(bytes: 1),
         ]
         for e in events { recorder.note(e) }
         recorder.close()
@@ -137,11 +137,67 @@ final class RecorderTests: XCTestCase {
             collect(obj, into: &keys)
         }
         for banned in ["text", "name", "path", "url", "title"] { XCTAssertFalse(keys.contains(banned), banned) }
+        var strings = Set<String>()
+        for line in text.split(separator: "\n") {
+            collectStrings(try JSONSerialization.jsonObject(with: Data(line.utf8)), into: &strings)
+        }
+        var allowed: Set<String> = ["id-1", "id-2", "id-3", "id-4", "id-5", "id-6", "id-7", "v", "m"]
+        allowed.formUnion(["open", "shape", "removed", "imageLoaded", "window", "column", "viewer", "sidebar", "textScale", "wheel", "key", "jump", "phase", "delta", "turnFinished", "toolRow", "card", "capped"])
+        allowed.insert("person")  // EntryShape.kind
+        allowed.formUnion(["pageUp", "idle"])  // ScrollKey, ScrollPhaseName
+        XCTAssertEqual(strings.subtracting(allowed), [])
         XCTAssertEqual(try Recorder.read(recorder.url).count, events.count)
     }
 
     private func collect(_ value: Any, into keys: inout Set<String>) {
         if let d = value as? [String: Any] { for (k, v) in d { keys.insert(k); collect(v, into: &keys) } }
         if let a = value as? [Any] { for v in a { collect(v, into: &keys) } }
+    }
+
+    private func collectStrings(_ value: Any, into out: inout Set<String>) {
+        if let s = value as? String { out.insert(s) }
+        if let d = value as? [String: Any] { for v in d.values { collectStrings(v, into: &out) } }
+        if let a = value as? [Any] { for v in a { collectStrings(v, into: &out) } }
+    }
+
+    func testTimerFlushesToDiskWhileOpen() throws {
+        let recorder = Recorder(chat: 1, directory: recordings, startedAt: start)
+        recorder.note(.removed(id: "a"))
+        let deadline = Date().addingTimeInterval(1.5)
+        var size = 0
+        while Date() < deadline && size == 0 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            size = (try? FileManager.default.attributesOfItem(atPath: recorder.url.path)[.size] as? Int) ?? 0
+        }
+        XCTAssertGreaterThan(size, 0, "the 250 ms timer should have flushed before close()")
+        recorder.close()
+        XCTAssertEqual(try Recorder.read(recorder.url).count, 1)
+    }
+
+    func testDroppedRecorderFlushesBufferedLines() throws {
+        var url: URL?
+        do {
+            let recorder = Recorder(chat: 1, directory: recordings, startedAt: start)
+            recorder.note(.removed(id: "a"))
+            recorder.note(.removed(id: "b"))
+            url = recorder.url
+        }
+        let deadline = Date().addingTimeInterval(1)
+        var count = 0
+        while Date() < deadline && count < 2 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            count = (try? Recorder.read(url!).count) ?? 0
+        }
+        XCTAssertEqual(count, 2)
+    }
+
+    func testTwoRecordersSameChatSameInstantDoNotClobber() throws {
+        let a = Recorder(chat: 1, directory: recordings, startedAt: start)
+        let b = Recorder(chat: 1, directory: recordings, startedAt: start)
+        XCTAssertNotEqual(a.url, b.url)
+        a.note(.removed(id: "a")); b.note(.removed(id: "b"))
+        a.close(); b.close()
+        XCTAssertEqual(try Recorder.read(a.url).map(\.event), [.removed(id: "a")])
+        XCTAssertEqual(try Recorder.read(b.url).map(\.event), [.removed(id: "b")])
     }
 }

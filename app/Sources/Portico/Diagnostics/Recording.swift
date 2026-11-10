@@ -1,5 +1,11 @@
 import Foundation
 
+/// The keys a recording notes; an enum so no free text can enter a recording.
+enum ScrollKey: String, Codable, Sendable { case pageUp, pageDown, home, end }
+
+/// SwiftUI's scroll phase names, as an enum for the same reason.
+enum ScrollPhaseName: String, Codable, Sendable { case idle, tracking, interacting, decelerating, animating }
+
 /// v0.26.4: one line of a conversation recording. Nothing here is content: ids,
 /// counts, sizes and flags only (D4). Each line is one JSON object with a `kind`
 /// (the case name), `t` (ms since the recording began) and the case's fields.
@@ -14,9 +20,9 @@ enum RecordingEvent: Codable, Equatable, Sendable {
     case sidebar(visible: Bool)
     case textScale(Double)
     case wheel(deltaY: Double, precise: Bool, phase: Int, momentum: Int)
-    case key(String)
+    case key(ScrollKey)
     case jump(id: String)
-    case phase(String)
+    case phase(ScrollPhaseName)
     case delta(turn: Int, chars: Int)
     case turnFinished(turn: Int)
     case toolRow(id: String)
@@ -75,7 +81,8 @@ enum RecordingEvent: Codable, Equatable, Sendable {
         case let .wheel(deltaY, precise, phase, momentum):
             try c.encode(deltaY, forKey: .deltaY); try c.encode(precise, forKey: .precise)
             try c.encode(phase, forKey: .phase); try c.encode(momentum, forKey: .momentum)
-        case .key(let v), .phase(let v): try c.encode(v, forKey: .value)
+        case .key(let v): try c.encode(v, forKey: .value)
+        case .phase(let v): try c.encode(v, forKey: .value)
         case let .delta(turn, chars): try c.encode(turn, forKey: .turn); try c.encode(chars, forKey: .chars)
         case .turnFinished(let turn): try c.encode(turn, forKey: .turn)
         case let .card(id, docked): try c.encode(id, forKey: .id); try c.encode(docked, forKey: .docked)
@@ -107,9 +114,9 @@ enum RecordingEvent: Codable, Equatable, Sendable {
         case "wheel":
             self = .wheel(deltaY: try c.decode(Double.self, forKey: .deltaY), precise: try c.decode(Bool.self, forKey: .precise),
                           phase: try c.decode(Int.self, forKey: .phase), momentum: try c.decode(Int.self, forKey: .momentum))
-        case "key": self = .key(try c.decode(String.self, forKey: .value))
+        case "key": self = .key(try c.decode(ScrollKey.self, forKey: .value))
         case "jump": self = .jump(id: try c.decode(String.self, forKey: .id))
-        case "phase": self = .phase(try c.decode(String.self, forKey: .value))
+        case "phase": self = .phase(try c.decode(ScrollPhaseName.self, forKey: .value))
         case "delta": self = .delta(turn: try c.decode(Int.self, forKey: .turn), chars: try c.decode(Int.self, forKey: .chars))
         case "turnFinished": self = .turnFinished(turn: try c.decode(Int.self, forKey: .turn))
         case "toolRow": self = .toolRow(id: try c.decode(String.self, forKey: .id))
@@ -144,7 +151,6 @@ private struct RecordingLine: Codable {
 
 /// Owns the file and the byte buffer; touched only on the recorder's queue.
 private final class RecordingWriter: @unchecked Sendable {
-    private let url: URL
     private let cap: Int
     private let encoder = JSONEncoder()
     private var handle: FileHandle?
@@ -152,26 +158,34 @@ private final class RecordingWriter: @unchecked Sendable {
     private var written = 0
     private var finished = false
 
-    init(url: URL, cap: Int) { self.url = url; self.cap = cap }
+    init(handle: FileHandle?, cap: Int) {
+        self.handle = handle
+        self.cap = cap
+        finished = handle == nil
+    }
 
-    /// Creates `recordings/` (0700) only when its parent `diagnostics/` exists, then the file (0600).
-    func prepare() {
+    /// Creates `recordings/` (0700) only when its parent `diagnostics/` exists, then the file
+    /// (0600, exclusive: a name already taken gets `-2`, `-3`, ...). Returns the URL used and
+    /// the handle, or `nil` when nothing may be created.
+    static func create(directory: URL, stem: String) -> (url: URL, handle: FileHandle?) {
         let fm = FileManager.default
-        let dir = url.deletingLastPathComponent()
+        let nominal = directory.appendingPathComponent("\(stem).jsonl")
         var isDir: ObjCBool = false
-        if !fm.fileExists(atPath: dir.path, isDirectory: &isDir) {
-            guard fm.fileExists(atPath: dir.deletingLastPathComponent().path, isDirectory: &isDir), isDir.boolValue else {
-                finished = true
-                return
+        if !fm.fileExists(atPath: directory.path, isDirectory: &isDir) {
+            guard fm.fileExists(atPath: directory.deletingLastPathComponent().path, isDirectory: &isDir), isDir.boolValue else {
+                return (nominal, nil)
             }
             do {
-                try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-            } catch { finished = true; return }
+                try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            } catch { return (nominal, nil) }
         }
-        guard fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]),
-            let h = try? FileHandle(forWritingTo: url)
-        else { finished = true; return }
-        handle = h
+        for n in 1...1000 {
+            let url = n == 1 ? nominal : directory.appendingPathComponent("\(stem)-\(n).jsonl")
+            let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            if fd >= 0 { return (url, FileHandle(fileDescriptor: fd, closeOnDealloc: true)) }
+            if errno != EEXIST { break }
+        }
+        return (nominal, nil)
     }
 
     func append(t: Int, event: RecordingEvent) {
@@ -225,16 +239,26 @@ final class Recorder {
 
     init(chat: Int, directory: URL, startedAt: Date = .now, cap: Int = 20_000_000) {
         let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // File-name safe: colons and the fractional point become dashes' neighbours (`21-05-00.250Z`).
         let stamp = formatter.string(from: startedAt).replacingOccurrences(of: ":", with: "-")
-        url = directory.appendingPathComponent("\(chat)-\(stamp).jsonl")
-        let writer = RecordingWriter(url: url, cap: cap)
+        let made = RecordingWriter.create(directory: directory, stem: "\(chat)-\(stamp)")
+        url = made.url
+        let writer = RecordingWriter(handle: made.handle, cap: cap)
         self.writer = writer
         timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250))
-        timer.setEventHandler { writer.flush() }
+        // `@Sendable`: written in a @MainActor init, the closure would otherwise be inferred
+        // @MainActor and trap (SE-0423) when the queue runs it.
+        timer.setEventHandler { @Sendable in writer.flush() }
         timer.resume()
-        queue.async { writer.prepare() }
+    }
+
+    /// A recorder dropped without `close()` still flushes what it holds.
+    deinit {
+        timer.cancel()
+        let writer = writer
+        queue.async { writer.close() }
     }
 
     /// Stamps `t` and hands the event to the queue; the main thread does nothing else.
