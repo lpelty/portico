@@ -1,10 +1,10 @@
 import AppKit
 import Foundation
 
-/// v0.26.1 field diagnostic for jumpy scrolling: off unless the file
-/// `scroll-trace` exists in the app's home (the folder the gateway's state
-/// lives in), then one line per scroll reading and per move the app makes
-/// itself, with why, appended to `scroll-trace.log` there.
+/// v0.26.1 field diagnostic for jumpy scrolling: on only while the
+/// diagnostics switch is (`Diagnostics`), then one line per scroll reading and
+/// per move the app makes itself, with why, appended to `trace.log` under the
+/// app's `diagnostics/` folder.
 /// No message text is written, only ids, offsets and reasons.
 ///
 /// 0.43.3 adds, for the transcript that sticks and the one that goes blank
@@ -14,26 +14,46 @@ import Foundation
 /// changes.
 @MainActor
 enum ScrollTrace {
-    private static let directory = GatewaySupervisor.resolveHome().url
-    static var enabled = FileManager.default.fileExists(atPath: directory.appendingPathComponent("scroll-trace").path)
+    /// Tests force it on or off; nil follows the diagnostics switch.
+    static var override: Bool?
+    static var enabled: Bool {
+        get { override ?? Diagnostics.isOn }
+        set { override = newValue }
+    }
     /// Tests read the lines here instead of the file.
     static var sink: ((String) -> Void)?
     private static let start = Date()
-    private static let handle: FileHandle? = {
-        guard enabled else { return nil }
-        let url = directory.appendingPathComponent("scroll-trace.log")
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
-        let handle = try? FileHandle(forWritingTo: url)
+    private static var handle: FileHandle?
+
+    /// Opened at the first line after the switch is on, so nothing is created while off.
+    private static func openHandle() -> FileHandle? {
+        if let handle { return handle }
+        let manager = FileManager.default
+        try? manager.createDirectory(
+            at: Diagnostics.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let url = Diagnostics.tracePath
+        if !manager.fileExists(atPath: url.path) {
+            manager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        handle = try? FileHandle(forWritingTo: url)
         _ = try? handle?.seekToEnd()
         return handle
-    }()
+    }
+
+    static var isOpen: Bool { handle != nil }
+
+    static func closeHandle() {
+        try? handle?.close()
+        handle = nil
+    }
 
     static func note(_ line: @autoclosure () -> String) {
         guard enabled else { return }
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let text = "\(ms) \(line())\n"
         if let sink { sink(text); return }
-        handle?.write(Data(text.utf8))
+        guard Diagnostics.isOn else { return }
+        openHandle()?.write(Data(text.utf8))
     }
 
     /// A row's frame changed from `old` (nil: not laid out until now): the

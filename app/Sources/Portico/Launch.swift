@@ -6,6 +6,9 @@ enum PorticoLaunch {
         if Updater.isUpdaterLaunch() {
             UpdaterApp.main()
         } else {
+            MainActor.assumeIsolated {
+                Diagnostics.start()
+            }
             PorticoApp.main()
         }
     }

@@ -71,12 +71,17 @@ final class ScrollTraceTests: XCTestCase {
     private func traced(enabled: Bool) throws -> [String] {
         _ = NSApplication.shared
         var lines: [String] = []
-        let wasEnabled = ScrollTrace.enabled
-        ScrollTrace.enabled = enabled
+        let wasOverride = ScrollTrace.override
+        let wasHome = Diagnostics.home
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("portico-trace-home-\(UUID().uuidString)")
+        Diagnostics.home = temp
+        ScrollTrace.override = enabled
         ScrollTrace.sink = { lines.append($0) }
         defer {
-            ScrollTrace.enabled = wasEnabled
+            ScrollTrace.override = wasOverride
             ScrollTrace.sink = nil
+            Diagnostics.home = wasHome
+            try? FileManager.default.removeItem(at: temp)
         }
         let model = try model()
         let settings = Settings(defaults: defaults)
