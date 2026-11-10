@@ -1,0 +1,50 @@
+"""v0.26.4: ``portico-gateway diagnostics on | off | status`` — the one switch for the diagnostics suite.
+
+Driven through ``main`` in-process on a throwaway state directory. Everything lives under
+``<state>/diagnostics/``; nothing is ever written at the state directory's root.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from portico_gateway.__main__ import main
+
+
+def test_on_creates_switch_readme_and_modes(tmp_path):
+    home = tmp_path / "home"
+    assert main(["diagnostics", "on", "--state", str(home)]) == 0
+    d = home / "diagnostics"
+    assert (d / "on").exists() and (d / "README").read_text().startswith("Diagnostics for the deployment's Daedalus")
+    assert oct(d.stat().st_mode & 0o777) == "0o700" and oct((d / "on").stat().st_mode & 0o777) == "0o600"
+    assert main(["diagnostics", "on", "--state", str(home)]) == 0  # idempotent
+
+
+def test_status_reports_on_off_and_files(tmp_path, capsys):
+    home = tmp_path / "home"
+    assert main(["diagnostics", "status", "--state", str(home)]) == 3
+    main(["diagnostics", "on", "--state", str(home)])
+    (home / "diagnostics" / "recordings").mkdir()
+    (home / "diagnostics" / "recordings" / "3-x.jsonl").write_text("{}\n")
+    capsys.readouterr()
+    assert main(["diagnostics", "status", "--state", str(home), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["on"] is True and {"name": "recordings/3-x.jsonl", "bytes": 3} in out["files"]
+
+
+def test_off_deletes_everything_and_nothing_at_root(tmp_path):
+    home = tmp_path / "home"
+    main(["diagnostics", "on", "--state", str(home)])
+    (home / "diagnostics" / "trace.log").write_text("x")
+    assert main(["diagnostics", "off", "--state", str(home)]) == 0
+    assert not (home / "diagnostics").exists()
+    assert sorted(p.name for p in home.iterdir()) == []  # the switch never touched the root
+    assert main(["diagnostics", "off", "--state", str(home)]) == 0  # absent is fine
+
+
+def test_help_carries_the_wording(capsys):
+    with pytest.raises(SystemExit):
+        main(["diagnostics", "--help"])
+    assert "Off unless turned on here" in capsys.readouterr().out

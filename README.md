@@ -576,6 +576,7 @@ sources. `tests/test_distribution.py` fails if the bundle is out of date.
 bin/portico-gateway status --json      # {"version": 1, "running": true, "pid", "port", "folder", "session",
                                        #  "state", "mode", "started_at", "config_stale"}; exit 0 running, 3 not
 bin/portico-gateway stop               # stop the running gateway (its own stop path); exit 3 when none runs
+bin/portico-gateway diagnostics on     # (v0.26.4) on | off | status [--json]: Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
