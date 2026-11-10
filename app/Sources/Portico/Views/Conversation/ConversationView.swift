@@ -234,7 +234,16 @@ struct ConversationView: View {
         .environment(\.highlightedMessage, model.highlightedMessage[chat])
         // Fix I-1: the scroller keeps clear of the viewer divider's grip.
         .clearOfViewerGrip()
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            ScrollTrace.note("width chat=\(chat) from=\(transcriptWidth.map { Int($0) } ?? -1) to=\(Int(width))")
+            transcriptWidth = width
+        }
+        .onChange(of: model.shownArtifact(for: chat)?.id) { old, new in
+            ScrollTrace.note("viewer chat=\(chat) shown from=\(old ?? "none") to=\(new ?? "none")")
+        }
+        .onChange(of: model.viewerVisible[chat] ?? false) { _, now in
+            ScrollTrace.note("viewer chat=\(chat) visible=\(now)")
+        }
         .environment(
             \.conversationColumn,
             transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset, scale: textScale) })
@@ -328,6 +337,8 @@ struct ConversationView: View {
         .accessibilityScrollAction { edge in personInput.page(toward: edge) }
         .onAppear {
             if ConversationProbe.enabled { ConversationProbe.rows[chat] = rows }
+            rows.traceChat = chat
+            ScrollTrace.note("open chat=\(chat) rows=\(drawn.count)")
             personInput.install()
             if let place = model.place(of: chat), !place.atBottom, let saved = place.topItem,
                 let top = TranscriptEntry.anchor(saved, in: drawn)
@@ -406,11 +417,18 @@ struct ConversationView: View {
     /// past the document's end, for over a second with no scroll phase.
     private func watchForBlankSpace() async {
         var watch = TranscriptBlankSpace.Watch()
+        var lastPaint: ScrollTrace.Paint?
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(500))
             guard let scroll = personInput.scrollView, let document = scroll.documentView else { continue }
             let clip = scroll.contentView.bounds
             let frames = rows.allFrames
+            // 0.43.3: what is on screen, when it changes (the blank-until-scrolled report).
+            if ScrollTrace.enabled, let paint = ScrollTrace.paint(scroll: scroll, rowFrames: frames, phase: scrollPhaseName),
+               paint != lastPaint {
+                ScrollTrace.note(paint.line(chat: chat))
+                lastPaint = paint
+            }
             // v0.26.2: past the end with no scroll phase, back to the end.
             if !byPerson, let top = TranscriptBlankSpace.pastEnd(clip: clip, documentHeight: document.frame.height) {
                 ScrollTrace.note("move chat=\(chat) past-end clip=\(Int(clip.maxY)) content=\(Int(document.frame.height))")
