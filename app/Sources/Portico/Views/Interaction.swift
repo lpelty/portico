@@ -81,7 +81,7 @@ struct HoverHighlight: ViewModifier {
 }
 
 extension View {
-    func hoverHighlight(_ shape: some Shape = RoundedRectangle(cornerRadius: 5, style: .continuous)) -> some View {
+    func hoverHighlight(_ shape: some SwiftUI.Shape = RoundedRectangle(cornerRadius: 5, style: .continuous)) -> some View {
         modifier(HoverHighlight(shape: AnyShape(shape)))
     }
 }
