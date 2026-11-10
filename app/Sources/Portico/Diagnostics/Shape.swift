@@ -31,13 +31,14 @@ struct EntryShape: Codable, Equatable, Sendable {
     var folded: Bool = false
 }
 
-enum Shape {
+extension EntryShape {
     /// `imageSize` reads an image's pixel size from its path (`nil` when it
     /// cannot); it is a parameter so tests need no files.
     static func of(_ entry: TranscriptEntry, imageSize: (String) -> [Int]?) -> EntryShape {
         switch entry {
         case .toolRun(_, let rows):
-            // A run draws folded until the person opens it, whatever its kind.
+            // `folded` is the default state, not the as-drawn state: a run with a step
+            // waiting for the person's OK draws open.
             return EntryShape(id: entry.id, kind: .toolRun, toolRows: rows.count, folded: true)
         case .item(let item):
             return shape(of: item, id: entry.id, imageSize: imageSize)
