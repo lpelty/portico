@@ -312,6 +312,7 @@ struct ConversationView: View {
             personScrolling = phase != .idle
             ScrollTrace.note("phase chat=\(chat) \(phase)")
             scrollPhaseName = "\(phase)"
+            if ConversationProbe.enabled { ConversationProbe.phaseNames[chat, default: []].append("\(phase)") }
         }
         // v0.15 task 2b fix round 1: the newest message is followed only
         // at the bottom (scrolled up, a streaming reply no longer pulls
@@ -1118,4 +1119,5 @@ enum ConversationProbe {
     static var bottomCorrections: [Int: Int] = [:]
     static var geometryReadings: [Int: Int] = [:]
     static var pastEndCorrections: [Int: Int] = [:]
+    static var phaseNames: [Int: [String]] = [:]
 }
