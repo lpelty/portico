@@ -80,14 +80,9 @@ final class ScrollPhaseSpikeTests: XCTestCase {
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
-        spin()
+        PhaseProbe.spin()
         let scroll = try XCTUnwrap(Self.transcriptScroll(in: host), "the transcript's scroll view")
         return Hosted(window: window, host: host, scroll: scroll)
-    }
-
-    private func spin(_ seconds: Double = 0.4) {
-        let until = Date().addingTimeInterval(seconds)
-        while Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     }
 
     /// The tall scroll view: the transcript (the composer's editor scrolls too).
@@ -101,13 +96,11 @@ final class ScrollPhaseSpikeTests: XCTestCase {
         _ = NSApplication.shared
         let hosted = try host(try model(varied: true), width: 900)
         defer { hosted.window.close() }
-        let clip = hosted.scroll.contentView
-        let before = clip.bounds.origin.y
-        let phased = PhaseProbe.phased(scroll: hosted.scroll, chat: 3)
-        let moved = abs(clip.bounds.origin.y - before)
+        let result = PhaseProbe.run(scroll: hosted.scroll, chat: 3)
         let names = ConversationProbe.phaseNames[3] ?? []
-        print("PHASE-SPIKE phased=\(phased) names=\(names) moved=\(moved)")
+        let offsets = result.offsets.map { Int($0.rounded()) }
+        print("PHASE-SPIKE phased=\(result.phased) names=\(names) moved=\(result.moved) atBottomBefore=\(result.atBottomBefore) offsets=\(offsets)")
         print("PHASE-SPIKE macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)")
-        XCTAssertTrue(moved >= 40 || !names.isEmpty, "the probe ran: the view moved or reported a phase")
+        XCTAssertTrue(abs(result.moved) >= 40 || !names.isEmpty, "the probe ran: the view moved or reported a phase")
     }
 }
