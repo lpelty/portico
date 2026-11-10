@@ -31,7 +31,11 @@ def turn_on(state: StateDir) -> Path:
     d = diagnostics_dir(state)
     d.mkdir(mode=0o700, exist_ok=True)
     d.chmod(0o700)
-    (d / "README").write_text(README_TEXT + "\n", encoding="utf-8")
+    readme = d / "README"
+    fd = os.open(readme, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(README_TEXT + "\n")
+    readme.chmod(0o600)
     switch = d / SWITCH
     fd = os.open(switch, os.O_WRONLY | os.O_CREAT, 0o600)
     os.close(fd)
@@ -39,13 +43,29 @@ def turn_on(state: StateDir) -> Path:
     return d
 
 
+class DiagnosticsError(OSError):
+    """``turn_off`` could not delete everything; the message names what remains."""
+
+
 def turn_off(state: StateDir) -> int:
-    """Delete the whole diagnostics directory and nothing else; return the files removed (0 when absent)."""
+    """Delete the whole diagnostics directory and nothing else; return the files removed (0 when absent).
+
+    A ``diagnostics`` symlink is unlinked, never followed. Raises ``DiagnosticsError`` naming what
+    remains when the directory is still there afterwards.
+    """
     d = diagnostics_dir(state)
+    if d.is_symlink():
+        d.unlink()
+        return 0
     if not d.is_dir():
         return 0
     removed = sum(1 for p in d.rglob("*") if p.is_file() or p.is_symlink())
-    shutil.rmtree(d, ignore_errors=True)
+    errors: list[str] = []
+    shutil.rmtree(d, onerror=lambda _fn, path, exc: errors.append(f"{path}: {exc[1].strerror or exc[1]}"))
+    if d.exists() or d.is_symlink():
+        left = sorted(p.relative_to(d).as_posix() for p in d.rglob("*")) if d.is_dir() else []
+        detail = "; ".join(errors[:3]) or "unknown error"
+        raise DiagnosticsError(f"could not delete {d} ({detail}); remains: {', '.join(left[:10]) or 'the directory'}")
     return removed
 
 

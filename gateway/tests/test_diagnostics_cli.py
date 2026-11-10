@@ -19,7 +19,9 @@ def test_on_creates_switch_readme_and_modes(tmp_path):
     d = home / "diagnostics"
     assert (d / "on").exists() and (d / "README").read_text().startswith("Diagnostics for the deployment's Daedalus")
     assert oct(d.stat().st_mode & 0o777) == "0o700" and oct((d / "on").stat().st_mode & 0o777) == "0o600"
+    assert oct((d / "README").stat().st_mode & 0o777) == "0o600"
     assert main(["diagnostics", "on", "--state", str(home)]) == 0  # idempotent
+    assert oct((d / "README").stat().st_mode & 0o777) == "0o600"
 
 
 def test_status_reports_on_off_and_files(tmp_path, capsys):
@@ -48,3 +50,31 @@ def test_help_carries_the_wording(capsys):
     with pytest.raises(SystemExit):
         main(["diagnostics", "--help"])
     assert "Off unless turned on here" in capsys.readouterr().out
+
+
+def test_off_unlinks_a_symlinked_diagnostics_and_leaves_the_target(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (target / "keep.txt").write_text("x")
+    (home / "diagnostics").symlink_to(target)
+    assert main(["diagnostics", "off", "--state", str(home)]) == 0
+    assert not (home / "diagnostics").exists() and not (home / "diagnostics").is_symlink()
+    assert (target / "keep.txt").read_text() == "x"
+
+
+def test_off_that_cannot_delete_exits_1_and_names_what_remains(tmp_path, capsys):
+    home = tmp_path / "home"
+    main(["diagnostics", "on", "--state", str(home)])
+    stuck = home / "diagnostics" / "recordings"
+    stuck.mkdir()
+    (stuck / "3-x.jsonl").write_text("{}\n")
+    stuck.chmod(0o500)
+    capsys.readouterr()
+    try:
+        assert main(["diagnostics", "off", "--state", str(home)]) == 1
+        err = capsys.readouterr().err
+        assert "recordings" in err and "3-x.jsonl" in err
+    finally:
+        stuck.chmod(0o700)

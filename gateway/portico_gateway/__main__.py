@@ -262,7 +262,11 @@ def cmd_diagnostics(args: argparse.Namespace) -> int:
         print(f"diagnostics on: {diagnostics.turn_on(state)}")
         return 0
     if args.diagnostics_command == "off":
-        print(f"diagnostics off: removed {diagnostics.turn_off(state)} file(s)")
+        try:
+            print(f"diagnostics off: removed {diagnostics.turn_off(state)} file(s)")
+        except diagnostics.DiagnosticsError as e:
+            print(f"portico-gateway: diagnostics off: {e}", file=sys.stderr)
+            return 1
         return 0
     result = diagnostics.status(state)
     if args.json:
