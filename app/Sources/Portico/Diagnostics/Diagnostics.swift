@@ -22,6 +22,10 @@ enum Diagnostics {
     /// Reads the switch once.
     static func refresh() {
         let now = FileManager.default.fileExists(atPath: switchFile.path)
+        // Off then on again inside one poll: the open trace points at a deleted file.
+        if now, isOn, ScrollTrace.isOpen, !FileManager.default.fileExists(atPath: tracePath.path) {
+            ScrollTrace.closeHandle()
+        }
         guard now != isOn else { return }
         isOn = now
         // The folder is going away under an open trace: let go of it.

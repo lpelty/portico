@@ -289,6 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// shows. Ask for a regular app and come to the front, so the window
     /// appears from a checkout the same as it will from a bundle.
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // v0.26.4: notice the diagnostics switch file without a relaunch.
+        Diagnostics.start()
         let app = NSApplication.shared
         if app.activationPolicy() != .regular {
             app.setActivationPolicy(.regular)

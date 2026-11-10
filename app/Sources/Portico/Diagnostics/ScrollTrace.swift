@@ -25,12 +25,13 @@ enum ScrollTrace {
     private static let start = Date()
     private static var handle: FileHandle?
 
-    /// Opened at the first line after the switch is on, so nothing is created while off.
+    /// Opened at the first line after the switch is on, and only while the switch file is there.
     private static func openHandle() -> FileHandle? {
         if let handle { return handle }
+        // The switch file lives in the folder, so with it present the gateway
+        // has already made the folder (0700); nothing is ever created while off.
         let manager = FileManager.default
-        try? manager.createDirectory(
-            at: Diagnostics.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard manager.fileExists(atPath: Diagnostics.switchFile.path) else { return nil }
         let url = Diagnostics.tracePath
         if !manager.fileExists(atPath: url.path) {
             manager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])

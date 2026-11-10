@@ -84,4 +84,25 @@ final class DiagnosticsSwitchTests: XCTestCase {
         ScrollTrace.note("two")
         XCTAssertFalse(FileManager.default.fileExists(atPath: Diagnostics.directory.path))
     }
+
+    func testNoteAfterTheDirectoryVanishesRecreatesNothing() throws {
+        try switchOn()
+        Diagnostics.refresh()
+        try FileManager.default.removeItem(at: Diagnostics.directory)
+        ScrollTrace.note("late")  // no refresh: isOn is still cached true
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Diagnostics.directory.path))
+    }
+
+    func testOffThenOnWithinOnePollReopensTheTrace() throws {
+        try switchOn()
+        Diagnostics.refresh()
+        ScrollTrace.note("before")
+        try FileManager.default.removeItem(at: Diagnostics.directory)
+        try switchOn()
+        Diagnostics.refresh()  // isOn unchanged, but the trace file is gone
+        ScrollTrace.note("after")
+        let text = try String(contentsOf: Diagnostics.tracePath, encoding: .utf8)
+        XCTAssertTrue(text.hasSuffix("after\n"))
+        XCTAssertFalse(text.contains("before"))
+    }
 }
