@@ -2,6 +2,8 @@
 
 ## v0.26.4 (unreleased)
 
+- Release gate: no distributed file may name the maintainer's home or the fleet's folders (`larrypelty`, `fleet/`), so a deployment's own config can never ride along with a release.
+
 ### Diagnostics
 
 - **A diagnostics suite for the deployment's Daedalus.** It looks at the

@@ -15,6 +15,10 @@ FORBIDDEN = [
     "daedalus",
     "hindsight",
     "chroma",
+    # Larry 2026-11-11: a deployment's own config must never ride along with a release.
+    # These name the maintainer's home and the fleet's folders; nothing distributed may.
+    "larrypelty",
+    "fleet/",
 ]
 
 
