@@ -75,7 +75,7 @@ enum Invariants {
                 let moved = clamped(r) - clamped(previous)
                 if precise {
                     // I1: the movement the document allows (a wheel past an end stops at it).
-                    let expected = min(max(previous.offset - deltaY, 0), maxOffset(previous)) - previous.offset
+                    let expected = min(max(clamped(previous) - deltaY, 0), maxOffset(previous)) - clamped(previous)
                     if abs(moved - expected) > wheelTolerance {
                         out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel delta \(n(deltaY)) moved the offset \(n(moved)), expected \(n(expected))"))
                     }

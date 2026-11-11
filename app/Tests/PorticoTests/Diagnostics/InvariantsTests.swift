@@ -129,6 +129,12 @@ final class InvariantsTests: XCTestCase {
         var wrong = reading(2, input: down, offset: 4100, doc: 5000)
         wrong.settled = false
         XCTAssertEqual(Invariants.check([reading(1, offset: 4180), wrong]).map(\.rule), [.wheelMoves])
+        // Ruling 20: the expectation starts from the clamped previous reading too. Previous
+        // unsettled at 4230 (max 4200), a wheel up 10, read settled at 4190: moved -10, expected -10.
+        var stretchedBefore = reading(1, offset: 4230, doc: 5000)
+        stretchedBefore.settled = false
+        let up = RecordingEvent.wheel(deltaY: 10, precise: true, phase: 4, momentum: 0)
+        XCTAssertTrue(Invariants.check([stretchedBefore, reading(2, input: up, offset: 4190, doc: 5000)]).isEmpty)
     }
 
     func testEstimateDriftAboveAQuarterIsAViolationOnlyWithoutNewContent() {
