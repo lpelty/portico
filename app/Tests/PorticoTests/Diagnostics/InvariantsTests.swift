@@ -37,12 +37,41 @@ final class InvariantsTests: XCTestCase {
         XCTAssertEqual(Invariants.check([reading(1, offset: 500), reading(2, input: wheel, offset: 600)]).map(\.rule), [.wheelMoves])
         // Moved against the delta, within tolerance: fine.
         XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: wheel, offset: 404)]).isEmpty)
-        // Started at the top.
+        // Started at the top, pushed further into it.
         XCTAssertTrue(Invariants.check([reading(1, offset: 0), reading(2, input: wheel, offset: 0)]).isEmpty)
-        // Started at the bottom (5000 - 800 = 4200).
-        XCTAssertTrue(Invariants.check([reading(1, offset: 4200), reading(2, input: wheel, offset: 4200)]).isEmpty)
+        // I1: started at the bottom (5000 - 800 = 4200), a wheel up (positive) must move: checked.
+        XCTAssertEqual(Invariants.check([reading(1, offset: 4200), reading(2, input: wheel, offset: 4200)]).map(\.rule), [.wheelMoves])
         // Not a wheel: no rule.
         XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: .phase(.idle), offset: 500)]).isEmpty)
+    }
+
+    /// I1: the expected movement is clamped to the document; only a wheel pushing into the
+    /// end the view is already at is exempt (at the top with a positive delta, at the bottom
+    /// with a negative one; positive is toward the top, ruling 10).
+    func testAWheelAtAnEndIsExemptOnlyWhenItPushesIntoThatEnd() {
+        func wheel(_ dy: Double) -> RecordingEvent { .wheel(deltaY: dy, precise: true, phase: 0, momentum: 0) }
+        // At the bottom (4200): a negative delta pushes into it, no movement is fine.
+        XCTAssertTrue(Invariants.check([reading(1, offset: 4200), reading(2, input: wheel(-100), offset: 4200)]).isEmpty)
+        // At the bottom: a positive delta is checked; it moved up by it, clean; it did not move, a violation.
+        XCTAssertTrue(Invariants.check([reading(1, offset: 4200), reading(2, input: wheel(100), offset: 4100)]).isEmpty)
+        let stuck = Invariants.check([reading(1, offset: 4200), reading(2, input: wheel(100), offset: 4200)])
+        XCTAssertEqual(stuck.map(\.rule), [.wheelMoves])
+        XCTAssertEqual(stuck.first?.detail, "wheel delta 100 moved the offset 0, expected -100")
+        // A wheel up from the bottom snapped back (moved 100, then put back to 4196): a violation.
+        XCTAssertEqual(Invariants.check([reading(1, offset: 4200), reading(2, input: wheel(100), offset: 4196)]).map(\.rule), [.wheelMoves])
+        // A wheel up that lands at the top partway: 120 asked, 30 moved, clean (clamped).
+        XCTAssertTrue(Invariants.check([reading(1, offset: 30), reading(2, input: wheel(120), offset: 0)]).isEmpty)
+        // ... but stopping short of the top is not.
+        XCTAssertEqual(Invariants.check([reading(1, offset: 30), reading(2, input: wheel(120), offset: 20)]).map(\.rule), [.wheelMoves])
+        // A wheel down that lands at the bottom partway: 150 asked, 50 moved, clean.
+        XCTAssertTrue(Invariants.check([reading(1, offset: 4150), reading(2, input: wheel(-150), offset: 4200)]).isEmpty)
+        // At the top, a negative delta is checked.
+        XCTAssertEqual(Invariants.check([reading(1, offset: 0), reading(2, input: wheel(-100), offset: 0)]).map(\.rule), [.wheelMoves])
+        // A line wheel up from the bottom that did not move: a violation (Ruling 12 still checks its direction).
+        let lineUp = RecordingEvent.wheel(deltaY: 1, precise: false, phase: 0, momentum: 0)
+        XCTAssertEqual(Invariants.check([reading(1, offset: 4200), reading(2, input: lineUp, offset: 4200)]).map(\.rule), [.wheelMoves])
+        let lineDown = RecordingEvent.wheel(deltaY: -1, precise: false, phase: 0, momentum: 0)
+        XCTAssertTrue(Invariants.check([reading(1, offset: 4200), reading(2, input: lineDown, offset: 4200)]).isEmpty)
     }
 
     /// Ruling 12: a line wheel (`precise == false`) is in lines, so only its direction and

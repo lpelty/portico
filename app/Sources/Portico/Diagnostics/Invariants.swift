@@ -48,11 +48,13 @@ enum Invariants {
             if let (a, b, run) = alternation(r.settledReadings) {
                 out.append(Violation(rule: .alternation, step: r.step, detail: "document height flipped between \(n(a)) and \(n(b)) \(run - 1) times"))
             }
-            if let previous, case .wheel(let deltaY, let precise, _, _) = r.input, !startedAtAnEnd(previous) {
+            if let previous, case .wheel(let deltaY, let precise, _, _) = r.input, !pushesIntoItsEnd(previous, deltaY: deltaY) {
                 let moved = r.offset - previous.offset
                 if precise {
-                    if abs(moved + deltaY) > wheelTolerance {
-                        out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel delta \(n(deltaY)) moved the offset \(n(moved)), expected \(n(-deltaY))"))
+                    // I1: the movement the document allows (a wheel past an end stops at it).
+                    let expected = min(max(previous.offset - deltaY, 0), maxOffset(previous)) - previous.offset
+                    if abs(moved - expected) > wheelTolerance {
+                        out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel delta \(n(deltaY)) moved the offset \(n(moved)), expected \(n(expected))"))
                     }
                 } else if deltaY != 0, abs(moved) < 1 || (moved > 0) == (deltaY > 0) {
                     // Ruling 12: a line wheel's delta is in lines (its points depend on the line
@@ -87,8 +89,12 @@ enum Invariants {
         return best
     }
 
-    private static func startedAtAnEnd(_ p: Reading) -> Bool {
-        p.offset <= 0 || p.offset >= p.documentHeight - Double(p.clip.height) - pastEndSlack
+    private static func maxOffset(_ p: Reading) -> Double { max(p.documentHeight - Double(p.clip.height), 0) }
+
+    /// I1: a wheel into the end the view already is at (at the top with a positive delta,
+    /// toward the top; at the bottom with a negative one) has nowhere to go: exempt.
+    private static func pushesIntoItsEnd(_ p: Reading, deltaY: Double) -> Bool {
+        (p.offset <= 0 && deltaY > 0) || (p.offset >= maxOffset(p) - pastEndSlack && deltaY < 0)
     }
 
     private static func addsContent(_ e: RecordingEvent?) -> Bool {
