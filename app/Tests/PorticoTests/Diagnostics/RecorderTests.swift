@@ -119,15 +119,68 @@ final class RecorderTests: XCTestCase {
         XCTAssertLessThan(worst, 5.0)
     }
 
+    /// Every `RecordingEvent` case, one fixture each. `EventCase` mirrors the event's cases:
+    /// `mirror(of:)` switches over the event (a new case does not compile until it is mapped)
+    /// and `fixture(_:)` switches over `EventCase` (a new one does not compile without a fixture).
+    private enum EventCase: CaseIterable {
+        case open, shape, removed, imageLoaded, window, column, viewer, sidebar, textScale, wheel, key, jump, phase
+        case delta, turnFinished, toolRow, card, capped
+    }
+
+    private static func mirror(of event: RecordingEvent) -> EventCase {
+        switch event {
+        case .open: return EventCase.open
+        case .shape: return EventCase.shape
+        case .removed: return EventCase.removed
+        case .imageLoaded: return EventCase.imageLoaded
+        case .window: return EventCase.window
+        case .column: return EventCase.column
+        case .viewer: return EventCase.viewer
+        case .sidebar: return EventCase.sidebar
+        case .textScale: return EventCase.textScale
+        case .wheel: return EventCase.wheel
+        case .key: return EventCase.key
+        case .jump: return EventCase.jump
+        case .phase: return EventCase.phase
+        case .delta: return EventCase.delta
+        case .turnFinished: return EventCase.turnFinished
+        case .toolRow: return EventCase.toolRow
+        case .card: return EventCase.card
+        case .capped: return EventCase.capped
+        }
+    }
+
+    private static func fixture(_ c: EventCase) -> RecordingEvent {
+        switch c {
+        case .open:
+            return RecordingEvent.open(chat: 1, appVersion: "v", macOS: "m", window: [1, 2], column: 3, viewerVisible: true,
+                                       viewerWidth: 4, sidebarVisible: true, textScale: 1)
+        case .shape:
+            return RecordingEvent.shape(EntryShape(id: "id-1", kind: .person, paragraphs: [3], headings: [1], listItems: 1, codeBlocks: [2],
+                                                   tables: [[1, 2]], quotes: 1, rules: 1, images: [[3, 4]], documents: 1, toolRows: 2, folded: true))
+        case .removed: return RecordingEvent.removed(id: "id-2")
+        case .imageLoaded: return RecordingEvent.imageLoaded(id: "id-3", index: 0, height: 9)
+        case .window: return RecordingEvent.window(width: 1, height: 2)
+        case .column: return RecordingEvent.column(width: 3)
+        case .viewer: return RecordingEvent.viewer(visible: true, width: 4, shown: "id-4")
+        case .sidebar: return RecordingEvent.sidebar(visible: false)
+        case .textScale: return RecordingEvent.textScale(1.2)
+        case .wheel: return RecordingEvent.wheel(deltaY: 1, precise: false, phase: 0, momentum: 0)
+        case .key: return RecordingEvent.key(.pageUp)
+        case .jump: return RecordingEvent.jump(id: "id-5")
+        case .phase: return RecordingEvent.phase(.idle)
+        case .delta: return RecordingEvent.delta(turn: 1, chars: 5)
+        case .turnFinished: return RecordingEvent.turnFinished(turn: 1)
+        case .toolRow: return RecordingEvent.toolRow(id: "id-6")
+        case .card: return RecordingEvent.card(id: "id-7", docked: true)
+        case .capped: return RecordingEvent.capped(bytes: 1)
+        }
+    }
+
     func testNoContentFieldsExistInTheEventType() throws {
         let recorder = Recorder(chat: 1, directory: recordings, startedAt: start)
-        let events: [RecordingEvent] = [
-            .open(chat: 1, appVersion: "v", macOS: "m", window: [1, 2], column: 3, viewerVisible: true, viewerWidth: 4, sidebarVisible: true, textScale: 1),
-            .shape(EntryShape(id: "id-1", kind: .person)), .removed(id: "id-2"), .imageLoaded(id: "id-3", index: 0, height: 9),
-            .window(width: 1, height: 2), .column(width: 3), .viewer(visible: true, width: 4, shown: "id-4"), .sidebar(visible: false),
-            .textScale(1.2), .wheel(deltaY: 1, precise: false, phase: 0, momentum: 0), .key(.pageUp), .jump(id: "id-5"),
-            .phase(.idle), .delta(turn: 1, chars: 5), .turnFinished(turn: 1), .toolRow(id: "id-6"), .card(id: "id-7", docked: true), .capped(bytes: 1),
-        ]
+        let events = EventCase.allCases.map(Self.fixture)
+        XCTAssertEqual(events.map(Self.mirror(of:)), EventCase.allCases, "one fixture per event case, each of its own case")
         for e in events { recorder.note(e) }
         recorder.close()
         let text = try String(contentsOf: recorder.url, encoding: .utf8)

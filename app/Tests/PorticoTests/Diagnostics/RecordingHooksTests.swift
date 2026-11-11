@@ -269,23 +269,53 @@ final class RecordingHooksTests: XCTestCase {
         let model = try model(
             turns: 4,
             question: { turn in UserText(chat: 3, turn: turn, text: "ZEBRA-TEXT \(turn)", attachments: turn == 4 ? [path] : nil) },
-            extra: [.artifactCreated(ArtifactCreated(chat: 3, artifact: Artifact(
-                id: "art-1", kind: .file, location: "/tmp/demo/zebra-location.html", media: .html,
-                title: "ZEBRA-TITLE.html", source: .tool, open: true)))])
+            extra: [
+                .artifactCreated(ArtifactCreated(chat: 3, artifact: Artifact(
+                    id: "art-1", kind: .file, location: "/tmp/demo/zebra-location.html", media: .html,
+                    title: "ZEBRA-TITLE.html", source: .tool, open: true))),
+                // A tool row whose summary and input name a file (C1: a tool row and a docked card).
+                .toolStarted(ToolStarted(chat: 3, turn: 4, toolUseId: "tu-1", tool: "Read", summary: "zebra-notes.md",
+                                         input: ["file_path": .string("/tmp/zebra-dir/zebra-notes.md")])),
+                .toolFinished(ToolFinished(chat: 3, turn: 4, toolUseId: "tu-1", ok: true, summary: "ZEBRA read")),
+            ])
         let hosted = host(model)
         defer { hosted.window.close() }
         model.setViewer(visible: false, for: 3)
         spin(0.3)
         model.setViewer(visible: true, for: 3)
         spin(0.3)
+        // C1: a local file, a link and a space shown in the viewer; their ids hold a path, a URL and a file stem.
+        model.openArtifact(file: "/tmp/zebra-dir/zebra.md", in: 3)
+        spin(0.3)
+        XCTAssertTrue(model.openLink("https://zebra.example/x", chat: 3))
+        spin(0.3)
+        model.apply(.spacesList(SpacesList(spaces: [SpaceInfo(
+            id: "zebra-space", title: "ZEBRA space", icon: "doc.text", order: nil,
+            location: "/tmp/zebra-dir/zebra-space.md", media: "markdown", updated: "2026-11-01T09:00:00Z")])))
+        model.setOpenSpace("zebra-space")
+        spin(0.3)
+        model.setOpenSpace(nil)
+        spin(0.3)
+        // A docked card (a question) with a title.
+        model.apply(.cardAsk(CardAsk(
+            chat: 3, id: "card-7", kind: .question, title: "ZEBRA-CARD",
+            permission: nil, questions: [Question(question: "ZEBRA?", header: "ZEBRA", options: [], multiSelect: false)], form: nil)))
+        spin(0.3)
         model.apply(.textDelta(TextDelta(chat: 3, turn: 5, text: "ZEBRA-TEXT reply")))
         spin(0.3)
+        XCTAssertNotNil(model.dockedCard(for: 3), "the card docked")
         let url = try XCTUnwrap(Diagnostics.recorders[3]?.url)
         let events = try recording()
         XCTAssertTrue(events.contains { if case .viewer = $0.event { true } else { false } }, "the viewer switch is recorded")
+        XCTAssertTrue(events.contains { if case .card(_, true) = $0.event { true } else { false } }, "the docked card is recorded")
+        XCTAssertTrue(events.contains { if case .shape(let s) = $0.event { [.tool, .toolRun].contains(s.kind) } else { false } }, "the tool row is recorded")
 
-        // Every string value in the recording is an id, the shown artifact's id, or a version.
-        let ids = Set((model.transcripts[3] ?? []).map(\.id)).union(["brief", "divider", "art-1"])
+        // Every string value in the recording is an id, the shown artifact's id (`art-…`
+        // or an opaque per-run token), or a version.
+        let items = model.transcripts[3] ?? []
+        let ids = Set(items.map(\.id)).union(TranscriptEntry.entries(items).map(\.id)).union(["brief", "divider", "art-1", "card-7"])
+        let token = try NSRegularExpression(pattern: "^(art-[A-Za-z0-9-]+|local-[0-9]+|link-[0-9]+|space-[0-9]+)$")
+        func isToken(_ s: String) -> Bool { token.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil }
         var strings: [String] = []
         func walk(_ value: Any, key: String?) {
             if let dict = value as? [String: Any] { for (k, v) in dict { walk(v, key: k) } }
@@ -296,18 +326,25 @@ final class RecordingHooksTests: XCTestCase {
         for line in text.split(separator: "\n") {
             walk(try JSONSerialization.jsonObject(with: Data(line.utf8)), key: nil)
         }
+        var shown: [String] = []
         for entry in strings {
             let parts = entry.split(separator: "=", maxSplits: 1).map(String.init)
             let (key, value) = (parts[0], parts.count > 1 ? parts[1] : "")
             switch key {
             case "appVersion", "macOS": continue
             case "value": XCTAssertTrue(ScrollKey(rawValue: value) != nil || ScrollPhaseName(rawValue: value) != nil, entry)
+            case "shown":
+                shown.append(value)
+                XCTAssertTrue(isToken(value), "not an artifact token: \(entry)")
             default: XCTAssertTrue(ids.contains(value), "not an id: \(entry)")
             }
         }
+        for kind in ["local-", "link-", "space-"] {
+            XCTAssertTrue(shown.contains { $0.hasPrefix(kind) }, "a \(kind) token among \(shown)")
+        }
 
         // Nothing planted appears in any file under diagnostics/.
-        let planted = ["ZEBRA", "zebra", "Jordan", "Priya"]
+        let planted = ["ZEBRA", "zebra", "Jordan", "Priya", "/tmp", "https"]
         let files = try XCTUnwrap(FileManager.default.enumerator(at: Diagnostics.directory, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }
             .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
@@ -319,6 +356,15 @@ final class RecordingHooksTests: XCTestCase {
                 XCTAssertFalse(body.contains(word), "\(word) in \(file.lastPathComponent)")
                 XCTAssertFalse(file.lastPathComponent.contains(word))
             }
+        }
+        // The trace's viewer line keeps its shape (D13), with tokens for the ids.
+        let trace = (try? String(contentsOf: Diagnostics.tracePath, encoding: .utf8)) ?? ""
+        let viewerLines = trace.split(separator: "\n").filter { $0.contains("viewer chat=3 shown from=") }
+        XCTAssertFalse(viewerLines.isEmpty, "the trace's viewer lines")
+        for line in viewerLines {
+            let fields = line.components(separatedBy: " shown from=")[1].components(separatedBy: " to=")
+            XCTAssertEqual(fields.count, 2, String(line))
+            for f in fields { XCTAssertTrue(f == "none" || isToken(f), "\(f) in \(line)") }
         }
     }
 

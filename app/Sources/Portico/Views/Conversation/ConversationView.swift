@@ -259,7 +259,7 @@ struct ConversationView: View {
             }
         }
         .onChange(of: model.shownArtifact(for: chat)?.id) { old, new in
-            ScrollTrace.note("viewer chat=\(chat) shown from=\(old ?? "none") to=\(new ?? "none")")
+            ScrollTrace.note("viewer chat=\(chat) shown from=\(ArtifactToken.of(old) ?? "none") to=\(ArtifactToken.of(new) ?? "none")")
             if Diagnostics.isOn { noteViewer() }
         }
         .onChange(of: model.viewerVisible[chat] ?? false) { _, now in
@@ -514,7 +514,7 @@ struct ConversationView: View {
     /// settled width follows in the `column` events the change causes.
     private func noteViewer() {
         recording.noteViewer(.viewer(
-            visible: model.isViewerShown(for: chat), width: viewerWidth, shown: model.shownArtifact(for: chat)?.id))
+            visible: model.isViewerShown(for: chat), width: viewerWidth, shown: ArtifactToken.of(model.shownArtifact(for: chat)?.id)))
     }
 
     /// The field diagnostic for "empty space under the conversation" (v0.16):
