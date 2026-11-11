@@ -759,6 +759,11 @@ enum ReplayRunner {
         return url
     }
 
+    /// What the field entry point prints (I7): the evaluation file's name, never its folder, then the evaluation.
+    static func fieldOutput(_ evaluation: Evaluation, file: URL) -> String {
+        "PORTICO-EVALUATION \(file.lastPathComponent)\n\(evaluation.render())"
+    }
+
     /// The field entry point: skips without `PORTICO_REPLAY`; otherwise replays the
     /// named recording and writes its evaluation. The caller fails on violations.
     static func replayFromEnvironment(_ environment: [String: String], checkout: URL? = checkout) throws -> (Evaluation, URL) {

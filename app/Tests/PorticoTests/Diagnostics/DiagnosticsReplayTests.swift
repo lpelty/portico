@@ -510,12 +510,24 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: elsewhere.appendingPathComponent("evaluations").path))
     }
 
+    /// I7: what the field entry point prints names the evaluation's file only, never its folder.
+    func testTheFieldOutputNamesTheFileOnly() {
+        let e = Evaluation(appVersion: "1", macOS: "2", phasesFire: false, phasesMove: false, recording: "a.jsonl", started: "s",
+                           lengthMs: 0, segments: 1, entriesByKind: [:], heightHistogram: [:], violations: [], window: [])
+        let file = URL(fileURLWithPath: "/Users/someone/Library/portico/diagnostics/evaluations/9-x.txt")
+        let out = ReplayRunner.fieldOutput(e, file: file)
+        XCTAssertTrue(out.hasPrefix("PORTICO-EVALUATION 9-x.txt\n"), out)
+        XCTAssertFalse(out.contains("/"), out)
+        XCTAssertFalse(out.contains("someone"))
+    }
+
     /// The field entry point: `PORTICO_REPLAY=<recording> swift test -c release
     /// --filter DiagnosticsReplayTests/testReplayRecordingFromEnvironment`. Red when the replay breaks an invariant.
     func testReplayRecordingFromEnvironment() throws {
         let (evaluation, file) = try ReplayRunner.replayFromEnvironment(ProcessInfo.processInfo.environment)
         // The render carries the steps, keys and skipped lines (review I4) with everything else.
-        print("PORTICO-EVALUATION \(file.path)\n\(evaluation.render())")
-        XCTAssertEqual(evaluation.violations, [], "the replay reproduced a failure; evaluation at \(file.path)")
+        // I7: the file's name only; the home's path stays on this Mac.
+        print(ReplayRunner.fieldOutput(evaluation, file: file))
+        XCTAssertEqual(evaluation.violations, [], "the replay reproduced a failure; evaluation \(file.lastPathComponent)")
     }
 }
