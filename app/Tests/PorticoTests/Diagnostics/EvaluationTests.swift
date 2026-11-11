@@ -36,7 +36,7 @@ final class EvaluationTests: XCTestCase {
             "textScale: 1.0 applied", "truncated: 0", "segments: 2",
         ])
         XCTAssertEqual(Array(lines[11...]), [
-            "steps: 9", "keys: 2 stepped, 1 moved", "skipped: capped 1, removed 3",
+            "steps: 9", "keys: 2 stepped, 1 moved", "wheels: 0 with room, 0 moved", "skipped: capped 1, removed 3",
             "entries:", "person: 30", "reply: 30", "tool: 4",
             "heights:", "0-49: 12", "150-199: 3",
             "violations: 1", "per segment: 1=1", "per rule: pastEnd=1", "step 1.7 pastEnd: clip.maxY 9100 > doc 9000",
@@ -109,6 +109,6 @@ final class EvaluationTests: XCTestCase {
     func testAnEmptyEvaluationRendersExactly() {
         let e = Evaluation(appVersion: "1", macOS: "2", phasesFire: false, phasesMove: false, recording: "a.jsonl", started: "s",
                            lengthMs: 0, segments: 0, entriesByKind: [:], heightHistogram: [:], violations: [], window: [])
-        XCTAssertEqual(e.render(), "verdict: green\napp: 1\nmacOS: 2\nrecording: a.jsonl\nstarted: s\nlength: 0 ms\nphases: fire=false move=false\nenvelope: on (0 gesture runs)\ntextScale: 1.0 applied\ntruncated: 0\nsegments: 0\nsteps: 0\nkeys: 0 stepped, 0 moved\nskipped: none\nentries:\nheights:\nviolations: 0\nwindow:")
+        XCTAssertEqual(e.render(), "verdict: green\napp: 1\nmacOS: 2\nrecording: a.jsonl\nstarted: s\nlength: 0 ms\nphases: fire=false move=false\nenvelope: on (0 gesture runs)\ntextScale: 1.0 applied\ntruncated: 0\nsegments: 0\nsteps: 0\nkeys: 0 stepped, 0 moved\nwheels: 0 with room, 0 moved\nskipped: none\nentries:\nheights:\nviolations: 0\nwindow:")
     }
 }

@@ -296,6 +296,14 @@ enum ReplayRunner {
             let bar = key == .up || key == .down ? 1 : 0.1 * Double(noted[i].clip.height)
             if moved >= bar { keysMoved += 1 } else { noted[i].note = "key-not-moved" }
         }
+        // Ruling 18: wheel steps that had room to move, and those that moved the view.
+        var wheelsWithRoom = 0, wheelsMoved = 0
+        for i in readings.indices.dropFirst() where readings[i - 1].segment == readings[i].segment {
+            guard case .wheel(let deltaY, _, _, _) = readings[i].input, deltaY != 0,
+                  !Invariants.pushesIntoItsEnd(readings[i - 1], deltaY: deltaY) else { continue }
+            wheelsWithRoom += 1
+            if abs(readings[i].offset - readings[i - 1].offset) >= 1 { wheelsMoved += 1 }
+        }
         let window: [Reading]
         if let failing = violations.first {
             window = noted.filter { $0.segment == failing.segment && abs($0.step - failing.step) <= 1 }
@@ -310,7 +318,7 @@ enum ReplayRunner {
         return Evaluation(appVersion: "", macOS: "", phasesFire: false, phasesMove: false, recording: "readings", started: "",
                           lengthMs: 0, segments: 0, entriesByKind: [:], heightHistogram: histogram,
                           violations: violations, window: window, steps: readings.count,
-                          keysStepped: keysStepped, keysMoved: keysMoved)
+                          keysStepped: keysStepped, keysMoved: keysMoved, wheelsWithRoom: wheelsWithRoom, wheelsMoved: wheelsMoved)
     }
 
     // MARK: - the replay

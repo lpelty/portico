@@ -635,7 +635,7 @@ To replay a failure:
    `PORTICO_REPLAY=<home>/diagnostics/recordings/<file>.jsonl swift test -c release --filter 'DiagnosticsReplayTests/testReplayRecordingFromEnvironment$'`
    Keep the trailing `$`: the filter is a regular expression, and without it the test that skips when `PORTICO_REPLAY` is unset runs too.
    It first prints the steps and about how long they take; run a long recording in the background. Every segment (each time the chat was opened) replays in order; `PORTICO_REPLAY_SEGMENT=<n>` replays segment `n` only.
-4. Post the verdict line and the text of `<home>/diagnostics/evaluations/<file>.txt` (the test prints it too). The first line is the verdict: `red` (a violation reproduced), `green` (none did), or `inconclusive (<reasons>)` (a key step did not move the view, the text scale was not applied, the envelope's phases did not fire, or more than a tenth of the steps' inputs were skipped).
+4. Post the verdict line and the text of `<home>/diagnostics/evaluations/<file>.txt` (the test prints it too). The first line is the verdict: `red` (a violation reproduced), `green` (none did), or `inconclusive (<reasons>)` (no wheel moved the view though it had room: the harness, not the app, on this Mac; a key step did not move the view, the text scale was not applied, the envelope's phases did not fire, or more than a tenth of the steps' inputs were skipped).
 5. After pulling a fix, run step 3 again on the same recording.
 6. `bin/portico-gateway diagnostics off`
 

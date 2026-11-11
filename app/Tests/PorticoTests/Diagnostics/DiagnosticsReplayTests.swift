@@ -208,6 +208,29 @@ final class DiagnosticsReplayTests: XCTestCase {
         }
     }
 
+    /// Ruling 18: every wheel step unmoved while the view had room to move is the harness (the
+    /// synthesized wheels reach nothing on this Mac), not the app: inconclusive, never red.
+    func testWheelsThatMovedNothingAnywhereMakeTheVerdictAHarnessOne() {
+        func wheel(_ dy: Double) -> RecordingEvent { .wheel(deltaY: dy, precise: true, phase: 0, momentum: 0) }
+        // Mid-document (offset 3000 of 6000 - 600): room both ways; every wheel stayed put.
+        let stuck = [reading(step: 0, input: nil, offset: 3000), reading(step: 1, input: wheel(40), offset: 3000),
+                     reading(step: 2, input: wheel(-40), offset: 3000), reading(step: 3, input: wheel(40), offset: 3000)]
+        let harness = ReplayRunner.check(readings: stuck)
+        XCTAssertEqual(harness.violations.map(\.rule), [.wheelMoves, .wheelMoves, .wheelMoves], "the rule still fires")
+        XCTAssertEqual(harness.render().components(separatedBy: "\n")[0], "verdict: inconclusive (no wheel moved the view: harness)")
+        XCTAssertTrue(harness.render().contains("\nwheels: 3 with room, 0 moved\n"))
+        // Some wheels moved, one did not: the app's failure, red as before.
+        let one = [reading(step: 0, input: nil, offset: 3000), reading(step: 1, input: wheel(40), offset: 2960),
+                   reading(step: 2, input: wheel(40), offset: 2960), reading(step: 3, input: wheel(-40), offset: 3000)]
+        let red = ReplayRunner.check(readings: one)
+        XCTAssertEqual(red.violations.map(\.rule), [.wheelMoves])
+        XCTAssertEqual(red.violations.first?.step, 2)
+        XCTAssertEqual(red.render().components(separatedBy: "\n")[0], "verdict: red")
+        // Wheels only into the end the view is at (no room) are not the harness: no wheel evidence either way.
+        let atBottom = [reading(step: 0, input: nil, offset: 5400), reading(step: 1, input: wheel(-40), offset: 5400)]
+        XCTAssertEqual(ReplayRunner.check(readings: atBottom).render().components(separatedBy: "\n")[0], "verdict: green")
+    }
+
     func testReplayAcceptsACappedRecording() throws {
         // Two segments (the chat reopened), the second cut off by the cap.
         var lines: [(Int, RecordingEvent)] = [(0, open())]

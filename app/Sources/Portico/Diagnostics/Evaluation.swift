@@ -39,6 +39,10 @@ struct Evaluation: Equatable, Sendable {
     var textScaleApplied = true
     /// Lines dropped from the recording's end (a half-written last line, I9).
     var truncated = 0
+    /// Wheel steps with room to move (not into the end the view was at), and those that moved
+    /// the view at all (Ruling 18: none of them moving is the harness, not the app).
+    var wheelsWithRoom = 0
+    var wheelsMoved = 0
 
     /// Skipped kinds that are inputs the replay could not apply (I8); re-shapes, image loads,
     /// tool rows and the cap marker are covered otherwise and do not count.
@@ -48,8 +52,14 @@ struct Evaluation: Equatable, Sendable {
     /// the view, the text scale was not applied, the envelope's phases did not fire, or more than
     /// a tenth of the steps' worth of inputs were skipped; `green` otherwise.
     var verdict: String {
-        if !violations.isEmpty { return "red" }
         var reasons: [String] = []
+        // Ruling 18: every wheel with room to move moved 0 pt, and nothing else failed: the
+        // synthesized wheels reached nothing on this Mac. A red here would read as the app's bug.
+        if wheelsWithRoom > 0, wheelsMoved == 0, violations.allSatisfy({ $0.rule == .wheelMoves }) {
+            reasons.append("no wheel moved the view: harness")
+        } else if !violations.isEmpty {
+            return "red"
+        }
         if keysMoved < keysStepped { reasons.append("\(keysStepped - keysMoved) of \(keysStepped) key steps did not move the view") }
         if textScale != 1, !textScaleApplied { reasons.append("text scale \(textScale) not applied") }
         if envelope.hasPrefix("off") { reasons.append("the envelope's phases did not fire") }
@@ -64,7 +74,7 @@ struct Evaluation: Equatable, Sendable {
             "app: \(appVersion)", "macOS: \(macOS)", "recording: \(URL(fileURLWithPath: recording).lastPathComponent)", "started: \(started)",
             "length: \(lengthMs) ms", "phases: fire=\(phasesFire) move=\(phasesMove)", "envelope: \(envelope)",
             "textScale: \(textScale) " + (textScaleApplied ? "applied" : "not applied"), "truncated: \(truncated)", "segments: \(segments)",
-            "steps: \(steps)", "keys: \(keysStepped) stepped, \(keysMoved) moved",
+            "steps: \(steps)", "keys: \(keysStepped) stepped, \(keysMoved) moved", "wheels: \(wheelsWithRoom) with room, \(wheelsMoved) moved",
             "skipped: " + (skipped.isEmpty ? "none" : skipped.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")),
             "entries:",
         ]

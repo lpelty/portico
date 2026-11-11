@@ -114,7 +114,7 @@ enum Invariants {
 
     /// I1: a wheel into the end the view already is at (at the top with a positive delta,
     /// toward the top; at the bottom with a negative one) has nowhere to go: exempt.
-    private static func pushesIntoItsEnd(_ p: Reading, deltaY: Double) -> Bool {
+    static func pushesIntoItsEnd(_ p: Reading, deltaY: Double) -> Bool {
         (p.offset <= 0 && deltaY > 0) || (p.offset >= maxOffset(p) - pastEndSlack && deltaY < 0)
     }
 
