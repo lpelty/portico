@@ -13,8 +13,8 @@ import XCTest
 ///
 /// Applied from the recording: `window` (height; the width is the column's),
 /// `column` (the hosted width, stepped to the recorded value), `wheel` (a
-/// phaseless CGEvent wheel, pixel or line units as recorded, the delta's sign
-/// unchanged), `key` (a key-down with focus in the transcript), `jump` (the
+/// phaseless precise CGEvent wheel in points, a line wheel's lines times the
+/// scroll view's line height (Ruling 15), the delta's sign unchanged), `key` (a key-down with focus in the transcript), `jump` (the
 /// model's marker jump to the mapped message), `delta` (the last reply grows by
 /// that many filler characters, or a new reply starts in the last turn), a new
 /// entry's `shape` (appended as the synthetic builder makes it; a reply shape
@@ -50,6 +50,9 @@ enum ReplayRunner {
     static private(set) var lastReadings: [Reading] = []
     static private(set) var lastNotes: [String] = []
     static private(set) var lastHostedWidth: CGFloat?
+    /// The last run's wheels as sent (points, always precise; Ruling 15) and the line height used.
+    static private(set) var lastSentWheels: [(pixels: Double, precise: Bool)] = []
+    static private(set) var lastLineHeight: Double?
 
     static let environmentKey = "PORTICO_REPLAY"
     static let unmapped = "unmapped"
@@ -103,31 +106,56 @@ enum ReplayRunner {
         return all.max { $0.frame.height < $1.frame.height }
     }
 
-    /// A wheel as the app dispatches it, without gesture phases (ruling 3): the
-    /// recorded delta unchanged (positive toward the top, ruling 10), in lines when
-    /// it was not precise. Pixel deltas are whole points in a CGEvent; the caller
-    /// carries the remainder (`delta` is the whole amount sent, `exact` the recorded
-    /// line delta). A line wheel also carries its exact fractional lines in the
-    /// fixed-point field, which AppKit reads as `scrollingDeltaY` and scrolls by
-    /// (verified hosted: 0.4 lines moved 4 pt, 1.5 moved 15 pt, with a whole field of 0).
-    @discardableResult
-    static func wheel(_ hosted: Hosted, deltaY: Double, precise: Bool, exact: Double? = nil) -> Bool {
-        let amount = Int32(clamping: Int(deltaY.rounded()))
-        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line, wheelCount: 1,
-                               wheel1: amount, wheel2: 0, wheel3: 0) else { return false }
-        if !precise { cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: exact ?? deltaY) }
+    /// Ruling 15: what a recorded wheel is sent as, in points. A pixel wheel as recorded; a
+    /// line wheel (`precise == false`) as lines x the scroll view's line height (10 pt when it
+    /// has none), because AppKit's own line-to-point conversion of a synthesized line wheel
+    /// depends on the Mac's devices (it moved 10/4/25 pt, then 0 pt, on one Mac in one day).
+    /// The sign is unchanged: positive is toward the top (ruling 10).
+    static func pixels(deltaY: Double, precise: Bool, lineHeight: CGFloat) -> Double {
+        precise ? deltaY : deltaY * Double(lineHeight > 0 ? lineHeight : 10)
+    }
+
+    /// A precise (pixel) wheel event of `pixels` whole points at `location` (CG screen
+    /// coordinates, top-left origin), with the scroll phase and momentum phase fields set
+    /// when given (the replay's envelope sends began and ended).
+    static func wheelEvent(pixels: Double, at location: CGPoint, phase: NSEvent.Phase? = nil) -> NSEvent? {
+        let amount = Int32(clamping: Int(pixels.rounded()))
+        guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                               wheel1: amount, wheel2: 0, wheel3: 0) else { return nil }
+        if let phase {
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+            cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 0)
+        }
+        cg.location = location
+        return NSEvent(cgEvent: cg)
+    }
+
+    /// The scroll view's middle in CG screen coordinates.
+    private static func location(of hosted: Hosted) -> CGPoint {
         let scroll = hosted.scroll
         let inWindow = scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil)
         let screen = hosted.window.convertPoint(toScreen: inWindow)
         let top = NSScreen.screens.first?.frame.maxY ?? 0
-        cg.location = CGPoint(x: screen.x, y: top - screen.y)
-        guard let event = NSEvent(cgEvent: cg) else { return false }
+        return CGPoint(x: screen.x, y: top - screen.y)
+    }
+
+    /// A wheel of `pixels` whole points as the app dispatches it, without gesture phases
+    /// (ruling 3) unless `phase` is given.
+    @discardableResult
+    static func wheel(_ hosted: Hosted, pixels: Double, phase: NSEvent.Phase? = nil) -> Bool {
+        guard let event = wheelEvent(pixels: pixels, at: location(of: hosted), phase: phase) else { return false }
         // Two calls, one delivery: `NSApp.sendEvent` runs the app's local monitor (the
         // person-input mark); the window is never shown or key, so it routes the event no
         // further, and only `scrollWheel(with:)` scrolls.
         NSApp.sendEvent(event)
-        scroll.scrollWheel(with: event)
+        hosted.scroll.scrollWheel(with: event)
         return true
+    }
+
+    /// A recorded wheel, sent as `pixels(deltaY:precise:lineHeight:)` says (Ruling 15).
+    @discardableResult
+    static func wheel(_ hosted: Hosted, deltaY: Double, precise: Bool) -> Bool {
+        wheel(hosted, pixels: pixels(deltaY: deltaY, precise: precise, lineHeight: hosted.scroll.verticalLineScroll))
     }
 
     private static let keyCodes: [ScrollKey: (code: UInt16, character: String)] = [
@@ -207,7 +235,8 @@ enum ReplayRunner {
     }
 
     private static func reading(step: Int, input: RecordingEvent?, hosted: Hosted, chat: Int, phase: ScrollPhaseName,
-                                settled: [Double], names: Names, hasRows: Bool) -> Reading {
+                                settled: [Double], names: Names, hasRows: Bool,
+                                syntheticKind: (String) -> EntryShape.Kind? = { _ in nil }) -> Reading {
         let clip = hosted.scroll.contentView.bounds
         let frames = ConversationProbe.rows[chat]?.frames ?? [:]
         let rows = frames.filter { $0.value.maxY > 0 && $0.value.minY < clip.height && $0.value.height > 0 }
@@ -216,7 +245,8 @@ enum ReplayRunner {
                 let recorded = names.recorded[id]
                 // `unmapped` (not expected: every drawn synthetic row comes from a recorded shape)
                 // keeps the row for the rows-in-view check; it never enters the histogram.
-                return RowInView(id: recorded ?? unmapped, kind: recorded.flatMap { names.kinds[$0] } ?? .notice,
+                // An unmapped row is named by its synthetic entry's kind (G2: the failure says which row).
+                return RowInView(id: recorded ?? unmapped, kind: recorded.flatMap { names.kinds[$0] } ?? syntheticKind(id) ?? .notice,
                                  height: Double(frame.height), minY: Double(clip.minY + frame.minY))
             }
         return Reading(step: step, input: input, offset: Double(clip.origin.y),
@@ -335,23 +365,24 @@ enum ReplayRunner {
         /// The recorded turn of the last delta: a delta of the same turn grows the same reply.
         var deltaTurn: Int?
         let rest = Array(segment[cursor...])
-        /// Whether the delta at `index` starts a reply: a new reply's shape follows before a delta of another turn.
-        func startsReply(at index: Int) -> Bool {
-            guard case .delta(let turn, _) = rest[index].event else { return false }
+        /// The new reply's shape that follows the delta at `index` before a delta of another turn,
+        /// if any: that delta starts it, and the reply it starts is named by it from the delta on (G2).
+        func replyStarted(at index: Int) -> EntryShape? {
+            guard case .delta(let turn, _) = rest[index].event else { return nil }
             for (_, later) in rest[(index + 1)...] {
                 switch later {
-                case .shape(let s) where s.kind == .reply && !known.contains(s.id): return true
-                case .delta(let t, _) where t != turn: return false
+                case .shape(let s) where s.kind == .reply && !known.contains(s.id): return s
+                case .delta(let t, _) where t != turn: return nil
                 default: continue
                 }
             }
-            return false
+            return nil
         }
         var known = Set(shapes.map(\.id))
         var notes: [String: Int] = [:]
         var phase: ScrollPhaseName = .idle
         var residual = 0.0
-        var lineResidual = 0.0
+        var sent: [(pixels: Double, precise: Bool)] = []
         var readings: [Reading] = []
         var appended = 0
 
@@ -361,7 +392,8 @@ enum ReplayRunner {
             XCTAssertTrue(Diagnostics.recorders.isEmpty, "the replay records nothing")
             let settled = settle(hosted)
             readings.append(reading(step: step, input: input, hosted: hosted, chat: chat, phase: phase,
-                                    settled: settled, names: names, hasRows: !entriesNow().isEmpty))
+                                    settled: settled, names: names, hasRows: !entriesNow().isEmpty,
+                                    syntheticKind: { id in entriesNow().first { $0.id == id }.map { EntryShape.of($0, imageSize: { _ in nil }).kind } }))
             onStep?(step)
         }
 
@@ -379,16 +411,12 @@ enum ReplayRunner {
                 resize(hosted, width: CGFloat(w))
                 take(event)
             case let .wheel(deltaY, precise, _, _):
-                // Ruling 12: the remainder of a whole-unit CGEvent field carries to the next wheel, for pixels and lines alike.
-                var delta = deltaY
-                if precise {
-                    delta += residual
-                    residual = delta - delta.rounded()
-                } else {
-                    delta += lineResidual
-                    lineResidual = delta - delta.rounded()
-                }
-                wheel(hosted, deltaY: delta, precise: precise, exact: precise ? nil : deltaY)
+                // Ruling 15: lines become points; the remainder of a whole-point CGEvent field carries to the next wheel.
+                let exact = pixels(deltaY: deltaY, precise: precise, lineHeight: hosted.scroll.verticalLineScroll) + residual
+                let whole = exact.rounded()
+                residual = exact - whole
+                wheel(hosted, pixels: whole)
+                sent.append((pixels: whole, precise: true))
                 take(event)
             case .key(let k):
                 key(hosted, k)
@@ -401,7 +429,8 @@ enum ReplayRunner {
                 let text = SyntheticConversation.text(matching: EntryShape(id: "delta-\(readings.count)", kind: .reply, paragraphs: [chars]))
                 let sameStream = recordedTurn == deltaTurn
                 deltaTurn = recordedTurn
-                if let turn = replyTurn, sameStream || (lastKind == .reply && !startsReply(at: index)) {
+                let started = replyStarted(at: index)
+                if let turn = replyTurn, sameStream || (lastKind == .reply && started == nil) {
                     model.apply(.textDelta(TextDelta(chat: chat, turn: turn, text: " " + text)))
                 } else {
                     // A new reply: in the turn of the question just appended, else a turn of its own.
@@ -409,6 +438,10 @@ enum ReplayRunner {
                     if lastKind == .person, lastTurn > 0 { turn = lastTurn } else { turn = nextTurn; nextTurn += 1 }
                     model.apply(.textDelta(TextDelta(chat: chat, turn: turn, text: text)))
                     pendingReply = entriesNow().last?.id
+                    // Named now by the shape that follows, so the step's reading maps it.
+                    if let started, let synthetic = pendingReply {
+                        names.pair(recorded: started.id, synthetic: synthetic, kind: started.kind)
+                    }
                     lastTurn = turn
                     replyTurn = turn
                     lastKind = .reply
@@ -462,6 +495,8 @@ enum ReplayRunner {
         lastReadings = readings
         lastNotes = notes.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
         lastHostedWidth = hosted.host.frame.width
+        lastSentWheels = sent
+        lastLineHeight = Double(hosted.scroll.verticalLineScroll > 0 ? hosted.scroll.verticalLineScroll : 10)
 
         var evaluation = check(readings: readings)
         evaluation.appVersion = appVersion

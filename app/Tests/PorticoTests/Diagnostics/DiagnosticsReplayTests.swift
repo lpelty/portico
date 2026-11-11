@@ -144,6 +144,11 @@ final class DiagnosticsReplayTests: XCTestCase {
         let recorded = Set(try Recorder.read(recording).compactMap { if case .shape(let s) = $0.event { s.id } else { nil } })
         let named = Set(evaluation.window.flatMap { $0.rowsInView.map(\.id) })
         XCTAssertFalse(named.isEmpty, "rows in view")
+        // G2: no drawn row lacks a recorded stand-in, at any step; a failure names the row's kind and height.
+        let unmappedRows = ReplayRunner.lastReadings.flatMap { r in
+            r.rowsInView.filter { $0.id == ReplayRunner.unmapped }.map { "step \(r.step) \($0.kind.rawValue):\(Int($0.height.rounded()))" }
+        }
+        XCTAssertEqual(unmappedRows, [], "every drawn row maps to a recorded id")
         XCTAssertTrue(named.isSubset(of: recorded), "rows \(named) are recorded ids")
         // Turn 31's stream is a reply of its own under the 30th (off screen: the view is scrolled up),
         // not growth of the 30th: that row keeps its height, the document grows.
@@ -293,6 +298,35 @@ final class DiagnosticsReplayTests: XCTestCase {
         if evaluation.keysMoved == 0 { XCTAssertTrue(text.contains("input=key ") && text.contains("note=key-not-moved"), text) }
         XCTAssertEqual(file.path, Diagnostics.evaluationsDirectory.appendingPathComponent("9-2026-11-10T23-30-00.000Z.txt").path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), text + "\n")
+    }
+
+    /// G1 (Ruling 15): a line wheel is sent as a precise pixel wheel of lines x the scroll view's
+    /// line height, in the recorded direction; the reading keeps the recorded (line) input.
+    func testALineWheelIsSentAsAPixelWheelOfLinesTimesTheLineHeight() throws {
+        XCTAssertEqual(ReplayRunner.pixels(deltaY: -2.5, precise: false, lineHeight: 12), -30)
+        XCTAssertEqual(ReplayRunner.pixels(deltaY: 0.4, precise: false, lineHeight: 0), 4, "no line height: 10 pt")
+        XCTAssertEqual(ReplayRunner.pixels(deltaY: 40, precise: true, lineHeight: 12), 40, "a pixel wheel as recorded")
+        let event = try XCTUnwrap(ReplayRunner.wheelEvent(pixels: -25, at: .zero))
+        XCTAssertTrue(event.hasPreciseScrollingDeltas, "sent in pixels")
+        XCTAssertEqual(event.scrollingDeltaY, -25)
+
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 8).map { (0, .shape($0)) }
+        lines += [(100, .wheel(deltaY: 1, precise: false, phase: 0, momentum: 0)),
+                  (200, .wheel(deltaY: 0.4, precise: false, phase: 0, momentum: 0)),
+                  (300, .wheel(deltaY: 0.4, precise: false, phase: 0, momentum: 0)),
+                  (400, .wheel(deltaY: -2.5, precise: false, phase: 0, momentum: 0))]
+        let recording = try write(lines, name: "9-2026-11-10T23-40-00.000Z.jsonl")
+        _ = try ReplayRunner.run(recording: recording, images: images())
+        let height = try XCTUnwrap(ReplayRunner.lastLineHeight)
+        XCTAssertEqual(ReplayRunner.lastSentWheels.count, 4)
+        for (sent, lines) in zip(ReplayRunner.lastSentWheels, [1, 0.4, 0.4, -2.5]) {
+            XCTAssertTrue(sent.precise, "a pixel wheel")
+            XCTAssertEqual(sent.pixels, lines * height, accuracy: 1, "lines x line height (\(height)), in the recorded direction")
+        }
+        XCTAssertEqual(ReplayRunner.lastSentWheels.map(\.pixels).reduce(0, +), -0.7 * height, accuracy: 1, "remainders carried")
+        let inputs = ReplayRunner.lastReadings.compactMap(\.input)
+        XCTAssertTrue(inputs.allSatisfy { if case .wheel(_, false, _, _) = $0 { true } else { false } }, "readings keep the line input")
     }
 
     /// Review I1: a recording copied out of `diagnostics/` (say to Downloads) still has its
