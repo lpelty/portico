@@ -21,7 +21,12 @@
   --filter 'DiagnosticsReplayTests/testReplayRecordingFromEnvironment$'`),
   checks it for alternating heights, wheels that did not move the view, rows
   in view, a view past the end and estimate drift, and writes counts and ids
-  to `diagnostics/evaluations/`. See Diagnostics in the README.
+  to `diagnostics/evaluations/`. Its first line is the verdict: `red`,
+  `green`, or `inconclusive` with the reasons. Each gesture replays inside a
+  zero-delta began/ended envelope so the view treats it as the person
+  scrolling, and the header says whether the envelope's phases fired. Every
+  segment replays from where the recording started it, at the recorded text
+  scale. See Diagnostics in the README.
 - **The scroll trace moved under `diagnostics/`.** It is now
   `diagnostics/trace.log` and follows the same switch; the root-level
   `scroll-trace` file is retired. ethOS 0.43.3's lines (row, width, viewer and

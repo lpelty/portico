@@ -618,7 +618,14 @@ bin/portico-gateway diagnostics status   # on or off, and the files with their s
                                          # exit 0 on, 3 off
 ```
 
-`<home>` is the state directory (`$PORTICO_HOME` or `~/.portico`).
+`<home>` is the state directory (`$PORTICO_HOME`, else the folder the checkout's `.portico-home` names, else `~/.portico`). The replay writes its evaluation under the `diagnostics/` the recording sits in; for a recording copied elsewhere, under `$PORTICO_HOME`'s, else the checkout's `.portico-home`'s. It never makes `diagnostics/`; with no home to use it fails with one line: set `PORTICO_HOME` to the app's home.
+
+First, on a new build, a baseline and the phase spike:
+
+1. `bin/portico-gateway diagnostics on`
+2. Open a short chat, scroll a little, quit.
+3. Replay that recording (step 3 below). The baseline must be `verdict: green`.
+4. `swift test --filter ScrollPhaseSpikeTests` from `app/`, and post its `PHASE-SPIKE` and `ENVELOPE-SPIKE` lines.
 
 To replay a failure:
 
@@ -627,13 +634,16 @@ To replay a failure:
 3. From the app checkout, replay the recording:
    `PORTICO_REPLAY=<home>/diagnostics/recordings/<file>.jsonl swift test -c release --filter 'DiagnosticsReplayTests/testReplayRecordingFromEnvironment$'`
    Keep the trailing `$`: the filter is a regular expression, and without it the test that skips when `PORTICO_REPLAY` is unset runs too.
-4. Post the text of `<home>/diagnostics/evaluations/<file>.txt` (the test prints it too). Red means a violation reproduced; green means it did not.
+   It first prints the steps and about how long they take; run a long recording in the background. Every segment (each time the chat was opened) replays in order; `PORTICO_REPLAY_SEGMENT=<n>` replays segment `n` only.
+4. Post the verdict line and the text of `<home>/diagnostics/evaluations/<file>.txt` (the test prints it too). The first line is the verdict: `red` (a violation reproduced), `green` (none did), or `inconclusive (<reasons>)` (a key step did not move the view, the text scale was not applied, the envelope's phases did not fire, or more than a tenth of the steps' inputs were skipped).
 5. After pulling a fix, run step 3 again on the same recording.
 6. `bin/portico-gateway diagnostics off`
 
-The evaluation holds counts and ids only: the app and macOS versions, whether scroll phases fire and move, the segments and steps, the keys stepped and how many moved, the recorded event kinds the replay skipped, the entries by kind, a histogram of row heights, the violations (`alternation`, `wheelMoves`, `rowsInView`, `pastEnd`, `estimateDrift`) each with its step, and the rows of the failing window.
+The evaluation holds counts and ids only: the verdict, the app and macOS versions, whether scroll phases fire and move, whether the envelope's phases fired around each gesture run, the text scale and whether it was applied, any half-written last line dropped (`truncated`), the segments and steps, the keys stepped and how many moved, the recorded event kinds the replay skipped, the entries by kind, a histogram of row heights, the violations (`alternation`, `wheelMoves`, `rowsInView`, `pastEnd`, `estimateDrift`) per segment and per rule, each with its `segment.step` (the first 20 listed), and the failing window's steps with each input's fields and each row's recorded metrics.
 
-Two limits. Hosted key replays are not reliable, so the evaluation reports how many key steps moved. A replay runs at about four inputs per second, so a long recording takes minutes.
+The replay starts each segment where the recording did (at the bottom, or scrolled up with the same row at the top) in a view of the recorded height, and draws at the recorded text scale. A line wheel is sent as that many lines of the view's line height. A trackpad gesture is fed at its recorded spacing, inside a zero-delta began/ended pair of phased wheels (the envelope) so the view treats it as the person scrolling.
+
+Two limits. Hosted key replays are not reliable, so a key step that did not move the view makes the verdict inconclusive. A replay runs at about three inputs per second, so a long recording takes minutes.
 
 ## Updating
 
