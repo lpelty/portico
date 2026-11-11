@@ -487,10 +487,14 @@ struct ConversationView: View {
     private var recordingSnapshot: ConversationRecording.Snapshot {
         ConversationRecording.Snapshot(
             items: items, itemsKey: itemsKey, docked: model.dockedCard(for: chat)?.id,
-            currentTurn: model.currentTurn[chat]
-        ) {
-            ConversationRecording.Layout(drawn: drawn, briefItem: briefItem, divider: sessionDivider != nil)
-        }
+            currentTurn: model.currentTurn[chat],
+            context: {
+                ConversationRecording.Context(
+                    briefItem: briefItem, divider: sessionDivider != nil,
+                    hidden: model.agentActivity[chat]?.startingToolUses ?? [],
+                    apart: Set(model.proposals.values.compactMap(\.toolUseId)).union(model.apps.keys))
+            },
+            drawn: { drawn(from: $0) })
     }
 
     /// The window's size, `[width, height]`.
@@ -561,8 +565,12 @@ struct ConversationView: View {
     }
 
     /// The transcript's drawn rows.
-    private var drawn: [TranscriptEntry] {
-        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) }) { row in
+    private var drawn: [TranscriptEntry] { drawn(from: 0) }
+
+    /// The drawn rows of the items from `from` on (the recording's tail; `from`
+    /// never falls inside a run of tool rows).
+    private func drawn(from: Int) -> [TranscriptEntry] {
+        TranscriptEntry.entries(items[from...].filter { model.isDrawn($0, in: chat) }) { row in
             // A proposal's card and an app's page stand apart; they split a run.
             model.proposal(forToolUse: row.toolUseId) != nil || model.app(forToolUse: row.toolUseId) != nil
         }
