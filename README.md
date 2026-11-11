@@ -576,7 +576,7 @@ sources. `tests/test_distribution.py` fails if the bundle is out of date.
 bin/portico-gateway status --json      # {"version": 1, "running": true, "pid", "port", "folder", "session",
                                        #  "state", "mode", "started_at", "config_stale"}; exit 0 running, 3 not
 bin/portico-gateway stop               # stop the running gateway (its own stop path); exit 3 when none runs
-bin/portico-gateway diagnostics on     # (v0.26.4) on | off | status [--json]: Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
+bin/portico-gateway diagnostics on     # (v0.26.4, see Diagnostics) on | off | status [--json]: Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
@@ -600,6 +600,40 @@ instead of `--state`: `export-config-doc` (v0.24, `CONFIGURATION.md` and
 `status --json` is the supported way for other tools to see that the app
 holds a live session in a folder; the lock and ledger files in the state
 directory are internal. Keys whose value is unknown are left out.
+
+## Diagnostics
+
+Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
+
+It is for the deployment's Daedalus only. There is no setting in the app and nothing the person sees.
+
+While it is on, the app writes the scroll trace (`diagnostics/trace.log`) and, per chat, a recording (`diagnostics/recordings/<chat>-<stamp>.jsonl`). A recording holds the conversation's shape (each entry's kind and size metrics), the geometry (window, column, viewer, sidebar, text scale), the inputs (wheel, keys, jumps, scroll phases) and the gateway's events as sizes. It never holds message text, file names, paths, URLs, titles or image content.
+
+```sh
+bin/portico-gateway diagnostics on       # create <home>/diagnostics/ (0700) with the switch file and a README;
+                                         # the app notices within a few seconds, no relaunch
+bin/portico-gateway diagnostics off      # delete the whole directory, recordings included; exit 1, naming what
+                                         # it could not delete, if something stays
+bin/portico-gateway diagnostics status   # on or off, and the files with their sizes; --json for programs;
+                                         # exit 0 on, 3 off
+```
+
+`<home>` is the state directory (`$PORTICO_HOME` or `~/.portico`).
+
+To replay a failure:
+
+1. `bin/portico-gateway diagnostics on`
+2. Work until it fails, or reproduce it.
+3. From the app checkout, replay the recording:
+   `PORTICO_REPLAY=<home>/diagnostics/recordings/<file>.jsonl swift test -c release --filter 'DiagnosticsReplayTests/testReplayRecordingFromEnvironment$'`
+   Keep the trailing `$`: the filter is a regular expression, and without it the test that skips when `PORTICO_REPLAY` is unset runs too.
+4. Post the text of `<home>/diagnostics/evaluations/<file>.txt` (the test prints it too). Red means a violation reproduced; green means it did not.
+5. After pulling a fix, run step 3 again on the same recording.
+6. `bin/portico-gateway diagnostics off`
+
+The evaluation holds counts and ids only: the app and macOS versions, whether scroll phases fire and move, the segments and steps, the keys stepped and how many moved, the recorded event kinds the replay skipped, the entries by kind, a histogram of row heights, the violations (`alternation`, `wheelMoves`, `rowsInView`, `pastEnd`, `estimateDrift`) each with its step, and the rows of the failing window.
+
+Two limits. Hosted key replays are not reliable, so the evaluation reports how many key steps moved. A replay runs at about four inputs per second, so a long recording takes minutes.
 
 ## Updating
 

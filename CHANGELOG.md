@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.26.4 (unreleased)
+
+### Diagnostics
+
+- **A diagnostics suite for the deployment's Daedalus.** It looks at the
+  conversation view's behaviour. Off unless turned on, with no setting in the
+  app and nothing the person sees. Recordings hold sizes, counts and ids,
+  never text, file names, paths, URLs, titles or image content, and stay on
+  the machine. While on, the app records each chat's shape, geometry and
+  inputs (wheel, keys, jumps, scroll phases) and the gateway's events as sizes
+  to `diagnostics/recordings/`.
+- **`portico-gateway diagnostics on | off | status [--json]`.** `on` creates
+  `diagnostics/` in the app's home with the switch file and a README, and the
+  app notices within a few seconds. `off` deletes the whole directory,
+  recordings included, and exits 1 naming anything it could not delete.
+  `status` says on or off and lists the files (exit 0 on, 3 off).
+- **A replay runner and its evaluation.** A recording replays on the real
+  conversation view (`PORTICO_REPLAY=<recording> swift test -c release
+  --filter 'DiagnosticsReplayTests/testReplayRecordingFromEnvironment$'`),
+  checks it for alternating heights, wheels that did not move the view, rows
+  in view, a view past the end and estimate drift, and writes counts and ids
+  to `diagnostics/evaluations/`. See Diagnostics in the README.
+- **The scroll trace moved under `diagnostics/`.** It is now
+  `diagnostics/trace.log` and follows the same switch; the root-level
+  `scroll-trace` file is retired. ethOS 0.43.3's lines (row, width, viewer and
+  paint) are carried unchanged.
+
+### Fixes
+
+The blank chat and the scroll jumps, once the field evaluation names the cause.
+
 ## v0.26.3 (2026-11-09)
 
 ### Fixes
