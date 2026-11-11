@@ -148,6 +148,10 @@ final class ConversationRecording {
     /// items before it are unchanged (the model appends, or edits its last
     /// item), so their entries and shapes stand. A tool row finishing earlier
     /// changes no shape. A change of `Context` reshapes every entry.
+    /// The invariant: while `Context` is unchanged, no shape before the tail
+    /// changes without an item id changing. The one theoretical exception is a
+    /// turn marker whose drawn state flips in place (`setSigninPaused`); a flip
+    /// on a marker before the tail is caught at the next full reshape only.
     func changed(_ snapshot: Snapshot) {
         guard let recorder else { return }
         if snapshot.docked != docked {
@@ -177,7 +181,9 @@ final class ConversationRecording {
         let context = snapshot.context()
         let all = context != self.context
         // The tail starts where a run of tool rows that reaches `first` starts
-        // (a turn end not drawn does not split a run).
+        // (a turn end not drawn does not split a run). O(run length), bounded by
+        // the turn. `Context.apart` spans the proposals and apps of every chat,
+        // so one arriving in another chat also reshapes this one in full.
         var from = all ? 0 : first
         while from > 0, Self.mayJoinARun(items[from - 1]) { from -= 1 }
         var keep = all ? 0 : order.count
@@ -290,6 +296,8 @@ final class ConversationRecording {
             }
             while index < items.count, let firstItem, !items[index].hasSameID(as: firstItem) { index += 1 }
             tail.starts.append(index)
+            // Past the match, so a duplicate id never takes the same item twice.
+            if index < items.count { index += 1 }
             let id = entry.id
             if id == context.briefItem {
                 tail.shapes.append(EntryShape(id: "brief", kind: .brief))
