@@ -4,6 +4,8 @@ import Foundation
 /// v0.26.4 (D9): one step of a replay, taken after the view settled.
 struct Reading: Equatable, Sendable {
     var step: Int
+    /// The recording's segment (each `open` starts one), from 1; steps count from 0 in each (I4).
+    var segment: Int = 1
     var input: RecordingEvent?
     var offset: Double
     var documentHeight: Double
@@ -31,6 +33,7 @@ struct Violation: Equatable, Sendable {
     var step: Int
     /// One line of numbers; never content.
     var detail: String
+    var segment: Int = 1
 }
 
 /// The failures the field logs already show, as checks over a replay's readings.
@@ -41,7 +44,20 @@ enum Invariants {
     /// Readings in an a, b, a, b, ... run before it counts.
     static let alternationLength = 4
 
+    /// Each segment on its own (I4): a step is never compared with another segment's.
     static func check(_ readings: [Reading]) -> [Violation] {
+        var out: [Violation] = []
+        var start = readings.startIndex
+        while start < readings.endIndex {
+            let segment = readings[start].segment
+            let end = readings[start...].firstIndex { $0.segment != segment } ?? readings.endIndex
+            out += checkSegment(Array(readings[start..<end])).map { var v = $0; v.segment = segment; return v }
+            start = end
+        }
+        return out
+    }
+
+    private static func checkSegment(_ readings: [Reading]) -> [Violation] {
         var out: [Violation] = []
         for (i, r) in readings.enumerated() {
             let previous = i > 0 ? readings[i - 1] : nil

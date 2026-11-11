@@ -32,10 +32,10 @@ final class EvaluationTests: XCTestCase {
             "steps: 9", "keys: 2 stepped, 1 moved", "skipped: capped 1, removed 3",
             "entries:", "person: 30", "reply: 30", "tool: 4",
             "heights:", "0-49: 12", "150-199: 3",
-            "violations: 1", "step 7 pastEnd: clip.maxY 9100 > doc 9000",
+            "violations: 1", "per segment: 1=1", "step 1.7 pastEnd: clip.maxY 9100 > doc 9000",
             "window:",
-            "step 7 input=wheel offset=1234 doc=9001 clip=1234..2034 phase=decelerating rows=[assistant:ZEBRA:reply:120,user:Q:person:40]",
-            "step 8 input=key offset=0 doc=10 clip=0..5 phase=idle rows=[] note=key-not-moved",
+            "step 1.7 input=wheel offset=1234 doc=9001 clip=1234..2034 phase=decelerating rows=[assistant:ZEBRA:reply:120,user:Q:person:40]",
+            "step 1.8 input=key offset=0 doc=10 clip=0..5 phase=idle rows=[] note=key-not-moved",
         ])
     }
 

@@ -10,7 +10,10 @@ enum ScrollPhaseName: String, Codable, Sendable { case idle, tracking, interacti
 /// counts, sizes and flags only (D4). Each line is one JSON object with a `kind`
 /// (the case name), `t` (ms since the recording began) and the case's fields.
 enum RecordingEvent: Codable, Equatable, Sendable {
-    case open(chat: Int, appVersion: String, macOS: String, window: [Int], column: Int, viewerVisible: Bool, viewerWidth: Int, sidebarVisible: Bool, textScale: Double)
+    /// `atBottom`, `topId` (the row at the view's top), `topOffset` (its top's distance from the
+    /// view's top, negative above it) and `clipHeight`: where the view was at open (I4).
+    case open(chat: Int, appVersion: String, macOS: String, window: [Int], column: Int, viewerVisible: Bool, viewerWidth: Int, sidebarVisible: Bool, textScale: Double,
+              atBottom: Bool = true, topId: String? = nil, topOffset: Int = 0, clipHeight: Int = 0)
     case shape(EntryShape)
     case removed(id: String)
     case imageLoaded(id: String, index: Int, height: Int)
@@ -32,6 +35,7 @@ enum RecordingEvent: Codable, Equatable, Sendable {
     private enum Key: String, CodingKey {
         case kind, value
         case chat, appVersion, macOS, window, column, viewerVisible, viewerWidth, sidebarVisible, textScale
+        case atBottom, topId, topOffset, clipHeight
         case id, index, height, width, visible, shown, deltaY, precise, phase, momentum
         case turn, chars, docked, bytes
     }
@@ -63,11 +67,13 @@ enum RecordingEvent: Codable, Equatable, Sendable {
         var c = encoder.container(keyedBy: Key.self)
         try c.encode(kindName, forKey: .kind)
         switch self {
-        case let .open(chat, appVersion, macOS, window, column, viewerVisible, viewerWidth, sidebarVisible, textScale):
+        case let .open(chat, appVersion, macOS, window, column, viewerVisible, viewerWidth, sidebarVisible, textScale, atBottom, topId, topOffset, clipHeight):
             try c.encode(chat, forKey: .chat); try c.encode(appVersion, forKey: .appVersion); try c.encode(macOS, forKey: .macOS)
             try c.encode(window, forKey: .window); try c.encode(column, forKey: .column)
             try c.encode(viewerVisible, forKey: .viewerVisible); try c.encode(viewerWidth, forKey: .viewerWidth)
             try c.encode(sidebarVisible, forKey: .sidebarVisible); try c.encode(textScale, forKey: .textScale)
+            try c.encode(atBottom, forKey: .atBottom); try c.encodeIfPresent(topId, forKey: .topId)
+            try c.encode(topOffset, forKey: .topOffset); try c.encode(clipHeight, forKey: .clipHeight)
         case .shape(let s): try c.encode(s, forKey: .value)
         case .removed(let id), .jump(let id), .toolRow(let id): try c.encode(id, forKey: .id)
         case let .imageLoaded(id, index, height):
@@ -100,7 +106,9 @@ enum RecordingEvent: Codable, Equatable, Sendable {
                 macOS: try c.decode(String.self, forKey: .macOS), window: try c.decode([Int].self, forKey: .window),
                 column: try c.decode(Int.self, forKey: .column), viewerVisible: try c.decode(Bool.self, forKey: .viewerVisible),
                 viewerWidth: try c.decode(Int.self, forKey: .viewerWidth), sidebarVisible: try c.decode(Bool.self, forKey: .sidebarVisible),
-                textScale: try c.decode(Double.self, forKey: .textScale))
+                textScale: try c.decode(Double.self, forKey: .textScale),
+                atBottom: try c.decode(Bool.self, forKey: .atBottom), topId: try c.decodeIfPresent(String.self, forKey: .topId),
+                topOffset: try c.decode(Int.self, forKey: .topOffset), clipHeight: try c.decode(Int.self, forKey: .clipHeight))
         case "shape": self = .shape(try c.decode(EntryShape.self, forKey: .value))
         case "removed": self = .removed(id: try c.decode(String.self, forKey: .id))
         case "imageLoaded":

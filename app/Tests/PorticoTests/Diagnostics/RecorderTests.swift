@@ -154,7 +154,8 @@ final class RecorderTests: XCTestCase {
         switch c {
         case .open:
             return RecordingEvent.open(chat: 1, appVersion: "v", macOS: "m", window: [1, 2], column: 3, viewerVisible: true,
-                                       viewerWidth: 4, sidebarVisible: true, textScale: 1)
+                                       viewerWidth: 4, sidebarVisible: true, textScale: 1, atBottom: false, topId: "id-8",
+                                       topOffset: -5, clipHeight: 9)
         case .shape:
             return RecordingEvent.shape(EntryShape(id: "id-1", kind: .person, paragraphs: [3], headings: [1], listItems: 1, codeBlocks: [2],
                                                    tables: [[1, 2]], quotes: 1, rules: 1, images: [[3, 4]], documents: 1, toolRows: 2, folded: true))
@@ -194,7 +195,7 @@ final class RecorderTests: XCTestCase {
         for line in text.split(separator: "\n") {
             collectStrings(try JSONSerialization.jsonObject(with: Data(line.utf8)), into: &strings)
         }
-        var allowed: Set<String> = ["id-1", "id-2", "id-3", "id-4", "id-5", "id-6", "id-7", "v", "m"]
+        var allowed: Set<String> = ["id-1", "id-2", "id-3", "id-4", "id-5", "id-6", "id-7", "id-8", "v", "m"]
         allowed.formUnion(["open", "shape", "removed", "imageLoaded", "window", "column", "viewer", "sidebar", "textScale", "wheel", "key", "jump", "phase", "delta", "turnFinished", "toolRow", "card", "capped"])
         allowed.insert("person")  // EntryShape.kind
         allowed.formUnion(["pageUp", "idle"])  // ScrollKey, ScrollPhaseName

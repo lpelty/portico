@@ -29,6 +29,8 @@ struct Evaluation: Equatable, Sendable {
     var keysMoved: Int = 0
     /// Recording event kinds the replay did not apply, and how many.
     var skipped: [String: Int] = [:]
+    /// The segments replayed (from 1); empty for readings checked on their own.
+    var replayed: [Int] = []
     /// Whether the replay's zero-delta began/ended envelope put SwiftUI's phase out of idle
     /// around each gesture run (Ruling 16): `on (N gesture runs)` or `off (phases did not fire)`.
     var envelope: String = "on (0 gesture runs)"
@@ -45,11 +47,17 @@ struct Evaluation: Equatable, Sendable {
         lines.append("heights:")
         for (bucket, count) in heightHistogram.sorted(by: { $0.key < $1.key }) { lines.append("\(bucket)-\(bucket + 49): \(count)") }
         lines.append("violations: \(violations.count)")
-        for v in violations { lines.append("step \(v.step) \(v.rule.rawValue): \(v.detail)") }
+        // I4: per segment replayed (or, for readings checked on their own, per segment seen).
+        var bySegment: [Int: Int] = Dictionary(uniqueKeysWithValues: replayed.map { ($0, 0) })
+        for v in violations { bySegment[v.segment, default: 0] += 1 }
+        if !bySegment.isEmpty {
+            lines.append("per segment: " + bySegment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))
+        }
+        for v in violations { lines.append("step \(v.segment).\(v.step) \(v.rule.rawValue): \(v.detail)") }
         lines.append("window:")
         for r in window {
             let rows = r.rowsInView.map { "\($0.id):\($0.kind.rawValue):\(Int($0.height.rounded()))" }.joined(separator: ",")
-            lines.append("step \(r.step) input=\(Self.kind(of: r.input)) offset=\(Int(r.offset.rounded())) doc=\(Int(r.documentHeight.rounded())) "
+            lines.append("step \(r.segment).\(r.step) input=\(Self.kind(of: r.input)) offset=\(Int(r.offset.rounded())) doc=\(Int(r.documentHeight.rounded())) "
                 + "clip=\(Int(r.clip.minY.rounded()))..\(Int(r.clip.maxY.rounded())) phase=\(r.phase.rawValue) rows=[\(rows)]" + (r.note.map { " note=\($0)" } ?? ""))
         }
         return lines.joined(separator: "\n")

@@ -465,6 +465,19 @@ struct ConversationView: View {
             guard recording.wanted, recording.recorder == nil, let recorder = Diagnostics.recorder(for: chat) else { return }
             let os = ProcessInfo.processInfo.operatingSystemVersion
             let window = windowSize
+            // I4: where the view is; a place being put back (the view has not got there yet)
+            // counts as where it is going.
+            let top = rows.top()
+            let saved = model.place(of: chat)
+            let atBottom: Bool, topId: String?, topOffset: Int
+            if restoredTop != nil, let saved, !saved.atBottom, let item = saved.topItem {
+                (atBottom, topId, topOffset) = (false, item, Int(saved.topOffset.rounded()))
+            } else {
+                atBottom = top == nil ? true : scrollMemory.atBottom
+                topId = top?.id
+                topOffset = top.map { Int($0.offset.rounded()) } ?? 0
+            }
+            let clipHeight = Int((personInput.scrollView?.contentView.bounds.height ?? 0).rounded())
             recording.start(
                 recorder,
                 open: .open(
@@ -472,7 +485,8 @@ struct ConversationView: View {
                     macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
                     window: window, column: Int(transcriptWidth ?? 0),
                     viewerVisible: model.isViewerShown(for: chat), viewerWidth: viewerWidth,
-                    sidebarVisible: model.sidebarVisible, textScale: Double(textScale)),
+                    sidebarVisible: model.sidebarVisible, textScale: Double(textScale),
+                    atBottom: atBottom, topId: topId, topOffset: topOffset, clipHeight: clipHeight),
                 window: window, snapshot: recordingSnapshot)
             personInput.onEvent = { [recording] event in recording.input(event) }
         }

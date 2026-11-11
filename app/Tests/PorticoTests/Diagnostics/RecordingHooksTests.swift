@@ -186,13 +186,18 @@ final class RecordingHooksTests: XCTestCase {
         spin(0.3)
 
         let events = try recording()
-        guard case let .open(chat, _, _, window, column, _, _, _, _)? = events.first?.event else {
+        guard case let .open(chat, _, _, window, column, _, _, _, _, atBottom, topId, _, clipHeight)? = events.first?.event else {
             return XCTFail("first event is open: \(String(describing: events.first))")
         }
         XCTAssertEqual(chat, 3)
         XCTAssertEqual(window, [800, 600])
         XCTAssertGreaterThan(column, 0)
+        // I4: where the view was at open: at the bottom, its top row, its clip's height.
+        XCTAssertTrue(atBottom, "opened at the bottom")
+        XCTAssertGreaterThan(clipHeight, 300)
+        XCTAssertLessThanOrEqual(clipHeight, 600)
         let opened = Self.openShapes(events)
+        XCTAssertTrue(opened.map(\.id).contains(try XCTUnwrap(topId, "the row at the top")), "the top row is a recorded entry")
         XCTAssertEqual(opened.count, 60, "one shape per drawn entry")
         XCTAssertEqual(opened.filter { $0.kind == .person }.count, 30)
         XCTAssertEqual(opened.filter { $0.kind == .reply }.count, 30)
@@ -208,6 +213,36 @@ final class RecordingHooksTests: XCTestCase {
         XCTAssertEqual(events.map(\.t), events.map(\.t).sorted(), "time never goes back")
     }
 
+    /// I4: a conversation opened scrolled up (its place kept, put back as a switch back puts it)
+    /// records that place in its `open`: the second segment of the chat's recording.
+    func testAScrolledUpOpenRecordsItsPlace() throws {
+        try switchOn()
+        let model = try model(turns: 30)
+        model.apply(.chatList(ChatList(chats: [3, 5].map {
+            ChatSummary(chat: $0, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")
+        })))
+        let hosted = host(model)
+        defer { hosted.window.close() }
+        let saved = try XCTUnwrap(TranscriptEntry.entries(model.transcripts[3] ?? []).map(\.id).filter { $0.hasPrefix("assistant") }.dropFirst(8).first)
+        model.selected = 5
+        spin(0.4)
+        model.notePlace(ConversationPlace(atBottom: false, topItem: saved, topOffset: -30), chat: 3)
+        model.selected = 3
+        spin(1.0)
+        let events = try recording()
+        let opens = events.compactMap { if case .open = $0.event { $0.event } else { nil } }
+        XCTAssertEqual(opens.count, 2, "opened, then opened again")
+        guard case let .open(_, _, _, _, _, _, _, _, _, firstAtBottom, _, _, _)? = opens.first,
+              case let .open(_, _, _, _, _, _, _, _, _, atBottom, topId, topOffset, clipHeight)? = opens.last else {
+            return XCTFail("two opens: \(opens)")
+        }
+        XCTAssertTrue(firstAtBottom, "the first open at the bottom")
+        XCTAssertFalse(atBottom, "the second scrolled up")
+        XCTAssertEqual(topId, saved)
+        XCTAssertEqual(Double(topOffset), -30, accuracy: 8)
+        XCTAssertGreaterThan(clipHeight, 300)
+    }
+
     func testSwitchOnMidSessionRecordsOpenChats() throws {
         let model = try model(turns: 30)
         let hosted = host(model)
@@ -216,7 +251,7 @@ final class RecordingHooksTests: XCTestCase {
         try switchOn()
         spin(0.5)
         let events = try recording()
-        guard case .open(chat: 3, _, _, let window, _, _, _, _, _)? = events.first?.event else {
+        guard case .open(chat: 3, _, _, let window, _, _, _, _, _, _, _, _, _)? = events.first?.event else {
             return XCTFail("first event is open: \(String(describing: events.first))")
         }
         XCTAssertEqual(window, [800, 600])
@@ -229,7 +264,7 @@ final class RecordingHooksTests: XCTestCase {
         let hosted = host(model)
         defer { hosted.window.close() }
         let events = try recording()
-        guard case .open(chat: 3, _, _, _, _, _, _, _, _)? = events.first?.event else {
+        guard case .open(chat: 3, _, _, _, _, _, _, _, _, _, _, _, _)? = events.first?.event else {
             return XCTFail("first event is open: \(String(describing: events.first))")
         }
         XCTAssertTrue(Self.shapes(events).isEmpty, "no entries")
@@ -382,7 +417,7 @@ final class RecordingHooksTests: XCTestCase {
         let second = try XCTUnwrap(Diagnostics.recorders[3], "a recorder again")
         XCTAssertFalse(first === second, "a new recorder")
         let events = try recording()
-        guard case .open(chat: 3, _, _, _, _, _, _, _, _)? = events.first?.event else {
+        guard case .open(chat: 3, _, _, _, _, _, _, _, _, _, _, _, _)? = events.first?.event else {
             return XCTFail("the new file starts with open: \(String(describing: events.first))")
         }
         XCTAssertEqual(Self.openShapes(events).count, 10)

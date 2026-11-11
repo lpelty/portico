@@ -99,9 +99,11 @@ final class DiagnosticsReplayTests: XCTestCase {
         return url
     }
 
-    private func open(window: [Int] = [800, 600], column: Int = 800) -> RecordingEvent {
+    private func open(window: [Int] = [800, 600], column: Int = 800, textScale: Double = 1, atBottom: Bool = true,
+                      topId: String? = nil, topOffset: Int = 0, clipHeight: Int = 0) -> RecordingEvent {
         .open(chat: 9, appVersion: "0.26.4", macOS: "27.0", window: window, column: column,
-              viewerVisible: false, viewerWidth: 0, sidebarVisible: false, textScale: 1)
+              viewerVisible: false, viewerWidth: 0, sidebarVisible: false, textScale: textScale,
+              atBottom: atBottom, topId: topId, topOffset: topOffset, clipHeight: clipHeight)
     }
 
     private func conversation(turns: Int, prefix: String = "") -> [EntryShape] {
@@ -130,7 +132,7 @@ final class DiagnosticsReplayTests: XCTestCase {
         for r in ReplayRunner.lastReadings { print("REPLAY-STEP \(r.step) \(r.input.map { "\($0)" } ?? "none") offset=\(r.offset) doc=\(r.documentHeight)") }
         XCTAssertEqual(evaluation.violations, [], text)
         XCTAssertEqual(evaluation.segments, 1)
-        guard case let .open(_, appVersion, macOS, _, _, _, _, _, _)? = try Recorder.read(recording).first?.event else {
+        guard case let .open(_, appVersion, macOS, _, _, _, _, _, _, _, _, _, _)? = try Recorder.read(recording).first?.event else {
             return XCTFail("the recording opens")
         }
         XCTAssertEqual(evaluation.appVersion, appVersion, "the recording's app, not the replaying build's")
@@ -197,7 +199,7 @@ final class DiagnosticsReplayTests: XCTestCase {
             print("REPLAY-EVALUATION crafted-injected\n\(crafted.render())")
             XCTAssertEqual(crafted.violations.map(\.rule), [.alternation])
             XCTAssertEqual(crafted.violations.first?.step, 4)
-            XCTAssertTrue(crafted.render().contains("step 4 alternation: document height flipped between 6000 and 6120"))
+            XCTAssertTrue(crafted.render().contains("step 1.4 alternation: document height flipped between 6000 and 6120"))
             XCTAssertEqual(crafted.window.map(\.step), [3, 4, 5], "the failing step and its neighbours")
         }
     }
@@ -220,14 +222,17 @@ final class DiagnosticsReplayTests: XCTestCase {
         let evaluation = try ReplayRunner.run(recording: recording, images: images())
         print("REPLAY-EVALUATION capped\n\(evaluation.render())")
         XCTAssertEqual(evaluation.segments, 2)
-        XCTAssertEqual(evaluation.lengthMs, 600, "the replayed segment's length")
+        XCTAssertEqual(evaluation.replayed, [1, 2], "every segment replays (I4)")
+        XCTAssertEqual(evaluation.lengthMs, 1500, "the replayed segments' length")
         XCTAssertEqual(evaluation.entriesByKind[.person], 21, "the last segment's people, the appended one too")
         XCTAssertEqual(evaluation.entriesByKind[.reply], 20, "the last segment's replies (the delta grew the 20th)")
         XCTAssertEqual(evaluation.skipped, ["capped": 1, "removed": 1])
         XCTAssertTrue(evaluation.render().contains("\nskipped: capped 1, removed 1\n"))
-        let inputs = ReplayRunner.lastReadings.compactMap(\.input)
+        XCTAssertEqual(ReplayRunner.lastReadings.filter { $0.segment == 1 }.compactMap(\.input).count, 1, "the first segment's wheel")
+        let second = ReplayRunner.lastReadings.filter { $0.segment == 2 }
+        let inputs = second.compactMap(\.input)
         XCTAssertEqual(inputs.count, 4, "wheel, column, delta, new shape: \(inputs)")
-        XCTAssertEqual(ReplayRunner.lastReadings.first(where: { if case .wheel = $0.input { true } else { false } })?.phase, .interacting)
+        XCTAssertEqual(second.first(where: { if case .wheel = $0.input { true } else { false } })?.phase, .interacting)
         XCTAssertEqual(Double(try XCTUnwrap(ReplayRunner.lastHostedWidth)), 560, accuracy: 0.5, "the column applied")
         XCTAssertTrue(ReplayRunner.lastNotes.contains { $0.hasPrefix("removed: 1") }, "\(ReplayRunner.lastNotes)")
         XCTAssertTrue(ReplayRunner.lastNotes.contains { $0.hasPrefix("capped: 1") }, "\(ReplayRunner.lastNotes)")
@@ -339,7 +344,61 @@ final class DiagnosticsReplayTests: XCTestCase {
         lines += [(600, .delta(turn: 3, chars: 9))]
         let estimate = ReplayRunner.estimate(lines)
         XCTAssertEqual(estimate.steps, 5, "an opening reading per segment, a wheel, a key, a delta")
-        XCTAssertGreaterThanOrEqual(estimate.seconds, 10, "hosting and the phase probe per segment, plus each step's settle")
+        XCTAssertEqual(estimate.seconds, 10, "the phase probe, hosting per segment, each step's settle (4 + 2 x 2 + 5 x 0.35, up)")
+    }
+
+    /// I4: every segment replays in order, each from its own `open`; readings are numbered
+    /// `segment.step` and violations reported per segment. The first segment's window shrinks
+    /// to nothing (no row in view, on any Mac); the second is healthy.
+    private func twoSegments() throws -> URL {
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 4, prefix: "a").map { (0, .shape($0)) }
+        lines += [(100, .window(width: 800, height: 1))]
+        lines += [(900, open(window: [900, 700], column: 700))]
+        lines += conversation(turns: 6, prefix: "b").map { (900, .shape($0)) }
+        lines += [(1000, .key(.end))]
+        return try write(lines, name: "9-2026-11-11T09-00-00.000Z.jsonl")
+    }
+
+    func testEverySegmentReplaysAndAFirstSegmentViolationIsRed() throws {
+        let evaluation = try ReplayRunner.run(recording: try twoSegments(), images: images())
+        let text = evaluation.render()
+        print("REPLAY-EVALUATION segments\n\(text)")
+        XCTAssertEqual(evaluation.segments, 2)
+        XCTAssertEqual(Set(ReplayRunner.lastReadings.map(\.segment)), [1, 2], "both segments replayed")
+        XCTAssertEqual(ReplayRunner.lastReadings.filter { $0.segment == 2 }.map(\.step), [0, 1], "the second from its own open")
+        XCTAssertFalse(evaluation.violations.isEmpty, "the first segment's violation is red")
+        XCTAssertEqual(Set(evaluation.violations.map(\.segment)), [1])
+        XCTAssertTrue(text.contains("\nstep 1.1 rowsInView: "), text)
+        XCTAssertTrue(text.contains("\nper segment: 1=\(evaluation.violations.count), 2=0\n"), text)
+        XCTAssertTrue(evaluation.window.allSatisfy { $0.segment == 1 }, "the window is the failing segment's")
+    }
+
+    func testOneSegmentReplaysWhenNamed() throws {
+        let recording = try twoSegments()
+        let evaluation = try ReplayRunner.run(recording: recording, images: images(), segment: 2)
+        XCTAssertEqual(Set(ReplayRunner.lastReadings.map(\.segment)), [2])
+        XCTAssertEqual(evaluation.violations, [])
+        XCTAssertTrue(evaluation.render().contains("\nper segment: 2=0\n"))
+        XCTAssertEqual(ReplayRunner.segment(from: ["PORTICO_REPLAY_SEGMENT": "2"]), 2)
+        XCTAssertNil(ReplayRunner.segment(from: [:]))
+        XCTAssertThrowsError(try ReplayRunner.run(recording: recording, images: images(), segment: 3))
+    }
+
+    /// I4: an `open` that says scrolled up starts the replay scrolled up: the recorded top row at
+    /// the recorded distance from the view's top, in a view of the recorded clip height.
+    func testAScrolledUpOpenStartsTheReplayScrolledUp() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open(atBottom: false, topId: "assistant:6", topOffset: -40, clipHeight: 480))]
+        lines += conversation(turns: 20).map { (0, .shape($0)) }
+        lines += [(100, .key(.down))]
+        let recording = try write(lines, name: "9-2026-11-11T09-30-00.000Z.jsonl")
+        _ = try ReplayRunner.run(recording: recording, images: images())
+        let first = try XCTUnwrap(ReplayRunner.lastReadings.first)
+        for r in ReplayRunner.lastReadings { print("REPLAY-STEP \(r.segment).\(r.step) offset=\(r.offset) doc=\(r.documentHeight) clip=\(r.clip) rows=\(r.rowsInView.map { "\($0.id)@\(Int($0.minY))" })") }
+        XCTAssertEqual(Double(first.clip.height), 480, accuracy: 1, "hosted at the recorded clip height")
+        let top = try XCTUnwrap(first.rowsInView.first { $0.id == "assistant:6" }, "the recorded top row in view: \(first.rowsInView.map(\.id))")
+        XCTAssertEqual(top.minY - first.offset, -40, accuracy: 8, "at the recorded distance from the view's top")
+        XCTAssertLessThan(Double(first.clip.maxY), first.documentHeight - 100, "scrolled up, not at the bottom")
     }
 
     /// G1 (Ruling 15): a line wheel is sent as a precise pixel wheel of lines x the scroll view's

@@ -42,9 +42,11 @@ enum ReplayRunner {
     enum Failure: Error, CustomStringConvertible {
         case noOpen
         case noScrollView
+        case noSegment(Int, Int)
         var description: String {
             switch self {
             case .noOpen: "the recording has no open event"
+            case let .noSegment(n, count): "the recording has no segment \(n) (it has \(count))"
             case .noScrollView: "no transcript scroll view in the hosted conversation"
             }
         }
@@ -276,13 +278,13 @@ enum ReplayRunner {
         for i in noted.indices {
             guard case .key(let key) = noted[i].input else { continue }
             keysStepped += 1
-            let moved = i > 0 ? abs(noted[i].offset - noted[i - 1].offset) : 0
+            let moved = i > 0 && noted[i - 1].segment == noted[i].segment ? abs(noted[i].offset - noted[i - 1].offset) : 0
             let bar = key == .up || key == .down ? 1 : 0.1 * Double(noted[i].clip.height)
             if moved >= bar { keysMoved += 1 } else { noted[i].note = "key-not-moved" }
         }
         let window: [Reading]
-        if let failing = violations.first?.step {
-            window = noted.filter { abs($0.step - failing) <= 1 }
+        if let failing = violations.first {
+            window = noted.filter { $0.segment == failing.segment && abs($0.step - failing.step) <= 1 }
         } else {
             window = Array(noted.suffix(3))
         }
@@ -299,18 +301,32 @@ enum ReplayRunner {
 
     // MARK: - the replay
 
-    static func run(recording: URL, images: URL) throws -> Evaluation {
-        let all = try Recorder.read(recording)
+    /// The recording's segments: each `open` and what follows it up to the next.
+    static func segments(_ all: [(t: Int, event: RecordingEvent)]) -> [[(t: Int, event: RecordingEvent)]] {
         let opens = all.indices.filter { if case .open = all[$0].event { true } else { false } }
-        guard let start = opens.last,
-              case let .open(chat, appVersion, macOS, window, column, _, _, _, _) = all[start].event
+        return opens.enumerated().map { n, start in
+            Array(all[start..<(n + 1 < opens.count ? opens[n + 1] : all.endIndex)])
+        }
+    }
+
+    /// `PORTICO_REPLAY_SEGMENT=<n>`: replay segment `n` only (from 1).
+    static let segmentKey = "PORTICO_REPLAY_SEGMENT"
+    static func segment(from environment: [String: String]) -> Int? {
+        environment[segmentKey].flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// Replays every segment of the recording in order (I4), or segment `only`.
+    static func run(recording: URL, images: URL, segment only: Int? = nil) throws -> Evaluation {
+        let all = try Recorder.read(recording)
+        let segments = Self.segments(all)
+        guard let firstOpen = segments.first?.first, case let .open(chat, appVersion, macOS, _, _, _, _, _, _, _, _, _, _) = firstOpen.event
         else { throw Failure.noOpen }
-        let segment = Array(all[start...])
-        var cursor = 1
-        var shapes: [EntryShape] = []
-        while cursor < segment.count, case .shape(let s) = segment[cursor].event {
-            shapes.append(s)
-            cursor += 1
+        let chosen: [Int]
+        if let only {
+            guard segments.indices.contains(only - 1) else { throw Failure.noSegment(only, segments.count) }
+            chosen = [only]
+        } else {
+            chosen = Array(1...segments.count)
         }
 
         // The runner never records itself: an empty home, no switch file, for the run.
@@ -339,18 +355,44 @@ enum ReplayRunner {
             cleanups.append { d.removePersistentDomain(forName: suite) }
             return d
         }
+        func openingShapes(_ segment: [(t: Int, event: RecordingEvent)]) -> [EntryShape] {
+            Array(segment.dropFirst().prefix { if case .shape = $0.event { true } else { false } })
+                .compactMap { if case .shape(let s) = $0.event { s } else { nil } }
+        }
+        func size(_ open: RecordingEvent) -> NSSize {
+            guard case let .open(_, _, _, window, column, _, _, _, _, _, _, _, _) = open else { return NSSize(width: 800, height: 600) }
+            return NSSize(width: CGFloat(column > 0 ? column : (window.first ?? 800)), height: CGFloat(window.count > 1 ? window[1] : 600))
+        }
 
-        let width = CGFloat(column > 0 ? column : (window.first ?? 800))
-        let height = CGFloat(window.count > 1 ? window[1] : 600)
-        let size = NSSize(width: width, height: height)
-
-        // The phase probe (D12) on its own model: it scrolls, and the replay starts where the recording did.
-        let probeModel = try SyntheticConversation.model(chat: chat, shapes: shapes, images: images, defaults: try defaults())
-        let probeHost = try host(probeModel, defaults: try defaults(), size: size)
+        // The phase probe (D12) on its own model, once: it scrolls, and each replay starts where
+        // its segment did. It also measures the chrome (the hosted height outside the transcript's clip).
+        let firstSegment = segments[chosen[0] - 1]
+        let probeModel = try SyntheticConversation.model(chat: chat, shapes: openingShapes(firstSegment), images: images, defaults: try defaults())
+        let probeHost = try host(probeModel, defaults: try defaults(), size: size(firstSegment[0].event))
+        let chrome = max(0, probeHost.host.frame.height - probeHost.scroll.contentView.bounds.height)
         let probe = PhaseProbe.run(scroll: probeHost.scroll, chat: chat)
         probeHost.window.close()
         ConversationProbe.phaseNames[chat] = nil
         ConversationProbe.rows[chat] = nil
+
+        var allReadings: [Reading] = []
+        var allNotes: [String: Int] = [:]
+        var allSent: [(pixels: Double, precise: Bool)] = []
+        var allRuns = 0, allRunWheels = 0, allEnvelopeFailed = 0
+        var lastEntries: [EntryShape.Kind: Int] = [:]
+        for number in chosen {
+            try replay(segments[number - 1], number: number)
+        }
+
+        /// One segment, from its own `open`, on a model and host of its own.
+        func replay(_ segment: [(t: Int, event: RecordingEvent)], number: Int) throws {
+        guard case let .open(_, _, _, window, _, _, _, _, _, atBottom, topId, topOffset, clipHeight) = segment[0].event else { return }
+        let shapes = openingShapes(segment)
+        let cursor = 1 + shapes.count
+        var size = size(segment[0].event)
+        // I4: hosted so the transcript's clip is the recorded one; window steps keep their difference.
+        if clipHeight > 0 { size.height = CGFloat(clipHeight) + chrome }
+        let windowHeight = CGFloat(window.count > 1 ? window[1] : 600)
 
         let built = try SyntheticConversation.events(chat: chat, shapes: shapes, images: images)
         var names = Names()
@@ -360,8 +402,26 @@ enum ReplayRunner {
         var entries: [EntryShape.Kind: Int] = [:]
         for shape in shapes { entries[shape.kind, default: 0] += 1 }
         let model = try SyntheticConversation.model(chat: chat, shapes: shapes, images: images, defaults: try defaults())
-        let hosted = try host(model, defaults: try defaults(), size: size)
-        cleanups.append { hosted.window.close() }
+        var hosted = try host(model, defaults: try defaults(), size: size)
+        defer { hosted.window.close() }
+        // I4: the starting place, put back as the app puts a conversation's place back: away to
+        // another conversation and back, the place kept in between (found hosted: a restore at
+        // the window's very first layout finds no row laid out and leaves the view at the top,
+        // and a switch to no conversation leaves the new scroll view unlaid out).
+        if !atBottom, let topId, let synthetic = names.synthetic[topId] {
+            let away = chat + 1
+            model.apply(.chatList(ChatList(chats: [chat, away].map {
+                ChatSummary(chat: $0, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")
+            })))
+            model.selected = away
+            spin(0.4)
+            model.notePlace(ConversationPlace(atBottom: false, topItem: synthetic, topOffset: CGFloat(topOffset)), chat: chat)
+            model.selected = chat
+            spin(1.0)
+            // The conversation came back as a new view, with a scroll view of its own.
+            guard let scroll = transcriptScroll(in: hosted.host) else { throw Failure.noScrollView }
+            hosted = Hosted(window: hosted.window, host: hosted.host, scroll: scroll)
+        }
 
         // The last turn and the kind of the last entry drawn, for deltas and turn ends.
         let keptIndex = shapes.lastIndex { !skippedKinds.contains($0.kind) }
@@ -403,6 +463,7 @@ enum ReplayRunner {
             readings.append(reading(step: step, input: input, hosted: hosted, chat: chat, phase: phase,
                                     settled: settled, names: names, hasRows: !entriesNow().isEmpty,
                                     syntheticKind: { id in entriesNow().first { $0.id == id }.map { EntryShape.of($0, imageSize: { _ in nil }).kind } }))
+            readings[readings.count - 1].segment = number
             onStep?(step)
         }
 
@@ -436,6 +497,7 @@ enum ReplayRunner {
                 let fresh = reading(step: readings[i].step, input: readings[i].input, hosted: hosted, chat: chat, phase: readings[i].phase,
                                     settled: runSamples + settled, names: names, hasRows: !entriesNow().isEmpty)
                 readings[i] = fresh
+                readings[i].segment = number
             }
         }
         /// Whether the wheel at `index` closes its run: its momentum ended, or its gesture ended
@@ -461,9 +523,9 @@ enum ReplayRunner {
                 phase = p
                 if p == .idle { endRun() } else if p == .tracking || p == .interacting, !inRun { startRun() }
             case .open:
-                break  // not in the last segment
+                break  // the segment's own, read above
             case .window(_, let h):
-                resize(hosted, height: CGFloat(h))
+                resize(hosted, height: max(1, CGFloat(h) - windowHeight + size.height))
                 take(event)
             case .column(let w):
                 resize(hosted, width: CGFloat(w))
@@ -568,31 +630,42 @@ enum ReplayRunner {
 
         endRun()
 
-        lastReadings = readings
-        lastRuns = (runs: runs, wheels: runWheels)
-        lastNotes = notes.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
+        allReadings += readings
+        for (kind, count) in notes { allNotes[kind, default: 0] += count }
+        allSent += sent
+        allRuns += runs
+        allRunWheels += runWheels
+        allEnvelopeFailed += envelopeFailed
+        lastEntries = entries
         lastHostedWidth = hosted.host.frame.width
-        lastSentWheels = sent
         lastLineHeight = Double(hosted.scroll.verticalLineScroll > 0 ? hosted.scroll.verticalLineScroll : 10)
+        }
 
-        var evaluation = check(readings: readings)
+        lastReadings = allReadings
+        lastRuns = (runs: allRuns, wheels: allRunWheels)
+        lastNotes = allNotes.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
+        lastSentWheels = allSent
+
+        var evaluation = check(readings: allReadings)
         evaluation.appVersion = appVersion
         evaluation.macOS = macOS
         evaluation.phasesFire = probe.phased
         evaluation.phasesMove = abs(probe.moved) >= 1
         evaluation.recording = recording.lastPathComponent
         evaluation.started = started(from: recording)
-        evaluation.lengthMs = (segment.last?.t ?? 0) - segment[0].t
-        evaluation.segments = opens.count
-        evaluation.entriesByKind = entries
-        evaluation.skipped = notes
-        evaluation.envelope = envelopeFailed > 0 ? "off (phases did not fire)" : "on (\(runs) gesture runs)"
+        let replayed = chosen.map { segments[$0 - 1] }
+        evaluation.lengthMs = (replayed.last?.last?.t ?? 0) - (replayed.first?.first?.t ?? 0)
+        evaluation.segments = segments.count
+        evaluation.replayed = chosen
+        evaluation.entriesByKind = lastEntries
+        evaluation.skipped = allNotes
+        evaluation.envelope = allEnvelopeFailed > 0 ? "off (phases did not fire)" : "on (\(allRuns) gesture runs)"
         return evaluation
     }
 
     /// I3c: the steps a replay of `events` takes (an opening reading per segment, one per
-    /// input it applies) and about how long, in seconds: hosting and the phase probe per
-    /// segment (about 6 s) and a settle per step (about 0.35 s).
+    /// input it applies) and about how long, in seconds: the phase probe once (about 4 s),
+    /// hosting per segment (about 2 s) and a settle per step (about 0.35 s).
     static func estimate(_ events: [(t: Int, event: RecordingEvent)]) -> (steps: Int, seconds: Int) {
         var steps = 0, segments = 0
         for (_, event) in events {
@@ -602,7 +675,7 @@ enum ReplayRunner {
             default: continue
             }
         }
-        return (steps, Int((Double(segments) * 6 + Double(steps) * 0.35).rounded(.up)))
+        return (steps, Int((4 + Double(segments) * 2 + Double(steps) * 0.35).rounded(.up)))
     }
 
     /// A live copy of a builder message: the replay's turn, no sequence number (the
