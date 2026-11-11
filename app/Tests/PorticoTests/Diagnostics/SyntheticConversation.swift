@@ -14,7 +14,9 @@ import Foundation
 /// keeps no block order, so blocks are interleaved in a fixed order, and a list
 /// item's or heading's length (not recorded) is a typical one. Also not reproduced:
 /// line breaks inside a paragraph (each is one line of prose), heading levels above 3
-/// (they draw as 3 anyway) and nested list levels (one flat list).
+/// (they draw as 3 anyway) and nested list levels (one flat list). Two tool runs with
+/// nothing emitted between them (side by side, or around a skipped kind) merge into one
+/// run; a recording never holds them side by side, but may around a skipped card.
 @MainActor
 enum SyntheticConversation {
     // MARK: - filler words (3-9 letters)
@@ -152,6 +154,9 @@ enum SyntheticConversation {
         var out: [ServerMessage] = []
         var seq = 0
         var kept: [String] = []
+        // Neighbours are those in the event stream: skipped kinds emit nothing, so two tool
+        // entries around a card or a divider are adjacent there.
+        let emitted = shapes.filter { ![.card, .turnMarker, .compacted, .notice, .agents, .signin, .brief, .divider].contains($0.kind) }
         func next() -> Int { seq += 1; return seq }
         for (index, shape) in shapes.enumerated() {
             let turn = index + 1
@@ -170,7 +175,8 @@ enum SyntheticConversation {
                 // the count (real recordings have such neighbours around a question record or a
                 // proposal): it stands alone, as the Mark row does. Two runs side by side cannot
                 // be told apart and merge; recordings never hold that (the app folds them).
-                let neighbours = [index - 1, index + 1].contains { shapes.indices.contains($0) && [.tool, .toolRun].contains(shapes[$0].kind) }
+                let place = kept.count
+                let neighbours = [place - 1, place + 1].contains { emitted.indices.contains($0) && [.tool, .toolRun].contains(emitted[$0].kind) }
                 let name = shape.kind == .tool && neighbours ? ViewerSteps.markTool
                     : rows == 2 ? ViewerSteps.prefix + "look" : "Read"
                 for row in 0..<rows {

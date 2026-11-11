@@ -269,6 +269,35 @@ final class SyntheticConversationTests: XCTestCase {
         XCTAssertEqual(shapes.compactMap { built.ids[$0.id] ?? nil }, entries.map(\.id))
     }
 
+    /// Skipped kinds emit nothing, so tools around them are neighbours in the event stream.
+    func testToolsAroundASkippedKindStayTheirOwnEntries() throws {
+        let tool = EntryShape(id: "t", kind: .tool, toolRows: 1, folded: true)
+        let run = EntryShape(id: "run", kind: .toolRun, toolRows: 3, folded: true)
+        let card = EntryShape(id: "c", kind: .card)
+        let divider = EntryShape(id: "d", kind: .divider)
+
+        // tool, card, run: the tool must not fold into the run.
+        var shapes = [tool, card, run]
+        var model = try SyntheticConversation.model(chat: 3, shapes: shapes, images: folder, defaults: defaults)
+        var back = TranscriptEntry.entries(model.transcripts[3] ?? []).map { EntryShape.of($0, imageSize: { _ in nil }) }
+        XCTAssertEqual(back.map(\.kind), [.tool, .toolRun])
+        XCTAssertEqual(back.map(\.toolRows), [1, 3])
+
+        // tool, divider, tool, divider, tool: three singles must not fold into one run.
+        shapes = [tool, divider, EntryShape(id: "t2", kind: .tool, toolRows: 1, folded: true), divider,
+                  EntryShape(id: "t3", kind: .tool, toolRows: 1, folded: true)]
+        model = try SyntheticConversation.model(chat: 3, shapes: shapes, images: folder, defaults: defaults)
+        back = TranscriptEntry.entries(model.transcripts[3] ?? []).map { EntryShape.of($0, imageSize: { _ in nil }) }
+        XCTAssertEqual(back.map(\.kind), [.tool, .tool, .tool])
+
+        // run, divider, run: documented limit, the two runs merge into one of their rows together.
+        shapes = [run, divider, EntryShape(id: "run2", kind: .toolRun, toolRows: 3, folded: true)]
+        model = try SyntheticConversation.model(chat: 3, shapes: shapes, images: folder, defaults: defaults)
+        back = TranscriptEntry.entries(model.transcripts[3] ?? []).map { EntryShape.of($0, imageSize: { _ in nil }) }
+        XCTAssertEqual(back.map(\.kind), [.toolRun], "two runs around a skipped kind merge (documented)")
+        XCTAssertEqual(back.map(\.toolRows), [6])
+    }
+
     // MARK: - images
 
     private func personHeight(image: [Int]) throws -> CGFloat {
