@@ -43,8 +43,10 @@ enum ReplayRunner {
         case noOpen
         case noScrollView
         case noSegment(Int, Int)
+        case noHome
         var description: String {
             switch self {
+            case .noHome: "set PORTICO_HOME to the app's home"
             case .noOpen: "the recording has no open event"
             case let .noSegment(n, count): "the recording has no segment \(n) (it has \(count))"
             case .noScrollView: "no transcript scroll view in the hosted conversation"
@@ -705,17 +707,46 @@ enum ReplayRunner {
 
     // MARK: - the evaluation file
 
-    /// Writes the rendered evaluation to `<directory>/<recording-stem>.txt`, `directory` being
-    /// the app's `diagnostics/evaluations/` (never beside a recording copied elsewhere). Creates
-    /// `diagnostics/` and `evaluations/` 0700 when missing and tightens `evaluations/` to 0700
-    /// when it exists; the file is 0600, replacing an earlier one.
+    /// I6: where a recording's evaluation goes, `<home>/diagnostics/evaluations/`, `<home>` being
+    /// the first of: the home the recording sits in (`<home>/diagnostics/recordings/<file>`, its
+    /// `diagnostics/` there); `PORTICO_HOME`; the folder the checkout's `.portico-home` names (read
+    /// as the gateway's `StateDir` reads it). The home's `diagnostics/` must exist: it is never made
+    /// here. None found: `Failure.noHome`.
+    static func evaluationsDirectory(for recording: URL, environment: [String: String], checkout: URL?) throws -> URL {
+        let fm = FileManager.default
+        func exists(_ url: URL) -> Bool {
+            var isDir: ObjCBool = false
+            return fm.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+        }
+        let parent = recording.deletingLastPathComponent()
+        if parent.lastPathComponent == "recordings", parent.deletingLastPathComponent().lastPathComponent == "diagnostics" {
+            let diagnostics = parent.deletingLastPathComponent()
+            if exists(diagnostics) { return diagnostics.appendingPathComponent("evaluations", isDirectory: true) }
+        }
+        var home: URL?
+        if let named = environment["PORTICO_HOME"], !named.isEmpty {
+            home = URL(fileURLWithPath: (named as NSString).expandingTildeInPath, isDirectory: true)
+        } else if let checkout, fm.fileExists(atPath: checkout.appendingPathComponent("bin/portico-gateway").path),
+                  let line = try? String(contentsOf: checkout.appendingPathComponent(".portico-home"), encoding: .utf8)
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !line.isEmpty {
+            home = URL(fileURLWithPath: (line as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        guard let home, exists(home.appendingPathComponent("diagnostics", isDirectory: true)) else { throw Failure.noHome }
+        return home.appendingPathComponent("diagnostics/evaluations", isDirectory: true)
+    }
+
+    /// The checkout this test target was built from (`app/Tests/PorticoTests/Diagnostics/` four up).
+    static let checkout: URL? = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+
+    /// Writes the rendered evaluation to `<directory>/<recording-stem>.txt`, `directory` being a
+    /// home's `diagnostics/evaluations/`. Never makes `diagnostics/` (I6); makes `evaluations/`
+    /// 0700 when missing and tightens it to 0700 when it exists; the file is 0600, replacing an
+    /// earlier one.
     @discardableResult
     static func write(_ evaluation: Evaluation, for recording: URL, in directory: URL) throws -> URL {
         let fm = FileManager.default
-        let diagnostics = directory.deletingLastPathComponent()
-        if !fm.fileExists(atPath: diagnostics.path) {
-            try fm.createDirectory(at: diagnostics, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        }
+        guard fm.fileExists(atPath: directory.deletingLastPathComponent().path) else { throw Failure.noHome }
         if fm.fileExists(atPath: directory.path) {
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         } else {
@@ -730,13 +761,13 @@ enum ReplayRunner {
 
     /// The field entry point: skips without `PORTICO_REPLAY`; otherwise replays the
     /// named recording and writes its evaluation. The caller fails on violations.
-    static func replayFromEnvironment(_ environment: [String: String]) throws -> (Evaluation, URL) {
+    static func replayFromEnvironment(_ environment: [String: String], checkout: URL? = checkout) throws -> (Evaluation, URL) {
         guard let path = environment[environmentKey], !path.isEmpty else {
             throw XCTSkip("set \(environmentKey)=<recording.jsonl> to replay a recording")
         }
         let recording = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        // Taken before the run, which points the home at a temp folder for its duration.
-        let directory = Diagnostics.evaluationsDirectory
+        // Decided before the run (I6): a missing home fails before minutes of replay.
+        let directory = try evaluationsDirectory(for: recording, environment: environment, checkout: checkout)
         let images = FileManager.default.temporaryDirectory.appendingPathComponent("portico-replay-images-\(UUID().uuidString)", isDirectory: true)
         // Removed only when made: XCTest reports the last error thrown, and a `try?` remove of a
         // folder never made would mask the replay's own error (found with a hand-written recording).

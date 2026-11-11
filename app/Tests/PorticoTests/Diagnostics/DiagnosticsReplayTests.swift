@@ -438,27 +438,76 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertTrue(inputs.allSatisfy { if case .wheel(_, false, _, _) = $0 { true } else { false } }, "readings keep the line input")
     }
 
-    /// Review I1: a recording copied out of `diagnostics/` (say to Downloads) still has its
-    /// evaluation written under the app's `diagnostics/evaluations/`, nothing beside the copy.
-    func testACopiedRecordingsEvaluationGoesUnderDiagnosticsNotBesideIt() throws {
-        Diagnostics.home = tmp.appendingPathComponent("home")
+    /// I6: a recording copied out of `diagnostics/` (say to Downloads), with no `PORTICO_HOME` and
+    /// no checkout `.portico-home`, fails with one line, writing nothing anywhere.
+    private func copiedRecording() throws -> (copy: URL, downloads: URL) {
         var lines: [(Int, RecordingEvent)] = [(0, open())]
         lines += conversation(turns: 6).map { (0, .shape($0)) }
-        lines += [(100, .wheel(deltaY: 40, precise: true, phase: 0, momentum: 0))]
+        lines += [(100, .wheel(deltaY: -40, precise: true, phase: 0, momentum: 0))]
         let made = try write(lines, name: "9-2026-11-11T08-00-00.000Z.jsonl")
         let downloads = tmp.appendingPathComponent("Downloads", isDirectory: true)
         try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
         let copy = downloads.appendingPathComponent(made.lastPathComponent)
         try FileManager.default.copyItem(at: made, to: copy)
-        // An evaluations folder left too open is tightened.
-        try FileManager.default.createDirectory(at: Diagnostics.evaluationsDirectory, withIntermediateDirectories: true,
-                                                attributes: [.posixPermissions: 0o755])
-        let (_, file) = try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": copy.path])
-        XCTAssertEqual(file.deletingLastPathComponent().path, Diagnostics.evaluationsDirectory.path)
+        return (copy, downloads)
+    }
+
+    func testACopiedRecordingWithNoHomeFailsWithOneLine() throws {
+        let (copy, downloads) = try copiedRecording()
+        let checkout = tmp.appendingPathComponent("checkout", isDirectory: true)
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: checkout.appendingPathComponent("bin/portico-gateway").path, contents: nil)
+        XCTAssertThrowsError(try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": copy.path], checkout: checkout)) { error in
+            XCTAssertEqual("\(error)", "set PORTICO_HOME to the app's home")
+        }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: downloads.path), [copy.lastPathComponent], "nothing beside the copy")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("evaluations").path), "no evaluations/ at the copy's parent")
-        let mode = try FileManager.default.attributesOfItem(atPath: Diagnostics.evaluationsDirectory.path)[.posixPermissions] as? Int
-        XCTAssertEqual(mode, 0o700)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("evaluations").path))
+    }
+
+    /// I6: with `PORTICO_HOME`, or the checkout's `.portico-home`, the evaluation goes under that
+    /// home's existing `diagnostics/` (an `evaluations/` left too open is tightened); a home with no
+    /// `diagnostics/` gets none made.
+    func testACopiedRecordingsEvaluationGoesUnderTheNamedHomesDiagnostics() throws {
+        let (copy, downloads) = try copiedRecording()
+        let home = tmp.appendingPathComponent("home", isDirectory: true)
+        let evaluations = home.appendingPathComponent("diagnostics/evaluations", isDirectory: true)
+        try FileManager.default.createDirectory(at: evaluations, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        let (_, file) = try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": copy.path, "PORTICO_HOME": home.path], checkout: nil)
+        XCTAssertEqual(file.deletingLastPathComponent().path, evaluations.path)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: evaluations.path)[.posixPermissions] as? Int, 0o700)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: downloads.path), [copy.lastPathComponent], "nothing beside the copy")
+
+        // The checkout's `.portico-home` (as the gateway reads it), when PORTICO_HOME is not set.
+        let other = tmp.appendingPathComponent("other-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: other.appendingPathComponent("diagnostics"), withIntermediateDirectories: true)
+        let checkout = tmp.appendingPathComponent("checkout", isDirectory: true)
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: checkout.appendingPathComponent("bin/portico-gateway").path, contents: nil)
+        try (other.path + "\n").write(to: checkout.appendingPathComponent(".portico-home"), atomically: true, encoding: .utf8)
+        let (_, second) = try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": copy.path], checkout: checkout)
+        XCTAssertEqual(second.deletingLastPathComponent().path, other.appendingPathComponent("diagnostics/evaluations").path)
+
+        // A home with no diagnostics/: nothing made, one line.
+        let bare = tmp.appendingPathComponent("bare-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: bare, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": copy.path, "PORTICO_HOME": bare.path], checkout: nil)) { error in
+            XCTAssertEqual("\(error)", "set PORTICO_HOME to the app's home")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bare.appendingPathComponent("diagnostics").path), "no diagnostics/ made")
+    }
+
+    /// I6: the normal case writes beside the recording, under its own `diagnostics/`, whatever the
+    /// environment says.
+    func testARecordingUnderDiagnosticsIsEvaluatedThere() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 6).map { (0, .shape($0)) }
+        let recording = try write(lines, name: "9-2026-11-11T08-30-00.000Z.jsonl")
+        let elsewhere = tmp.appendingPathComponent("elsewhere/diagnostics", isDirectory: true)
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        let (_, file) = try ReplayRunner.replayFromEnvironment(
+            ["PORTICO_REPLAY": recording.path, "PORTICO_HOME": elsewhere.deletingLastPathComponent().path], checkout: nil)
+        XCTAssertEqual(file.path, tmp.appendingPathComponent("crafted/diagnostics/evaluations/9-2026-11-11T08-30-00.000Z.txt").path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: elsewhere.appendingPathComponent("evaluations").path))
     }
 
     /// The field entry point: `PORTICO_REPLAY=<recording> swift test -c release
