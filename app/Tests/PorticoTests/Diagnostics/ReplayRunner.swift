@@ -19,7 +19,8 @@ import XCTest
 /// that many filler characters, or a new reply starts in the last turn), a new
 /// entry's `shape` (appended as the synthetic builder makes it; a reply shape
 /// right after a delta that started a reply names that reply), `turnFinished`
-/// (the last turn ends). `phase` sets the phase of the readings that follow.
+/// (the last turn ends), `textScale` (the hosted conversation's environment; the
+/// `open`'s scale from the start). `phase` sets the phase of the readings that follow.
 /// A gesture run (wheels with a scroll or momentum phase, or wheels while the
 /// recorded phase is tracking or interacting, until the gesture or its momentum
 /// ends or the phase goes idle) is fed at its recorded spacing (at most 50 ms
@@ -28,7 +29,7 @@ import XCTest
 /// its end; a wheel on its own settles on its own.
 /// Skipped, and counted by event kind in `lastNotes` and the evaluation's `skipped:` line: `removed`, `imageLoaded` (images load
 /// through the real thumbnail path), `toolRow` (its run's shape covers it),
-/// `card`, `viewer`, `sidebar`, `textScale`, `capped`, a changed shape of a
+/// `card`, `viewer`, `sidebar`, `capped`, a changed shape of a
 /// known entry, a new entry of a kind the builder skips, and a jump to an
 /// entry it has no stand-in for.
 @MainActor
@@ -37,6 +38,14 @@ enum ReplayRunner {
         let window: NSWindow
         let host: NSView
         let scroll: NSScrollView
+        var scale = ReplayScale()
+    }
+
+    /// The text scale the hosted conversation draws at (I8), set as the app sets it: the
+    /// environment's `textScale` above the conversation.
+    final class ReplayScale: ObservableObject {
+        @Published var value: CGFloat
+        init(_ value: CGFloat = 1) { self.value = value }
     }
 
     enum Failure: Error, CustomStringConvertible {
@@ -74,17 +83,19 @@ enum ReplayRunner {
 
     private struct Selected: View {
         @EnvironmentObject var model: AppModel
+        @ObservedObject var scale: ReplayScale
         var body: some View {
-            if let chat = model.selected { ConversationView(chat: chat).id(chat) }
+            if let chat = model.selected { ConversationView(chat: chat).id(chat).environment(\.textScale, scale.value) }
         }
     }
 
-    /// The conversation the model has selected, hosted as the round-trip tests host it.
-    static func host(_ model: AppModel, defaults: UserDefaults, size: NSSize) throws -> Hosted {
+    /// The conversation the model has selected, hosted as the round-trip tests host it, at `scale`.
+    static func host(_ model: AppModel, defaults: UserDefaults, size: NSSize, scale: ReplayScale = ReplayScale()) throws -> Hosted {
         _ = NSApplication.shared
+        defaults.set(Double(scale.value), forKey: "textScale")
         let settings = Settings(defaults: defaults)
         let host = NSHostingView(rootView:
-            Selected()
+            Selected(scale: scale)
                 .environmentObject(model)
                 .environmentObject(settings)
                 .environmentObject(ReadAloud(settings: settings))
@@ -99,7 +110,7 @@ enum ReplayRunner {
             window.close()
             throw Failure.noScrollView
         }
-        return Hosted(window: window, host: host, scroll: scroll)
+        return Hosted(window: window, host: host, scroll: scroll, scale: scale)
     }
 
     static func spin(_ seconds: Double = 0.4) {
@@ -383,13 +394,15 @@ enum ReplayRunner {
         var allSent: [(pixels: Double, precise: Bool)] = []
         var allRuns = 0, allRunWheels = 0, allEnvelopeFailed = 0
         var lastEntries: [EntryShape.Kind: Int] = [:]
+        var lastTextScale = 1.0
         for number in chosen {
             try replay(segments[number - 1], number: number)
         }
 
         /// One segment, from its own `open`, on a model and host of its own.
         func replay(_ segment: [(t: Int, event: RecordingEvent)], number: Int) throws {
-        guard case let .open(_, _, _, window, _, _, _, _, _, atBottom, topId, topOffset, clipHeight) = segment[0].event else { return }
+        guard case let .open(_, _, _, window, _, _, _, _, textScale, atBottom, topId, topOffset, clipHeight) = segment[0].event else { return }
+        lastTextScale = textScale
         let shapes = openingShapes(segment)
         let cursor = 1 + shapes.count
         var size = size(segment[0].event)
@@ -405,7 +418,7 @@ enum ReplayRunner {
         var entries: [EntryShape.Kind: Int] = [:]
         for shape in shapes { entries[shape.kind, default: 0] += 1 }
         let model = try SyntheticConversation.model(chat: chat, shapes: shapes, images: images, defaults: try defaults())
-        var hosted = try host(model, defaults: try defaults(), size: size)
+        var hosted = try host(model, defaults: try defaults(), size: size, scale: ReplayScale(CGFloat(textScale)))
         defer { hosted.window.close() }
         // I4: the starting place, put back as the app puts a conversation's place back: away to
         // another conversation and back, the place kept in between (found hosted: a restore at
@@ -423,7 +436,7 @@ enum ReplayRunner {
             spin(1.0)
             // The conversation came back as a new view, with a scroll view of its own.
             guard let scroll = transcriptScroll(in: hosted.host) else { throw Failure.noScrollView }
-            hosted = Hosted(window: hosted.window, host: hosted.host, scroll: scroll)
+            hosted = Hosted(window: hosted.window, host: hosted.host, scroll: scroll, scale: hosted.scale)
         }
 
         // The last turn and the kind of the last entry drawn, for deltas and turn ends.
@@ -628,7 +641,10 @@ enum ReplayRunner {
             case .card: notes["card", default: 0] += 1
             case .viewer: notes["viewer", default: 0] += 1
             case .sidebar: notes["sidebar", default: 0] += 1
-            case .textScale: notes["textScale", default: 0] += 1
+            case .textScale(let v):
+                // I8: drawn at the new scale, as the app's environment changes it.
+                hosted.scale.value = CGFloat(v)
+                take(event)
             case .capped: notes["capped", default: 0] += 1
             }
         }
@@ -664,6 +680,8 @@ enum ReplayRunner {
         evaluation.replayed = chosen
         evaluation.entriesByKind = lastEntries
         evaluation.skipped = allNotes
+        evaluation.textScale = lastTextScale
+        evaluation.textScaleApplied = true  // the hosted conversation's environment carries it (I8)
         evaluation.envelope = allEnvelopeFailed > 0 ? "off (phases did not fire)" : "on (\(allRuns) gesture runs)"
         return evaluation
     }
@@ -676,7 +694,7 @@ enum ReplayRunner {
         for (_, event) in events {
             switch event {
             case .open: segments += 1; steps += 1
-            case .wheel, .key, .jump, .delta, .turnFinished, .window, .column: steps += 1
+            case .wheel, .key, .jump, .delta, .turnFinished, .window, .column, .textScale: steps += 1
             default: continue
             }
         }

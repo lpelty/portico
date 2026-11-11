@@ -409,6 +409,35 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertLessThan(Double(first.clip.maxY), first.documentHeight - 100, "scrolled up, not at the bottom")
     }
 
+    /// I8: a key step that did not move the view makes the verdict inconclusive, never green.
+    func testAKeyThatDoesNotMoveMakesTheVerdictInconclusive() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 10).map { (0, .shape($0)) }
+        lines += [(100, .key(.end))]  // at the bottom already: End cannot move it
+        let evaluation = try ReplayRunner.run(recording: try write(lines, name: "9-2026-11-11T10-00-00.000Z.jsonl"), images: images())
+        let first = evaluation.render().components(separatedBy: "\n")[0]
+        print("REPLAY-VERDICT \(first)")
+        XCTAssertEqual(evaluation.violations, [])
+        XCTAssertEqual(first, "verdict: inconclusive (1 of 1 key steps did not move the view)")
+    }
+
+    /// I8: the recorded text scale is drawn: the same shapes at 1.25 make taller rows than at 1.
+    func testTheRecordedTextScaleIsApplied() throws {
+        func lastRowHeight(scale: Double, name: String) throws -> (Double, Evaluation) {
+            var lines: [(Int, RecordingEvent)] = [(0, open(textScale: scale))]
+            lines += conversation(turns: 6).map { (0, .shape($0)) }
+            let evaluation = try ReplayRunner.run(recording: try write(lines, name: name), images: images())
+            let row = try XCTUnwrap(ReplayRunner.lastReadings.first?.rowsInView.first { $0.id == "assistant:6" })
+            return (row.height, evaluation)
+        }
+        let (plain, _) = try lastRowHeight(scale: 1, name: "9-2026-11-11T10-10-00.000Z.jsonl")
+        let (scaled, evaluation) = try lastRowHeight(scale: 1.25, name: "9-2026-11-11T10-20-00.000Z.jsonl")
+        print("REPLAY-SCALE plain=\(plain) scaled=\(scaled)")
+        XCTAssertGreaterThan(scaled, plain * 1.1, "rows drawn at 1.25")
+        XCTAssertTrue(evaluation.render().contains("\ntextScale: 1.25 applied\n"))
+        XCTAssertEqual(evaluation.render().components(separatedBy: "\n")[0], "verdict: green")
+    }
+
     /// G1 (Ruling 15): a line wheel is sent as a precise pixel wheel of lines x the scroll view's
     /// line height, in the recorded direction; the reading keeps the recorded (line) input.
     func testALineWheelIsSentAsAPixelWheelOfLinesTimesTheLineHeight() throws {
