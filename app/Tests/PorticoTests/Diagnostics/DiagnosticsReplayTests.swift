@@ -383,6 +383,10 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertEqual(ReplayRunner.segment(from: ["PORTICO_REPLAY_SEGMENT": "2"]), 2)
         XCTAssertNil(ReplayRunner.segment(from: [:]))
         XCTAssertThrowsError(try ReplayRunner.run(recording: recording, images: images(), segment: 3))
+        // The field entry point reads the variable.
+        Diagnostics.home = tmp.appendingPathComponent("crafted")
+        let (fromEnvironment, _) = try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": recording.path, "PORTICO_REPLAY_SEGMENT": "2"])
+        XCTAssertEqual(fromEnvironment.replayed, [2])
     }
 
     /// I4: an `open` that says scrolled up starts the replay scrolled up: the recorded top row at

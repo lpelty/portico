@@ -742,7 +742,7 @@ enum ReplayRunner {
             let estimate = estimate(events)
             print("PORTICO-REPLAY \(recording.lastPathComponent): \(estimate.steps) steps, about \(estimate.seconds) s")
         }
-        let evaluation = try run(recording: recording, images: images)
+        let evaluation = try run(recording: recording, images: images, segment: segment(from: environment))
         return (evaluation, try write(evaluation, for: recording, in: directory))
     }
 }
