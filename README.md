@@ -576,7 +576,7 @@ sources. `tests/test_distribution.py` fails if the bundle is out of date.
 bin/portico-gateway status --json      # {"version": 1, "running": true, "pid", "port", "folder", "session",
                                        #  "state", "mode", "started_at", "config_stale"}; exit 0 running, 3 not
 bin/portico-gateway stop               # stop the running gateway (its own stop path); exit 3 when none runs
-bin/portico-gateway diagnostics on     # (v0.26.4, see Diagnostics) on | off | status [--json]: Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
+bin/portico-gateway diagnostics on     # (v0.26.4, see Diagnostics) on | off | status [--json]: Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
@@ -603,9 +603,9 @@ directory are internal. Keys whose value is unknown are left out.
 
 ## Diagnostics
 
-Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
+Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
 
-It is for the deployment's Daedalus only. There is no setting in the app and nothing the person sees.
+It is for the deployment's maintainer agent only. There is no setting in the app and nothing the person sees.
 
 While it is on, the app writes the scroll trace (`diagnostics/trace.log`) and, per chat, a recording (`diagnostics/recordings/<chat>-<stamp>.jsonl`). A recording holds the conversation's shape (each entry's kind and size metrics), the geometry (window, column, viewer, sidebar, text scale), the inputs (wheel, keys, jumps, scroll phases) and the gateway's events as sizes. It never holds message text, file names, paths, URLs, titles or image content.
 

@@ -1,4 +1,4 @@
-"""v0.26.4: the diagnostics switch — the deployment's Daedalus looks at the conversation view's behaviour.
+"""v0.26.4: the diagnostics switch — the deployment's maintainer agent looks at the conversation view's behaviour.
 
 Everything lives under ``<state>/diagnostics/``: the ``on`` file is the switch, ``README`` says what
 the folder is, and the recordings and traces other parts write sit beside them. Nothing is ever
@@ -17,7 +17,7 @@ from portico_gateway.state import StateDir
 DIRNAME = "diagnostics"
 SWITCH = "on"
 README_TEXT = (
-    "Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. "
+    "Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. "
     "Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine."
 )
 

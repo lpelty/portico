@@ -17,7 +17,7 @@ def test_on_creates_switch_readme_and_modes(tmp_path):
     home = tmp_path / "home"
     assert main(["diagnostics", "on", "--state", str(home)]) == 0
     d = home / "diagnostics"
-    assert (d / "on").exists() and (d / "README").read_text().startswith("Diagnostics for the deployment's Daedalus")
+    assert (d / "on").exists() and (d / "README").read_text().startswith("Diagnostics for the deployment's maintainer agent")
     assert oct(d.stat().st_mode & 0o777) == "0o700" and oct((d / "on").stat().st_mode & 0o777) == "0o600"
     assert oct((d / "README").stat().st_mode & 0o777) == "0o600"
     assert main(["diagnostics", "on", "--state", str(home)]) == 0  # idempotent

@@ -247,7 +247,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if status["running"] else EXIT_NONE_RUNNING
 
 
-DIAG_HELP = ("Diagnostics for the deployment's Daedalus to look at the conversation view's behaviour. Off unless turned on here. "
+DIAG_HELP = ("Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. Off unless turned on here. "
              "Recordings hold sizes, counts and ids, never text, and stay on this machine.")
 
 

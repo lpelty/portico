@@ -2,11 +2,11 @@
 
 ## v0.26.4 (unreleased)
 
-- Release gate: no distributed file may name the maintainer's home or the fleet's folders (`larrypelty`, `fleet/`), so a deployment's own config can never ride along with a release.
+- Release gate: no distributed file may name the maintainer's home folders, so a deployment's own config can never ride along with a release.
 
 ### Diagnostics
 
-- **A diagnostics suite for the deployment's Daedalus.** It looks at the
+- **A diagnostics suite for the deployment's maintainer agent.** It looks at the
   conversation view's behaviour. Off unless turned on, with no setting in the
   app and nothing the person sees. Recordings hold sizes, counts and ids,
   never text, file names, paths, URLs, titles or image content, and stay on
@@ -31,7 +31,7 @@
   scale. See Diagnostics in the README.
 - **The scroll trace moved under `diagnostics/`.** It is now
   `diagnostics/trace.log` and follows the same switch; the root-level
-  `scroll-trace` file is retired. ethOS 0.43.3's lines (row, width, viewer and
+  `scroll-trace` file is retired. The field build's 0.43.3 lines (row, width, viewer and
   paint) are carried unchanged.
 
 ### Fixes

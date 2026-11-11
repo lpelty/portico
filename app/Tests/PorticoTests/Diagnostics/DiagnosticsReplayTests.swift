@@ -266,7 +266,7 @@ final class DiagnosticsReplayTests: XCTestCase {
     }
 
     func testRunnerDisablesItsOwnRecorder() throws {
-        // The field: the switch is on in the real home while Daedalus replays.
+        // The field: the switch is on in the real home while the maintainer agent replays.
         let home = tmp.appendingPathComponent("field")
         Diagnostics.home = home
         try FileManager.default.createDirectory(at: Diagnostics.directory, withIntermediateDirectories: true)

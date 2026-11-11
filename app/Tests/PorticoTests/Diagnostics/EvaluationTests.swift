@@ -47,7 +47,7 @@ final class EvaluationTests: XCTestCase {
         ])
     }
 
-    /// I8 (Ruling 17): the first line is the verdict Daedalus acts on.
+    /// I8 (Ruling 17): the first line is the verdict the maintainer agent acts on.
     func testTheVerdictIsRedGreenOrInconclusiveWithItsReason() {
         func e(_ change: (inout Evaluation) -> Void) -> String {
             var x = Evaluation(appVersion: "1", macOS: "2", phasesFire: true, phasesMove: true, recording: "a.jsonl", started: "s",
