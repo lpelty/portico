@@ -338,6 +338,23 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertTrue(text.contains("\nenvelope: on (1 gesture runs)\n"), text)
     }
 
+    /// I3: an input inside a gesture run (a reply streaming mid-gesture) is read at its own step;
+    /// the run's end never reads its last wheel again after it.
+    func testADeltaInsideAGestureRunIsReadAtItsOwnStep() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 10).map { (0, .shape($0)) }
+        lines += [(1000, .phase(.interacting)),
+                  (1000, .wheel(deltaY: -30, precise: true, phase: 0, momentum: 0)),
+                  (1100, .delta(turn: 11, chars: 600)),
+                  (1500, .phase(.idle))]
+        let evaluation = try ReplayRunner.run(recording: try write(lines, name: "9-2026-11-10T23-50-00.000Z.jsonl"), images: images())
+        let readings = ReplayRunner.lastReadings
+        XCTAssertEqual(ReplayRunner.lastRuns.runs, 1)
+        XCTAssertEqual(readings.count, 3)
+        XCTAssertGreaterThan(readings[2].documentHeight, readings[1].documentHeight + 50, "the new reply at the delta's step, not before it")
+        XCTAssertEqual(evaluation.violations, [])
+    }
+
     /// I3c: a field replay says up front how many steps it takes and about how long.
     func testTheEstimateCountsStepsAndSeconds() throws {
         var lines: [(t: Int, event: RecordingEvent)] = [(0, open())]

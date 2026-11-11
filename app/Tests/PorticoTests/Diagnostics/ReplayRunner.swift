@@ -509,8 +509,12 @@ enum ReplayRunner {
             inRun = false
             wheel(hosted, pixels: 0, phase: .ended)
             let settled = settle(hosted)
-            // The run's last wheel is read again, settled, with every height sampled in the run.
-            if let i = runLastWheel {
+            // The run's last wheel is read again, settled, with every height sampled in the run,
+            // unless a later input (a delta mid-gesture) was read since: that reading settled, and
+            // reading the wheel again now would show the later input's effect at the wheel's step.
+            if let i = runLastWheel, i != readings.count - 1 {
+                readings[i].settledReadings = runSamples  // its own offset stays the unsettled one
+            } else if let i = runLastWheel {
                 let fresh = reading(step: readings[i].step, input: readings[i].input, hosted: hosted, chat: chat, phase: readings[i].phase,
                                     settled: runSamples + settled, names: names, hasRows: !entriesNow().isEmpty)
                 readings[i] = fresh
@@ -566,6 +570,7 @@ enum ReplayRunner {
                     runLastT = t
                     runLastWheel = readings.count
                     take(event, settled: [runSamples.last ?? 0])
+                    readings[readings.count - 1].settled = false
                     runWheels += 1
                     if closesRun(at: index) { endRun() }
                 } else {

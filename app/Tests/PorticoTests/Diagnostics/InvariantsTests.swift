@@ -104,6 +104,15 @@ final class InvariantsTests: XCTestCase {
         XCTAssertEqual(Invariants.check([past]).map(\.rule), [.pastEnd])
     }
 
+    /// I3: a wheel read mid-gesture (unsettled) may stretch past the end (the rubber band);
+    /// the run's settled reading is checked.
+    func testPastEndWaitsForTheSettledReadingOfAGesture() {
+        var mid = reading(2, offset: 4230, doc: 5000)
+        mid.settled = false
+        XCTAssertTrue(Invariants.check([mid]).isEmpty)
+        XCTAssertEqual(Invariants.check([reading(3, offset: 4230, doc: 5000)]).map(\.rule), [.pastEnd])
+    }
+
     func testEstimateDriftAboveAQuarterIsAViolationOnlyWithoutNewContent() {
         let a = reading(1, doc: 5000), b = reading(2, input: .phase(.idle), doc: 6300)
         XCTAssertEqual(Invariants.check([a, b]).map(\.rule), [.estimateDrift])

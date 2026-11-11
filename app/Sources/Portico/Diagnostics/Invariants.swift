@@ -18,6 +18,9 @@ struct Reading: Equatable, Sendable {
     var hasRows: Bool = true
     /// The replay's own remark on this step (harness fidelity, never a violation); counts and names only.
     var note: String? = nil
+    /// False for a wheel read mid-gesture, before the run settles (I3): the view may stretch past
+    /// an end there as AppKit's rubber band does, so `pastEnd` waits for the settled reading.
+    var settled: Bool = true
 }
 
 struct RowInView: Equatable, Sendable {
@@ -83,7 +86,7 @@ enum Invariants {
             if r.hasRows, r.rowsInView.isEmpty {
                 out.append(Violation(rule: .rowsInView, step: r.step, detail: "no rows in view at offset \(n(r.offset))"))
             }
-            if r.clip.maxY > r.documentHeight + pastEndSlack {
+            if r.settled, r.clip.maxY > r.documentHeight + pastEndSlack {
                 out.append(Violation(rule: .pastEnd, step: r.step, detail: "clip.maxY \(n(Double(r.clip.maxY))) > doc \(n(r.documentHeight))"))
             }
             if let previous, !reflows(previous.input), !reflows(r.input),
