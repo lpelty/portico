@@ -53,21 +53,77 @@ struct Evaluation: Equatable, Sendable {
         if !bySegment.isEmpty {
             lines.append("per segment: " + bySegment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))
         }
-        for v in violations { lines.append("step \(v.segment).\(v.step) \(v.rule.rawValue): \(v.detail)") }
+        if !violations.isEmpty {
+            var byRule: [String: Int] = [:]
+            for v in violations { byRule[v.rule.rawValue, default: 0] += 1 }
+            lines.append("per rule: " + byRule.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))
+        }
+        for v in violations.prefix(Self.violationsShown) { lines.append("step \(v.segment).\(v.step) \(v.rule.rawValue): \(v.detail)") }
+        if violations.count > Self.violationsShown { lines.append("… and \(violations.count - Self.violationsShown) more") }
         lines.append("window:")
         for r in window {
-            let rows = r.rowsInView.map { "\($0.id):\($0.kind.rawValue):\(Int($0.height.rounded()))" }.joined(separator: ",")
-            lines.append("step \(r.segment).\(r.step) input=\(Self.kind(of: r.input)) offset=\(Int(r.offset.rounded())) doc=\(Int(r.documentHeight.rounded())) "
+            let rows = r.rowsInView.map(Self.render(row:)).joined(separator: ",")
+            lines.append("step \(r.segment).\(r.step) input=\(Self.render(input: r.input)) offset=\(Int(r.offset.rounded())) doc=\(Int(r.documentHeight.rounded())) "
                 + "clip=\(Int(r.clip.minY.rounded()))..\(Int(r.clip.maxY.rounded())) phase=\(r.phase.rawValue) rows=[\(rows)]" + (r.note.map { " note=\($0)" } ?? ""))
         }
         return lines.joined(separator: "\n")
     }
 
-    /// The event's kind name (its recording `kind`), read from its encoding so the case list lives in one place.
-    private static func kind(of event: RecordingEvent?) -> String {
-        guard let event, let data = try? JSONEncoder().encode(event),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let kind = object["kind"] as? String else { return "none" }
-        return kind
+    /// The violations listed in full; the rest are counted (I5).
+    static let violationsShown = 20
+
+    /// A row: `<id>:<kind>:<height>`, then its recorded metrics that are not empty (I5).
+    static func render(row: RowInView) -> String {
+        let head = "\(row.id):\(row.kind.rawValue):\(Int(row.height.rounded()))"
+        guard let s = row.shape else { return head }
+        func list(_ v: [Int]) -> String { "[" + v.map(String.init).joined(separator: ",") + "]" }
+        func lists(_ v: [[Int]]) -> String { "[" + v.map(list).joined(separator: ",") + "]" }
+        var fields: [String] = []
+        if !s.paragraphs.isEmpty { fields.append("paragraphs=\(list(s.paragraphs))") }
+        if !s.codeBlocks.isEmpty { fields.append("code=\(list(s.codeBlocks))") }
+        if !s.images.isEmpty { fields.append("images=\(lists(s.images))") }
+        if !s.tables.isEmpty { fields.append("tables=\(lists(s.tables))") }
+        if s.toolRows > 0 { fields.append("toolRows=\(s.toolRows)") }
+        return fields.isEmpty ? head : head + "{" + fields.joined(separator: " ") + "}"
+    }
+
+    /// An input with its fields (I5); never content (a viewer's shown id is left out).
+    static func render(input: RecordingEvent?) -> String {
+        guard let input else { return "none" }
+        switch input {
+        case let .open(chat, _, _, window, column, _, _, _, _, _, _, _, _): return "open(chat=\(chat) window=\(window.map(String.init).joined(separator: "x")) column=\(column))"
+        case .shape(let s): return "shape(\(s.id):\(s.kind.rawValue))"
+        case .removed(let id): return "removed(\(id))"
+        case let .imageLoaded(id, index, height): return "imageLoaded(\(id) index=\(index) height=\(height))"
+        case let .window(width, height): return "window(\(width)x\(height))"
+        case .column(let width): return "column(\(width))"
+        case let .viewer(visible, width, _): return "viewer(visible=\(visible) width=\(width))"
+        case .sidebar(let visible): return "sidebar(visible=\(visible))"
+        case .textScale(let v): return "textScale(\(v))"
+        case let .wheel(deltaY, precise, phase, momentum):
+            return "wheel(deltaY=\(deltaY) precise=\(precise) phase=\(phaseName(phase))" + (momentum != 0 ? " momentum=\(phaseName(momentum))" : "") + ")"
+        case .key(let k): return "key(\(k.rawValue))"
+        case .jump(let id): return "jump(\(id))"
+        case .phase(let p): return "phase(\(p.rawValue))"
+        case let .delta(turn, chars): return "delta(turn=\(turn) chars=\(chars))"
+        case .turnFinished(let turn): return "turnFinished(\(turn))"
+        case .toolRow(let id): return "toolRow(\(id))"
+        case let .card(id, docked): return "card(\(id) docked=\(docked))"
+        case .capped(let bytes): return "capped(\(bytes))"
+        }
+    }
+
+    /// `NSEvent.Phase` raw values by name.
+    private static func phaseName(_ raw: Int) -> String {
+        switch raw {
+        case 0: "none"
+        case 1: "began"
+        case 2: "stationary"
+        case 4: "changed"
+        case 8: "ended"
+        case 16: "cancelled"
+        case 32: "mayBegin"
+        default: "\(raw)"
+        }
     }
 }

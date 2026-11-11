@@ -6,10 +6,15 @@ import XCTest
 /// v0.26.4 (D10): the one artefact that leaves the machine; text with counts and opaque ids only.
 final class EvaluationTests: XCTestCase {
     private func make() -> Evaluation {
-        let r = Reading(step: 7, input: .wheel(deltaY: -40, precise: true, phase: 0, momentum: 0), offset: 1234.4,
+        let r = Reading(step: 7, input: .wheel(deltaY: -40, precise: true, phase: 4, momentum: 0), offset: 1234.4,
                         documentHeight: 9000.6, clip: CGRect(x: 0, y: 1234, width: 600, height: 800),
-                        rowsInView: [RowInView(id: "assistant:ZEBRA", kind: .reply, height: 120, minY: 1200),
-                                     RowInView(id: "user:Q", kind: .person, height: 40, minY: 1320)],
+                        rowsInView: [RowInView(id: "assistant:ZEBRA", kind: .reply, height: 120, minY: 1200,
+                                               shape: EntryShape(id: "assistant:ZEBRA", kind: .reply, paragraphs: [300, 12], codeBlocks: [4],
+                                                                 tables: [[3, 2]])),
+                                     RowInView(id: "user:Q", kind: .person, height: 40, minY: 1320,
+                                               shape: EntryShape(id: "user:Q", kind: .person, images: [[160, 90]])),
+                                     RowInView(id: "tool-run:t", kind: .toolRun, height: 30, minY: 1360,
+                                               shape: EntryShape(id: "tool-run:t", kind: .toolRun, toolRows: 3, folded: true))],
                         phase: .decelerating, settledReadings: [], hasRows: true)
         let quiet = Reading(step: 8, input: .key(.pageUp), offset: 0, documentHeight: 10, clip: CGRect(x: 0, y: 0, width: 5, height: 5),
                             rowsInView: [], phase: .idle, settledReadings: [], hasRows: true, note: "key-not-moved")
@@ -32,11 +37,41 @@ final class EvaluationTests: XCTestCase {
             "steps: 9", "keys: 2 stepped, 1 moved", "skipped: capped 1, removed 3",
             "entries:", "person: 30", "reply: 30", "tool: 4",
             "heights:", "0-49: 12", "150-199: 3",
-            "violations: 1", "per segment: 1=1", "step 1.7 pastEnd: clip.maxY 9100 > doc 9000",
+            "violations: 1", "per segment: 1=1", "per rule: pastEnd=1", "step 1.7 pastEnd: clip.maxY 9100 > doc 9000",
             "window:",
-            "step 1.7 input=wheel offset=1234 doc=9001 clip=1234..2034 phase=decelerating rows=[assistant:ZEBRA:reply:120,user:Q:person:40]",
-            "step 1.8 input=key offset=0 doc=10 clip=0..5 phase=idle rows=[] note=key-not-moved",
+            "step 1.7 input=wheel(deltaY=-40.0 precise=true phase=changed) offset=1234 doc=9001 clip=1234..2034 phase=decelerating "
+                + "rows=[assistant:ZEBRA:reply:120{paragraphs=[300,12] code=[4] tables=[[3,2]]},user:Q:person:40{images=[[160,90]]},tool-run:t:toolRun:30{toolRows=3}]",
+            "step 1.8 input=key(pageUp) offset=0 doc=10 clip=0..5 phase=idle rows=[] note=key-not-moved",
         ])
+    }
+
+    /// I5: each input renders with its fields.
+    func testInputsRenderWithTheirFields() {
+        let cases: [(RecordingEvent?, String)] = [
+            (nil, "none"),
+            (.wheel(deltaY: -120, precise: true, phase: 4, momentum: 0), "wheel(deltaY=-120.0 precise=true phase=changed)"),
+            (.wheel(deltaY: 0.4, precise: false, phase: 0, momentum: 2), "wheel(deltaY=0.4 precise=false phase=none momentum=stationary)"),
+            (.key(.pageUp), "key(pageUp)"), (.column(width: 620), "column(620)"), (.window(width: 900, height: 700), "window(900x700)"),
+            (.jump(id: "user:3"), "jump(user:3)"), (.delta(turn: 31, chars: 120), "delta(turn=31 chars=120)"),
+            (.shape(EntryShape(id: "assistant:31", kind: .reply)), "shape(assistant:31:reply)"), (.turnFinished(turn: 31), "turnFinished(31)"),
+            (.textScale(1.25), "textScale(1.25)"), (.sidebar(visible: false), "sidebar(visible=false)"),
+            (.viewer(visible: true, width: 400, shown: "local-1"), "viewer(visible=true width=400)"),
+        ]
+        for (event, text) in cases { XCTAssertEqual(Evaluation.render(input: event), text) }
+    }
+
+    /// I5: the violations list stops at 20, says how many more, and counts each rule.
+    func testViolationsAreCappedAtTwentyWithCounts() {
+        var e = make()
+        e.violations = (0..<23).map { Violation(rule: $0 < 21 ? .wheelMoves : .pastEnd, step: $0, detail: "d") }
+        let lines = e.render().components(separatedBy: "\n")
+        let start = try! XCTUnwrap(lines.firstIndex(of: "violations: 23"))
+        XCTAssertEqual(lines[start + 1], "per segment: 1=23")
+        XCTAssertEqual(lines[start + 2], "per rule: pastEnd=2, wheelMoves=21")
+        XCTAssertEqual(lines[start + 3], "step 1.0 wheelMoves: d")
+        XCTAssertEqual(lines[start + 22], "step 1.19 wheelMoves: d")
+        XCTAssertEqual(lines[start + 23], "… and 3 more")
+        XCTAssertEqual(lines[start + 24], "window:")
     }
 
     func testRenderHasNoContentKeys() {

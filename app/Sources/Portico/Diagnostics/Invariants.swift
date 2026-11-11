@@ -25,6 +25,8 @@ struct RowInView: Equatable, Sendable {
     var kind: EntryShape.Kind
     var height: Double
     var minY: Double
+    /// The recorded shape (I5: the window prints its metrics); nil for an unmapped row.
+    var shape: EntryShape? = nil
 }
 
 struct Violation: Equatable, Sendable {

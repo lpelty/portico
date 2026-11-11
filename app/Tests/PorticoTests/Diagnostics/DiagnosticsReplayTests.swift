@@ -152,6 +152,10 @@ final class DiagnosticsReplayTests: XCTestCase {
         }
         XCTAssertEqual(unmappedRows, [], "every drawn row maps to a recorded id")
         XCTAssertTrue(named.isSubset(of: recorded), "rows \(named) are recorded ids")
+        // I5: the window's rows carry their recorded metrics, its inputs their fields.
+        XCTAssertTrue(evaluation.window.allSatisfy { $0.rowsInView.allSatisfy { $0.shape != nil } }, "every row's shape")
+        XCTAssertTrue(text.contains(":reply:") && text.contains("{paragraphs=["), text)
+        XCTAssertTrue(text.contains("input=delta(turn=31 chars=120)") || text.contains("input=turnFinished(31)"), text)
         // Turn 31's stream is a reply of its own under the 30th (off screen: the view is scrolled up),
         // not growth of the 30th: that row keeps its height, the document grows.
         let readings = ReplayRunner.lastReadings
@@ -300,7 +304,7 @@ final class DiagnosticsReplayTests: XCTestCase {
         // Ruling 13: the key is counted; one that did not move is noted in its window line, never a violation.
         XCTAssertEqual(evaluation.keysStepped, 1)
         XCTAssertTrue(text.contains("\nkeys: 1 stepped, \(evaluation.keysMoved) moved\n"))
-        if evaluation.keysMoved == 0 { XCTAssertTrue(text.contains("input=key ") && text.contains("note=key-not-moved"), text) }
+        if evaluation.keysMoved == 0 { XCTAssertTrue(text.contains("input=key(pageUp) ") && text.contains("note=key-not-moved"), text) }
         XCTAssertEqual(file.path, Diagnostics.evaluationsDirectory.appendingPathComponent("9-2026-11-10T23-30-00.000Z.txt").path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), text + "\n")
     }

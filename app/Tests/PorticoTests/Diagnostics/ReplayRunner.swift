@@ -234,13 +234,13 @@ enum ReplayRunner {
         var recorded: [String: String] = [:]
         /// Recorded id -> synthetic entry id.
         var synthetic: [String: String] = [:]
-        /// Recorded id -> recorded kind.
-        var kinds: [String: EntryShape.Kind] = [:]
+        /// Recorded id -> recorded shape (the newest).
+        var shapes: [String: EntryShape] = [:]
 
-        mutating func pair(recorded id: String, synthetic: String, kind: EntryShape.Kind) {
-            recorded[synthetic] = id
-            self.synthetic[id] = synthetic
-            kinds[id] = kind
+        mutating func pair(_ shape: EntryShape, synthetic: String) {
+            recorded[synthetic] = shape.id
+            self.synthetic[shape.id] = synthetic
+            shapes[shape.id] = shape
         }
     }
 
@@ -256,8 +256,9 @@ enum ReplayRunner {
                 // `unmapped` (not expected: every drawn synthetic row comes from a recorded shape)
                 // keeps the row for the rows-in-view check; it never enters the histogram.
                 // An unmapped row is named by its synthetic entry's kind (G2: the failure says which row).
-                return RowInView(id: recorded ?? unmapped, kind: recorded.flatMap { names.kinds[$0] } ?? syntheticKind(id) ?? .notice,
-                                 height: Double(frame.height), minY: Double(clip.minY + frame.minY))
+                let shape = recorded.flatMap { names.shapes[$0] }
+                return RowInView(id: recorded ?? unmapped, kind: shape?.kind ?? syntheticKind(id) ?? .notice,
+                                 height: Double(frame.height), minY: Double(clip.minY + frame.minY), shape: shape)
             }
         return Reading(step: step, input: input, offset: Double(clip.origin.y),
                        documentHeight: Double(hosted.scroll.documentView?.frame.height ?? 0), clip: clip,
@@ -397,7 +398,7 @@ enum ReplayRunner {
         let built = try SyntheticConversation.events(chat: chat, shapes: shapes, images: images)
         var names = Names()
         for shape in shapes {
-            if let synthetic = built.ids[shape.id] ?? nil { names.pair(recorded: shape.id, synthetic: synthetic, kind: shape.kind) }
+            if let synthetic = built.ids[shape.id] ?? nil { names.pair(shape, synthetic: synthetic) }
         }
         var entries: [EntryShape.Kind: Int] = [:]
         for shape in shapes { entries[shape.kind, default: 0] += 1 }
@@ -576,7 +577,7 @@ enum ReplayRunner {
                     pendingReply = entriesNow().last?.id
                     // Named now by the shape that follows, so the step's reading maps it.
                     if let started, let synthetic = pendingReply {
-                        names.pair(recorded: started.id, synthetic: synthetic, kind: started.kind)
+                        names.pair(started, synthetic: synthetic)
                     }
                     lastTurn = turn
                     replyTurn = turn
@@ -585,13 +586,15 @@ enum ReplayRunner {
                 take(event)
             case .shape(let s):
                 if known.contains(s.id) {
-                    notes["shape", default: 0] += 1  // a known entry re-shaped: deltas already grew it
+                    // A known entry re-shaped: deltas already grew it; its metrics are the newest.
+                    if let synthetic = names.synthetic[s.id] { names.pair(s, synthetic: synthetic) }
+                    notes["shape", default: 0] += 1
                     continue
                 }
                 known.insert(s.id)
                 entries[s.kind, default: 0] += 1
                 if s.kind == .reply, let synthetic = pendingReply {
-                    names.pair(recorded: s.id, synthetic: synthetic, kind: s.kind)
+                    names.pair(s, synthetic: synthetic)
                     pendingReply = nil
                     continue
                 }
@@ -608,7 +611,7 @@ enum ReplayRunner {
                 for message in try SyntheticConversation.events(chat: chat, shapes: [s], images: images).events {
                     model.apply(retarget(message, turn: turn, tag: "live-\(appended)-"))
                 }
-                if let id = entriesNow().last?.id { names.pair(recorded: s.id, synthetic: id, kind: s.kind) }
+                if let id = entriesNow().last?.id { names.pair(s, synthetic: id) }
                 lastTurn = turn
                 lastKind = s.kind
                 if s.kind == .reply { replyTurn = turn }
