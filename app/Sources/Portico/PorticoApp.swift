@@ -305,6 +305,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// v0.26.4: what the open recordings hold reaches their files before the app goes.
+    func applicationWillTerminate(_ notification: Notification) {
+        Diagnostics.closeAll()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if quitHandler == nil && editSessions.all.isEmpty { return .terminateNow }
         Task { @MainActor in

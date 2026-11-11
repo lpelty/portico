@@ -506,8 +506,9 @@ final class AppModel: ObservableObject {
     @Published var chosenStartFolder: URL?
     /// Why the last start was refused (the gateway's message), shown under the composer.
     @Published private(set) var startError: String?
-    /// Per chat, the turn the last delta belonged to, for coalescing.
-    private var currentTurn: [Int: Int] = [:]
+    /// Per chat, the turn the last delta belonged to, for coalescing (and the
+    /// diagnostics recorder's turn for a reply, v0.26.4).
+    private(set) var currentTurn: [Int: Int] = [:]
     /// Per chat and tool use, a permission outcome that arrived before the
     /// tool's row did (a card answered ahead of `tool.started`): drawn on
     /// the row when it starts.

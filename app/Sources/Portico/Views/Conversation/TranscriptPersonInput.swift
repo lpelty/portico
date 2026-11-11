@@ -34,6 +34,9 @@ final class TranscriptPersonInput {
     var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var last: (time: TimeInterval, direction: Direction)?
     private var monitor: Any?
+    /// v0.26.4 (D5): every wheel and key event the transcript takes, while a
+    /// recording runs (nil otherwise).
+    var onEvent: ((NSEvent) -> Void)?
 
     /// Whether the person's input came within the last `span`.
     var isRecent: Bool { recent != nil }
@@ -56,7 +59,10 @@ final class TranscriptPersonInput {
         guard monitor == nil, NSApp != nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
             MainActor.assumeIsolated {
-                if let direction = self?.direction(of: event) { self?.mark(direction: direction) }
+                if let self, let direction = self.direction(of: event) {
+                    self.mark(direction: direction)
+                    self.onEvent?(event)
+                }
             }
             return event
         }

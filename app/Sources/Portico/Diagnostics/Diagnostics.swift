@@ -17,6 +17,11 @@ enum Diagnostics {
     static private(set) var isOn = false
     /// Called with the new value whenever the switch changes.
     static var onChange: [(Bool) -> Void] = []
+    /// Posted (main thread) whenever the switch changes; each open conversation
+    /// starts or stops its recording on it. Unlike `onChange`, nothing resets it.
+    static let switched = Notification.Name("PorticoDiagnosticsSwitched")
+    /// The conversation recorders made since the switch last turned on, by chat.
+    static private(set) var recorders: [Int: Recorder] = [:]
     private static var poll: Task<Void, Never>?
 
     /// Reads the switch once.
@@ -28,9 +33,29 @@ enum Diagnostics {
         }
         guard now != isOn else { return }
         isOn = now
-        // The folder is going away under an open trace: let go of it.
-        if !now { ScrollTrace.closeHandle() }
+        // The folder is going away under an open trace and recordings: let go of them.
+        if !now {
+            ScrollTrace.closeHandle()
+            closeAll()
+        }
+        NotificationCenter.default.post(name: switched, object: nil)
         for handler in onChange { handler(now) }
+    }
+
+    /// The chat's recorder: `nil` while off; made on the first ask after the
+    /// switch turns on (its file opens then), the same one after that.
+    static func recorder(for chat: Int) -> Recorder? {
+        guard isOn else { return nil }
+        if let made = recorders[chat] { return made }
+        let made = Recorder(chat: chat, directory: recordingsDirectory)
+        recorders[chat] = made
+        return made
+    }
+
+    /// Closes and forgets every recorder (switch off, app quit, tests).
+    static func closeAll() {
+        for recorder in recorders.values { recorder.close() }
+        recorders = [:]
     }
 
     /// Polls the switch on the main actor; a second call does nothing.
