@@ -61,6 +61,7 @@ final class EvaluationTests: XCTestCase {
         XCTAssertEqual(e { $0.keysStepped = 2; $0.keysMoved = 1 }, "verdict: inconclusive (1 of 2 key steps did not move the view)")
         XCTAssertEqual(e { $0.textScale = 1.3; $0.textScaleApplied = false }, "verdict: inconclusive (text scale 1.3 not applied)")
         XCTAssertEqual(e { $0.textScale = 1.3 }, "verdict: green", "a text scale applied")
+        XCTAssertEqual(e { $0.placesNotRestored = 1 }, "verdict: inconclusive (1 scrolled-up place not restored)")
         XCTAssertEqual(e { $0.envelope = "off (phases did not fire)" }, "verdict: inconclusive (the envelope's phases did not fire)")
         XCTAssertEqual(e { $0.skipped = ["viewer": 2, "shape": 40] }, "verdict: green", "2 of 20: not over a tenth; re-shapes are not inputs")
         XCTAssertEqual(e { $0.skipped = ["viewer": 2, "sidebar": 1] }, "verdict: inconclusive (3 inputs skipped of 20 steps)")

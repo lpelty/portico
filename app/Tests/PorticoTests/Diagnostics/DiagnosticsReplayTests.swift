@@ -449,6 +449,16 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertLessThan(Double(first.clip.maxY), first.documentHeight - 100, "scrolled up, not at the bottom")
     }
 
+    /// Ruling 19: a scrolled-up open whose top row has no stand-in (a skipped kind) starts at the
+    /// bottom; the first reading says so and the verdict is inconclusive.
+    func testAScrolledUpOpenThatCannotBeRestoredIsNoted() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open(atBottom: false, topId: "divider", topOffset: -10, clipHeight: 480))]
+        lines += conversation(turns: 8).map { (0, .shape($0)) }
+        let evaluation = try ReplayRunner.run(recording: try write(lines, name: "9-2026-11-11T11-00-00.000Z.jsonl"), images: images())
+        XCTAssertEqual(ReplayRunner.lastReadings.first?.note, "place-not-restored")
+        XCTAssertEqual(evaluation.render().components(separatedBy: "\n")[0], "verdict: inconclusive (1 scrolled-up place not restored)")
+    }
+
     /// I8: a key step that did not move the view makes the verdict inconclusive, never green.
     func testAKeyThatDoesNotMoveMakesTheVerdictInconclusive() throws {
         var lines: [(Int, RecordingEvent)] = [(0, open())]

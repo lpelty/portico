@@ -70,7 +70,9 @@ enum Invariants {
                 out.append(Violation(rule: .alternation, step: r.step, detail: "document height flipped between \(n(a)) and \(n(b)) \(run - 1) times"))
             }
             if let previous, case .wheel(let deltaY, let precise, _, _) = r.input, !pushesIntoItsEnd(previous, deltaY: deltaY) {
-                let moved = r.offset - previous.offset
+                // Ruling 19: an unsettled reading (mid-gesture) may sit in AppKit's rubber band past an
+                // end; clamped to the document, its direction and amount are still checked.
+                let moved = clamped(r) - clamped(previous)
                 if precise {
                     // I1: the movement the document allows (a wheel past an end stops at it).
                     let expected = min(max(previous.offset - deltaY, 0), maxOffset(previous)) - previous.offset
@@ -111,6 +113,9 @@ enum Invariants {
     }
 
     private static func maxOffset(_ p: Reading) -> Double { max(p.documentHeight - Double(p.clip.height), 0) }
+
+    /// The offset, held to the document when the reading is unsettled (Ruling 19).
+    private static func clamped(_ p: Reading) -> Double { p.settled ? p.offset : min(max(p.offset, 0), maxOffset(p)) }
 
     /// I1: a wheel into the end the view already is at (at the top with a positive delta,
     /// toward the top; at the bottom with a negative one) has nowhere to go: exempt.

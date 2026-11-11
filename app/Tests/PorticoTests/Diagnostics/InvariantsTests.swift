@@ -113,6 +113,24 @@ final class InvariantsTests: XCTestCase {
         XCTAssertEqual(Invariants.check([reading(3, offset: 4230, doc: 5000)]).map(\.rule), [.pastEnd])
     }
 
+    /// Ruling 19: a wheel that crosses into the bottom mid-gesture, read unsettled, sits in the
+    /// rubber band past the end; its offset is clamped to the document before `wheelMoves`, so the
+    /// stretch is not a violation, while direction and amount are still checked.
+    func testAnUnsettledReadingPastTheEndIsClampedBeforeWheelMoves() {
+        let down = RecordingEvent.wheel(deltaY: -60, precise: true, phase: 4, momentum: 0)
+        // 20 pt above the bottom (4180 of max 4200); the wheel asks for 60, read 30 pt past the end.
+        var stretched = reading(2, input: down, offset: 4230, doc: 5000)
+        stretched.settled = false
+        XCTAssertTrue(Invariants.check([reading(1, offset: 4180), stretched]).isEmpty, "the rubber band is not a violation")
+        // The same reading settled: pastEnd, as before (the wheel itself is clamped only when unsettled).
+        XCTAssertEqual(Invariants.check([reading(1, offset: 4180), reading(2, input: down, offset: 4230, doc: 5000)]).map(\.rule),
+                       [.wheelMoves, .pastEnd])
+        // Clamped, the direction is still checked: an unsettled wheel down that went up is a violation.
+        var wrong = reading(2, input: down, offset: 4100, doc: 5000)
+        wrong.settled = false
+        XCTAssertEqual(Invariants.check([reading(1, offset: 4180), wrong]).map(\.rule), [.wheelMoves])
+    }
+
     func testEstimateDriftAboveAQuarterIsAViolationOnlyWithoutNewContent() {
         let a = reading(1, doc: 5000), b = reading(2, input: .phase(.idle), doc: 6300)
         XCTAssertEqual(Invariants.check([a, b]).map(\.rule), [.estimateDrift])

@@ -404,6 +404,7 @@ enum ReplayRunner {
         var allRuns = 0, allRunWheels = 0, allEnvelopeFailed = 0
         var lastEntries: [EntryShape.Kind: Int] = [:]
         var lastTextScale = 1.0
+        var allPlacesNotRestored = 0
         for number in chosen {
             try replay(segments[number - 1], number: number)
         }
@@ -433,6 +434,9 @@ enum ReplayRunner {
         // another conversation and back, the place kept in between (found hosted: a restore at
         // the window's very first layout finds no row laid out and leaves the view at the top,
         // and a switch to no conversation leaves the new scroll view unlaid out).
+        // A scrolled-up open whose top row has no stand-in starts at the bottom instead: noted.
+        let placeNotRestored = !atBottom && (topId.flatMap { names.synthetic[$0] } == nil)
+        if placeNotRestored { allPlacesNotRestored += 1 }
         if !atBottom, let topId, let synthetic = names.synthetic[topId] {
             let away = chat + 1
             model.apply(.chatList(ChatList(chats: [chat, away].map {
@@ -546,6 +550,7 @@ enum ReplayRunner {
         }
 
         take(nil)
+        if placeNotRestored { readings[readings.count - 1].note = "place-not-restored" }
         for (index, (t, event)) in rest.enumerated() {
             switch event {
             case .phase(let p):
@@ -695,6 +700,7 @@ enum ReplayRunner {
         evaluation.entriesByKind = lastEntries
         evaluation.skipped = allNotes
         evaluation.truncated = read.truncated ? 1 : 0
+        evaluation.placesNotRestored = allPlacesNotRestored
         evaluation.textScale = lastTextScale
         evaluation.textScaleApplied = true  // the hosted conversation's environment carries it (I8)
         evaluation.envelope = allEnvelopeFailed > 0 ? "off (phases did not fire)" : "on (\(allRuns) gesture runs)"

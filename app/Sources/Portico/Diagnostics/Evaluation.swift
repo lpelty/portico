@@ -43,6 +43,8 @@ struct Evaluation: Equatable, Sendable {
     /// the view at all (Ruling 18: none of them moving is the harness, not the app).
     var wheelsWithRoom = 0
     var wheelsMoved = 0
+    /// Scrolled-up opens whose top row had no stand-in, so the replay started at the bottom.
+    var placesNotRestored = 0
 
     /// Skipped kinds that are inputs the replay could not apply (I8); re-shapes, image loads,
     /// tool rows and the cap marker are covered otherwise and do not count.
@@ -61,6 +63,7 @@ struct Evaluation: Equatable, Sendable {
             return "red"
         }
         if keysMoved < keysStepped { reasons.append("\(keysStepped - keysMoved) of \(keysStepped) key steps did not move the view") }
+        if placesNotRestored > 0 { reasons.append("\(placesNotRestored) scrolled-up place not restored") }
         if textScale != 1, !textScaleApplied { reasons.append("text scale \(textScale) not applied") }
         if envelope.hasPrefix("off") { reasons.append("the envelope's phases did not fire") }
         let skippedInputs = skipped.filter { Self.skippedInputs.contains($0.key) }.values.reduce(0, +)
