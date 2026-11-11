@@ -61,7 +61,12 @@ def turn_off(state: StateDir) -> int:
         return 0
     removed = sum(1 for p in d.rglob("*") if p.is_file() or p.is_symlink())
     errors: list[str] = []
-    shutil.rmtree(d, onerror=lambda _fn, path, exc: errors.append(f"{path}: {exc[1].strerror or exc[1]}"))
+    # The switch first: the app polls it and stops writing, so it cannot make ``trace.log`` again mid-delete.
+    try:
+        (d / SWITCH).unlink(missing_ok=True)
+    except OSError as e:
+        errors.append(f"{d / SWITCH}: {e.strerror or e}")
+    shutil.rmtree(d, onexc=lambda _fn, path, exc: errors.append(f"{path}: {getattr(exc, 'strerror', None) or exc}"))
     if d.exists() or d.is_symlink():
         left = sorted(p.relative_to(d).as_posix() for p in d.rglob("*")) if d.is_dir() else []
         detail = "; ".join(errors[:3]) or "unknown error"

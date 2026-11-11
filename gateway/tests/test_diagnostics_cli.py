@@ -78,3 +78,29 @@ def test_off_that_cannot_delete_exits_1_and_names_what_remains(tmp_path, capsys)
         assert "recordings" in err and "3-x.jsonl" in err
     finally:
         stuck.chmod(0o700)
+
+
+def test_off_removes_the_switch_before_the_folder(tmp_path, monkeypatch):
+    """The app polls ``on``: gone first, it stops writing (no ``trace.log`` made again mid-delete).
+
+    The delete reports through ``onexc`` (``onerror`` is deprecated in Python 3.12).
+    """
+    import shutil
+
+    from portico_gateway import diagnostics
+
+    home = tmp_path / "home"
+    main(["diagnostics", "on", "--state", str(home)])
+    (home / "diagnostics" / "trace.log").write_text("x")
+    seen = {}
+    real = shutil.rmtree
+
+    def spy(path, *args, **kwargs):
+        seen["on at rmtree"] = (home / "diagnostics" / "on").exists()
+        seen["kwargs"] = sorted(kwargs)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(diagnostics.shutil, "rmtree", spy)
+    assert main(["diagnostics", "off", "--state", str(home)]) == 0
+    assert seen == {"on at rmtree": False, "kwargs": ["onexc"]}
+    assert not (home / "diagnostics").exists()
