@@ -12,14 +12,14 @@ final class InvariantsTests: XCTestCase {
                          settled: [Double] = []) -> Reading {
         Reading(step: step, input: input, offset: offset, documentHeight: doc,
                 clip: clip ?? CGRect(x: 0, y: offset, width: 600, height: 800),
-                rowsInView: rows ?? [row], phase: "idle", settledReadings: settled, hasRows: hasRows)
+                rowsInView: rows ?? [row], phase: .idle, settledReadings: settled, hasRows: hasRows)
     }
 
     func testAlternationIsCaughtAndNamedWithTheStep() {
         let v = Invariants.check([reading(6), reading(7, settled: [3850, 4050, 3850, 4050, 3850])])
         XCTAssertEqual(v.map(\.rule), [.alternation])
         XCTAssertEqual(v.first?.step, 7)
-        XCTAssertTrue(v[0].detail.contains("3850") && v[0].detail.contains("4050") && v[0].detail.contains("5"))
+        XCTAssertTrue(v[0].detail.contains("3850") && v[0].detail.contains("4050") && v[0].detail.contains("4 times"))
     }
 
     func testAlternationNeedsFourAndARealGap() {
@@ -33,8 +33,10 @@ final class InvariantsTests: XCTestCase {
         let stuck = Invariants.check([reading(1, offset: 500), reading(2, input: wheel, offset: 500)])
         XCTAssertEqual(stuck.map(\.rule), [.wheelMoves])
         XCTAssertEqual(stuck.first?.step, 2)
-        // Within tolerance: fine.
-        XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: wheel, offset: 596)]).isEmpty)
+        // The wrong way (the offset grew with a positive delta) is a violation too.
+        XCTAssertEqual(Invariants.check([reading(1, offset: 500), reading(2, input: wheel, offset: 600)]).map(\.rule), [.wheelMoves])
+        // Moved against the delta, within tolerance: fine.
+        XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: wheel, offset: 404)]).isEmpty)
         // Started at the top.
         XCTAssertTrue(Invariants.check([reading(1, offset: 0), reading(2, input: wheel, offset: 0)]).isEmpty)
         // Started at the bottom (5000 - 800 = 4200).
@@ -71,8 +73,8 @@ final class InvariantsTests: XCTestCase {
 
     func testACleanRunHasNoViolations() {
         let wheel = RecordingEvent.wheel(deltaY: 100, precise: true, phase: 0, momentum: 0)
-        let run = [reading(1, offset: 500), reading(2, input: wheel, offset: 600, settled: [5000, 5000]),
-                   reading(3, input: wheel, offset: 700)]
+        let run = [reading(1, offset: 500), reading(2, input: wheel, offset: 400, settled: [5000, 5000]),
+                   reading(3, input: wheel, offset: 300)]
         XCTAssertEqual(Invariants.check(run), [])
     }
 }

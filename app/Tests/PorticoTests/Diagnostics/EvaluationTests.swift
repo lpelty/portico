@@ -10,11 +10,11 @@ final class EvaluationTests: XCTestCase {
                         documentHeight: 9000.6, clip: CGRect(x: 0, y: 1234, width: 600, height: 800),
                         rowsInView: [RowInView(id: "assistant:ZEBRA", kind: .reply, height: 120, minY: 1200),
                                      RowInView(id: "user:Q", kind: .person, height: 40, minY: 1320)],
-                        phase: "decelerating", settledReadings: [], hasRows: true)
+                        phase: .decelerating, settledReadings: [], hasRows: true)
         let quiet = Reading(step: 8, input: nil, offset: 0, documentHeight: 10, clip: CGRect(x: 0, y: 0, width: 5, height: 5),
-                            rowsInView: [], phase: "idle", settledReadings: [], hasRows: true)
+                            rowsInView: [], phase: .idle, settledReadings: [], hasRows: true)
         return Evaluation(appVersion: "0.26.4", macOS: "27.0", phasesFire: true, phasesMove: false,
-                          recording: "12-2026-11-10T21-05-00.250Z.jsonl", started: "2026-11-10T21:05:00Z", lengthMs: 4200,
+                          recording: "/Users/someone/recordings/12-2026-11-10T21-05-00.250Z.jsonl", started: "2026-11-10T21:05:00Z", lengthMs: 4200,
                           segments: 2, entriesByKind: [.reply: 30, .person: 30, .tool: 4],
                           heightHistogram: [150: 3, 0: 12],
                           violations: [Violation(rule: .pastEnd, step: 7, detail: "clip.maxY 9100 > doc 9000")],
@@ -42,5 +42,11 @@ final class EvaluationTests: XCTestCase {
         XCTAssertFalse(text.contains("text"))
         XCTAssertFalse(text.contains("title"))
         XCTAssertFalse(text.contains("/"))
+    }
+
+    func testAnEmptyEvaluationRendersExactly() {
+        let e = Evaluation(appVersion: "1", macOS: "2", phasesFire: false, phasesMove: false, recording: "a.jsonl", started: "s",
+                           lengthMs: 0, segments: 0, entriesByKind: [:], heightHistogram: [:], violations: [], window: [])
+        XCTAssertEqual(e.render(), "app: 1\nmacOS: 2\nrecording: a.jsonl\nstarted: s\nlength: 0 ms\nphases: fire=false move=false\nsegments: 0\nentries:\nheights:\nviolations: 0\nwindow:")
     }
 }

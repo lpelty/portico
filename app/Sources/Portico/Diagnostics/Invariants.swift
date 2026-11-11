@@ -9,7 +9,7 @@ struct Reading: Equatable, Sendable {
     var documentHeight: Double
     var clip: CGRect
     var rowsInView: [RowInView]
-    var phase: String
+    var phase: ScrollPhaseName
     /// Document heights sampled while settling, in order.
     var settledReadings: [Double]
     /// Whether the conversation has entries to draw.
@@ -44,12 +44,12 @@ enum Invariants {
         for (i, r) in readings.enumerated() {
             let previous = i > 0 ? readings[i - 1] : nil
             if let (a, b, run) = alternation(r.settledReadings) {
-                out.append(Violation(rule: .alternation, step: r.step, detail: "document height flipped between \(n(a)) and \(n(b)) \(run) times"))
+                out.append(Violation(rule: .alternation, step: r.step, detail: "document height flipped between \(n(a)) and \(n(b)) \(run - 1) times"))
             }
             if let previous, case .wheel(let deltaY, _, _, _) = r.input, !startedAtAnEnd(previous) {
                 let moved = r.offset - previous.offset
-                if abs(moved - deltaY) > wheelTolerance {
-                    out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel \(n(deltaY)) moved the view \(n(moved))"))
+                if abs(moved + deltaY) > wheelTolerance {
+                    out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel delta \(n(deltaY)) moved the offset \(n(moved)), expected \(n(-deltaY))"))
                 }
             }
             if r.hasRows, r.rowsInView.isEmpty {
