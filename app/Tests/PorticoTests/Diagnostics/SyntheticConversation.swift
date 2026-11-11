@@ -166,7 +166,9 @@ enum SyntheticConversation {
                 attachments += (0..<shape.documents).map { images.appendingPathComponent("document-\(index)-\($0).txt").path }
                 out.append(.userText(UserText(
                     chat: chat, turn: turn, text: text(matching: shape),
-                    attachments: attachments.isEmpty ? nil : attachments, seq: next())))
+                    attachments: attachments.isEmpty ? nil : attachments, seq: next(),
+                    // A fixed time: a person row's id hashes it, and the runner pairs ids across two builds (G2).
+                    ts: "2026-11-01T09:00:00.000Z")))
             case .reply:
                 out.append(.textDelta(TextDelta(chat: chat, turn: turn, text: text(matching: shape), seq: next())))
             case .tool, .toolRun:
