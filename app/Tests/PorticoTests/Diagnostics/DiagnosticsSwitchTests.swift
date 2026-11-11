@@ -105,4 +105,32 @@ final class DiagnosticsSwitchTests: XCTestCase {
         XCTAssertTrue(text.hasSuffix("after\n"))
         XCTAssertFalse(text.contains("before"))
     }
+
+    /// A `recordings/` that cannot be made (a `diagnostics/` the app may not write) is not retried
+    /// at every poll: no restart notice, the same recorder, until the switch turns off and on.
+    func testARecordingsFolderThatCannotBeMadeIsNotRetriedEveryPoll() throws {
+        try switchOn()
+        Diagnostics.refresh()
+        XCTAssertTrue(Diagnostics.isOn)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: Diagnostics.directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: Diagnostics.directory.path) }
+        let first = try XCTUnwrap(Diagnostics.recorder(for: 3))
+        XCTAssertFalse(first.isWriting, "no recordings/ could be made")
+        var notices = 0
+        let token = NotificationCenter.default.addObserver(forName: Diagnostics.switched, object: nil, queue: nil) { _ in notices += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+        for _ in 0..<3 { Diagnostics.refresh() }
+        XCTAssertEqual(notices, 0, "no restart at each poll")
+        XCTAssertTrue(Diagnostics.recorder(for: 3) === first, "the same recorder")
+        // Off and on again: tried afresh.
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: Diagnostics.directory.path)
+        try FileManager.default.removeItem(at: Diagnostics.switchFile)
+        Diagnostics.refresh()
+        try switchOn()
+        Diagnostics.refresh()
+        let again = try XCTUnwrap(Diagnostics.recorder(for: 3))
+        XCTAssertFalse(again === first)
+        XCTAssertTrue(again.isWriting)
+        Diagnostics.closeAll()
+    }
 }

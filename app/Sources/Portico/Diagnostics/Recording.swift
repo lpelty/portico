@@ -239,6 +239,8 @@ private final class RecordingWriter: @unchecked Sendable {
 @MainActor
 final class Recorder {
     let url: URL
+    /// Whether its file could be made (a `recordings/` the app may not create leaves it `false`).
+    let isWriting: Bool
     private let queue = DispatchQueue(label: "portico.diagnostics.recorder")
     private let writer: RecordingWriter
     private let timer: DispatchSourceTimer
@@ -252,6 +254,7 @@ final class Recorder {
         let stamp = formatter.string(from: startedAt).replacingOccurrences(of: ":", with: "-")
         let made = RecordingWriter.create(directory: directory, stem: "\(chat)-\(stamp)")
         url = made.url
+        isWriting = made.handle != nil
         let writer = RecordingWriter(handle: made.handle, cap: cap)
         self.writer = writer
         timer = DispatchSource.makeTimerSource(queue: queue)

@@ -23,6 +23,8 @@ enum Diagnostics {
     /// The conversation recorders made since the switch last turned on, by chat.
     static private(set) var recorders: [Int: Recorder] = [:]
     private static var poll: Task<Void, Never>?
+    /// A recorder's file could not be made since the switch last turned on.
+    private static var recordingFailed = false
 
     /// Reads the switch once.
     static func refresh() {
@@ -33,12 +35,15 @@ enum Diagnostics {
         }
         // Off then on again inside one poll: the open recordings point into a deleted
         // `recordings/`. Close them; the views start fresh on the notice.
-        if now, isOn, !recorders.isEmpty, !FileManager.default.fileExists(atPath: recordingsDirectory.path) {
+        // A `recordings/` that could not be made is not retried at every poll (it would close and
+        // restart every recording each time); the switch turning off and on tries again.
+        if now, isOn, !recorders.isEmpty, !recordingFailed, !FileManager.default.fileExists(atPath: recordingsDirectory.path) {
             closeAll()
             NotificationCenter.default.post(name: switched, object: nil)
         }
         guard now != isOn else { return }
         isOn = now
+        recordingFailed = false
         // The folder is going away under an open trace and recordings: let go of them.
         if !now {
             ScrollTrace.closeHandle()
@@ -55,6 +60,7 @@ enum Diagnostics {
         if let made = recorders[chat] { return made }
         let made = Recorder(chat: chat, directory: recordingsDirectory)
         recorders[chat] = made
+        if !made.isWriting { recordingFailed = true }
         return made
     }
 
