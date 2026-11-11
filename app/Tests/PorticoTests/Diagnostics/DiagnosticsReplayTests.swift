@@ -300,6 +300,48 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), text + "\n")
     }
 
+    /// I3: a trackpad gesture (began, changed x3, ended) is one run: fed at its recorded spacing
+    /// inside the zero-delta envelope, read per wheel without settling, settled once at its end;
+    /// a wheel on its own keeps its own settle.
+    func testAGestureRunIsFedAsOneRunAndSettlesOnceAtItsEnd() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 10).map { (0, .shape($0)) }
+        lines += [(1000, .wheel(deltaY: 0, precise: true, phase: 1, momentum: 0)),
+                  (1016, .phase(.interacting)),
+                  (1016, .wheel(deltaY: -30, precise: true, phase: 4, momentum: 0)),
+                  (1040, .wheel(deltaY: -30, precise: true, phase: 4, momentum: 0)),
+                  (1200, .wheel(deltaY: -30, precise: true, phase: 4, momentum: 0)),
+                  (1220, .wheel(deltaY: 0, precise: true, phase: 8, momentum: 0)),
+                  (1300, .phase(.idle)),
+                  (2000, .wheel(deltaY: -40, precise: true, phase: 0, momentum: 0))]
+        let recording = try write(lines, name: "9-2026-11-10T23-45-00.000Z.jsonl")
+        let evaluation = try ReplayRunner.run(recording: recording, images: images())
+        let text = evaluation.render()
+        print("REPLAY-EVALUATION run\n\(text)")
+        XCTAssertEqual(ReplayRunner.lastRuns.runs, 1, "one gesture run")
+        XCTAssertEqual(ReplayRunner.lastRuns.wheels, 5, "its five wheels")
+        let readings = ReplayRunner.lastReadings
+        XCTAssertEqual(readings.count, 7, "the opening reading and one per wheel")
+        XCTAssertEqual(readings[1...4].map(\.settledReadings.count), [1, 1, 1, 1], "no settle inside the run")
+        XCTAssertGreaterThanOrEqual(readings[5].settledReadings.count, 20 + 5, "the run's heights and one settle at its end")
+        XCTAssertEqual(readings[6].settledReadings.count, 20, "a wheel on its own settles on its own")
+        XCTAssertEqual(evaluation.envelope, "on (1 gesture runs)", "the phases fired around the run (spike: they do on this Mac)")
+        XCTAssertTrue(text.contains("\nenvelope: on (1 gesture runs)\n"), text)
+    }
+
+    /// I3c: a field replay says up front how many steps it takes and about how long.
+    func testTheEstimateCountsStepsAndSeconds() throws {
+        var lines: [(t: Int, event: RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 2).map { (t: 0, event: .shape($0)) }
+        lines += [(100, .wheel(deltaY: 1, precise: false, phase: 0, momentum: 0)), (200, .key(.end)), (300, .phase(.idle)),
+                  (400, .removed(id: "x")), (500, open())]
+        lines += conversation(turns: 2).map { (t: 500, event: .shape($0)) }
+        lines += [(600, .delta(turn: 3, chars: 9))]
+        let estimate = ReplayRunner.estimate(lines)
+        XCTAssertEqual(estimate.steps, 5, "an opening reading per segment, a wheel, a key, a delta")
+        XCTAssertGreaterThanOrEqual(estimate.seconds, 10, "hosting and the phase probe per segment, plus each step's settle")
+    }
+
     /// G1 (Ruling 15): a line wheel is sent as a precise pixel wheel of lines x the scroll view's
     /// line height, in the recorded direction; the reading keeps the recorded (line) input.
     func testALineWheelIsSentAsAPixelWheelOfLinesTimesTheLineHeight() throws {

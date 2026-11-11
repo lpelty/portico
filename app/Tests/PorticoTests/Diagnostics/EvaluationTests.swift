@@ -19,16 +19,16 @@ final class EvaluationTests: XCTestCase {
                           heightHistogram: [150: 3, 0: 12],
                           violations: [Violation(rule: .pastEnd, step: 7, detail: "clip.maxY 9100 > doc 9000")],
                           window: [r, quiet], steps: 9, keysStepped: 2, keysMoved: 1,
-                          skipped: ["removed": 3, "capped": 1])
+                          skipped: ["removed": 3, "capped": 1], envelope: "on (2 gesture runs)")
     }
 
     func testRenderCarriesHeaderHistogramViolationsAndWindowWithoutContent() {
         let lines = make().render().components(separatedBy: "\n")
-        XCTAssertEqual(Array(lines.prefix(7)), [
+        XCTAssertEqual(Array(lines.prefix(8)), [
             "app: 0.26.4", "macOS: 27.0", "recording: 12-2026-11-10T21-05-00.250Z.jsonl",
-            "started: 2026-11-10T21:05:00Z", "length: 4200 ms", "phases: fire=true move=false", "segments: 2",
+            "started: 2026-11-10T21:05:00Z", "length: 4200 ms", "phases: fire=true move=false", "envelope: on (2 gesture runs)", "segments: 2",
         ])
-        XCTAssertEqual(Array(lines[7...]), [
+        XCTAssertEqual(Array(lines[8...]), [
             "steps: 9", "keys: 2 stepped, 1 moved", "skipped: capped 1, removed 3",
             "entries:", "person: 30", "reply: 30", "tool: 4",
             "heights:", "0-49: 12", "150-199: 3",
@@ -49,6 +49,6 @@ final class EvaluationTests: XCTestCase {
     func testAnEmptyEvaluationRendersExactly() {
         let e = Evaluation(appVersion: "1", macOS: "2", phasesFire: false, phasesMove: false, recording: "a.jsonl", started: "s",
                            lengthMs: 0, segments: 0, entriesByKind: [:], heightHistogram: [:], violations: [], window: [])
-        XCTAssertEqual(e.render(), "app: 1\nmacOS: 2\nrecording: a.jsonl\nstarted: s\nlength: 0 ms\nphases: fire=false move=false\nsegments: 0\nsteps: 0\nkeys: 0 stepped, 0 moved\nskipped: none\nentries:\nheights:\nviolations: 0\nwindow:")
+        XCTAssertEqual(e.render(), "app: 1\nmacOS: 2\nrecording: a.jsonl\nstarted: s\nlength: 0 ms\nphases: fire=false move=false\nenvelope: on (0 gesture runs)\nsegments: 0\nsteps: 0\nkeys: 0 stepped, 0 moved\nskipped: none\nentries:\nheights:\nviolations: 0\nwindow:")
     }
 }

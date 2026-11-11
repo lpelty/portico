@@ -29,11 +29,14 @@ struct Evaluation: Equatable, Sendable {
     var keysMoved: Int = 0
     /// Recording event kinds the replay did not apply, and how many.
     var skipped: [String: Int] = [:]
+    /// Whether the replay's zero-delta began/ended envelope put SwiftUI's phase out of idle
+    /// around each gesture run (Ruling 16): `on (N gesture runs)` or `off (phases did not fire)`.
+    var envelope: String = "on (0 gesture runs)"
 
     func render() -> String {
         var lines = [
             "app: \(appVersion)", "macOS: \(macOS)", "recording: \(URL(fileURLWithPath: recording).lastPathComponent)", "started: \(started)",
-            "length: \(lengthMs) ms", "phases: fire=\(phasesFire) move=\(phasesMove)", "segments: \(segments)",
+            "length: \(lengthMs) ms", "phases: fire=\(phasesFire) move=\(phasesMove)", "envelope: \(envelope)", "segments: \(segments)",
             "steps: \(steps)", "keys: \(keysStepped) stepped, \(keysMoved) moved",
             "skipped: " + (skipped.isEmpty ? "none" : skipped.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")),
             "entries:",

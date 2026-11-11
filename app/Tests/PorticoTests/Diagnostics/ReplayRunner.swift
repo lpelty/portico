@@ -20,6 +20,12 @@ import XCTest
 /// entry's `shape` (appended as the synthetic builder makes it; a reply shape
 /// right after a delta that started a reply names that reply), `turnFinished`
 /// (the last turn ends). `phase` sets the phase of the readings that follow.
+/// A gesture run (wheels with a scroll or momentum phase, or wheels while the
+/// recorded phase is tracking or interacting, until the gesture or its momentum
+/// ends or the phase goes idle) is fed at its recorded spacing (at most 50 ms
+/// apart) inside a zero-delta began/ended envelope (Ruling 16), read per wheel
+/// without settling while the document's height is sampled, and settled once at
+/// its end; a wheel on its own settles on its own.
 /// Skipped, and counted by event kind in `lastNotes` and the evaluation's `skipped:` line: `removed`, `imageLoaded` (images load
 /// through the real thumbnail path), `toolRow` (its run's shape covers it),
 /// `card`, `viewer`, `sidebar`, `textScale`, `capped`, a changed shape of a
@@ -53,6 +59,8 @@ enum ReplayRunner {
     /// The last run's wheels as sent (points, always precise; Ruling 15) and the line height used.
     static private(set) var lastSentWheels: [(pixels: Double, precise: Bool)] = []
     static private(set) var lastLineHeight: Double?
+    /// The last run's gesture runs and the wheels fed inside them (I3).
+    static private(set) var lastRuns: (runs: Int, wheels: Int) = (0, 0)
 
     static let environmentKey = "PORTICO_REPLAY"
     static let unmapped = "unmapped"
@@ -383,25 +391,75 @@ enum ReplayRunner {
         var phase: ScrollPhaseName = .idle
         var residual = 0.0
         var sent: [(pixels: Double, precise: Bool)] = []
+        var runs = 0, runWheels = 0, envelopeFailed = 0
         var readings: [Reading] = []
         var appended = 0
 
         func entriesNow() -> [TranscriptEntry] { TranscriptEntry.entries(model.transcripts[chat] ?? []) }
-        func take(_ input: RecordingEvent?) {
+        func take(_ input: RecordingEvent?, settled given: [Double]? = nil) {
             let step = readings.count
             XCTAssertTrue(Diagnostics.recorders.isEmpty, "the replay records nothing")
-            let settled = settle(hosted)
+            let settled = given ?? settle(hosted)
             readings.append(reading(step: step, input: input, hosted: hosted, chat: chat, phase: phase,
                                     settled: settled, names: names, hasRows: !entriesNow().isEmpty,
                                     syntheticKind: { id in entriesNow().first { $0.id == id }.map { EntryShape.of($0, imageSize: { _ in nil }).kind } }))
             onStep?(step)
         }
 
+        // I3: a gesture run (a trackpad's phased wheels, or a mouse's wheels while SwiftUI
+        // reports a phase) is fed at its recorded spacing inside the envelope (Ruling 16),
+        // sampling the document's height all through, and settles once at its end.
+        var inRun = false
+        var runSamples: [Double] = []
+        var runLastWheel: Int?
+        var runLastT: Int?
+        func sample() { runSamples.append(Double(hosted.scroll.documentView?.frame.height ?? 0)) }
+        func startRun() {
+            inRun = true
+            runs += 1
+            runSamples = []
+            runLastWheel = nil
+            runLastT = nil
+            let seen = ConversationProbe.phaseNames[chat]?.count ?? 0
+            wheel(hosted, pixels: 0, phase: .began)
+            spin(0.05)
+            let names = ConversationProbe.phaseNames[chat] ?? []
+            if !names.dropFirst(min(seen, names.count)).contains(where: { $0 != "idle" }) { envelopeFailed += 1 }
+        }
+        func endRun() {
+            guard inRun else { return }
+            inRun = false
+            wheel(hosted, pixels: 0, phase: .ended)
+            let settled = settle(hosted)
+            // The run's last wheel is read again, settled, with every height sampled in the run.
+            if let i = runLastWheel {
+                let fresh = reading(step: readings[i].step, input: readings[i].input, hosted: hosted, chat: chat, phase: readings[i].phase,
+                                    settled: runSamples + settled, names: names, hasRows: !entriesNow().isEmpty)
+                readings[i] = fresh
+            }
+        }
+        /// Whether the wheel at `index` closes its run: its momentum ended, or its gesture ended
+        /// (or was cancelled) with no momentum wheel before the next idle phase.
+        func closesRun(at index: Int) -> Bool {
+            guard case let .wheel(_, _, p, m) = rest[index].event else { return false }
+            if m == 8 { return true }
+            guard m == 0, p == 8 || p == 16 else { return false }
+            for (_, later) in rest[(index + 1)...] {
+                switch later {
+                case .wheel(_, _, _, let lm): return lm == 0
+                case .phase(.idle): return true
+                default: continue
+                }
+            }
+            return true
+        }
+
         take(nil)
-        for (index, (_, event)) in rest.enumerated() {
+        for (index, (t, event)) in rest.enumerated() {
             switch event {
             case .phase(let p):
                 phase = p
+                if p == .idle { endRun() } else if p == .tracking || p == .interacting, !inRun { startRun() }
             case .open:
                 break  // not in the last segment
             case .window(_, let h):
@@ -410,14 +468,30 @@ enum ReplayRunner {
             case .column(let w):
                 resize(hosted, width: CGFloat(w))
                 take(event)
-            case let .wheel(deltaY, precise, _, _):
+            case let .wheel(deltaY, precise, p, m):
+                if !inRun, p != 0 || m != 0 { startRun() }
+                if inRun, let last = runLastT {
+                    // The recorded spacing, at most 50 ms, sampling the height every 10 ms.
+                    let gap = min(max(t - last, 0), 50)
+                    for _ in 0..<max(gap / 10, 1) { spin(0.01); sample() }
+                }
                 // Ruling 15: lines become points; the remainder of a whole-point CGEvent field carries to the next wheel.
                 let exact = pixels(deltaY: deltaY, precise: precise, lineHeight: hosted.scroll.verticalLineScroll) + residual
                 let whole = exact.rounded()
                 residual = exact - whole
                 wheel(hosted, pixels: whole)
                 sent.append((pixels: whole, precise: true))
-                take(event)
+                if inRun {
+                    spin(0.01)
+                    sample()
+                    runLastT = t
+                    runLastWheel = readings.count
+                    take(event, settled: [runSamples.last ?? 0])
+                    runWheels += 1
+                    if closesRun(at: index) { endRun() }
+                } else {
+                    take(event)
+                }
             case .key(let k):
                 key(hosted, k)
                 take(event)
@@ -492,7 +566,10 @@ enum ReplayRunner {
             }
         }
 
+        endRun()
+
         lastReadings = readings
+        lastRuns = (runs: runs, wheels: runWheels)
         lastNotes = notes.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }
         lastHostedWidth = hosted.host.frame.width
         lastSentWheels = sent
@@ -509,7 +586,23 @@ enum ReplayRunner {
         evaluation.segments = opens.count
         evaluation.entriesByKind = entries
         evaluation.skipped = notes
+        evaluation.envelope = envelopeFailed > 0 ? "off (phases did not fire)" : "on (\(runs) gesture runs)"
         return evaluation
+    }
+
+    /// I3c: the steps a replay of `events` takes (an opening reading per segment, one per
+    /// input it applies) and about how long, in seconds: hosting and the phase probe per
+    /// segment (about 6 s) and a settle per step (about 0.35 s).
+    static func estimate(_ events: [(t: Int, event: RecordingEvent)]) -> (steps: Int, seconds: Int) {
+        var steps = 0, segments = 0
+        for (_, event) in events {
+            switch event {
+            case .open: segments += 1; steps += 1
+            case .wheel, .key, .jump, .delta, .turnFinished, .window, .column: steps += 1
+            default: continue
+            }
+        }
+        return (steps, Int((Double(segments) * 6 + Double(steps) * 0.35).rounded(.up)))
     }
 
     /// A live copy of a builder message: the replay's turn, no sequence number (the
@@ -572,6 +665,10 @@ enum ReplayRunner {
         // Removed only when made: XCTest reports the last error thrown, and a `try?` remove of a
         // folder never made would mask the replay's own error (found with a hand-written recording).
         defer { if FileManager.default.fileExists(atPath: images.path) { try? FileManager.default.removeItem(at: images) } }
+        if let events = try? Recorder.read(recording) {
+            let estimate = estimate(events)
+            print("PORTICO-REPLAY \(recording.lastPathComponent): \(estimate.steps) steps, about \(estimate.seconds) s")
+        }
         let evaluation = try run(recording: recording, images: images)
         return (evaluation, try write(evaluation, for: recording, in: directory))
     }

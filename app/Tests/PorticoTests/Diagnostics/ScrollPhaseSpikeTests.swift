@@ -103,4 +103,59 @@ final class ScrollPhaseSpikeTests: XCTestCase {
         print("PHASE-SPIKE macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)")
         XCTAssertTrue(abs(result.moved) >= 40 || !names.isEmpty, "the probe ran: the view moved or reported a phase")
     }
+
+    /// I3b (Ruling 16): the replay's envelope. A zero-delta wheel with scroll phase began,
+    /// before a gesture run, and one with ended after it (momentum 0) put SwiftUI's phase
+    /// into a non-idle one, so the view's `personScrolling` path runs (the `.sizeChanges`
+    /// anchor off) while content streams mid-gesture, and the scrolled-up view holds.
+    func testAZeroDeltaPhasedEnvelopeKeepsThePersonScrollingThroughADelta() throws {
+        let shapes = (1...20).flatMap { turn in [
+            EntryShape(id: "user:\(turn)", kind: .person, paragraphs: [48]),
+            EntryShape(id: "assistant:\(turn)", kind: .reply, paragraphs: [300, 240, 180]),
+        ] }
+        let images = FileManager.default.temporaryDirectory.appendingPathComponent("portico-envelope-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: images) }
+        let suite = "portico-envelope-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = try SyntheticConversation.model(chat: 9, shapes: shapes, images: images, defaults: defaults)
+        let wasEnabled = ConversationProbe.enabled
+        ConversationProbe.enabled = true
+        defer { ConversationProbe.enabled = wasEnabled; ConversationProbe.phaseNames[9] = nil; ConversationProbe.rows[9] = nil }
+        let hosted = try ReplayRunner.host(model, defaults: defaults, size: NSSize(width: 800, height: 600))
+        defer { hosted.window.close() }
+        let clip = hosted.scroll.contentView
+        // Scrolled up (a key moves the view on every Mac; a synthesized wheel may not).
+        ReplayRunner.key(hosted, .pageUp)
+        ReplayRunner.spin(0.4)
+        ReplayRunner.key(hosted, .pageUp)
+        ReplayRunner.spin(0.6)
+        let height = Double(hosted.scroll.documentView?.frame.height ?? 0)
+        XCTAssertLessThan(Double(clip.bounds.maxY), height - 100, "scrolled up")
+
+        var lines: [String] = []
+        ScrollTrace.override = true
+        ScrollTrace.sink = { lines.append($0) }
+        defer { ScrollTrace.sink = nil; ScrollTrace.override = nil }
+        ConversationProbe.phaseNames[9] = nil
+        let before = Double(clip.bounds.origin.y)
+        XCTAssertTrue(ReplayRunner.wheel(hosted, pixels: 0, phase: .began))
+        ReplayRunner.spin(0.1)
+        let began = ConversationProbe.phaseNames[9] ?? []
+        for _ in 0..<6 {
+            model.apply(.textDelta(TextDelta(chat: 9, turn: 40, text: String(repeating: " word", count: 120))))
+            ReplayRunner.spin(0.05)
+        }
+        let mid = Double(clip.bounds.origin.y)
+        let duringReads = lines.filter { $0.contains(" read chat=9 ") }
+        XCTAssertTrue(ReplayRunner.wheel(hosted, pixels: 0, phase: .ended))
+        ReplayRunner.spin(0.4)
+        let names = ConversationProbe.phaseNames[9] ?? []
+        print("ENVELOPE-SPIKE began=\(began) names=\(names) before=\(Int(before)) mid=\(Int(mid)) reads=\(duringReads.count) scrollingTrue=\(duringReads.filter { $0.contains("scrolling=true") }.count)")
+        XCTAssertTrue(began.contains { $0 != "idle" }, "began put the phase out of idle: \(began)")
+        XCTAssertFalse(duringReads.isEmpty, "the view read its geometry while the reply streamed")
+        XCTAssertTrue(duringReads.allSatisfy { $0.contains("scrolling=true") }, "personScrolling all through the delta: \(duringReads)")
+        XCTAssertEqual(mid, before, accuracy: 8, "the scrolled-up view held through the delta")
+        XCTAssertEqual(names.last, "idle", "ended put the phase back to idle")
+    }
 }
