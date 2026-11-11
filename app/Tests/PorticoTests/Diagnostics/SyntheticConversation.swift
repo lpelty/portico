@@ -12,7 +12,9 @@ import Foundation
 /// Not reproduced: `card`, `turnMarker`, `compacted`, `notice`, `agents`, `signin`,
 /// `brief` and `divider` entries (rare in the field problems; skipped). A recording
 /// keeps no block order, so blocks are interleaved in a fixed order, and a list
-/// item's or heading's length (not recorded) is a typical one.
+/// item's or heading's length (not recorded) is a typical one. Also not reproduced:
+/// line breaks inside a paragraph (each is one line of prose), heading levels above 3
+/// (they draw as 3 anyway) and nested list levels (one flat list).
 @MainActor
 enum SyntheticConversation {
     // MARK: - filler words (3-9 letters)
@@ -131,10 +133,25 @@ enum SyntheticConversation {
 
     // MARK: - events
 
+    /// What `events` built: the messages, and which synthetic entry stands for each
+    /// recorded one (`nil`: a skipped kind). Synthetic ids come from the model (a person
+    /// row's carries a per-process hash, a reply's a counter), so a scratch model replays
+    /// the events and recorded entries are paired with the synthetic ones by order among
+    /// the non-skipped shapes. The ids hold for any fresh model fed the same events in
+    /// this process, which is what `model(...)` builds.
+    struct Built {
+        var events: [ServerMessage]
+        var ids: [String: String?]
+    }
+
     /// `ChatHistory`-ready events for `shapes`, in order, each entry in a turn of its own.
-    static func events(chat: Int, shapes: [EntryShape], images: URL) throws -> [ServerMessage] {
+    /// A `toolRun` of two rows uses viewer-step tools (the only two-row run the app folds);
+    /// of three or more, `Read`; one row (never recorded) is a single tool.
+    /// A single tool beside another tool entry is a Mark row, so it stays an entry of its own.
+    static func events(chat: Int, shapes: [EntryShape], images: URL) throws -> Built {
         var out: [ServerMessage] = []
         var seq = 0
+        var kept: [String] = []
         func next() -> Int { seq += 1; return seq }
         for (index, shape) in shapes.enumerated() {
             let turn = index + 1
@@ -148,22 +165,51 @@ enum SyntheticConversation {
             case .reply:
                 out.append(.textDelta(TextDelta(chat: chat, turn: turn, text: text(matching: shape), seq: next())))
             case .tool, .toolRun:
-                for row in 0..<max(shape.toolRows, 1) {
+                let rows = shape.kind == .tool ? 1 : max(shape.toolRows, 1)
+                // A single tool row beside another tool row or run would fold into it and break
+                // the count (real recordings have such neighbours around a question record or a
+                // proposal): it stands alone, as the Mark row does. Two runs side by side cannot
+                // be told apart and merge; recordings never hold that (the app folds them).
+                let neighbours = [index - 1, index + 1].contains { shapes.indices.contains($0) && [.tool, .toolRun].contains(shapes[$0].kind) }
+                let name = shape.kind == .tool && neighbours ? ViewerSteps.markTool
+                    : rows == 2 ? ViewerSteps.prefix + "look" : "Read"
+                for row in 0..<rows {
                     let id = "tool-\(index)-\(row)"
                     out.append(.toolStarted(ToolStarted(
-                        chat: chat, turn: turn, toolUseId: id, tool: "Read", summary: "notes.md", input: [:], seq: next())))
+                        chat: chat, turn: turn, toolUseId: id, tool: name, summary: "notes.md", input: [:], seq: next())))
                     out.append(.toolFinished(ToolFinished(
                         chat: chat, turn: turn, toolUseId: id, ok: true, summary: "done", seq: next())))
                 }
             case .card, .turnMarker, .compacted, .notice, .agents, .signin, .brief, .divider:
                 continue
             }
+            kept.append(shape.id)
         }
-        return out
+        var ids: [String: String?] = [:]
+        for shape in shapes { ids[shape.id] = .some(nil) }
+        let entries = TranscriptEntry.entries(try scratch(chat: chat, events: out).transcripts[chat] ?? [])
+        for (position, id) in kept.enumerated() where position < entries.count { ids[id] = .some(entries[position].id) }
+        return Built(events: out, ids: ids)
+    }
+
+    private static func scratch(chat: Int, events: [ServerMessage]) throws -> AppModel {
+        let suite = "portico-synthetic-scratch-\(UUID().uuidString)"
+        let defaults = try suiteDefaults(suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        return build(chat: chat, events: events, defaults: defaults)
+    }
+
+    private static func suiteDefaults(_ suite: String) throws -> UserDefaults {
+        guard let defaults = UserDefaults(suiteName: suite) else { throw CocoaError(.fileWriteUnknown) }
+        return defaults
     }
 
     /// A connected model with `chat` selected and `shapes` replayed into it.
     static func model(chat: Int, shapes: [EntryShape], images: URL, defaults: UserDefaults) throws -> AppModel {
+        build(chat: chat, events: try events(chat: chat, shapes: shapes, images: images).events, defaults: defaults)
+    }
+
+    private static func build(chat: Int, events: [ServerMessage], defaults: UserDefaults) -> AppModel {
         let model = AppModel(settings: Settings(defaults: defaults))
         model.outbound = { _ in }
         model.relistDelay = .zero
@@ -175,7 +221,6 @@ enum SyntheticConversation {
         model.apply(.chatList(ChatList(chats: [ChatSummary(
             chat: chat, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")])))
         model.selected = chat
-        let events = try events(chat: chat, shapes: shapes, images: images)
         model.apply(.chatHistory(ChatHistory(chat: chat, events: events, truncated: false)))
         model.apply(.chatLive(ChatLive(chat: chat)))
         return model

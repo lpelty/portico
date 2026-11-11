@@ -54,10 +54,10 @@ final class SyntheticConversationTests: XCTestCase {
                        SyntheticConversation.text(matching: shape { $0.paragraphs = [200] }), "deterministic")
     }
 
-    func testParagraphLengthIsWithinTwoAndWordsAreProse() {
+    func testParagraphLengthIsExactAndWordsAreThreeToNineLetters() {
         for n in [1, 2, 3, 4, 5, 11, 12, 13, 57, 400] {
             let text = SyntheticConversation.text(matching: shape(.person) { $0.paragraphs = [n] })
-            XCTAssertEqual(text.count, n, abs(text.count - n) <= 2 ? "" : "off by more than 2") // exact in practice
+            XCTAssertEqual(text.count, n)
             for word in text.split(separator: " ") where n >= 3 {
                 XCTAssertTrue((3...9).contains(word.count), "\(word)")
             }
@@ -65,7 +65,9 @@ final class SyntheticConversationTests: XCTestCase {
     }
 
     func testSyntheticFromEmptyShapeIsEmpty() throws {
-        XCTAssertEqual(try SyntheticConversation.events(chat: 3, shapes: [], images: folder).count, 0)
+        let built = try SyntheticConversation.events(chat: 3, shapes: [], images: folder)
+        XCTAssertEqual(built.events.count, 0)
+        XCTAssertTrue(built.ids.isEmpty)
         let model = try SyntheticConversation.model(chat: 3, shapes: [], images: folder, defaults: defaults)
         XCTAssertEqual(model.transcripts[3] ?? [], [])
     }
@@ -117,14 +119,13 @@ final class SyntheticConversationTests: XCTestCase {
 
     /// Row heights by entry index, gathered while walking the transcript top to bottom
     /// (the lazy stack lays out only the rows near the view).
-    private func heights(_ model: AppModel, chat: Int, width: CGFloat) throws -> [Int: CGFloat] {
+    private func heights(_ model: AppModel, chat: Int, width: CGFloat, entryIds: [String]) throws -> [Int: CGFloat] {
         let hosted = try host(model, width: width)
         defer { hosted.window.close() }
-        let entries = TranscriptEntry.entries(model.transcripts[chat] ?? [])
         var out: [Int: CGFloat] = [:]
         func snapshot() {
             guard let frames = ConversationProbe.rows[chat]?.frames else { return }
-            for (index, entry) in entries.enumerated() { if let frame = frames[entry.id] { out[index] = frame.height } }
+            for (index, id) in entryIds.enumerated() { if let frame = frames[id] { out[index] = frame.height } }
         }
         snapshot()
         // Relative steps from wherever the stack leaves the view (its estimates move the
@@ -176,10 +177,15 @@ final class SyntheticConversationTests: XCTestCase {
             EntryShape.of($0, imageSize: { _ in nil })
         }
         XCTAssertEqual(shapes.count, expectedRows)
-        let originalHeights = try heights(original, chat: chat, width: 740)
+        let originalHeights = try heights(original, chat: chat, width: 740, entryIds: shapes.map(\.id))
+        let built = try SyntheticConversation.events(chat: chat, shapes: shapes, images: folder)
         let synthetic = try SyntheticConversation.model(chat: chat, shapes: shapes, images: folder, defaults: defaults)
-        XCTAssertEqual(TranscriptEntry.entries(synthetic.transcripts[chat] ?? []).count, shapes.count)
-        let syntheticHeights = try heights(synthetic, chat: chat, width: 740)
+        let syntheticEntries = TranscriptEntry.entries(synthetic.transcripts[chat] ?? [])
+        XCTAssertEqual(syntheticEntries.count, shapes.count)
+        // Paired through the recorded-to-synthetic map, never by raw index.
+        let mapped = shapes.map { built.ids[$0.id] ?? nil }
+        XCTAssertEqual(mapped.compactMap { $0 }, syntheticEntries.map(\.id), "the map names the model's own entry ids")
+        let syntheticHeights = try heights(synthetic, chat: chat, width: 740, entryIds: mapped.map { $0 ?? "" })
 
         let both = Set(originalHeights.keys).intersection(syntheticHeights.keys).sorted()
         var worst: Double = 0
@@ -238,6 +244,31 @@ final class SyntheticConversationTests: XCTestCase {
         XCTAssertGreaterThan(result.rows, 20)
     }
 
+    func testToolRowsAndRunsRoundTripThroughTheModel() throws {
+        let shapes = [
+            shape(.person) { $0.id = "p1"; $0.paragraphs = [30] },
+            EntryShape(id: "t1", kind: .tool, toolRows: 1, folded: true),
+            shape { $0.id = "r1"; $0.paragraphs = [80] },
+            EntryShape(id: "run3", kind: .toolRun, toolRows: 4, folded: true),
+            EntryShape(id: "t3", kind: .tool, toolRows: 1, folded: true),
+            EntryShape(id: "run2", kind: .toolRun, toolRows: 2, folded: true),
+            shape { $0.id = "r2"; $0.paragraphs = [40] },
+            EntryShape(id: "t2", kind: .tool, toolRows: 1, folded: true),
+            EntryShape(id: "n1", kind: .notice),
+            shape(.person) { $0.id = "p2"; $0.paragraphs = [10] },
+        ]
+        let built = try SyntheticConversation.events(chat: 3, shapes: shapes, images: folder)
+        let model = try SyntheticConversation.model(chat: 3, shapes: shapes, images: folder, defaults: defaults)
+        let entries = TranscriptEntry.entries(model.transcripts[3] ?? [])
+        let back = entries.map { EntryShape.of($0, imageSize: { _ in nil }) }
+        let recorded = shapes.filter { $0.kind != .notice }
+        XCTAssertEqual(back.count, recorded.count, "one entry for each recorded entry but the skipped kind")
+        XCTAssertEqual(back.map(\.kind), recorded.map(\.kind))
+        XCTAssertEqual(back.map(\.toolRows), recorded.map(\.toolRows))
+        XCTAssertEqual(built.ids["n1"] ?? "x", nil, "a skipped kind maps to nil")
+        XCTAssertEqual(shapes.compactMap { built.ids[$0.id] ?? nil }, entries.map(\.id))
+    }
+
     // MARK: - images
 
     private func personHeight(image: [Int]) throws -> CGFloat {
@@ -252,7 +283,7 @@ final class SyntheticConversationTests: XCTestCase {
 
     func testImagesAreGeneratedAtTheRecordedSizeAndLoadThroughTheRealPath() throws {
         let shapes = [shape(.person) { $0.paragraphs = [20]; $0.images = [[640, 480], [0, 0]]; $0.documents = 1 }]
-        let events = try SyntheticConversation.events(chat: 3, shapes: shapes, images: folder)
+        let events = try SyntheticConversation.events(chat: 3, shapes: shapes, images: folder).events
         guard case .userText(let user)? = events.first else { return XCTFail("no person message") }
         let split = Attachment.split(try XCTUnwrap(user.attachments))
         XCTAssertEqual(split.images.count, 2)
