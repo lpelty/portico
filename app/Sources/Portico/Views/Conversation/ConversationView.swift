@@ -145,7 +145,9 @@ struct ConversationView: View {
             if Diagnostics.isOn { recording.note(.textScale(Double(now))) }
         }
         .onReceive(NotificationCenter.default.publisher(for: Diagnostics.switched)) { _ in
-            if Diagnostics.isOn { startRecording() } else { stopRecording() }
+            // On again inside one poll, the recorders were closed: start afresh.
+            stopRecording()
+            if Diagnostics.isOn { startRecording() }
         }
     }
 
@@ -344,7 +346,15 @@ struct ConversationView: View {
             ScrollTrace.note("follow chat=\(chat) sent-changed=\(new.sent != old.sent) memoryAtBottom=\(scrollMemory.atBottom) byPerson=\(byPerson)")
             // v0.26.4: the follow key holds the items key and the docked card; the
             // recording writes what changed (shapes, sizes of the gateway's events).
-            if Diagnostics.isOn { recording.changed(recordingSnapshot) }
+            if Diagnostics.isOn {
+                if ConversationProbe.enabled {
+                    let began = DispatchTime.now().uptimeNanoseconds
+                    recording.changed(recordingSnapshot)
+                    ConversationProbe.recordingChangeNanos.append(DispatchTime.now().uptimeNanoseconds - began)
+                } else {
+                    recording.changed(recordingSnapshot)
+                }
+            }
             if new.sent != old.sent {
                 scrollToBottom()
             } else if scrollMemory.atBottom && !byPerson {
@@ -473,16 +483,19 @@ struct ConversationView: View {
         personInput.onEvent = nil
     }
 
-    /// What the recording diffs on each change.
+    /// What the recording diffs on each change; the drawn rows only when it asks.
     private var recordingSnapshot: ConversationRecording.Snapshot {
         ConversationRecording.Snapshot(
-            items: items, drawn: drawn, briefItem: briefItem, divider: sessionDivider != nil,
-            itemsKey: itemsKey, docked: model.dockedCard(for: chat)?.id, currentTurn: model.currentTurn[chat])
+            items: items, itemsKey: itemsKey, docked: model.dockedCard(for: chat)?.id,
+            currentTurn: model.currentTurn[chat]
+        ) {
+            ConversationRecording.Layout(drawn: drawn, briefItem: briefItem, divider: sessionDivider != nil)
+        }
     }
 
     /// The window's size, `[width, height]`.
     private var windowSize: [Int] {
-        guard let window = personInput.scrollView?.window ?? NSApp.keyWindow else { return [0, 0] }
+        guard let window = personInput.scrollView?.window else { return [0, 0] }
         return [Int(window.frame.width), Int(window.frame.height)]
     }
 
@@ -493,13 +506,11 @@ struct ConversationView: View {
         return max(0, Int(content.bounds.width - scroll.convert(scroll.bounds, to: nil).maxX))
     }
 
-    /// The viewer's state once its column has settled (its width animates over 0.18 s).
+    /// The viewer's state as it changes, with its width as laid out then; the
+    /// settled width follows in the `column` events the change causes.
     private func noteViewer() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            recording.note(.viewer(
-                visible: model.isViewerShown(for: chat), width: viewerWidth, shown: model.shownArtifact(for: chat)?.id))
-        }
+        recording.noteViewer(.viewer(
+            visible: model.isViewerShown(for: chat), width: viewerWidth, shown: model.shownArtifact(for: chat)?.id))
     }
 
     /// The field diagnostic for "empty space under the conversation" (v0.16):
@@ -1222,4 +1233,6 @@ enum ConversationProbe {
     static var geometryReadings: [Int: Int] = [:]
     static var pastEndCorrections: [Int: Int] = [:]
     static var phaseNames: [Int: [String]] = [:]
+    /// v0.26.4: main-thread time of each recording diff on a follow-key change.
+    static var recordingChangeNanos: [UInt64] = []
 }

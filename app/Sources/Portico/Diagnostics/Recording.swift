@@ -1,7 +1,7 @@
 import Foundation
 
 /// The keys a recording notes; an enum so no free text can enter a recording.
-enum ScrollKey: String, Codable, Sendable { case pageUp, pageDown, home, end }
+enum ScrollKey: String, Codable, Sendable { case pageUp, pageDown, home, end, up, down, space }
 
 /// SwiftUI's scroll phase names, as an enum for the same reason.
 enum ScrollPhaseName: String, Codable, Sendable { case idle, tracking, interacting, decelerating, animating }

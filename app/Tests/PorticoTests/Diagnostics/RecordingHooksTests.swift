@@ -39,7 +39,9 @@ final class RecordingHooksTests: XCTestCase {
         XCTAssertTrue(Diagnostics.isOn)
     }
 
-    private func model(turns: Int, question: (Int) -> UserText? = { _ in nil }, extra: [ServerMessage] = []) throws -> AppModel {
+    private func model(
+        turns: Int, replyRepeat: Int = 30, question: (Int) -> UserText? = { _ in nil }, extra: [ServerMessage] = []
+    ) throws -> AppModel {
         let suite = "portico-hooks-\(UUID().uuidString)"
         defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         addTeardownBlock { [defaults] in defaults?.removePersistentDomain(forName: suite) }
@@ -59,7 +61,7 @@ final class RecordingHooksTests: XCTestCase {
             for turn in 1...turns {
                 events.append(.userText(question(turn)
                     ?? UserText(chat: 3, turn: turn, text: "Question \(turn) from Jordan about the Acme plan.")))
-                events.append(.textDelta(TextDelta(chat: 3, turn: turn, text: "Answer \(turn). " + String(repeating: "Priya replied at length. ", count: 30))))
+                events.append(.textDelta(TextDelta(chat: 3, turn: turn, text: "Answer \(turn). " + String(repeating: "Priya replied at length. ", count: replyRepeat))))
                 events.append(.turnFinished(TurnFinished(chat: 3, turn: turn, outcome: .done)))
             }
         }
@@ -165,6 +167,19 @@ final class RecordingHooksTests: XCTestCase {
         NSApp.sendEvent(pageUp)
         hosted.window.sendEvent(pageUp)
         spin(0.3)
+        // Ruling 8: the arrows and Space are the transcript's scroll keys too.
+        for (code, character) in [(UInt16(126), "\u{F700}"), (UInt16(49), " ")] {
+            // The page scroll may have let the first reply's text view go: focus one on screen.
+            let focus = try XCTUnwrap(Self.firstTextView(in: try XCTUnwrap(scroll.documentView)))
+            XCTAssertTrue(hosted.window.makeFirstResponder(focus))
+            let key = try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: hosted.window.windowNumber, context: nil, characters: character,
+                charactersIgnoringModifiers: character, isARepeat: false, keyCode: code))
+            NSApp.sendEvent(key)
+            hosted.window.sendEvent(key)
+            spin(0.2)
+        }
         model.apply(.textDelta(TextDelta(chat: 3, turn: 31, text: String(repeating: "x", count: 120))))
         spin(0.3)
         model.apply(.turnFinished(TurnFinished(chat: 3, turn: 31, outcome: .done)))
@@ -184,6 +199,8 @@ final class RecordingHooksTests: XCTestCase {
         let wheels = events.compactMap { if case .wheel(let dy, _, _, _) = $0.event { dy } else { nil } }
         XCTAssertEqual(wheels, [40, 40, 40], "three wheels of 40")
         XCTAssertTrue(events.contains { $0.event == .key(.pageUp) }, "Page Up")
+        XCTAssertTrue(events.contains { $0.event == .key(.up) }, "Up arrow")
+        XCTAssertTrue(events.contains { $0.event == .key(.space) }, "Space")
         XCTAssertTrue(events.contains { $0.event == .delta(turn: 31, chars: 120) }, "the reply's growth")
         XCTAssertTrue(events.contains { $0.event == .turnFinished(turn: 31) }, "the turn's end")
         XCTAssertTrue(events.contains { if case .phase = $0.event { true } else { false } }, "a scroll phase")
@@ -303,5 +320,58 @@ final class RecordingHooksTests: XCTestCase {
                 XCTAssertFalse(file.lastPathComponent.contains(word))
             }
         }
+    }
+
+    /// Off then on inside one poll deletes `recordings/` under the open recorders;
+    /// the next refresh closes them and each open conversation starts a new file.
+    func testOffThenOnWithinOnePollStartsFreshRecordings() throws {
+        try switchOn()
+        let model = try model(turns: 5)
+        let hosted = host(model)
+        defer { hosted.window.close() }
+        let first = try XCTUnwrap(Diagnostics.recorders[3])
+        try FileManager.default.removeItem(at: Diagnostics.directory)
+        try switchOn()
+        spin(0.5)
+        let second = try XCTUnwrap(Diagnostics.recorders[3], "a recorder again")
+        XCTAssertFalse(first === second, "a new recorder")
+        let events = try recording()
+        guard case .open(chat: 3, _, _, _, _, _, _, _, _)? = events.first?.event else {
+            return XCTFail("the new file starts with open: \(String(describing: events.first))")
+        }
+        XCTAssertEqual(Self.openShapes(events).count, 10)
+    }
+
+    /// Review I1: a streaming delta costs the recording the same however long the
+    /// conversation is. 200 turns of about 5000 characters each, 40 deltas.
+    func testStreamingIntoALongConversationStaysUnderAMillisecondPerChange() throws {
+        try switchOn()
+        let model = try model(turns: 200, replyRepeat: 200)
+        let hosted = host(model)
+        defer { hosted.window.close() }
+        let wasEnabled = ConversationProbe.enabled
+        ConversationProbe.enabled = true
+        defer { ConversationProbe.enabled = wasEnabled }
+        ConversationProbe.recordingChangeNanos = []
+        for _ in 0..<40 {
+            model.apply(.textDelta(TextDelta(chat: 3, turn: 201, text: String(repeating: "y", count: 30))))
+            spin(0.03)
+        }
+        let times = ConversationProbe.recordingChangeNanos.map { Double($0) / 1_000_000 }
+        ConversationProbe.recordingChangeNanos = []
+        model.apply(.turnFinished(TurnFinished(chat: 3, turn: 201, outcome: .done)))
+        spin(0.3)
+        let average = times.reduce(0, +) / Double(max(times.count, 1))
+        print(String(format: "RECORDING per change: n=%d average=%.3f ms max=%.3f ms", times.count, average, times.max() ?? 0))
+        XCTAssertGreaterThanOrEqual(times.count, 20, "the follow key changed with the deltas")
+        XCTAssertLessThan(average, 1.0)
+
+        let id = try XCTUnwrap(model.transcripts[3]?.last { if case .assistantText = $0 { true } else { false } }?.id)
+        let events = try recording()
+        let deltas = events.compactMap { if case .delta(201, let chars) = $0.event { chars } else { nil } }
+        XCTAssertEqual(deltas.reduce(0, +), 1200, "every character's growth, at its own time")
+        let shapes = Self.shapes(events).filter { $0.id == id }
+        XCTAssertLessThan(shapes.count, 40, "the streaming shape is throttled")
+        XCTAssertEqual(shapes.last?.paragraphs, [1200], "and right once the turn ends")
     }
 }

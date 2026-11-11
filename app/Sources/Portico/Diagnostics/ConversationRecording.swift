@@ -15,24 +15,41 @@ final class ConversationRecording {
     private var shapes: [String: EntryShape] = [:]
     private var order: [String] = []
     private var entries: [String: TranscriptEntry] = [:]
+    /// Reply lengths, turn ends and tool rows already written; kept up to date
+    /// from the items walked since the last change, never rebuilt from scratch.
     private var replyChars: [String: Int] = [:]
     private var turnEnds: Set<String> = []
     private var toolRows: Set<String> = []
     private var itemsKey = ""
+    /// The item count and the last item's id at the last change: items before
+    /// that index are taken as unchanged while that id is still in its place.
+    private var itemCount = 0
+    private var lastItemID: String?
     private var docked: String?
     private var window: [Int]?
+    private var viewer: RecordingEvent?
     private var imageSizes: [String: [Int]] = [:]
+    /// When the streaming reply's shape was last worked out (at most once per `tailShapeInterval`).
+    private var tailShapedAt: TimeInterval = 0
+    static let tailShapeInterval: TimeInterval = 0.25
+    /// The clock (a test sets its own).
+    var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
-    /// What the transcript holds at one moment, as the view sees it.
+    /// What the transcript holds at one moment, as the view sees it. The drawn
+    /// rows are a closure: a streaming delta never needs them.
     struct Snapshot {
         var items: [TranscriptItem]
-        var drawn: [TranscriptEntry]
-        var briefItem: String?
-        var divider: Bool
         var itemsKey: String
         var docked: String?
         /// The turn a reply with no turn end after it belongs to (the model's current turn).
         var currentTurn: Int?
+        var layout: () -> Layout
+    }
+
+    struct Layout {
+        var drawn: [TranscriptEntry]
+        var briefItem: String?
+        var divider: Bool
     }
 
     /// Writes `open`, then one shape per drawn entry.
@@ -40,11 +57,17 @@ final class ConversationRecording {
         self.recorder = recorder
         shapes = [:]
         entries = [:]
+        replyChars = [:]
+        turnEnds = []
+        toolRows = []
+        viewer = nil
         recorder.note(open)
         self.window = window
-        let now = shapeList(snapshot)
+        let now = shapeList(snapshot.layout())
         for shape in now { recorder.note(.shape(shape)) }
-        remember(now, snapshot: snapshot)
+        remember(now)
+        walk(snapshot, from: 0, write: false)
+        mark(snapshot)
     }
 
     func stop() {
@@ -53,6 +76,14 @@ final class ConversationRecording {
 
     func note(_ event: RecordingEvent) {
         recorder?.note(event)
+    }
+
+    /// The viewer's state, unless it is the one written last (the shown and
+    /// visible changes often come together).
+    func noteViewer(_ event: RecordingEvent) {
+        guard let recorder, event != viewer else { return }
+        viewer = event
+        recorder.note(event)
     }
 
     /// The window's size, when it changed since the last one written.
@@ -77,19 +108,25 @@ final class ConversationRecording {
         }
     }
 
-    /// Page Up, Page Down, Home and End; the arrows and Space have no `ScrollKey`.
+    /// The transcript's scroll keys (the ones `TranscriptPersonInput` takes).
     static func key(_ code: UInt16) -> ScrollKey? {
         switch code {
         case 116: .pageUp
         case 121: .pageDown
         case 115: .home
         case 119: .end
+        case 126: .up
+        case 125: .down
+        case 49: .space
         default: nil
         }
     }
 
-    /// The transcript changed (the view's follow key): shapes that changed,
-    /// ids gone, and the gateway's events as sizes (ruling 1).
+    /// The transcript changed (the view's follow key): the gateway's events as
+    /// sizes (ruling 1), shapes that changed and ids gone. Only the items after
+    /// the last change are walked; a streaming delta (the same items, the last
+    /// reply longer) writes its growth and, at most every `tailShapeInterval`,
+    /// the reply's shape, without the drawn rows.
     func changed(_ snapshot: Snapshot) {
         guard let recorder else { return }
         if snapshot.docked != docked {
@@ -99,45 +136,70 @@ final class ConversationRecording {
         }
         guard snapshot.itemsKey != itemsKey else { return }
         let items = snapshot.items
-        for (index, item) in items.enumerated() {
+        if items.count == itemCount, let last = items.last, last.id == lastItemID, case .assistantText = last {
+            walk(snapshot, from: items.count - 1, write: true)
+            if now() - tailShapedAt >= Self.tailShapeInterval { shapeTail(last) }
+            mark(snapshot)
+            return
+        }
+        let unchangedBefore = itemCount > 0 && items.count >= itemCount && items[itemCount - 1].id == lastItemID
+        walk(snapshot, from: unchangedBefore ? itemCount - 1 : 0, write: true)
+        let now = shapeList(snapshot.layout())
+        let ids = Set(now.map(\.id))
+        for shape in now where shapes[shape.id] != shape { recorder.note(.shape(shape)) }
+        for id in order where !ids.contains(id) { recorder.note(.removed(id: id)) }
+        remember(now)
+        tailShapedAt = self.now()
+        mark(snapshot)
+    }
+
+    /// Notes (when `write`) and remembers reply growth, turn ends and tool rows from `start` on.
+    private func walk(_ snapshot: Snapshot, from start: Int, write: Bool) {
+        let items = snapshot.items
+        guard start < items.count else { return }
+        for index in start..<items.count {
+            let item = items[index]
             switch item {
             case .assistantText(_, let text, _):
                 let id = item.id
-                let grew = text.count - (replyChars[id] ?? 0)
-                if grew > 0, let turn = Self.turn(ofReplyAt: index, in: items, current: snapshot.currentTurn) {
-                    recorder.note(.delta(turn: turn, chars: grew))
+                let count = text.count
+                let grew = count - (replyChars[id] ?? 0)
+                if write, grew > 0, let turn = Self.turn(ofReplyAt: index, in: items, current: snapshot.currentTurn) {
+                    recorder?.note(.delta(turn: turn, chars: grew))
                 }
+                replyChars[id] = count
             case .turnMarker(let marker):
-                if !turnEnds.contains(item.id) { recorder.note(.turnFinished(turn: marker.turn)) }
+                if turnEnds.insert(item.id).inserted, write { recorder?.note(.turnFinished(turn: marker.turn)) }
             case .tool:
-                if !toolRows.contains(item.id) { recorder.note(.toolRow(id: item.id)) }
+                if toolRows.insert(item.id).inserted, write { recorder?.note(.toolRow(id: item.id)) }
             default:
                 break
             }
         }
-        let now = shapeList(snapshot)
-        let ids = Set(now.map(\.id))
-        for shape in now where shapes[shape.id] != shape { recorder.note(.shape(shape)) }
-        for id in order where !ids.contains(id) { recorder.note(.removed(id: id)) }
-        remember(now, snapshot: snapshot)
     }
 
-    private func remember(_ now: [EntryShape], snapshot: Snapshot) {
+    /// The streaming reply's shape, written when it changed (a drawn reply only).
+    private func shapeTail(_ item: TranscriptItem) {
+        let id = item.id
+        guard let old = shapes[id] else { return }
+        let entry = TranscriptEntry.item(item)
+        let shape = EntryShape.of(entry, imageSize: imageSize)
+        if shape != old { recorder?.note(.shape(shape)) }
+        shapes[id] = shape
+        entries[id] = entry
+        tailShapedAt = now()
+    }
+
+    private func mark(_ snapshot: Snapshot) {
+        itemsKey = snapshot.itemsKey
+        itemCount = snapshot.items.count
+        lastItemID = snapshot.items.last?.id
+        docked = snapshot.docked
+    }
+
+    private func remember(_ now: [EntryShape]) {
         shapes = Dictionary(now.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         order = now.map(\.id)
-        itemsKey = snapshot.itemsKey
-        docked = snapshot.docked
-        replyChars = [:]
-        turnEnds = []
-        toolRows = []
-        for item in snapshot.items {
-            switch item {
-            case .assistantText(_, let text, _): replyChars[item.id] = text.count
-            case .turnMarker: turnEnds.insert(item.id)
-            case .tool: toolRows.insert(item.id)
-            default: break
-            }
-        }
     }
 
     /// A reply's turn: the first turn end after it, else the model's current turn.
@@ -150,13 +212,13 @@ final class ConversationRecording {
 
     /// One shape per drawn entry, the divider first and the brief in its entry's
     /// place (ids only); an entry unchanged since the last call keeps its shape.
-    private func shapeList(_ snapshot: Snapshot) -> [EntryShape] {
+    private func shapeList(_ layout: Layout) -> [EntryShape] {
         var out: [EntryShape] = []
-        if snapshot.divider { out.append(EntryShape(id: "divider", kind: .divider)) }
+        if layout.divider { out.append(EntryShape(id: "divider", kind: .divider)) }
         var seen: [String: TranscriptEntry] = [:]
-        for entry in snapshot.drawn {
+        for entry in layout.drawn {
             let id = entry.id
-            if id == snapshot.briefItem {
+            if id == layout.briefItem {
                 out.append(EntryShape(id: "brief", kind: .brief))
                 continue
             }

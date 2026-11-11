@@ -31,6 +31,12 @@ enum Diagnostics {
         if now, isOn, ScrollTrace.isOpen, !FileManager.default.fileExists(atPath: tracePath.path) {
             ScrollTrace.closeHandle()
         }
+        // Off then on again inside one poll: the open recordings point into a deleted
+        // `recordings/`. Close them; the views start fresh on the notice.
+        if now, isOn, !recorders.isEmpty, !FileManager.default.fileExists(atPath: recordingsDirectory.path) {
+            closeAll()
+            NotificationCenter.default.post(name: switched, object: nil)
+        }
         guard now != isOn else { return }
         isOn = now
         // The folder is going away under an open trace and recordings: let go of them.
