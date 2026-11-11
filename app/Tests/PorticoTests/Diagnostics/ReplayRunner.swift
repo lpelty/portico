@@ -331,7 +331,8 @@ enum ReplayRunner {
 
     /// Replays every segment of the recording in order (I4), or segment `only`.
     static func run(recording: URL, images: URL, segment only: Int? = nil) throws -> Evaluation {
-        let all = try Recorder.read(recording)
+        let read = try Recorder.read(recording)
+        let all = read.events
         let segments = Self.segments(all)
         guard let firstOpen = segments.first?.first, case let .open(chat, appVersion, macOS, _, _, _, _, _, _, _, _, _, _) = firstOpen.event
         else { throw Failure.noOpen }
@@ -680,6 +681,7 @@ enum ReplayRunner {
         evaluation.replayed = chosen
         evaluation.entriesByKind = lastEntries
         evaluation.skipped = allNotes
+        evaluation.truncated = read.truncated ? 1 : 0
         evaluation.textScale = lastTextScale
         evaluation.textScaleApplied = true  // the hosted conversation's environment carries it (I8)
         evaluation.envelope = allEnvelopeFailed > 0 ? "off (phases did not fire)" : "on (\(allRuns) gesture runs)"
@@ -795,7 +797,7 @@ enum ReplayRunner {
         // Removed only when made: XCTest reports the last error thrown, and a `try?` remove of a
         // folder never made would mask the replay's own error (found with a hand-written recording).
         defer { if FileManager.default.fileExists(atPath: images.path) { try? FileManager.default.removeItem(at: images) } }
-        if let events = try? Recorder.read(recording) {
+        if let events = try? Recorder.read(recording).events {
             let estimate = estimate(events)
             print("PORTICO-REPLAY \(recording.lastPathComponent): \(estimate.steps) steps, about \(estimate.seconds) s")
         }

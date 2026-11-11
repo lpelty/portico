@@ -179,7 +179,7 @@ final class ConversationRecordingTests: XCTestCase {
         }
         recorder.close()
         var perStep: [[RecordingEvent]] = [[]]
-        for event in try Recorder.read(recorder.url).map(\.event) {
+        for event in try Recorder.read(recorder.url).events.map(\.event) {
             if case .removed(let id) = event, id.hasPrefix("oracle-step-") {
                 perStep.append([])
             } else {
@@ -197,7 +197,7 @@ final class ConversationRecordingTests: XCTestCase {
         recording.start(recorder, open: Self.open, window: [1000, 700],
                         snapshot: Self.snapshot(state, step: step, full: false, calls: Counter()))
         recorder.close()
-        return try Recorder.read(recorder.url).compactMap { if case .shape(let s) = $0.event { s } else { nil } }
+        return try Recorder.read(recorder.url).events.compactMap { if case .shape(let s) = $0.event { s } else { nil } }
     }
 
     func testShapesAndRemovalsAreTheDifferenceBetweenWholeShapeLists() throws {

@@ -28,7 +28,7 @@ final class RecorderTests: XCTestCase {
         ]
         for e in events { recorder.note(e) }
         recorder.close()
-        let back = try Recorder.read(recorder.url)
+        let back = try Recorder.read(recorder.url).events
         XCTAssertEqual(back.map(\.event), events)
         XCTAssertEqual(back.map(\.t), back.map(\.t).sorted())
         let first = try String(contentsOf: recorder.url, encoding: .utf8).split(separator: "\n").first.map(String.init) ?? ""
@@ -57,7 +57,7 @@ final class RecorderTests: XCTestCase {
         let recorder = Recorder(chat: 1, directory: recordings, startedAt: start, cap: 2_000)
         for i in 0..<100 { recorder.note(.shape(EntryShape(id: "entry-\(i)", kind: .reply, paragraphs: [100, 200]))) }
         recorder.close()
-        let back = try Recorder.read(recorder.url)
+        let back = try Recorder.read(recorder.url).events
         guard case .capped(let bytes) = back.last?.event else { return XCTFail("last line is not capped") }
         XCTAssertGreaterThanOrEqual(bytes, 2_000)
         XCTAssertEqual(back.filter { if case .capped = $0.event { return true } else { return false } }.count, 1)
@@ -91,16 +91,31 @@ final class RecorderTests: XCTestCase {
         recorder.close()
         recorder.close()
         recorder.note(.removed(id: "late"))
-        XCTAssertEqual(try Recorder.read(recorder.url).count, 1)
+        XCTAssertEqual(try Recorder.read(recorder.url).events.count, 1)
     }
 
     func testReadThrowsOnMalformedLineAndUnknownKind() throws {
         try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
         let bad = recordings.appendingPathComponent("bad.jsonl")
-        try "{\"kind\":\"removed\",\"t\":1,\"id\":\"a\"}\nnot json\n".write(to: bad, atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try Recorder.read(bad))
-        try "{\"kind\":\"mystery\",\"t\":1}\n".write(to: bad, atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try Recorder.read(bad))
+        // A bad line with a good one after it: not a half-written end, so the recording is unreadable.
+        try "{\"kind\":\"removed\",\"t\":1,\"id\":\"a\"}\nnot json\n{\"kind\":\"removed\",\"t\":2,\"id\":\"b\"}\n"
+            .write(to: bad, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try Recorder.read(bad).events)
+        try "{\"kind\":\"mystery\",\"t\":1}\n{\"kind\":\"removed\",\"t\":2,\"id\":\"b\"}\n".write(to: bad, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try Recorder.read(bad).events)
+    }
+
+    /// I9: a half-written last line (the app stopped mid-write) is dropped and reported.
+    func testAHalfWrittenLastLineIsDroppedAndReported() throws {
+        try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+        let cut = recordings.appendingPathComponent("cut.jsonl")
+        try "{\"kind\":\"removed\",\"t\":1,\"id\":\"a\"}\n{\"kind\":\"removed\",\"t\":2,\"i".write(to: cut, atomically: true, encoding: .utf8)
+        let read = try Recorder.read(cut)
+        XCTAssertEqual(read.events.map(\.event), [.removed(id: "a")])
+        XCTAssertTrue(read.truncated)
+        let whole = recordings.appendingPathComponent("whole.jsonl")
+        try "{\"kind\":\"removed\",\"t\":1,\"id\":\"a\"}\n".write(to: whole, atomically: true, encoding: .utf8)
+        XCTAssertFalse(try Recorder.read(whole).truncated)
     }
 
     func testNoteCostsUnderOneMillisecondOnMain() throws {
@@ -200,7 +215,7 @@ final class RecorderTests: XCTestCase {
         allowed.insert("person")  // EntryShape.kind
         allowed.formUnion(["pageUp", "idle"])  // ScrollKey, ScrollPhaseName
         XCTAssertEqual(strings.subtracting(allowed), [])
-        XCTAssertEqual(try Recorder.read(recorder.url).count, events.count)
+        XCTAssertEqual(try Recorder.read(recorder.url).events.count, events.count)
     }
 
     private func collect(_ value: Any, into keys: inout Set<String>) {
@@ -225,7 +240,7 @@ final class RecorderTests: XCTestCase {
         }
         XCTAssertGreaterThan(size, 0, "the 250 ms timer should have flushed before close()")
         recorder.close()
-        XCTAssertEqual(try Recorder.read(recorder.url).count, 1)
+        XCTAssertEqual(try Recorder.read(recorder.url).events.count, 1)
     }
 
     func testDroppedRecorderFlushesBufferedLines() throws {
@@ -240,7 +255,7 @@ final class RecorderTests: XCTestCase {
         var count = 0
         while Date() < deadline && count < 2 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            count = (try? Recorder.read(url!).count) ?? 0
+            count = (try? Recorder.read(url!).events.count) ?? 0
         }
         XCTAssertEqual(count, 2)
     }
@@ -251,7 +266,7 @@ final class RecorderTests: XCTestCase {
         XCTAssertNotEqual(a.url, b.url)
         a.note(.removed(id: "a")); b.note(.removed(id: "b"))
         a.close(); b.close()
-        XCTAssertEqual(try Recorder.read(a.url).map(\.event), [.removed(id: "a")])
-        XCTAssertEqual(try Recorder.read(b.url).map(\.event), [.removed(id: "b")])
+        XCTAssertEqual(try Recorder.read(a.url).events.map(\.event), [.removed(id: "a")])
+        XCTAssertEqual(try Recorder.read(b.url).events.map(\.event), [.removed(id: "b")])
     }
 }

@@ -288,12 +288,27 @@ final class Recorder {
         queue.sync { writer.close() }
     }
 
-    nonisolated static func read(_ url: URL) throws -> [(t: Int, event: RecordingEvent)] {
-        let text = try String(contentsOf: url, encoding: .utf8)
+    /// A recording read back: its events, and whether a half-written last line was dropped (I9).
+    struct Read {
+        var events: [(t: Int, event: RecordingEvent)]
+        var truncated: Bool
+    }
+
+    /// Reads a recording. Only its last line may fail to decode (the app stopped mid-write): it is
+    /// dropped and `truncated` says so. Any other bad line makes the recording unreadable.
+    nonisolated static func read(_ url: URL) throws -> Read {
+        let text = try String(decoding: Data(contentsOf: url), as: UTF8.self)
         let decoder = JSONDecoder()
-        return try text.split(separator: "\n", omittingEmptySubsequences: true).map { line in
-            let l = try decoder.decode(RecordingLine.self, from: Data(line.utf8))
-            return (t: l.t, event: l.event)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        var events: [(t: Int, event: RecordingEvent)] = []
+        for (index, line) in lines.enumerated() {
+            do {
+                let l = try decoder.decode(RecordingLine.self, from: Data(line.utf8))
+                events.append((t: l.t, event: l.event))
+            } catch where index == lines.count - 1 {
+                return Read(events: events, truncated: true)
+            }
         }
+        return Read(events: events, truncated: false)
     }
 }

@@ -132,7 +132,7 @@ final class DiagnosticsReplayTests: XCTestCase {
         for r in ReplayRunner.lastReadings { print("REPLAY-STEP \(r.step) \(r.input.map { "\($0)" } ?? "none") offset=\(r.offset) doc=\(r.documentHeight)") }
         XCTAssertEqual(evaluation.violations, [], text)
         XCTAssertEqual(evaluation.segments, 1)
-        guard case let .open(_, appVersion, macOS, _, _, _, _, _, _, _, _, _, _)? = try Recorder.read(recording).first?.event else {
+        guard case let .open(_, appVersion, macOS, _, _, _, _, _, _, _, _, _, _)? = try Recorder.read(recording).events.first?.event else {
             return XCTFail("the recording opens")
         }
         XCTAssertEqual(evaluation.appVersion, appVersion, "the recording's app, not the replaying build's")
@@ -143,7 +143,7 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertTrue(text.contains("\nphases: fire="), "the phase probe's answer in the header")
         XCTAssertFalse(evaluation.window.isEmpty)
         // Rows are named by the recorded ids (ruling 11), never the synthetic ones.
-        let recorded = Set(try Recorder.read(recording).compactMap { if case .shape(let s) = $0.event { s.id } else { nil } })
+        let recorded = Set(try Recorder.read(recording).events.compactMap { if case .shape(let s) = $0.event { s.id } else { nil } })
         let named = Set(evaluation.window.flatMap { $0.rowsInView.map(\.id) })
         XCTAssertFalse(named.isEmpty, "rows in view")
         // G2: no drawn row lacks a recorded stand-in, at any step; a failure names the row's kind and height.
@@ -436,6 +436,22 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertGreaterThan(scaled, plain * 1.1, "rows drawn at 1.25")
         XCTAssertTrue(evaluation.render().contains("\ntextScale: 1.25 applied\n"))
         XCTAssertEqual(evaluation.render().components(separatedBy: "\n")[0], "verdict: green")
+    }
+
+    /// I9: a recording whose last line was half written (the app stopped mid-write) replays;
+    /// the header says one line was dropped.
+    func testAHalfWrittenLastLineReplaysAndIsCounted() throws {
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 6).map { (0, .shape($0)) }
+        lines += [(100, .key(.pageUp))]
+        let recording = try write(lines, name: "9-2026-11-11T10-30-00.000Z.jsonl")
+        let handle = try FileHandle(forWritingTo: recording)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("{\"kind\":\"wheel\",\"t\":200,\"deltaY\":-4".utf8))
+        try handle.close()
+        let evaluation = try ReplayRunner.run(recording: recording, images: images())
+        XCTAssertEqual(ReplayRunner.lastReadings.count, 2, "the opening reading and the key")
+        XCTAssertTrue(evaluation.render().contains("\ntruncated: 1\n"), evaluation.render())
     }
 
     /// G1 (Ruling 15): a line wheel is sent as a precise pixel wheel of lines x the scroll view's

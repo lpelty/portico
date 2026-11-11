@@ -133,7 +133,7 @@ final class RecordingHooksTests: XCTestCase {
     private func recording(chat: Int = 3) throws -> [(t: Int, event: RecordingEvent)] {
         let url = try XCTUnwrap(Diagnostics.recorders[chat]?.url, "a recorder for chat \(chat)")
         Diagnostics.closeAll()
-        return try Recorder.read(url)
+        return try Recorder.read(url).events
     }
 
     private static func shapes(_ events: [(t: Int, event: RecordingEvent)]) -> [EntryShape] {

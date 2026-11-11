@@ -247,7 +247,7 @@ final class DiagnosticsBudgetTests: XCTestCase {
         let on = try streamedReply(turns: 400, on: true)
         let url = try XCTUnwrap(Diagnostics.recorders[3]?.url, "a recorder for chat 3")
         Diagnostics.closeAll()
-        let events = try Recorder.read(url)
+        let events = try Recorder.read(url).events
         let off2 = try streamedReply(turns: 400, on: false).wall
         let off = min(off1, off2)
         print(String(format: "BUDGET streaming 400 turns off=%.3fs/%.3fs on=%.3fs ratio=%.2f recorder=%.1f ms (%.1f%% of the loop)",
