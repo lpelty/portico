@@ -22,11 +22,20 @@ struct Evaluation: Equatable, Sendable {
     var violations: [Violation]
     /// The failing step and its neighbours, or the last three.
     var window: [Reading]
+    /// Readings taken (one per applied input, plus the opening one).
+    var steps: Int = 0
+    /// Key steps, and those that moved the view (ruling 13: the replay's keys may not move it as a person's do).
+    var keysStepped: Int = 0
+    var keysMoved: Int = 0
+    /// Recording event kinds the replay did not apply, and how many.
+    var skipped: [String: Int] = [:]
 
     func render() -> String {
         var lines = [
             "app: \(appVersion)", "macOS: \(macOS)", "recording: \(URL(fileURLWithPath: recording).lastPathComponent)", "started: \(started)",
             "length: \(lengthMs) ms", "phases: fire=\(phasesFire) move=\(phasesMove)", "segments: \(segments)",
+            "steps: \(steps)", "keys: \(keysStepped) stepped, \(keysMoved) moved",
+            "skipped: " + (skipped.isEmpty ? "none" : skipped.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")),
             "entries:",
         ]
         for (kind, count) in entriesByKind.sorted(by: { $0.key.rawValue < $1.key.rawValue }) { lines.append("\(kind.rawValue): \(count)") }
@@ -38,7 +47,7 @@ struct Evaluation: Equatable, Sendable {
         for r in window {
             let rows = r.rowsInView.map { "\($0.id):\($0.kind.rawValue):\(Int($0.height.rounded()))" }.joined(separator: ",")
             lines.append("step \(r.step) input=\(Self.kind(of: r.input)) offset=\(Int(r.offset.rounded())) doc=\(Int(r.documentHeight.rounded())) "
-                + "clip=\(Int(r.clip.minY.rounded()))..\(Int(r.clip.maxY.rounded())) phase=\(r.phase.rawValue) rows=[\(rows)]")
+                + "clip=\(Int(r.clip.minY.rounded()))..\(Int(r.clip.maxY.rounded())) phase=\(r.phase.rawValue) rows=[\(rows)]" + (r.note.map { " note=\($0)" } ?? ""))
         }
         return lines.joined(separator: "\n")
     }

@@ -20,7 +20,7 @@ import XCTest
 /// entry's `shape` (appended as the synthetic builder makes it; a reply shape
 /// right after a delta that started a reply names that reply), `turnFinished`
 /// (the last turn ends). `phase` sets the phase of the readings that follow.
-/// Skipped, and counted in `lastNotes`: `removed`, `imageLoaded` (images load
+/// Skipped, and counted by event kind in `lastNotes` and the evaluation's `skipped:` line: `removed`, `imageLoaded` (images load
 /// through the real thumbnail path), `toolRow` (its run's shape covers it),
 /// `card`, `viewer`, `sidebar`, `textScale`, `capped`, a changed shape of a
 /// known entry, a new entry of a kind the builder skips, and a jump to an
@@ -52,6 +52,7 @@ enum ReplayRunner {
     static private(set) var lastHostedWidth: CGFloat?
 
     static let environmentKey = "PORTICO_REPLAY"
+    static let unmapped = "unmapped"
     private static let skippedKinds: Set<EntryShape.Kind> = [.card, .turnMarker, .compacted, .notice, .agents, .signin, .brief, .divider]
 
     // MARK: - hosting and input
@@ -105,18 +106,25 @@ enum ReplayRunner {
     /// A wheel as the app dispatches it, without gesture phases (ruling 3): the
     /// recorded delta unchanged (positive toward the top, ruling 10), in lines when
     /// it was not precise. Pixel deltas are whole points in a CGEvent; the caller
-    /// carries the remainder.
+    /// carries the remainder (`delta` is the whole amount sent, `exact` the recorded
+    /// line delta). A line wheel also carries its exact fractional lines in the
+    /// fixed-point field, which AppKit reads as `scrollingDeltaY` and scrolls by
+    /// (verified hosted: 0.4 lines moved 4 pt, 1.5 moved 15 pt, with a whole field of 0).
     @discardableResult
-    static func wheel(_ hosted: Hosted, deltaY: Double, precise: Bool) -> Bool {
+    static func wheel(_ hosted: Hosted, deltaY: Double, precise: Bool, exact: Double? = nil) -> Bool {
         let amount = Int32(clamping: Int(deltaY.rounded()))
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line, wheelCount: 1,
                                wheel1: amount, wheel2: 0, wheel3: 0) else { return false }
+        if !precise { cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: exact ?? deltaY) }
         let scroll = hosted.scroll
         let inWindow = scroll.convert(NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY), to: nil)
         let screen = hosted.window.convertPoint(toScreen: inWindow)
         let top = NSScreen.screens.first?.frame.maxY ?? 0
         cg.location = CGPoint(x: screen.x, y: top - screen.y)
         guard let event = NSEvent(cgEvent: cg) else { return false }
+        // Two calls, one delivery: `NSApp.sendEvent` runs the app's local monitor (the
+        // person-input mark); the window is never shown or key, so it routes the event no
+        // further, and only `scrollWheel(with:)` scrolls.
         NSApp.sendEvent(event)
         scroll.scrollWheel(with: event)
         return true
@@ -137,6 +145,9 @@ enum ReplayRunner {
             with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: hosted.window.windowNumber, context: nil, characters: character,
             charactersIgnoringModifiers: character, isARepeat: false, keyCode: code) else { return }
+        // Two calls, one delivery: `NSApp.sendEvent` runs the local monitor only (the window
+        // is never shown or key, so NSApp does not route the key on); `window.sendEvent`
+        // delivers it to the first responder.
         NSApp.sendEvent(event)
         hosted.window.sendEvent(event)
     }
@@ -203,7 +214,9 @@ enum ReplayRunner {
             .sorted { $0.value.minY < $1.value.minY }
             .map { id, frame -> RowInView in
                 let recorded = names.recorded[id]
-                return RowInView(id: recorded ?? "unmapped", kind: recorded.flatMap { names.kinds[$0] } ?? .notice,
+                // `unmapped` (not expected: every drawn synthetic row comes from a recorded shape)
+                // keeps the row for the rows-in-view check; it never enters the histogram.
+                return RowInView(id: recorded ?? unmapped, kind: recorded.flatMap { names.kinds[$0] } ?? .notice,
                                  height: Double(frame.height), minY: Double(clip.minY + frame.minY))
             }
         return Reading(step: step, input: input, offset: Double(clip.origin.y),
@@ -218,19 +231,32 @@ enum ReplayRunner {
     /// buckets). The header is left blank for `run` to fill.
     static func check(readings: [Reading]) -> Evaluation {
         let violations = Invariants.check(readings)
+        // Ruling 13: a key step moved the view when the offset changed by a tenth of the clip
+        // (Page Up/Down, Home, End, Space) or a point (the arrows); one that did not is noted.
+        var noted = readings
+        var keysStepped = 0, keysMoved = 0
+        for i in noted.indices {
+            guard case .key(let key) = noted[i].input else { continue }
+            keysStepped += 1
+            let moved = i > 0 ? abs(noted[i].offset - noted[i - 1].offset) : 0
+            let bar = key == .up || key == .down ? 1 : 0.1 * Double(noted[i].clip.height)
+            if moved >= bar { keysMoved += 1 } else { noted[i].note = "key-not-moved" }
+        }
         let window: [Reading]
         if let failing = violations.first?.step {
-            window = readings.filter { abs($0.step - failing) <= 1 }
+            window = noted.filter { abs($0.step - failing) <= 1 }
         } else {
-            window = Array(readings.suffix(3))
+            window = Array(noted.suffix(3))
         }
         var heights: [String: Double] = [:]
-        for r in readings { for row in r.rowsInView { heights[row.id] = row.height } }
+        // A row with no recorded stand-in stays out of the histogram.
+        for r in readings { for row in r.rowsInView where row.id != unmapped { heights[row.id] = row.height } }
         var histogram: [Int: Int] = [:]
         for h in heights.values { histogram[Int(max(h, 0) / 50) * 50, default: 0] += 1 }
         return Evaluation(appVersion: "", macOS: "", phasesFire: false, phasesMove: false, recording: "readings", started: "",
                           lengthMs: 0, segments: 0, entriesByKind: [:], heightHistogram: histogram,
-                          violations: violations, window: window)
+                          violations: violations, window: window, steps: readings.count,
+                          keysStepped: keysStepped, keysMoved: keysMoved)
     }
 
     // MARK: - the replay
@@ -325,6 +351,7 @@ enum ReplayRunner {
         var notes: [String: Int] = [:]
         var phase: ScrollPhaseName = .idle
         var residual = 0.0
+        var lineResidual = 0.0
         var readings: [Reading] = []
         var appended = 0
 
@@ -352,18 +379,22 @@ enum ReplayRunner {
                 resize(hosted, width: CGFloat(w))
                 take(event)
             case let .wheel(deltaY, precise, _, _):
+                // Ruling 12: the remainder of a whole-unit CGEvent field carries to the next wheel, for pixels and lines alike.
                 var delta = deltaY
                 if precise {
                     delta += residual
                     residual = delta - delta.rounded()
+                } else {
+                    delta += lineResidual
+                    lineResidual = delta - delta.rounded()
                 }
-                wheel(hosted, deltaY: delta, precise: precise)
+                wheel(hosted, deltaY: delta, precise: precise, exact: precise ? nil : deltaY)
                 take(event)
             case .key(let k):
                 key(hosted, k)
                 take(event)
             case .jump(let id):
-                guard let synthetic = names.synthetic[id] else { notes["jump (no stand-in)", default: 0] += 1; continue }
+                guard let synthetic = names.synthetic[id] else { notes["jump", default: 0] += 1; continue }
                 model.jumpToMessage(synthetic, chat: chat)
                 take(event)
             case let .delta(recordedTurn, chars):
@@ -385,7 +416,7 @@ enum ReplayRunner {
                 take(event)
             case .shape(let s):
                 if known.contains(s.id) {
-                    notes["changed shape", default: 0] += 1
+                    notes["shape", default: 0] += 1  // a known entry re-shaped: deltas already grew it
                     continue
                 }
                 known.insert(s.id)
@@ -396,7 +427,7 @@ enum ReplayRunner {
                     continue
                 }
                 if skippedKinds.contains(s.kind) {
-                    notes["new \(s.kind.rawValue)", default: 0] += 1
+                    notes["shape", default: 0] += 1  // a kind the builder skips
                     continue
                 }
                 pendingReply = nil
@@ -442,6 +473,7 @@ enum ReplayRunner {
         evaluation.lengthMs = (segment.last?.t ?? 0) - segment[0].t
         evaluation.segments = opens.count
         evaluation.entriesByKind = entries
+        evaluation.skipped = notes
         return evaluation
     }
 
@@ -469,22 +501,23 @@ enum ReplayRunner {
 
     // MARK: - the evaluation file
 
-    /// `<diagnostics>/evaluations/<recording-stem>.txt`, beside the recording's `recordings/`.
-    static func evaluationURL(for recording: URL) -> URL {
-        recording.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("evaluations", isDirectory: true)
-            .appendingPathComponent(recording.deletingPathExtension().lastPathComponent + ".txt")
-    }
-
-    /// Writes the rendered evaluation (`evaluations/` 0700, the file 0600, replacing an earlier one).
+    /// Writes the rendered evaluation to `<directory>/<recording-stem>.txt`, `directory` being
+    /// the app's `diagnostics/evaluations/` (never beside a recording copied elsewhere). Creates
+    /// `diagnostics/` and `evaluations/` 0700 when missing and tightens `evaluations/` to 0700
+    /// when it exists; the file is 0600, replacing an earlier one.
     @discardableResult
-    static func write(_ evaluation: Evaluation, for recording: URL) throws -> URL {
-        let url = evaluationURL(for: recording)
+    static func write(_ evaluation: Evaluation, for recording: URL, in directory: URL) throws -> URL {
         let fm = FileManager.default
-        let dir = url.deletingLastPathComponent()
-        if !fm.fileExists(atPath: dir.path) {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let diagnostics = directory.deletingLastPathComponent()
+        if !fm.fileExists(atPath: diagnostics.path) {
+            try fm.createDirectory(at: diagnostics, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
+        if fm.fileExists(atPath: directory.path) {
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        } else {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        let url = directory.appendingPathComponent(recording.deletingPathExtension().lastPathComponent + ".txt")
         if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
         guard fm.createFile(atPath: url.path, contents: Data((evaluation.render() + "\n").utf8), attributes: [.posixPermissions: 0o600])
         else { throw CocoaError(.fileWriteUnknown) }
@@ -498,11 +531,13 @@ enum ReplayRunner {
             throw XCTSkip("set \(environmentKey)=<recording.jsonl> to replay a recording")
         }
         let recording = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        // Taken before the run, which points the home at a temp folder for its duration.
+        let directory = Diagnostics.evaluationsDirectory
         let images = FileManager.default.temporaryDirectory.appendingPathComponent("portico-replay-images-\(UUID().uuidString)", isDirectory: true)
         // Removed only when made: XCTest reports the last error thrown, and a `try?` remove of a
         // folder never made would mask the replay's own error (found with a hand-written recording).
         defer { if FileManager.default.fileExists(atPath: images.path) { try? FileManager.default.removeItem(at: images) } }
         let evaluation = try run(recording: recording, images: images)
-        return (evaluation, try write(evaluation, for: recording))
+        return (evaluation, try write(evaluation, for: recording, in: directory))
     }
 }

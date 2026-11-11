@@ -45,6 +45,23 @@ final class InvariantsTests: XCTestCase {
         XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: .phase(.idle), offset: 500)]).isEmpty)
     }
 
+    /// Ruling 12: a line wheel (`precise == false`) is in lines, so only its direction and
+    /// some movement are checked, never the magnitude.
+    func testALineWheelIsCheckedByDirectionAndMovementOnly() {
+        let up = RecordingEvent.wheel(deltaY: 1, precise: false, phase: 0, momentum: 0)
+        let down = RecordingEvent.wheel(deltaY: -0.4, precise: false, phase: 0, momentum: 0)
+        // One line moved 10 pt (or 40): toward the top, so the offset falls. No violation.
+        XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: up, offset: 490)]).isEmpty)
+        XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: up, offset: 460)]).isEmpty)
+        XCTAssertTrue(Invariants.check([reading(1, offset: 500), reading(2, input: down, offset: 504)]).isEmpty)
+        // The wrong way, or not at all: a violation.
+        XCTAssertEqual(Invariants.check([reading(1, offset: 500), reading(2, input: up, offset: 510)]).map(\.rule), [.wheelMoves])
+        XCTAssertEqual(Invariants.check([reading(1, offset: 500), reading(2, input: down, offset: 500)]).map(\.rule), [.wheelMoves])
+        XCTAssertEqual(Invariants.check([reading(1, offset: 500), reading(2, input: down, offset: 499.5)]).map(\.rule), [.wheelMoves])
+        // At an end: exempt, as for a precise wheel.
+        XCTAssertTrue(Invariants.check([reading(1, offset: 0), reading(2, input: up, offset: 0)]).isEmpty)
+    }
+
     func testNoRowsInViewIsAViolation() {
         XCTAssertEqual(Invariants.check([reading(3, rows: [])]).map(\.rule), [.rowsInView])
         XCTAssertTrue(Invariants.check([reading(3, rows: [], hasRows: false)]).isEmpty)

@@ -156,7 +156,9 @@ final class DiagnosticsReplayTests: XCTestCase {
         // The wheels were fed as recorded: three wheel steps.
         XCTAssertEqual(ReplayRunner.lastReadings.filter { if case .wheel = $0.input { true } else { false } }.count, 3)
 
-        let file = try ReplayRunner.write(evaluation, for: recording)
+        XCTAssertEqual(evaluation.steps, ReplayRunner.lastReadings.count)
+        XCTAssertTrue(text.contains("\nsteps: \(evaluation.steps)\n"))
+        let file = try ReplayRunner.write(evaluation, for: recording, in: Diagnostics.evaluationsDirectory)
         XCTAssertEqual(file.path, recording.deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("evaluations").appendingPathComponent(recording.deletingPathExtension().lastPathComponent + ".txt").path)
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), text + "\n")
@@ -215,7 +217,9 @@ final class DiagnosticsReplayTests: XCTestCase {
         XCTAssertEqual(evaluation.segments, 2)
         XCTAssertEqual(evaluation.lengthMs, 600, "the replayed segment's length")
         XCTAssertEqual(evaluation.entriesByKind[.person], 21, "the last segment's people, the appended one too")
-        XCTAssertNil(evaluation.entriesByKind[.reply].flatMap { $0 == 4 ? $0 : nil }, "not the first segment's")
+        XCTAssertEqual(evaluation.entriesByKind[.reply], 20, "the last segment's replies (the delta grew the 20th)")
+        XCTAssertEqual(evaluation.skipped, ["capped": 1, "removed": 1])
+        XCTAssertTrue(evaluation.render().contains("\nskipped: capped 1, removed 1\n"))
         let inputs = ReplayRunner.lastReadings.compactMap(\.input)
         XCTAssertEqual(inputs.count, 4, "wheel, column, delta, new shape: \(inputs)")
         XCTAssertEqual(ReplayRunner.lastReadings.first(where: { if case .wheel = $0.input { true } else { false } })?.phase, .interacting)
@@ -261,21 +265,64 @@ final class DiagnosticsReplayTests: XCTestCase {
         }
     }
 
-    func testReplayFromEnvironmentWritesTheEvaluationNextToTheRecording() throws {
+    func testReplayFromEnvironmentWritesTheEvaluationUnderDiagnostics() throws {
+        // A mouse's line wheels (fractional, both ways) and a key, as a field recording holds them.
+        Diagnostics.home = tmp.appendingPathComponent("crafted")
         var lines: [(Int, RecordingEvent)] = [(0, open())]
         lines += conversation(turns: 8).map { (0, .shape($0)) }
-        lines += [(100, .wheel(deltaY: 40, precise: true, phase: 0, momentum: 0))]
+        lines += [(100, .wheel(deltaY: 40, precise: true, phase: 0, momentum: 0)),
+                  (200, .wheel(deltaY: 1, precise: false, phase: 0, momentum: 0)),
+                  (300, .wheel(deltaY: 0.4, precise: false, phase: 0, momentum: 0)),
+                  (400, .wheel(deltaY: 0.4, precise: false, phase: 0, momentum: 0)),
+                  (500, .wheel(deltaY: -2.5, precise: false, phase: 0, momentum: 0)),
+                  (600, .key(.pageUp))]
         let recording = try write(lines, name: "9-2026-11-10T23-30-00.000Z.jsonl")
         let (evaluation, file) = try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": recording.path])
-        XCTAssertEqual(file.lastPathComponent, "9-2026-11-10T23-30-00.000Z.txt")
-        XCTAssertEqual(file.deletingLastPathComponent().lastPathComponent, "evaluations")
-        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), evaluation.render() + "\n")
+        let text = evaluation.render()
+        print("REPLAY-EVALUATION env\n\(text)")
+        for r in ReplayRunner.lastReadings { print("REPLAY-STEP \(r.step) \(r.input.map { "\($0)" } ?? "none") offset=\(r.offset)") }
+        XCTAssertEqual(evaluation.violations, [], "line wheels move by lines, checked by direction (ruling 12)")
+        let offsets = ReplayRunner.lastReadings.map(\.offset)
+        XCTAssertLessThan(offsets[2], offsets[1] - 1, "one line up moved up")
+        XCTAssertLessThan(offsets[3], offsets[2], "0.4 lines up moved up")
+        XCTAssertLessThan(offsets[4], offsets[3], "0.4 lines up moved up")
+        XCTAssertGreaterThan(offsets[5], offsets[4] + 1, "2.5 lines down moved down")
+        // Ruling 13: the key is counted; one that did not move is noted in its window line, never a violation.
+        XCTAssertEqual(evaluation.keysStepped, 1)
+        XCTAssertTrue(text.contains("\nkeys: 1 stepped, \(evaluation.keysMoved) moved\n"))
+        if evaluation.keysMoved == 0 { XCTAssertTrue(text.contains("input=key ") && text.contains("note=key-not-moved"), text) }
+        XCTAssertEqual(file.path, Diagnostics.evaluationsDirectory.appendingPathComponent("9-2026-11-10T23-30-00.000Z.txt").path)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), text + "\n")
+    }
+
+    /// Review I1: a recording copied out of `diagnostics/` (say to Downloads) still has its
+    /// evaluation written under the app's `diagnostics/evaluations/`, nothing beside the copy.
+    func testACopiedRecordingsEvaluationGoesUnderDiagnosticsNotBesideIt() throws {
+        Diagnostics.home = tmp.appendingPathComponent("home")
+        var lines: [(Int, RecordingEvent)] = [(0, open())]
+        lines += conversation(turns: 6).map { (0, .shape($0)) }
+        lines += [(100, .wheel(deltaY: 40, precise: true, phase: 0, momentum: 0))]
+        let made = try write(lines, name: "9-2026-11-11T08-00-00.000Z.jsonl")
+        let downloads = tmp.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let copy = downloads.appendingPathComponent(made.lastPathComponent)
+        try FileManager.default.copyItem(at: made, to: copy)
+        // An evaluations folder left too open is tightened.
+        try FileManager.default.createDirectory(at: Diagnostics.evaluationsDirectory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o755])
+        let (_, file) = try ReplayRunner.replayFromEnvironment(["PORTICO_REPLAY": copy.path])
+        XCTAssertEqual(file.deletingLastPathComponent().path, Diagnostics.evaluationsDirectory.path)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: downloads.path), [copy.lastPathComponent], "nothing beside the copy")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("evaluations").path), "no evaluations/ at the copy's parent")
+        let mode = try FileManager.default.attributesOfItem(atPath: Diagnostics.evaluationsDirectory.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o700)
     }
 
     /// The field entry point: `PORTICO_REPLAY=<recording> swift test -c release
     /// --filter DiagnosticsReplayTests/testReplayRecordingFromEnvironment`. Red when the replay breaks an invariant.
     func testReplayRecordingFromEnvironment() throws {
         let (evaluation, file) = try ReplayRunner.replayFromEnvironment(ProcessInfo.processInfo.environment)
+        // The render carries the steps, keys and skipped lines (review I4) with everything else.
         print("PORTICO-EVALUATION \(file.path)\n\(evaluation.render())")
         XCTAssertEqual(evaluation.violations, [], "the replay reproduced a failure; evaluation at \(file.path)")
     }

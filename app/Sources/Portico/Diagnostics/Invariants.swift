@@ -14,6 +14,8 @@ struct Reading: Equatable, Sendable {
     var settledReadings: [Double]
     /// Whether the conversation has entries to draw.
     var hasRows: Bool = true
+    /// The replay's own remark on this step (harness fidelity, never a violation); counts and names only.
+    var note: String? = nil
 }
 
 struct RowInView: Equatable, Sendable {
@@ -46,10 +48,16 @@ enum Invariants {
             if let (a, b, run) = alternation(r.settledReadings) {
                 out.append(Violation(rule: .alternation, step: r.step, detail: "document height flipped between \(n(a)) and \(n(b)) \(run - 1) times"))
             }
-            if let previous, case .wheel(let deltaY, _, _, _) = r.input, !startedAtAnEnd(previous) {
+            if let previous, case .wheel(let deltaY, let precise, _, _) = r.input, !startedAtAnEnd(previous) {
                 let moved = r.offset - previous.offset
-                if abs(moved + deltaY) > wheelTolerance {
-                    out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel delta \(n(deltaY)) moved the offset \(n(moved)), expected \(n(-deltaY))"))
+                if precise {
+                    if abs(moved + deltaY) > wheelTolerance {
+                        out.append(Violation(rule: .wheelMoves, step: r.step, detail: "wheel delta \(n(deltaY)) moved the offset \(n(moved)), expected \(n(-deltaY))"))
+                    }
+                } else if deltaY != 0, abs(moved) < 1 || (moved > 0) == (deltaY > 0) {
+                    // Ruling 12: a line wheel's delta is in lines (its points depend on the line
+                    // height), so only the direction and some movement are checked.
+                    out.append(Violation(rule: .wheelMoves, step: r.step, detail: "line wheel delta \(deltaY) moved the offset \(n(moved)), expected against it"))
                 }
             }
             if r.hasRows, r.rowsInView.isEmpty {
