@@ -68,7 +68,7 @@ enum Invariants {
             if r.clip.maxY > r.documentHeight + pastEndSlack {
                 out.append(Violation(rule: .pastEnd, step: r.step, detail: "clip.maxY \(n(Double(r.clip.maxY))) > doc \(n(r.documentHeight))"))
             }
-            if let previous, !addsContent(previous.input), !addsContent(r.input),
+            if let previous, !reflows(previous.input), !reflows(r.input),
                abs(r.documentHeight - previous.documentHeight) > driftFraction * previous.documentHeight {
                 out.append(Violation(rule: .estimateDrift, step: r.step, detail: "doc \(n(previous.documentHeight)) -> \(n(r.documentHeight)) with no new content"))
             }
@@ -97,9 +97,12 @@ enum Invariants {
         (p.offset <= 0 && deltaY > 0) || (p.offset >= maxOffset(p) - pastEndSlack && deltaY < 0)
     }
 
-    private static func addsContent(_ e: RecordingEvent?) -> Bool {
+    /// Inputs across which the document's height may change by any amount: new content, and
+    /// (I2) geometry, which re-wraps every row.
+    private static func reflows(_ e: RecordingEvent?) -> Bool {
         switch e {
         case .delta, .shape, .imageLoaded, .removed: true
+        case .column, .window, .textScale, .viewer, .sidebar: true
         default: false
         }
     }

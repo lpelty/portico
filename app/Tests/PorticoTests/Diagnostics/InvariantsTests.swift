@@ -117,6 +117,20 @@ final class InvariantsTests: XCTestCase {
         }
     }
 
+    /// I2: a geometry step (column, window, text scale, viewer, sidebar) re-wraps every row, so
+    /// the document's height may change by any amount across it; a wheel step may not.
+    func testEstimateDriftIsNotCheckedAcrossAGeometryStep() {
+        let a = reading(1, doc: 5000)
+        XCTAssertTrue(Invariants.check([a, reading(2, input: .column(width: 600), doc: 7000)]).isEmpty, "1000 -> 600 column, +40 %")
+        for input in [RecordingEvent.window(width: 900, height: 700), .textScale(1.25),
+                      .viewer(visible: true, width: 400, shown: nil), .sidebar(visible: false)] {
+            XCTAssertTrue(Invariants.check([a, reading(2, input: input, doc: 7000)]).isEmpty, "\(input)")
+            XCTAssertTrue(Invariants.check([reading(1, input: input, doc: 5000), reading(2, doc: 7000)]).isEmpty, "after \(input)")
+        }
+        let wheel = RecordingEvent.wheel(deltaY: 0, precise: true, phase: 0, momentum: 0)
+        XCTAssertEqual(Invariants.check([a, reading(2, input: wheel, doc: 6500)]).map(\.rule), [.estimateDrift], "a wheel step, +30 %")
+    }
+
     func testACleanRunHasNoViolations() {
         let wheel = RecordingEvent.wheel(deltaY: 100, precise: true, phase: 0, momentum: 0)
         let run = [reading(1, offset: 500), reading(2, input: wheel, offset: 400, settled: [5000, 5000]),
