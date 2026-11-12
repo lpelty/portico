@@ -3,6 +3,14 @@
 ## v0.26.4 (unreleased)
 
 - Release gate: no distributed file may name the maintainer's home folders, so a deployment's own config can never ride along with a release.
+- **Blank conversation until scrolled (first fix).** A field trace caught it: idle at the
+  bottom, a small change in the view's height made the app scroll to the end
+  by id, the lazy stack swapped its measured height for an estimate and
+  dropped every row, and the view sat below the last real row. Back at the
+  end after a size change, the app now scrolls by id only when the last row
+  is out of view. The blank-space watch counts transcript rows apart from the
+  cards under them, and a conversation at its end with no row laid out is
+  scrolled back to its last row. Not reproduced hosted; a field run decides.
 
 ### Diagnostics
 

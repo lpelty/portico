@@ -16,15 +16,35 @@ enum TranscriptBlankSpace {
     /// Whether the visible area now shows blank where the conversation should be.
     /// - Parameters:
     ///   - hasRows: the conversation has rows to draw.
-    ///   - rowFrames: the frames the drawn rows, calling cards and working line report, in the scroll view's own
-    ///     space (its visible area has its top left at the origin).
+    ///   - rowFrames: the frames the drawn transcript rows report, in the scroll view's own space (its visible
+    ///     area has its top left at the origin).
+    ///   - otherFrames: the frames of what is drawn under the rows (calling cards, the working line), same space.
     ///   - clip: the scroll view's clip bounds (its visible area in the document).
     ///   - documentHeight: the document view's height.
-    static func isBlank(hasRows: Bool, rowFrames: [CGRect], clip: CGRect, documentHeight: CGFloat) -> Bool {
+    ///
+    /// v0.26.4 (a field trace, 11-12): with rows to draw and not one of them laid out, the view is blank
+    /// whatever else is in view. The lazy stack had dropped every row and parked the view at its estimated
+    /// end; the cards under the rows follow that end, so counting them as drawn kept this quiet.
+    static func isBlank(
+        hasRows: Bool, rowFrames: [CGRect], otherFrames: [CGRect] = [], clip: CGRect, documentHeight: CGFloat
+    ) -> Bool {
         guard hasRows, clip.height > 0 else { return false }
+        if rowFrames.isEmpty { return true }
         let visible = CGRect(x: 0, y: 0, width: clip.width, height: clip.height)
-        if !rowFrames.contains(where: { $0.intersects(visible) }) { return true }
+        if !(rowFrames + otherFrames).contains(where: { $0.intersects(visible) }) { return true }
         return clip.maxY > documentHeight + slack
+    }
+
+    /// v0.26.4 (the same trace): back at the end after the view's size changed, whether the last row must be
+    /// scrolled to by its id before the bottom edge. Only when it is not in view already: there, the id scroll
+    /// made with the last rows on screen is where the lazy stack swapped its measured height (7673) for an
+    /// estimate (9570) and dropped every row; the edge alone keeps a measured end.
+    /// - Parameters:
+    ///   - lastRow: the last drawn row's reported frame in the scroll view's space, nil when it is not laid out.
+    ///   - visibleHeight: the scroll view's visible height.
+    static func endNeedsRowLayout(lastRow: CGRect?, visibleHeight: CGFloat) -> Bool {
+        guard let lastRow, visibleHeight > 0 else { return true }
+        return !(lastRow.maxY > 0 && lastRow.minY < visibleHeight)
     }
 
     /// v0.26.2 (a field trace, 11-09): where to put a view left past

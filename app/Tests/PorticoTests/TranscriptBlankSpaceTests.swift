@@ -52,6 +52,41 @@ final class TranscriptBlankSpaceTests: XCTestCase {
             TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000))
     }
 
+    /// v0.26.4 (a field trace, 11-12): every transcript row was dropped by
+    /// the lazy stack and the view sat at its estimated end; the cards drawn
+    /// under the rows were still "in view", so the watch stayed quiet for
+    /// seven minutes. With rows to draw and not one of them laid out, the
+    /// view is blank whatever else reports a frame.
+    func testNoTranscriptRowLaidOutIsBlankEvenWithACardInView() {
+        let cards = [CGRect(x: 0, y: 20, width: 600, height: 120)]
+        XCTAssertTrue(TranscriptBlankSpace.isBlank(
+            hasRows: true, rowFrames: [], otherFrames: cards, clip: clip, documentHeight: 2000))
+    }
+
+    /// Rows laid out but scrolled out of view, a card in view: not blank
+    /// (the person is looking at the cards under the conversation).
+    func testACardInViewWithRowsLaidOutElsewhereIsNotBlank() {
+        let rows = [CGRect(x: 0, y: -300, width: 600, height: 80)]
+        let cards = [CGRect(x: 0, y: 20, width: 600, height: 120)]
+        XCTAssertFalse(TranscriptBlankSpace.isBlank(
+            hasRows: true, rowFrames: rows, otherFrames: cards, clip: clip, documentHeight: 2000))
+    }
+
+    /// Back to the end after a size change: the last row is scrolled to by
+    /// its id only when it is not already in view. In the field trace that
+    /// scroll, made with the last rows on screen, is where the lazy stack
+    /// swapped its measured height for an estimate.
+    func testTheEndNeedsARowLaidOutOnlyWhenTheLastRowIsOutOfView() {
+        let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
+        XCTAssertFalse(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812))
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: nil, visibleHeight: 812), "not laid out")
+        let below = CGRect(x: 0, y: 900, width: 600, height: 251)
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: below, visibleHeight: 812))
+        let above = CGRect(x: 0, y: -400, width: 600, height: 251)
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: above, visibleHeight: 812))
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 0), "no view yet")
+    }
+
     func testWatchReportsOncePerOccurrenceAfterTheGrace() {
         var watch = TranscriptBlankSpace.Watch()
         let t0 = Date(timeIntervalSince1970: 1000)

@@ -296,7 +296,13 @@ struct ConversationView: View {
             ScrollTrace.note("read chat=\(chat) offset=\(Int(now.offset)) content=\(Int(now.content)) visible=\(Int(now.visible)) width=\(Int(now.width)) atBottom=\(now.atBottom) scrolling=\(personScrolling) marked=\(String(describing: personInput.recent)) memoryAtBottom=\(scrollMemory.atBottom) target=\(String(describing: target)) edge=\(String(describing: position.edge)) viewID=\(position.viewID(type: String.self) ?? "-")")
             if target == .bottom {
                 if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
-                toBottomThroughLastRow()
+                // v0.26.4: the id scroll only when the last row is out of view (a field trace, 11-12).
+                let last = drawn.last.flatMap { rows.frames[$0.id] }
+                if TranscriptBlankSpace.endNeedsRowLayout(lastRow: last, visibleHeight: now.visible) {
+                    toBottomThroughLastRow()
+                } else {
+                    toBottom()
+                }
             } else if !scrollMemory.atBottom, position.edge == .bottom {
                 // The person left the end by input with no scroll phase (a
                 // key, or VoiceOver): AppKit moved the clip, so the position
@@ -542,7 +548,9 @@ struct ConversationView: View {
             try? await Task.sleep(for: .milliseconds(500))
             guard let scroll = personInput.scrollView, let document = scroll.documentView else { continue }
             let clip = scroll.contentView.bounds
-            let frames = rows.allFrames
+            // v0.26.4: transcript rows apart from what is drawn under them; the trace's rowsInView counts rows only.
+            let frames = Array(rows.frames.values)
+            let others = Array(rows.others.values)
             // 0.43.3: what is on screen, when it changes (the blank-until-scrolled report).
             if ScrollTrace.enabled, let paint = ScrollTrace.paint(scroll: scroll, rowFrames: frames, phase: scrollPhaseName),
                paint != lastPaint {
@@ -559,8 +567,22 @@ struct ConversationView: View {
                 continue
             }
             let blank = TranscriptBlankSpace.isBlank(
-                hasRows: !drawn.isEmpty, rowFrames: frames, clip: clip, documentHeight: document.frame.height)
+                hasRows: !drawn.isEmpty, rowFrames: frames, otherFrames: others, clip: clip,
+                documentHeight: document.frame.height)
             if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {
+                // v0.26.4: at the end with no row laid out, the last row is scrolled to by its id (that lays
+                // it out where the view is, and the content is measured again), then the bottom edge. Once
+                // per occurrence, and only when the conversation was at its end: scrolled up, the place is
+                // the person's.
+                if !byPerson, scrollMemory.atBottom, frames.isEmpty, let lastID = drawn.last?.id {
+                    ScrollTrace.note("move chat=\(chat) blank-heal to=\(lastID)")
+                    if ConversationProbe.enabled { ConversationProbe.blankHeals[chat, default: 0] += 1 }
+                    position.scrollTo(id: lastID, anchor: .bottom)
+                    Task { @MainActor in
+                        await Task.yield()
+                        toBottom()
+                    }
+                }
                 let last = rows.frames.values.max { $0.minY < $1.minY }
                 TranscriptBlankSpace.log(
                     TranscriptBlankSpace.line(
@@ -1254,6 +1276,8 @@ enum ConversationProbe {
     static var bottomCorrections: [Int: Int] = [:]
     static var geometryReadings: [Int: Int] = [:]
     static var pastEndCorrections: [Int: Int] = [:]
+    /// v0.26.4: times the blank-space watch scrolled a view with no row laid out back to its last row.
+    static var blankHeals: [Int: Int] = [:]
     static var phaseNames: [Int: [String]] = [:]
     /// v0.26.4: main-thread time of each recording diff on a follow-key change.
     static var recordingChangeNanos: [UInt64] = []

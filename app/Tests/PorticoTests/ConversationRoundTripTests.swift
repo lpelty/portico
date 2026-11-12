@@ -937,6 +937,25 @@ final class ConversationRoundTripTests: XCTestCase {
         }
     }
 
+    /// v0.26.4 (a field trace, 11-12): idle at the bottom, the visible
+    /// height changed by 25 pt with no input (787 to 812) and the view was
+    /// left at the lazy stack's estimated end, below every real row, blank
+    /// until the person scrolled. A guard, not a reproduction: the fault
+    /// has not been produced hosted. Rows very unlike each other, as there.
+    func testGuardAtTheBottomASmallHeightChangeWhileIdleLeavesTheEndInView() throws {
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        spin(0.6)
+        assertTheEndIsInView(hosted, "opened at the bottom")
+        for (index, height) in [625, 600, 625, 600, 625].enumerated() {
+            let size = NSSize(width: 900, height: CGFloat(height))
+            hosted.host.setFrameSize(size)
+            hosted.window.setContentSize(size)
+            spin(1.6)  // past the blank-space watch's grace
+            assertTheEndIsInView(hosted, "height change \(index + 1) to \(height)")
+        }
+    }
+
     /// How far the visible area runs past the transcript's end (0 when it
     /// does not): the "large empty space" of the field report (11-02, item 11).
     private static func emptyBelow(_ scroll: NSScrollView) -> CGFloat {
