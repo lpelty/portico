@@ -38,15 +38,29 @@ enum TranscriptBlankSpace {
     /// v0.26.4 (the same trace): back at the end after the view's height changed, whether the last row must be
     /// scrolled to by its id before the bottom edge. Only when it is not in view already: there, the id scroll
     /// made with the last rows on screen is where the lazy stack swapped its measured height (7673) for an
-    /// estimate (9570) and dropped every row; the edge alone keeps a measured end. A width change wraps every
-    /// line again and always takes the id scroll (v0.19: the edge alone left the view showing no row).
+    /// estimate (9570) and dropped every row; the edge alone keeps a measured end. A reflow (the width or the
+    /// text size changed) wraps every line again and always takes the id scroll (v0.19: the edge alone left
+    /// the view showing no row).
     /// - Parameters:
     ///   - lastRow: the last drawn row's reported frame in the scroll view's space, nil when it is not laid out.
     ///   - visibleHeight: the scroll view's visible height.
-    ///   - widthChanged: the column's width changed at this reading.
-    static func endNeedsRowLayout(lastRow: CGRect?, visibleHeight: CGFloat, widthChanged: Bool) -> Bool {
-        guard !widthChanged, let lastRow, visibleHeight > 0, lastRow.height > 0 else { return true }
+    ///   - reflowed: every line was wrapped again at this reading (`reflowed(widthChanged:textScaleChangedAt:now:)`).
+    static func endNeedsRowLayout(lastRow: CGRect?, visibleHeight: CGFloat, reflowed: Bool) -> Bool {
+        guard !reflowed, let lastRow, visibleHeight > 0, lastRow.height > 0 else { return true }
         return !(lastRow.maxY > 0 && lastRow.minY < visibleHeight)
+    }
+
+    /// How long after a text-size change a reading still counts as its reflow: the rows are laid out again
+    /// over several frames, and the scroll view's own width does not change to mark them.
+    static let reflowWindow: TimeInterval = 1
+
+    /// Whether a reading at `now` is a reflow's: the column's width changed at it, or the text size changed
+    /// within `reflowWindow` before it.
+    static func reflowed(widthChanged: Bool, textScaleChangedAt: Date?, now: Date) -> Bool {
+        if widthChanged { return true }
+        guard let changed = textScaleChangedAt else { return false }
+        let since = now.timeIntervalSince(changed)
+        return since >= 0 && since <= reflowWindow
     }
 
     /// v0.26.2 (a field trace, 11-09): where to put a view left past
@@ -65,10 +79,14 @@ enum TranscriptBlankSpace {
     struct Watch: Equatable {
         private(set) var blankSince: Date?
         private(set) var reported = false
-        /// v0.26.4: heals made in this occurrence. A heal that brought no row back is tried again after
-        /// another grace, `maxHeals` times at most; a reading that is not blank starts the count again.
+        /// v0.26.4: heals made since the view was last settled. A heal that brought no row back is tried
+        /// again after another grace, `maxHeals` times at most. The count starts again only once the view
+        /// has shown a row for `settle` seconds on end: a row that comes back for one reading and drops
+        /// again (the heal's own id scroll could do that) does not buy three more heals.
         private(set) var heals = 0
         static let maxHeals = 3
+        static let settle: TimeInterval = 10
+        private(set) var shownSince: Date?
 
         var mayHeal: Bool { heals < Self.maxHeals }
 
@@ -85,9 +103,16 @@ enum TranscriptBlankSpace {
                 // A scroll phase, or a view that is not blank, ends the occurrence.
                 blankSince = nil
                 reported = false
-                if !blank { heals = 0 }
+                if blank {
+                    shownSince = nil
+                } else {
+                    let since = shownSince ?? now
+                    shownSince = since
+                    if now.timeIntervalSince(since) >= Self.settle { heals = 0 }
+                }
                 return false
             }
+            shownSince = nil
             guard let since = blankSince else {
                 blankSince = now
                 return false

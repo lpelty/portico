@@ -82,8 +82,8 @@ final class TranscriptBlankSpaceTests: XCTestCase {
     /// scroll, made with the last rows on screen, is where the lazy stack
     /// swapped its measured height for an estimate.
     func testTheEndNeedsARowLaidOutOnlyWhenTheLastRowIsOutOfView() {
-        func needs(_ row: CGRect?, visible: CGFloat = 812, widthChanged: Bool = false) -> Bool {
-            TranscriptBlankSpace.endNeedsRowLayout(lastRow: row, visibleHeight: visible, widthChanged: widthChanged)
+        func needs(_ row: CGRect?, visible: CGFloat = 812, reflowed: Bool = false) -> Bool {
+            TranscriptBlankSpace.endNeedsRowLayout(lastRow: row, visibleHeight: visible, reflowed: reflowed)
         }
         let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
         XCTAssertFalse(needs(inView))
@@ -104,7 +104,7 @@ final class TranscriptBlankSpaceTests: XCTestCase {
     /// left the view showing no row).
     func testAWidthChangeAlwaysNeedsTheRowLaidOut() {
         let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812, widthChanged: true))
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812, reflowed: true))
     }
 
     /// The heal is for rows that were laid out and then all dropped: a
@@ -121,10 +121,25 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         XCTAssertTrue(rows.hasReported)
     }
 
+    /// A text-size change wraps every line again without changing the scroll
+    /// view's width: the readings within a second of it are a reflow's, as a
+    /// width change's is (review round 2).
+    func testAReadingJustAfterATextSizeChangeIsAReflow() {
+        let changed = Date(timeIntervalSince1970: 1000)
+        func reflowed(width: Bool = false, at: Date? = changed, after: TimeInterval) -> Bool {
+            TranscriptBlankSpace.reflowed(widthChanged: width, textScaleChangedAt: at, now: changed + after)
+        }
+        XCTAssertTrue(reflowed(after: 0))
+        XCTAssertTrue(reflowed(after: 0.9))
+        XCTAssertFalse(reflowed(after: 1.1), "a later height change is only that")
+        XCTAssertFalse(reflowed(at: nil, after: 0), "the text size never changed")
+        XCTAssertTrue(reflowed(width: true, at: nil, after: 0), "a width change is one whenever")
+        XCTAssertFalse(reflowed(after: -1), "a clock set back is not a reflow")
+    }
+
     /// A heal that did not bring a row back is tried again after another
-    /// grace, three times an occurrence at most; a reading that is not blank
-    /// starts the count again.
-    func testTheWatchAllowsThreeHealsAnOccurrence() {
+    /// grace, three times at most.
+    func testTheWatchAllowsThreeHeals() {
         var watch = TranscriptBlankSpace.Watch()
         var now = Date(timeIntervalSince1970: 1000)
         XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
@@ -138,8 +153,50 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         now += 1.5
         XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now), "still reported")
         XCTAssertFalse(watch.mayHeal, "no fourth heal")
-        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 1))
-        XCTAssertTrue(watch.mayHeal, "a view that is not blank starts the count again")
+    }
+
+    /// Review round 2: a row that comes back for one reading and drops again
+    /// (the heal's own id scroll could do that) does not start the count
+    /// again; three heals are the limit however the readings alternate.
+    func testARowBackForAMomentDoesNotBuyMoreHeals() {
+        var watch = TranscriptBlankSpace.Watch()
+        var now = Date(timeIntervalSince1970: 1000)
+        var heals = 0
+        for _ in 1...10 {
+            XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
+            now += 1.5
+            XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now))
+            if watch.mayHeal { watch.healed(now: now); heals += 1 }
+            now += 0.5
+            XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now), "a row for one reading")
+            now += 0.5
+        }
+        XCTAssertEqual(heals, 3)
+        XCTAssertFalse(watch.mayHeal)
+    }
+
+    /// The count starts again once rows have been shown for ten seconds on
+    /// end; a blank reading in between starts those ten seconds over.
+    func testTheHealCountStartsAgainOnceTheViewHasSettled() {
+        var watch = TranscriptBlankSpace.Watch()
+        var now = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
+        for _ in 1...3 {
+            now += 1.5
+            XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now))
+            watch.healed(now: now)
+        }
+        XCTAssertFalse(watch.mayHeal)
+        now += 0.5
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now))
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 9))
+        XCTAssertFalse(watch.mayHeal, "nine seconds is not settled")
+        XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now + 9.5))
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 10))
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 19))
+        XCTAssertFalse(watch.mayHeal, "the blank reading started the ten seconds over")
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 20))
+        XCTAssertTrue(watch.mayHeal, "rows shown for ten seconds on end")
     }
 
     func testWatchReportsOncePerOccurrenceAfterTheGrace() {

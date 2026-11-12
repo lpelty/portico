@@ -21,6 +21,8 @@ struct ConversationView: View {
     @State private var restoredTop: String?
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
+    /// v0.26.4: when the text size last changed; readings just after it are a reflow's.
+    @State private var textScaleChangedAt: Date?
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
     @State private var personScrolling = false
@@ -142,6 +144,7 @@ struct ConversationView: View {
             if Diagnostics.isOn { recording.note(.sidebar(visible: now)) }
         }
         .onChange(of: textScale) { _, now in
+            textScaleChangedAt = Date()  // v0.26.4: the readings that follow are a reflow's
             if Diagnostics.isOn { recording.note(.textScale(Double(now))) }
         }
         .onReceive(NotificationCenter.default.publisher(for: Diagnostics.switched)) { _ in
@@ -298,10 +301,12 @@ struct ConversationView: View {
             if target == .bottom {
                 if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
                 // v0.26.4: after a height change the id scroll only when the last row is out of view (a
-                // field trace, 11-12); a width change always takes it (v0.19).
+                // field trace, 11-12); a reflow (the width, or the text size) always takes it (v0.19).
                 let last = drawn.last.flatMap { rows.frames[$0.id] }
+                let reflowed = TranscriptBlankSpace.reflowed(
+                    widthChanged: widthChanged, textScaleChangedAt: textScaleChangedAt, now: Date())
                 if TranscriptBlankSpace.endNeedsRowLayout(
-                    lastRow: last, visibleHeight: now.visible, widthChanged: widthChanged) {
+                    lastRow: last, visibleHeight: now.visible, reflowed: reflowed) {
                     if ConversationProbe.enabled { ConversationProbe.endThroughLastRow[chat, default: 0] += 1 }
                     toBottomThroughLastRow()
                 } else {
@@ -578,7 +583,8 @@ struct ConversationView: View {
                 // v0.26.4: at the end, rows once laid out and now none: the last row is scrolled to by its
                 // id, then the bottom edge. Whether that lays the row out in the field's state is not shown
                 // hosted, so a heal that brought no row back is tried again after another grace, three
-                // times an occurrence. Only when the conversation was at its end: scrolled up, the place is
+                // times until the view has settled (rows shown for ten seconds). Only when the conversation
+                // was at its end: scrolled up, the place is
                 // the person's.
                 if !byPerson, scrollMemory.atBottom, frames.isEmpty, rows.hasReported, watch.mayHeal,
                    let lastID = drawn.last?.id {

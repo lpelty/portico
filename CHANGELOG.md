@@ -8,10 +8,11 @@
   by id, the lazy stack swapped its measured height for an estimate and
   dropped every row, and the view sat below the last real row. Back at the
   end after a height change, the app now scrolls by id only when the last row
-  is out of view (a width change scrolls by id as before). The blank-space
+  is out of view (a change of width or of text size scrolls by id as before). The blank-space
   watch counts transcript rows apart from the cards under them, and a
   conversation at its end whose rows have all been dropped is scrolled back
-  to its last row, up to three times. Not reproduced hosted; a field run
+  to its last row, three times at most until rows have stayed in view for
+  ten seconds. Not reproduced hosted; a field run
   decides.
 
 ### Diagnostics

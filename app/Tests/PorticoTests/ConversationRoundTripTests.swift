@@ -61,16 +61,20 @@ final class ConversationRoundTripTests: XCTestCase {
         let window: NSWindow
         let host: NSView
         let scroll: NSScrollView
+        var settings: Portico.Settings?
     }
 
     /// The conversation the model has selected, drawn as the main window
     /// draws it: a new view for each chat (`.id`).
     private struct Selected: View {
         @EnvironmentObject var model: AppModel
+        @EnvironmentObject var settings: Portico.Settings
 
         var body: some View {
             if let chat = model.selected {
+                // The text size as the app's window gives it (PorticoApp).
                 ConversationView(chat: chat).id(chat)
+                    .environment(\.textScale, CGFloat(settings.textScale))
             }
         }
     }
@@ -90,7 +94,7 @@ final class ConversationRoundTripTests: XCTestCase {
         window.contentView = host
         spin()
         let scroll = try XCTUnwrap(Self.transcriptScroll(in: host), "the transcript's scroll view")
-        return Hosted(window: window, host: host, scroll: scroll)
+        return Hosted(window: window, host: host, scroll: scroll, settings: settings)
     }
 
     private func spin(_ seconds: Double = 0.4) {
@@ -972,6 +976,37 @@ final class ConversationRoundTripTests: XCTestCase {
         XCTAssertGreaterThan(ConversationProbe.endKeptByEdge[3] ?? 0, 0, "a height change at the end went back by the edge")
         XCTAssertEqual(ConversationProbe.endThroughLastRow[3] ?? 0, through, "no id scroll with the last row in view")
         XCTAssertEqual(ConversationProbe.blankHeals[3] ?? 0, 0, "a view with rows in it is not healed")
+    }
+
+    /// v0.26.4, review round 2: a text-size change at the bottom wraps every
+    /// line again without changing the scroll view's width. Whenever the app
+    /// goes back to the end within that reflow it is through the last row's
+    /// id, as after a width change, never by the edge alone; and the end is
+    /// in view after each change.
+    func testAtTheBottomATextSizeChangeGoesBackThroughTheLastRow() throws {
+        probe()
+        ConversationProbe.endKeptByEdge = [:]
+        ConversationProbe.endThroughLastRow = [:]
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        let settings = try XCTUnwrap(hosted.settings)
+        spin(0.6)
+        for _ in 0..<3 { try Self.phaselessWheel(hosted, pixels: 200); spin(0.05) }
+        spin(0.3)
+        for _ in 0..<20 where !atBottom(hosted) { try Self.phaselessWheel(hosted, pixels: -200); spin(0.05) }
+        spin(1.2)
+        assertTheEndIsInView(hosted, "at the bottom")
+        let edge = ConversationProbe.endKeptByEdge[3] ?? 0
+        for (index, scale) in [1.3, 1.0, 1.5, 0.85, 1.0].enumerated() {
+            settings.textScale = scale
+            spin(0.8)  // inside the reflow window
+            XCTAssertEqual(
+                ConversationProbe.endKeptByEdge[3] ?? 0, edge, "text size \(index + 1) to \(scale): not by the edge alone")
+            spin(0.8)
+            assertTheEndIsInView(hosted, "text size \(index + 1) to \(scale)")
+        }
+        XCTAssertGreaterThan(
+            ConversationProbe.endThroughLastRow[3] ?? 0, 0, "a text-size change at the end went back through the last row")
     }
 
     /// v0.26.4: the heal's wiring. Every row's frame is forgotten, as the
