@@ -35,41 +35,9 @@ enum TranscriptBlankSpace {
         return clip.maxY > documentHeight + slack
     }
 
-    /// v0.26.4 (the same trace): back at the end, whether the last row must be scrolled to by its id before
-    /// the bottom edge. Always, as since v0.19, with one exception: the reading is one where the view's
-    /// visible height changed, nothing was wrapped again, and the last row is in view. There, the id scroll
-    /// made with the last rows on screen is where the lazy stack swapped its measured height (7673) for an
-    /// estimate (9570) and dropped every row; the edge alone keeps a measured end. Every other return to the
-    /// end (a reply growing, the layout moving the offset, a width or text-size change) is as it was.
-    /// - Parameters:
-    ///   - lastRow: the last drawn row's reported frame in the scroll view's space, nil when it is not laid out.
-    ///   - visibleHeight: the scroll view's visible height.
-    ///   - heightChanged: the visible height changed at this reading.
-    ///   - reflowed: every line was wrapped again at this reading (`reflowed(widthChanged:textScaleChangedAt:now:)`).
-    static func endNeedsRowLayout(
-        lastRow: CGRect?, visibleHeight: CGFloat, heightChanged: Bool, reflowed: Bool
-    ) -> Bool {
-        guard heightChanged, !reflowed, let lastRow, visibleHeight > 0, lastRow.height > 0 else { return true }
-        return !(lastRow.maxY > 0 && lastRow.minY < visibleHeight)
-    }
-
-    /// Whether the visible height changed between two readings (none before the first).
-    static func heightChanged(from previous: CGFloat?, to now: CGFloat) -> Bool {
-        previous.map { abs($0 - now) >= 1 } ?? false
-    }
-
-    /// How long after a text-size change a reading still counts as its reflow: the rows are laid out again
-    /// over several frames, and the scroll view's own width does not change to mark them.
-    static let reflowWindow: TimeInterval = 1
-
-    /// Whether a reading at `now` is a reflow's: the column's width changed at it, or the text size changed
-    /// within `reflowWindow` before it.
-    static func reflowed(widthChanged: Bool, textScaleChangedAt: Date?, now: Date) -> Bool {
-        if widthChanged { return true }
-        guard let changed = textScaleChangedAt else { return false }
-        let since = now.timeIntervalSince(changed)
-        return since >= 0 && since <= reflowWindow
-    }
+    /// v0.26.4 (the same trace): how far the heal moves a view with no row laid out, toward the top. In the
+    /// trace the wheel's first delta, a few points, brought a row in and the content was measured again.
+    static let healNudge: CGFloat = 4
 
     /// v0.26.2 (a field trace, 11-09): where to put a view left past
     /// the document's end, or nil when it isn't. A column-width animation
@@ -90,7 +58,7 @@ enum TranscriptBlankSpace {
         /// v0.26.4: heals made since the view was last settled. A heal that brought no row back is tried
         /// again after another grace, `maxHeals` times at most. The count starts again only once the view
         /// has shown a row for `settle` seconds on end: a row that comes back for one reading and drops
-        /// again (the heal's own id scroll could do that) does not buy three more heals.
+        /// again does not buy three more heals.
         private(set) var heals = 0
         static let maxHeals = 3
         static let settle: TimeInterval = 10
@@ -98,7 +66,7 @@ enum TranscriptBlankSpace {
 
         var mayHeal: Bool { heals < Self.maxHeals }
 
-        /// The view was scrolled back to its last row at `now`: the grace runs again from here.
+        /// The view was nudged at `now`: the grace runs again from here.
         mutating func healed(now: Date) {
             heals += 1
             blankSince = now

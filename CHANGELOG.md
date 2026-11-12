@@ -3,18 +3,17 @@
 ## v0.26.4 (2026-11-12)
 
 - Release gate: no distributed file may name the maintainer's home folders, so a deployment's own config can never ride along with a release.
-- **Blank conversation until scrolled (first fix).** A field trace caught it: idle at the
-  bottom, a small change in the view's height made the app scroll to the end
-  by id, the lazy stack swapped its measured height for an estimate and
-  dropped every row, and the view sat below the last real row. Back at the
-  end after a height change, the app now scrolls by id only when the last row
-  is out of view. Every other return to the end (a reply growing, a change
-  of width or of text size) scrolls by id as before. The blank-space
-  watch counts transcript rows apart from the cards under them, and a
-  conversation at its end whose rows have all been dropped is scrolled back
-  to its last row, three times at most until rows have stayed in view for
-  ten seconds. Not reproduced hosted; a field run
-  decides.
+- **Blank conversation until scrolled: detected and recovered from.** A field
+  trace caught it: idle at the bottom, a small change in the view's height,
+  the lazy stack swapped its measured height for an estimate and dropped
+  every row, and the view sat below the last real row until a wheel movement
+  brought the rows back. The blank-space watch now counts transcript rows
+  apart from the cards under them, so it sees this and writes it to the
+  trace. A conversation at its end whose rows have all been dropped is moved
+  a few points, as that wheel movement did, three times at most until rows
+  have stayed in view for ten seconds. How the app goes back to the end is
+  unchanged from v0.26.3. The cause is not fixed here; whether the nudge
+  brings the rows back is settled by a field run.
 
 ### Diagnostics
 

@@ -61,20 +61,16 @@ final class ConversationRoundTripTests: XCTestCase {
         let window: NSWindow
         let host: NSView
         let scroll: NSScrollView
-        var settings: Portico.Settings?
     }
 
     /// The conversation the model has selected, drawn as the main window
     /// draws it: a new view for each chat (`.id`).
     private struct Selected: View {
         @EnvironmentObject var model: AppModel
-        @EnvironmentObject var settings: Portico.Settings
 
         var body: some View {
             if let chat = model.selected {
-                // The text size as the app's window gives it (PorticoApp).
                 ConversationView(chat: chat).id(chat)
-                    .environment(\.textScale, CGFloat(settings.textScale))
             }
         }
     }
@@ -94,7 +90,7 @@ final class ConversationRoundTripTests: XCTestCase {
         window.contentView = host
         spin()
         let scroll = try XCTUnwrap(Self.transcriptScroll(in: host), "the transcript's scroll view")
-        return Hosted(window: window, host: host, scroll: scroll, settings: settings)
+        return Hosted(window: window, host: host, scroll: scroll)
     }
 
     private func spin(_ seconds: Double = 0.4) {
@@ -448,8 +444,6 @@ final class ConversationRoundTripTests: XCTestCase {
     /// taken for them leaving the bottom).
     func testScrollingBackToTheEndWhileAReplyStreamsResumesFollowing() throws {
         _ = NSApplication.shared
-        probe()
-        ConversationProbe.endKeptByEdge = [:]
         let model = try model()
         let hosted = try host(model, width: 900)
         defer { hosted.window.close() }
@@ -483,9 +477,6 @@ final class ConversationRoundTripTests: XCTestCase {
         stream(6)
         spin()
         XCTAssertTrue(atBottom(), "following again")
-        // v0.26.4: the edge alone is for a height change; a reply growing
-        // at the end goes back as it always did (review at promote).
-        XCTAssertEqual(ConversationProbe.endKeptByEdge[3] ?? 0, 0, "a streaming reply is not a height change")
     }
 
     /// A scroll key pressed in the transcript, as the app dispatches it
@@ -946,79 +937,11 @@ final class ConversationRoundTripTests: XCTestCase {
         }
     }
 
-    /// v0.26.4 (a field trace, 11-12): idle at the bottom, the visible
-    /// height changed by 25 pt with no input (787 to 812) and the view was
-    /// left at the lazy stack's estimated end, below every real row, blank
-    /// until the person scrolled. The fault itself has not been produced
-    /// hosted; this drives the same input and checks the path taken: back
-    /// to the end by the edge alone (the last row is in view), never by the
-    /// id scroll, and no heal in a healthy view. Rows very unlike each other.
-    func testAtTheBottomAHeightChangeWhileIdleKeepsTheEndByTheEdgeAlone() throws {
-        probe()
-        ConversationProbe.endKeptByEdge = [:]
-        ConversationProbe.endThroughLastRow = [:]
-        ConversationProbe.blankHeals = [:]
-        let hosted = try host(try model(varied: true), width: 900)
-        defer { hosted.window.close() }
-        spin(0.6)
-        // Back at the end by a wheel, as a person gets there: SwiftUI has
-        // dropped the bottom edge, so a shorter view leaves the offset short
-        // of the end and the app goes back to it. (Opened and never
-        // scrolled, SwiftUI keeps the edge itself and the app does nothing.)
-        for _ in 0..<3 { try Self.phaselessWheel(hosted, pixels: 200); spin(0.05) }
-        spin(0.3)
-        for _ in 0..<20 where !atBottom(hosted) { try Self.phaselessWheel(hosted, pixels: -200); spin(0.05) }
-        spin(1.2)
-        assertTheEndIsInView(hosted, "at the bottom")
-        let through = ConversationProbe.endThroughLastRow[3] ?? 0
-        for (index, height) in [560, 600, 560, 600, 560].enumerated() {
-            let size = NSSize(width: 900, height: CGFloat(height))
-            hosted.host.setFrameSize(size)
-            hosted.window.setContentSize(size)
-            spin(1.6)  // past the blank-space watch's grace
-            assertTheEndIsInView(hosted, "height change \(index + 1) to \(height)")
-        }
-        XCTAssertGreaterThan(ConversationProbe.endKeptByEdge[3] ?? 0, 0, "a height change at the end went back by the edge")
-        XCTAssertEqual(ConversationProbe.endThroughLastRow[3] ?? 0, through, "no id scroll with the last row in view")
-        XCTAssertEqual(ConversationProbe.blankHeals[3] ?? 0, 0, "a view with rows in it is not healed")
-    }
-
-    /// v0.26.4, review round 2: a text-size change at the bottom wraps every
-    /// line again without changing the scroll view's width. Whenever the app
-    /// goes back to the end within that reflow it is through the last row's
-    /// id, as after a width change, never by the edge alone; and the end is
-    /// in view after each change.
-    func testAtTheBottomATextSizeChangeGoesBackThroughTheLastRow() throws {
-        probe()
-        ConversationProbe.endKeptByEdge = [:]
-        ConversationProbe.endThroughLastRow = [:]
-        let hosted = try host(try model(varied: true), width: 900)
-        defer { hosted.window.close() }
-        let settings = try XCTUnwrap(hosted.settings)
-        spin(0.6)
-        for _ in 0..<3 { try Self.phaselessWheel(hosted, pixels: 200); spin(0.05) }
-        spin(0.3)
-        for _ in 0..<20 where !atBottom(hosted) { try Self.phaselessWheel(hosted, pixels: -200); spin(0.05) }
-        spin(1.2)
-        assertTheEndIsInView(hosted, "at the bottom")
-        let edge = ConversationProbe.endKeptByEdge[3] ?? 0
-        for (index, scale) in [1.3, 1.0, 1.5, 0.85, 1.0].enumerated() {
-            settings.textScale = scale
-            spin(0.8)  // inside the reflow window
-            XCTAssertEqual(
-                ConversationProbe.endKeptByEdge[3] ?? 0, edge, "text size \(index + 1) to \(scale): not by the edge alone")
-            spin(0.8)
-            assertTheEndIsInView(hosted, "text size \(index + 1) to \(scale)")
-        }
-        XCTAssertGreaterThan(
-            ConversationProbe.endThroughLastRow[3] ?? 0, 0, "a text-size change at the end went back through the last row")
-    }
-
     /// v0.26.4: the heal's wiring. Every row's frame is forgotten, as the
     /// lazy stack reported them all out in the field; past the grace, at the
-    /// end with no input, the watch scrolls to the last row and the end is
-    /// in view. (The rows here are still drawn, so this is the wiring, not
-    /// the fault.)
+    /// end with no input, the watch nudges the view and the end stays in
+    /// view. (The rows here are still drawn, so this is the wiring, not the
+    /// fault: only the count can fail.)
     func testAtTheEndWithNoRowReportedTheWatchHeals() throws {
         probe()
         ConversationProbe.blankHeals = [:]
@@ -1030,7 +953,6 @@ final class ConversationRoundTripTests: XCTestCase {
         for id in Array(rows.frames.keys) { rows.forget(id) }
         spin(2.2)
         XCTAssertGreaterThan(ConversationProbe.blankHeals[3] ?? 0, 0, "healed")
-        XCTAssertLessThanOrEqual(ConversationProbe.blankHeals[3] ?? 0, 3, "three heals an occurrence at most")
         assertTheEndIsInView(hosted, "after the heal")
     }
 

@@ -21,10 +21,6 @@ struct ConversationView: View {
     @State private var restoredTop: String?
     /// Whether the transcript was seen at its bottom, kept there when its width changes (v0.11, item 67).
     @State private var scrollMemory = ConversationScrollMemory()
-    /// v0.26.4: when the text size last changed; readings just after it are a reflow's.
-    @State private var textScaleChangedAt: Date?
-    /// v0.26.4: the visible height at the last geometry reading.
-    @State private var lastVisibleHeight: CGFloat?
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
     @State private var personScrolling = false
@@ -146,7 +142,6 @@ struct ConversationView: View {
             if Diagnostics.isOn { recording.note(.sidebar(visible: now)) }
         }
         .onChange(of: textScale) { _, now in
-            textScaleChangedAt = Date()  // v0.26.4: the readings that follow are a reflow's
             if Diagnostics.isOn { recording.note(.textScale(Double(now))) }
         }
         .onReceive(NotificationCenter.default.publisher(for: Diagnostics.switched)) { _ in
@@ -295,29 +290,13 @@ struct ConversationView: View {
             // v0.16 spike: `position.isPositionedByUser` stays false for
             // every input here (ConversationScroll.swift), so the person
             // is the scroll phase and the marked input, as in v0.15.
-            let widthChanged = scrollMemory.width.map { abs($0 - now.width) >= 1 } ?? false
-            let heightChanged = TranscriptBlankSpace.heightChanged(from: lastVisibleHeight, to: now.visible)
-            lastVisibleHeight = now.visible
             let target = scrollMemory.observe(
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
             ScrollTrace.note("read chat=\(chat) offset=\(Int(now.offset)) content=\(Int(now.content)) visible=\(Int(now.visible)) width=\(Int(now.width)) atBottom=\(now.atBottom) scrolling=\(personScrolling) marked=\(String(describing: personInput.recent)) memoryAtBottom=\(scrollMemory.atBottom) target=\(String(describing: target)) edge=\(String(describing: position.edge)) viewID=\(position.viewID(type: String.self) ?? "-")")
             if target == .bottom {
                 if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
-                // v0.26.4: at a reading where the visible height changed, the id scroll only when the last
-                // row is out of view (a field trace, 11-12). Every other return to the end takes it, as
-                // since v0.19: a reply growing, the layout moving the offset, a reflow.
-                let last = drawn.last.flatMap { rows.frames[$0.id] }
-                let reflowed = TranscriptBlankSpace.reflowed(
-                    widthChanged: widthChanged, textScaleChangedAt: textScaleChangedAt, now: Date())
-                if TranscriptBlankSpace.endNeedsRowLayout(
-                    lastRow: last, visibleHeight: now.visible, heightChanged: heightChanged, reflowed: reflowed) {
-                    if ConversationProbe.enabled { ConversationProbe.endThroughLastRow[chat, default: 0] += 1 }
-                    toBottomThroughLastRow()
-                } else {
-                    if ConversationProbe.enabled { ConversationProbe.endKeptByEdge[chat, default: 0] += 1 }
-                    toBottom()
-                }
+                toBottomThroughLastRow()
             } else if !scrollMemory.atBottom, position.edge == .bottom {
                 // The person left the end by input with no scroll phase (a
                 // key, or VoiceOver): AppKit moved the clip, so the position
@@ -585,22 +564,19 @@ struct ConversationView: View {
                 hasRows: !drawn.isEmpty, rowFrames: frames, otherFrames: others, clip: clip,
                 documentHeight: document.frame.height)
             if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {
-                // v0.26.4: at the end, rows once laid out and now none: the last row is scrolled to by its
-                // id, then the bottom edge. Whether that lays the row out in the field's state is not shown
-                // hosted, so a heal that brought no row back is tried again after another grace, three
-                // times until the view has settled (rows shown for ten seconds). Only when the conversation
-                // was at its end: scrolled up, the place is
-                // the person's.
-                if !byPerson, scrollMemory.atBottom, frames.isEmpty, rows.hasReported, watch.mayHeal,
-                   let lastID = drawn.last?.id {
+                // v0.26.4: at the end, rows once laid out and now none (a field trace, 11-12): the view is
+                // moved a few points, as the wheel's first delta did when it brought the rows back in that
+                // trace. Not shown hosted, so a nudge that brought no row back is tried again after another
+                // grace, three times until the view has settled (rows shown for ten seconds). Only when the
+                // conversation was at its end: scrolled up, the place is the person's.
+                if !byPerson, scrollMemory.atBottom, frames.isEmpty, rows.hasReported, watch.mayHeal {
                     watch.healed(now: Date())
-                    ScrollTrace.note("move chat=\(chat) blank-heal \(watch.heals) to=\(lastID)")
+                    let view = scroll.contentView
+                    let top = max(0, clip.origin.y - TranscriptBlankSpace.healNudge)
+                    ScrollTrace.note("move chat=\(chat) blank-heal \(watch.heals) nudge to=\(Int(top))")
                     if ConversationProbe.enabled { ConversationProbe.blankHeals[chat, default: 0] += 1 }
-                    position.scrollTo(id: lastID, anchor: .bottom)
-                    Task { @MainActor in
-                        await Task.yield()
-                        toBottom()
-                    }
+                    view.scroll(to: NSPoint(x: view.bounds.origin.x, y: top))
+                    scroll.reflectScrolledClipView(view)
                 }
                 let last = rows.frames.values.max { $0.minY < $1.minY }
                 TranscriptBlankSpace.log(
@@ -1295,11 +1271,8 @@ enum ConversationProbe {
     static var bottomCorrections: [Int: Int] = [:]
     static var geometryReadings: [Int: Int] = [:]
     static var pastEndCorrections: [Int: Int] = [:]
-    /// v0.26.4: times the blank-space watch scrolled a view with no row laid out back to its last row.
+    /// v0.26.4: times the blank-space watch nudged a view with no row laid out.
     static var blankHeals: [Int: Int] = [:]
-    /// v0.26.4: back to the end by the edge alone, and by the id scroll first.
-    static var endKeptByEdge: [Int: Int] = [:]
-    static var endThroughLastRow: [Int: Int] = [:]
     static var phaseNames: [Int: [String]] = [:]
     /// v0.26.4: main-thread time of each recording diff on a follow-key change.
     static var recordingChangeNanos: [UInt64] = []

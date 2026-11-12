@@ -77,36 +77,6 @@ final class TranscriptBlankSpaceTests: XCTestCase {
             hasRows: true, rowFrames: rows, otherFrames: cards, clip: clip, documentHeight: 2000))
     }
 
-    /// Back to the end after a height change: the last row is scrolled to by
-    /// its id only when it is not already in view. In the field trace that
-    /// scroll, made with the last rows on screen, is where the lazy stack
-    /// swapped its measured height for an estimate.
-    func testTheEndNeedsARowLaidOutOnlyWhenTheLastRowIsOutOfView() {
-        func needs(_ row: CGRect?, visible: CGFloat = 812, heightChanged: Bool = true, reflowed: Bool = false) -> Bool {
-            TranscriptBlankSpace.endNeedsRowLayout(lastRow: row, visibleHeight: visible, heightChanged: heightChanged, reflowed: reflowed)
-        }
-        let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
-        XCTAssertFalse(needs(inView))
-        // The common case at the end: a tall last reply, its top above the view.
-        XCTAssertFalse(needs(CGRect(x: 0, y: -900, width: 600, height: 1500)), "top above the view, bottom in it")
-        XCTAssertFalse(needs(CGRect(x: 0, y: 700, width: 600, height: 400)), "top in the view, bottom below it")
-        XCTAssertTrue(needs(nil), "not laid out")
-        XCTAssertTrue(needs(CGRect(x: 0, y: 900, width: 600, height: 251)), "below the view")
-        XCTAssertTrue(needs(CGRect(x: 0, y: -400, width: 600, height: 251)), "above the view")
-        XCTAssertTrue(needs(CGRect(x: 0, y: -251, width: 600, height: 251)), "ends exactly at the view's top")
-        XCTAssertTrue(needs(CGRect(x: 0, y: 812, width: 600, height: 251)), "starts exactly at the view's bottom")
-        XCTAssertTrue(needs(CGRect(x: 0, y: 100, width: 600, height: 0)), "a row with no height shows nothing")
-        XCTAssertTrue(needs(inView, visible: 0), "no view yet")
-    }
-
-    /// A width change wraps every line again: v0.19's id scroll stays, the
-    /// last row in view or not (narrowing 900 to 640 with the edge alone
-    /// left the view showing no row).
-    func testAWidthChangeAlwaysNeedsTheRowLaidOut() {
-        let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812, heightChanged: true, reflowed: true))
-    }
-
     /// The heal is for rows that were laid out and then all dropped: a
     /// conversation still opening has reported no row yet and is left alone.
     @MainActor
@@ -119,37 +89,6 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         rows.forget("item-1")
         XCTAssertTrue(rows.frames.isEmpty)
         XCTAssertTrue(rows.hasReported)
-    }
-
-    /// Review at promote: the edge alone is for a reading where the visible
-    /// height changed. A reply growing at the end, or the layout moving the
-    /// offset, has no height change and takes the id scroll as before v0.26.4.
-    func testWithNoHeightChangeTheEndAlwaysNeedsTheRowLaidOut() {
-        let inView = CGRect(x: 0, y: 600, width: 600, height: 200)
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(
-            lastRow: inView, visibleHeight: 812, heightChanged: false, reflowed: false))
-        XCTAssertFalse(TranscriptBlankSpace.endNeedsRowLayout(
-            lastRow: inView, visibleHeight: 812, heightChanged: true, reflowed: false))
-        XCTAssertFalse(TranscriptBlankSpace.heightChanged(from: nil, to: 812), "the first reading")
-        XCTAssertFalse(TranscriptBlankSpace.heightChanged(from: 812, to: 812.4))
-        XCTAssertTrue(TranscriptBlankSpace.heightChanged(from: 787, to: 812))
-        XCTAssertTrue(TranscriptBlankSpace.heightChanged(from: 812, to: 787))
-    }
-
-    /// A text-size change wraps every line again without changing the scroll
-    /// view's width: the readings within a second of it are a reflow's, as a
-    /// width change's is (review round 2).
-    func testAReadingJustAfterATextSizeChangeIsAReflow() {
-        let changed = Date(timeIntervalSince1970: 1000)
-        func reflowed(width: Bool = false, at: Date? = changed, after: TimeInterval) -> Bool {
-            TranscriptBlankSpace.reflowed(widthChanged: width, textScaleChangedAt: at, now: changed + after)
-        }
-        XCTAssertTrue(reflowed(after: 0))
-        XCTAssertTrue(reflowed(after: 0.9))
-        XCTAssertFalse(reflowed(after: 1.1), "a later height change is only that")
-        XCTAssertFalse(reflowed(at: nil, after: 0), "the text size never changed")
-        XCTAssertTrue(reflowed(width: true, at: nil, after: 0), "a width change is one whenever")
-        XCTAssertFalse(reflowed(after: -1), "a clock set back is not a reflow")
     }
 
     /// A heal that did not bring a row back is tried again after another
