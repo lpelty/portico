@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.26.4 (unreleased)
+## v0.26.4 (2026-11-12)
 
 - Release gate: no distributed file may name the maintainer's home folders, so a deployment's own config can never ride along with a release.
 - **Blank conversation until scrolled (first fix).** A field trace caught it: idle at the
