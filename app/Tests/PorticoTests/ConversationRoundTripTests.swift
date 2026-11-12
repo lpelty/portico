@@ -940,20 +940,76 @@ final class ConversationRoundTripTests: XCTestCase {
     /// v0.26.4 (a field trace, 11-12): idle at the bottom, the visible
     /// height changed by 25 pt with no input (787 to 812) and the view was
     /// left at the lazy stack's estimated end, below every real row, blank
-    /// until the person scrolled. A guard, not a reproduction: the fault
-    /// has not been produced hosted. Rows very unlike each other, as there.
-    func testGuardAtTheBottomASmallHeightChangeWhileIdleLeavesTheEndInView() throws {
+    /// until the person scrolled. The fault itself has not been produced
+    /// hosted; this drives the same input and checks the path taken: back
+    /// to the end by the edge alone (the last row is in view), never by the
+    /// id scroll, and no heal in a healthy view. Rows very unlike each other.
+    func testAtTheBottomAHeightChangeWhileIdleKeepsTheEndByTheEdgeAlone() throws {
+        probe()
+        ConversationProbe.endKeptByEdge = [:]
+        ConversationProbe.endThroughLastRow = [:]
+        ConversationProbe.blankHeals = [:]
         let hosted = try host(try model(varied: true), width: 900)
         defer { hosted.window.close() }
         spin(0.6)
-        assertTheEndIsInView(hosted, "opened at the bottom")
-        for (index, height) in [625, 600, 625, 600, 625].enumerated() {
+        // Back at the end by a wheel, as a person gets there: SwiftUI has
+        // dropped the bottom edge, so a shorter view leaves the offset short
+        // of the end and the app goes back to it. (Opened and never
+        // scrolled, SwiftUI keeps the edge itself and the app does nothing.)
+        for _ in 0..<3 { try Self.phaselessWheel(hosted, pixels: 200); spin(0.05) }
+        spin(0.3)
+        for _ in 0..<20 where !atBottom(hosted) { try Self.phaselessWheel(hosted, pixels: -200); spin(0.05) }
+        spin(1.2)
+        assertTheEndIsInView(hosted, "at the bottom")
+        let through = ConversationProbe.endThroughLastRow[3] ?? 0
+        for (index, height) in [560, 600, 560, 600, 560].enumerated() {
             let size = NSSize(width: 900, height: CGFloat(height))
             hosted.host.setFrameSize(size)
             hosted.window.setContentSize(size)
             spin(1.6)  // past the blank-space watch's grace
             assertTheEndIsInView(hosted, "height change \(index + 1) to \(height)")
         }
+        XCTAssertGreaterThan(ConversationProbe.endKeptByEdge[3] ?? 0, 0, "a height change at the end went back by the edge")
+        XCTAssertEqual(ConversationProbe.endThroughLastRow[3] ?? 0, through, "no id scroll with the last row in view")
+        XCTAssertEqual(ConversationProbe.blankHeals[3] ?? 0, 0, "a view with rows in it is not healed")
+    }
+
+    /// v0.26.4: the heal's wiring. Every row's frame is forgotten, as the
+    /// lazy stack reported them all out in the field; past the grace, at the
+    /// end with no input, the watch scrolls to the last row and the end is
+    /// in view. (The rows here are still drawn, so this is the wiring, not
+    /// the fault.)
+    func testAtTheEndWithNoRowReportedTheWatchHeals() throws {
+        probe()
+        ConversationProbe.blankHeals = [:]
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        spin(0.6)
+        let rows = try XCTUnwrap(ConversationProbe.rows[3])
+        XCTAssertFalse(rows.frames.isEmpty)
+        for id in Array(rows.frames.keys) { rows.forget(id) }
+        spin(2.2)
+        XCTAssertGreaterThan(ConversationProbe.blankHeals[3] ?? 0, 0, "healed")
+        XCTAssertLessThanOrEqual(ConversationProbe.blankHeals[3] ?? 0, 3, "three heals an occurrence at most")
+        assertTheEndIsInView(hosted, "after the heal")
+    }
+
+    /// Scrolled up, the place is the person's: no heal.
+    func testScrolledUpWithNoRowReportedNothingMoves() throws {
+        probe()
+        ConversationProbe.blankHeals = [:]
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        spin(0.6)
+        for _ in 0..<3 { Self.wheel(hosted.scroll, pixels: 300); spin(0.05) }
+        spin(1.2)  // the person's input is no longer recent
+        XCTAssertFalse(atBottom(hosted), "scrolled up")
+        let before = hosted.scroll.contentView.bounds.minY
+        let rows = try XCTUnwrap(ConversationProbe.rows[3])
+        for id in Array(rows.frames.keys) { rows.forget(id) }
+        spin(2.2)
+        XCTAssertEqual(ConversationProbe.blankHeals[3] ?? 0, 0, "no heal away from the end")
+        XCTAssertEqual(hosted.scroll.contentView.bounds.minY, before, accuracy: 1, "the view stayed where it was")
     }
 
     /// How far the visible area runs past the transcript's end (0 when it

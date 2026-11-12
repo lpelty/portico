@@ -192,7 +192,12 @@ final class TranscriptRowFrames {
             ScrollTrace.note(line)
         }
         frames[id] = frame
+        hasReported = true
     }
+
+    /// v0.26.4: a transcript row has reported its frame at least once (the blank-space heal is for rows laid
+    /// out and then all dropped, never for a conversation still opening).
+    private(set) var hasReported = false
 
     func forget(_ id: String) {
         if ScrollTrace.enabled, frames[id] != nil { ScrollTrace.note(ScrollTrace.rowGoneLine(chat: traceChat, id: id)) }

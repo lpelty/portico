@@ -290,17 +290,22 @@ struct ConversationView: View {
             // v0.16 spike: `position.isPositionedByUser` stays false for
             // every input here (ConversationScroll.swift), so the person
             // is the scroll phase and the marked input, as in v0.15.
+            let widthChanged = scrollMemory.width.map { abs($0 - now.width) >= 1 } ?? false
             let target = scrollMemory.observe(
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
             ScrollTrace.note("read chat=\(chat) offset=\(Int(now.offset)) content=\(Int(now.content)) visible=\(Int(now.visible)) width=\(Int(now.width)) atBottom=\(now.atBottom) scrolling=\(personScrolling) marked=\(String(describing: personInput.recent)) memoryAtBottom=\(scrollMemory.atBottom) target=\(String(describing: target)) edge=\(String(describing: position.edge)) viewID=\(position.viewID(type: String.self) ?? "-")")
             if target == .bottom {
                 if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
-                // v0.26.4: the id scroll only when the last row is out of view (a field trace, 11-12).
+                // v0.26.4: after a height change the id scroll only when the last row is out of view (a
+                // field trace, 11-12); a width change always takes it (v0.19).
                 let last = drawn.last.flatMap { rows.frames[$0.id] }
-                if TranscriptBlankSpace.endNeedsRowLayout(lastRow: last, visibleHeight: now.visible) {
+                if TranscriptBlankSpace.endNeedsRowLayout(
+                    lastRow: last, visibleHeight: now.visible, widthChanged: widthChanged) {
+                    if ConversationProbe.enabled { ConversationProbe.endThroughLastRow[chat, default: 0] += 1 }
                     toBottomThroughLastRow()
                 } else {
+                    if ConversationProbe.enabled { ConversationProbe.endKeptByEdge[chat, default: 0] += 1 }
                     toBottom()
                 }
             } else if !scrollMemory.atBottom, position.edge == .bottom {
@@ -570,12 +575,15 @@ struct ConversationView: View {
                 hasRows: !drawn.isEmpty, rowFrames: frames, otherFrames: others, clip: clip,
                 documentHeight: document.frame.height)
             if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {
-                // v0.26.4: at the end with no row laid out, the last row is scrolled to by its id (that lays
-                // it out where the view is, and the content is measured again), then the bottom edge. Once
-                // per occurrence, and only when the conversation was at its end: scrolled up, the place is
+                // v0.26.4: at the end, rows once laid out and now none: the last row is scrolled to by its
+                // id, then the bottom edge. Whether that lays the row out in the field's state is not shown
+                // hosted, so a heal that brought no row back is tried again after another grace, three
+                // times an occurrence. Only when the conversation was at its end: scrolled up, the place is
                 // the person's.
-                if !byPerson, scrollMemory.atBottom, frames.isEmpty, let lastID = drawn.last?.id {
-                    ScrollTrace.note("move chat=\(chat) blank-heal to=\(lastID)")
+                if !byPerson, scrollMemory.atBottom, frames.isEmpty, rows.hasReported, watch.mayHeal,
+                   let lastID = drawn.last?.id {
+                    watch.healed(now: Date())
+                    ScrollTrace.note("move chat=\(chat) blank-heal \(watch.heals) to=\(lastID)")
                     if ConversationProbe.enabled { ConversationProbe.blankHeals[chat, default: 0] += 1 }
                     position.scrollTo(id: lastID, anchor: .bottom)
                     Task { @MainActor in
@@ -1278,6 +1286,9 @@ enum ConversationProbe {
     static var pastEndCorrections: [Int: Int] = [:]
     /// v0.26.4: times the blank-space watch scrolled a view with no row laid out back to its last row.
     static var blankHeals: [Int: Int] = [:]
+    /// v0.26.4: back to the end by the edge alone, and by the id scroll first.
+    static var endKeptByEdge: [Int: Int] = [:]
+    static var endThroughLastRow: [Int: Int] = [:]
     static var phaseNames: [Int: [String]] = [:]
     /// v0.26.4: main-thread time of each recording diff on a follow-key change.
     static var recordingChangeNanos: [UInt64] = []

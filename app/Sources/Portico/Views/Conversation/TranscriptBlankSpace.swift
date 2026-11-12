@@ -35,15 +35,17 @@ enum TranscriptBlankSpace {
         return clip.maxY > documentHeight + slack
     }
 
-    /// v0.26.4 (the same trace): back at the end after the view's size changed, whether the last row must be
+    /// v0.26.4 (the same trace): back at the end after the view's height changed, whether the last row must be
     /// scrolled to by its id before the bottom edge. Only when it is not in view already: there, the id scroll
     /// made with the last rows on screen is where the lazy stack swapped its measured height (7673) for an
-    /// estimate (9570) and dropped every row; the edge alone keeps a measured end.
+    /// estimate (9570) and dropped every row; the edge alone keeps a measured end. A width change wraps every
+    /// line again and always takes the id scroll (v0.19: the edge alone left the view showing no row).
     /// - Parameters:
     ///   - lastRow: the last drawn row's reported frame in the scroll view's space, nil when it is not laid out.
     ///   - visibleHeight: the scroll view's visible height.
-    static func endNeedsRowLayout(lastRow: CGRect?, visibleHeight: CGFloat) -> Bool {
-        guard let lastRow, visibleHeight > 0 else { return true }
+    ///   - widthChanged: the column's width changed at this reading.
+    static func endNeedsRowLayout(lastRow: CGRect?, visibleHeight: CGFloat, widthChanged: Bool) -> Bool {
+        guard !widthChanged, let lastRow, visibleHeight > 0, lastRow.height > 0 else { return true }
         return !(lastRow.maxY > 0 && lastRow.minY < visibleHeight)
     }
 
@@ -63,6 +65,19 @@ enum TranscriptBlankSpace {
     struct Watch: Equatable {
         private(set) var blankSince: Date?
         private(set) var reported = false
+        /// v0.26.4: heals made in this occurrence. A heal that brought no row back is tried again after
+        /// another grace, `maxHeals` times at most; a reading that is not blank starts the count again.
+        private(set) var heals = 0
+        static let maxHeals = 3
+
+        var mayHeal: Bool { heals < Self.maxHeals }
+
+        /// The view was scrolled back to its last row at `now`: the grace runs again from here.
+        mutating func healed(now: Date) {
+            heals += 1
+            blankSince = now
+            reported = false
+        }
 
         /// One reading at `now`. Returns true when this reading is the one to log.
         mutating func observe(blank: Bool, scrolling: Bool, now: Date) -> Bool {
@@ -70,6 +85,7 @@ enum TranscriptBlankSpace {
                 // A scroll phase, or a view that is not blank, ends the occurrence.
                 blankSince = nil
                 reported = false
+                if !blank { heals = 0 }
                 return false
             }
             guard let since = blankSince else {

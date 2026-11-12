@@ -42,14 +42,19 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         rows.noteOther(CGRect(x: 0, y: 20, width: 600, height: 120), id: "calling:card-1")
         rows.noteOther(CGRect(x: 0, y: 160, width: 600, height: 24), id: "working")
         XCTAssertEqual(rows.allFrames.count, 4)
+        let others = Array(rows.others.values)
         XCTAssertFalse(
-            TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000),
+            TranscriptBlankSpace.isBlank(
+                hasRows: true, rowFrames: Array(rows.frames.values), otherFrames: others, clip: clip,
+                documentHeight: 2000),
             "calling cards and the working line in view are not blank space")
         XCTAssertEqual(rows.top()?.id, "item-2", "the kept place is a transcript row, never a calling card")
         rows.forgetOther("calling:card-1")
         rows.forgetOther("working")
         XCTAssertTrue(
-            TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000))
+            TranscriptBlankSpace.isBlank(
+                hasRows: true, rowFrames: Array(rows.frames.values), otherFrames: Array(rows.others.values),
+                clip: clip, documentHeight: 2000))
     }
 
     /// v0.26.4 (a field trace, 11-12): every transcript row was dropped by
@@ -72,19 +77,69 @@ final class TranscriptBlankSpaceTests: XCTestCase {
             hasRows: true, rowFrames: rows, otherFrames: cards, clip: clip, documentHeight: 2000))
     }
 
-    /// Back to the end after a size change: the last row is scrolled to by
+    /// Back to the end after a height change: the last row is scrolled to by
     /// its id only when it is not already in view. In the field trace that
     /// scroll, made with the last rows on screen, is where the lazy stack
     /// swapped its measured height for an estimate.
     func testTheEndNeedsARowLaidOutOnlyWhenTheLastRowIsOutOfView() {
+        func needs(_ row: CGRect?, visible: CGFloat = 812, widthChanged: Bool = false) -> Bool {
+            TranscriptBlankSpace.endNeedsRowLayout(lastRow: row, visibleHeight: visible, widthChanged: widthChanged)
+        }
         let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
-        XCTAssertFalse(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812))
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: nil, visibleHeight: 812), "not laid out")
-        let below = CGRect(x: 0, y: 900, width: 600, height: 251)
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: below, visibleHeight: 812))
-        let above = CGRect(x: 0, y: -400, width: 600, height: 251)
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: above, visibleHeight: 812))
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 0), "no view yet")
+        XCTAssertFalse(needs(inView))
+        // The common case at the end: a tall last reply, its top above the view.
+        XCTAssertFalse(needs(CGRect(x: 0, y: -900, width: 600, height: 1500)), "top above the view, bottom in it")
+        XCTAssertFalse(needs(CGRect(x: 0, y: 700, width: 600, height: 400)), "top in the view, bottom below it")
+        XCTAssertTrue(needs(nil), "not laid out")
+        XCTAssertTrue(needs(CGRect(x: 0, y: 900, width: 600, height: 251)), "below the view")
+        XCTAssertTrue(needs(CGRect(x: 0, y: -400, width: 600, height: 251)), "above the view")
+        XCTAssertTrue(needs(CGRect(x: 0, y: -251, width: 600, height: 251)), "ends exactly at the view's top")
+        XCTAssertTrue(needs(CGRect(x: 0, y: 812, width: 600, height: 251)), "starts exactly at the view's bottom")
+        XCTAssertTrue(needs(CGRect(x: 0, y: 100, width: 600, height: 0)), "a row with no height shows nothing")
+        XCTAssertTrue(needs(inView, visible: 0), "no view yet")
+    }
+
+    /// A width change wraps every line again: v0.19's id scroll stays, the
+    /// last row in view or not (narrowing 900 to 640 with the edge alone
+    /// left the view showing no row).
+    func testAWidthChangeAlwaysNeedsTheRowLaidOut() {
+        let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812, widthChanged: true))
+    }
+
+    /// The heal is for rows that were laid out and then all dropped: a
+    /// conversation still opening has reported no row yet and is left alone.
+    @MainActor
+    func testRowFramesRememberThatARowWasEverReported() {
+        let rows = TranscriptRowFrames()
+        XCTAssertFalse(rows.hasReported)
+        rows.noteOther(CGRect(x: 0, y: 20, width: 600, height: 24), id: "working")
+        XCTAssertFalse(rows.hasReported, "a card or the working line is not a row")
+        rows.note(CGRect(x: 0, y: 100, width: 600, height: 80), id: "item-1")
+        rows.forget("item-1")
+        XCTAssertTrue(rows.frames.isEmpty)
+        XCTAssertTrue(rows.hasReported)
+    }
+
+    /// A heal that did not bring a row back is tried again after another
+    /// grace, three times an occurrence at most; a reading that is not blank
+    /// starts the count again.
+    func testTheWatchAllowsThreeHealsAnOccurrence() {
+        var watch = TranscriptBlankSpace.Watch()
+        var now = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
+        for attempt in 1...3 {
+            now += 1.5
+            XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now), "report \(attempt)")
+            XCTAssertTrue(watch.mayHeal, "heal \(attempt)")
+            watch.healed(now: now)
+            XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now + 0.5), "within the grace again")
+        }
+        now += 1.5
+        XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now), "still reported")
+        XCTAssertFalse(watch.mayHeal, "no fourth heal")
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 1))
+        XCTAssertTrue(watch.mayHeal, "a view that is not blank starts the count again")
     }
 
     func testWatchReportsOncePerOccurrenceAfterTheGrace() {
