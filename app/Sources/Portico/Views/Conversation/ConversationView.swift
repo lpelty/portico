@@ -23,6 +23,8 @@ struct ConversationView: View {
     @State private var scrollMemory = ConversationScrollMemory()
     /// v0.26.4: when the text size last changed; readings just after it are a reflow's.
     @State private var textScaleChangedAt: Date?
+    /// v0.26.4: the visible height at the last geometry reading.
+    @State private var lastVisibleHeight: CGFloat?
     /// Whether the person is scrolling the transcript (v0.15 task 2b fix
     /// round 1): only its readings move the scroll memory.
     @State private var personScrolling = false
@@ -294,19 +296,22 @@ struct ConversationView: View {
             // every input here (ConversationScroll.swift), so the person
             // is the scroll phase and the marked input, as in v0.15.
             let widthChanged = scrollMemory.width.map { abs($0 - now.width) >= 1 } ?? false
+            let heightChanged = TranscriptBlankSpace.heightChanged(from: lastVisibleHeight, to: now.visible)
+            lastVisibleHeight = now.visible
             let target = scrollMemory.observe(
                 width: now.width, atBottom: now.atBottom, scrolling: personScrolling,
                 marked: personInput.recent, offset: now.offset)
             ScrollTrace.note("read chat=\(chat) offset=\(Int(now.offset)) content=\(Int(now.content)) visible=\(Int(now.visible)) width=\(Int(now.width)) atBottom=\(now.atBottom) scrolling=\(personScrolling) marked=\(String(describing: personInput.recent)) memoryAtBottom=\(scrollMemory.atBottom) target=\(String(describing: target)) edge=\(String(describing: position.edge)) viewID=\(position.viewID(type: String.self) ?? "-")")
             if target == .bottom {
                 if ConversationProbe.enabled { ConversationProbe.bottomCorrections[chat, default: 0] += 1 }
-                // v0.26.4: after a height change the id scroll only when the last row is out of view (a
-                // field trace, 11-12); a reflow (the width, or the text size) always takes it (v0.19).
+                // v0.26.4: at a reading where the visible height changed, the id scroll only when the last
+                // row is out of view (a field trace, 11-12). Every other return to the end takes it, as
+                // since v0.19: a reply growing, the layout moving the offset, a reflow.
                 let last = drawn.last.flatMap { rows.frames[$0.id] }
                 let reflowed = TranscriptBlankSpace.reflowed(
                     widthChanged: widthChanged, textScaleChangedAt: textScaleChangedAt, now: Date())
                 if TranscriptBlankSpace.endNeedsRowLayout(
-                    lastRow: last, visibleHeight: now.visible, reflowed: reflowed) {
+                    lastRow: last, visibleHeight: now.visible, heightChanged: heightChanged, reflowed: reflowed) {
                     if ConversationProbe.enabled { ConversationProbe.endThroughLastRow[chat, default: 0] += 1 }
                     toBottomThroughLastRow()
                 } else {

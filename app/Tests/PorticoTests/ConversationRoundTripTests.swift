@@ -448,6 +448,8 @@ final class ConversationRoundTripTests: XCTestCase {
     /// taken for them leaving the bottom).
     func testScrollingBackToTheEndWhileAReplyStreamsResumesFollowing() throws {
         _ = NSApplication.shared
+        probe()
+        ConversationProbe.endKeptByEdge = [:]
         let model = try model()
         let hosted = try host(model, width: 900)
         defer { hosted.window.close() }
@@ -481,6 +483,9 @@ final class ConversationRoundTripTests: XCTestCase {
         stream(6)
         spin()
         XCTAssertTrue(atBottom(), "following again")
+        // v0.26.4: the edge alone is for a height change; a reply growing
+        // at the end goes back as it always did (review at promote).
+        XCTAssertEqual(ConversationProbe.endKeptByEdge[3] ?? 0, 0, "a streaming reply is not a height change")
     }
 
     /// A scroll key pressed in the transcript, as the app dispatches it

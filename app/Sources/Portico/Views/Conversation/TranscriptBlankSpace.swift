@@ -35,19 +35,27 @@ enum TranscriptBlankSpace {
         return clip.maxY > documentHeight + slack
     }
 
-    /// v0.26.4 (the same trace): back at the end after the view's height changed, whether the last row must be
-    /// scrolled to by its id before the bottom edge. Only when it is not in view already: there, the id scroll
+    /// v0.26.4 (the same trace): back at the end, whether the last row must be scrolled to by its id before
+    /// the bottom edge. Always, as since v0.19, with one exception: the reading is one where the view's
+    /// visible height changed, nothing was wrapped again, and the last row is in view. There, the id scroll
     /// made with the last rows on screen is where the lazy stack swapped its measured height (7673) for an
-    /// estimate (9570) and dropped every row; the edge alone keeps a measured end. A reflow (the width or the
-    /// text size changed) wraps every line again and always takes the id scroll (v0.19: the edge alone left
-    /// the view showing no row).
+    /// estimate (9570) and dropped every row; the edge alone keeps a measured end. Every other return to the
+    /// end (a reply growing, the layout moving the offset, a width or text-size change) is as it was.
     /// - Parameters:
     ///   - lastRow: the last drawn row's reported frame in the scroll view's space, nil when it is not laid out.
     ///   - visibleHeight: the scroll view's visible height.
+    ///   - heightChanged: the visible height changed at this reading.
     ///   - reflowed: every line was wrapped again at this reading (`reflowed(widthChanged:textScaleChangedAt:now:)`).
-    static func endNeedsRowLayout(lastRow: CGRect?, visibleHeight: CGFloat, reflowed: Bool) -> Bool {
-        guard !reflowed, let lastRow, visibleHeight > 0, lastRow.height > 0 else { return true }
+    static func endNeedsRowLayout(
+        lastRow: CGRect?, visibleHeight: CGFloat, heightChanged: Bool, reflowed: Bool
+    ) -> Bool {
+        guard heightChanged, !reflowed, let lastRow, visibleHeight > 0, lastRow.height > 0 else { return true }
         return !(lastRow.maxY > 0 && lastRow.minY < visibleHeight)
+    }
+
+    /// Whether the visible height changed between two readings (none before the first).
+    static func heightChanged(from previous: CGFloat?, to now: CGFloat) -> Bool {
+        previous.map { abs($0 - now) >= 1 } ?? false
     }
 
     /// How long after a text-size change a reading still counts as its reflow: the rows are laid out again

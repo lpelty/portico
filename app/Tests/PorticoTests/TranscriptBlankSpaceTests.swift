@@ -82,8 +82,8 @@ final class TranscriptBlankSpaceTests: XCTestCase {
     /// scroll, made with the last rows on screen, is where the lazy stack
     /// swapped its measured height for an estimate.
     func testTheEndNeedsARowLaidOutOnlyWhenTheLastRowIsOutOfView() {
-        func needs(_ row: CGRect?, visible: CGFloat = 812, reflowed: Bool = false) -> Bool {
-            TranscriptBlankSpace.endNeedsRowLayout(lastRow: row, visibleHeight: visible, reflowed: reflowed)
+        func needs(_ row: CGRect?, visible: CGFloat = 812, heightChanged: Bool = true, reflowed: Bool = false) -> Bool {
+            TranscriptBlankSpace.endNeedsRowLayout(lastRow: row, visibleHeight: visible, heightChanged: heightChanged, reflowed: reflowed)
         }
         let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
         XCTAssertFalse(needs(inView))
@@ -104,7 +104,7 @@ final class TranscriptBlankSpaceTests: XCTestCase {
     /// left the view showing no row).
     func testAWidthChangeAlwaysNeedsTheRowLaidOut() {
         let inView = CGRect(x: 0, y: 500, width: 600, height: 251)
-        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812, reflowed: true))
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(lastRow: inView, visibleHeight: 812, heightChanged: true, reflowed: true))
     }
 
     /// The heal is for rows that were laid out and then all dropped: a
@@ -119,6 +119,21 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         rows.forget("item-1")
         XCTAssertTrue(rows.frames.isEmpty)
         XCTAssertTrue(rows.hasReported)
+    }
+
+    /// Review at promote: the edge alone is for a reading where the visible
+    /// height changed. A reply growing at the end, or the layout moving the
+    /// offset, has no height change and takes the id scroll as before v0.26.4.
+    func testWithNoHeightChangeTheEndAlwaysNeedsTheRowLaidOut() {
+        let inView = CGRect(x: 0, y: 600, width: 600, height: 200)
+        XCTAssertTrue(TranscriptBlankSpace.endNeedsRowLayout(
+            lastRow: inView, visibleHeight: 812, heightChanged: false, reflowed: false))
+        XCTAssertFalse(TranscriptBlankSpace.endNeedsRowLayout(
+            lastRow: inView, visibleHeight: 812, heightChanged: true, reflowed: false))
+        XCTAssertFalse(TranscriptBlankSpace.heightChanged(from: nil, to: 812), "the first reading")
+        XCTAssertFalse(TranscriptBlankSpace.heightChanged(from: 812, to: 812.4))
+        XCTAssertTrue(TranscriptBlankSpace.heightChanged(from: 787, to: 812))
+        XCTAssertTrue(TranscriptBlankSpace.heightChanged(from: 812, to: 787))
     }
 
     /// A text-size change wraps every line again without changing the scroll
