@@ -89,7 +89,7 @@ def test_cli_docs_name_only_real_flags() -> None:
     for command in commands:
         words = command.split()
         # The positional each needs, as the README's own line gives it.
-        words += {"message": ["hi"], "config-value": ["brand.name"]}.get(words[0], [])
+        words += {"message": ["hi"], "config-value": ["brand.name"], "diagnostics": ["on"]}.get(words[0], [])
         assert not words[0].startswith("export-"), f"{command}: the export commands take --out, not --state"
         assert _parses([*words, "--state", "/tmp/x"]), f"{command} does not take --state"
     assert "--out" in text[text.index("## Command line") :][:3000]
