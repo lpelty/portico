@@ -30,6 +30,15 @@
   shown, dimmed, for what can never be edited there: a web page, an image, a
   PDF or another kind of file. A file that cannot be edited just now (too
   large, read-only, open elsewhere) keeps the dimmed button and its reason.
+- **Files shows what the agent just made, in every folder.** After a write,
+  a command or the end of a turn, the directories already listed are listed
+  again in every root (the vault and added folders too, not only the
+  session's own folder), so a new folder or file appears without the
+  refresh button. A shell command now counts as soon as it finishes.
+- **Folders left open in Files stay open.** Open folders are remembered by
+  where they are on disk: they are open again after a restart, and in a
+  later session or another chat that shows the same folder. A remembered
+  folder that is gone is dropped.
 - For the agent: `viewer_clear_marks` and `viewer_mark`'s `replace` now act
   on the page the viewer shows, not on every page; `viewer_look` lists that
   page's marks and says when the person has hidden them.

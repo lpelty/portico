@@ -156,19 +156,26 @@ extension AppModel {
 
     // MARK: open folders (v0.22.1 item 25)
 
-    private static func folderKey(_ root: String, _ path: String) -> String { "\(root)|\(path)" }
-
-    /// Whether the folder is open in this chat's Files tree.
-    func isFolderOpen(chat: Int, root: String, path: String) -> Bool {
-        openFolders[chat]?.contains(Self.folderKey(root, path)) ?? false
+    /// The folder's absolute path, through the chat's roots. A root the
+    /// chat does not have (nothing known about it yet) gives `nil`.
+    private func folderPath(chat: Int, root: String, path: String) -> String? {
+        guard let base = fileRoots(for: chat).first(where: { $0.name == root })?.path else { return nil }
+        let url = URL(fileURLWithPath: base, isDirectory: true)
+        return (path.isEmpty ? url : url.appendingPathComponent(path, isDirectory: true)).standardizedFileURL.path
     }
 
-    /// Open the folder in this chat's Files tree, or close it.
+    /// Whether the folder is open in the Files tree. A folder is open by
+    /// where it is on disk (v0.26.5), so the same folder is open in every
+    /// chat that shows it, after a restart and in a later session.
+    func isFolderOpen(chat: Int, root: String, path: String) -> Bool {
+        folderPath(chat: chat, root: root, path: path).map(openFolders.contains) ?? false
+    }
+
+    /// Open the folder in the Files tree, or close it, and remember it.
     func toggleFolder(chat: Int, root: String, path: String) {
-        let key = Self.folderKey(root, path)
-        var open = openFolders[chat] ?? []
-        if open.contains(key) { open.remove(key) } else { open.insert(key) }
-        openFolders[chat] = open
+        guard let key = folderPath(chat: chat, root: root, path: path) else { return }
+        if let index = openFolders.firstIndex(of: key) { openFolders.remove(at: index) } else { openFolders.append(key) }
+        settings.openFolders = openFolders
     }
 
     // MARK: bookmarks

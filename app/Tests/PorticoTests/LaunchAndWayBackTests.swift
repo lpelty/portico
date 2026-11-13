@@ -406,7 +406,7 @@ final class LaunchAndWayBackTests: XCTestCase {
         XCTAssertTrue(FolderRelist.triggers(finished("t4"), tool: lookup))
         XCTAssertTrue(FolderRelist.triggers(finished("t5"), tool: lookup))
         XCTAssertFalse(FolderRelist.triggers(finished("t2"), tool: lookup), "a read changes nothing")
-        XCTAssertFalse(FolderRelist.triggers(finished("t6"), tool: lookup), "a command waits for the turn's end")
+        XCTAssertTrue(FolderRelist.triggers(finished("t6"), tool: lookup), "a command can make folders and files (v0.26.5)")
         XCTAssertFalse(FolderRelist.triggers(finished("unknown"), tool: lookup))
         XCTAssertTrue(FolderRelist.triggers(.turnFinished(TurnFinished(chat: 3, turn: 1, outcome: .done)), tool: lookup))
         XCTAssertFalse(FolderRelist.triggers(.textDelta(TextDelta(chat: 3, turn: 1, text: "x")), tool: lookup))

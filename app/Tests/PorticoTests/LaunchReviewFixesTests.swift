@@ -168,19 +168,26 @@ final class LaunchReviewFixesTests: XCTestCase {
         XCTAssertEqual(sent.listings.map(\.path), [""], "listed again though a listing was out")
     }
 
-    func testARootHoldingTheSessionsFolderListsThePartInsideIt() async throws {
+    /// v0.26.5: every directory already listed is listed again, in every
+    /// root: the agent makes folders outside the session's own folder too.
+    func testARelistCoversEveryListedDirectoryInEveryRoot() async throws {
         let (model, sent) = try model()
-        launched(model, [session(3)], roots: [Root(name: "work", path: "/tmp")])
+        launched(model, [session(3)], roots: [Root(name: "work", path: "/tmp"), Root(name: "vault", path: "/vault")])
         for path in ["", "demo", "demo/notes", "other"] {
             model.listFiles(chat: 3, root: "work", path: path)
         }
+        model.listFiles(chat: 3, root: "vault", path: "")
+        model.listFiles(chat: 3, root: "vault", path: "notes")
         for request in sent.listings {
             model.apply(.filesList(FilesList(root: request.root, path: request.path, entries: [], chat: 3, id: request.id)))
         }
         sent.frames = []
         model.apply(.turnFinished(TurnFinished(chat: 3, turn: 1, outcome: .done, seq: 5)))
         await settle()
-        XCTAssertEqual(sent.listings.map(\.path), ["demo", "demo/notes"], "the folder and below, nothing else")
+        XCTAssertEqual(
+            sent.listings.map { "\($0.root):\($0.path)" },
+            ["vault:", "vault:notes", "work:", "work:demo", "work:demo/notes", "work:other"],
+            "what was listed, in both roots, and nothing that was not")
     }
 
     // MARK: - the viewer opens only on something
