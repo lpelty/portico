@@ -342,8 +342,9 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
         "Mark parts of the page in the viewer so the person can see what you mean: each mark is a numbered "
         "accent box with a short note (at most 60 characters). target is a ref from your last viewer_look "
         "(e12), or any text the person can see on the page. Tie each finding to a ref when you look, and mark by that ref, not by "
-        "guessing from the screenshot. Marks stay until cleared; numbers carry on across pages; viewer_look "
-        "lists the marks in use. replace clears all marks first." + QUEUE_NOTE,
+        "guessing from the screenshot. Marks belong to the page they are on and stay with it, across sessions, until "
+        "cleared; each page numbers its own from 1; the person can hide a page's marks, and new marks show them again. "
+        "viewer_look lists the marks on the page it looks at. replace clears that page's marks first." + QUEUE_NOTE,
         schema(
             {
                 "marks": {
@@ -383,7 +384,11 @@ def build_viewer_tools(bridge: ViewerBridge, chat: int) -> list[SdkMcpTool[Any]]
                 return _error(STOPPED)
             return await bridge.act(chat, "mark", wire, needs_marks=True)
 
-    @tool("viewer_clear_marks", "Clear every mark in the viewer." + QUEUE_NOTE, schema({}, []))
+    @tool(
+        "viewer_clear_marks",
+        "Clear every mark on the page the viewer shows, for good. Other pages keep theirs." + QUEUE_NOTE,
+        schema({}, []),
+    )
     async def viewer_clear_marks(args: dict[str, Any]) -> dict[str, Any]:
         async with bridge.queued(chat) as live:
             if not live:

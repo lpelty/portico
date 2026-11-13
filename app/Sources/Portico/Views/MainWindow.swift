@@ -242,7 +242,7 @@ struct MainToolbar: View {
             PanelToggle(
                 shown: model.sidebarShown, side: .leading,
                 help: model.sidebarVisible ? "Hide the sidebar" : "Show the sidebar"
-            ) { model.sidebarVisible.toggle() }
+            ) { model.toggleSidebar() }
             .disabled(model.awaitingFirstSession)
         case .brand:
             HStack(spacing: 8) {

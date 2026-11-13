@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The marks chip in the viewer header (v0.14 §3.4, AK5): a dot in the
-/// accent, the count in the header's current form and a chevron; a click
-/// lists the marks. Shown only while the chat has marks.
+/// The marks chip in the viewer header (v0.14 §3.4, AK5; v0.26.5): a dot
+/// in the accent (a crossed-out eye while the marks are hidden), the count
+/// of this page's marks and a chevron; a click lists them. Shown only on a
+/// page that has marks of its own.
 struct MarksChip: View {
     let chat: Int
     @ObservedObject var store: MarkStore
@@ -11,22 +12,23 @@ struct MarksChip: View {
     let accent: Color
     @State private var open = false
 
-    /// "4 marks on 2 pages, opens the list" (VoiceOver).
-    static func spokenLabel(count: Int, pages: Int) -> String {
-        "\(count) mark\(count == 1 ? "" : "s") on \(pages) page\(pages == 1 ? "" : "s"), opens the list"
+    /// "3 marks on this page, hidden, opens the list" (VoiceOver).
+    static func spokenLabel(count: Int, hidden: Bool) -> String {
+        "\(count) mark\(count == 1 ? "" : "s") on this page, \(hidden ? "hidden, " : "")opens the list"
     }
 
     var body: some View {
-        let list = store.marks[chat] ?? []
+        let page = store.current
+        let hidden = page.map(store.isHidden) ?? false
         Button {
             open.toggle()
         } label: {
-            MarksChipLabel(text: store.chipText(chat: chat, form: form), open: open, accent: accent)
+            MarksChipLabel(text: store.chipText(page: page, form: form), open: open, hidden: hidden, accent: accent)
         }
         .buttonStyle(.hover)
         .fixedSize()
         .tip("Marks: open the list")
-        .accessibilityLabel(Self.spokenLabel(count: list.count, pages: Set(list.map(\.page)).count))
+        .accessibilityLabel(Self.spokenLabel(count: page.map { store.marks(on: $0).count } ?? 0, hidden: hidden))
         .popover(isPresented: $open, arrowEdge: .bottom) {
             MarksList(chat: chat, store: store, agent: agent, accent: accent, onDone: { open = false })
                 .popoverSurface()
@@ -38,13 +40,23 @@ struct MarksChip: View {
 struct MarksChipLabel: View {
     let text: String
     var open = false
+    var hidden = false
     let accent: Color
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(accent)
-                .frame(width: 7, height: 7)
+            // The same 7-point slot either way, so the chip keeps its width.
+            ZStack {
+                if hidden {
+                    Image(systemName: "eye.slash")
+                        .font(Theme.iconFont(9, weight: .semibold))
+                        .foregroundStyle(Theme.text2)
+                        .fixedSize()
+                } else {
+                    Circle().fill(accent)
+                }
+            }
+            .frame(width: 7, height: 7)
             Text(text)
                 .scaledFont(12, monospacedDigit: true)
                 .foregroundStyle(Theme.text)
@@ -62,87 +74,130 @@ struct MarksChipLabel: View {
     }
 }
 
-/// The chip's list: the marks grouped by page, the page the viewer shows
-/// first as "THIS PAGE"; a row goes to its mark (its page first, when it
-/// is another), and "Clear all marks" takes them all away.
+/// The chip's list (v0.26.5): this page's marks under "THIS PAGE"; a row
+/// goes to its mark. The bottom row hides or shows the marks on the left
+/// and clears them on the right; Clear asks first, in the row's place.
 struct MarksList: View {
     let chat: Int
     @ObservedObject var store: MarkStore
-    @ObservedObject var agent: ViewerAgent
+    let agent: ViewerAgent
     let accent: Color
     let onDone: () -> Void
+    @State var asking = false
 
-    /// A row for VoiceOver (spec §6): "Mark 2, Start here, trail.html",
-    /// the label when there is no note, and "not on the page now" when lost.
+    /// A row for VoiceOver (spec §6): "Mark 2, Start here", the label when
+    /// there is no note, and "not on the page now" when lost.
     static func spokenLabel(for mark: Mark) -> String {
-        var parts = ["Mark \(mark.number)", mark.note.isEmpty ? mark.label : mark.note, mark.page.name]
+        var parts = ["Mark \(mark.number)", mark.note.isEmpty ? mark.label : mark.note]
         if !mark.found { parts.append("not on the page now") }
         return parts.joined(separator: ", ")
     }
 
+    /// "Clear the 3 marks on this page?"
+    static func question(count: Int) -> String {
+        count == 1 ? "Clear the mark on this page?" : "Clear the \(count) marks on this page?"
+    }
+
     var body: some View {
-        let current = agent.currentPage
+        let page = store.current
+        let list = page.map(store.marks(on:)) ?? []
+        let hidden = page.map(store.isHidden) ?? false
         VStack(alignment: .leading, spacing: 2) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(store.groups(chat: chat, current: current), id: \.page) { group in
-                        let here = group.page == current
-                        header(here ? "THIS PAGE" : group.page.name.uppercased(), aside: here ? nil : "choose one to go back")
-                        ForEach(group.marks) { mark in
-                            row(mark, here: here)
-                        }
+                    header("THIS PAGE")
+                    ForEach(list) { mark in
+                        row(mark, hidden: hidden)
                     }
                 }
             }
             .frame(maxHeight: 360)
             Divider()
                 .padding(.vertical, 4)
-            Button {
-                agent.clearMarks(chat: chat)
-                onDone()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "eraser")
-                        .font(Theme.iconFont(12))
-                        .frame(width: 18)
-                    Text("Clear all marks")
-                        .scaledFont(13)
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(accent)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
+            if asking {
+                confirmation(count: list.count)
+            } else {
+                actions(hidden: hidden)
             }
-            .buttonStyle(.hover)
         }
         .padding(6)
         .frame(width: 340)
     }
 
-    private func header(_ title: String, aside: String?) -> some View {
+    private func actions(hidden: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                agent.setMarksHidden(!hidden)
+            } label: {
+                action(hidden ? "Show marks" : "Hide marks", icon: hidden ? "eye" : "eye.slash", colour: Theme.text)
+            }
+            .buttonStyle(.hover)
+            Spacer(minLength: 8)
+            Button {
+                asking = true
+            } label: {
+                action("Clear marks", icon: "eraser", colour: Theme.deny)
+            }
+            .buttonStyle(.hover)
+        }
+    }
+
+    private func action(_ title: String, icon: String, colour: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(Theme.iconFont(12))
+                .frame(width: 18)
+            Text(title)
+                .scaledFont(13)
+        }
+        .foregroundStyle(colour)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+
+    private func confirmation(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Self.question(count: count))
+                .scaledFont(13, weight: .medium)
+                .foregroundStyle(Theme.text)
+            Text("The agent would have to mark them again.")
+                .scaledFont(12)
+                .foregroundStyle(Theme.text2)
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Cancel") { asking = false }
+                    .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                    .keyboardShortcut(.cancelAction)
+                Button("Clear marks") {
+                    agent.clearMarks()
+                    onDone()
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary(Theme.deny), compact: true))
+            }
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private func header(_ title: String) -> some View {
         HStack(spacing: 8) {
             Text(title)
                 .scaledFont(10, weight: .semibold)
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
-                .truncationMode(.middle)
             Spacer(minLength: 8)
-            if let aside {
-                Text(aside)
-                    .scaledFont(10)
-                    .foregroundStyle(Theme.text2)
-                    .lineLimit(1)
-                    .fixedSize()
-            }
         }
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .padding(.bottom, 2)
     }
 
-    private func row(_ mark: Mark, here: Bool) -> some View {
+    private func row(_ mark: Mark, hidden: Bool) -> some View {
         Button {
+            // Going to a mark shows the page's marks: there is nothing to go to otherwise.
+            agent.setMarksHidden(false)
             agent.goToMark(mark, chat: chat)
             onDone()
         } label: {
@@ -158,20 +213,15 @@ struct MarksList: View {
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if !mark.found {
+                    if !mark.found, !hidden {
                         Text("not on the page now")
                             .scaledFont(11)
                             .foregroundStyle(Theme.text2)
                     }
                 }
                 Spacer(minLength: 8)
-                if !here {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(Theme.iconFont(11, weight: .semibold))
-                        .foregroundStyle(Theme.text3)
-                }
             }
-            .opacity(mark.found ? 1 : 0.5)
+            .opacity(hidden || !mark.found ? 0.5 : 1)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
@@ -192,7 +242,7 @@ struct MarksChipMeasures: View {
 
     var body: some View {
         ForEach([MarkStore.ChipForm.full, .short, .count], id: \.self) { form in
-            MarksChipLabel(text: marks.chipText(chat: chat, form: form), accent: accent)
+            MarksChipLabel(text: marks.chipText(page: marks.current, form: form), accent: accent)
                 .headerMeasure { report(form, $0) }
         }
     }

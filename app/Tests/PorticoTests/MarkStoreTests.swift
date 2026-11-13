@@ -10,35 +10,46 @@ final class MarkStoreTests: XCTestCase {
     private func items(_ rows: [(String, String)]) -> [(label: String, note: String, locator: MarkLocator)] {
         rows.map { (label: $0.0, note: $0.1, locator: loc($0.0)) }
     }
-    private func seeded() -> MarkStore {
-        let store = MarkStore()
+    private func seeded(_ store: MarkStore = MarkStore()) -> MarkStore {
         store.add(chat: 1, page: p1, items: items([("Elevation chart", "No axis labels"), ("Start button", "Too small"), ("Share link", "Hidden")]),
                   call: "c1", toolUseId: "t1", replace: false)
         store.add(chat: 1, page: p2, items: items([("End hike", "Same as Pause, one tap away")]),
                   call: "c2", toolUseId: "t2", replace: false)
         return store
     }
+    private func home() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("marks-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
 
-    func testNumbersCarryAcrossPages() {
+    /// A page's marks are that page's: each page numbers from 1, whatever
+    /// chat made them.
+    func testEachPageNumbersFromOne() {
         let store = MarkStore()
         let a = store.add(chat: 1, page: p1, items: items([("a", ""), ("b", ""), ("c", "")]), call: "c1", toolUseId: nil, replace: false)
         let b = store.add(chat: 1, page: p2, items: items([("d", "")]), call: "c2", toolUseId: nil, replace: false)
+        let c = store.add(chat: 2, page: p1, items: items([("e", "")]), call: "c3", toolUseId: nil, replace: false)
         XCTAssertEqual(a.map(\.number), [1, 2, 3])
-        XCTAssertEqual(b.map(\.number), [4])
-        XCTAssertEqual(a.first?.id, 1)
+        XCTAssertEqual(b.map(\.number), [1])
+        XCTAssertEqual(c.map(\.number), [4], "another chat adds to the same page")
+        XCTAssertEqual(store.marks(on: p1).count, 4)
     }
 
-    func testReplaceStartsAtOne() {
+    func testReplaceIsThisPageOnly() {
         let store = seeded()
         let r = store.add(chat: 1, page: p2, items: items([("x", "")]), call: "c3", toolUseId: nil, replace: true)
         XCTAssertEqual(r.map(\.number), [1])
-        XCTAssertEqual(store.marks[1]?.count, 1)
+        XCTAssertEqual(store.marks(on: p2).count, 1)
+        XCTAssertEqual(store.marks(on: p1).count, 3, "the other page keeps its marks")
     }
 
-    func testClearRestartsAtOne() {
+    func testClearIsThisPageOnlyAndRestartsAtOne() {
         let store = seeded()
-        XCTAssertEqual(store.clear(chat: 1), 4)
-        XCTAssertEqual(store.clear(chat: 1), 0)
+        XCTAssertEqual(store.clear(page: p1), 3)
+        XCTAssertEqual(store.clear(page: p1), 0)
+        XCTAssertEqual(store.marks(on: p2).count, 1, "the other page keeps its marks")
         let r = store.add(chat: 1, page: p1, items: items([("x", "")]), call: "c3", toolUseId: nil, replace: false)
         XCTAssertEqual(r.map(\.number), [1])
     }
@@ -51,42 +62,41 @@ final class MarkStoreTests: XCTestCase {
         XCTAssertTrue(cut.hasSuffix("…"))
     }
 
-    func testChipText() {
-        let one = MarkStore()
-        one.add(chat: 1, page: p1, items: items([("a", "")]), call: "c", toolUseId: nil, replace: false)
-        XCTAssertEqual(one.chipText(chat: 1, form: .full), "1 mark")
+    /// The chip counts the page's own marks and never mentions other pages.
+    func testChipTextIsThisPagesCount() {
         let store = seeded()
-        XCTAssertEqual(store.chipText(chat: 1, form: .full), "4 marks · 2 pages")
-        XCTAssertEqual(store.chipText(chat: 1, form: .short), "4 marks")
-        XCTAssertEqual(store.chipText(chat: 1, form: .count), "4")
+        XCTAssertEqual(store.chipText(page: p1, form: .full), "3 marks")
+        XCTAssertEqual(store.chipText(page: p1, form: .short), "3 marks")
+        XCTAssertEqual(store.chipText(page: p1, form: .count), "3")
+        XCTAssertEqual(store.chipText(page: p2, form: .full), "1 mark")
+        XCTAssertEqual(store.chipText(page: MarkPage(key: "/x/other.html", name: "other.html"), form: .full), "")
+        XCTAssertEqual(store.chipText(page: nil, form: .full), "")
     }
 
-    func testGroupsThisPageFirst() {
-        let groups = seeded().groups(chat: 1, current: p2)
-        XCTAssertEqual(groups.map(\.page), [p2, p1])
-        XCTAssertEqual(groups.map { $0.marks.map(\.number) }, [[4], [1, 2, 3]])
-    }
-
-    func testLookText() {
+    func testLookTextIsThisPages() {
         let store = seeded()
-        XCTAssertEqual(store.lookText(chat: 1, current: p2), """
+        XCTAssertEqual(store.lookText(current: p2), """
         Marks:
-        - 4 · End hike — Same as Pause, one tap away (this page)
-        - 1 · Elevation chart — No axis labels (trail-detail.html)
-        - 2 · Start button — Too small (trail-detail.html)
-        - 3 · Share link — Hidden (trail-detail.html)
+        - 1 · End hike — Same as Pause, one tap away
         """)
-        XCTAssertNil(MarkStore().lookText(chat: 1, current: p2))
+        XCTAssertNil(store.lookText(current: MarkPage(key: "/x/other.html", name: "other.html")))
+        XCTAssertNil(store.lookText(current: nil))
     }
 
-    func testLookTextNotFoundAndEmptyNote() {
+    func testLookTextNotFoundEmptyNoteAndHidden() {
         let store = MarkStore()
         store.add(chat: 1, page: p1, items: items([("Chart", ""), ("Nav", "Odd")]), call: "c", toolUseId: nil, replace: false)
-        store.setFound(chat: 1, page: p1, found: [2: false])
-        XCTAssertEqual(store.lookText(chat: 1, current: p1), """
+        store.setFound(page: p1, found: [2: false])
+        XCTAssertEqual(store.lookText(current: p1), """
         Marks:
-        - 1 · Chart (this page)
-        - 2 · Nav — Odd (this page) — not on the page now
+        - 1 · Chart
+        - 2 · Nav — Odd — not on the page now
+        """)
+        store.setHidden(true, page: p1)
+        XCTAssertEqual(store.lookText(current: p1), """
+        Marks (hidden by the person, not drawn on the page now):
+        - 1 · Chart
+        - 2 · Nav — Odd
         """)
     }
 
@@ -94,35 +104,63 @@ final class MarkStoreTests: XCTestCase {
         let store = seeded()
         var published = 0
         let sub = store.$marks.dropFirst().sink { _ in published += 1 }
-        store.setFound(chat: 1, page: p1, found: [1: true, 2: true])
+        store.setFound(page: p1, found: [1: true, 2: true])
         XCTAssertEqual(published, 0)
-        store.setFound(chat: 1, page: p1, found: [1: false])
+        store.setFound(page: p1, found: [1: false])
         XCTAssertEqual(published, 1)
-        store.setFound(chat: 1, page: p1, found: [1: false])
+        store.setFound(page: p1, found: [1: false])
         XCTAssertEqual(published, 1)
         sub.cancel()
     }
 
-    func testShowAgainRestoresOriginalNumbersWhenFree() {
+    /// Hidden is per page, keeps the marks and their count, and new marks
+    /// on a hidden page show it again.
+    func testHideAndShowKeepTheMarks() {
         let store = seeded()
-        store.clear(chat: 1)
-        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "t1").map(\.number), [1, 2, 3])
-        XCTAssertEqual(store.marks[1]?.count, 3)
-        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "nope"), [])
+        store.setHidden(true, page: p1)
+        XCTAssertTrue(store.isHidden(p1))
+        XCTAssertFalse(store.isHidden(p2))
+        XCTAssertEqual(store.marks(on: p1).map(\.number), [1, 2, 3])
+        XCTAssertEqual(store.chipText(page: p1, form: .full), "3 marks")
+        store.setHidden(false, page: p1)
+        XCTAssertFalse(store.isHidden(p1))
+        store.setHidden(true, page: p1)
+        store.add(chat: 1, page: p1, items: items([("x", "")]), call: "c3", toolUseId: nil, replace: false)
+        XCTAssertFalse(store.isHidden(p1), "new marks are seen")
+        store.setHidden(true, page: MarkPage(key: "/x/none.html", name: "none.html"))
+        XCTAssertEqual(store.hidden, [], "a page without marks has nothing to hide")
     }
 
-    func testShowAgainRenumbersWhenTaken() {
+    /// Show again shows the call's page and gives its first mark to go to.
+    func testShowAgainShowsHiddenMarks() {
         let store = seeded()
-        store.clear(chat: 1)
-        store.add(chat: 1, page: p2, items: items([("x", "")]), call: "c3", toolUseId: "t3", replace: false)
-        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "t1").map(\.number), [2, 3, 4])
+        store.setHidden(true, page: p1)
+        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "t1")?.number, 1)
+        XCTAssertFalse(store.isHidden(p1))
+        XCTAssertNil(store.showAgain(chat: 1, toolUseId: "nope"))
+        XCTAssertNil(store.showAgain(chat: 2, toolUseId: "t1"), "a call belongs to its chat")
     }
 
-    func testShowAgainWhenStillPresentChangesNothing() {
+    /// Clear is final: the call's record loses the marks, so the chat's
+    /// row offers no Show again and none brings them back.
+    func testClearIsFinal() {
         let store = seeded()
-        let again = store.showAgain(chat: 1, toolUseId: "t1")
-        XCTAssertEqual(again.map(\.number), [1, 2, 3])
-        XCTAssertEqual(store.marks[1]?.count, 4)
+        store.clear(page: p1)
+        XCTAssertNil(store.showAgain(chat: 1, toolUseId: "t1"))
+        XCTAssertEqual(store.call(chat: 1, toolUseId: "t1")?.marks, [])
+        XCTAssertEqual(store.call(chat: 1, toolUseId: "t2")?.marks.count, 1)
+        XCTAssertTrue(store.marks(on: p1).isEmpty)
+    }
+
+    /// Replace clears as Clear does: the replaced call's row offers no
+    /// Show again, and none goes to another call's marks.
+    func testReplaceIsFinalForTheReplacedCalls() {
+        let store = seeded()
+        store.add(chat: 1, page: p1, items: items([("x", "")]), call: "c3", toolUseId: "t3", replace: true)
+        XCTAssertEqual(store.call(chat: 1, toolUseId: "t1")?.marks, [])
+        XCTAssertNil(store.showAgain(chat: 1, toolUseId: "t1"))
+        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "t3")?.call, "c3")
+        XCTAssertEqual(store.call(chat: 1, toolUseId: "t2")?.marks.count, 1, "another page's call is untouched")
     }
 
     /// A page is its key: the same file reached under another name (a
@@ -137,17 +175,125 @@ final class MarkStoreTests: XCTestCase {
         store.add(chat: 1, page: space, items: items([("a", "")]), call: "c1", toolUseId: nil, replace: false)
         let more = store.add(chat: 1, page: file, items: items([("b", "")]), call: "c2", toolUseId: nil, replace: false)
         XCTAssertEqual(more.first?.page.name, "Brief", "a known key keeps its stored name")
-        XCTAssertEqual(store.marks(chat: 1, on: file).count, 2)
-        XCTAssertEqual(store.groups(chat: 1, current: file).count, 1)
-        XCTAssertTrue(store.lookText(chat: 1, current: file)?.contains("(this page)") == true)
-        store.setFound(chat: 1, page: file, found: [1: false])
-        XCTAssertEqual(store.marks[1]?.first?.found, false)
+        XCTAssertEqual(store.marks(on: file).count, 2)
+        store.setFound(page: file, found: [1: false])
+        XCTAssertEqual(store.marks(on: file).first?.found, false)
     }
 
-    func testEndSessionClears() {
+    // MARK: kept on disk (v0.26.5)
+
+    /// Marks, their numbers and whether they were hidden come back in a
+    /// new store reading the same home, as after a restart.
+    func testMarksComeBackAsTheyWereLeft() throws {
+        let home = try home()
+        let first = MarkStore()
+        first.keep(in: home)
+        _ = seeded(first)
+        first.setHidden(true, page: p1)
+        first.setFound(page: p2, found: [1: false])
+
+        let second = MarkStore()
+        second.keep(in: home)
+        XCTAssertEqual(second.marks(on: p1).map(\.number), [1, 2, 3])
+        XCTAssertEqual(second.marks(on: p1).map(\.note), ["No axis labels", "Too small", "Hidden"])
+        XCTAssertEqual(second.marks(on: p1).first?.page.name, "trail-detail.html")
+        XCTAssertEqual(second.marks(on: p1).first?.locator, loc("Elevation chart"))
+        XCTAssertTrue(second.isHidden(p1), "hidden marks come back hidden")
+        XCTAssertFalse(second.isHidden(p2), "shown marks come back shown")
+        XCTAssertEqual(second.marks(on: p2).first?.found, true, "found is read from the page again")
+        let more = second.add(chat: 9, page: p1, items: items([("x", "")]), call: "c9", toolUseId: nil, replace: false)
+        XCTAssertEqual(more.map(\.number), [4])
+    }
+
+    func testClearedMarksAreGoneFromDisk() throws {
+        let home = try home()
+        let first = MarkStore()
+        first.keep(in: home)
+        _ = seeded(first)
+        first.clear(page: p1)
+        let second = MarkStore()
+        second.keep(in: home)
+        XCTAssertTrue(second.marks(on: p1).isEmpty)
+        XCTAssertEqual(second.marks(on: p2).count, 1)
+    }
+
+    /// The file is the person's alone, and is made only once there is a mark.
+    func testFileIsPrivate() throws {
+        let home = try home()
+        let file = home.appendingPathComponent(MarkStore.fileName)
+        let store = MarkStore()
+        store.keep(in: home)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "nothing is written until there is a mark")
+        _ = seeded(store)
+        let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(mode.intValue & 0o777, 0o600)
+
+    }
+
+    /// A file that cannot be read, or that a later version wrote, is left
+    /// exactly as it is: the run works in memory and writes nothing.
+    func testAnUnreadableFileIsLeftUntouched() throws {
+        for content in ["not json", #"{"version":2,"pages":[{"key":"/a","name":"a","hidden":false,"marks":[{"number":1}]}]}"#] {
+            let home = try home()
+            let file = home.appendingPathComponent(MarkStore.fileName)
+            try Data(content.utf8).write(to: file)
+            let store = MarkStore()
+            store.keep(in: home)
+            XCTAssertTrue(store.all.isEmpty)
+            _ = seeded(store)
+            store.setHidden(true, page: p1)
+            store.clear(page: p2)
+            XCTAssertEqual(store.marks(on: p1).count, 3, "the marks work in memory")
+            XCTAssertEqual(try Data(contentsOf: file), Data(content.utf8), "the file is as it was")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: home.path), [MarkStore.fileName], "nothing else is made")
+        }
+    }
+
+    /// A web page's marks are not written to disk: its address can carry a
+    /// token. They work in memory, as before v0.26.5.
+    func testWebPageMarksStayInMemory() throws {
+        let home = try home()
+        let web = MarkPage(key: "https://example.com/p?token=abc", name: "p")
+        let store = MarkStore()
+        store.keep(in: home)
+        store.add(chat: 1, page: web, items: items([("a", "")]), call: "c1", toolUseId: nil, replace: false)
+        store.add(chat: 1, page: p1, items: items([("b", "")]), call: "c2", toolUseId: nil, replace: false)
+        XCTAssertEqual(store.marks(on: web).count, 1)
+        let text = try String(contentsOf: home.appendingPathComponent(MarkStore.fileName), encoding: .utf8)
+        XCTAssertFalse(text.contains("token"), text)
+        XCTAssertFalse(text.contains("example.com"), text)
+        let again = MarkStore()
+        again.keep(in: home)
+        XCTAssertTrue(again.marks(on: web).isEmpty)
+        XCTAssertEqual(again.marks(on: p1).count, 1)
+    }
+
+    /// A page this Mac serves to itself (a prototype on localhost) keeps
+    /// its marks across a restart; with a query or a sign-in in the
+    /// address, or on any other host, it does not.
+    func testLocalhostPagesAreKeptWithoutQueryOrSignIn() throws {
+        for key in ["http://localhost:3000/trail", "http://127.0.0.1:5173/", "https://localhost/app/page", "http://[::1]:8080/x", "/x/a.html"] {
+            XCTAssertTrue(MarkStore.isKept(key), key)
+        }
+        for key in ["http://localhost:3000/trail?token=abc", "http://user:pw@localhost:3000/", "https://example.com/p",
+                    "http://localhost.example.com/", "http://192.168.1.5:3000/", "file-ish", "ftp://localhost/x"] {
+            XCTAssertFalse(MarkStore.isKept(key), key)
+        }
+        let home = try home()
+        let local = MarkPage(key: "http://localhost:3000/trail", name: "trail")
+        let store = MarkStore()
+        store.keep(in: home)
+        store.add(chat: 1, page: local, items: items([("a", "note")]), call: "c1", toolUseId: nil, replace: false)
+        store.setHidden(true, page: local)
+        let again = MarkStore()
+        again.keep(in: home)
+        XCTAssertEqual(again.marks(on: local).map(\.note), ["note"])
+        XCTAssertTrue(again.isHidden(local))
+    }
+
+    /// Without a home (a test, or no supervisor) the store works in memory.
+    func testWithoutAHomeNothingIsWritten() {
         let store = seeded()
-        store.endSession(chat: 1)
-        XCTAssertNil(store.lookText(chat: 1, current: p1))
-        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "t1"), [])
+        XCTAssertEqual(store.all.count, 4)
     }
 }

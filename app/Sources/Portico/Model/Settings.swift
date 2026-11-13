@@ -99,6 +99,7 @@ final class Settings: ObservableObject {
         static let tokenFile = "tokenFile"
         static let lastFolder = "lastFolder"
         static let pinnedFiles = "pinnedFiles"
+        static let openFolders = "openFolders"
         static let extraFolders = "extraFolders"
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
@@ -202,6 +203,15 @@ final class Settings: ObservableObject {
     @Published var pinnedFiles: [String] {
         didSet { defaults.set(pinnedFiles, forKey: Key.pinnedFiles) }
     }
+
+    /// The folders left open in the Files tree, by absolute path (v0.26.5),
+    /// so they are open again after a restart and in a later session.
+    /// At most `openFoldersLimit`, the oldest dropped first.
+    var openFolders: [String] {
+        get { defaults.stringArray(forKey: Key.openFolders) ?? [] }
+        set { defaults.set(Array(newValue.suffix(Self.openFoldersLimit)), forKey: Key.openFolders) }
+    }
+    static let openFoldersLimit = 500
 
     /// Folders the person added to the Files pane (Settings › General › Also
     /// show in Files, v0.19 §4.2), by absolute path, in the order added.

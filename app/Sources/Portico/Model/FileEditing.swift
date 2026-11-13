@@ -19,6 +19,17 @@ enum Editability: Equatable {
         if case .editable = self { return true }
         return false
     }
+
+    /// Whether the viewer shows the Edit button at all (v0.26.5): not for
+    /// what can never be edited there (a web page, an image, a PDF, another
+    /// kind of file), as a button that cannot act on the item is not shown.
+    /// A file that could be edited but not now (too large, no permission,
+    /// open for editing elsewhere, a table, a space) keeps the dimmed
+    /// button, whose tip says why.
+    var offersEdit: Bool {
+        if case .readOnly(let reason) = self { return reason != FileEditing.webReason && reason != FileEditing.kindReason }
+        return true
+    }
 }
 
 /// A file's modification date and size: what the app saw when it loaded or

@@ -168,19 +168,63 @@ final class LaunchReviewFixesTests: XCTestCase {
         XCTAssertEqual(sent.listings.map(\.path), [""], "listed again though a listing was out")
     }
 
-    func testARootHoldingTheSessionsFolderListsThePartInsideIt() async throws {
-        let (model, sent) = try model()
-        launched(model, [session(3)], roots: [Root(name: "work", path: "/tmp")])
+    private func listTwoRoots(_ model: AppModel, _ sent: Sent) {
         for path in ["", "demo", "demo/notes", "other"] {
             model.listFiles(chat: 3, root: "work", path: path)
         }
+        model.listFiles(chat: 3, root: "vault", path: "")
+        model.listFiles(chat: 3, root: "vault", path: "notes")
         for request in sent.listings {
             model.apply(.filesList(FilesList(root: request.root, path: request.path, entries: [], chat: 3, id: request.id)))
         }
+    }
+
+    /// v0.26.5: a relist asks for each root's top level and the folders
+    /// open now, in every root (the agent makes folders outside the
+    /// session's own folder too). A listed folder that is closed is not
+    /// asked for; its listing is forgotten, to be listed when opened.
+    func testARelistAsksForTheRootsAndTheOpenFoldersInEveryRoot() async throws {
+        let (model, sent) = try model()
+        launched(model, [session(3)], roots: [Root(name: "work", path: "/tmp"), Root(name: "vault", path: "/vault")])
+        listTwoRoots(model, sent)
+        model.toggleFolder(chat: 3, root: "work", path: "demo")
+        model.toggleFolder(chat: 3, root: "vault", path: "notes")
+        XCTAssertTrue(model.isFolderOpen(chat: 3, root: "work", path: "demo"), "the folders are open")
         sent.frames = []
         model.apply(.turnFinished(TurnFinished(chat: 3, turn: 1, outcome: .done, seq: 5)))
         await settle()
-        XCTAssertEqual(sent.listings.map(\.path), ["demo", "demo/notes"], "the folder and below, nothing else")
+        XCTAssertEqual(
+            sent.listings.map { "\($0.root):\($0.path)" },
+            ["vault:", "vault:notes", "work:", "work:demo"],
+            "the roots and the open folders, and no closed folder")
+        XCTAssertNil(model.fileEntries(chat: 3, root: "work", path: "other"), "a closed folder's listing is forgotten")
+        XCTAssertNil(model.fileEntries(chat: 3, root: "work", path: "demo/notes"))
+        XCTAssertNotNil(model.fileEntries(chat: 3, root: "work", path: "demo"), "an open folder keeps its rows until the answer")
+    }
+
+    /// v0.26.5: a folder whose relist is refused (it is gone) loses its
+    /// listing, shows the refusal, and is not asked for again.
+    func testARefusedRelistIsNotAskedForAgain() async throws {
+        let (model, sent) = try model()
+        launched(model, [session(3)], roots: [Root(name: "work", path: "/tmp"), Root(name: "vault", path: "/vault")])
+        listTwoRoots(model, sent)
+        model.toggleFolder(chat: 3, root: "work", path: "demo")
+        sent.frames = []
+        model.apply(.turnFinished(TurnFinished(chat: 3, turn: 1, outcome: .done, seq: 5)))
+        await settle()
+        for request in sent.listings {
+            if request.path == "demo" {
+                model.apply(.error(ErrorMessage(code: "files.not_found", message: "No such directory", chat: 3, id: request.id)))
+            } else {
+                model.apply(.filesList(FilesList(root: request.root, path: request.path, entries: [], chat: 3, id: request.id)))
+            }
+        }
+        XCTAssertNil(model.fileEntries(chat: 3, root: "work", path: "demo"))
+        XCTAssertEqual(model.fileListError(chat: 3, root: "work", path: "demo"), "No such directory")
+        sent.frames = []
+        model.apply(.turnFinished(TurnFinished(chat: 3, turn: 2, outcome: .done, seq: 9)))
+        await settle()
+        XCTAssertEqual(sent.listings.map { "\($0.root):\($0.path)" }, ["vault:", "work:"], "the refused folder is left alone")
     }
 
     // MARK: - the viewer opens only on something

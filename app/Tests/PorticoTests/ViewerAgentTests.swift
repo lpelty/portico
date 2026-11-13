@@ -955,7 +955,7 @@ final class ViewerAgentTests: XCTestCase {
         _ = await rig.agent.perform(act(.look))
         let result = await rig.agent.perform(act(.mark, markArgs([("e2", "Start here"), ("e3", nil)], toolUseId: "tu-1")))
         XCTAssertTrue(result.ok, result.text)
-        let marks = rig.model.markStore.marks[1] ?? []
+        let marks = rig.model.markStore.all
         XCTAssertEqual(marks.count, 2)
         XCTAssertEqual(marks.map(\.number), [1, 2])
         guard marks.count == 2 else { return }
@@ -975,7 +975,7 @@ final class ViewerAgentTests: XCTestCase {
         let ten = await rig.agent.perform(act(.mark, markArgs(Array(repeating: ("Save trail", nil), count: 10))))
         XCTAssertFalse(ten.ok)
         XCTAssertEqual(ten.text, "Mark 1 to 9 things at a time.")
-        XCTAssertNil(rig.model.markStore.marks[1])
+        XCTAssertTrue(rig.model.markStore.all.isEmpty)
     }
 
     func testMarkActPartlyNotFound() async throws {
@@ -985,7 +985,7 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertTrue(result.ok, result.text)
         XCTAssertTrue(result.text.hasPrefix("Marked 1 · "), result.text)
         XCTAssertTrue(result.text.hasSuffix(" No visible text matches 'nonexistent words'."), result.text)
-        XCTAssertEqual(rig.model.markStore.marks[1]?.count, 1)
+        XCTAssertEqual(rig.model.markStore.all.count, 1)
     }
 
     func testMarkActNoneFound() async throws {
@@ -994,7 +994,7 @@ final class ViewerAgentTests: XCTestCase {
         let result = await rig.agent.perform(act(.mark, markArgs([("nonexistent words", nil)])))
         XCTAssertFalse(result.ok)
         XCTAssertEqual(result.text, "No visible text matches 'nonexistent words'")
-        XCTAssertNil(rig.model.markStore.marks[1])
+        XCTAssertTrue(rig.model.markStore.all.isEmpty)
     }
 
     func testMarkOnImagePane() async throws {
@@ -1018,7 +1018,7 @@ final class ViewerAgentTests: XCTestCase {
         _ = await rig.agent.perform(act(.look))
         let result = await rig.agent.perform(act(.mark, markArgs([("e1", "This one")])))
         XCTAssertTrue(result.ok, result.text)
-        XCTAssertEqual(rig.model.markStore.marks[1]?.first?.page, MarkPage(key: "https://example.com/trails", name: "trails"))
+        XCTAssertEqual(rig.model.markStore.all.first?.page, MarkPage(key: "https://example.com/trails", name: "trails"))
     }
 
     func testClearMarksAct() async throws {
@@ -1044,7 +1044,6 @@ final class ViewerAgentTests: XCTestCase {
         _ = await rig.agent.perform(act(.mark, markArgs([("e2", "Start here")])))
         let look = await rig.agent.perform(act(.look))
         XCTAssertTrue(look.text.contains("\n\nMarks:\n- 1 · "), look.text)
-        XCTAssertTrue(look.text.contains("(this page)"), look.text)
     }
 
     /// Marks on A; follow the link to B; Back. WebKit fires `didFinish`
@@ -1083,11 +1082,17 @@ final class ViewerAgentTests: XCTestCase {
             to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
         _ = await rig.agent.perform(act(.look))
         _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)])))
+        let found = await rig.agent.page(of: rig.view)
+        let pageA = try XCTUnwrap(found)
         _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
         let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
         XCTAssertTrue(onB)
+        // The act clears the page it is on (v0.26.5): B has none, A keeps its two.
         let cleared = await rig.agent.perform(act(.clearMarks))
-        XCTAssertEqual(cleared.text, "Cleared 2 marks.")
+        XCTAssertEqual(cleared.text, "Cleared 0 marks.")
+        XCTAssertEqual(rig.model.markStore.marks(on: pageA).count, 2)
+        // A's marks cleared while the viewer is away from it.
+        XCTAssertEqual(rig.model.markStore.clear(page: pageA), 2)
         rig.view.goBack()
         let back = await waitFor { rig.view.url?.lastPathComponent == "trail-detail.html" && !rig.view.isLoading }
         XCTAssertTrue(back)
@@ -1126,25 +1131,40 @@ final class ViewerAgentTests: XCTestCase {
         try XCTUnwrap(rig.coordinator).apply(.html(rig.file), revision: "edited", to: rig.view)
         let reloaded = await waitFor { rig.view.url != before && !rig.view.isLoading }
         XCTAssertTrue(reloaded)
-        let flagged = await waitFor { rig.model.markStore.marks[1]?.contains { !$0.found } == true }
+        let flagged = await waitFor { rig.model.markStore.all.contains { !$0.found } == true }
         XCTAssertTrue(flagged)
         let boxes = try await boxCount(in: rig.view)
         XCTAssertEqual(boxes, 1)
-        XCTAssertEqual(rig.model.markStore.marks[1]?.map(\.found), [true, false])
+        XCTAssertEqual(rig.model.markStore.all.map(\.found), [true, false])
     }
 
-    /// Clear all and Show again from the list redraw through the store.
-    func testClearAllAndShowAgainRedraw() async throws {
+    /// Hide, Show, Show again and Clear from the list redraw through the
+    /// store (v0.26.5): hidden marks leave the page and stay in the store,
+    /// and cleared marks do not come back.
+    func testHideShowAndClearRedraw() async throws {
         let rig = try rig(Self.trailPage)
         _ = await rig.agent.perform(act(.look))
         _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)], toolUseId: "tu-7")))
-        rig.agent.clearMarks(chat: 1)
-        let gone = try await waitFor { try await self.boxCount(in: rig.view) == 0 }
-        XCTAssertTrue(gone, "Clear all takes the boxes away")
+        rig.agent.setMarksHidden(true)
+        let hidden = try await waitFor { try await self.boxCount(in: rig.view) == 0 }
+        XCTAssertTrue(hidden, "Hide marks takes the boxes away")
+        XCTAssertEqual(rig.model.markStore.all.map(\.number), [1, 2], "and keeps the marks")
+        rig.agent.setMarksHidden(false)
+        let shown = try await waitFor { try await self.boxCount(in: rig.view) == 2 }
+        XCTAssertTrue(shown, "Show marks draws them again")
+        rig.agent.setMarksHidden(true)
+        _ = try await waitFor { try await self.boxCount(in: rig.view) == 0 }
         rig.agent.showAgain(toolUseId: "tu-7", chat: 1)
         let back = try await waitFor { try await self.boxCount(in: rig.view) == 2 }
-        XCTAssertTrue(back, "Show again draws them again")
-        XCTAssertEqual(rig.model.markStore.marks[1]?.map(\.number), [1, 2])
+        XCTAssertTrue(back, "Show again on the chat's row shows hidden marks")
+        rig.agent.clearMarks()
+        let gone = try await waitFor { try await self.boxCount(in: rig.view) == 0 }
+        XCTAssertTrue(gone, "Clear marks takes the boxes away")
+        rig.agent.showAgain(toolUseId: "tu-7", chat: 1)
+        try await Task.sleep(for: .milliseconds(300))
+        let still = try await boxCount(in: rig.view)
+        XCTAssertEqual(still, 0, "cleared marks do not come back")
+        XCTAssertTrue(rig.model.markStore.all.isEmpty)
     }
 
     /// A mark on a page the viewer has left: going to it loads that page
@@ -1155,7 +1175,7 @@ final class ViewerAgentTests: XCTestCase {
             to: rig.file.deletingLastPathComponent().appendingPathComponent("b.html"), atomically: true, encoding: .utf8)
         _ = await rig.agent.perform(act(.look))
         _ = await rig.agent.perform(act(.mark, markArgs([("e2", nil), ("e3", nil)])))
-        let mark = try XCTUnwrap(rig.model.markStore.marks[1]?.last)
+        let mark = try XCTUnwrap(rig.model.markStore.all.last)
         _ = try await evaluate("document.querySelector('a').click(); true", in: rig.view)
         let onB = await waitFor { rig.view.url?.lastPathComponent == "b.html" && !rig.view.isLoading }
         XCTAssertTrue(onB)
@@ -1233,7 +1253,7 @@ final class ViewerAgentTests: XCTestCase {
         coordinator.apply(spaceLoad, to: view)
         let marked = await agent.perform(act(.mark, markArgs([("Route notes", nil)])))
         XCTAssertTrue(marked.ok, marked.text)
-        let mark = try XCTUnwrap(model.markStore.marks[1]?.first)
+        let mark = try XCTUnwrap(model.markStore.all.first)
         XCTAssertEqual(mark.page.name, "Brief")
 
         // Leave the page, close the space, and go back to the mark.
@@ -1257,9 +1277,9 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(page?.key, mark.page.key)
         let scrolled = try await waitFor { (try await self.evaluate("window.scrollY", in: view) as? Double ?? 0) > 100 }
         XCTAssertTrue(scrolled, "it scrolled to the mark")
-        let look = model.markStore.lookText(chat: 1, current: page)
-        XCTAssertTrue(look?.contains("(this page)") == true, look ?? "")
-        XCTAssertEqual(model.markStore.marks[1]?.first?.found, true)
+        let look = model.markStore.lookText(current: page)
+        XCTAssertTrue(look?.contains("- 1 · ") == true, look ?? "")
+        XCTAssertEqual(model.markStore.all.first?.found, true)
         let text = try await evaluate("document.body.innerText", in: view) as? String ?? ""
         XCTAssertTrue(text.contains("Sam"), text)
         XCTAssertFalse(text.contains("compass"), "the space's front matter stays hidden")
@@ -1285,7 +1305,7 @@ final class ViewerAgentTests: XCTestCase {
         coordinator.apply(try XCTUnwrap(WebPane.Load(ArtifactPresentation(artifact: try XCTUnwrap(model.openSpaceArtifact)))), to: view)
         let result = await agent.perform(act(.mark, markArgs([("Morning brief", nil)])))
         XCTAssertTrue(result.ok, result.text)
-        XCTAssertEqual(model.markStore.marks[1]?.first?.page, MarkPage(key: file.standardizedFileURL.resolvingSymlinksInPath().path, name: "Brief"))
+        XCTAssertEqual(model.markStore.all.first?.page, MarkPage(key: file.standardizedFileURL.resolvingSymlinksInPath().path, name: "Brief"))
     }
 
     // MARK: - final fix wave (v0.14)
@@ -1320,7 +1340,7 @@ final class ViewerAgentTests: XCTestCase {
         _ = await rig.agent.perform(act(.look))
         let marked = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Share trail", nil)], toolUseId: "tu-c")))
         XCTAssertTrue(marked.ok, marked.text)
-        rig.agent.clearMarks(chat: 1)
+        rig.agent.setMarksHidden(true)
         // Collapse: SwiftUI takes the pane down.
         rig.model.setViewer(visible: false, for: 1)
         rig.agent.detach(rig.view)
@@ -1393,7 +1413,7 @@ final class ViewerAgentTests: XCTestCase {
         _ = await rig.agent.perform(act(.look))
         let marked = await rig.agent.perform(act(.mark, markArgs([("Download route", "Here")])))
         XCTAssertTrue(marked.ok, marked.text)
-        let mark = try XCTUnwrap(rig.model.markStore.marks[1]?.first)
+        let mark = try XCTUnwrap(rig.model.markStore.all.first)
 
         // From another web page.
         rig.model.show(first, in: 1)
@@ -1446,7 +1466,7 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertTrue(back)
         let drawn = try await waitFor(.seconds(5)) { try await self.boxCount(in: rig.view) == 1 }
         XCTAssertTrue(drawn, "the late element gets its box")
-        let found = await waitFor(.seconds(5)) { rig.model.markStore.marks[1]?.first?.found == true }
+        let found = await waitFor(.seconds(5)) { rig.model.markStore.all.first?.found == true }
         XCTAssertTrue(found, "the store hears it was found")
         // Settled: no redraw loop keeps the store publishing.
         var publishes = 0
@@ -1458,7 +1478,9 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertEqual(still, 1)
     }
 
-    /// Fix 5: clearing is store-only, so it works with nothing open.
+    /// Marks belong to their page (v0.26.5): with nothing open there is no
+    /// page to clear, so the act answers none cleared and other pages'
+    /// marks stay.
     func testClearMarksWithNothingOpen() async throws {
         let (model, _) = model()
         let agent = ViewerAgent(model: model)
@@ -1469,8 +1491,8 @@ final class ViewerAgentTests: XCTestCase {
         XCTAssertNil(model.shownArtifact(for: 1))
         let cleared = await agent.perform(act(.clearMarks))
         XCTAssertTrue(cleared.ok, cleared.text)
-        XCTAssertEqual(cleared.text, "Cleared 1 mark.")
-        XCTAssertNil(model.markStore.marks[1])
+        XCTAssertEqual(cleared.text, "Cleared 0 marks.")
+        XCTAssertEqual(model.markStore.all.count, 1)
         // The setting and the other-chat checks still come first.
         let other = await agent.perform(act(.clearMarks, chat: 2))
         XCTAssertEqual(other.text, "The person is looking at another chat.")
@@ -1659,11 +1681,11 @@ final class ViewerAgentTests: XCTestCase {
         let none = await rig.agent.perform(act(.mark, markArgs([("Nowhere", nil)])))
         XCTAssertFalse(none.ok)
         XCTAssertEqual(none.text, "No visible text matches 'Nowhere'")
-        XCTAssertNil(rig.model.markStore.marks[1])
+        XCTAssertTrue(rig.model.markStore.all.isEmpty)
 
         let partly = await rig.agent.perform(act(.mark, markArgs([("Save trail", nil), ("Nowhere", nil)])))
         XCTAssertTrue(partly.ok, partly.text)
-        let label = rig.model.markStore.marks[1]?.first?.label ?? "?"
+        let label = rig.model.markStore.all.first?.label ?? "?"
         XCTAssertEqual(partly.text, "Marked 1 · \(label). No visible text matches 'Nowhere'.")
 
         // A ref that isn't on the page (no reload, no input) says so as a ref.

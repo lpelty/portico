@@ -406,16 +406,20 @@ final class LaunchAndWayBackTests: XCTestCase {
         XCTAssertTrue(FolderRelist.triggers(finished("t4"), tool: lookup))
         XCTAssertTrue(FolderRelist.triggers(finished("t5"), tool: lookup))
         XCTAssertFalse(FolderRelist.triggers(finished("t2"), tool: lookup), "a read changes nothing")
-        XCTAssertFalse(FolderRelist.triggers(finished("t6"), tool: lookup), "a command waits for the turn's end")
+        XCTAssertTrue(FolderRelist.triggers(finished("t6"), tool: lookup), "a command can make folders and files (v0.26.5)")
         XCTAssertFalse(FolderRelist.triggers(finished("unknown"), tool: lookup))
         XCTAssertTrue(FolderRelist.triggers(.turnFinished(TurnFinished(chat: 3, turn: 1, outcome: .done)), tool: lookup))
         XCTAssertFalse(FolderRelist.triggers(.textDelta(TextDelta(chat: 3, turn: 1, text: "x")), tool: lookup))
     }
 
-    /// The Files pane has listed the folder's top and `notes/`.
+    /// The Files pane has listed the folder's top and `notes/`, which is
+    /// open (a relist asks only for the top and the open folders).
     private func listedTree(_ model: AppModel, _ sent: Sent) {
         model.listFiles(chat: 3, root: AppModel.chatRoot, path: "")
         model.listFiles(chat: 3, root: AppModel.chatRoot, path: "notes")
+        if !model.isFolderOpen(chat: 3, root: AppModel.chatRoot, path: "notes") {
+            model.toggleFolder(chat: 3, root: AppModel.chatRoot, path: "notes")
+        }
         for frame in sent.frames {
             if case .filesList(let request) = frame {
                 model.apply(.filesList(FilesList(
@@ -441,7 +445,7 @@ final class LaunchAndWayBackTests: XCTestCase {
             if case .filesList(let request) = frame { return request.path }
             return nil
         }
-        XCTAssertEqual(paths.sorted(), ["", "notes"], "every listed directory of the folder, once")
+        XCTAssertEqual(paths.sorted(), ["", "notes"], "the top and the open folder, once")
         XCTAssertEqual(model.fileEntries(chat: 3, root: AppModel.chatRoot, path: "notes")?.map(\.name), ["a.md"],
             "the old listing stays drawn until the new one comes")
     }

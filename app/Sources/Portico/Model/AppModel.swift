@@ -278,11 +278,12 @@ final class AppModel: ObservableObject {
     /// normalised relative path), the entries the last `files.list` gave.
     /// A directory is fetched when it is expanded, once, until a refresh.
     @Published private(set) var fileTree: [FilesKey: [Entry]] = [:]
-    /// v0.22.1 item 25: per chat (a session, or a thread), the Files
-    /// tree's open folders as `root|path`. Kept here, like the session's own
-    /// "Changed this session", so switching tabs or chats and back shows the
-    /// tree as it was left; not kept across a relaunch.
-    @Published var openFolders: [Int: Set<String>] = [:]
+    /// The Files tree's open folders (v0.22.1 item 25; v0.26.5), each by
+    /// its absolute path, in the order they were opened. Kept here so
+    /// switching tabs or chats and back shows the tree as it was left, and
+    /// written to the settings so it is the same after a restart and in a
+    /// later session that shows the same folder.
+    @Published var openFolders: [String] = []
     /// The folders this person added to the Files pane, as the gateway named them (v0.19 §4.2; `files.roots`).
     @Published private(set) var extraRoots: [Root] = []
     /// Whether each extra folder was a directory at the last look (`refreshExtraFolderChecks`).
@@ -633,6 +634,11 @@ final class AppModel: ObservableObject {
 
     init(settings: Settings = Settings()) {
         self.settings = settings
+        // A remembered folder that is gone is dropped (v0.26.5).
+        openFolders = settings.openFolders.filter { path in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
         // A change to either viewer switch tells the gateway at once. The
         // publishers fire before the value lands, so send what they carry.
         viewerSwitchObserver = settings.$viewerAgentCanSee
@@ -1412,9 +1418,12 @@ final class AppModel: ObservableObject {
                 }
             }
             // A refused listing: the directory is no longer pending (so it
-            // can be asked for again) and its row shows the refusal.
+            // can be asked for again) and its row shows the refusal. An
+            // earlier listing of it is dropped (v0.26.5): the directory may
+            // be gone, and a relist asks only for what is listed.
             if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileListErrors[key] = error.message
+                fileTree[key] = nil
             }
 
         case .appCallResult(let result):
@@ -2173,6 +2182,19 @@ final class AppModel: ObservableObject {
             viewerFocus = ViewerFocus(chat: chat, sidebarWasVisible: sidebarVisible)
             sidebarVisible = false
             if openSpace != nil { spaceViewerShown = true } else { viewerVisible[chat] = true }
+        }
+    }
+
+    /// The sidebar's button, menu item and shortcut. In focus the sidebar
+    /// is hidden by the focus itself, so showing it leaves focus and opens
+    /// the sidebar in one step (v0.26.5: it used to flip a flag the focused
+    /// layout ignores, which moved the header and opened nothing).
+    func toggleSidebar() {
+        if viewerFocus != nil {
+            viewerFocus = nil
+            sidebarVisible = true
+        } else {
+            sidebarVisible.toggle()
         }
     }
 
@@ -2995,49 +3017,33 @@ extension AppModel {
         }
     }
 
-    /// List again the directories of the session's folder the Files pane
-    /// has already listed, so a file the agent made appears without the
-    /// refresh button. The old entries stay drawn until the new ones come
-    /// (no "Listing…" flash), and nothing outside the folder is asked for.
-    /// A chat whose files are not on screen just forgets those listings;
-    /// they are asked for when it is shown.
+    /// List again the directories the Files pane shows for the chat, in
+    /// every root, so a folder or file the agent made appears without the
+    /// refresh button: each root's top level and the folders open now. The
+    /// old entries stay drawn until the new ones come (no "Listing…"
+    /// flash). A listed folder that is closed now is not asked for; its
+    /// listing is forgotten, so it is listed afresh when it is opened. A
+    /// chat whose files are not on screen forgets all its listings; they
+    /// are asked for when it is shown.
     ///
     /// A directory whose listing is still out is asked for again: that
     /// listing may have been read before the write (each request has its
-    /// own id, and the later answer lands last). A deployment root that
-    /// holds the session's folder lists again the part inside the folder.
+    /// own id, and the later answer lands last).
     func relistSessionFolder(chat: Int) {
-        let scopes = sessionFolderScopes(chat: chat)
-        let keys = fileTree.keys.filter { key in
-            guard key.chat == chat, let inside = scopes[key.root] else { return false }
-            return inside.isEmpty || key.path == inside || key.path.hasPrefix(inside + "/")
-        }
+        // Every root (v0.26.5): the agent makes folders and files in the
+        // vault and in other folders too, not only in the session's own.
+        let keys = fileTree.keys.filter { $0.chat == chat }
         guard filesChat == chat else {
             for key in keys { fileTree[key] = nil }
             return
         }
         for key in keys.sorted(by: { ($0.root, $0.path) < ($1.root, $1.path) }) {
-            send(filesListRequest(for: key))
-        }
-    }
-
-    /// Per root that holds the session's folder, where the folder is in it:
-    /// `""` for a root that is the folder (`chat`, or a deployment root at
-    /// the same path), else the folder's path under the root.
-    func sessionFolderScopes(chat: Int) -> [String: String] {
-        guard let folder = summary(of: chat)?.folder else { return [:] }
-        let own = URL(fileURLWithPath: folder).standardizedFileURL.path
-        var scopes: [String: String] = [:]
-        for root in fileRoots(for: chat) {
-            let base = URL(fileURLWithPath: root.path).standardizedFileURL.path
-            if base == own {
-                scopes[root.name] = ""
+            if key.path.isEmpty || isFolderOpen(chat: chat, root: key.root, path: key.path) {
+                send(filesListRequest(for: key))
             } else {
-                let prefix = base.hasSuffix("/") ? base : base + "/"
-                if own.hasPrefix(prefix) { scopes[root.name] = String(own.dropFirst(prefix.count)) }
+                fileTree[key] = nil
             }
         }
-        return scopes
     }
 
     /// Show a file from the Files pane in the viewer, as a local artifact:
@@ -3132,7 +3138,9 @@ extension AppModel {
 /// files too). Live frames only; a replay changes nothing on disk.
 enum FolderRelist {
     /// The engine's tools that write files.
-    static let writeTools: Set<String> = ["Write", "Edit", "MultiEdit", "NotebookEdit"]
+    /// `Bash` is here since v0.26.5: a command makes folders and files too,
+    /// and the turn's end can be minutes away.
+    static let writeTools: Set<String> = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"]
 
     /// Whether `message` may have changed what the folder holds; `tool`
     /// names the tool a use started with.

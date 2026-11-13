@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.26.5 (2026-11-13)
+
+- **Marks belong to their page.** The marks chip in the viewer's header shows
+  only on a page that has marks, and counts that page's alone; another file,
+  page or space has no chip and nothing drawn. Each page numbers its marks
+  from 1.
+- **Hide marks / Show marks.** The marks menu's bottom row hides the page's
+  marks without losing them: the page reads clean, the chip stays with its
+  count and a crossed-out eye, the list is greyed, and Show marks draws them
+  again as they were. Hidden or shown is per page.
+- **Clear marks asks first, and is final.** "Clear the 3 marks on this
+  page?" sits in the menu; it clears this page's marks only. "Show again" on
+  a Mark row in the chat opens the page with its marks shown, and is no
+  longer offered for marks that were cleared.
+- **Marks are kept across sessions and restarts.** Marks on a file, and on
+  a page this Mac serves to itself (a prototype on `localhost`, with no
+  query or sign-in in its address), are written to `marks.json` (0600) in
+  the app's home and come back as they were left, shown or hidden, in any
+  chat that opens the page. A renewed session no longer drops them. Marks on
+  any other web address are kept in every chat until the app quits and are
+  not written to disk: an address can carry a sign-in or a one-time token.
+  A `marks.json` that cannot be read is left untouched; that run keeps its
+  marks in memory and writes nothing.
+- **Show-sidebar works in focus mode.** With the viewer in focus, the
+  sidebar button (and Show Sidebar in the menu) moved the header and opened
+  nothing. One click now leaves focus and opens the sidebar.
+- **No Edit button on a web page.** The viewer's Edit button is no longer
+  shown, dimmed, for what can never be edited there: a web page, an image, a
+  PDF or another kind of file. A file that cannot be edited just now (too
+  large, read-only, open elsewhere) keeps the dimmed button and its reason.
+- **Files shows what the agent just made, in every folder.** After a write,
+  a command or the end of a turn, each root's top level and the folders
+  open in Files are listed again, in every root (the vault and added
+  folders too, not only the session's own folder), so a new folder or file
+  appears without the refresh button. A shell command now counts as soon as
+  it finishes. A closed folder is listed afresh when it is opened, and a
+  folder that is gone is not asked for again.
+- **Folders left open in Files stay open.** Open folders are remembered by
+  where they are on disk: they are open again after a restart, and in a
+  later session or another chat that shows the same folder. A remembered
+  folder that is gone is dropped.
+- For the agent: `viewer_clear_marks` and `viewer_mark`'s `replace` now act
+  on the page the viewer shows, not on every page; `viewer_look` lists that
+  page's marks and says when the person has hidden them.
+
 ## v0.26.4 (2026-11-12)
 
 - Release gate: no distributed file may name the maintainer's home folders, so a deployment's own config can never ride along with a release.
