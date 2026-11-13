@@ -483,9 +483,9 @@ under their control.
 the agent has `viewer_look`, `viewer_click`, `viewer_type`, `viewer_scroll`
 and `viewer_back`. Since v0.14 it also has `viewer_mark` (draw numbered,
 noted boxes around parts of a web page; needs `viewer.marks.v1`) and
-`viewer_clear_marks` (remove the shown page's). Since v0.26.5 marks belong to their page: they are kept in
+`viewer_clear_marks` (remove the shown page's). Since v0.26.5 marks belong to their page: a file's are kept in
 `marks.json` in the app's home, so they are there in another chat, after a session renews and after a
-restart; the chip in the viewer's header shows only on a page with marks and counts that page's; its menu
+restart (a web address's are kept until the app quits, and never written to disk); the chip in the viewer's header shows only on a page with marks and counts that page's; its menu
 hides or shows them, and Clear asks first and is final. A look returns a picture of what the viewer shows, an
 outline of the page (a ref such as `e12` on each heading, link, button and
 field) and any page errors since the last look; the other tools act on a

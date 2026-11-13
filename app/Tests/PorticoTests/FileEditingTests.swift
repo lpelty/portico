@@ -4,6 +4,19 @@ import XCTest
 /// v0.20 §2.1 and §2.5: what can be edited, and saving it byte for byte.
 @MainActor
 final class FileEditingTests: XCTestCase {
+    /// v0.26.5: the Edit button is not shown for what can never be edited
+    /// in the viewer; a file that cannot be edited just now keeps it, dimmed.
+    func testEditButtonIsOfferedOnlyWhereEditingCanEverHappen() {
+        XCTAssertFalse(Editability.readOnly(reason: FileEditing.webReason).offersEdit, "a web page")
+        XCTAssertFalse(Editability.readOnly(reason: FileEditing.kindReason).offersEdit, "an image, a PDF, another kind")
+        XCTAssertTrue(Editability.editable(mode: .markdown, language: "markdown").offersEdit)
+        XCTAssertTrue(Editability.editable(mode: .code, language: nil).offersEdit)
+        for reason in [FileEditing.tableReason, FileEditing.spaceReason, FileEditing.tooLarge, FileEditing.permissionReason,
+                       FileEditing.missingReason, ViewerEdit.elsewhere] {
+            XCTAssertTrue(Editability.readOnly(reason: reason).offersEdit, reason)
+        }
+    }
+
     private var folder: URL!
 
     override func setUp() async throws {
@@ -1254,18 +1267,5 @@ private final class AsyncGate {
         opened = true
         waiters.forEach { $0.resume() }
         waiters = []
-    }
-
-    /// v0.26.5: the Edit button is not shown for what can never be edited
-    /// in the viewer; a file that cannot be edited just now keeps it, dimmed.
-    func testEditButtonIsOfferedOnlyWhereEditingCanEverHappen() {
-        XCTAssertFalse(Editability.readOnly(reason: FileEditing.webReason).offersEdit, "a web page")
-        XCTAssertFalse(Editability.readOnly(reason: FileEditing.kindReason).offersEdit, "an image, a PDF, another kind")
-        XCTAssertTrue(Editability.editable(mode: .markdown, language: "markdown").offersEdit)
-        XCTAssertTrue(Editability.editable(mode: .code, language: nil).offersEdit)
-        for reason in [FileEditing.tableReason, FileEditing.spaceReason, FileEditing.tooLarge, FileEditing.permissionReason,
-                       FileEditing.missingReason, ViewerEdit.elsewhere] {
-            XCTAssertTrue(Editability.readOnly(reason: reason).offersEdit, reason)
-        }
     }
 }

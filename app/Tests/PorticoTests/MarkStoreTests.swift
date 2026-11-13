@@ -152,6 +152,17 @@ final class MarkStoreTests: XCTestCase {
         XCTAssertTrue(store.marks(on: p1).isEmpty)
     }
 
+    /// Replace clears as Clear does: the replaced call's row offers no
+    /// Show again, and none goes to another call's marks.
+    func testReplaceIsFinalForTheReplacedCalls() {
+        let store = seeded()
+        store.add(chat: 1, page: p1, items: items([("x", "")]), call: "c3", toolUseId: "t3", replace: true)
+        XCTAssertEqual(store.call(chat: 1, toolUseId: "t1")?.marks, [])
+        XCTAssertNil(store.showAgain(chat: 1, toolUseId: "t1"))
+        XCTAssertEqual(store.showAgain(chat: 1, toolUseId: "t3")?.call, "c3")
+        XCTAssertEqual(store.call(chat: 1, toolUseId: "t2")?.marks.count, 1, "another page's call is untouched")
+    }
+
     /// A page is its key: the same file reached under another name (a
     /// space's title, then the file's name) is the same page, and the
     /// store keeps the name it first saw.
@@ -206,9 +217,8 @@ final class MarkStoreTests: XCTestCase {
         XCTAssertEqual(second.marks(on: p2).count, 1)
     }
 
-    /// The file is the person's alone, and a file that cannot be read
-    /// starts empty without being thrown away until a change writes it.
-    func testFileIsPrivateAndAnUnreadableFileStartsEmpty() throws {
+    /// The file is the person's alone, and is made only once there is a mark.
+    func testFileIsPrivate() throws {
         let home = try home()
         let file = home.appendingPathComponent(MarkStore.fileName)
         let store = MarkStore()
@@ -218,11 +228,45 @@ final class MarkStoreTests: XCTestCase {
         let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)
         XCTAssertEqual(mode.intValue & 0o777, 0o600)
 
-        try Data("not json".utf8).write(to: file)
-        let broken = MarkStore()
-        broken.keep(in: home)
-        XCTAssertTrue(broken.all.isEmpty)
-        XCTAssertEqual(try Data(contentsOf: file), Data("not json".utf8))
+    }
+
+    /// A file that cannot be read, or that a later version wrote, is moved
+    /// aside before anything is written, so its marks are not lost.
+    func testAnUnreadableFileIsSetAsideNotWrittenOver() throws {
+        for content in ["not json", #"{"version":2,"pages":[{"key":"/a","name":"a","hidden":false,"marks":[{"number":1}]}]}"#] {
+            let home = try home()
+            let file = home.appendingPathComponent(MarkStore.fileName)
+            let aside = home.appendingPathComponent(MarkStore.fileName + ".unreadable")
+            try Data(content.utf8).write(to: file)
+            let store = MarkStore()
+            store.keep(in: home)
+            XCTAssertTrue(store.all.isEmpty)
+            XCTAssertEqual(try Data(contentsOf: aside), Data(content.utf8), "set aside as it was")
+            _ = seeded(store)
+            XCTAssertEqual(try Data(contentsOf: aside), Data(content.utf8), "and still there after a change")
+            let again = MarkStore()
+            again.keep(in: home)
+            XCTAssertEqual(again.all.count, 4, "the new marks are kept in a fresh file")
+        }
+    }
+
+    /// A web page's marks are not written to disk: its address can carry a
+    /// token. They work in memory, as before v0.26.5.
+    func testWebPageMarksStayInMemory() throws {
+        let home = try home()
+        let web = MarkPage(key: "https://example.com/p?token=abc", name: "p")
+        let store = MarkStore()
+        store.keep(in: home)
+        store.add(chat: 1, page: web, items: items([("a", "")]), call: "c1", toolUseId: nil, replace: false)
+        store.add(chat: 1, page: p1, items: items([("b", "")]), call: "c2", toolUseId: nil, replace: false)
+        XCTAssertEqual(store.marks(on: web).count, 1)
+        let text = try String(contentsOf: home.appendingPathComponent(MarkStore.fileName), encoding: .utf8)
+        XCTAssertFalse(text.contains("token"), text)
+        XCTAssertFalse(text.contains("example.com"), text)
+        let again = MarkStore()
+        again.keep(in: home)
+        XCTAssertTrue(again.marks(on: web).isEmpty)
+        XCTAssertEqual(again.marks(on: p1).count, 1)
     }
 
     /// Without a home (a test, or no supervisor) the store works in memory.

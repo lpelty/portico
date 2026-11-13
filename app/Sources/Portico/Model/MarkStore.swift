@@ -81,7 +81,7 @@ final class MarkStore: ObservableObject {
     @discardableResult
     func add(chat: Int, page: MarkPage, items: [(label: String, note: String, locator: MarkLocator)],
              call: String, toolUseId: String?, replace: Bool) -> [Mark] {
-        if replace { marks[page.key] = nil }
+        if replace { drop(page) }
         // A known page keeps the name it was first listed under.
         let page = marks[page.key]?.first?.page ?? page
         var next = highest(page)
@@ -102,6 +102,15 @@ final class MarkStore: ObservableObject {
     /// records lose them too, so no "Show again" brings them back.
     @discardableResult
     func clear(page: MarkPage) -> Int {
+        let count = drop(page)
+        if count > 0 { save() }
+        return count
+    }
+
+    /// The page's marks leave the store and every call's record (so no row
+    /// offers "Show again" for them); returns how many. Nothing is written.
+    @discardableResult
+    private func drop(_ page: MarkPage) -> Int {
         let count = marks[page.key]?.count ?? 0
         guard count > 0 else { return 0 }
         marks[page.key] = nil
@@ -113,7 +122,6 @@ final class MarkStore: ObservableObject {
                 return record
             }
         }
-        save()
         return count
     }
 
@@ -182,8 +190,7 @@ final class MarkStore: ObservableObject {
     /// Cleared marks do not come back.
     func showAgain(chat: Int, toolUseId: String) -> Mark? {
         guard let record = call(chat: chat, toolUseId: toolUseId), let page = record.marks.first?.page else { return nil }
-        let present = marks(on: page)
-        guard let first = present.first(where: { $0.call == record.id }) ?? present.first else { return nil }
+        guard let first = marks(on: page).first(where: { $0.call == record.id }) else { return nil }
         setHidden(false, page: page)
         return first
     }
@@ -210,13 +217,31 @@ final class MarkStore: ObservableObject {
         var call: String
     }
 
-    /// Read the marks kept in `home` and keep later changes there. A file
-    /// that is missing or cannot be read starts empty and is left alone
-    /// until the next change writes it.
+    /// Whether a page's marks are written to disk: a file's are. A web
+    /// address can carry a sign-in or a one-time token in its query, so a
+    /// web page's marks stay in memory until the app quits, as all marks
+    /// did before v0.26.5.
+    nonisolated static func isKept(_ key: String) -> Bool { key.hasPrefix("/") }
+
+    /// Read the marks kept in `home` and keep later changes there. A
+    /// missing file starts empty. A file that is there and cannot be read
+    /// (damaged, or written by a later version) is moved aside to
+    /// `marks.json.unreadable`, so the next change does not write over it.
     func keep(in home: URL) {
         let file = home.appendingPathComponent(Self.fileName)
         self.file = file
-        guard let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return }
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        guard let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Saved.self, from: data),
+              saved.version == 1
+        else {
+            let aside = home.appendingPathComponent(Self.fileName + ".unreadable")
+            try? FileManager.default.removeItem(at: aside)
+            if (try? FileManager.default.moveItem(at: file, to: aside)) == nil {
+                // It could not be moved either: write nothing, so it is not lost.
+                self.file = nil
+            }
+            return
+        }
         var marks: [String: [Mark]] = [:]
         var hidden: Set<String> = []
         for page in saved.pages where !page.marks.isEmpty {
@@ -232,7 +257,7 @@ final class MarkStore: ObservableObject {
 
     private func save() {
         guard let file else { return }
-        let pages = marks.keys.sorted().compactMap { key -> SavedPage? in
+        let pages = marks.keys.filter(Self.isKept).sorted().compactMap { key -> SavedPage? in
             guard let list = marks[key], let first = list.first else { return nil }
             return SavedPage(key: key, name: first.page.name, hidden: hidden.contains(key), marks: list.map {
                 SavedMark(number: $0.number, note: $0.note, label: $0.label, locator: $0.locator, call: $0.call)
@@ -241,11 +266,12 @@ final class MarkStore: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(Saved(pages: pages)) else { return }
-        do {
-            try data.write(to: file, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        } catch {
-            // The marks stay in memory; the next change tries again.
+        // Made 0600 before it holds anything, then moved into place.
+        let fresh = file.deletingLastPathComponent().appendingPathComponent(Self.fileName + ".new")
+        try? FileManager.default.removeItem(at: fresh)
+        guard FileManager.default.createFile(atPath: fresh.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            return  // The marks stay in memory; the next change tries again.
         }
+        if rename(fresh.path, file.path) != 0 { try? FileManager.default.removeItem(at: fresh) }
     }
 }
