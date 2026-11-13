@@ -230,23 +230,22 @@ final class MarkStoreTests: XCTestCase {
 
     }
 
-    /// A file that cannot be read, or that a later version wrote, is moved
-    /// aside before anything is written, so its marks are not lost.
-    func testAnUnreadableFileIsSetAsideNotWrittenOver() throws {
+    /// A file that cannot be read, or that a later version wrote, is left
+    /// exactly as it is: the run works in memory and writes nothing.
+    func testAnUnreadableFileIsLeftUntouched() throws {
         for content in ["not json", #"{"version":2,"pages":[{"key":"/a","name":"a","hidden":false,"marks":[{"number":1}]}]}"#] {
             let home = try home()
             let file = home.appendingPathComponent(MarkStore.fileName)
-            let aside = home.appendingPathComponent(MarkStore.fileName + ".unreadable")
             try Data(content.utf8).write(to: file)
             let store = MarkStore()
             store.keep(in: home)
             XCTAssertTrue(store.all.isEmpty)
-            XCTAssertEqual(try Data(contentsOf: aside), Data(content.utf8), "set aside as it was")
             _ = seeded(store)
-            XCTAssertEqual(try Data(contentsOf: aside), Data(content.utf8), "and still there after a change")
-            let again = MarkStore()
-            again.keep(in: home)
-            XCTAssertEqual(again.all.count, 4, "the new marks are kept in a fresh file")
+            store.setHidden(true, page: p1)
+            store.clear(page: p2)
+            XCTAssertEqual(store.marks(on: p1).count, 3, "the marks work in memory")
+            XCTAssertEqual(try Data(contentsOf: file), Data(content.utf8), "the file is as it was")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: home.path), [MarkStore.fileName], "nothing else is made")
         }
     }
 
@@ -267,6 +266,29 @@ final class MarkStoreTests: XCTestCase {
         again.keep(in: home)
         XCTAssertTrue(again.marks(on: web).isEmpty)
         XCTAssertEqual(again.marks(on: p1).count, 1)
+    }
+
+    /// A page this Mac serves to itself (a prototype on localhost) keeps
+    /// its marks across a restart; with a query or a sign-in in the
+    /// address, or on any other host, it does not.
+    func testLocalhostPagesAreKeptWithoutQueryOrSignIn() throws {
+        for key in ["http://localhost:3000/trail", "http://127.0.0.1:5173/", "https://localhost/app/page", "http://[::1]:8080/x", "/x/a.html"] {
+            XCTAssertTrue(MarkStore.isKept(key), key)
+        }
+        for key in ["http://localhost:3000/trail?token=abc", "http://user:pw@localhost:3000/", "https://example.com/p",
+                    "http://localhost.example.com/", "http://192.168.1.5:3000/", "file-ish", "ftp://localhost/x"] {
+            XCTAssertFalse(MarkStore.isKept(key), key)
+        }
+        let home = try home()
+        let local = MarkPage(key: "http://localhost:3000/trail", name: "trail")
+        let store = MarkStore()
+        store.keep(in: home)
+        store.add(chat: 1, page: local, items: items([("a", "note")]), call: "c1", toolUseId: nil, replace: false)
+        store.setHidden(true, page: local)
+        let again = MarkStore()
+        again.keep(in: home)
+        XCTAssertEqual(again.marks(on: local).map(\.note), ["note"])
+        XCTAssertTrue(again.isHidden(local))
     }
 
     /// Without a home (a test, or no supervisor) the store works in memory.

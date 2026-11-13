@@ -217,16 +217,25 @@ final class MarkStore: ObservableObject {
         var call: String
     }
 
-    /// Whether a page's marks are written to disk: a file's are. A web
-    /// address can carry a sign-in or a one-time token in its query, so a
-    /// web page's marks stay in memory until the app quits, as all marks
-    /// did before v0.26.5.
-    nonisolated static func isKept(_ key: String) -> Bool { key.hasPrefix("/") }
+    /// Whether a page's marks are written to disk: a file's are, and so are
+    /// those of a page this Mac serves to itself (a prototype on
+    /// `localhost`), when its address has no query and no sign-in. Any
+    /// other web address can carry a sign-in or a one-time token, so its
+    /// marks stay in memory until the app quits, as all marks did before
+    /// v0.26.5.
+    nonisolated static func isKept(_ key: String) -> Bool {
+        if key.hasPrefix("/") { return true }
+        guard let parts = URLComponents(string: key), ["http", "https"].contains(parts.scheme?.lowercased() ?? ""),
+              ["localhost", "127.0.0.1", "::1", "[::1]"].contains(parts.host?.lowercased() ?? ""),
+              parts.query == nil, parts.user == nil, parts.password == nil
+        else { return false }
+        return true
+    }
 
     /// Read the marks kept in `home` and keep later changes there. A
     /// missing file starts empty. A file that is there and cannot be read
-    /// (damaged, or written by a later version) is moved aside to
-    /// `marks.json.unreadable`, so the next change does not write over it.
+    /// (damaged, or written by a later version) is left exactly as it is:
+    /// this run keeps its marks in memory and writes nothing.
     func keep(in home: URL) {
         let file = home.appendingPathComponent(Self.fileName)
         self.file = file
@@ -234,12 +243,7 @@ final class MarkStore: ObservableObject {
         guard let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Saved.self, from: data),
               saved.version == 1
         else {
-            let aside = home.appendingPathComponent(Self.fileName + ".unreadable")
-            try? FileManager.default.removeItem(at: aside)
-            if (try? FileManager.default.moveItem(at: file, to: aside)) == nil {
-                // It could not be moved either: write nothing, so it is not lost.
-                self.file = nil
-            }
+            self.file = nil
             return
         }
         var marks: [String: [Mark]] = [:]
@@ -266,12 +270,20 @@ final class MarkStore: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(Saved(pages: pages)) else { return }
-        // Made 0600 before it holds anything, then moved into place.
+        // Created 0600 by `open` itself (the mode can only lose bits to the
+        // umask), written, then moved into place.
         let fresh = file.deletingLastPathComponent().appendingPathComponent(Self.fileName + ".new")
-        try? FileManager.default.removeItem(at: fresh)
-        guard FileManager.default.createFile(atPath: fresh.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-            return  // The marks stay in memory; the next change tries again.
+        unlink(fresh.path)
+        let descriptor = open(fresh.path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        guard descriptor >= 0 else { return }  // The marks stay in memory; the next change tries again.
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: data)
+            try handle.close()
+        } catch {
+            unlink(fresh.path)
+            return
         }
-        if rename(fresh.path, file.path) != 0 { try? FileManager.default.removeItem(at: fresh) }
+        if rename(fresh.path, file.path) != 0 { unlink(fresh.path) }
     }
 }

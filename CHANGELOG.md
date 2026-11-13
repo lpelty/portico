@@ -14,13 +14,15 @@
   page?" sits in the menu; it clears this page's marks only. "Show again" on
   a Mark row in the chat opens the page with its marks shown, and is no
   longer offered for marks that were cleared.
-- **Marks on a file are kept across sessions and restarts.** They are
-  written to `marks.json` (0600) in the app's home and come back as they
-  were left, shown or hidden, in any chat that opens the file. A renewed
-  session no longer drops them. Marks on a web address (http, https) are
-  kept in every chat until the app quits and are not written to disk: an
-  address can carry a sign-in or a one-time token. A `marks.json` that
-  cannot be read is moved aside to `marks.json.unreadable`, not written over.
+- **Marks are kept across sessions and restarts.** Marks on a file, and on
+  a page this Mac serves to itself (a prototype on `localhost`, with no
+  query or sign-in in its address), are written to `marks.json` (0600) in
+  the app's home and come back as they were left, shown or hidden, in any
+  chat that opens the page. A renewed session no longer drops them. Marks on
+  any other web address are kept in every chat until the app quits and are
+  not written to disk: an address can carry a sign-in or a one-time token.
+  A `marks.json` that cannot be read is left untouched; that run keeps its
+  marks in memory and writes nothing.
 - **Show-sidebar works in focus mode.** With the viewer in focus, the
   sidebar button (and Show Sidebar in the menu) moved the header and opened
   nothing. One click now leaves focus and opens the sidebar.
