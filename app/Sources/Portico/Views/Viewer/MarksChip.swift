@@ -83,7 +83,7 @@ struct MarksList: View {
     let agent: ViewerAgent
     let accent: Color
     let onDone: () -> Void
-    @State private var asking = false
+    @State var asking = false
 
     /// A row for VoiceOver (spec §6): "Mark 2, Start here", the label when
     /// there is no note, and "not on the page now" when lost.
@@ -167,17 +167,14 @@ struct MarksList: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Button("Cancel") { asking = false }
+                    .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
                     .keyboardShortcut(.cancelAction)
-                Button {
+                Button("Clear marks") {
                     agent.clearMarks()
                     onDone()
-                } label: {
-                    Text("Clear marks")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.deny)
+                .buttonStyle(PillButtonStyle(kind: .primary(Theme.deny), compact: true))
             }
-            .controlSize(.small)
             .padding(.top, 4)
         }
         .padding(.horizontal, 10)
