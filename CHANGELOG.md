@@ -21,6 +21,10 @@
 - **Show-sidebar works in focus mode.** With the viewer in focus, the
   sidebar button (and Show Sidebar in the menu) moved the header and opened
   nothing. One click now leaves focus and opens the sidebar.
+- **No Edit button on a web page.** The viewer's Edit button is no longer
+  shown, dimmed, for what can never be edited there: a web page, an image, a
+  PDF or another kind of file. A file that cannot be edited just now (too
+  large, read-only, open elsewhere) keeps the dimmed button and its reason.
 - For the agent: `viewer_clear_marks` and `viewer_mark`'s `replace` now act
   on the page the viewer shows, not on every page; `viewer_look` lists that
   page's marks and says when the person has hidden them.

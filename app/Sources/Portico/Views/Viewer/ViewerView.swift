@@ -272,7 +272,9 @@ struct ViewerView: View {
     /// The Edit toggle and the save state, while there is a file to edit.
     @ViewBuilder
     private var editControls: some View {
-        if let editability {
+        // Nothing at all (no empty group taking the header's spacing) for an
+        // item with no Edit button and nothing else to say here.
+        if let editability, editability.offersEdit || edit.isEditing || edit.note != nil || commentsFile != nil {
             HStack(spacing: 8) {
                 if let session = edit.session {
                     ViewerEditStatus(session: session, onDiscard: { Task { await edit.discard() } })
@@ -304,9 +306,11 @@ struct ViewerView: View {
                         comments.setShown(!comments.shown, chat: chat, focus: model)
                     }
                 }
-                ViewerEditToggle(on: edit.isEditing, editability: editability,
-                                 accent: model.brand.accent ?? Theme.accent) {
-                    edit.toggle(model.current[chat])
+                if editability.offersEdit || edit.isEditing {
+                    ViewerEditToggle(on: edit.isEditing, editability: editability,
+                                     accent: model.brand.accent ?? Theme.accent) {
+                        edit.toggle(model.current[chat])
+                    }
                 }
             }
         }
