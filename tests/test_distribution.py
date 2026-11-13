@@ -15,6 +15,10 @@ FORBIDDEN = [
     "daedalus",
     "hindsight",
     "chroma",
+    # Larry 2026-11-11: a deployment's own config must never ride along with a release.
+    # These name the maintainer's home and the fleet's folders; nothing distributed may.
+    "larrypelty",
+    "fleet/",
 ]
 
 
@@ -41,7 +45,7 @@ def test_no_deployment_names_in_distributed_files():
 
 def test_version_and_changelog_agree():
     version = (REPO / "VERSION").read_text().strip()
-    assert version == "0.26.3"
+    assert version == "0.26.4"
     assert f"## v{version} (" in (REPO / "CHANGELOG.md").read_text()
 
 

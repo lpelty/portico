@@ -937,6 +937,43 @@ final class ConversationRoundTripTests: XCTestCase {
         }
     }
 
+    /// v0.26.4: the heal's wiring. Every row's frame is forgotten, as the
+    /// lazy stack reported them all out in the field; past the grace, at the
+    /// end with no input, the watch nudges the view and the end stays in
+    /// view. (The rows here are still drawn, so this is the wiring, not the
+    /// fault: only the count can fail.)
+    func testAtTheEndWithNoRowReportedTheWatchHeals() throws {
+        probe()
+        ConversationProbe.blankHeals = [:]
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        spin(0.6)
+        let rows = try XCTUnwrap(ConversationProbe.rows[3])
+        XCTAssertFalse(rows.frames.isEmpty)
+        for id in Array(rows.frames.keys) { rows.forget(id) }
+        spin(2.2)
+        XCTAssertGreaterThan(ConversationProbe.blankHeals[3] ?? 0, 0, "healed")
+        assertTheEndIsInView(hosted, "after the heal")
+    }
+
+    /// Scrolled up, the place is the person's: no heal.
+    func testScrolledUpWithNoRowReportedNothingMoves() throws {
+        probe()
+        ConversationProbe.blankHeals = [:]
+        let hosted = try host(try model(varied: true), width: 900)
+        defer { hosted.window.close() }
+        spin(0.6)
+        for _ in 0..<3 { Self.wheel(hosted.scroll, pixels: 300); spin(0.05) }
+        spin(1.2)  // the person's input is no longer recent
+        XCTAssertFalse(atBottom(hosted), "scrolled up")
+        let before = hosted.scroll.contentView.bounds.minY
+        let rows = try XCTUnwrap(ConversationProbe.rows[3])
+        for id in Array(rows.frames.keys) { rows.forget(id) }
+        spin(2.2)
+        XCTAssertEqual(ConversationProbe.blankHeals[3] ?? 0, 0, "no heal away from the end")
+        XCTAssertEqual(hosted.scroll.contentView.bounds.minY, before, accuracy: 1, "the view stayed where it was")
+    }
+
     /// How far the visible area runs past the transcript's end (0 when it
     /// does not): the "large empty space" of the field report (11-02, item 11).
     private static func emptyBelow(_ scroll: NSScrollView) -> CGFloat {

@@ -576,6 +576,7 @@ sources. `tests/test_distribution.py` fails if the bundle is out of date.
 bin/portico-gateway status --json      # {"version": 1, "running": true, "pid", "port", "folder", "session",
                                        #  "state", "mode", "started_at", "config_stale"}; exit 0 running, 3 not
 bin/portico-gateway stop               # stop the running gateway (its own stop path); exit 3 when none runs
+bin/portico-gateway diagnostics on     # (v0.26.4, see Diagnostics) on | off | status [--json]: Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
 bin/portico-gateway update --check     # [update] check: exit 0 + version, 1 none, 2 not configured, 4 failed
 bin/portico-gateway update             # stop the gateway, run [update] run with its output, exit with its code
 bin/portico-gateway config-value brand.name   # one config value, or nothing
@@ -599,6 +600,51 @@ instead of `--state`: `export-config-doc` (v0.24, `CONFIGURATION.md` and
 `status --json` is the supported way for other tools to see that the app
 holds a live session in a folder; the lock and ledger files in the state
 directory are internal. Keys whose value is unknown are left out.
+
+## Diagnostics
+
+Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. Off unless turned on here. Recordings hold sizes, counts and ids, never text, and stay on this machine.
+
+It is for the deployment's maintainer agent only. There is no setting in the app and nothing the person sees.
+
+While it is on, the app writes the scroll trace (`diagnostics/trace.log`) and, per chat, a recording (`diagnostics/recordings/<chat>-<stamp>.jsonl`). A recording holds the conversation's shape (each entry's kind and size metrics), the geometry (window, column, viewer, sidebar, text scale), the inputs (wheel, keys, jumps, scroll phases) and the gateway's events as sizes. It never holds message text, file names, paths, URLs, titles or image content.
+
+```sh
+bin/portico-gateway diagnostics on       # create <home>/diagnostics/ (0700) with the switch file and a README;
+                                         # the app notices within a few seconds, no relaunch
+bin/portico-gateway diagnostics off      # delete the whole directory, recordings included; exit 1, naming what
+                                         # it could not delete, if something stays
+bin/portico-gateway diagnostics status   # on or off, and the files with their sizes; --json for programs;
+                                         # exit 0 on, 3 off
+```
+
+`<home>` is the state directory (`$PORTICO_HOME`, else the folder the checkout's `.portico-home` names, else `~/.portico`). The replay writes its evaluation under the `diagnostics/` the recording sits in; for a recording copied elsewhere, under `$PORTICO_HOME`'s, else the checkout's `.portico-home`'s. It never makes `diagnostics/`; with no home to use it fails with one line: set `PORTICO_HOME` to the app's home.
+
+First, on a new build, a baseline and the phase spike:
+
+1. `bin/portico-gateway diagnostics on`
+2. Open a short chat, scroll a little, quit.
+3. Replay that recording (step 3 below). The baseline must be `verdict: green`.
+4. `swift test --filter ScrollPhaseSpikeTests` from `app/`, and post its `PHASE-SPIKE` and `ENVELOPE-SPIKE` lines.
+
+To replay a failure:
+
+1. `bin/portico-gateway diagnostics on`
+2. Work until it fails, or reproduce it.
+3. From the app checkout, replay the recording:
+   `PORTICO_REPLAY=<home>/diagnostics/recordings/<file>.jsonl swift test -c release --filter 'DiagnosticsReplayTests/testReplayRecordingFromEnvironment$'`
+   Keep the trailing `$`: the filter is a regular expression, and without it the test that skips when `PORTICO_REPLAY` is unset runs too.
+   It first prints the steps and about how long they take; run a long recording in the background. Every segment (each time the chat was opened) replays in order; `PORTICO_REPLAY_SEGMENT=<n>` replays segment `n` only.
+4. Post the verdict line and the text of `<home>/diagnostics/evaluations/<file>.txt` (the test prints it too). The first line is the verdict: `red` (a violation reproduced), `green` (none did), or `inconclusive (<reasons>)` (no wheel moved the view though it had room: the harness, not the app, on this Mac; a scrolled-up place not restored, a key step did not move the view, the text scale was not applied, the envelope's phases did not fire, or more than a tenth of the steps' inputs were skipped).
+   The test's pass or fail is not the verdict: an `inconclusive` run can still fail it (a harness whose wheels moved nothing lists its `wheelMoves`). Read the first line, not the exit code.
+5. After pulling a fix, run step 3 again on the same recording.
+6. `bin/portico-gateway diagnostics off`
+
+The evaluation holds counts and ids only: the verdict, the app and macOS versions, whether scroll phases fire and move, whether the envelope's phases fired around each gesture run, the text scale and whether it was applied, any half-written last line dropped (`truncated`), the segments and steps, the keys stepped and how many moved, the recorded event kinds the replay skipped, the entries by kind, a histogram of row heights, the violations (`alternation`, `wheelMoves`, `rowsInView`, `pastEnd`, `estimateDrift`) per segment and per rule, each with its `segment.step` (the first 20 listed), and the failing window's steps with each input's fields and each row's recorded metrics.
+
+The replay starts each segment where the recording did (at the bottom, or scrolled up with the same row at the top) in a view of the recorded height, and draws at the recorded text scale. A line wheel is sent as that many lines of the view's line height. A trackpad gesture is fed at its recorded spacing, inside a zero-delta began/ended pair of phased wheels (the envelope) so the view treats it as the person scrolling.
+
+Two limits. Hosted key replays are not reliable, so a key step that did not move the view makes the verdict inconclusive. A replay runs at about three inputs per second, so a long recording takes minutes.
 
 ## Updating
 

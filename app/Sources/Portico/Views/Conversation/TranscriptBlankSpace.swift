@@ -16,16 +16,28 @@ enum TranscriptBlankSpace {
     /// Whether the visible area now shows blank where the conversation should be.
     /// - Parameters:
     ///   - hasRows: the conversation has rows to draw.
-    ///   - rowFrames: the frames the drawn rows, calling cards and working line report, in the scroll view's own
-    ///     space (its visible area has its top left at the origin).
+    ///   - rowFrames: the frames the drawn transcript rows report, in the scroll view's own space (its visible
+    ///     area has its top left at the origin).
+    ///   - otherFrames: the frames of what is drawn under the rows (calling cards, the working line), same space.
     ///   - clip: the scroll view's clip bounds (its visible area in the document).
     ///   - documentHeight: the document view's height.
-    static func isBlank(hasRows: Bool, rowFrames: [CGRect], clip: CGRect, documentHeight: CGFloat) -> Bool {
+    ///
+    /// v0.26.4 (a field trace, 11-12): with rows to draw and not one of them laid out, the view is blank
+    /// whatever else is in view. The lazy stack had dropped every row and parked the view at its estimated
+    /// end; the cards under the rows follow that end, so counting them as drawn kept this quiet.
+    static func isBlank(
+        hasRows: Bool, rowFrames: [CGRect], otherFrames: [CGRect] = [], clip: CGRect, documentHeight: CGFloat
+    ) -> Bool {
         guard hasRows, clip.height > 0 else { return false }
+        if rowFrames.isEmpty { return true }
         let visible = CGRect(x: 0, y: 0, width: clip.width, height: clip.height)
-        if !rowFrames.contains(where: { $0.intersects(visible) }) { return true }
+        if !(rowFrames + otherFrames).contains(where: { $0.intersects(visible) }) { return true }
         return clip.maxY > documentHeight + slack
     }
+
+    /// v0.26.4 (the same trace): how far the heal moves a view with no row laid out, toward the top. In the
+    /// trace the wheel's first delta, a few points, brought a row in and the content was measured again.
+    static let healNudge: CGFloat = 4
 
     /// v0.26.2 (a field trace, 11-09): where to put a view left past
     /// the document's end, or nil when it isn't. A column-width animation
@@ -43,6 +55,23 @@ enum TranscriptBlankSpace {
     struct Watch: Equatable {
         private(set) var blankSince: Date?
         private(set) var reported = false
+        /// v0.26.4: heals made since the view was last settled. A heal that brought no row back is tried
+        /// again after another grace, `maxHeals` times at most. The count starts again only once the view
+        /// has shown a row for `settle` seconds on end: a row that comes back for one reading and drops
+        /// again does not buy three more heals.
+        private(set) var heals = 0
+        static let maxHeals = 3
+        static let settle: TimeInterval = 10
+        private(set) var shownSince: Date?
+
+        var mayHeal: Bool { heals < Self.maxHeals }
+
+        /// The view was nudged at `now`: the grace runs again from here.
+        mutating func healed(now: Date) {
+            heals += 1
+            blankSince = now
+            reported = false
+        }
 
         /// One reading at `now`. Returns true when this reading is the one to log.
         mutating func observe(blank: Bool, scrolling: Bool, now: Date) -> Bool {
@@ -50,8 +79,16 @@ enum TranscriptBlankSpace {
                 // A scroll phase, or a view that is not blank, ends the occurrence.
                 blankSince = nil
                 reported = false
+                if blank {
+                    shownSince = nil
+                } else {
+                    let since = shownSince ?? now
+                    shownSince = since
+                    if now.timeIntervalSince(since) >= Self.settle { heals = 0 }
+                }
                 return false
             }
+            shownSince = nil
             guard let since = blankSince else {
                 blankSince = now
                 return false

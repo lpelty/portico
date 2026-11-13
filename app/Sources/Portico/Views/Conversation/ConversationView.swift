@@ -41,6 +41,8 @@ struct ConversationView: View {
     @State private var inViewMarkers = MarkersInView()
     /// Review H2: the markers, worked out once per transcript change.
     @State private var markerIndex = MarkerIndex()
+    /// v0.26.4 (D4, D5): this view's side of the diagnostics recording; touched only while they are on.
+    @State private var recording = ConversationRecording()
 
     /// How long a marker's jump highlights the message (ruling 19).
     static let highlightDuration: Duration = .milliseconds(1200)
@@ -132,7 +134,21 @@ struct ConversationView: View {
                     .zIndex(1)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { conversationHeight = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+            conversationHeight = $0
+            if Diagnostics.isOn { recording.noteWindow(windowSize) }
+        }
+        .onChange(of: model.sidebarVisible) { _, now in
+            if Diagnostics.isOn { recording.note(.sidebar(visible: now)) }
+        }
+        .onChange(of: textScale) { _, now in
+            if Diagnostics.isOn { recording.note(.textScale(Double(now))) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Diagnostics.switched)) { _ in
+            // On again inside one poll, the recorders were closed: start afresh.
+            stopRecording()
+            if Diagnostics.isOn { startRecording() }
+        }
     }
 
     /// S5: a session that followed another opens with the line that says
@@ -234,7 +250,22 @@ struct ConversationView: View {
         .environment(\.highlightedMessage, model.highlightedMessage[chat])
         // Fix I-1: the scroller keeps clear of the viewer divider's grip.
         .clearOfViewerGrip()
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { transcriptWidth = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            ScrollTrace.note("width chat=\(chat) from=\(transcriptWidth.map { Int($0) } ?? -1) to=\(Int(width))")
+            transcriptWidth = width
+            if Diagnostics.isOn {
+                recording.note(.column(width: Int(width)))
+                recording.noteWindow(windowSize)
+            }
+        }
+        .onChange(of: model.shownArtifact(for: chat)?.id) { old, new in
+            ScrollTrace.note("viewer chat=\(chat) shown from=\(ArtifactToken.of(old) ?? "none") to=\(ArtifactToken.of(new) ?? "none")")
+            if Diagnostics.isOn { noteViewer() }
+        }
+        .onChange(of: model.viewerVisible[chat] ?? false) { _, now in
+            ScrollTrace.note("viewer chat=\(chat) visible=\(now)")
+            if Diagnostics.isOn { noteViewer() }
+        }
         .environment(
             \.conversationColumn,
             transcriptWidth.map { ConversationColumn.width(available: $0, sideInset: Self.sideInset, scale: textScale) })
@@ -303,6 +334,8 @@ struct ConversationView: View {
             personScrolling = phase != .idle
             ScrollTrace.note("phase chat=\(chat) \(phase)")
             scrollPhaseName = "\(phase)"
+            if ConversationProbe.enabled { ConversationProbe.phaseNames[chat, default: []].append("\(phase)") }
+            if Diagnostics.isOn, let name = ScrollPhaseName(phase) { recording.note(.phase(name)) }
         }
         // v0.15 task 2b fix round 1: the newest message is followed only
         // at the bottom (scrolled up, a streaming reply no longer pulls
@@ -311,6 +344,17 @@ struct ConversationView: View {
         // own message always goes to the bottom.
         .onChange(of: followKey) { old, new in
             ScrollTrace.note("follow chat=\(chat) sent-changed=\(new.sent != old.sent) memoryAtBottom=\(scrollMemory.atBottom) byPerson=\(byPerson)")
+            // v0.26.4: the follow key holds the items key and the docked card; the
+            // recording writes what changed (shapes, sizes of the gateway's events).
+            if Diagnostics.isOn {
+                if ConversationProbe.enabled {
+                    let began = DispatchTime.now().uptimeNanoseconds
+                    recording.changed(recordingSnapshot)
+                    ConversationProbe.recordingChangeNanos.append(DispatchTime.now().uptimeNanoseconds - began)
+                } else {
+                    recording.changed(recordingSnapshot)
+                }
+            }
             if new.sent != old.sent {
                 scrollToBottom()
             } else if scrollMemory.atBottom && !byPerson {
@@ -328,7 +372,11 @@ struct ConversationView: View {
         .accessibilityScrollAction { edge in personInput.page(toward: edge) }
         .onAppear {
             if ConversationProbe.enabled { ConversationProbe.rows[chat] = rows }
+            rows.traceChat = chat
+            ScrollTrace.note("open chat=\(chat) rows=\(drawn.count)")
             personInput.install()
+            recording.wanted = true
+            if Diagnostics.isOn { startRecording() }
             if let place = model.place(of: chat), !place.atBottom, let saved = place.topItem,
                 let top = TranscriptEntry.anchor(saved, in: drawn)
             {
@@ -339,6 +387,8 @@ struct ConversationView: View {
         }
         .onDisappear {
             personInput.remove()
+            recording.wanted = false
+            stopRecording()
             // Each conversation keeps its own place (v0.16 §5): Main and
             // its threads, or a session opened from History, and back.
             let top = rows.top()
@@ -388,6 +438,7 @@ struct ConversationView: View {
     /// doesn't pull the view down; the bubble is highlighted briefly.
     private func jump(to id: String) {
         ScrollTrace.note("move chat=\(chat) marker-jump id=\(id)")
+        if Diagnostics.isOn { recording.note(.jump(id: id)) }
         scrollMemory.jumped()
         position.scrollTo(id: id, anchor: .top)
         restoredTop = id
@@ -400,17 +451,106 @@ struct ConversationView: View {
         }
     }
 
+    // MARK: The diagnostics recording (v0.26.4, D4 and D5); called only while they are on.
+
+    /// Starts this conversation's recording: `open`, then one shape per drawn
+    /// entry. Waits for the view to be in its window (`onAppear` can come first),
+    /// so `open` has the window's size.
+    private func startRecording() {
+        guard recording.recorder == nil else { return }
+        Task { @MainActor in
+            for _ in 0..<30 where personInput.scrollView?.window == nil {
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            guard recording.wanted, recording.recorder == nil, let recorder = Diagnostics.recorder(for: chat) else { return }
+            let os = ProcessInfo.processInfo.operatingSystemVersion
+            let window = windowSize
+            // I4: where the view is; a place being put back (the view has not got there yet)
+            // counts as where it is going.
+            let top = rows.top()
+            let saved = model.place(of: chat)
+            let atBottom: Bool, topId: String?, topOffset: Int
+            if restoredTop != nil, let saved, !saved.atBottom, let item = saved.topItem {
+                (atBottom, topId, topOffset) = (false, item, Int(saved.topOffset.rounded()))
+            } else {
+                atBottom = top == nil ? true : scrollMemory.atBottom
+                topId = top?.id
+                topOffset = top.map { Int($0.offset.rounded()) } ?? 0
+            }
+            let clipHeight = Int((personInput.scrollView?.contentView.bounds.height ?? 0).rounded())
+            recording.start(
+                recorder,
+                open: .open(
+                    chat: chat, appVersion: model.appVersion,
+                    macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+                    window: window, column: Int(transcriptWidth ?? 0),
+                    viewerVisible: model.isViewerShown(for: chat), viewerWidth: viewerWidth,
+                    sidebarVisible: model.sidebarVisible, textScale: Double(textScale),
+                    atBottom: atBottom, topId: topId, topOffset: topOffset, clipHeight: clipHeight),
+                window: window, snapshot: recordingSnapshot)
+            personInput.onEvent = { [recording] event in recording.input(event) }
+        }
+    }
+
+    private func stopRecording() {
+        recording.stop()
+        personInput.onEvent = nil
+    }
+
+    /// What the recording diffs on each change; the drawn rows only when it asks.
+    private var recordingSnapshot: ConversationRecording.Snapshot {
+        ConversationRecording.Snapshot(
+            items: items, itemsKey: itemsKey, docked: model.dockedCard(for: chat)?.id,
+            currentTurn: model.currentTurn[chat],
+            context: {
+                ConversationRecording.Context(
+                    briefItem: briefItem, divider: sessionDivider != nil,
+                    hidden: model.agentActivity[chat]?.startingToolUses ?? [],
+                    apart: Set(model.proposals.values.compactMap(\.toolUseId)).union(model.apps.keys))
+            },
+            drawn: { drawn(from: $0) })
+    }
+
+    /// The window's size, `[width, height]`.
+    private var windowSize: [Int] {
+        guard let window = personInput.scrollView?.window else { return [0, 0] }
+        return [Int(window.frame.width), Int(window.frame.height)]
+    }
+
+    /// The viewer column's width: what lies right of the transcript in the window, 0 when it is hidden.
+    private var viewerWidth: Int {
+        guard model.isViewerShown(for: chat), let scroll = personInput.scrollView,
+              let content = scroll.window?.contentView else { return 0 }
+        return max(0, Int(content.bounds.width - scroll.convert(scroll.bounds, to: nil).maxX))
+    }
+
+    /// The viewer's state as it changes, with its width as laid out then; the
+    /// settled width follows in the `column` events the change causes.
+    private func noteViewer() {
+        recording.noteViewer(.viewer(
+            visible: model.isViewerShown(for: chat), width: viewerWidth, shown: ArtifactToken.of(model.shownArtifact(for: chat)?.id)))
+    }
+
     /// The field diagnostic for "empty space under the conversation" (v0.16):
     /// twice a second, while this conversation is shown, one log line per
     /// occurrence when rows exist but the view shows none of them, or shows
     /// past the document's end, for over a second with no scroll phase.
     private func watchForBlankSpace() async {
         var watch = TranscriptBlankSpace.Watch()
+        var lastPaint: ScrollTrace.Paint?
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(500))
             guard let scroll = personInput.scrollView, let document = scroll.documentView else { continue }
             let clip = scroll.contentView.bounds
-            let frames = rows.allFrames
+            // v0.26.4: transcript rows apart from what is drawn under them; the trace's rowsInView counts rows only.
+            let frames = Array(rows.frames.values)
+            let others = Array(rows.others.values)
+            // 0.43.3: what is on screen, when it changes (the blank-until-scrolled report).
+            if ScrollTrace.enabled, let paint = ScrollTrace.paint(scroll: scroll, rowFrames: frames, phase: scrollPhaseName),
+               paint != lastPaint {
+                ScrollTrace.note(paint.line(chat: chat))
+                lastPaint = paint
+            }
             // v0.26.2: past the end with no scroll phase, back to the end.
             if !byPerson, let top = TranscriptBlankSpace.pastEnd(clip: clip, documentHeight: document.frame.height) {
                 ScrollTrace.note("move chat=\(chat) past-end clip=\(Int(clip.maxY)) content=\(Int(document.frame.height))")
@@ -421,8 +561,23 @@ struct ConversationView: View {
                 continue
             }
             let blank = TranscriptBlankSpace.isBlank(
-                hasRows: !drawn.isEmpty, rowFrames: frames, clip: clip, documentHeight: document.frame.height)
+                hasRows: !drawn.isEmpty, rowFrames: frames, otherFrames: others, clip: clip,
+                documentHeight: document.frame.height)
             if watch.observe(blank: blank, scrolling: personScrolling, now: Date()) {
+                // v0.26.4: at the end, rows once laid out and now none (a field trace, 11-12): the view is
+                // moved a few points, as the wheel's first delta did when it brought the rows back in that
+                // trace. Not shown hosted, so a nudge that brought no row back is tried again after another
+                // grace, three times until the view has settled (rows shown for ten seconds). Only when the
+                // conversation was at its end: scrolled up, the place is the person's.
+                if !byPerson, scrollMemory.atBottom, frames.isEmpty, rows.hasReported, watch.mayHeal {
+                    watch.healed(now: Date())
+                    let view = scroll.contentView
+                    let top = max(0, clip.origin.y - TranscriptBlankSpace.healNudge)
+                    ScrollTrace.note("move chat=\(chat) blank-heal \(watch.heals) nudge to=\(Int(top))")
+                    if ConversationProbe.enabled { ConversationProbe.blankHeals[chat, default: 0] += 1 }
+                    view.scroll(to: NSPoint(x: view.bounds.origin.x, y: top))
+                    scroll.reflectScrolledClipView(view)
+                }
                 let last = rows.frames.values.max { $0.minY < $1.minY }
                 TranscriptBlankSpace.log(
                     TranscriptBlankSpace.line(
@@ -441,8 +596,12 @@ struct ConversationView: View {
     }
 
     /// The transcript's drawn rows.
-    private var drawn: [TranscriptEntry] {
-        TranscriptEntry.entries(items.filter { model.isDrawn($0, in: chat) }) { row in
+    private var drawn: [TranscriptEntry] { drawn(from: 0) }
+
+    /// The drawn rows of the items from `from` on (the recording's tail; `from`
+    /// never falls inside a run of tool rows).
+    private func drawn(from: Int) -> [TranscriptEntry] {
+        TranscriptEntry.entries(items[from...].filter { model.isDrawn($0, in: chat) }) { row in
             // A proposal's card and an app's page stand apart; they split a run.
             model.proposal(forToolUse: row.toolUseId) != nil || model.app(forToolUse: row.toolUseId) != nil
         }
@@ -635,7 +794,12 @@ struct TranscriptItemView: View {
                 via: user.via, onOpen: { [model] path in model.reveal(file: path, in: user.chat) },
                 linkSites: model.hello?.linkSites ?? [:],
                 at: user.noTime == true ? nil : SessionTime.parse(user.ts), copyText: user.text,
-                highlighted: highlighted == item.id)
+                highlighted: highlighted == item.id,
+                onImageLoaded: Diagnostics.isOn ? { [chat, id = item.id] index, height in
+                    // Only into a recording already opened (`open` comes first).
+                    guard let chat else { return }
+                    Diagnostics.recorders[chat]?.note(.imageLoaded(id: id, index: index, height: Int(height.rounded())))
+                } : nil)
         case .assistantText(let id, let text, let at):
             MarkdownText(text: text, id: id, at: SessionTime.parse(at))
                 .frame(maxWidth: replyWidth, alignment: .leading)
@@ -725,6 +889,9 @@ struct UserBubble: View {
     var copyText: String? = nil
     /// v0.26 (PORT-12): a marker's jump landed here; the bubble is `accentSoft` for a moment.
     var highlighted: Bool = false
+    /// v0.26.4 (D4): an image thumbnail swapped its placeholder for the image:
+    /// its index among the images and its laid-out height. Set only while diagnostics are on.
+    var onImageLoaded: ((Int, CGFloat) -> Void)? = nil
 
     /// The bubble's fill: `surface`, or `accentSoft` while highlighted (solid, no fade).
     static func fill(highlighted: Bool) -> Color { highlighted ? Theme.accentSoft : Theme.surface }
@@ -747,7 +914,11 @@ struct UserBubble: View {
                 if !content.images.isEmpty {
                     WrappingRows(spacing: 6, trailing: false) {
                         ForEach(content.images, id: \.self) { path in
-                            AttachmentThumbnail(path: path, size: .bubble, onOpen: onOpen)
+                            AttachmentThumbnail(
+                                path: path, size: .bubble, onOpen: onOpen,
+                                onLoaded: onImageLoaded.map { [images = content.images] report in
+                                    { height in report(images.firstIndex(of: path) ?? 0, height) }
+                                })
                         }
                     }
                 }
@@ -1100,4 +1271,9 @@ enum ConversationProbe {
     static var bottomCorrections: [Int: Int] = [:]
     static var geometryReadings: [Int: Int] = [:]
     static var pastEndCorrections: [Int: Int] = [:]
+    /// v0.26.4: times the blank-space watch nudged a view with no row laid out.
+    static var blankHeals: [Int: Int] = [:]
+    static var phaseNames: [Int: [String]] = [:]
+    /// v0.26.4: main-thread time of each recording diff on a follow-key change.
+    static var recordingChangeNanos: [UInt64] = []
 }

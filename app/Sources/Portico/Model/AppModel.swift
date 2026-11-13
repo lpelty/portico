@@ -95,6 +95,42 @@ enum TranscriptItem: Equatable, Sendable, Identifiable {
         case .signinContinued(let id, _): "signin:\(id)"
         }
     }
+
+    /// Whether `other` has this item's `id`, without building either string
+    /// (v0.26.4 Ruling 14: the diagnostics recording compares every item on a
+    /// change). Keep it in step with `id`; a user message compares its key's
+    /// parts, not their hash, so it may answer no where the ids collide.
+    func hasSameID(as other: TranscriptItem) -> Bool {
+        switch self {
+        case .userText(let a):
+            guard case .userText(let b) = other else { return false }
+            return a.turn == b.turn && a.text == b.text && a.attachments == b.attachments && a.seq == b.seq && a.ts == b.ts
+        case .assistantText(let a, _, _):
+            guard case .assistantText(let b, _, _) = other else { return false }
+            return a == b
+        case .tool(let a):
+            guard case .tool(let b) = other else { return false }
+            return a.toolUseId == b.toolUseId
+        case .card(let a):
+            guard case .card(let b) = other else { return false }
+            return a.id == b.id
+        case .turnMarker(let a):
+            guard case .turnMarker(let b) = other else { return false }
+            return a.turn == b.turn
+        case .compacted(let a, _):
+            guard case .compacted(let b, _) = other else { return false }
+            return a == b
+        case .notice(let a, _):
+            guard case .notice(let b, _) = other else { return false }
+            return a == b
+        case .agents(let a):
+            guard case .agents(let b) = other else { return false }
+            return a.id == b.id
+        case .signinContinued(let a, _):
+            guard case .signinContinued(let b, _) = other else { return false }
+            return a == b
+        }
+    }
 }
 
 /// Where a card stands from the app's side: still waiting, answered from
@@ -506,8 +542,9 @@ final class AppModel: ObservableObject {
     @Published var chosenStartFolder: URL?
     /// Why the last start was refused (the gateway's message), shown under the composer.
     @Published private(set) var startError: String?
-    /// Per chat, the turn the last delta belonged to, for coalescing.
-    private var currentTurn: [Int: Int] = [:]
+    /// Per chat, the turn the last delta belonged to, for coalescing (and the
+    /// diagnostics recorder's turn for a reply, v0.26.4).
+    private(set) var currentTurn: [Int: Int] = [:]
     /// Per chat and tool use, a permission outcome that arrived before the
     /// tool's row did (a card answered ahead of `tool.started`): drawn on
     /// the row when it starts.

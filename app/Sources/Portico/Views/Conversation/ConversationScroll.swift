@@ -184,9 +184,25 @@ struct ConversationScrollMemory: Equatable, Sendable {
 @MainActor
 final class TranscriptRowFrames {
     private(set) var frames: [String: CGRect] = [:]
+    /// The chat these rows are, for the scroll trace's row lines.
+    var traceChat = 0
 
-    func note(_ frame: CGRect, id: String) { frames[id] = frame }
-    func forget(_ id: String) { frames[id] = nil }
+    func note(_ frame: CGRect, id: String) {
+        if ScrollTrace.enabled, let line = ScrollTrace.rowLine(chat: traceChat, id: id, old: frames[id], new: frame) {
+            ScrollTrace.note(line)
+        }
+        frames[id] = frame
+        hasReported = true
+    }
+
+    /// v0.26.4: a transcript row has reported its frame at least once (the blank-space heal is for rows laid
+    /// out and then all dropped, never for a conversation still opening).
+    private(set) var hasReported = false
+
+    func forget(_ id: String) {
+        if ScrollTrace.enabled, frames[id] != nil { ScrollTrace.note(ScrollTrace.rowGoneLine(chat: traceChat, id: id)) }
+        frames[id] = nil
+    }
 
     /// What else the stack draws under the rows (calling cards, the working
     /// line): counted as drawn by the blank-space diagnostic, never the

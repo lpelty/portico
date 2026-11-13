@@ -1,7 +1,7 @@
 """``portico-gateway`` command line.
 
 Subcommands: ``run``, ``stop``, ``status``, ``update``, ``doctor``, ``config-value``, ``check-env``,
-``sessions`` (list, clear), ``config show``, ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``, ``export-config-doc``. ``run`` holds the state directory lock, serves until
+``sessions`` (list, clear), ``diagnostics`` (on, off, status), ``config show``, ``message``, ``capture-prompt``, ``export-schema``, ``export-examples``, ``export-config-doc``. ``run`` holds the state directory lock, serves until
 ``gateway.stop`` or SIGINT/SIGTERM, and exits 0 after ``on_stop``. ``stop`` sends that SIGTERM to the
 gateway holding the lock and waits for it; ``status`` asks the running gateway what it is doing.
 """
@@ -247,6 +247,37 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0 if status["running"] else EXIT_NONE_RUNNING
 
 
+DIAG_HELP = ("Diagnostics for the deployment's maintainer agent to look at the conversation view's behaviour. Off unless turned on here. "
+             "Recordings hold sizes, counts and ids, never text, and stay on this machine.")
+
+
+def cmd_diagnostics(args: argparse.Namespace) -> int:
+    """``diagnostics on | off | status``: the one switch for the diagnostics suite. ``status`` exits 0 on, 3 off."""
+    import json
+
+    from portico_gateway import diagnostics
+
+    state, _ = _state_and_config_path(args)
+    if args.diagnostics_command == "on":
+        print(f"diagnostics on: {diagnostics.turn_on(state)}")
+        return 0
+    if args.diagnostics_command == "off":
+        try:
+            print(f"diagnostics off: removed {diagnostics.turn_off(state)} file(s)")
+        except diagnostics.DiagnosticsError as e:
+            print(f"portico-gateway: diagnostics off: {e}", file=sys.stderr)
+            return 1
+        return 0
+    result = diagnostics.status(state)
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print("diagnostics: " + ("on" if result["on"] else "off"))
+        for f in result["files"]:
+            print(f"  {f['name']}  {f['bytes']} bytes")
+    return 0 if result["on"] else EXIT_NONE_RUNNING
+
+
 def cmd_sessions_clear(args: argparse.Namespace) -> int:
     """Forget every ended session on a stopped gateway's state directory; the live one and the transcripts stay."""
     from portico_gateway.chats import ChatRegistry
@@ -456,6 +487,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
     p.add_argument("--json", action="store_true", help='one JSON object: {"version": 1, "running": ..., ...}')
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("diagnostics", help=DIAG_HELP, description=DIAG_HELP)
+    diag_sub = p.add_subparsers(dest="diagnostics_command", required=True)
+    for name, what in (("on", "turn diagnostics on"), ("off", "turn diagnostics off and delete everything it recorded"),
+                       ("status", "whether diagnostics is on, and the files it holds (exit 0 on, 3 off)")):
+        c = diag_sub.add_parser(name, help=what)
+        c.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")
+        if name == "status":
+            c.add_argument("--json", action="store_true", help='one JSON object: {"on": ..., "files": [...]}')
+        c.set_defaults(func=cmd_diagnostics)
 
     p = sub.add_parser("sessions", help="list sessions with the prompt each started with (v0.24), or clear earlier ones")
     p.add_argument("--state", help="state directory (default: $PORTICO_HOME, the checkout's .portico-home, or ~/.portico)")

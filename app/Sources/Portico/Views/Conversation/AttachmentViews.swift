@@ -57,6 +57,9 @@ struct AttachmentThumbnail: View {
     var size: Size = .bubble
     var onOpen: (String) -> Void
     var onRemove: ((String) -> Void)? = nil
+    /// v0.26.4 (D4): told the thumbnail's laid-out height when the image replaces
+    /// the placeholder; set only while diagnostics are on.
+    var onLoaded: ((CGFloat) -> Void)? = nil
 
     @State private var loaded: AttachmentImage?
     @State private var hovering = false
@@ -67,6 +70,13 @@ struct AttachmentThumbnail: View {
     /// What stands in for a file that is gone or unreadable.
     static let missingSymbol = "exclamationmark.triangle"
     static let loadingSymbol = "photo"
+
+    /// A loaded image's height in the bubble: the frame clamps each side on its
+    /// own (measured hosted: 200 × 100 lays out 160 × 100), so the height is the
+    /// image's, at most `bubbleMaxHeight`.
+    static func bubbleHeight(for size: CGSize) -> CGFloat {
+        min(size.height, bubbleMaxHeight)
+    }
 
     /// The symbol drawn in place of the picture, if any.
     static func placeholderSymbol(for loaded: AttachmentImage?) -> String? {
@@ -101,6 +111,7 @@ struct AttachmentThumbnail: View {
             .task(id: path) {
                 let path = path
                 loaded = await Task.detached(priority: .userInitiated) { AttachmentImageCache.shared.load(path: path) }.value
+                if let onLoaded, case .image(let image) = loaded { onLoaded(Self.bubbleHeight(for: image.size)) }
             }
     }
 

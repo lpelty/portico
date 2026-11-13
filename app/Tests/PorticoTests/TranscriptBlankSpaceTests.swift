@@ -42,14 +42,115 @@ final class TranscriptBlankSpaceTests: XCTestCase {
         rows.noteOther(CGRect(x: 0, y: 20, width: 600, height: 120), id: "calling:card-1")
         rows.noteOther(CGRect(x: 0, y: 160, width: 600, height: 24), id: "working")
         XCTAssertEqual(rows.allFrames.count, 4)
+        let others = Array(rows.others.values)
         XCTAssertFalse(
-            TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000),
+            TranscriptBlankSpace.isBlank(
+                hasRows: true, rowFrames: Array(rows.frames.values), otherFrames: others, clip: clip,
+                documentHeight: 2000),
             "calling cards and the working line in view are not blank space")
         XCTAssertEqual(rows.top()?.id, "item-2", "the kept place is a transcript row, never a calling card")
         rows.forgetOther("calling:card-1")
         rows.forgetOther("working")
         XCTAssertTrue(
-            TranscriptBlankSpace.isBlank(hasRows: true, rowFrames: rows.allFrames, clip: clip, documentHeight: 2000))
+            TranscriptBlankSpace.isBlank(
+                hasRows: true, rowFrames: Array(rows.frames.values), otherFrames: Array(rows.others.values),
+                clip: clip, documentHeight: 2000))
+    }
+
+    /// v0.26.4 (a field trace, 11-12): every transcript row was dropped by
+    /// the lazy stack and the view sat at its estimated end; the cards drawn
+    /// under the rows were still "in view", so the watch stayed quiet for
+    /// seven minutes. With rows to draw and not one of them laid out, the
+    /// view is blank whatever else reports a frame.
+    func testNoTranscriptRowLaidOutIsBlankEvenWithACardInView() {
+        let cards = [CGRect(x: 0, y: 20, width: 600, height: 120)]
+        XCTAssertTrue(TranscriptBlankSpace.isBlank(
+            hasRows: true, rowFrames: [], otherFrames: cards, clip: clip, documentHeight: 2000))
+    }
+
+    /// Rows laid out but scrolled out of view, a card in view: not blank
+    /// (the person is looking at the cards under the conversation).
+    func testACardInViewWithRowsLaidOutElsewhereIsNotBlank() {
+        let rows = [CGRect(x: 0, y: -300, width: 600, height: 80)]
+        let cards = [CGRect(x: 0, y: 20, width: 600, height: 120)]
+        XCTAssertFalse(TranscriptBlankSpace.isBlank(
+            hasRows: true, rowFrames: rows, otherFrames: cards, clip: clip, documentHeight: 2000))
+    }
+
+    /// The heal is for rows that were laid out and then all dropped: a
+    /// conversation still opening has reported no row yet and is left alone.
+    @MainActor
+    func testRowFramesRememberThatARowWasEverReported() {
+        let rows = TranscriptRowFrames()
+        XCTAssertFalse(rows.hasReported)
+        rows.noteOther(CGRect(x: 0, y: 20, width: 600, height: 24), id: "working")
+        XCTAssertFalse(rows.hasReported, "a card or the working line is not a row")
+        rows.note(CGRect(x: 0, y: 100, width: 600, height: 80), id: "item-1")
+        rows.forget("item-1")
+        XCTAssertTrue(rows.frames.isEmpty)
+        XCTAssertTrue(rows.hasReported)
+    }
+
+    /// A heal that did not bring a row back is tried again after another
+    /// grace, three times at most.
+    func testTheWatchAllowsThreeHeals() {
+        var watch = TranscriptBlankSpace.Watch()
+        var now = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
+        for attempt in 1...3 {
+            now += 1.5
+            XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now), "report \(attempt)")
+            XCTAssertTrue(watch.mayHeal, "heal \(attempt)")
+            watch.healed(now: now)
+            XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now + 0.5), "within the grace again")
+        }
+        now += 1.5
+        XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now), "still reported")
+        XCTAssertFalse(watch.mayHeal, "no fourth heal")
+    }
+
+    /// Review round 2: a row that comes back for one reading and drops again
+    /// (the heal's own id scroll could do that) does not start the count
+    /// again; three heals are the limit however the readings alternate.
+    func testARowBackForAMomentDoesNotBuyMoreHeals() {
+        var watch = TranscriptBlankSpace.Watch()
+        var now = Date(timeIntervalSince1970: 1000)
+        var heals = 0
+        for _ in 1...10 {
+            XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
+            now += 1.5
+            XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now))
+            if watch.mayHeal { watch.healed(now: now); heals += 1 }
+            now += 0.5
+            XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now), "a row for one reading")
+            now += 0.5
+        }
+        XCTAssertEqual(heals, 3)
+        XCTAssertFalse(watch.mayHeal)
+    }
+
+    /// The count starts again once rows have been shown for ten seconds on
+    /// end; a blank reading in between starts those ten seconds over.
+    func testTheHealCountStartsAgainOnceTheViewHasSettled() {
+        var watch = TranscriptBlankSpace.Watch()
+        var now = Date(timeIntervalSince1970: 1000)
+        XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now))
+        for _ in 1...3 {
+            now += 1.5
+            XCTAssertTrue(watch.observe(blank: true, scrolling: false, now: now))
+            watch.healed(now: now)
+        }
+        XCTAssertFalse(watch.mayHeal)
+        now += 0.5
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now))
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 9))
+        XCTAssertFalse(watch.mayHeal, "nine seconds is not settled")
+        XCTAssertFalse(watch.observe(blank: true, scrolling: false, now: now + 9.5))
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 10))
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 19))
+        XCTAssertFalse(watch.mayHeal, "the blank reading started the ten seconds over")
+        XCTAssertFalse(watch.observe(blank: false, scrolling: false, now: now + 20))
+        XCTAssertTrue(watch.mayHeal, "rows shown for ten seconds on end")
     }
 
     func testWatchReportsOncePerOccurrenceAfterTheGrace() {
