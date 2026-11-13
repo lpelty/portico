@@ -18,6 +18,9 @@
   `marks.json` (0600) in the app's home and come back as they were left,
   shown or hidden, in any chat that opens the page. A renewed session no
   longer drops them.
+- **Show-sidebar works in focus mode.** With the viewer in focus, the
+  sidebar button (and Show Sidebar in the menu) moved the header and opened
+  nothing. One click now leaves focus and opens the sidebar.
 - For the agent: `viewer_clear_marks` and `viewer_mark`'s `replace` now act
   on the page the viewer shows, not on every page; `viewer_look` lists that
   page's marks and says when the person has hidden them.

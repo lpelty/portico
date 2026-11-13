@@ -2176,6 +2176,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The sidebar's button, menu item and shortcut. In focus the sidebar
+    /// is hidden by the focus itself, so showing it leaves focus and opens
+    /// the sidebar in one step (v0.26.5: it used to flip a flag the focused
+    /// layout ignores, which moved the header and opened nothing).
+    func toggleSidebar() {
+        if viewerFocus != nil {
+            viewerFocus = nil
+            sidebarVisible = true
+        } else {
+            sidebarVisible.toggle()
+        }
+    }
+
     func endFocus() {
         guard let focus = viewerFocus else { return }
         viewerFocus = nil

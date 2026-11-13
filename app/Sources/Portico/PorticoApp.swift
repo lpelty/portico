@@ -174,7 +174,7 @@ struct PorticoApp: App {
         .commands {
             CommandGroup(after: .sidebar) {
                 Button(model.sidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
-                    model.sidebarVisible.toggle()
+                    model.toggleSidebar()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 Button(viewerShown ? "Hide Viewer" : "Show Viewer") {

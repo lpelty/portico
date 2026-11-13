@@ -25,6 +25,28 @@ final class ArtifactFocusTests: XCTestCase {
         XCTAssertEqual(ColumnWidths.focusViewer(window: 600), ColumnWidths.viewerMinimum, "the viewer keeps its own minimum")
     }
 
+    /// v0.26.5: show-sidebar in focus leaves focus and opens the sidebar in
+    /// one step, whether or not the sidebar was open before the focus; out
+    /// of focus it is the plain toggle.
+    func testShowSidebarInFocusLeavesFocusAndOpensTheSidebar() throws {
+        let (model, _) = try model()
+        model.selected = 1
+        for before in [true, false] {
+            model.sidebarVisible = before
+            model.toggleFocus(chat: 1)
+            XCTAssertTrue(model.isFocused(chat: 1))
+            XCTAssertFalse(model.sidebarVisible)
+            model.toggleSidebar()
+            XCTAssertFalse(model.isFocused(chat: 1), "focus is off")
+            XCTAssertTrue(model.sidebarVisible, "the sidebar is open (it was \(before ? "open" : "hidden") before the focus)")
+            XCTAssertTrue(model.isViewerShown(for: 1), "the viewer stays up, at its own width")
+        }
+        model.toggleSidebar()
+        XCTAssertFalse(model.sidebarVisible)
+        model.toggleSidebar()
+        XCTAssertTrue(model.sidebarVisible)
+    }
+
     func testFocusHidesTheSidebarAndPutsEverythingBack() throws {
         let (model, settings) = try model()
         settings.sidebarWidth = 300
