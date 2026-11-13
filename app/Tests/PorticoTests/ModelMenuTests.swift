@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import Portico
@@ -303,6 +304,61 @@ final class ModelMenuTests: XCTestCase {
             extra,
             StatusStripPresentation.Measure.iconGap + StatusStripPresentation.Measure.chevron.size
                 + 2 * StatusStripPresentation.Measure.modelMenuPadding)
+    }
+
+    // MARK: - an overlong name (PORT-68)
+
+    private static let arn =
+        "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/a1b2c3d4e5f6"
+
+    func testABedrockNameThatEndsInAClaudeIdReadsAsThatModel() {
+        let name = StatusStripPresentation.modelDisplayName
+        XCTAssertEqual(
+            name("arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-opus-5-5-20260101-v1:0"),
+            "Claude Opus 5.5")
+        XCTAssertEqual(name("anthropic.claude-sonnet-5-5-v1:0"), "Claude Sonnet 5.5")
+        XCTAssertEqual(name("global.anthropic.claude-haiku-5-5-20260101-v1:0"), "Claude Haiku 5.5")
+        XCTAssertEqual(name(Self.arn), Self.arn, "an ARN that names no Claude id is shown as sent")
+        XCTAssertEqual(name("claude-sonnet-5-5"), "Claude Sonnet 5.5", "a plain id as before")
+        XCTAssertEqual(name("gpt-6"), "gpt-6")
+    }
+
+    func testAnOverlongNameKeepsTheModelWhereAShortNameKeepsIt() {
+        let services = ServicesPresentation(
+            gateway: ServicesPresentation.gatewayRow(.running(port: 1), connection: .connected), services: [])
+        let metrics = StatusStripPresentation.Metrics(text: { CGFloat($0.count * 7) }, symbol: { $0.size + 2 })
+        var short = StatusStripPresentation(modelText: "Claude Opus 5.5", services: services, gatewayText: "")
+        short.modelMenu = presentation()
+        var long = short
+        long.modelText = Self.arn
+        let cap = StatusStripPresentation.Measure.modelMaxWidth
+        XCTAssertGreaterThan(metrics.text(Self.arn), cap, "the name is wider than the cap")
+        let extra = cap - metrics.text("Claude Opus 5.5")
+        for fit in [StatusStripPresentation.Fit.full, .compact] {
+            XCTAssertLessThanOrEqual(
+                long.width(at: fit, restart: false, update: nil, metrics: metrics),
+                short.width(at: .full, restart: false, update: nil, metrics: metrics) + extra,
+                "the long name costs the cap at most")
+        }
+        let width = long.width(at: .full, restart: false, update: nil, metrics: metrics)
+        XCTAssertEqual(long.fit(width: width, restart: false, update: nil, metrics: metrics), .full)
+        XCTAssertEqual(long.model(at: .full), Self.arn, "the words are whole; the view truncates them")
+    }
+
+    func testTheSelectorDrawsAnOverlongNameNoWiderThanTheCap() {
+        let model = model()
+        let measure = StatusStripPresentation.Measure.self
+        func drawn(_ label: String) -> CGFloat {
+            let host = NSHostingView(
+                rootView: ModelMenuControl(
+                    menu: presentation(), chat: 3, label: label, help: label, shown: .constant(false)
+                )
+                .environmentObject(model))
+            return host.fittingSize.width
+        }
+        let chrome = drawn("M") - StatusStripPresentation.textWidth("M")
+        XCTAssertLessThanOrEqual(drawn(Self.arn), measure.modelMaxWidth + chrome + 1)
+        XCTAssertLessThan(drawn("Claude Opus 5.5"), measure.modelMaxWidth, "a short name keeps its own width")
     }
 
     // MARK: - model.set
