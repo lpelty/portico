@@ -7,7 +7,8 @@ struct MarkRowPresentation: Equatable {
     /// The stored call, if the app drew this one (a resumed session has none).
     let call: MarkCall?
 
-    var showsShowAgain: Bool { call != nil && !isFailed }
+    /// Only while the call still has marks: cleared marks do not come back.
+    var showsShowAgain: Bool { !(call?.marks.isEmpty ?? true) && !isFailed }
 
     /// Running and failed read as on any tool row (`ToolRowPresentation`).
     private var tool: ToolRowPresentation { ToolRowPresentation(row: row) }

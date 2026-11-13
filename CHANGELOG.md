@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.26.5 (unreleased)
+
+- **Marks belong to their page.** The marks chip in the viewer's header shows
+  only on a page that has marks, and counts that page's alone; another file,
+  page or space has no chip and nothing drawn. Each page numbers its marks
+  from 1.
+- **Hide marks / Show marks.** The marks menu's bottom row hides the page's
+  marks without losing them: the page reads clean, the chip stays with its
+  count and a crossed-out eye, the list is greyed, and Show marks draws them
+  again as they were. Hidden or shown is per page.
+- **Clear marks asks first, and is final.** "Clear the 3 marks on this
+  page?" sits in the menu; it clears this page's marks only. "Show again" on
+  a Mark row in the chat opens the page with its marks shown, and is no
+  longer offered for marks that were cleared.
+- **Marks are kept across sessions and restarts.** They are written to
+  `marks.json` (0600) in the app's home and come back as they were left,
+  shown or hidden, in any chat that opens the page. A renewed session no
+  longer drops them.
+- For the agent: `viewer_clear_marks` and `viewer_mark`'s `replace` now act
+  on the page the viewer shows, not on every page; `viewer_look` lists that
+  page's marks and says when the person has hidden them.
+
 ## v0.26.4 (2026-11-12)
 
 - Release gate: no distributed file may name the maintainer's home folders, so a deployment's own config can never ride along with a release.

@@ -316,7 +316,8 @@ struct ViewerView: View {
 
     private var header: some View { fileHeader }
 
-    private var chipShown: Bool { !(marks.marks[chat] ?? []).isEmpty }
+    /// Only on a page that has marks of its own (v0.26.5).
+    private var chipShown: Bool { marks.current.map { !marks.marks(on: $0).isEmpty } ?? false }
 
     /// The measured parts as `HeaderFit` counts them, with the header's
     /// spacing: padding 16 + 16, 8 either side of the Spacer and its 8,
@@ -731,7 +732,7 @@ struct SpaceViewer: View {
 
     /// The chat whose marks the chip counts; none without a chat.
     private var chipChat: Int? {
-        guard let chat, !(marks.marks[chat] ?? []).isEmpty else { return nil }
+        guard let chat, let page = marks.current, !marks.marks(on: page).isEmpty else { return nil }
         return chat
     }
 

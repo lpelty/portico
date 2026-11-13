@@ -145,9 +145,9 @@ final class ViewerStepsTests: XCTestCase {
         let page = MarkPage(key: "/tmp/trail-detail.html", name: "trail-detail.html")
         var mark = Mark(number: 2, page: page, note: "Start here", label: "button: Start trail",
                         locator: MarkLocator(path: "", tag: "button", text: "Start trail"), found: true, call: "c1")
-        XCTAssertEqual(MarksList.spokenLabel(for: mark), "Mark 2, Start here, trail-detail.html")
+        XCTAssertEqual(MarksList.spokenLabel(for: mark), "Mark 2, Start here")
         mark.note = ""
         mark.found = false
-        XCTAssertEqual(MarksList.spokenLabel(for: mark), "Mark 2, button: Start trail, trail-detail.html, not on the page now")
+        XCTAssertEqual(MarksList.spokenLabel(for: mark), "Mark 2, button: Start trail, not on the page now")
     }
 }

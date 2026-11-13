@@ -169,7 +169,8 @@ final class ViewerAgent: ObservableObject {
         // publisher fires before the value lands, so the redraw is queued.
         // A redraw writes found flags back, which publish only on a change,
         // so a redraw leads to at most one more and then stops.
-        marksWatch = model?.markStore.$marks.dropFirst().sink { [weak self] _ in
+        marksWatch = model.map { $0.markStore.$marks.map { _ in () }.merge(with: $0.markStore.$hidden.map { _ in () }) }?
+            .dropFirst(2).sink { [weak self] _ in
             MainActor.assumeIsolated { self?.queueRedraw() }
         }
         // A space opened or Work again: the page on screen changed, so
@@ -220,6 +221,7 @@ final class ViewerAgent: ObservableObject {
     private func setCurrentPage(_ page: MarkPage?) {
         // A page's name can differ by how it was reached; both count here.
         if currentPage?.key != page?.key || currentPage?.name != page?.name { currentPage = page }
+        if let store = model?.markStore, store.current?.key != page?.key || store.current?.name != page?.name { store.current = page }
     }
 
     /// The view that holds a native pane (image, PDF, text, table), for its snapshot.
@@ -266,10 +268,10 @@ final class ViewerAgent: ObservableObject {
             chat = act.chat
         }
         guard let artifact = model.shownArtifact(for: chat) else {
-            // Clearing is the store's alone: it needs no page open.
+            // Nothing open has no page to clear: the answer is none cleared.
             guard act.action == .clearMarks else { return fail(act, Message.nothingOpen) }
             lastChat = chat
-            return ViewerResult(id: act.id, ok: true, text: Message.cleared(model.markStore.clear(chat: chat)))
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(0))
         }
 
         begin(chat)
@@ -314,8 +316,7 @@ final class ViewerAgent: ObservableObject {
         case .back:
             return fail(act, "There's nothing to go back to in the viewer.")
         case .clearMarks:
-            let count = model?.markStore.clear(chat: runChat) ?? 0
-            return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(clearCurrentPage()))
         case .show:
             return ViewerResult(id: act.id, ok: true, text: Message.shown)
         }
@@ -441,8 +442,8 @@ final class ViewerAgent: ObservableObject {
         case .mark:
             return await mark(act, in: view)
         case .clearMarks:
-            let count = model?.markStore.clear(chat: runChat) ?? 0
-            await draw([], chat: runChat, page: nil, in: view, quiet: false)
+            let count = await page(of: view).map { model?.markStore.clear(page: $0) ?? 0 } ?? 0
+            await draw([], page: nil, in: view, quiet: false)
             return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
         case .show:
             assertionFailure("a show is answered by performShow")
@@ -471,7 +472,7 @@ final class ViewerAgent: ObservableObject {
         } else {
             text += "\nPage errors since the last look:\n" + errors.map { "- \($0)" }.joined(separator: "\n")
         }
-        if let marks = model?.markStore.lookText(chat: runChat, current: await page(of: view)) {
+        if let marks = model?.markStore.lookText(current: await page(of: view)) {
             text += "\n\n" + marks
         }
         let image = await snapshot(of: view)
@@ -813,7 +814,7 @@ final class ViewerAgent: ObservableObject {
         let added = store.add(
             chat: runChat, page: page, items: located, call: act.id,
             toolUseId: act.args["tool_use_id"]?.stringValue, replace: act.args["replace"] == .bool(true))
-        await draw(store.marks(chat: runChat, on: page), chat: runChat, page: page, in: view, quiet: false)
+        await draw(store.marks(on: page), page: page, in: view, quiet: false)
         if let first = added.first {
             _ = await call("return window.__porticoAgent.scrollToMark(n)", ["n": first.number], in: view)
         }
@@ -923,14 +924,15 @@ final class ViewerAgent: ObservableObject {
         await ensureScript(in: view, quiet: true)
         let page = await page(of: view)
         if web?.view === view { setCurrentPage(page) }
-        let chat = drawChat
-        let list = page.flatMap { page in chat.map { model.markStore.marks(chat: $0, on: page) } } ?? []
-        await draw(list, chat: chat ?? 0, page: page, in: view, quiet: true)
+        let store = model.markStore
+        let list = page.map { store.isHidden($0) ? [] : store.marks(on: $0) } ?? []
+        // Hidden marks are not drawn, and their found flags stay as they were.
+        await draw(list, page: page.flatMap { store.isHidden($0) ? nil : $0 }, in: view, quiet: true)
     }
 
     /// Show `list` on the page and record the found flags for `page`,
     /// unless the page moved on meanwhile.
-    private func draw(_ list: [Mark], chat: Int, page: MarkPage?, in view: WKWebView, quiet: Bool) async {
+    private func draw(_ list: [Mark], page: MarkPage?, in view: WKWebView, quiet: Bool) async {
         let url = view.url
         let payload: [[String: Any]] = list.map { mark in
             ["n": mark.number, "note": mark.note,
@@ -943,7 +945,7 @@ final class ViewerAgent: ObservableObject {
         recheck = nil
         guard let answer, let page, view.url == url else { return }
         let found = Self.foundFlags(answer)
-        model?.markStore.setFound(chat: chat, page: page, found: found)
+        model?.markStore.setFound(page: page, found: found)
         guard found.values.contains(false) else { return }
         // The page script watches a short while for what it didn't find (a
         // page that builds its content with script); read back what it drew.
@@ -959,7 +961,7 @@ final class ViewerAgent: ObservableObject {
                       !Task.isCancelled, view.url == url
                 else { return }
                 let now = Self.foundFlags(status)
-                self.model?.markStore.setFound(chat: chat, page: page, found: now)
+                self.model?.markStore.setFound(page: page, found: now)
                 if !now.values.contains(false) { return }
             }
         }
@@ -990,16 +992,28 @@ final class ViewerAgent: ObservableObject {
         return css
     }
 
-    /// Clear all (the list): every mark in the chat goes, and the page
-    /// redraws through the store.
-    func clearMarks(chat: Int) {
-        model?.markStore.clear(chat: chat)
+    /// Clear marks (the list, after it asked): the marks of the page the
+    /// viewer shows go for good, and the page redraws through the store.
+    func clearMarks() {
+        clearCurrentPage()
     }
 
-    /// Show again (a tool call's chip): the call's marks come back and the
-    /// viewer goes to the first.
+    /// Hide or show the marks of the page the viewer shows.
+    func setMarksHidden(_ hidden: Bool) {
+        guard let page = currentPage else { return }
+        model?.markStore.setHidden(hidden, page: page)
+    }
+
+    @discardableResult
+    private func clearCurrentPage() -> Int {
+        guard let page = currentPage else { return 0 }
+        return model?.markStore.clear(page: page) ?? 0
+    }
+
+    /// Show again (a tool call's chip): the viewer goes to the call's page
+    /// with its marks shown. Cleared marks stay cleared.
     func showAgain(toolUseId: String, chat: Int) {
-        guard let first = model?.markStore.showAgain(chat: chat, toolUseId: toolUseId).first else { return }
+        guard let first = model?.markStore.showAgain(chat: chat, toolUseId: toolUseId) else { return }
         goToMark(first, chat: chat)
     }
 
@@ -1127,8 +1141,7 @@ final class ViewerAgent: ObservableObject {
         case .mark:
             return fail(act, Message.marksOnWebPages(kind: kind))
         case .clearMarks:
-            let count = model?.markStore.clear(chat: runChat) ?? 0
-            return ViewerResult(id: act.id, ok: true, text: Message.cleared(count))
+            return ViewerResult(id: act.id, ok: true, text: Message.cleared(clearCurrentPage()))
         case .show:
             assertionFailure("a show is answered by performShow")
             return ViewerResult(id: act.id, ok: true, text: Message.shown)

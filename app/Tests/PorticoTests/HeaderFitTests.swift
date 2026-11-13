@@ -53,7 +53,7 @@ final class HeaderFitTests: XCTestCase {
 
     /// The chip's VoiceOver label.
     func testChipSpokenLabel() {
-        XCTAssertEqual(MarksChip.spokenLabel(count: 1, pages: 1), "1 mark on 1 page, opens the list")
-        XCTAssertEqual(MarksChip.spokenLabel(count: 4, pages: 2), "4 marks on 2 pages, opens the list")
+        XCTAssertEqual(MarksChip.spokenLabel(count: 1, hidden: false), "1 mark on this page, opens the list")
+        XCTAssertEqual(MarksChip.spokenLabel(count: 4, hidden: true), "4 marks on this page, hidden, opens the list")
     }
 }

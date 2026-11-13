@@ -30,6 +30,8 @@ struct PorticoApp: App {
         model.appVersion = Self.version
         // Pasted images never sent go after a week (v0.19 §8.2), off the main thread.
         let home = supervisor.home.url
+        // Marks are kept with their page across sessions and restarts (v0.26.5).
+        model.markStore.keep(in: home)
         Task.detached(priority: .utility) { PastedImages.prunePending(home: home, now: Date()) }
         // Space-updated notifications need an app bundle; a bare executable
         // (`swift run`) has no notification centre to ask.
