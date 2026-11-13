@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.26.5 (unreleased)
+## v0.26.5 (2026-11-13)
 
 - **Marks belong to their page.** The marks chip in the viewer's header shows
   only on a page that has marks, and counts that page's alone; another file,
@@ -31,10 +31,12 @@
   PDF or another kind of file. A file that cannot be edited just now (too
   large, read-only, open elsewhere) keeps the dimmed button and its reason.
 - **Files shows what the agent just made, in every folder.** After a write,
-  a command or the end of a turn, the directories already listed are listed
-  again in every root (the vault and added folders too, not only the
-  session's own folder), so a new folder or file appears without the
-  refresh button. A shell command now counts as soon as it finishes.
+  a command or the end of a turn, each root's top level and the folders
+  open in Files are listed again, in every root (the vault and added
+  folders too, not only the session's own folder), so a new folder or file
+  appears without the refresh button. A shell command now counts as soon as
+  it finishes. A closed folder is listed afresh when it is opened, and a
+  folder that is gone is not asked for again.
 - **Folders left open in Files stay open.** Open folders are remembered by
   where they are on disk: they are open again after a restart, and in a
   later session or another chat that shows the same folder. A remembered

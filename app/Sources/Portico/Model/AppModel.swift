@@ -1418,9 +1418,12 @@ final class AppModel: ObservableObject {
                 }
             }
             // A refused listing: the directory is no longer pending (so it
-            // can be asked for again) and its row shows the refusal.
+            // can be asked for again) and its row shows the refusal. An
+            // earlier listing of it is dropped (v0.26.5): the directory may
+            // be gone, and a relist asks only for what is listed.
             if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileListErrors[key] = error.message
+                fileTree[key] = nil
             }
 
         case .appCallResult(let result):
@@ -3014,12 +3017,14 @@ extension AppModel {
         }
     }
 
-    /// List again the directories the Files pane has already listed for
-    /// the chat, in every root, so a folder or file the agent made appears
-    /// without the refresh button. The old entries stay drawn until the
-    /// new ones come (no "Listing…" flash), and no directory is asked for
-    /// that was not already listed. A chat whose files are not on screen
-    /// just forgets those listings; they are asked for when it is shown.
+    /// List again the directories the Files pane shows for the chat, in
+    /// every root, so a folder or file the agent made appears without the
+    /// refresh button: each root's top level and the folders open now. The
+    /// old entries stay drawn until the new ones come (no "Listing…"
+    /// flash). A listed folder that is closed now is not asked for; its
+    /// listing is forgotten, so it is listed afresh when it is opened. A
+    /// chat whose files are not on screen forgets all its listings; they
+    /// are asked for when it is shown.
     ///
     /// A directory whose listing is still out is asked for again: that
     /// listing may have been read before the write (each request has its
@@ -3033,7 +3038,11 @@ extension AppModel {
             return
         }
         for key in keys.sorted(by: { ($0.root, $0.path) < ($1.root, $1.path) }) {
-            send(filesListRequest(for: key))
+            if key.path.isEmpty || isFolderOpen(chat: chat, root: key.root, path: key.path) {
+                send(filesListRequest(for: key))
+            } else {
+                fileTree[key] = nil
+            }
         }
     }
 
