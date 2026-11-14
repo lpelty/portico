@@ -183,34 +183,14 @@ struct StatusStripPresentation: Equatable, Sendable {
     // MARK: words
 
     /// `claude-sonnet-5-5` reads `Claude Sonnet 5.5`; a dated id drops the
-    /// date; a Bedrock id or ARN that ends in a Claude id reads as that
-    /// model (PORT-68); a name that is not a Claude id is shown as sent.
+    /// date; a name that is not a Claude id is shown as sent.
     static func modelDisplayName(_ id: String) -> String {
-        var parts = bedrockModelID(id).split(separator: "-").map(String.init)
+        var parts = id.split(separator: "-").map(String.init)
         guard parts.first?.lowercased() == "claude", parts.count > 1 else { return id }
         if let last = parts.last, last.count == 8, Int(last) != nil { parts.removeLast() }
         let words = parts.prefix { Int($0) == nil }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
         let version = parts.drop { Int($0) == nil }.joined(separator: ".")
         return (words + (version.isEmpty ? [] : [version])).joined(separator: " ")
-    }
-
-    /// The Claude id inside a Bedrock name, else the name as it is:
-    /// `arn:aws:bedrock:…:inference-profile/us.anthropic.claude-opus-5-5-20260101-v1:0`
-    /// and `anthropic.claude-opus-5-5-v1:0` are `claude-opus-5-5-20260101`
-    /// and `claude-opus-5-5`.
-    static func bedrockModelID(_ id: String) -> String {
-        var name = Substring(id)
-        if name.hasPrefix("arn:"), let slash = name.lastIndex(of: "/") { name = name[name.index(after: slash)...] }
-        guard let vendor = name.range(of: "anthropic.") else { return id }
-        name = name[vendor.upperBound...]
-        if let colon = name.lastIndex(of: ":") { name = name[..<colon] }
-        if let dash = name.lastIndex(of: "-") {
-            let tail = name[name.index(after: dash)...]
-            if tail.hasPrefix("v"), !tail.dropFirst().isEmpty, tail.dropFirst().allSatisfy(\.isNumber) {
-                name = name[..<dash]
-            }
-        }
-        return String(name)
     }
 
     /// The name without its vendor: `Claude Opus 5.5` reads `Opus 5.5`.
@@ -327,10 +307,7 @@ struct StatusStrip: View {
         HStack(spacing: StatusStripPresentation.Measure.iconGap) {
             Image(systemName: icon.name)
                 .font(Theme.iconFont(icon.size))
-            Text(text)
-                .scaledFont(12)
-                .truncationMode(.middle)
-                .frame(maxWidth: StatusStripPresentation.Measure.modelMaxWidth)
+            ModelNameText(name: text)
         }
         .foregroundStyle(Theme.text2)
         .fixedSize()
@@ -380,6 +357,28 @@ struct StatusStrip: View {
         .buttonStyle(.hover)
         .tip("\(StatusStripPresentation.updateText(version)). Install it: \(model.brand.name) closes, updates, and opens again")
         .accessibilityLabel(StatusStripPresentation.updateText(version))
+    }
+}
+
+/// The model's name in the strip (PORT-68): its own width, or, when it
+/// measures wider than `modelMaxWidth`, exactly that width with the middle
+/// cut. The width is given outright, so the text is truncated whatever its
+/// container proposes.
+struct ModelNameText: View {
+    let name: String
+    @Environment(\.textScale) private var textScale
+
+    /// The name measures wider than the cap at this text scale.
+    static func truncates(_ name: String, scale: CGFloat = 1) -> Bool {
+        StatusStripPresentation.textWidth(name, scale: scale) > StatusStripPresentation.Measure.modelMaxWidth
+    }
+
+    var body: some View {
+        Text(name)
+            .scaledFont(StatusStripPresentation.Measure.fontSize)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(width: Self.truncates(name, scale: textScale) ? StatusStripPresentation.Measure.modelMaxWidth : nil)
     }
 }
 
@@ -448,7 +447,7 @@ struct ModelMenuPresentation: Equatable, Sendable {
         let wanted = value ?? Models.defaultValue
         if wanted == Models.defaultValue, let name = defaultModelName(in: choices) { return name }
         if let choice = choices.first(where: { $0.value == wanted }) { return shortChoiceName(choice.displayName) }
-        return wanted == Models.defaultValue ? defaultLabel : StatusStripPresentation.modelDisplayName(wanted)
+        return wanted == Models.defaultValue ? defaultLabel : wanted
     }
 
     /// A row's secondary text: its description; Default's leads with the
@@ -492,10 +491,7 @@ struct ModelMenuControl: View {
                 HStack(spacing: Measure.iconGap) {
                     Image(systemName: Measure.modelIcon.name)
                         .font(Theme.iconFont(Measure.modelIcon.size))
-                    Text(label)
-                        .scaledFont(Measure.fontSize)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: Measure.modelMaxWidth)
+                    ModelNameText(name: label)
                     Image(systemName: shown ? "chevron.up" : Measure.chevron.name)
                         .font(Theme.iconFont(Measure.chevron.size, weight: .semibold))
                         .foregroundStyle(Theme.text3)
