@@ -282,7 +282,38 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertNil(found("https://localhost:8080/"), "another scheme is another place")
         XCTAssertNil(found("http://example.com:8080/"))
         XCTAssertTrue(ViewerAgent.canAct(url: URL(string: "http://localhost:8080/ui")!, actHosts: []), "the local rule alone would let it through")
-        XCTAssertTrue(ViewerAgent.Message.servicePage("Memory").contains("looked at and scrolled, not used"))
+    }
+
+    /// Review 20261115-164629-3ce6b9, F1 and F2: the refusal the agent's click and type go
+    /// through, and that it holds when the services list empties under an open page.
+    func testTheAgentIsRefusedOnAViewedServicesPageWhateverTheListSaysLater() throws {
+        let (model, _) = try model()
+        connected(model, sessions: [ChatSummary(chat: 3, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")])
+        model.selected = 3
+        let page = URL(string: "http://localhost:8080/banks/main")!
+        func refusal() -> String? {
+            ViewerAgent.refusal(at: page, actHosts: [], servicePage: model.servicePage(at: page)?.name)
+        }
+        XCTAssertNil(refusal(), "an ordinary local page is the agent's to use")
+
+        // Listed, before anyone pressed View: already look-only.
+        model.apply(.servicesStatus(ServicesStatus(services: [
+            Service(id: "memory", name: "Memory", state: .stuck, view: "http://localhost:8080/ui"),
+        ])))
+        XCTAssertEqual(refusal(), ViewerAgent.Message.servicePage("Memory"))
+        XCTAssertTrue(try XCTUnwrap(refusal()).contains("looked at and scrolled, not used"))
+
+        // View opens it; then the status read fails and the list holds one failed row, then nothing.
+        XCTAssertTrue(model.viewService(try XCTUnwrap(ServicesPresentation.row(try XCTUnwrap(model.services?.first)))))
+        model.apply(.servicesStatus(ServicesStatus(services: [Service(id: "status", name: "Services", state: .down)])))
+        XCTAssertEqual(refusal(), ViewerAgent.Message.servicePage("Memory"), "the list no longer names it; the page is still the service's")
+        model.services = nil
+        XCTAssertEqual(refusal(), ViewerAgent.Message.servicePage("Memory"), "nor after a reconnect")
+
+        // The other rule is unchanged: an outside site is refused as before, a listed one allowed.
+        let outside = URL(string: "https://example.com/")!
+        XCTAssertEqual(ViewerAgent.refusal(at: outside, actHosts: [], servicePage: nil), ViewerAgent.Message.outsideSite("example.com"))
+        XCTAssertNil(ViewerAgent.refusal(at: outside, actHosts: ["example.com"], servicePage: nil))
     }
 
     // MARK: - a row's Restart beside Restart all services

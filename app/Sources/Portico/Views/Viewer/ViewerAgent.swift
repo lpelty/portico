@@ -671,6 +671,16 @@ final class ViewerAgent: ObservableObject {
         }
     }
 
+    /// Why the agent may not click or type on the page at `url`, or `nil` when it may: an
+    /// outside site off the allow list, or a service's own page (v0.26.6; it is on this
+    /// Mac, so `canAct` alone lets it through).
+    static func refusal(at url: URL, actHosts: [String], servicePage: String?) -> String? {
+        guard canAct(url: url, actHosts: actHosts) else {
+            return Message.outsideSite(url.host(percentEncoded: false) ?? url.absoluteString)
+        }
+        return servicePage.map(Message.servicePage)
+    }
+
     private enum Place {
         case place(String)
         case refused(String)
@@ -688,12 +698,10 @@ final class ViewerAgent: ObservableObject {
             let href = (here["href"] as? String).flatMap(URL.init(string:)),
             let place = here["place"] as? String
         else { return .refused(Message.nothingOpen) }
-        guard Self.canAct(url: href, actHosts: model?.hello?.viewerDefaults?.actHosts ?? []) else {
-            return .refused(Message.outsideSite(href.host(percentEncoded: false) ?? href.absoluteString))
-        }
-        // v0.26.6: a service's page is on this Mac, so the rule above lets it through.
-        if let service = ServicesPresentation.service(at: href, in: model?.services ?? []) {
-            return .refused(Message.servicePage(service.name))
+        if let refusal = Self.refusal(
+            at: href, actHosts: model?.hello?.viewerDefaults?.actHosts ?? [], servicePage: model?.servicePage(at: href)?.name)
+        {
+            return .refused(refusal)
         }
         return .place(place)
     }

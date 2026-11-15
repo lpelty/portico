@@ -12,7 +12,7 @@
   work since the log, or no log yet, Close logs first, as before.
 - **View on a service's row.** A service in the deployment's `[[services]]`
   (or a `deployment.status` row) may give its own web page with `view`, an
-  http or https address with its port. Its row in the services menu then
+  http or https address. Its row in the services menu then
   shows View beside Restart, whatever state it is in; View opens that page in
   the viewer. The agent can look at a service's page and scroll it, and
   cannot click or type there.

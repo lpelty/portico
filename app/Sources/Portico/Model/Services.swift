@@ -351,7 +351,17 @@ extension AppModel {
     @discardableResult
     func viewService(_ row: ServiceRow) -> Bool {
         guard let address = row.view, let chat = shownChat else { return false }
+        // Remembered for as long as the app runs: the services list empties when a status
+        // read fails or the gateway reconnects, and the page must stay look-only then.
+        viewedServices.removeAll { $0.id == row.id }
+        viewedServices.append(Service(id: row.id, name: row.name, state: row.state, view: address))
         return openLink(address, chat: chat)
+    }
+
+    /// The service whose page `url` is on: one in the list now, or one whose page View
+    /// opened earlier in this run.
+    func servicePage(at url: URL) -> Service? {
+        ServicesPresentation.service(at: url, in: (services ?? []) + viewedServices)
     }
 
     /// Whether View can act now: there is a chat whose viewer takes the page.

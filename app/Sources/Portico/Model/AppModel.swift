@@ -357,6 +357,8 @@ final class AppModel: ObservableObject {
     /// The deployment's services from the latest `services.status`; `nil`
     /// until the first one on this connection ("Checking…").
     @Published var services: [Service]?
+    /// The services whose pages View opened in this run (v0.26.6); see `servicePage(at:)`.
+    var viewedServices: [Service] = []
     /// Restarts sent and not yet answered by a `services.status`: service
     /// id → request id.
     @Published var restartingServices: [String: String] = [:]
