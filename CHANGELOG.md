@@ -2,16 +2,6 @@
 
 ## v0.26.6 (2026-11-15)
 
-- **A conversation's height is measured, not estimated.** Scrolling up in a
-  conversation could hang the app for good (found in the field on v0.26.5:
-  the main thread at 100% in the transcript's layout). The list of messages
-  was lazy, so the height of what was not on screen was a guess; the guess
-  moved by hundreds of points as a tall message came in and went out, and
-  the layout chased it. A conversation of up to 300 rows is now laid out in
-  full: its height is the real one and holds still under the wheel. Longer
-  conversations stay lazy, as before, because in full they open and scroll
-  slowly. The hang was not reproduced on the development Mac; what is tested
-  is that the height no longer moves.
 - **An overlong model name is truncated in the status strip.** A model that
   arrives as a long identifier (an ARN) pushed the selector out of view when
   the viewer opened. The name now takes at most 200 pt and is cut in the
