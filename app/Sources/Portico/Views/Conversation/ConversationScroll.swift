@@ -240,3 +240,12 @@ struct ReportsRowFrame: ViewModifier {
             .onDisappear { if isRow { rows.forget(id) } else { rows.forgetOther(id) } }
     }
 }
+
+/// How the transcript's rows are laid out (v0.26.6, PORT-69).
+enum TranscriptLayout {
+    /// The most rows laid out in full. Measured hosted: 69 rows open as fast in full as
+    /// lazily; 850 rows open 1.4 s slower and scroll slowly.
+    static let fullLimit = 300
+
+    static func isFull(rows: Int) -> Bool { rows <= fullLimit }
+}

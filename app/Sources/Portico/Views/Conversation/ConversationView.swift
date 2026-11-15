@@ -173,32 +173,17 @@ struct ConversationView: View {
             let done = model.doneCards(in: chat)
             let headed = sessionDivider != nil || items.isEmpty
             VStack(alignment: .leading, spacing: 0) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if let divider = sessionDivider {
-                        divider
-                    }
-                    if items.isEmpty {
-                        emptyState
-                            .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
-                    }
-                    ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
-                        let gap: CGFloat = index == 0
-                            ? (headed ? TranscriptSpacing.itemGap : 0)
-                            : standsApart(entry) || standsApart(drawn[index - 1])
-                                ? TranscriptSpacing.itemGap
-                                : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
-                        Group {
-                            if entry.id == briefItem, let info = model.thread(of: chat) {
-                                BriefBlock(info: info)
-                                    .atReplyWidth()
-                            } else {
-                                TranscriptEntryView(entry: entry, folder: folder, chat: chat)
-                            }
-                        }
-                            .padding(.top, gap)
-                            .id(entry.id)
-                            .modifier(MarksVoiceOverFocus(input: personInput))
-                            .modifier(ReportsRowFrame(rows: rows, id: entry.id))
+                // v0.26.6 (PORT-69): up to `TranscriptLayout.fullLimit` rows the stack is laid
+                // out in full, so the content's height is measured, never estimated. Found
+                // in the field: the lazy stack's estimate swung by 300 pt at one offset as a
+                // tall row came in and went out, and the layout never finished (the app
+                // hung). Longer conversations stay lazy: laid out in full they open and
+                // scroll slowly.
+                Group {
+                    if TranscriptLayout.isFull(rows: drawn.count) {
+                        VStack(alignment: .leading, spacing: 0) { rowViews(drawn, headed: headed) }
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 0) { rowViews(drawn, headed: headed) }
                     }
                 }
                 .scrollTargetLayout()
@@ -593,6 +578,37 @@ struct ConversationView: View {
     /// layout's settling for the person's again.)
     private var byPerson: Bool {
         personScrolling || personInput.isRecent
+    }
+
+    /// The transcript's rows: the session divider, the empty state, then each drawn entry.
+    @ViewBuilder
+    private func rowViews(_ drawn: [TranscriptEntry], headed: Bool) -> some View {
+        if let divider = sessionDivider {
+            divider
+        }
+        if items.isEmpty {
+            emptyState
+                .padding(.top, sessionDivider == nil ? 0 : TranscriptSpacing.itemGap)
+        }
+        ForEach(Array(drawn.enumerated()), id: \.element.id) { index, entry in
+            let gap: CGFloat = index == 0
+                ? (headed ? TranscriptSpacing.itemGap : 0)
+                : standsApart(entry) || standsApart(drawn[index - 1])
+                    ? TranscriptSpacing.itemGap
+                    : TranscriptSpacing.gap(before: entry, after: drawn[index - 1])
+            Group {
+                if entry.id == briefItem, let info = model.thread(of: chat) {
+                    BriefBlock(info: info)
+                        .atReplyWidth()
+                } else {
+                    TranscriptEntryView(entry: entry, folder: folder, chat: chat)
+                }
+            }
+                .padding(.top, gap)
+                .id(entry.id)
+                .modifier(MarksVoiceOverFocus(input: personInput))
+                .modifier(ReportsRowFrame(rows: rows, id: entry.id))
+        }
     }
 
     /// The transcript's drawn rows.
