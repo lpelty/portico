@@ -117,18 +117,34 @@ extension AppModel {
     /// The files this chat's tools created or edited (no reads, no failed
     /// writes, no writes the person declined or the deployment blocked),
     /// newest change first, one row per path with the time of its last
-    /// change.
+    /// change. A file the agent then moved with `mv` or `git mv` is listed
+    /// where it went (v0.26.6); a move made any other way is not seen.
     func changedFiles(chat: Int) -> [ChangedFile] {
         let folder = summary(of: chat)?.folder
-        var seen = Set<String>()
-        var files: [ChangedFile] = []
-        for item in (transcripts[chat] ?? []).reversed() {
-            guard case .tool(let row) = item, Self.isWriteTool(row.tool), Self.didWrite(row),
-                let path = Self.filePath(of: row, folder: folder), seen.insert(path).inserted
-            else { continue }
-            files.append(ChangedFile(path: path, at: SessionTime.parse(row.at)))
+        // Oldest first, so a later move finds the file it moves (v0.26.6).
+        var order: [String] = []
+        var at: [String: Date?] = [:]
+        for item in transcripts[chat] ?? [] {
+            guard case .tool(let row) = item, Self.didWrite(row) else { continue }
+            if Self.isWriteTool(row.tool), let path = Self.filePath(of: row, folder: folder) {
+                order.removeAll { $0 == path }
+                order.append(path)
+                at[path] = SessionTime.parse(row.at)
+            } else if row.tool == "Bash", row.ok == true, let command = row.input["command"]?.stringValue {
+                for move in FileMoves.moves(in: command, folder: folder) {
+                    for path in order {
+                        guard let moved = FileMoves.apply(move, to: path), moved != path else { continue }
+                        let when = at[path] ?? nil
+                        at[path] = nil
+                        // A file moved onto a listed one replaces it.
+                        order.removeAll { $0 == moved }
+                        order[order.firstIndex(of: path)!] = moved
+                        at[moved] = when
+                    }
+                }
+            }
         }
-        return files
+        return order.reversed().map { ChangedFile(path: $0, at: at[$0] ?? nil) }
     }
 
     /// The Files pane's CHANGED THIS SESSION for the chat on screen: in
@@ -428,5 +444,90 @@ enum Obsidian {
     @MainActor static func appIcon(resolving appFor: (URL) -> URL?) -> NSImage? {
         guard let probe = URL(string: "obsidian://open"), let app = appFor(probe) else { return nil }
         return NSWorkspace.shared.icon(forFile: app.path)
+    }
+}
+
+/// The moves a shell command makes that can be read from its text (v0.26.6): `mv` and
+/// `git mv` with plain paths, in a command's `&&`, `;` or line-separated parts, after any
+/// `cd` in it. Anything with a glob, a variable or a substitution is left alone: the list
+/// then keeps the old path, as before.
+enum FileMoves {
+    struct Move: Equatable {
+        var from: String
+        var to: String
+    }
+
+    static func moves(
+        in command: String, folder: String?,
+        isDirectory: (String) -> Bool = { path in
+            var dir: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
+        }
+    ) -> [Move] {
+        var here = folder
+        var out: [Move] = []
+        let parts = command.replacingOccurrences(of: "&&", with: "\n").replacingOccurrences(of: ";", with: "\n")
+            .split(separator: "\n")
+        for part in parts {
+            guard let words = words(String(part)), !words.isEmpty else { continue }
+            if words[0] == "cd", words.count == 2 {
+                here = resolve(words[1], folder: here)
+                continue
+            }
+            var rest = words[...]
+            if rest.first == "git" { rest = rest.dropFirst() }
+            guard rest.first == "mv" else { continue }
+            let paths = rest.dropFirst().filter { !$0.hasPrefix("-") }
+            guard paths.count >= 2, let last = paths.last else { continue }
+            let target = resolve(last, folder: here)
+            let into = paths.count > 2 || last.hasSuffix("/") || isDirectory(target)
+            for source in paths.dropLast() {
+                let from = resolve(source, folder: here)
+                let to = into ? (target as NSString).appendingPathComponent((from as NSString).lastPathComponent) : target
+                out.append(Move(from: from, to: to))
+            }
+        }
+        return out
+    }
+
+    /// `path` after `move`: the file itself, or a file under a folder that moved.
+    static func apply(_ move: Move, to path: String) -> String? {
+        if path == move.from { return move.to }
+        if path.hasPrefix(move.from + "/") { return move.to + path.dropFirst(move.from.count) }
+        return nil
+    }
+
+    private static func resolve(_ path: String, folder: String?) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") || folder == nil { return URL(fileURLWithPath: expanded).standardized.path }
+        return URL(fileURLWithPath: folder!).appendingPathComponent(expanded).standardized.path
+    }
+
+    /// The part's words, quotes removed; `nil` when it holds what cannot be read as plain
+    /// paths (a glob, a variable, a substitution, a pipe, a redirect, an unclosed quote).
+    private static func words(_ part: String) -> [String]? {
+        var words: [String] = []
+        var word = ""
+        var quote: Character?
+        var open = false
+        for character in part {
+            if let q = quote {
+                if character == q { quote = nil } else if character == "$" && q == "\"" { return nil } else { word.append(character) }
+            } else if character == "\"" || character == "'" {
+                quote = character
+                open = true
+            } else if character == " " || character == "\t" {
+                if open || !word.isEmpty { words.append(word) }
+                word = ""
+                open = false
+            } else if "*?$`|<>()[]{}\\&".contains(character) {
+                return nil
+            } else {
+                word.append(character)
+            }
+        }
+        if quote != nil { return nil }
+        if open || !word.isEmpty { words.append(word) }
+        return words
     }
 }

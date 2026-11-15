@@ -308,6 +308,54 @@ final class SessionAndFilesTests: XCTestCase {
         XCTAssertEqual(changed.first?.time(now: SessionTime.parse("2026-10-28T09:20:00Z")!, calendar: utc, locale: us), "6 min ago")
     }
 
+    /// v0.26.6 (PORT-35): a file the agent wrote and then moved is listed where it went.
+    func testAChangedFileFollowsTheAgentsMove() throws {
+        let (model, _) = try model()
+        model.apply(.hello(hello()))
+        model.apply(.chatList(ChatList(chats: [session(1, folder: "/tmp/demo")])))
+        var seq = 0
+        func write(_ id: String, _ path: String) {
+            seq += 1
+            model.apply(.toolStarted(ToolStarted(chat: 1, turn: 1, toolUseId: id, tool: "Write", summary: path, input: ["file_path": .string(path)], seq: seq, ts: "2026-10-28T09:10:00Z")))
+            seq += 1
+            model.apply(.toolFinished(ToolFinished(chat: 1, turn: 1, toolUseId: id, ok: true, summary: "", seq: seq, ts: "2026-10-28T09:10:05Z")))
+        }
+        func bash(_ id: String, _ command: String, ok: Bool = true) {
+            seq += 1
+            model.apply(.toolStarted(ToolStarted(chat: 1, turn: 1, toolUseId: id, tool: "Bash", summary: command, input: ["command": .string(command)], seq: seq, ts: "2026-10-28T09:11:00Z")))
+            seq += 1
+            model.apply(.toolFinished(ToolFinished(chat: 1, turn: 1, toolUseId: id, ok: ok, summary: "", seq: seq, ts: "2026-10-28T09:11:05Z")))
+        }
+        write("a", "draft.md")
+        write("b", "notes/one.md")
+        write("c", "keep.md")
+        bash("d", "mv draft.md final.md")
+        XCTAssertEqual(model.changedFiles(chat: 1).map(\.path), ["/tmp/demo/keep.md", "/tmp/demo/notes/one.md", "/tmp/demo/final.md"])
+        XCTAssertNotNil(model.changedFiles(chat: 1).last?.at, "the time of its last change is kept")
+        // A folder moved takes its files; a failed move and one that cannot be read move nothing.
+        bash("e", "cd /tmp/demo && git mv notes archive")
+        bash("f", "mv keep.md gone.md", ok: false)
+        bash("g", "mv *.md elsewhere/")
+        XCTAssertEqual(model.changedFiles(chat: 1).map(\.path), ["/tmp/demo/keep.md", "/tmp/demo/archive/one.md", "/tmp/demo/final.md"])
+    }
+
+    func testMovesAreReadFromPlainCommandsOnly() {
+        func moves(_ command: String, dirs: Set<String> = []) -> [FileMoves.Move] {
+            FileMoves.moves(in: command, folder: "/w") { dirs.contains($0) }
+        }
+        XCTAssertEqual(moves("mv a.md b.md"), [.init(from: "/w/a.md", to: "/w/b.md")])
+        XCTAssertEqual(moves("mv -f 'my file.md' \"sub dir/new.md\""), [.init(from: "/w/my file.md", to: "/w/sub dir/new.md")])
+        XCTAssertEqual(moves("mv a.md out", dirs: ["/w/out"]), [.init(from: "/w/a.md", to: "/w/out/a.md")], "into a folder")
+        XCTAssertEqual(moves("mv a.md b.md out/"), [.init(from: "/w/a.md", to: "/w/out/a.md"), .init(from: "/w/b.md", to: "/w/out/b.md")])
+        XCTAssertEqual(moves("mkdir x; cd x && mv ../a.md ."), [.init(from: "/w/a.md", to: "/w/x")], "a bare dot not known as a folder is taken as the name")
+        XCTAssertEqual(moves("cd x && mv ../a.md .", dirs: ["/w/x"]), [.init(from: "/w/a.md", to: "/w/x/a.md")])
+        XCTAssertEqual(moves("mv $SRC b.md"), [])
+        XCTAssertEqual(moves("mv *.md out/"), [])
+        XCTAssertEqual(moves("echo mv a b | sh"), [])
+        XCTAssertEqual(moves("rm a.md"), [])
+        XCTAssertEqual(FileMoves.apply(.init(from: "/w/a", to: "/w/b"), to: "/w/ab/c.md"), nil, "a name that only starts the same is not under it")
+    }
+
     func testDeclinedOrBlockedWritesAreNotChanged() throws {
         let (model, _) = try model()
         model.apply(.hello(hello()))

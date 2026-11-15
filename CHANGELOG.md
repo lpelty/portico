@@ -6,6 +6,15 @@
   arrives as a long identifier (an ARN) pushed the selector out of view when
   the viewer opened. The name now takes at most 200 pt and is cut in the
   middle; the tooltip and VoiceOver still carry the whole name.
+- **Close thread does not log a session twice.** When a thread's session
+  was logged and nothing was sent or run since, Close thread closes it at
+  once with no second log, and the line under the buttons says so. With
+  work since the log, or no log yet, Close logs first, as before.
+- **"Changed this session" follows a file the agent moved.** A file written
+  and then moved with `mv` or `git mv` (the file itself, or a folder holding
+  it) is listed at its new path and opens. A move made in Finder, or by a
+  command with a wildcard or a variable in it, is not seen: the entry keeps
+  its old path, as before.
 
 ## v0.26.5 (2026-11-13)
 
