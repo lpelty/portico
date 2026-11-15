@@ -13,8 +13,8 @@
 - **"Changed this session" follows a file the agent moved.** A file written
   and then moved with `mv` or `git mv` (the file itself, or a folder holding
   it) is listed at its new path and opens. A move made in Finder, or by a
-  command with a wildcard or a variable in it, is not seen: the entry keeps
-  its old path, as before.
+  command with a wildcard, a variable or an unusual option in it, is not
+  seen: the entry keeps its old path, as before.
 - **Files keeps what it listed.** After the agent's command, a folder that
   is closed in Files keeps its listing, so the filter and quick open still
   find its files; it is listed afresh when opened. A folder that is open

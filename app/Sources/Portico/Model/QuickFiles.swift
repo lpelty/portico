@@ -190,7 +190,14 @@ extension AppModel {
     /// Open the folder in the Files tree, or close it, and remember it.
     func toggleFolder(chat: Int, root: String, path: String) {
         guard let key = folderPath(chat: chat, root: root, path: path) else { return }
-        if let index = openFolders.firstIndex(of: key) { openFolders.remove(at: index) } else { openFolders.append(key) }
+        if let index = openFolders.firstIndex(of: key) {
+            openFolders.remove(at: index)
+        } else {
+            openFolders.append(key)
+            // v0.26.6: a listing kept from before a relist is asked for afresh on opening
+            // (one never listed is asked for by its row, and this asks once too).
+            listFiles(chat: chat, root: root, path: path)
+        }
         settings.openFolders = openFolders
     }
 
@@ -447,23 +454,23 @@ enum Obsidian {
     }
 }
 
-/// The moves a shell command makes that can be read from its text (v0.26.6): `mv` and
-/// `git mv` with plain paths, in a command's `&&`, `;` or line-separated parts, after any
-/// `cd` in it. Anything with a glob, a variable or a substitution is left alone: the list
-/// then keeps the old path, as before.
+/// The moves a shell command makes that can be read from its text alone (v0.26.6): `mv` and
+/// `git mv` with plain paths and at most the flags `-f -i -n -v -k`, in a command's `&&`,
+/// `;` or line-separated parts, after any `cd` in it, up to a `#` comment. The disk is never
+/// asked: the list is worked out again long after the command ran. Anything else (a glob,
+/// a variable, a substitution, a pipe, any other option) is left alone: the list then
+/// keeps the old path, as before.
+///
+/// Whether the last path is the new name or a folder to move into is read from the text:
+/// into a folder when there are several sources, when it ends in `/`, or when the source's
+/// name has an extension and the last path's has none (`mv a.md archive`).
 enum FileMoves {
     struct Move: Equatable {
         var from: String
         var to: String
     }
 
-    static func moves(
-        in command: String, folder: String?,
-        isDirectory: (String) -> Bool = { path in
-            var dir: ObjCBool = false
-            return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
-        }
-    ) -> [Move] {
+    static func moves(in command: String, folder: String?) -> [Move] {
         var here = folder
         var out: [Move] = []
         let parts = command.replacingOccurrences(of: "&&", with: "\n").replacingOccurrences(of: ";", with: "\n")
@@ -477,12 +484,17 @@ enum FileMoves {
             var rest = words[...]
             if rest.first == "git" { rest = rest.dropFirst() }
             guard rest.first == "mv" else { continue }
-            let paths = rest.dropFirst().filter { !$0.hasPrefix("-") }
+            let arguments = rest.dropFirst()
+            let flags = arguments.filter { $0.hasPrefix("-") }
+            // An option that takes an argument (`-t dir`, `-S suffix`) changes what the paths mean.
+            guard flags.allSatisfy({ $0.dropFirst().allSatisfy { "finvk".contains($0) } && $0.count > 1 }) else { continue }
+            let paths = arguments.filter { !$0.hasPrefix("-") }
             guard paths.count >= 2, let last = paths.last else { continue }
             let target = resolve(last, folder: here)
-            let into = paths.count > 2 || last.hasSuffix("/") || isDirectory(target)
             for source in paths.dropLast() {
                 let from = resolve(source, folder: here)
+                let into = paths.count > 2 || last.hasSuffix("/")
+                    || (!(from as NSString).pathExtension.isEmpty && (target as NSString).pathExtension.isEmpty)
                 let to = into ? (target as NSString).appendingPathComponent((from as NSString).lastPathComponent) : target
                 out.append(Move(from: from, to: to))
             }
@@ -503,8 +515,9 @@ enum FileMoves {
         return URL(fileURLWithPath: folder!).appendingPathComponent(expanded).standardized.path
     }
 
-    /// The part's words, quotes removed; `nil` when it holds what cannot be read as plain
-    /// paths (a glob, a variable, a substitution, a pipe, a redirect, an unclosed quote).
+    /// The part's words up to a `#` comment, quotes removed; `nil` when it holds what cannot
+    /// be read as plain paths (a glob, a variable, a substitution, a pipe, a redirect, an
+    /// unclosed quote).
     private static func words(_ part: String) -> [String]? {
         var words: [String] = []
         var word = ""
@@ -520,6 +533,8 @@ enum FileMoves {
                 if open || !word.isEmpty { words.append(word) }
                 word = ""
                 open = false
+            } else if character == "#" && word.isEmpty && !open {
+                return words
             } else if "*?$`|<>()[]{}\\&".contains(character) {
                 return nil
             } else {

@@ -230,15 +230,19 @@ final class LaunchReviewFixesTests: XCTestCase {
         XCTAssertNotNil(model.fileEntries(chat: 3, root: "work", path: "demo"), "an open folder keeps its rows until the answer")
         answer(model, sent)
 
-        // Opened after the relist, the closed folder is asked for though it has a listing.
-        model.listFiles(chat: 3, root: "work", path: "other")
+        // Opened in Files after the relist (review F1: the click, not a direct request), the
+        // closed folder is asked for though it has a listing, and its old rows stay meanwhile.
+        model.toggleFolder(chat: 3, root: "work", path: "other")
         XCTAssertEqual(sent.listings.map { "\($0.root):\($0.path)" }, ["work:other"], "listed afresh when opened")
-        answer(model, sent)
-        model.listFiles(chat: 3, root: "work", path: "other")
+        XCTAssertEqual(model.fileEntries(chat: 3, root: "work", path: "other")?.map(\.name), ["found.md"])
+        var grown = Self.tree
+        grown["work:other"] = [Entry(name: "found.md", dir: false), Entry(name: "new.md", dir: false)]
+        answer(model, sent, tree: grown)
+        XCTAssertEqual(model.fileEntries(chat: 3, root: "work", path: "other")?.map(\.name), ["found.md", "new.md"], "the file the agent added shows")
+        // Closed and opened again with no relist between: fresh already, nothing asked.
+        model.toggleFolder(chat: 3, root: "work", path: "other")
+        model.toggleFolder(chat: 3, root: "work", path: "other")
         XCTAssertEqual(sent.listings.count, 0, "and once: fresh now")
-        // A folder never relisted while closed is not asked for twice either.
-        model.listFiles(chat: 3, root: "work", path: "demo")
-        XCTAssertEqual(sent.listings.count, 0)
     }
 
     /// v0.26.6 (PORT-67): the filter searches the listings, so a closed folder's files are
