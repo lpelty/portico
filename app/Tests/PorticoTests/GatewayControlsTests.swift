@@ -284,31 +284,47 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertTrue(ViewerAgent.canAct(url: URL(string: "http://localhost:8080/ui")!, actHosts: []), "the local rule alone would let it through")
     }
 
-    /// Review 20261115-164629-3ce6b9, F1 and F2: the refusal the agent's click and type go
-    /// through, and that it holds when the services list empties under an open page.
+    /// Reviews 20261115-164629-3ce6b9 and 20261115-171702-e92dc6: the refusal the agent's
+    /// click and type go through holds when the services list empties under an open page,
+    /// through a reconnect, and after the app is quit and launched again.
     func testTheAgentIsRefusedOnAViewedServicesPageWhateverTheListSaysLater() throws {
-        let (model, _) = try model()
-        connected(model, sessions: [ChatSummary(chat: 3, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")])
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "portico-view-\(UUID().uuidString)"))
+        let model = AppModel(settings: Settings(defaults: defaults))
+        model.outbound = { _ in }
+        let sessions = [ChatSummary(chat: 3, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")]
+        connected(model, sessions: sessions)
         model.selected = 3
         let page = URL(string: "http://localhost:8080/banks/main")!
-        func refusal() -> String? {
+        func refusal(_ model: AppModel) -> String? {
             ViewerAgent.refusal(at: page, actHosts: [], servicePage: model.servicePage(at: page)?.name)
         }
-        XCTAssertNil(refusal(), "an ordinary local page is the agent's to use")
+        XCTAssertNil(refusal(model), "an ordinary local page is the agent's to use")
 
         // Listed, before anyone pressed View: already look-only.
         model.apply(.servicesStatus(ServicesStatus(services: [
-            Service(id: "memory", name: "Memory", state: .stuck, view: "http://localhost:8080/ui"),
+            Service(id: "memory", name: "Memory", state: .stuck, view: "http://localhost:8080/ui?token=secret"),
         ])))
-        XCTAssertEqual(refusal(), ViewerAgent.Message.servicePage("Memory"))
-        XCTAssertTrue(try XCTUnwrap(refusal()).contains("looked at and scrolled, not used"))
+        XCTAssertEqual(refusal(model), ViewerAgent.Message.servicePage("Memory"))
+        XCTAssertTrue(try XCTUnwrap(refusal(model)).contains("looked at and scrolled, not used"))
 
-        // View opens it; then the status read fails and the list holds one failed row, then nothing.
-        XCTAssertTrue(model.viewService(try XCTUnwrap(ServicesPresentation.row(try XCTUnwrap(model.services?.first)))))
+        // View opens it; then the status read fails and the list holds one failed row.
+        XCTAssertTrue(model.viewService(ServicesPresentation.row(try XCTUnwrap(model.services?.first))))
         model.apply(.servicesStatus(ServicesStatus(services: [Service(id: "status", name: "Services", state: .down)])))
-        XCTAssertEqual(refusal(), ViewerAgent.Message.servicePage("Memory"), "the list no longer names it; the page is still the service's")
-        model.services = nil
-        XCTAssertEqual(refusal(), ViewerAgent.Message.servicePage("Memory"), "nor after a reconnect")
+        XCTAssertEqual(refusal(model), ViewerAgent.Message.servicePage("Memory"), "the list no longer names it; the page is still the service's")
+        // A reconnect: the new gateway's hello empties the list until its first status.
+        model.apply(.hello(hello(restartAll: true, epoch: "e2")))
+        XCTAssertNil(model.services)
+        XCTAssertEqual(refusal(model), ViewerAgent.Message.servicePage("Memory"), "nor after a reconnect")
+
+        // Quit and launched again: a new model on the same settings, the page put back by the
+        // viewer's restore (which never goes through View), and no services list yet.
+        let relaunched = AppModel(settings: Settings(defaults: defaults))
+        relaunched.outbound = { _ in }
+        connected(relaunched, sessions: sessions)
+        XCTAssertNil(relaunched.services)
+        XCTAssertTrue(relaunched.openLink(page.absoluteString, chat: 3))
+        XCTAssertEqual(refusal(relaunched), ViewerAgent.Message.servicePage("Memory"), "nor after a restart")
+        XCTAssertEqual(Settings(defaults: defaults).viewedServicePages, ["http://localhost:8080": "Memory"], "where it is served from, never its path or query")
 
         // The other rule is unchanged: an outside site is refused as before, a listed one allowed.
         let outside = URL(string: "https://example.com/")!

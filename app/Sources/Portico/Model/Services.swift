@@ -328,16 +328,18 @@ extension ServicesPresentation {
         return (scheme == "https" || scheme == "http") && url.host?.isEmpty == false
     }
 
+    /// Where a page is served from: scheme, host and port, and nothing of its path or query.
+    static func origin(_ url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host(percentEncoded: false)?.lowercased() else { return nil }
+        let port = url.port ?? (scheme == "https" ? 443 : 80)
+        // One machine, three spellings.
+        let local = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)
+        return "\(scheme)://\(local ? "localhost" : host):\(port)"
+    }
+
     /// The service whose page `url` is on (v0.26.6): the same scheme, host and port as its
     /// `view` address. The agent may look at such a page and scroll it, never click or type.
     static func service(at url: URL, in services: [Service]) -> Service? {
-        func origin(_ url: URL) -> String? {
-            guard let scheme = url.scheme?.lowercased(), let host = url.host(percentEncoded: false)?.lowercased() else { return nil }
-            let port = url.port ?? (scheme == "https" ? 443 : 80)
-            // One machine, three spellings.
-            let local = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)
-            return "\(scheme)://\(local ? "localhost" : host):\(port)"
-        }
         guard let here = origin(url) else { return nil }
         return services.first { service in
             service.view.flatMap(URL.init(string:)).flatMap(origin) == here
@@ -351,17 +353,20 @@ extension AppModel {
     @discardableResult
     func viewService(_ row: ServiceRow) -> Bool {
         guard let address = row.view, let chat = shownChat else { return false }
-        // Remembered for as long as the app runs: the services list empties when a status
-        // read fails or the gateway reconnects, and the page must stay look-only then.
-        viewedServices.removeAll { $0.id == row.id }
-        viewedServices.append(Service(id: row.id, name: row.name, state: row.state, view: address))
+        // Remembered across restarts (where it is served from, never its path or query):
+        // the services list is empty after a launch, a reconnect or a failed status read,
+        // the viewer puts its last page back at launch, and the page must stay look-only.
+        if let origin = URL(string: address).flatMap(ServicesPresentation.origin) {
+            settings.viewedServicePages[origin] = row.name
+        }
         return openLink(address, chat: chat)
     }
 
     /// The service whose page `url` is on: one in the list now, or one whose page View
-    /// opened earlier in this run.
+    /// has opened on this Mac.
     func servicePage(at url: URL) -> Service? {
-        ServicesPresentation.service(at: url, in: (services ?? []) + viewedServices)
+        let viewed = settings.viewedServicePages.map { Service(id: $0.key, name: $0.value, state: .checking, view: $0.key) }
+        return ServicesPresentation.service(at: url, in: (services ?? []) + viewed)
     }
 
     /// Whether View can act now: there is a chat whose viewer takes the page.
