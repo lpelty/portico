@@ -292,9 +292,6 @@ final class AppModel: ObservableObject {
     /// (`files.outside_root` for a link that leaves the root, say), shown
     /// in the directory's row instead of a listing; cleared when it is asked for again.
     @Published private(set) var fileListErrors: [FilesKey: String] = [:]
-    /// Listings kept from before a relist for folders that were closed then (v0.26.6):
-    /// still found by the filter and quick open, and asked for afresh when opened.
-    private(set) var staleFileLists: Set<FilesKey> = []
     /// Per chat, its subagents and workflows (v0.10): the tray, the
     /// workflow box and the record read it.
     @Published private(set) var agentActivity: [Int: AgentActivity] = [:]
@@ -1304,7 +1301,6 @@ final class AppModel: ObservableObject {
             if let id = list.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileTree[key] = list.entries
                 fileListErrors[key] = nil
-                staleFileLists.remove(key)
                 forgetFolders(under: key, notIn: list.entries)
             } else if list.id == nil, let chat = list.chat {
                 fileTree[FilesKey(chat: chat, root: list.root, path: list.path)] = list.entries
@@ -1430,7 +1426,6 @@ final class AppModel: ObservableObject {
             if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileListErrors[key] = error.message
                 fileTree[key] = nil
-                staleFileLists.remove(key)
             }
 
         case .appCallResult(let result):
@@ -2991,7 +2986,7 @@ extension AppModel {
     /// clears both). A refused directory may be asked for again.
     func listFiles(chat: Int, root: String, path: String) {
         let key = FilesKey(chat: chat, root: root, path: path)
-        guard fileTree[key] == nil || staleFileLists.contains(key), !pendingFileLists.values.contains(key) else { return }
+        guard fileTree[key] == nil, !pendingFileLists.values.contains(key) else { return }
         fileListErrors[key] = nil
         send(filesListRequest(for: key))
     }
@@ -3003,12 +2998,16 @@ extension AppModel {
         return .filesList(FilesListRequest(root: key.root, path: key.path, chat: key.chat, id: id))
     }
 
+    /// Ask for a listed directory again; its rows stay drawn until the answer (v0.26.6).
+    func listAgain(_ key: FilesKey) {
+        send(filesListRequest(for: key))
+    }
+
     /// Drop the chat's tree so every expanded directory is listed afresh.
     func refreshFiles(chat: Int) {
         fileTree = fileTree.filter { $0.key.chat != chat }
         fileListErrors = fileListErrors.filter { $0.key.chat != chat }
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
-        staleFileLists = staleFileLists.filter { $0.chat != chat }
     }
 
     /// A directory's fresh listing: every folder remembered under it that the listing
@@ -3029,7 +3028,6 @@ extension AppModel {
         fileTree = fileTree.filter { !gone($0.key) }
         fileListErrors = fileListErrors.filter { !gone($0.key) }
         pendingFileLists = pendingFileLists.filter { !gone($0.value) }
-        staleFileLists = staleFileLists.filter { !gone($0) }
     }
 
     /// A write finished or a turn ended in `chat` (`FolderRelist`): list
@@ -3053,7 +3051,7 @@ extension AppModel {
     /// stay drawn until the new ones come (no "Listing…" flash). A listed
     /// folder that is closed now is not asked for; its listing is kept
     /// (v0.26.6), so the filter and quick open still find its files, and
-    /// it is listed afresh when it is opened. A chat whose files are not
+    /// it is asked for again when it is opened (`toggleFolder`). A chat whose files are not
     /// on screen forgets all its listings; they are asked for when it is
     /// shown.
     ///
@@ -3068,15 +3066,12 @@ extension AppModel {
             for key in keys {
                 fileTree[key] = nil
                 fileListErrors[key] = nil
-                staleFileLists.remove(key)
             }
             return
         }
         for key in keys.sorted(by: { ($0.root, $0.path) < ($1.root, $1.path) }) {
             if key.path.isEmpty || isFolderOpen(chat: chat, root: key.root, path: key.path) {
                 send(filesListRequest(for: key))
-            } else if fileTree[key] != nil {
-                staleFileLists.insert(key)
             }
         }
     }

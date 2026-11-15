@@ -10,14 +10,9 @@
   was logged and nothing was sent or run since, Close thread closes it at
   once with no second log, and the line under the buttons says so. With
   work since the log, or no log yet, Close logs first, as before.
-- **"Changed this session" follows a file the agent moved.** A file written
-  and then moved with `mv` or `git mv` (the file itself, or a folder holding
-  it) is listed at its new path and opens. A move made in Finder, or by a
-  command with a wildcard, a variable or an unusual option in it, is not
-  seen: the entry keeps its old path, as before.
 - **Files keeps what it listed.** After the agent's command, a folder that
   is closed in Files keeps its listing, so the filter and quick open still
-  find its files; it is listed afresh when opened. A folder that is open
+  find its files; it is asked for again when opened. A folder that is open
   while the agent deletes it and makes it again shows its new contents after
   the next refresh with no click. A folder that is gone is forgotten once
   its parent's listing no longer holds it, and is not asked for again.

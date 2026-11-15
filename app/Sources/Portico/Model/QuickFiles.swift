@@ -117,34 +117,18 @@ extension AppModel {
     /// The files this chat's tools created or edited (no reads, no failed
     /// writes, no writes the person declined or the deployment blocked),
     /// newest change first, one row per path with the time of its last
-    /// change. A file the agent then moved with `mv` or `git mv` is listed
-    /// where it went (v0.26.6); a move made any other way is not seen.
+    /// change.
     func changedFiles(chat: Int) -> [ChangedFile] {
         let folder = summary(of: chat)?.folder
-        // Oldest first, so a later move finds the file it moves (v0.26.6).
-        var order: [String] = []
-        var at: [String: Date?] = [:]
-        for item in transcripts[chat] ?? [] {
-            guard case .tool(let row) = item, Self.didWrite(row) else { continue }
-            if Self.isWriteTool(row.tool), let path = Self.filePath(of: row, folder: folder) {
-                order.removeAll { $0 == path }
-                order.append(path)
-                at[path] = SessionTime.parse(row.at)
-            } else if row.tool == "Bash", row.ok == true, let command = row.input["command"]?.stringValue {
-                for move in FileMoves.moves(in: command, folder: folder) {
-                    for path in order {
-                        guard let moved = FileMoves.apply(move, to: path), moved != path else { continue }
-                        let when = at[path] ?? nil
-                        at[path] = nil
-                        // A file moved onto a listed one replaces it.
-                        order.removeAll { $0 == moved }
-                        order[order.firstIndex(of: path)!] = moved
-                        at[moved] = when
-                    }
-                }
-            }
+        var seen = Set<String>()
+        var files: [ChangedFile] = []
+        for item in (transcripts[chat] ?? []).reversed() {
+            guard case .tool(let row) = item, Self.isWriteTool(row.tool), Self.didWrite(row),
+                let path = Self.filePath(of: row, folder: folder), seen.insert(path).inserted
+            else { continue }
+            files.append(ChangedFile(path: path, at: SessionTime.parse(row.at)))
         }
-        return order.reversed().map { ChangedFile(path: $0, at: at[$0] ?? nil) }
+        return files
     }
 
     /// The Files pane's CHANGED THIS SESSION for the chat on screen: in
@@ -194,9 +178,12 @@ extension AppModel {
             openFolders.remove(at: index)
         } else {
             openFolders.append(key)
-            // v0.26.6: a listing kept from before a relist is asked for afresh on opening
-            // (one never listed is asked for by its row, and this asks once too).
-            listFiles(chat: chat, root: root, path: path)
+            // v0.26.6: a closed folder keeps its listing through a relist, so opening it
+            // asks again, in every chat that has it listed (a folder is open by where it
+            // is on disk, in all of them). One never listed is asked for by its row.
+            for listed in fileTree.keys where folderPath(chat: listed.chat, root: listed.root, path: listed.path) == key {
+                listAgain(listed)
+            }
         }
         settings.openFolders = openFolders
     }
@@ -451,98 +438,5 @@ enum Obsidian {
     @MainActor static func appIcon(resolving appFor: (URL) -> URL?) -> NSImage? {
         guard let probe = URL(string: "obsidian://open"), let app = appFor(probe) else { return nil }
         return NSWorkspace.shared.icon(forFile: app.path)
-    }
-}
-
-/// The moves a shell command makes that can be read from its text alone (v0.26.6): `mv` and
-/// `git mv` with plain paths and at most the flags `-f -i -n -v -k`, in a command's `&&`,
-/// `;` or line-separated parts, after any `cd` in it, up to a `#` comment. The disk is never
-/// asked: the list is worked out again long after the command ran. Anything else (a glob,
-/// a variable, a substitution, a pipe, any other option) is left alone: the list then
-/// keeps the old path, as before.
-///
-/// Whether the last path is the new name or a folder to move into is read from the text:
-/// into a folder when there are several sources, when it ends in `/`, or when the source's
-/// name has an extension and the last path's has none (`mv a.md archive`).
-enum FileMoves {
-    struct Move: Equatable {
-        var from: String
-        var to: String
-    }
-
-    static func moves(in command: String, folder: String?) -> [Move] {
-        var here = folder
-        var out: [Move] = []
-        let parts = command.replacingOccurrences(of: "&&", with: "\n").replacingOccurrences(of: ";", with: "\n")
-            .split(separator: "\n")
-        for part in parts {
-            guard let words = words(String(part)), !words.isEmpty else { continue }
-            if words[0] == "cd", words.count == 2 {
-                here = resolve(words[1], folder: here)
-                continue
-            }
-            var rest = words[...]
-            if rest.first == "git" { rest = rest.dropFirst() }
-            guard rest.first == "mv" else { continue }
-            let arguments = rest.dropFirst()
-            let flags = arguments.filter { $0.hasPrefix("-") }
-            // An option that takes an argument (`-t dir`, `-S suffix`) changes what the paths mean.
-            guard flags.allSatisfy({ $0.dropFirst().allSatisfy { "finvk".contains($0) } && $0.count > 1 }) else { continue }
-            let paths = arguments.filter { !$0.hasPrefix("-") }
-            guard paths.count >= 2, let last = paths.last else { continue }
-            let target = resolve(last, folder: here)
-            for source in paths.dropLast() {
-                let from = resolve(source, folder: here)
-                let into = paths.count > 2 || last.hasSuffix("/")
-                    || (!(from as NSString).pathExtension.isEmpty && (target as NSString).pathExtension.isEmpty)
-                let to = into ? (target as NSString).appendingPathComponent((from as NSString).lastPathComponent) : target
-                out.append(Move(from: from, to: to))
-            }
-        }
-        return out
-    }
-
-    /// `path` after `move`: the file itself, or a file under a folder that moved.
-    static func apply(_ move: Move, to path: String) -> String? {
-        if path == move.from { return move.to }
-        if path.hasPrefix(move.from + "/") { return move.to + path.dropFirst(move.from.count) }
-        return nil
-    }
-
-    private static func resolve(_ path: String, folder: String?) -> String {
-        let expanded = (path as NSString).expandingTildeInPath
-        if expanded.hasPrefix("/") || folder == nil { return URL(fileURLWithPath: expanded).standardized.path }
-        return URL(fileURLWithPath: folder!).appendingPathComponent(expanded).standardized.path
-    }
-
-    /// The part's words up to a `#` comment, quotes removed; `nil` when it holds what cannot
-    /// be read as plain paths (a glob, a variable, a substitution, a pipe, a redirect, an
-    /// unclosed quote).
-    private static func words(_ part: String) -> [String]? {
-        var words: [String] = []
-        var word = ""
-        var quote: Character?
-        var open = false
-        for character in part {
-            if let q = quote {
-                if character == q { quote = nil } else if character == "$" && q == "\"" { return nil } else { word.append(character) }
-            } else if character == "\"" || character == "'" {
-                quote = character
-                open = true
-            } else if character == " " || character == "\t" {
-                if open || !word.isEmpty { words.append(word) }
-                word = ""
-                open = false
-            } else if character == "#" && word.isEmpty && !open {
-                return words
-            } else if "*?$`|<>()[]{}\\&".contains(character) {
-                return nil
-            } else {
-                word.append(character)
-            }
-        }
-        if quote != nil { return nil }
-        if open || !word.isEmpty { words.append(word) }
-        return words
     }
 }

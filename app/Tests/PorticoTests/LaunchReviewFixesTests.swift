@@ -220,6 +220,7 @@ final class LaunchReviewFixesTests: XCTestCase {
         model.toggleFolder(chat: 3, root: "work", path: "demo")
         model.toggleFolder(chat: 3, root: "vault", path: "notes")
         XCTAssertTrue(model.isFolderOpen(chat: 3, root: "work", path: "demo"), "the folders are open")
+        answer(model, sent)  // opening each asked for it again
         await turnEnds(model, seq: 5)
         XCTAssertEqual(
             sent.listings.map { "\($0.root):\($0.path)" },
@@ -230,19 +231,39 @@ final class LaunchReviewFixesTests: XCTestCase {
         XCTAssertNotNil(model.fileEntries(chat: 3, root: "work", path: "demo"), "an open folder keeps its rows until the answer")
         answer(model, sent)
 
-        // Opened in Files after the relist (review F1: the click, not a direct request), the
-        // closed folder is asked for though it has a listing, and its old rows stay meanwhile.
+        // Opened in Files after the relist (the click, as the interface makes it), the closed
+        // folder is asked for though it has a listing, and its old rows stay meanwhile.
         model.toggleFolder(chat: 3, root: "work", path: "other")
-        XCTAssertEqual(sent.listings.map { "\($0.root):\($0.path)" }, ["work:other"], "listed afresh when opened")
+        XCTAssertEqual(sent.listings.map { "\($0.root):\($0.path)" }, ["work:other"], "asked for again when opened")
         XCTAssertEqual(model.fileEntries(chat: 3, root: "work", path: "other")?.map(\.name), ["found.md"])
         var grown = Self.tree
         grown["work:other"] = [Entry(name: "found.md", dir: false), Entry(name: "new.md", dir: false)]
         answer(model, sent, tree: grown)
         XCTAssertEqual(model.fileEntries(chat: 3, root: "work", path: "other")?.map(\.name), ["found.md", "new.md"], "the file the agent added shows")
-        // Closed and opened again with no relist between: fresh already, nothing asked.
+        // Closing asks for nothing.
         model.toggleFolder(chat: 3, root: "work", path: "other")
-        model.toggleFolder(chat: 3, root: "work", path: "other")
-        XCTAssertEqual(sent.listings.count, 0, "and once: fresh now")
+        XCTAssertEqual(sent.listings.count, 0)
+    }
+
+    /// v0.26.6 (review round 2, F1): a folder is open by where it is on disk, in every chat.
+    /// Opened from one chat, it is asked for again in each chat that has it listed, so the
+    /// other chat does not keep showing its old contents.
+    func testOpeningAFolderAsksAgainInEveryChatThatListsIt() async throws {
+        let (model, sent) = try model()
+        launched(model, [session(3), session(4)], roots: [Root(name: "work", path: "/tmp"), Root(name: "vault", path: "/vault")])
+        for chat in [3, 4] {
+            model.listFiles(chat: chat, root: "work", path: "")
+            model.listFiles(chat: chat, root: "work", path: "other")
+        }
+        for request in sent.listings {
+            model.apply(.filesList(FilesList(
+                root: request.root, path: request.path, entries: Self.tree["\(request.root):\(request.path)"] ?? [],
+                chat: request.chat, id: request.id)))
+        }
+        sent.frames = []
+        model.toggleFolder(chat: 4, root: "work", path: "other")
+        XCTAssertEqual(
+            sent.listings.map { "\($0.chat ?? 0):\($0.path)" }.sorted(), ["3:other", "4:other"], "both chats' listings of the folder")
     }
 
     /// v0.26.6 (PORT-67): the filter searches the listings, so a closed folder's files are
@@ -263,6 +284,7 @@ final class LaunchReviewFixesTests: XCTestCase {
         for refusalFirst in [true, false] {
             let (model, sent) = try twoRoots()
             model.toggleFolder(chat: 3, root: "work", path: "demo")
+            answer(model, sent)
             await turnEnds(model, seq: 5)
             var gone = Self.tree
             gone["work:demo"] = nil
@@ -290,6 +312,7 @@ final class LaunchReviewFixesTests: XCTestCase {
     func testAnOpenFolderMadeAgainIsListedByTheNextRelist() async throws {
         let (model, sent) = try twoRoots()
         model.toggleFolder(chat: 3, root: "work", path: "demo")
+        answer(model, sent)
         await turnEnds(model, seq: 5)
         // The folder's listing is refused while its parent's (read a moment earlier or later) still holds it.
         var between = Self.tree
