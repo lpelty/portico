@@ -738,6 +738,13 @@ struct ServiceRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if row.view != nil {
+                // v0.26.6: the service's own page, in the viewer; in every state.
+                RowActionButton(title: "View", systemImage: "eye", help: "Show \(row.name) in the viewer") {
+                    if model.viewService(row) { closeMenu() }
+                }
+                .disabled(!model.canViewService)
+            }
             if restarting {
                 ProgressView().controlSize(.small)
                     .tip("Restarting \(row.name)…")
@@ -794,9 +801,15 @@ struct ServiceRowView: View {
                 Button("\(control.title) gateway") { press(control) }
                     .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
             }
-        } else if ServicesPresentation.rowActions(row).contains(.restart) {
-            Button("Restart \(row.name)") { model.restartService(row.id) }
-                .disabled(!model.canRestart(service: row.id))
+        } else {
+            if row.view != nil {
+                Button("View \(row.name)") { if model.viewService(row) { closeMenu() } }
+                    .disabled(!model.canViewService)
+            }
+            if ServicesPresentation.rowActions(row).contains(.restart) {
+                Button("Restart \(row.name)") { model.restartService(row.id) }
+                    .disabled(!model.canRestart(service: row.id))
+            }
         }
     }
 

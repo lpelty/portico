@@ -99,6 +99,7 @@
 #   check = "curl -sf http://localhost:8888/health"    ## required
 #   restart = "my-tool restart memory"    ## not set
 #   up_detail = "recall and capture"    ## not set
+#   view = "http://localhost:8080"    ## not set
 #   timeout_seconds = 10    ## 10
 
 ## Folders the Files pane can browse.

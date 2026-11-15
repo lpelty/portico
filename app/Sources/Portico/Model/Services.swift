@@ -11,6 +11,9 @@ struct ServiceRow: Equatable, Identifiable, Sendable {
     /// One line under the name: `running · port 54675`, `up · recall and capture`.
     var detail: String
     var canRestart: Bool = false
+    /// The service's own web page (v0.26.6): an http(s) address, or `nil`. The row then
+    /// shows View, in every state: a stuck service is when its page is worth a look.
+    var view: String? = nil
     /// The app's own row, from the supervisor and the socket.
     var isGateway: Bool = false
 
@@ -125,7 +128,8 @@ struct ServicesPresentation: Equatable, Sendable {
         }
         return ServiceRow(
             id: service.id, name: service.name, state: service.state, detail: detail,
-            canRestart: service.canRestart ?? false)
+            canRestart: service.canRestart ?? false,
+            view: service.view.flatMap { isWebAddress($0) ? $0 : nil })
     }
 
     /// The Gateway row from what the app knows itself: the supervisor's
@@ -315,6 +319,43 @@ extension ServicesPresentation {
 /// A deployment service row's own action (v0.17).
 enum RowAction: Equatable, Sendable {
     case restart
+}
+
+extension ServicesPresentation {
+    /// An http(s) address with a host: the only kind a row's View opens.
+    static func isWebAddress(_ address: String) -> Bool {
+        guard let url = URL(string: address), let scheme = url.scheme?.lowercased() else { return false }
+        return (scheme == "https" || scheme == "http") && url.host?.isEmpty == false
+    }
+
+    /// The service whose page `url` is on (v0.26.6): the same scheme, host and port as its
+    /// `view` address. The agent may look at such a page and scroll it, never click or type.
+    static func service(at url: URL, in services: [Service]) -> Service? {
+        func origin(_ url: URL) -> String? {
+            guard let scheme = url.scheme?.lowercased(), let host = url.host(percentEncoded: false)?.lowercased() else { return nil }
+            let port = url.port ?? (scheme == "https" ? 443 : 80)
+            // One machine, three spellings.
+            let local = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)
+            return "\(scheme)://\(local ? "localhost" : host):\(port)"
+        }
+        guard let here = origin(url) else { return nil }
+        return services.first { service in
+            service.view.flatMap(URL.init(string:)).flatMap(origin) == here
+        }
+    }
+}
+
+extension AppModel {
+    /// View on a service's row: its page opens in the shown chat's viewer as any web
+    /// page does (`openLink`). Nothing happens with no chat shown.
+    @discardableResult
+    func viewService(_ row: ServiceRow) -> Bool {
+        guard let address = row.view, let chat = shownChat else { return false }
+        return openLink(address, chat: chat)
+    }
+
+    /// Whether View can act now: there is a chat whose viewer takes the page.
+    var canViewService: Bool { shownChat != nil }
 }
 
 /// An action that may ask first (v0.8 decisions 3, 4).

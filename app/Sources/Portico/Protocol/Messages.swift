@@ -270,9 +270,11 @@ struct Service: Codable, Equatable, Sendable, Identifiable {
     var since: String? = nil
     /// The deployment has a restart command for it; absent means false.
     var canRestart: Bool? = nil
+    /// The service's own web page (v0.26.6), when the deployment gave one.
+    var view: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, state, detail, since
+        case id, name, state, detail, since, view
         case canRestart = "can_restart"
     }
 }

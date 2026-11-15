@@ -10,6 +10,12 @@
   was logged and nothing was sent or run since, Close thread closes it at
   once with no second log, and the line under the buttons says so. With
   work since the log, or no log yet, Close logs first, as before.
+- **View on a service's row.** A service in the deployment's `[[services]]`
+  (or a `deployment.status` row) may give its own web page with `view`, an
+  http or https address with its port. Its row in the services menu then
+  shows View beside Restart, whatever state it is in; View opens that page in
+  the viewer. The agent can look at a service's page and scroll it, and
+  cannot click or type there.
 - **Files keeps what it listed.** After the agent's command, a folder that
   is closed in Files keeps its listing, so the filter and quick open still
   find its files; it is asked for again when opened. A folder that is open

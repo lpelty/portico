@@ -210,6 +210,8 @@ class Service(Strict):
     detail: str | None = None
     since: str | None = None
     can_restart: bool = False
+    # v0.26.6: the service's own web page, when the deployment gave one.
+    view: str | None = None
 
 
 class Permission(Strict):

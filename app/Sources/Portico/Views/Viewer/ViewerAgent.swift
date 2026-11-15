@@ -54,6 +54,11 @@ final class ViewerAgent: ObservableObject {
             "This page (\(host)) can be looked at and scrolled, not used. The deployment's allow list sets which sites the agent can click and type on."
         }
 
+        /// A service's own page (v0.26.6): its controls change the service for everyone using it.
+        static func servicePage(_ name: String) -> String {
+            "This is \(name)'s own page, opened from the services menu. It can be looked at and scrolled, not used."
+        }
+
         /// A mark asked for on a pane that isn't a web page (v0.14).
         static func marksOnWebPages(kind: String) -> String {
             "Marks work on web pages; this is \(article(kind)) \(kind)."
@@ -685,6 +690,10 @@ final class ViewerAgent: ObservableObject {
         else { return .refused(Message.nothingOpen) }
         guard Self.canAct(url: href, actHosts: model?.hello?.viewerDefaults?.actHosts ?? []) else {
             return .refused(Message.outsideSite(href.host(percentEncoded: false) ?? href.absoluteString))
+        }
+        // v0.26.6: a service's page is on this Mac, so the rule above lets it through.
+        if let service = ServicesPresentation.service(at: href, in: model?.services ?? []) {
+            return .refused(Message.servicePage(service.name))
         }
         return .place(place)
     }

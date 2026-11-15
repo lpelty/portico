@@ -149,6 +149,17 @@ class UpdateConfig(BaseModel):
 SERVICE_ID = re.compile(r"[a-z0-9-]+")
 
 
+def is_web_address(value: str) -> bool:
+    """An ``http`` or ``https`` address with a host (a service's ``view``)."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(value)
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
 class ServiceConfig(BaseModel):
     """``[[services]]`` (v0.4): one thing the deployment depends on, and how to tell it is up.
 
@@ -167,7 +178,20 @@ class ServiceConfig(BaseModel):
     check: str
     restart: str | None = None
     up_detail: str | None = None
+    # v0.26.6: the service's own web page (its dashboard); the menu's View opens it in the viewer.
+    view: str | None = None
     timeout_seconds: int = Field(default=10, ge=1)
+
+    @field_validator("view")
+    @classmethod
+    def _view_is_a_web_address(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        if not is_web_address(value.strip()):
+            raise ConfigError(
+                f"services: view {value!r} must be an http or https address (like \"http://localhost:8080\")"
+            )
+        return value.strip()
 
     @field_validator("id")
     @classmethod

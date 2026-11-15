@@ -225,6 +225,66 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertNil(model.restartingAll)
     }
 
+    // MARK: - a row's View (v0.26.6, PORT-43)
+
+    func testARowShowsViewOnlyForAWebAddress() {
+        func row(_ view: String?, state: ServiceState = .up) -> ServiceRow {
+            ServicesPresentation.row(Service(id: "memory", name: "Memory", state: state, view: view))
+        }
+        XCTAssertEqual(row("http://localhost:8080/ui").view, "http://localhost:8080/ui")
+        XCTAssertEqual(row("https://status.example.com", state: .stuck).view, "https://status.example.com", "in every state")
+        XCTAssertEqual(row("http://localhost:8080", state: .down).view, "http://localhost:8080")
+        XCTAssertNil(row(nil).view)
+        XCTAssertNil(row("file:///etc/hosts").view)
+        XCTAssertNil(row("javascript:alert(1)").view)
+        XCTAssertNil(row("localhost:8080").view)
+        let gateway = ServicesPresentation.gatewayRow(.running(port: 1), connection: .connected)
+        XCTAssertNil(gateway.view, "the Gateway row has no page")
+    }
+
+    func testAServiceOlderGatewaysSendDecodesWithNoView() throws {
+        let old = try JSONDecoder().decode(Service.self, from: Data(#"{"id":"memory","name":"Memory","state":"up"}"#.utf8))
+        XCTAssertNil(old.view)
+        let new = try JSONDecoder().decode(
+            Service.self, from: Data(#"{"id":"memory","name":"Memory","state":"up","view":"http://localhost:8080"}"#.utf8))
+        XCTAssertEqual(new.view, "http://localhost:8080")
+    }
+
+    func testViewOpensThatAddressInTheShownChatsViewer() throws {
+        let (model, _) = try model()
+        connected(model, sessions: [ChatSummary(chat: 3, folder: "/tmp/demo", alias: nil, state: .idle, created: "2026-11-01T09:00:00Z")])
+        let row = ServicesPresentation.row(Service(id: "memory", name: "Memory", state: .stuck, view: "http://localhost:8080/ui"))
+        model.selected = 3
+        XCTAssertTrue(model.canViewService)
+        XCTAssertTrue(model.viewService(row))
+        XCTAssertEqual(model.current[3]?.location, "http://localhost:8080/ui", "that address and no other")
+        XCTAssertTrue(model.isViewerShown(for: 3))
+        XCTAssertFalse(model.viewService(ServicesPresentation.row(Service(id: "search", name: "Search", state: .up))), "no address, nothing opens")
+    }
+
+    /// The agent may look at a service's page and scroll it, never click or type: the page
+    /// is found by where it is served from, whichever way this Mac is spelled.
+    func testAServicesPageIsFoundByItsOrigin() throws {
+        let services = [
+            Service(id: "memory", name: "Memory", state: .up, view: "http://localhost:8080/ui"),
+            Service(id: "status", name: "Status", state: .up, view: "https://status.example.com"),
+            Service(id: "search", name: "Search", state: .up),
+        ]
+        func found(_ address: String) -> String? {
+            ServicesPresentation.service(at: URL(string: address)!, in: services)?.id
+        }
+        XCTAssertEqual(found("http://localhost:8080/ui"), "memory")
+        XCTAssertEqual(found("http://localhost:8080/banks/main/config?tab=2#save"), "memory", "any page of it")
+        XCTAssertEqual(found("http://127.0.0.1:8080/"), "memory")
+        XCTAssertEqual(found("http://[::1]:8080/"), "memory")
+        XCTAssertEqual(found("https://status.example.com:443/x"), "status", "the default port is the same place")
+        XCTAssertNil(found("http://localhost:3000/"), "another local server stays the agent's to use")
+        XCTAssertNil(found("https://localhost:8080/"), "another scheme is another place")
+        XCTAssertNil(found("http://example.com:8080/"))
+        XCTAssertTrue(ViewerAgent.canAct(url: URL(string: "http://localhost:8080/ui")!, actHosts: []), "the local rule alone would let it through")
+        XCTAssertTrue(ViewerAgent.Message.servicePage("Memory").contains("looked at and scrolled, not used"))
+    }
+
     // MARK: - a row's Restart beside Restart all services
 
     private func withRestartableMemory(_ model: AppModel) {
