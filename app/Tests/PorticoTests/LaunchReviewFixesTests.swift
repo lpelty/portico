@@ -319,6 +319,14 @@ final class LaunchReviewFixesTests: XCTestCase {
         between["work:demo"] = nil
         answer(model, sent, tree: between)
         XCTAssertEqual(model.fileListError(chat: 3, root: "work", path: "demo"), "No such directory")
+        XCTAssertEqual(model.latestStatusLine(for: 3), "No such directory", "the first refusal is said, as before")
+        // Refused again at the next relist (review 20261115-173452-0e093e, F13): the row already
+        // says it, and the chat's status line is left to whatever it holds by then.
+        model.apply(.statusSet(StatusSet(text: "Reading the plan", chat: 3)))
+        await turnEnds(model, seq: 7)
+        answer(model, sent, tree: between)
+        XCTAssertEqual(model.fileListError(chat: 3, root: "work", path: "demo"), "No such directory")
+        XCTAssertEqual(model.latestStatusLine(for: 3), "Reading the plan", "the same refusal again does not take the status line")
         await turnEnds(model, seq: 9)
         XCTAssertEqual(
             sent.listings.map { "\($0.root):\($0.path)" }, ["vault:", "work:", "work:demo"], "the refused open folder is asked for again")

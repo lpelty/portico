@@ -100,7 +100,6 @@ final class Settings: ObservableObject {
         static let lastFolder = "lastFolder"
         static let pinnedFiles = "pinnedFiles"
         static let openFolders = "openFolders"
-        static let viewedServicePages = "viewedServicePages"
         static let extraFolders = "extraFolders"
         static let sidebarWidth = "sidebarWidth"
         static let readingWidth = "viewerWidth.reading"
@@ -213,13 +212,6 @@ final class Settings: ObservableObject {
         set { defaults.set(Array(newValue.suffix(Self.openFoldersLimit)), forKey: Key.openFolders) }
     }
     static let openFoldersLimit = 500
-
-    /// Where the service pages View has opened are served from (scheme, host, port), each
-    /// with its service's name (v0.26.6): the agent may look at such a page, never use it.
-    var viewedServicePages: [String: String] {
-        get { defaults.dictionary(forKey: Key.viewedServicePages) as? [String: String] ?? [:] }
-        set { defaults.set(newValue, forKey: Key.viewedServicePages) }
-    }
 
     /// Folders the person added to the Files pane (Settings › General › Also
     /// show in Files, v0.19 §4.2), by absolute path, in the order added.

@@ -1407,7 +1407,11 @@ final class AppModel: ObservableObject {
             if let chat = error.chat {
                 // v0.22.1: a refusal that explains a failed turn goes on that
                 // turn's line; anything else, or with no such turn, to the status line.
-                if !explainFailedTurn(error, chat: chat) {
+                // v0.26.6: a relist asks again for an open folder whose listing was refused; the
+                // same refusal again is already on the folder's row and is not said a second time.
+                let listing = error.id.flatMap { pendingFileLists[$0] }
+                let repeated = listing.map { fileListErrors[$0] == error.message } ?? false
+                if !repeated, !explainFailedTurn(error, chat: chat) {
                     setStatus(error.message, for: chat)
                 }
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {

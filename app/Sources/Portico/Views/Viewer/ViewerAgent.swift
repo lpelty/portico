@@ -54,11 +54,6 @@ final class ViewerAgent: ObservableObject {
             "This page (\(host)) can be looked at and scrolled, not used. The deployment's allow list sets which sites the agent can click and type on."
         }
 
-        /// A service's own page (v0.26.6): its controls change the service for everyone using it.
-        static func servicePage(_ name: String) -> String {
-            "This is \(name)'s own page, opened from the services menu. It can be looked at and scrolled, not used."
-        }
-
         /// A mark asked for on a pane that isn't a web page (v0.14).
         static func marksOnWebPages(kind: String) -> String {
             "Marks work on web pages; this is \(article(kind)) \(kind)."
@@ -671,16 +666,6 @@ final class ViewerAgent: ObservableObject {
         }
     }
 
-    /// Why the agent may not click or type on the page at `url`, or `nil` when it may: an
-    /// outside site off the allow list, or a service's own page (v0.26.6; it is on this
-    /// Mac, so `canAct` alone lets it through).
-    static func refusal(at url: URL, actHosts: [String], servicePage: String?) -> String? {
-        guard canAct(url: url, actHosts: actHosts) else {
-            return Message.outsideSite(url.host(percentEncoded: false) ?? url.absoluteString)
-        }
-        return servicePage.map(Message.servicePage)
-    }
-
     private enum Place {
         case place(String)
         case refused(String)
@@ -698,10 +683,8 @@ final class ViewerAgent: ObservableObject {
             let href = (here["href"] as? String).flatMap(URL.init(string:)),
             let place = here["place"] as? String
         else { return .refused(Message.nothingOpen) }
-        if let refusal = Self.refusal(
-            at: href, actHosts: model?.hello?.viewerDefaults?.actHosts ?? [], servicePage: model?.servicePage(at: href)?.name)
-        {
-            return .refused(refusal)
+        guard Self.canAct(url: href, actHosts: model?.hello?.viewerDefaults?.actHosts ?? []) else {
+            return .refused(Message.outsideSite(href.host(percentEncoded: false) ?? href.absoluteString))
         }
         return .place(place)
     }

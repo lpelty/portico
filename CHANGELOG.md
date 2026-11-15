@@ -14,8 +14,7 @@
   (or a `deployment.status` row) may give its own web page with `view`, an
   http or https address. Its row in the services menu then
   shows View beside Restart, whatever state it is in; View opens that page in
-  the viewer. The agent can look at a service's page and scroll it, and
-  cannot click or type there.
+  the viewer, as any web page opens there.
 - **Files keeps what it listed.** After the agent's command, a folder that
   is closed in Files keeps its listing, so the filter and quick open still
   find its files; it is asked for again when opened. A folder that is open
