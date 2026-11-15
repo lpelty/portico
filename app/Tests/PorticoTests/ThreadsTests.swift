@@ -401,6 +401,41 @@ final class ThreadsTests: XCTestCase {
         XCTAssertNotNil(close.id)
     }
 
+    /// v0.26.6 (PORT-66): a session just logged, with nothing sent or run since, is
+    /// closed without a second log; work after the log, or no log at all, logs.
+    func testCloseLogsOnlyWhenThereIsWorkTheLogDoesNotHold() {
+        func closing(loggedAt: String?, unlogged: Bool?) -> ThreadClose? {
+            var thread = Self.thread(5, slot: 1)
+            thread.loggedAt = loggedAt
+            thread.unlogged = unlogged
+            let (model, sent) = model(chats: [Self.main(3), thread])
+            XCTAssertEqual(
+                SessionCard.closeLine(logs: model.closeLogs(chat: 5)).hasPrefix("Already logged"),
+                loggedAt != nil && unlogged == false, "the card's line says what Close will do")
+            model.requestCloseThread(chat: 5)
+            guard case .threadClose(let close)? = sent.frames.last else { return nil }
+            return close
+        }
+        XCTAssertEqual(closing(loggedAt: "2026-11-15T10:00:00Z", unlogged: false)?.log, false, "just logged: closes at once")
+        XCTAssertEqual(closing(loggedAt: "2026-11-15T10:00:00Z", unlogged: true)?.log, true, "logged, then worked in")
+        XCTAssertEqual(closing(loggedAt: nil, unlogged: true)?.log, true, "never logged")
+        XCTAssertEqual(closing(loggedAt: nil, unlogged: false)?.log, true, "never logged, nothing run: as before")
+        XCTAssertEqual(closing(loggedAt: "2026-11-15T10:00:00Z", unlogged: nil)?.log, true, "an older gateway does not say")
+    }
+
+    /// A turn that ends after the log makes Close log again.
+    func testWorkAfterTheLogMakesCloseLogAgain() {
+        var thread = Self.thread(5, slot: 1)
+        thread.loggedAt = "2026-11-15T10:00:00Z"
+        thread.unlogged = false
+        let (model, _) = model(chats: [Self.main(3), thread])
+        XCTAssertFalse(model.closeLogs(chat: 5))
+        var state = ChatState(chat: 5, state: .idle)
+        state.unlogged = true
+        model.apply(.chatState(state))
+        XCTAssertTrue(model.closeLogs(chat: 5))
+    }
+
     func testClosingAnIdleThreadSendsAtOnce() {
         let (model, sent) = model(chats: [Self.main(3), Self.thread(5, slot: 1)])
         model.requestCloseThread(chat: 5)
