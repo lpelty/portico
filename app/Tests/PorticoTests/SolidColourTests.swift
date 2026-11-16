@@ -34,6 +34,8 @@ final class SolidColourTests: XCTestCase {
             .logo4: ("#8A6BD1", "#8A6BD1"), .logo5: ("#C9A227", "#C9A227"), .logo6: ("#D1567A", "#D1567A"),
             .logo7: ("#3F6FD8", "#3F6FD8"), .logo8: ("#5D6874", "#5D6874"), .logo9: ("#3F8CD1", "#3F8CD1"),
             .logo10: ("#7A8A3F", "#7A8A3F"),
+            .window1Edge: ("#B0C5FA", "#30447B"), .window2Edge: ("#F1C3A9", "#71432A"),
+            .window3Edge: ("#A1D3CD", "#21534E"), .window4Edge: ("#CABCEA", "#4A3C6B"),
         ]
         XCTAssertEqual(spec.count, Theme.Token.allCases.count)
         for (token, want) in spec {
