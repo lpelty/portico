@@ -482,7 +482,9 @@ struct SessionCard: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
-        .tip("Close this thread; its summary goes to History")
+        .tip(model.closeLogs(chat: chat)
+            ? "Close this thread; its summary goes to History"
+            : "Close this thread; it is already logged, so nothing more is written")
         .disabled(closing)
     }
 
@@ -496,10 +498,15 @@ struct SessionCard: View {
         if let failure = model.closeFailures[chat] {
             CloseFailureLine(chat: chat, failure: failure)
         } else {
-            Text("Close writes a summary to History")
+            Text(Self.closeLine(logs: model.closeLogs(chat: chat)))
                 .scaledFont(11)
                 .foregroundStyle(Theme.text3)
         }
+    }
+
+    /// The line under a thread's buttons: what Close will do now (v0.26.6).
+    static func closeLine(logs: Bool) -> String {
+        logs ? "Close writes a summary to History" : "Already logged: Close just closes the thread"
     }
 
     private var renewButtonLabel: some View {

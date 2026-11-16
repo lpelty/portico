@@ -415,6 +415,15 @@ A line shown while it is up.
 - **Applies:** gateway restart
 - **Belongs in:** the deployment's `config.toml`
 
+### `services[].view`
+
+The service's own web page (http or https). The menu's View opens it in the viewer.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `view = "http://localhost:8080"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
 ### `services[].timeout_seconds`
 
 The check is killed after this. At least 1.

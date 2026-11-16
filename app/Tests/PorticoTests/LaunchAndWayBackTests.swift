@@ -422,8 +422,10 @@ final class LaunchAndWayBackTests: XCTestCase {
         }
         for frame in sent.frames {
             if case .filesList(let request) = frame {
-                model.apply(.filesList(FilesList(
-                    root: request.root, path: request.path, entries: [Entry(name: "a.md", dir: false)], chat: 3, id: request.id)))
+                // The top lists the folder it holds (v0.26.6: a folder a fresh listing lacks is forgotten).
+                let entries = request.path.isEmpty
+                    ? [Entry(name: "notes", dir: true), Entry(name: "a.md", dir: false)] : [Entry(name: "a.md", dir: false)]
+                model.apply(.filesList(FilesList(root: request.root, path: request.path, entries: entries, chat: 3, id: request.id)))
             }
         }
         sent.frames = []

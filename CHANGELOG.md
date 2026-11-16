@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.26.6 (2026-11-15)
+
+- **An overlong model name is truncated in the status strip.** A model that
+  arrives as a long identifier (an ARN) pushed the selector out of view when
+  the viewer opened. The name now takes at most 200 pt and is cut in the
+  middle; the tooltip and VoiceOver still carry the whole name.
+- **Close thread does not log a session twice.** When a thread's session
+  was logged and nothing was sent or run since, Close thread closes it at
+  once with no second log, and the line under the buttons says so. With
+  work since the log, or no log yet, Close logs first, as before.
+- **View on a service's row.** A service in the deployment's `[[services]]`
+  (or a `deployment.status` row) may give its own web page with `view`, an
+  http or https address. Its row in the services menu then
+  shows View beside Restart, whatever state it is in; View opens that page in
+  the viewer, as any web page opens there.
+- **Files keeps what it listed.** After the agent's command, a folder that
+  is closed in Files keeps its listing, so the filter and quick open still
+  find its files; it is asked for again when opened. A folder that is open
+  while the agent deletes it and makes it again shows its new contents after
+  the next refresh with no click. A folder that is gone is forgotten once
+  its parent's listing no longer holds it, and is not asked for again.
+
 ## v0.26.5 (2026-11-13)
 
 - **Marks belong to their page.** The marks chip in the viewer's header shows

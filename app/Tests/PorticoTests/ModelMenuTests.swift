@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import XCTest
 
 @testable import Portico
@@ -303,6 +304,75 @@ final class ModelMenuTests: XCTestCase {
             extra,
             StatusStripPresentation.Measure.iconGap + StatusStripPresentation.Measure.chevron.size
                 + 2 * StatusStripPresentation.Measure.modelMenuPadding)
+    }
+
+    // MARK: - an overlong name (PORT-68)
+
+    private static let arn =
+        "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/a1b2c3d4e5f6"
+
+    func testAnOverlongNameKeepsTheModelWhereANameAsWideAsTheCapKeepsIt() {
+        let services = ServicesPresentation(
+            gateway: ServicesPresentation.gatewayRow(.running(port: 1), connection: .connected), services: [])
+        let cap = StatusStripPresentation.Measure.modelMaxWidth
+        // One point a character: a name of `cap` characters is exactly as wide as the cap.
+        let metrics = StatusStripPresentation.Metrics(text: { CGFloat($0.count) }, symbol: { $0.size })
+        let atCap = String(repeating: "m", count: Int(cap))
+        let longer = String(repeating: "m", count: Int(cap) * 3)
+        var capped = StatusStripPresentation(modelText: atCap, services: services, gatewayText: "")
+        capped.modelMenu = presentation()
+        var long = capped
+        long.modelText = longer
+        for fit in [StatusStripPresentation.Fit.full, .compact] {
+            XCTAssertEqual(
+                long.width(at: fit, restart: false, update: nil, metrics: metrics),
+                capped.width(at: fit, restart: false, update: nil, metrics: metrics),
+                "a longer name costs the strip the cap and no more")
+        }
+        let width = capped.width(at: .full, restart: false, update: nil, metrics: metrics)
+        XCTAssertEqual(long.fit(width: width, restart: false, update: nil, metrics: metrics), .full)
+        XCTAssertEqual(
+            long.fit(width: width - 1, restart: false, update: nil, metrics: metrics),
+            capped.fit(width: width - 1, restart: false, update: nil, metrics: metrics))
+        XCTAssertEqual(long.model(at: .full), longer, "the words are whole; the view truncates them")
+        XCTAssertEqual(long.text.hasPrefix(longer), true, "the accessibility words carry the whole name")
+    }
+
+    /// The selector drawn into a bitmap wider than it asks for: its asked
+    /// width, and the rightmost column that has any ink.
+    private func drawn(_ label: String) throws -> (asked: CGFloat, ink: CGFloat) {
+        let host = NSHostingView(
+            rootView: ModelMenuControl(menu: presentation(), chat: 3, label: label, help: label, shown: .constant(false))
+                .environmentObject(model())
+                .frame(maxWidth: .infinity, alignment: .leading))
+        let asked = host.fittingSize
+        host.frame = NSRect(x: 0, y: 0, width: 1400, height: asked.height)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        var last = 0
+        for x in 0..<bitmap.pixelsWide {
+            for y in 0..<bitmap.pixelsHigh where (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.05 {
+                last = x
+                break
+            }
+        }
+        let scale = CGFloat(bitmap.pixelsWide) / host.bounds.width
+        return (asked.width, CGFloat(last) / scale)
+    }
+
+    func testTheSelectorDrawsAnOverlongNameInsideTheCap() throws {
+        let cap = StatusStripPresentation.Measure.modelMaxWidth
+        XCTAssertTrue(ModelNameText.truncates(Self.arn))
+        let short = try drawn("Claude Opus 5.5")
+        let long = try drawn(Self.arn)
+        XCTAssertGreaterThan(short.ink, 40, "the bitmap has the selector's ink")
+        let chrome = short.asked - StatusStripPresentation.textWidth("Claude Opus 5.5")
+        XCTAssertEqual(long.asked, cap + chrome, accuracy: 2, "the long name asks for the cap and the selector's own parts")
+        XCTAssertLessThanOrEqual(long.ink, long.asked + 1, "nothing is drawn past the width it asks for")
+        XCTAssertGreaterThan(long.ink, cap, "the chevron is drawn after the truncated name")
+        XCTAssertLessThan(short.asked, long.asked, "a short name keeps its own width")
+        XCTAssertFalse(ModelNameText.truncates("Claude Opus 5.5"))
     }
 
     // MARK: - model.set

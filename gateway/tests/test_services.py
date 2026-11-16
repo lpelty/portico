@@ -389,3 +389,22 @@ async def test_without_services_the_list_is_empty_and_no_monitor_runs(state_dir:
         assert not any(t.get_name() == "portico-services" for t in srv._tasks)
     finally:
         await srv.shutdown()
+
+
+# --- a service's own page (v0.26.6) -------------------------------------------------
+
+
+def test_a_services_view_is_an_http_address_or_refused() -> None:
+    assert svc("memory", "true", view="http://localhost:8080/ui").view == "http://localhost:8080/ui"
+    assert svc("memory", "true", view="  https://status.example.com  ").view == "https://status.example.com"
+    assert svc("memory", "true", view="  ").view is None, "blank is unset"
+    assert svc("memory", "true").view is None
+    for bad in ["localhost:8080", "file:///etc/hosts", "javascript:alert(1)", "http://", "ftp://example.com"]:
+        with pytest.raises(ValueError) as e:  # the loader's ConfigError, wrapped when the model is built directly
+            svc("memory", "true", view=bad)
+        assert "view" in str(e.value) and "http" in str(e.value)
+
+
+async def test_the_snapshot_carries_each_services_view() -> None:
+    mon, _ = monitor([svc("memory", "true", view="http://localhost:8080"), svc("search", "true")])
+    assert [(s.id, s.view) for s in mon.snapshot()] == [("memory", "http://localhost:8080"), ("search", None)]

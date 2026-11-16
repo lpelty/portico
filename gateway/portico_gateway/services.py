@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from .config import ServiceConfig
+from .config import ServiceConfig, is_web_address
 from .lifecycle import run_command
 from .messages import ProtocolError, Service, ServiceState
 from .plugins import ServicesHook, call_hook
@@ -99,6 +99,7 @@ class StatusRow:
     name: str
     state: ServiceState
     detail: str | None = None
+    view: str | None = None
 
 
 def parse_status(raw: Any) -> list[StatusRow]:
@@ -138,8 +139,13 @@ def parse_status(raw: Any) -> list[StatusRow]:
             raise SourceFailed(f"services[{n}] ({id}): up must be true or false")
         if detail is not None and not isinstance(detail, str):
             raise SourceFailed(f"services[{n}] ({id}): detail must be text")
+        # A view that is not an http(s) address is left out: the row shows no View.
+        view = item.get("view")
+        view = view.strip() if isinstance(view, str) and is_web_address(view.strip()) else None
         seen.add(id)
-        rows.append(StatusRow(id=id, name=name, state=state, detail=_short(detail) if detail and detail.strip() else None))
+        rows.append(
+            StatusRow(id=id, name=name, state=state, detail=_short(detail) if detail and detail.strip() else None, view=view)
+        )
     return rows
 
 
@@ -276,6 +282,7 @@ class ServiceMonitor:
         # With a status source, the rows (id, name) its last reading gave, in
         # its order; none until the first reading.
         self._rows: list[tuple[str, str]] = []
+        self._views: dict[str, str] = {}
         # One check or restart per service at a time.
         self._locks: dict[str, asyncio.Lock] = {s.id: asyncio.Lock() for s in self.services}
         # One status reading, and one restart of everything, at a time.
@@ -308,6 +315,15 @@ class ServiceMonitor:
                 return service.restart
         return None
 
+    def _view(self, service_id: str) -> str | None:
+        """The service's page: the status row's when the status command gave one, else its ``[[services]]`` entry's."""
+        if service_id in self._views:
+            return self._views[service_id]
+        for service in self.services:
+            if service.id == service_id:
+                return service.view
+        return None
+
     def snapshot(self) -> list[Service]:
         """Every service as last found: down ones first, then stuck ones, then in config (or status) order."""
         rows = self._rows if self.status_source is not None else [(s.id, s.name) for s in self.services]
@@ -322,6 +338,7 @@ class ServiceMonitor:
                     detail=status.detail,
                     since=_iso(status.since) if status.since is not None else None,
                     can_restart=self._restart_command(service_id) is not None,
+                    view=self._view(service_id),
                 )
             )
         return sorted(out, key=lambda s: {"down": 0, "stuck": 1}.get(s.state, 2))
@@ -421,6 +438,7 @@ class ServiceMonitor:
             for gone in [i for i in self._status if i not in ids]:
                 del self._status[gone]
             self._rows = [(row.id, row.name) for row in rows]
+            self._views = {row.id: row.view for row in rows if row.view}
             for row in rows:
                 if row.state in ("up", "stuck"):
                     self._set(row.id, row.state, row.detail)

@@ -64,6 +64,10 @@ struct StatusStripPresentation: Equatable, Sendable {
         static let chevron = Symbol(name: "chevron.down", size: 8, weight: .semibold)
         /// The model menu's own padding either side, inside its hover fill (AN1: 3 × 7).
         static let modelMenuPadding: CGFloat = 7
+        /// The widest the model's name is drawn (PORT-68): a longer one (a
+        /// Bedrock ARN) is truncated in the middle, so the segment stays in
+        /// the strip where a short name would.
+        static let modelMaxWidth: CGFloat = 200
         static let restartIcon = Symbol(name: "arrow.clockwise", size: 10, weight: .semibold)
         static let updateIcon = Symbol(name: "arrow.down.circle", size: 11)
         static let updateIconCompact = Symbol(name: "arrow.down.circle", size: 13)
@@ -125,7 +129,7 @@ struct StatusStripPresentation: Equatable, Sendable {
         }
         var segments: [CGFloat] = []
         if let model = model(at: fit) {
-            var segment = labelled(Measure.modelIcon, metrics.text(model))
+            var segment = labelled(Measure.modelIcon, min(metrics.text(model), Measure.modelMaxWidth))
             if hasModelMenu {
                 segment += Measure.iconGap + metrics.symbol(Measure.chevron) + 2 * Measure.modelMenuPadding
             }
@@ -303,8 +307,7 @@ struct StatusStrip: View {
         HStack(spacing: StatusStripPresentation.Measure.iconGap) {
             Image(systemName: icon.name)
                 .font(Theme.iconFont(icon.size))
-            Text(text)
-                .scaledFont(12)
+            ModelNameText(name: text)
         }
         .foregroundStyle(Theme.text2)
         .fixedSize()
@@ -354,6 +357,28 @@ struct StatusStrip: View {
         .buttonStyle(.hover)
         .tip("\(StatusStripPresentation.updateText(version)). Install it: \(model.brand.name) closes, updates, and opens again")
         .accessibilityLabel(StatusStripPresentation.updateText(version))
+    }
+}
+
+/// The model's name in the strip (PORT-68): its own width, or, when it
+/// measures wider than `modelMaxWidth`, exactly that width with the middle
+/// cut. The width is given outright, so the text is truncated whatever its
+/// container proposes.
+struct ModelNameText: View {
+    let name: String
+    @Environment(\.textScale) private var textScale
+
+    /// The name measures wider than the cap at this text scale.
+    static func truncates(_ name: String, scale: CGFloat = 1) -> Bool {
+        StatusStripPresentation.textWidth(name, scale: scale) > StatusStripPresentation.Measure.modelMaxWidth
+    }
+
+    var body: some View {
+        Text(name)
+            .scaledFont(StatusStripPresentation.Measure.fontSize)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(width: Self.truncates(name, scale: textScale) ? StatusStripPresentation.Measure.modelMaxWidth : nil)
     }
 }
 
@@ -466,8 +491,7 @@ struct ModelMenuControl: View {
                 HStack(spacing: Measure.iconGap) {
                     Image(systemName: Measure.modelIcon.name)
                         .font(Theme.iconFont(Measure.modelIcon.size))
-                    Text(label)
-                        .scaledFont(Measure.fontSize)
+                    ModelNameText(name: label)
                     Image(systemName: shown ? "chevron.up" : Measure.chevron.name)
                         .font(Theme.iconFont(Measure.chevron.size, weight: .semibold))
                         .foregroundStyle(Theme.text3)
@@ -714,6 +738,13 @@ struct ServiceRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if row.view != nil {
+                // v0.26.6: the service's own page, in the viewer; in every state.
+                RowActionButton(title: "View", systemImage: "eye", help: "Show \(row.name) in the viewer") {
+                    if model.viewService(row) { closeMenu() }
+                }
+                .disabled(!model.canViewService)
+            }
             if restarting {
                 ProgressView().controlSize(.small)
                     .tip("Restarting \(row.name)…")
@@ -770,9 +801,15 @@ struct ServiceRowView: View {
                 Button("\(control.title) gateway") { press(control) }
                     .disabled(!ServicesPresentation.gatewayControlEnabled(control, gateway: row, restarting: model.restarting))
             }
-        } else if ServicesPresentation.rowActions(row).contains(.restart) {
-            Button("Restart \(row.name)") { model.restartService(row.id) }
-                .disabled(!model.canRestart(service: row.id))
+        } else {
+            if row.view != nil {
+                Button("View \(row.name)") { if model.viewService(row) { closeMenu() } }
+                    .disabled(!model.canViewService)
+            }
+            if ServicesPresentation.rowActions(row).contains(.restart) {
+                Button("Restart \(row.name)") { model.restartService(row.id) }
+                    .disabled(!model.canRestart(service: row.id))
+            }
         }
     }
 

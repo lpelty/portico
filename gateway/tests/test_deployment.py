@@ -495,3 +495,24 @@ async def test_a_row_restart_while_restart_all_runs_is_refused_over_the_socket(t
     finally:
         await conn.close()
         await srv.shutdown()
+
+
+async def test_a_status_row_may_carry_a_view_and_a_bad_one_is_left_out(tmp_path: Path) -> None:
+    """v0.26.6: the status command's row gives the page; without one the [[services]] entry's stands."""
+    command = printing(
+        tmp_path / "status.json",
+        status_json(
+            {"id": "files", "name": "Files", "up": True, "view": "http://localhost:8081/"},
+            {"id": "memory", "name": "Memory", "up": True},
+            {"id": "search", "name": "Search", "up": True, "view": "file:///etc/hosts"},
+            {"id": "queue", "name": "Queue", "up": True, "view": 7},
+        ),
+    )
+    mon, rec = status_monitor(command, services=[svc("memory", "true", view="http://localhost:8080")])
+    await mon.check_all()
+    assert {s.id: s.view for s in rec.calls[-1]} == {
+        "files": "http://localhost:8081/",
+        "memory": "http://localhost:8080",
+        "search": None,
+        "queue": None,
+    }

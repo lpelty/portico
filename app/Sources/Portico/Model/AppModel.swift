@@ -1301,6 +1301,7 @@ final class AppModel: ObservableObject {
             if let id = list.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileTree[key] = list.entries
                 fileListErrors[key] = nil
+                forgetFolders(under: key, notIn: list.entries)
             } else if list.id == nil, let chat = list.chat {
                 fileTree[FilesKey(chat: chat, root: list.root, path: list.path)] = list.entries
             }
@@ -1406,7 +1407,11 @@ final class AppModel: ObservableObject {
             if let chat = error.chat {
                 // v0.22.1: a refusal that explains a failed turn goes on that
                 // turn's line; anything else, or with no such turn, to the status line.
-                if !explainFailedTurn(error, chat: chat) {
+                // v0.26.6: a relist asks again for an open folder whose listing was refused; the
+                // same refusal again is already on the folder's row and is not said a second time.
+                let listing = error.id.flatMap { pendingFileLists[$0] }
+                let repeated = listing.map { fileListErrors[$0] == error.message } ?? false
+                if !repeated, !explainFailedTurn(error, chat: chat) {
                     setStatus(error.message, for: chat)
                 }
                 if let id = error.id, let pending = pendingSends[chat], pending.id == id {
@@ -1418,9 +1423,10 @@ final class AppModel: ObservableObject {
                 }
             }
             // A refused listing: the directory is no longer pending (so it
-            // can be asked for again) and its row shows the refusal. An
-            // earlier listing of it is dropped (v0.26.5): the directory may
-            // be gone, and a relist asks only for what is listed.
+            // can be asked for again) and its row shows the refusal in place
+            // of its earlier listing. The refusal is kept (v0.26.6): a relist
+            // asks for an open folder again, so one made again is shown; one
+            // that is gone is forgotten when its parent's listing lacks it.
             if let id = error.id, let key = pendingFileLists.removeValue(forKey: id) {
                 fileListErrors[key] = error.message
                 fileTree[key] = nil
@@ -2996,11 +3002,36 @@ extension AppModel {
         return .filesList(FilesListRequest(root: key.root, path: key.path, chat: key.chat, id: id))
     }
 
+    /// Ask for a listed directory again; its rows stay drawn until the answer (v0.26.6).
+    func listAgain(_ key: FilesKey) {
+        send(filesListRequest(for: key))
+    }
+
     /// Drop the chat's tree so every expanded directory is listed afresh.
     func refreshFiles(chat: Int) {
         fileTree = fileTree.filter { $0.key.chat != chat }
         fileListErrors = fileListErrors.filter { $0.key.chat != chat }
         pendingFileLists = pendingFileLists.filter { $0.value.chat != chat }
+    }
+
+    /// A directory's fresh listing: every folder remembered under it that the listing
+    /// no longer holds is forgotten, with all below it (its listing, its refusal, a
+    /// request still out), so a folder that is gone is not asked for again (v0.26.6).
+    private func forgetFolders(under key: FilesKey, notIn entries: [Entry]) {
+        let kept = Set(entries.filter(\.dir).map(\.name))
+        let prefix = key.path.isEmpty ? "" : key.path + "/"
+        func gone(_ other: FilesKey) -> Bool {
+            guard other.chat == key.chat, other.root == key.root, other.path != key.path, other.path.hasPrefix(prefix),
+                let child = other.path.dropFirst(prefix.count).split(separator: "/").first
+            else { return false }
+            return !kept.contains(String(child))
+        }
+        guard fileTree.keys.contains(where: gone) || fileListErrors.keys.contains(where: gone)
+            || pendingFileLists.values.contains(where: gone)
+        else { return }
+        fileTree = fileTree.filter { !gone($0.key) }
+        fileListErrors = fileListErrors.filter { !gone($0.key) }
+        pendingFileLists = pendingFileLists.filter { !gone($0.value) }
     }
 
     /// A write finished or a turn ended in `chat` (`FolderRelist`): list
@@ -3019,12 +3050,14 @@ extension AppModel {
 
     /// List again the directories the Files pane shows for the chat, in
     /// every root, so a folder or file the agent made appears without the
-    /// refresh button: each root's top level and the folders open now. The
-    /// old entries stay drawn until the new ones come (no "Listing…"
-    /// flash). A listed folder that is closed now is not asked for; its
-    /// listing is forgotten, so it is listed afresh when it is opened. A
-    /// chat whose files are not on screen forgets all its listings; they
-    /// are asked for when it is shown.
+    /// refresh button: each root's top level and the folders open now,
+    /// those whose last listing was refused among them. The old entries
+    /// stay drawn until the new ones come (no "Listing…" flash). A listed
+    /// folder that is closed now is not asked for; its listing is kept
+    /// (v0.26.6), so the filter and quick open still find its files, and
+    /// it is asked for again when it is opened (`toggleFolder`). A chat whose files are not
+    /// on screen forgets all its listings; they are asked for when it is
+    /// shown.
     ///
     /// A directory whose listing is still out is asked for again: that
     /// listing may have been read before the write (each request has its
@@ -3032,16 +3065,17 @@ extension AppModel {
     func relistSessionFolder(chat: Int) {
         // Every root (v0.26.5): the agent makes folders and files in the
         // vault and in other folders too, not only in the session's own.
-        let keys = fileTree.keys.filter { $0.chat == chat }
+        let keys = Set(fileTree.keys.filter { $0.chat == chat }).union(fileListErrors.keys.filter { $0.chat == chat })
         guard filesChat == chat else {
-            for key in keys { fileTree[key] = nil }
+            for key in keys {
+                fileTree[key] = nil
+                fileListErrors[key] = nil
+            }
             return
         }
         for key in keys.sorted(by: { ($0.root, $0.path) < ($1.root, $1.path) }) {
             if key.path.isEmpty || isFolderOpen(chat: chat, root: key.root, path: key.path) {
                 send(filesListRequest(for: key))
-            } else {
-                fileTree[key] = nil
             }
         }
     }

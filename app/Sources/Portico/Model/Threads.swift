@@ -495,8 +495,17 @@ extension AppModel {
         if isBusy(chat: chat) {
             closingThread = chat
         } else {
-            closeThread(chat: chat, log: true)
+            closeThread(chat: chat, log: closeLogs(chat: chat))
         }
+    }
+
+    /// Whether Close thread runs the log step (v0.26.6): not when the session was
+    /// logged and the gateway says nothing was sent or run since, so one session is
+    /// not logged twice. Work after the log, a session never logged, and a gateway
+    /// that does not say (`unlogged` absent) all log, as before.
+    func closeLogs(chat: Int) -> Bool {
+        guard let summary = summary(of: chat) else { return true }
+        return !(summary.loggedAt != nil && summary.unlogged == false)
     }
 
     /// The confirm's Close.

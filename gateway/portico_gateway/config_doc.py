@@ -119,6 +119,7 @@ KEY_DOCS: dict[str, KeyDoc] = {
     "services[].check": KeyDoc("A command (/bin/sh -c): exit 0 is up, 75 is stuck, anything else down.", 'check = "curl -sf http://localhost:8888/health"'),
     "services[].restart": KeyDoc("A command the menu's Restart runs.", 'restart = "my-tool restart memory"'),
     "services[].up_detail": KeyDoc("A line shown while it is up.", 'up_detail = "recall and capture"'),
+    "services[].view": KeyDoc("The service's own web page (http or https). The menu's View opens it in the viewer.", 'view = "http://localhost:8080"'),
     "services[].timeout_seconds": KeyDoc("The check is killed after this. At least 1.", "timeout_seconds = 10"),
     # --- roots ------------------------------------------------------------------------
     "roots": KeyDoc("Folders the Files pane can browse.", '[[roots]] name = "projects", path = "~/projects"', scope="either"),

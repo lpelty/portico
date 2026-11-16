@@ -174,7 +174,17 @@ extension AppModel {
     /// Open the folder in the Files tree, or close it, and remember it.
     func toggleFolder(chat: Int, root: String, path: String) {
         guard let key = folderPath(chat: chat, root: root, path: path) else { return }
-        if let index = openFolders.firstIndex(of: key) { openFolders.remove(at: index) } else { openFolders.append(key) }
+        if let index = openFolders.firstIndex(of: key) {
+            openFolders.remove(at: index)
+        } else {
+            openFolders.append(key)
+            // v0.26.6: a closed folder keeps its listing through a relist, so opening it
+            // asks again, in every chat that has it listed (a folder is open by where it
+            // is on disk, in all of them). One never listed is asked for by its row.
+            for listed in fileTree.keys where folderPath(chat: listed.chat, root: listed.root, path: listed.path) == key {
+                listAgain(listed)
+            }
+        }
         settings.openFolders = openFolders
     }
 
