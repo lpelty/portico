@@ -25,7 +25,14 @@ so updating Portico never touches it. Each module sets
   same shape the status command prints, ``{"services": [{"id", "name",
   "up", "detail"?}]}`` (a dict, or that JSON as text).
 
-For ``on_renew``, ``search``, ``restart_services`` and ``services_status``
+- ``team_check(request)``, ``team_get``, ``team_send``, ``team_sending``,
+  ``team_stop``, ``team_resolve``, ``team_share_check``, ``team_share``
+  (sync or async, v0.27) — team knowledge, each instead of the ``[team]``
+  command of the same name. Each takes the request as a dict and returns
+  the answer as a dict (``team.py`` gives the shapes); raising is a failed
+  request, with the exception's message as the reason.
+
+For ``on_renew``, ``search``, ``restart_services``, ``services_status`` and each ``team_`` hook
 the last plug-in in the list that names the hook is the one used. A module that is missing, raises on import, or
 sets a different API number stops the gateway at start with one line
 saying which and why; the doctor reports the same.
@@ -81,6 +88,11 @@ class RenewContext:
     ending: bool = True
 
 
+# v0.27: team knowledge's requests; a hook is ``team_`` and the request's name.
+TEAM_REQUESTS = ("check", "get", "send", "sending", "stop", "resolve", "share_check", "share")
+TEAM_HOOKS = tuple(f"team_{name}" for name in TEAM_REQUESTS)
+
+
 def _add_paths(paths: list[str]) -> None:
     for raw in reversed(paths):
         if raw not in sys.path:
@@ -105,14 +117,14 @@ def _import(name: str) -> ModuleType:
     renew = getattr(module, "on_renew", None)
     if renew is not None and not inspect.iscoroutinefunction(renew):
         raise PluginError(f"plug-in {name!r}: on_renew must be an async function (async def)")
-    for hook in ("on_hello", "search", "restart_services", "services_status"):
+    for hook in ("on_hello", "search", "restart_services", "services_status", *TEAM_HOOKS):
         value = getattr(module, hook, None)
         if value is not None and not callable(value):
             raise PluginError(f"plug-in {name!r}: {hook} is not callable")
     return module
 
 
-HOOKS = ("on_hello", "on_renew", "search", "restart_services", "services_status")
+HOOKS = ("on_hello", "on_renew", "search", "restart_services", "services_status", *TEAM_HOOKS)
 
 
 def _hooks(module: ModuleType) -> list[str]:
@@ -128,7 +140,13 @@ class Plugins:
         self.search: SearchHook | None = None
         self.restart_services: ServicesHook | None = None
         self.services_status: ServicesHook | None = None
+        # v0.27: team knowledge's hooks, by request name (``check`` for ``team_check``).
+        self.team: dict[str, Callable[[dict[str, Any]], Any]] = {}
         for module in self.modules:
+            for request in TEAM_REQUESTS:
+                hook = getattr(module, f"team_{request}", None)
+                if hook is not None:
+                    self.team[request] = hook
             self.renew = getattr(module, "on_renew", None) or self.renew
             self.search = getattr(module, "search", None) or self.search
             self.restart_services = getattr(module, "restart_services", None) or self.restart_services

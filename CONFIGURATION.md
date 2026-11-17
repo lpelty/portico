@@ -339,6 +339,98 @@ One command printing {"services": [...]} rows that replace the [[services]] chec
 - **Applies:** gateway restart
 - **Belongs in:** the deployment's `config.toml`
 
+## [team]
+
+### `team.label`
+
+What the app calls team knowledge.
+
+- **Type:** text · **Default:** `"Team knowledge"`
+- **Example:** `label = "Team knowledge"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.folder`
+
+The folder, under the person's root, where files from other people live.
+
+- **Type:** text · **Default:** `"_team"`
+- **Example:** `folder = "_team"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.check`
+
+Turns team knowledge on. Sends what is due, brings in what changed, and prints the whole state as JSON. Like every [team] command it reads its request as JSON on stdin.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `check = "my-tool team check"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.get`
+
+Accepts and brings in the shares the person pressed Get on.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `get = "my-tool team get"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.send`
+
+Sends the named files' changes now (Send changes now).
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `send = "my-tool team send"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.sending`
+
+Pauses or resumes sending for the named files.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `sending = "my-tool team sending"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.stop`
+
+Stops syncing the named files on this Mac.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `stop = "my-tool team stop"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.resolve`
+
+Applies the person's choice between two versions of a file.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `resolve = "my-tool team resolve"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.share_check`
+
+Checks files for personal material before a share; changes nothing.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `share_check = "my-tool team share-check"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
+### `team.share`
+
+Takes out what the person chose to, then shares the files with the team.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `share = "my-tool team share"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
 ## [[actions]]
 
 ### `actions`

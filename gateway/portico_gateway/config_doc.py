@@ -42,7 +42,7 @@ class KeyDoc:
 
 # Grouping for ``config show`` and the reference, in the README's order; newer sections last.
 SECTION_ORDER: list[str] = [
-    "general", "brand", "update", "deployment", "actions", "services", "roots", "sessions", "threads",
+    "general", "brand", "update", "deployment", "team", "actions", "services", "roots", "sessions", "threads",
     "files", "viewer", "links", "apps", "mcp", "spaces", "person", "voice", "signin",
 ]
 
@@ -109,6 +109,21 @@ KEY_DOCS: dict[str, KeyDoc] = {
     # --- deployment -------------------------------------------------------------------
     "deployment.restart": KeyDoc("One command that restarts all the deployment's services (Restart all services).", 'restart = "my-tool restart-all"'),
     "deployment.status": KeyDoc('One command printing {"services": [...]} rows that replace the [[services]] checks.', 'status = "my-tool status --json"'),
+    # --- team (v0.27) -------------------------------------------------------------------
+    "team.label": KeyDoc("What the app calls team knowledge.", 'label = "Team knowledge"'),
+    "team.folder": KeyDoc("The folder, under the person's root, where files from other people live.", 'folder = "_team"'),
+    "team.check": KeyDoc(
+        "Turns team knowledge on. Sends what is due, brings in what changed, and prints the whole state as JSON. "
+        "Like every [team] command it reads its request as JSON on stdin.",
+        'check = "my-tool team check"',
+    ),
+    "team.get": KeyDoc("Accepts and brings in the shares the person pressed Get on.", 'get = "my-tool team get"'),
+    "team.send": KeyDoc("Sends the named files' changes now (Send changes now).", 'send = "my-tool team send"'),
+    "team.sending": KeyDoc("Pauses or resumes sending for the named files.", 'sending = "my-tool team sending"'),
+    "team.stop": KeyDoc("Stops syncing the named files on this Mac.", 'stop = "my-tool team stop"'),
+    "team.resolve": KeyDoc("Applies the person's choice between two versions of a file.", 'resolve = "my-tool team resolve"'),
+    "team.share_check": KeyDoc("Checks files for personal material before a share; changes nothing.", 'share_check = "my-tool team share-check"'),
+    "team.share": KeyDoc("Takes out what the person chose to, then shares the files with the team.", 'share = "my-tool team share"'),
     # --- actions ----------------------------------------------------------------------
     "actions": KeyDoc("Buttons in the input bar; each sends its text.", '[[actions]] label = "Review", text = "/review"', scope="either"),
     "actions[].label": KeyDoc("The button's label.", 'label = "Review"', scope="either"),

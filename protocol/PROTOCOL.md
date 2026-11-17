@@ -2327,6 +2327,19 @@ an `id` is answered by a `team.result` with that `id`. The same `id` sent
 again is answered with the first outcome and nothing is repeated; a
 gateway keeps outcomes across a restart for at least a day. An app that
 saw no result sends the same request again and learns what happened.
+One exception: a `team.share.send` carries its draft's `id`, so a refused
+one is not kept and the person's next Share on that draft is carried out;
+only a Share that was done is answered again without repeating it.
+
+**The reference gateway.** It asks the deployment through a `[team]`
+table (one command per request: `check`, `get`, `send`, `sending`,
+`stop`, `resolve`, `share_check`, `share`) or a plug-in's hooks of the
+same names with `team_` in front, which take precedence. Each reads its
+request as JSON and answers in JSON; `gateway/portico_gateway/team.py`
+gives each shape, [CONFIGURATION.md](../CONFIGURATION.md) the keys, and
+`examples/team-sample/` a stand-in team source that answers all eight.
+The gateway itself keeps the timer, the chosen interval, which versions
+the person has opened, and each request's outcome.
 
 ### `team.state` — `TeamState`
 Everything the app draws, in one snapshot. Sent after `hello` and

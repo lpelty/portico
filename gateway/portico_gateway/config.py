@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
-from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, ViewerDefaults, Voice, ELEVENLABS_LAB, READ_ALOUD_LAB
+from .messages import APPS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, FILES_EDITED_CAPABILITY, FILES_EXTRA_CAPABILITY, HISTORY_TIMES_CAPABILITY, SIGNIN_CAPABILITY, MESSAGES_ATTACHMENTS_CAPABILITY, TASKS_CAPABILITY, THREADS_CAPABILITY, Action, Brand, HelloServer, LabItem, PermissionMode, Person, Presentation, Root, TeamHello, ViewerDefaults, Voice, ELEVENLABS_LAB, READ_ALOUD_LAB
 
 if TYPE_CHECKING:
     from .plugins import Plugins
@@ -235,6 +235,45 @@ class DeploymentConfig(BaseModel):
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value if value is not None and value.strip() else None
+
+
+class TeamConfig(BaseModel):
+    """``[team]`` (v0.27): team knowledge. One command per request, each run with ``/bin/sh -c``.
+
+    A command reads the request as JSON on stdin and prints its answer as
+    JSON (``team.py`` gives each shape). ``check`` turns team knowledge on;
+    a plug-in's hook of the same name (``team_check`` …) takes precedence.
+    ``label`` is what the app calls it; ``folder`` is where files from
+    other people live.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = "Team knowledge"
+    folder: str = "_team"
+    check: str | None = None
+    get: str | None = None
+    send: str | None = None
+    sending: str | None = None
+    stop: str | None = None
+    resolve: str | None = None
+    share_check: str | None = None
+    share: str | None = None
+
+    @field_validator("check", "get", "send", "sending", "stop", "resolve", "share_check", "share")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
+
+    @field_validator("label", "folder")
+    @classmethod
+    def _not_blank(cls, value: str, info: ValidationInfo) -> str:
+        if not value.strip():
+            raise ConfigError(f"team: {info.field_name} must not be empty")
+        return value.strip()
+
+    def commands(self) -> dict[str, str | None]:
+        return {name: getattr(self, name) for name in ("check", "get", "send", "sending", "stop", "resolve", "share_check", "share")}
 
 
 class FilesConfig(BaseModel):
@@ -547,6 +586,8 @@ class Config(BaseModel):
     services_interval_seconds: int = Field(default=30, ge=5)
     # v0.8: the deployment's one restart and one status command.
     deployment: DeploymentConfig = DeploymentConfig()
+    # v0.27: team knowledge, one command per request.
+    team: TeamConfig = TeamConfig()
     # v0.8: a session's title. ``generated`` asks a small model for one
     # after the first turn finishes cleanly (the first line until then, and
     # if the call fails); ``first_line`` makes no extra model call.
@@ -903,6 +944,7 @@ def hello_for(
         person=Person(name=config.person.name) if config.person.name else None,
         voice=Voice(read_aloud=config.voice.read_aloud),
         labs=_labs(config, layers) or None,
+        team=team_hello(config, plugins),
     )
     return plugins.on_hello(hello) if plugins is not None else hello
 
@@ -941,6 +983,18 @@ def _labs(config: Config, layers: ConfigLayers | None) -> list[LabItem]:
                 )
             )
     return items
+
+
+def has_team(config: Config, plugins: Plugins | None = None) -> bool:
+    """v0.27: whether the deployment has team knowledge: a ``team_check`` hook or ``[team] check``."""
+    return bool(config.team.check) or (plugins is not None and "check" in plugins.team)
+
+
+def team_hello(config: Config, plugins: Plugins | None = None) -> TeamHello | None:
+    """``hello.team``, or ``None`` when the deployment has no team knowledge."""
+    if not has_team(config, plugins):
+        return None
+    return TeamHello(label=config.team.label, folder=config.team.folder, intervals=[15, 30, 60])
 
 
 def can_restart_all(config: Config, plugins: Plugins | None = None) -> bool:

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import REPO_ROOT
 from .config import EMPTY_SETTING_SOURCES_MESSAGE, LOCAL_CONFIG_NAME, ConfigError, load_config, local_config_path, read_config_layers
-from .plugins import check_plugin
+from .plugins import TEAM_REQUESTS, PluginError, check_plugin, load_plugins
 from .state import ENV_HOME, ENV_HOME_SOURCE, StateDir
 
 MIN_PYTHON = (3, 13)
@@ -628,6 +628,34 @@ def check_services(config_path: Path) -> Check:
     )
 
 
+TEAM_KEYS = frozenset({"team"})
+
+
+def check_team(config_path: Path) -> Check:
+    """Team knowledge (v0.27): off, on with every request answered, or which requests nothing answers. Runs no command."""
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        if e.keys & TEAM_KEYS:
+            return Check("team knowledge", False, _one_line(str(e)))
+        return Check("team knowledge", True, "not checked: the config does not load (see the config check)")
+    try:
+        hooks = set(load_plugins(config.plugins, config.plugin_paths).team)
+    except PluginError:
+        hooks = set()
+    commands = {name for name, command in config.team.commands().items() if command}
+    answered = commands | hooks
+    if not answered:
+        return Check("team knowledge", True, "off: no [team] check and no team_check plug-in hook")
+    missing = [name for name in TEAM_REQUESTS if name not in answered]
+    if "check" in missing:
+        return Check("team knowledge", False, "[team] has no check (it turns team knowledge on); the other keys do nothing without it")
+    if missing:
+        return Check("team knowledge", False, f"[team] is missing {', '.join(missing)}: the app will offer what nothing answers")
+    by_hook = f"; plug-in hooks for {', '.join(sorted(hooks))}" if hooks else ""
+    return Check("team knowledge", True, f'on as "{config.team.label}", files from others in {config.team.folder}{by_hook}')
+
+
 VIEWER_KEYS = frozenset({"viewer"})
 
 
@@ -732,6 +760,7 @@ def doctor(state: StateDir, config_path: Path, repo: Path = REPO_ROOT, *, state_
         check_signin(config_path),
         *check_plugins(config_path),
         check_services(config_path),
+        check_team(config_path),
         check_viewer(config_path),
         check_path(config_path),
         check_token(state),
