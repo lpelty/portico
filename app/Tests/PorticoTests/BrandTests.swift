@@ -156,6 +156,49 @@ final class BrandTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(Brand.self, from: Data(json.utf8)).headerImage, "/x/lockup.svg")
     }
 
+    func testTheLightAppearanceDrawsItsOwnHeaderImageWhenTheDeploymentGivesOne() throws {
+        // v0.26.7 (PORT-76): a white lockup is invisible on the light window, so
+        // `brand.header_image_light` names the image for the light appearance.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("portico-header-light-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func write(_ name: String, width: CGFloat) throws -> String {
+            let image = NSImage(size: NSSize(width: width, height: 100), flipped: false) { rect in
+                NSColor.white.setFill()
+                rect.fill()
+                return true
+            }
+            let tiff = try XCTUnwrap(image.tiffRepresentation)
+            let path = dir.appendingPathComponent(name)
+            try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])).write(to: path)
+            return path.path
+        }
+        let dark = try write("lockup.png", width: 300)
+        let light = try write("lockup-light.png", width: 200)
+
+        // Both given: each appearance draws its own.
+        let both = BrandPresentation(brand: Brand(name: "A", agentName: "A", headerImage: dark, headerImageLight: light))
+        XCTAssertEqual(both.headerImage(light: false)?.size.width, 300)
+        XCTAssertEqual(both.headerImage(light: true)?.size.width, 200)
+
+        // Only `header_image`: both appearances draw it, as before v0.26.7.
+        let one = BrandPresentation(brand: Brand(name: "A", agentName: "A", headerImage: dark))
+        XCTAssertEqual(one.headerImage(light: false)?.size.width, 300)
+        XCTAssertEqual(one.headerImage(light: true)?.size.width, 300)
+
+        // A light image that cannot be read falls back to `header_image`.
+        let missing = BrandPresentation(brand: Brand(name: "A", agentName: "A", headerImage: dark, headerImageLight: dir.appendingPathComponent("gone.png").path))
+        XCTAssertEqual(missing.headerImage(light: true)?.size.width, 300)
+
+        // Only the light one: the light appearance draws it; the dark keeps the mark and the name.
+        let lightOnly = BrandPresentation(brand: Brand(name: "A", agentName: "A", headerImageLight: light))
+        XCTAssertEqual(lightOnly.headerImage(light: true)?.size.width, 200)
+        XCTAssertNil(lightOnly.headerImage(light: false))
+
+        let json = #"{"name":"A","agent_name":"A","header_image":"/x/lockup.svg","header_image_light":"/x/lockup-light.svg"}"#
+        XCTAssertEqual(try JSONDecoder().decode(Brand.self, from: Data(json.utf8)).headerImageLight, "/x/lockup-light.svg")
+    }
+
     // MARK: - v0.18.1: a deployment's people never read "Portico" (field note 11)
 
     func testTheSpacesNoteNamesTheBrand() {

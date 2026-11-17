@@ -62,6 +62,9 @@
 ## An absolute path to an image that replaces the mark and name in the toolbar, 28 pt tall (SVG or
 ## PDF stays sharp).
 ## e.g. header_image = "/path/to/lockup.svg"  (not set by default)
+## An absolute path to the header image for the light appearance, when `header_image` only reads on
+## a dark window; without it `header_image` is drawn in both.
+## e.g. header_image_light = "/path/to/lockup-light.svg"  (not set by default)
 ## The deployment's version; the About panel shows it in place of the app's.
 ## e.g. version = "1.4.0"  (not set by default)
 ## The About panel's text under the version; {app_version} and {built} are filled in, "" shows

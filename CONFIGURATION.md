@@ -245,6 +245,15 @@ An absolute path to an image that replaces the mark and name in the toolbar, 28 
 - **Applies:** gateway restart
 - **Belongs in:** the deployment's `config.toml`
 
+### `brand.header_image_light`
+
+An absolute path to the header image for the light appearance, when `header_image` only reads on a dark window; without it `header_image` is drawn in both.
+
+- **Type:** text (optional) · **Default:** `not set`
+- **Example:** `header_image_light = "/path/to/lockup-light.svg"`
+- **Applies:** gateway restart
+- **Belongs in:** the deployment's `config.toml`
+
 ### `brand.version`
 
 The deployment's version; the About panel shows it in place of the app's.

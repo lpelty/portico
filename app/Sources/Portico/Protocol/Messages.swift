@@ -149,6 +149,9 @@ struct Brand: Codable, Equatable, Sendable {
     var icon: String? = nil
     /// v0.7: an image the toolbar shows in place of the mark and the name.
     var headerImage: String? = nil
+    /// v0.26.7: the header image for the light appearance; without it
+    /// `headerImage` is drawn in both.
+    var headerImageLight: String? = nil
     /// v0.20.1: the deployment's version for the About panel, and the
     /// panel's text under it (`{app_version}` and `{built}` filled in).
     var version: String? = nil
@@ -158,6 +161,7 @@ struct Brand: Codable, Equatable, Sendable {
         case name, accent, icon, version, about
         case agentName = "agent_name"
         case headerImage = "header_image"
+        case headerImageLight = "header_image_light"
     }
 }
 

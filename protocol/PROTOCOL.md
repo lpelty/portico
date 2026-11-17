@@ -513,7 +513,7 @@ next engine; no engine is started to change it.
 ## Messages: gateway → app
 
 ### `hello` — `HelloServer`
-`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?, header_image?, version?, about?}`
+`protocol: 1`, `gateway_version`, `epoch`, `brand {name, agent_name, accent?, icon?, header_image?, header_image_light?, version?, about?}`
 (`name` goes in the title bar and the About panel, `agent_name` is how
 the app refers to the agent, `accent` is a CSS hex colour — `#RRGGBB`,
 `#RGB` or `#RRGGBBAA` — for the app's controls, `icon` an absolute path
@@ -521,6 +521,9 @@ to an image file for the Dock, the About panel, the sidebar header and
 the mark beside the start screen's greeting, `header_image` (v0.7) an
 absolute path to an image the toolbar shows in place of the mark and the
 name, 28 points tall with its own proportions (an older app ignores it),
+`header_image_light` (v0.26.7) the same for the light appearance, drawn
+there in place of `header_image` when it is set and readable (an older
+app ignores it and draws `header_image` in both),
 `version` (v0.20.1) the deployment's version, which the About panel shows
 in place of the app's own (macOS adds "Version" before it only when it
 looks like a number), and `about` (v0.20.1) the About panel's text
