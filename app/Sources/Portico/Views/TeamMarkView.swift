@@ -50,6 +50,7 @@ struct TeamMarkView: View {
                 .buttonStyle(SettingsButtonStyle(kind: .quiet))
             }
             .padding(10)
+            .popoverSurface()
         }
     }
 

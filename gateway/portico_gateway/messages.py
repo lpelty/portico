@@ -2141,7 +2141,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY, SIGNIN_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY, SIGNIN_CAPABILITY, TEAM_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
