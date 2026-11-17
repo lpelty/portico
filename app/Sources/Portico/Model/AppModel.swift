@@ -267,6 +267,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var restarting = false
     /// The version the deployment's update check found (`update.available`).
     @Published private(set) var updateVersion: String?
+    /// The team knowledge snapshot (`team.state`); nil until a gateway that has it sends one.
+    @Published private(set) var teamState: TeamState?
     /// Per chat, the attachment paths queued in the input bar: the Files
     /// pane and drag-and-drop add here; a send clears the chat's list.
     @Published private(set) var draftAttachments: [Int: [String]] = [:]
@@ -1356,6 +1358,12 @@ final class AppModel: ObservableObject {
         case .updateAvailable(let update):
             updateVersion = update.version
 
+        case .teamState(let state):
+            teamState = state
+
+        case .teamResult, .teamShareDraft:
+            break
+
         case .error(let error):
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
             if let id = error.id { pendingRemovals[id] = nil }
@@ -1840,7 +1848,7 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
-            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait:
+            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait, .teamState, .teamResult, .teamShareDraft:
             break
         }
     }

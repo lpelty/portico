@@ -1295,6 +1295,8 @@ class TeamLatest(Strict):
 
 
 class TeamSince(Strict):
+    """``since``: for ``pending`` the earliest change not yet sent; for ``paused`` when the pause began."""
+
     since: str
 
 
@@ -1386,6 +1388,8 @@ class TeamShareDraft(Envelope):
     paths: list[str]
     note: str | None = None
     checking: bool
+    # The check could not finish: one plain line. The dialog then offers Share anyway.
+    check_error: str | None = None
     findings: list[TeamFinding] = []
 
 
@@ -1462,6 +1466,8 @@ class TeamShareSend(Envelope):
     rev: str
     note: str | None = None
     remove: list[str] = []
+    # Share anyway: the person saw ``check_error`` and chose to share without the check.
+    unchecked: bool | None = None
 
 
 class TeamShareCancel(Envelope):

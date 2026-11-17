@@ -762,13 +762,15 @@ struct HelloServer: Codable, Equatable, Sendable {
     var voice: HelloVoice? = nil
     /// Settings › Labs's items (v0.25): config Preview features, then plug-ins' Local items; absent when none.
     var labs: [LabItem]? = nil
+    /// The deployment has team knowledge (v0.27, `team.v1`); absent when it has none.
+    var team: TeamHello? = nil
     var chat: Int? = nil
     var id: String? = nil
     var seq: Int? = nil
     var ts: String = ProtocolClock.now()
 
     enum CodingKeys: String, CodingKey {
-        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice, labs
+        case `protocol`, epoch, brand, actions, roots, commands, capabilities, presentation, chat, id, seq, ts, person, voice, labs, team
         case viewerDefaults = "viewer_defaults"
         case threadsMax = "threads_max"
         case gatewayVersion = "gateway_version"
@@ -2477,6 +2479,17 @@ enum ClientMessage: Codable, Equatable, Sendable {
     case signinOpen(SigninOpen)
     case signinStop(SigninStop)
     case signinCode(SigninCode)
+    case teamGet(TeamGet)
+    case teamCheck(TeamCheck)
+    case teamIntervalSet(TeamIntervalSet)
+    case teamSeen(TeamSeen)
+    case teamSendNow(TeamSendNow)
+    case teamSendingSet(TeamSendingSet)
+    case teamStop(TeamStop)
+    case teamResolve(TeamResolve)
+    case teamSharePrepare(TeamSharePrepare)
+    case teamShareSend(TeamShareSend)
+    case teamShareCancel(TeamShareCancel)
     case mcpList(McpList)
     case mcpToggle(McpToggle)
     case mcpReconnect(McpReconnect)
@@ -2537,6 +2550,17 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .signinOpen: SigninOpen.messageType
         case .signinStop: SigninStop.messageType
         case .signinCode: SigninCode.messageType
+        case .teamGet: TeamGet.messageType
+        case .teamCheck: TeamCheck.messageType
+        case .teamIntervalSet: TeamIntervalSet.messageType
+        case .teamSeen: TeamSeen.messageType
+        case .teamSendNow: TeamSendNow.messageType
+        case .teamSendingSet: TeamSendingSet.messageType
+        case .teamStop: TeamStop.messageType
+        case .teamResolve: TeamResolve.messageType
+        case .teamSharePrepare: TeamSharePrepare.messageType
+        case .teamShareSend: TeamShareSend.messageType
+        case .teamShareCancel: TeamShareCancel.messageType
         case .mcpList: McpList.messageType
         case .mcpToggle: McpToggle.messageType
         case .mcpReconnect: McpReconnect.messageType
@@ -2600,6 +2624,17 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case SigninOpen.messageType: self = .signinOpen(try SigninOpen(from: decoder))
         case SigninStop.messageType: self = .signinStop(try SigninStop(from: decoder))
         case SigninCode.messageType: self = .signinCode(try SigninCode(from: decoder))
+        case TeamGet.messageType: self = .teamGet(try TeamGet(from: decoder))
+        case TeamCheck.messageType: self = .teamCheck(try TeamCheck(from: decoder))
+        case TeamIntervalSet.messageType: self = .teamIntervalSet(try TeamIntervalSet(from: decoder))
+        case TeamSeen.messageType: self = .teamSeen(try TeamSeen(from: decoder))
+        case TeamSendNow.messageType: self = .teamSendNow(try TeamSendNow(from: decoder))
+        case TeamSendingSet.messageType: self = .teamSendingSet(try TeamSendingSet(from: decoder))
+        case TeamStop.messageType: self = .teamStop(try TeamStop(from: decoder))
+        case TeamResolve.messageType: self = .teamResolve(try TeamResolve(from: decoder))
+        case TeamSharePrepare.messageType: self = .teamSharePrepare(try TeamSharePrepare(from: decoder))
+        case TeamShareSend.messageType: self = .teamShareSend(try TeamShareSend(from: decoder))
+        case TeamShareCancel.messageType: self = .teamShareCancel(try TeamShareCancel(from: decoder))
         case McpList.messageType: self = .mcpList(try McpList(from: decoder))
         case McpToggle.messageType: self = .mcpToggle(try McpToggle(from: decoder))
         case McpReconnect.messageType: self = .mcpReconnect(try McpReconnect(from: decoder))
@@ -2665,6 +2700,17 @@ enum ClientMessage: Codable, Equatable, Sendable {
         case .signinOpen(let m): try m.encode(to: encoder)
         case .signinStop(let m): try m.encode(to: encoder)
         case .signinCode(let m): try m.encode(to: encoder)
+        case .teamGet(let m): try m.encode(to: encoder)
+        case .teamCheck(let m): try m.encode(to: encoder)
+        case .teamIntervalSet(let m): try m.encode(to: encoder)
+        case .teamSeen(let m): try m.encode(to: encoder)
+        case .teamSendNow(let m): try m.encode(to: encoder)
+        case .teamSendingSet(let m): try m.encode(to: encoder)
+        case .teamStop(let m): try m.encode(to: encoder)
+        case .teamResolve(let m): try m.encode(to: encoder)
+        case .teamSharePrepare(let m): try m.encode(to: encoder)
+        case .teamShareSend(let m): try m.encode(to: encoder)
+        case .teamShareCancel(let m): try m.encode(to: encoder)
         case .mcpList(let m): try m.encode(to: encoder)
         case .mcpToggle(let m): try m.encode(to: encoder)
         case .mcpReconnect(let m): try m.encode(to: encoder)
@@ -2741,6 +2787,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
     case pluginsDetails(PluginsDetails)
     case pluginsOptions(PluginsOptions)
     case signinWait(SigninWait)
+    case teamState(TeamState)
+    case teamResult(TeamResult)
+    case teamShareDraft(TeamShareDraft)
 
     var type: String {
         switch self {
@@ -2795,6 +2844,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .pluginsDetails: PluginsDetails.messageType
         case .pluginsOptions: PluginsOptions.messageType
         case .signinWait: SigninWait.messageType
+        case .teamState: TeamState.messageType
+        case .teamResult: TeamResult.messageType
+        case .teamShareDraft: TeamShareDraft.messageType
         }
     }
 
@@ -2851,6 +2903,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .pluginsDetails(let m): m.envelope
         case .pluginsOptions(let m): m.envelope
         case .signinWait(let m): m.envelope
+        case .teamState(let m): m.envelope
+        case .teamResult(let m): m.envelope
+        case .teamShareDraft(let m): m.envelope
         }
     }
 
@@ -2908,6 +2963,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case PluginsDetails.messageType: self = .pluginsDetails(try PluginsDetails(from: decoder))
         case PluginsOptions.messageType: self = .pluginsOptions(try PluginsOptions(from: decoder))
         case SigninWait.messageType: self = .signinWait(try SigninWait(from: decoder))
+        case TeamState.messageType: self = .teamState(try TeamState(from: decoder))
+        case TeamResult.messageType: self = .teamResult(try TeamResult(from: decoder))
+        case TeamShareDraft.messageType: self = .teamShareDraft(try TeamShareDraft(from: decoder))
         default: throw unknownType(type, direction: "server", decoder)
         }
     }
@@ -2967,6 +3025,9 @@ enum ServerMessage: Codable, Equatable, Sendable {
         case .pluginsDetails(let m): try m.encode(to: encoder)
         case .pluginsOptions(let m): try m.encode(to: encoder)
         case .signinWait(let m): try m.encode(to: encoder)
+        case .teamState(let m): try m.encode(to: encoder)
+        case .teamResult(let m): try m.encode(to: encoder)
+        case .teamShareDraft(let m): try m.encode(to: encoder)
         }
     }
 }

@@ -8931,6 +8931,18 @@
           "default": null,
           "title": "Chat"
         },
+        "check_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Check Error"
+        },
         "checking": {
           "title": "Checking",
           "type": "boolean"
@@ -9148,6 +9160,18 @@
           "default": "team.share.send",
           "title": "Type",
           "type": "string"
+        },
+        "unchecked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unchecked"
         }
       },
       "required": [
@@ -9159,6 +9183,7 @@
     },
     "TeamSince": {
       "additionalProperties": false,
+      "description": "``since``: for ``pending`` the earliest change not yet sent; for ``paused`` when the pause began.",
       "properties": {
         "since": {
           "title": "Since",
