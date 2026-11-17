@@ -2937,6 +2937,39 @@
         },
         {
           "$ref": "#/$defs/SigninCode"
+        },
+        {
+          "$ref": "#/$defs/TeamGet"
+        },
+        {
+          "$ref": "#/$defs/TeamCheck"
+        },
+        {
+          "$ref": "#/$defs/TeamIntervalSet"
+        },
+        {
+          "$ref": "#/$defs/TeamSeen"
+        },
+        {
+          "$ref": "#/$defs/TeamSendNow"
+        },
+        {
+          "$ref": "#/$defs/TeamSendingSet"
+        },
+        {
+          "$ref": "#/$defs/TeamStop"
+        },
+        {
+          "$ref": "#/$defs/TeamResolve"
+        },
+        {
+          "$ref": "#/$defs/TeamSharePrepare"
+        },
+        {
+          "$ref": "#/$defs/TeamShareSend"
+        },
+        {
+          "$ref": "#/$defs/TeamShareCancel"
         }
       ]
     },
@@ -4097,6 +4130,17 @@
           ],
           "default": null,
           "title": "Seq"
+        },
+        "team": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamHello"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "threads_max": {
           "anyOf": [
@@ -6547,6 +6591,15 @@
           "$ref": "#/$defs/SigninWait"
         },
         {
+          "$ref": "#/$defs/TeamState"
+        },
+        {
+          "$ref": "#/$defs/TeamResult"
+        },
+        {
+          "$ref": "#/$defs/TeamShareDraft"
+        },
+        {
           "$ref": "#/$defs/Error"
         }
       ]
@@ -7864,6 +7917,1467 @@
         "text"
       ],
       "title": "StatusSet",
+      "type": "object"
+    },
+    "TeamCheck": {
+      "additionalProperties": false,
+      "description": "Check now.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.check",
+          "default": "team.check",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "TeamCheck",
+      "type": "object"
+    },
+    "TeamConflict": {
+      "additionalProperties": false,
+      "description": "Two versions: the row's ``path`` holds the team's, ``mine.path`` the person's saved one.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "mine": {
+          "$ref": "#/$defs/TeamMine"
+        }
+      },
+      "required": [
+        "id",
+        "mine"
+      ],
+      "title": "TeamConflict",
+      "type": "object"
+    },
+    "TeamFailure": {
+      "additionalProperties": false,
+      "description": "What a request could not do: a file (``path``) or a share (``share``), and one plain line.",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "share": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Share"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "TeamFailure",
+      "type": "object"
+    },
+    "TeamFile": {
+      "additionalProperties": false,
+      "description": "One file under an agreement on this Mac. Each fact stands alone; the app derives the one mark.",
+      "properties": {
+        "changed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Changed At"
+        },
+        "changed_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamPerson"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "conflict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamConflict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "direction": {
+          "enum": [
+            "in",
+            "out"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "paused": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamSince"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pending": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamSince"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rev": {
+          "title": "Rev",
+          "type": "string"
+        },
+        "sent_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sent At"
+        },
+        "shared_at": {
+          "title": "Shared At",
+          "type": "string"
+        },
+        "shared_by": {
+          "$ref": "#/$defs/TeamPerson"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "unread": {
+          "default": false,
+          "title": "Unread",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "direction",
+        "rev",
+        "shared_by",
+        "shared_at"
+      ],
+      "title": "TeamFile",
+      "type": "object"
+    },
+    "TeamFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "location": {
+          "title": "Location",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "text",
+        "location"
+      ],
+      "title": "TeamFinding",
+      "type": "object"
+    },
+    "TeamGet": {
+      "additionalProperties": false,
+      "description": "Get and accept these shares, by the ids the person was shown.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "shares": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Shares",
+          "type": "array"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.get",
+          "default": "team.get",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "shares"
+      ],
+      "title": "TeamGet",
+      "type": "object"
+    },
+    "TeamHello": {
+      "additionalProperties": false,
+      "description": "``hello.team``: the deployment has team knowledge. Absent, the app shows none of it.",
+      "properties": {
+        "folder": {
+          "title": "Folder",
+          "type": "string"
+        },
+        "intervals": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Intervals",
+          "type": "array"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "folder",
+        "intervals"
+      ],
+      "title": "TeamHello",
+      "type": "object"
+    },
+    "TeamIntervalSet": {
+      "additionalProperties": false,
+      "description": "Set how often the check runs: one of ``hello.team.intervals``. Kept across restarts.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "minutes": {
+          "title": "Minutes",
+          "type": "integer"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.interval.set",
+          "default": "team.interval.set",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "minutes"
+      ],
+      "title": "TeamIntervalSet",
+      "type": "object"
+    },
+    "TeamLatest": {
+      "additionalProperties": false,
+      "description": "The last arrival the agent can now use. One line in the conversation per ``id``.",
+      "properties": {
+        "at": {
+          "title": "At",
+          "type": "string"
+        },
+        "by": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TeamPerson"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "By"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "new",
+            "changed"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "shares": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TeamShare"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shares"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "at",
+        "summary",
+        "files"
+      ],
+      "title": "TeamLatest",
+      "type": "object"
+    },
+    "TeamMine": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "title": "At",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "at"
+      ],
+      "title": "TeamMine",
+      "type": "object"
+    },
+    "TeamPerson": {
+      "additionalProperties": false,
+      "description": "``name`` is the display name; ``short`` is what the strip uses. The app never shortens a name.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "short": {
+          "title": "Short",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "short"
+      ],
+      "title": "TeamPerson",
+      "type": "object"
+    },
+    "TeamResolve": {
+      "additionalProperties": false,
+      "description": "Choose between two versions: the person's (``mine``) or the team's (``team``).",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "conflict": {
+          "title": "Conflict",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.resolve",
+          "default": "team.resolve",
+          "title": "Type",
+          "type": "string"
+        },
+        "use": {
+          "enum": [
+            "mine",
+            "team"
+          ],
+          "title": "Use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "path",
+        "conflict",
+        "use"
+      ],
+      "title": "TeamResolve",
+      "type": "object"
+    },
+    "TeamResult": {
+      "additionalProperties": false,
+      "description": "The outcome of a ``team.*`` request, by its ``id``. ``ok`` only when all of it was done.\n\nThe same ``id`` sent again is answered with the first outcome and nothing is repeated.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "failed": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TeamFailure"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failed"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.result",
+          "default": "team.result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "ok"
+      ],
+      "title": "TeamResult",
+      "type": "object"
+    },
+    "TeamSeen": {
+      "additionalProperties": false,
+      "description": "The person opened this version of the file. No result.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "rev": {
+          "title": "Rev",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.seen",
+          "default": "team.seen",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "path",
+        "rev"
+      ],
+      "title": "TeamSeen",
+      "type": "object"
+    },
+    "TeamSendNow": {
+      "additionalProperties": false,
+      "description": "Send these files' pending changes at once.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.send_now",
+          "default": "team.send_now",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "paths"
+      ],
+      "title": "TeamSendNow",
+      "type": "object"
+    },
+    "TeamSendingSet": {
+      "additionalProperties": false,
+      "description": "Pause or resume sending for these files.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "paused": {
+          "title": "Paused",
+          "type": "boolean"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.sending.set",
+          "default": "team.sending.set",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "paths",
+        "paused"
+      ],
+      "title": "TeamSendingSet",
+      "type": "object"
+    },
+    "TeamShare": {
+      "additionalProperties": false,
+      "description": "One share: who, which files (names in ``waiting``, paths in ``latest``), and the note that came with it.",
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/TeamPerson"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "id",
+        "by",
+        "files"
+      ],
+      "title": "TeamShare",
+      "type": "object"
+    },
+    "TeamShareCancel": {
+      "additionalProperties": false,
+      "description": "The draft ``id`` was closed. Nothing is shared and no file was changed.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.share.cancel",
+          "default": "team.share.cancel",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts"
+      ],
+      "title": "TeamShareCancel",
+      "type": "object"
+    },
+    "TeamShareDraft": {
+      "additionalProperties": false,
+      "description": "The check for personal material on a share being prepared. Each replaces the last for its ``id``.\n\nWith ``chat`` the gateway started it (the person asked in that\nconversation) and the app draws a card there instead of the dialog.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "checking": {
+          "title": "Checking",
+          "type": "boolean"
+        },
+        "findings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TeamFinding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "rev": {
+          "title": "Rev",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.share.draft",
+          "default": "team.share.draft",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "rev",
+        "paths",
+        "checking"
+      ],
+      "title": "TeamShareDraft",
+      "type": "object"
+    },
+    "TeamSharePrepare": {
+      "additionalProperties": false,
+      "description": "The person chose Share on these files. Nothing is sent to the team. ``id`` names the draft.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.share.prepare",
+          "default": "team.share.prepare",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "paths"
+      ],
+      "title": "TeamSharePrepare",
+      "type": "object"
+    },
+    "TeamShareSend": {
+      "additionalProperties": false,
+      "description": "The person pressed Share on the draft ``id`` at ``rev``. Only now does anything reach the team.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "remove": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Remove",
+          "type": "array"
+        },
+        "rev": {
+          "title": "Rev",
+          "type": "string"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.share.send",
+          "default": "team.share.send",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "rev"
+      ],
+      "title": "TeamShareSend",
+      "type": "object"
+    },
+    "TeamSince": {
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "title": "Since",
+          "type": "string"
+        }
+      },
+      "required": [
+        "since"
+      ],
+      "title": "TeamSince",
+      "type": "object"
+    },
+    "TeamState": {
+      "additionalProperties": false,
+      "description": "Everything the app draws for team knowledge, in one snapshot (``team.v1``).\n\nSent after ``hello`` and whenever anything in it changes; each replaces\nthe last. A reading, not history: no ``seq``.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "files": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TeamFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "getting": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Getting"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "interval_minutes": {
+          "title": "Interval Minutes",
+          "type": "integer"
+        },
+        "last_ok_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Ok At"
+        },
+        "latest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TeamLatest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "next_check_at": {
+          "title": "Next Check At",
+          "type": "string"
+        },
+        "reach": {
+          "enum": [
+            "ok",
+            "unreachable",
+            "refused",
+            "never"
+          ],
+          "title": "Reach",
+          "type": "string"
+        },
+        "reach_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reach Reason"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.state",
+          "default": "team.state",
+          "title": "Type",
+          "type": "string"
+        },
+        "waiting": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TeamShare"
+          },
+          "title": "Waiting",
+          "type": "array"
+        }
+      },
+      "required": [
+        "ts",
+        "reach",
+        "next_check_at",
+        "interval_minutes"
+      ],
+      "title": "TeamState",
+      "type": "object"
+    },
+    "TeamStop": {
+      "additionalProperties": false,
+      "description": "Stop syncing these files on this Mac.",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seq"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "team.stop",
+          "default": "team.stop",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "paths"
+      ],
+      "title": "TeamStop",
       "type": "object"
     },
     "TextDelta": {

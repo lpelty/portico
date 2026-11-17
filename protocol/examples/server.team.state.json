@@ -1,0 +1,92 @@
+{
+  "files": [
+    {
+      "changed_at": "2026-10-27T12:00:00Z",
+      "changed_by": {
+        "name": "Priya Raman",
+        "short": "Priya"
+      },
+      "direction": "out",
+      "path": "specs/export-workaround.md",
+      "rev": "r-12",
+      "shared_at": "2026-10-27T12:00:00Z",
+      "shared_by": {
+        "name": "Larry Example",
+        "short": "Larry"
+      },
+      "summary": "_team/_summary.md",
+      "unread": true
+    },
+    {
+      "direction": "out",
+      "path": "research/round-2/Research plan.md",
+      "pending": {
+        "since": "2026-10-27T12:00:00Z"
+      },
+      "rev": "r-3",
+      "sent_at": "2026-10-27T12:00:00Z",
+      "shared_at": "2026-10-27T12:00:00Z",
+      "shared_by": {
+        "name": "Larry Example",
+        "short": "Larry"
+      },
+      "unread": false
+    },
+    {
+      "conflict": {
+        "id": "c-3",
+        "mine": {
+          "at": "2026-10-27T12:00:00Z",
+          "path": "_team/.mine/release-calendar.md"
+        }
+      },
+      "direction": "in",
+      "path": "_team/release-calendar.md",
+      "paused": {
+        "since": "2026-10-27T12:00:00Z"
+      },
+      "rev": "r-41",
+      "shared_at": "2026-10-27T12:00:00Z",
+      "shared_by": {
+        "name": "Sam Castellanos",
+        "short": "Sam"
+      },
+      "unread": false
+    }
+  ],
+  "interval_minutes": 15,
+  "last_ok_at": "2026-10-27T12:00:00Z",
+  "latest": {
+    "at": "2026-10-27T12:00:00Z",
+    "by": [
+      {
+        "name": "Priya Raman",
+        "short": "Priya"
+      }
+    ],
+    "files": [
+      "specs/export-workaround.md"
+    ],
+    "id": "a-12",
+    "kind": "changed",
+    "summary": "_team/_summary.md"
+  },
+  "next_check_at": "2026-10-27T12:00:00Z",
+  "reach": "ok",
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "team.state",
+  "waiting": [
+    {
+      "by": {
+        "name": "Priya Raman",
+        "short": "Priya"
+      },
+      "files": [
+        "Research plan.md",
+        "interview-guide.md"
+      ],
+      "id": "share-7",
+      "note": "Round 2 plan and guide. The final index is waiting on your corpus list."
+    }
+  ]
+}

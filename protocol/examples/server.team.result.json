@@ -1,0 +1,12 @@
+{
+  "failed": [
+    {
+      "reason": "The file could not be downloaded.",
+      "share": "share-8"
+    }
+  ],
+  "id": "req-50",
+  "ok": false,
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "team.result"
+}
