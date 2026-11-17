@@ -357,6 +357,12 @@ struct InputBar: View {
             draft.wrappedValue = ""
             return
         }
+        // `/model` is answered by the app, even while the agent works, when
+        // the answer is why it cannot change now (v0.26.7, PORT-75).
+        if model.runModelCommand(draft.wrappedValue, chat: chat) {
+            draft.wrappedValue = ""
+            return
+        }
         guard canSend else { return }
         // A talk into this composer ends first: what is shown is what goes.
         dictation.willSend(from: voiceComposer.id)

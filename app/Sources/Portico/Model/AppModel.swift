@@ -455,6 +455,8 @@ final class AppModel: ObservableObject {
     /// Asks to bring Settings forward: the main window calls SwiftUI's
     /// `openSettings` each time this changes.
     @Published var settingsOpenRequests = 0
+    /// Counts each `/model` that asks the strip to open its model menu (v0.26.7).
+    @Published var modelMenuRequests = 0
     /// Settings → MCP servers: the gateway's list and what is in flight.
     @Published var mcpServers = McpServersState()
     /// Remove… asked first (ruling 11); `nil` when nothing is being asked.
@@ -2421,6 +2423,11 @@ final class AppModel: ObservableObject {
     func sendMessage(chat: Int, text: String, about: String? = nil) {
         // `/mcp` and `/plugin` open Settings; nothing is sent (v0.18 ruling 15).
         if runSettingsCommand(text) {
+            drafts[chat] = nil
+            return
+        }
+        // `/model` opens the strip's menu or switches; nothing is sent (v0.26.7).
+        if runModelCommand(text, chat: chat) {
             drafts[chat] = nil
             return
         }

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.26.7 (2026-11-17)
+
+- **A header image for the light appearance.** A deployment whose lockup
+  only reads on a dark window (white type) can give a second image with
+  `brand.header_image_light`. The toolbar draws it when the window is light
+  and `brand.header_image` when it is dark, and changes with the appearance
+  with no restart. With only `header_image` set, nothing changes.
+- **`/model` does something.** `/model` was in the command list and did
+  nothing on Enter. It now opens the status strip's model menu, and
+  `/model` with a name (`/model sonnet`) switches to that model. Where the
+  model cannot be changed (a past session, a reply still running, not
+  connected) or the name matches no model, one line in the conversation
+  says so. Nothing is sent to the agent.
+
 ## v0.26.6 (2026-11-15)
 
 - **An overlong model name is truncated in the status strip.** A model that
