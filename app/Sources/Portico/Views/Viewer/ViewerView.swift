@@ -191,6 +191,9 @@ struct ViewerView: View {
         VStack(spacing: 0) {
             header
             Rectangle().fill(Theme.border).frame(height: 1)
+            if let bar = model.teamViewerBar(chat: chat) {
+                TeamViewerBarView(bar: bar)
+            }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay { ViewerActingGlow(agent: model.viewerAgent, chat: chat, accent: model.brand.accent ?? Theme.accent) }

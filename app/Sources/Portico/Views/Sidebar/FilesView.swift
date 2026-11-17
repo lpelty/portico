@@ -65,7 +65,7 @@ struct FilesView: View {
             .padding(.top, 18)
             .padding(.bottom, 6)
             .padding(.horizontal, 16)
-            FilesTabSwitch(selection: $model.filesTab)
+            FilesTabSwitch(selection: $model.filesTab, shared: model.team != nil)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
             switch model.filesTab {
@@ -78,6 +78,14 @@ struct FilesView: View {
                 }
             case .bookmarks:
                 BookmarksView(chat: chat)
+            case .shared:
+                // v0.27 (ZJ1). A gateway without team knowledge has no such tab: the folders show.
+                header
+                if model.team != nil {
+                    TeamSharedView(chat: chat, filter: filter)
+                } else {
+                    tree
+                }
             }
         }
     }
@@ -769,13 +777,17 @@ enum FileIcon {
 /// macOS, so this is drawn by hand.
 struct FilesTabSwitch: View {
     @Binding var selection: AppModel.FilesTab
+    /// v0.27: the Shared tab, only when the deployment has team knowledge.
+    var shared = false
 
     static let foldersTitle = "Folders"
+    static let sharedTitle = "Shared"
 
     var body: some View {
         HStack(spacing: 2) {
             item(Self.foldersTitle, .folder)
             item("Bookmarks", .bookmarks)
+            if shared { item(Self.sharedTitle, .shared) }
         }
         .padding(2)
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 6))

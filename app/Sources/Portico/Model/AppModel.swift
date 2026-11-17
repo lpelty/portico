@@ -411,7 +411,7 @@ final class AppModel: ObservableObject {
     /// The tab to go back to when the document view closes.
     var filesTabBeforeDocument: FilesTab?
 
-    enum FilesTab: String, Sendable { case folder, bookmarks }
+    enum FilesTab: String, Sendable { case folder, bookmarks, shared }
 
     /// One directory in one root of one chat's Files pane.
     struct FilesKey: Hashable, Sendable {

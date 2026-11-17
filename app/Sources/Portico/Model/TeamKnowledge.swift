@@ -448,3 +448,79 @@ extension AppModel {
         send(.teamSeen(TeamSeen(path: file.path, rev: file.rev)))
     }
 }
+
+/// The bar over a team file in the viewer (v0.27): two versions with the
+/// choice (Bill's ZJ6), or a change that arrived by itself (ZJ1).
+struct TeamViewerBar: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        /// `readingMine`: the viewer shows the person's saved version, not the team's.
+        case twoVersions(readingMine: Bool)
+        case changed
+    }
+
+    var kind: Kind
+    var text: String
+    /// The row the bar is about.
+    var file: TeamFile
+
+    static let useMine = "Use my version"
+    static let useTeam = "Use the team's version"
+    static let compare = "Compare"
+    static let seeChanged = "See what changed"
+    static let stop = "Stop syncing"
+
+    /// The bar for the file the viewer shows (`path`, as the rows name it), if it needs one.
+    static func make(path: String, state: TeamState?, words: TeamMarkPresentation.Words = .system) -> TeamViewerBar? {
+        guard let state else { return nil }
+        func time(_ stamp: String?) -> String { stamp.flatMap(words.time) ?? "" }
+        func who(_ file: TeamFile) -> String {
+            [file.changedBy?.short, file.changedAt.flatMap(words.time)].compactMap { $0 }.joined(separator: ", ")
+        }
+        for file in state.files {
+            guard let conflict = file.conflict else { continue }
+            let team = who(file).isEmpty ? "" : " (\(who(file)))"
+            if file.path == path {
+                return TeamViewerBar(
+                    kind: .twoVersions(readingMine: false),
+                    text: "This file has two versions. You are reading the team's version\(team). "
+                        + "Your version (\(time(conflict.mine.at))) was not sent and is saved on this Mac.",
+                    file: file)
+            }
+            if conflict.mine.path == path {
+                return TeamViewerBar(
+                    kind: .twoVersions(readingMine: true),
+                    text: "This file has two versions. You are reading your version (\(time(conflict.mine.at))), "
+                        + "which was not sent and is saved on this Mac. The team's version\(team) is in the file's place.",
+                    file: file)
+            }
+        }
+        guard let file = state.files.first(where: { $0.path == path }), file.summary != nil,
+              let by = file.changedBy, let at = file.changedAt
+        else { return nil }
+        let when = (words.isToday(at) ? "today at " : "") + time(at)
+        return TeamViewerBar(
+            kind: .changed, text: "\(by.short) changed this file \(when). It updated here by itself.", file: file)
+    }
+}
+
+extension AppModel {
+    /// The team bar for what a chat's viewer shows.
+    func teamViewerBar(chat: Int) -> TeamViewerBar? {
+        guard team != nil, let location = current[chat]?.location else { return nil }
+        return TeamViewerBar.make(path: teamPath(forAbsolute: location), state: teamState)
+    }
+
+    /// Choose between two versions; refused by the gateway if the team's version changed meanwhile.
+    func teamResolve(_ file: TeamFile, use: TeamResolve.Use) {
+        guard let conflict = file.conflict else { return }
+        send(.teamResolve(TeamResolve(path: file.path, conflict: conflict.id, use: use, id: teamRequestId())))
+        // Either way the file at its own path is what remains: show it.
+        teamOpen(file.path)
+    }
+
+    /// Compare: the viewer goes to the other version; the bar says which one is being read.
+    func teamCompare(_ bar: TeamViewerBar) {
+        guard case .twoVersions(let readingMine) = bar.kind, let conflict = bar.file.conflict else { return }
+        teamOpen(readingMine ? bar.file.path : conflict.mine.path)
+    }
+}
