@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.27.0 (2026-11-17)
+
+Team knowledge: a deployment may keep files a team shares. Portico shows
+none of it unless the deployment turns it on.
+
+- **A person shares a file once, and accepts a shared file once.** From
+  then on changes go out and come in at each check, with no click. The
+  check runs every 15, 30 or 60 minutes (Settings › General), 15 unless
+  changed.
+- **The strip says what happened.** New files someone shared wait behind
+  one Get button and land only on that click. A change that arrived by
+  itself is one quiet line, and one line in the conversation. Two versions
+  of a file, and a team source that cannot be reached, each say so and
+  stay until dealt with. With less room the notices shorten, then fold to
+  their icons; none disappears.
+- **A file's mark.** A file under an agreement wears one mark on its row:
+  in step, changes going out, paused, changed since last opened, or two
+  versions. Its hover gives the names and times. A going-out mark offers
+  Send now and Pause; the row's menu offers Send changes now, Pause or
+  Resume sending, and Stop syncing.
+- **Share with team…** on a file's menu opens a dialog at once: the files,
+  an optional note, and what a check for personal material found. Each
+  finding is Take it out or Keep it; the file changes only when Share is
+  pressed. If the check cannot finish, the dialog says so and offers Share
+  anyway.
+- **Two versions.** A change from the team never overwrites changes not
+  yet sent: both are kept, and a bar over the file offers Compare, Use my
+  version and Use the team's version.
+- **A Shared tab** in Files lists files from the team and the person's own
+  shared files.
+- **For a deployment.** A `[team]` table names one command per request
+  (`check`, `get`, `send`, `sending`, `stop`, `resolve`, `share_check`,
+  `share`), each reading JSON on stdin and printing JSON; a plug-in's
+  `team_` hooks take precedence. `bin/doctor` names a request nothing
+  answers. `examples/team-sample/` is a stand-in team source for trying it
+  on one Mac. The message kinds (`team.v1`) are in `protocol/PROTOCOL.md`.
+- Not in this release: sharing from a card in the conversation, and a
+  side-by-side Compare (Compare switches between the two versions).
+- `design/portico.pen` is Bill's file with the team knowledge screens
+  (rows ZI and ZJ).
+
 ## v0.26.7 (2026-11-17)
 
 - **A header image for the light appearance.** A deployment whose lockup
