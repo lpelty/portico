@@ -25,7 +25,7 @@ enum Theme {
         /// Pen only (ruling 15): the code never draws these; AppKit draws the real window buttons.
         case shadow, windowClose, windowMinimize, windowZoom
         case logo1, logo2, logo3, logo4, logo5, logo6, logo7, logo8, logo9, logo10
-        /// Pen only: the edge colours of the window-recognition design (rows BA to BG), not built yet.
+        /// Pen only: the edge colours of the window-recognition design (rows BF and BG), not built yet.
         case window1Edge, window2Edge, window3Edge, window4Edge
     }
 
