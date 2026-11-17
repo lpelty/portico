@@ -91,9 +91,19 @@ enum GeneralSettingsPresentation {
 
     /// Spaces appears only on a gateway with `spaces.v1`. There is no
     /// Sessions section: Clear earlier sessions is an admin command.
-    static func sectionTitles(capabilities: [String]) -> [String] {
-        ["Folder", "Viewer"] + (capabilities.contains("spaces.v1") ? ["Spaces"] : [])
+    /// v0.27 (ZJ5): the deployment's name for team knowledge heads its own
+    /// section, between Viewer and Spaces, only when `hello.team` is there.
+    static func sectionTitles(capabilities: [String], team: String? = nil) -> [String] {
+        ["Folder", "Viewer"] + (team.map { [$0] } ?? []) + (capabilities.contains("spaces.v1") ? ["Spaces"] : [])
     }
+
+    static let teamCheckLabel = "Check for changes"
+
+    static func teamCheckNote(brand: String) -> String {
+        "How often \(brand) looks for changes from the team and sends yours. Send now on a file skips the wait."
+    }
+
+    static func teamIntervalLabel(_ minutes: Int) -> String { "\(minutes) min" }
 
     /// The Works in row while the deployment fixes the folder (v0.19 §4.1).
     /// The Works in value: the folder's name, or while the deployment fixes it, its path with the home folder as `~`.
@@ -253,6 +263,21 @@ struct GeneralSettingsTab: View {
                     SettingsSwitch("Agent checks HTML it creates", isOn: checksHTMLBinding)
                 }
                 .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
+            }
+            if let team = model.team {
+                SettingsSection(team.label) {
+                    SettingsRow(
+                        GeneralSettingsPresentation.teamCheckLabel,
+                        help: GeneralSettingsPresentation.teamCheckNote(brand: model.brand.name)
+                    ) {
+                        SettingsSegmented(
+                            selection: Binding(
+                                get: { model.teamState?.intervalMinutes ?? team.intervals.first ?? 15 },
+                                set: { model.teamSetInterval($0) }),
+                            options: team.intervals.map { ($0, GeneralSettingsPresentation.teamIntervalLabel($0)) },
+                            label: GeneralSettingsPresentation.teamCheckLabel)
+                    }
+                }
             }
             if titles.contains("Spaces") {
                 SettingsSection("Spaces") {

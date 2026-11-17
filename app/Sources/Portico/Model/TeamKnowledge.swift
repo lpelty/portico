@@ -288,3 +288,163 @@ extension AppModel {
 
     static let teamLatestShownKey = "team.latestShown"
 }
+
+/// A team file's one mark on its row (v0.27, Bill's ZJ4): the icon, its
+/// colour, the hover's two lines, and what a click on the mark does.
+/// Out is up and to the right, in is down and to the left; colour is the
+/// state: grey in step, accent moving or unread, amber needs the person.
+struct TeamMarkPresentation: Equatable, Sendable {
+    enum Tone: Sendable {
+        case grey, accent, wait
+    }
+
+    enum Click: Equatable, Sendable {
+        case nothing
+        /// Opens "Goes to the team in 9 min" with Send now and Pause.
+        case sendOrPause
+        case resume
+        case open
+    }
+
+    var icon: String
+    var tone: Tone
+    var title: String
+    var detail: String
+    var click: Click
+
+    var help: String { "\(title)\n\(detail)" }
+
+    /// What the words need from the clock; the tests give their own.
+    struct Words: Sendable {
+        /// "2:14 PM" today, "Yesterday 2:14 PM", "Nov 6, 2:14 PM".
+        var time: @Sendable (String) -> String?
+        /// "Nov 14".
+        var day: @Sendable (String) -> String?
+        var isToday: @Sendable (String) -> Bool
+        /// Whole minutes until a stamp, rounded up; `nil` when it is past or unreadable.
+        var minutesUntil: @Sendable (String) -> Int?
+
+        static let system = Words(
+            time: { SessionTime.parse($0).map { MessageTime.short($0) } },
+            day: { SessionTime.parse($0).map { SessionTime.day($0, withYear: false, calendar: .current, locale: .current) } },
+            isToday: { SessionTime.parse($0).map { Calendar.current.isDateInToday($0) } ?? false },
+            minutesUntil: { stamp in
+                guard let date = SessionTime.parse(stamp) else { return nil }
+                let seconds = date.timeIntervalSinceNow
+                return seconds > 0 ? Int((seconds / 60).rounded(.up)) : nil
+            })
+    }
+
+    /// "Goes to the team in 9 min"; "at the next check" once that time is past.
+    static func goes(nextCheckAt: String, words: Words) -> String {
+        guard let minutes = words.minutesUntil(nextCheckAt) else { return "Goes to the team at the next check" }
+        return "Goes to the team in \(minutes) min"
+    }
+
+    /// The menu's "in 9 min" beside Send changes now.
+    static func wait(nextCheckAt: String, words: Words) -> String? {
+        words.minutesUntil(nextCheckAt).map { "in \($0) min" }
+    }
+
+    static func make(_ file: TeamFile, state: TeamState, words: Words = .system) -> TeamMarkPresentation {
+        func time(_ stamp: String?) -> String { stamp.flatMap(words.time) ?? "" }
+        func day(_ stamp: String?) -> String { stamp.flatMap(words.day) ?? "" }
+        func todayTime(_ stamp: String) -> String {
+            (words.isToday(stamp) ? "today " : "") + time(stamp)
+        }
+        // While the team cannot be reached nothing claims to be in step: it says when it was last checked.
+        let stale = state.reach == .ok || state.reach == .never
+            ? nil : state.lastOkAt.map { "last checked \(todayTime($0))" }
+        func with(_ parts: [String?]) -> String { (parts + [stale]).compactMap { $0 }.joined(separator: " · ") }
+
+        switch file.mark {
+        case .twoVersions:
+            return .init(
+                icon: "doc.on.doc", tone: .wait, title: "Your version and the team's differ",
+                detail: "Yours is saved on this Mac · open to choose", click: .open)
+        case .paused:
+            let waiting = file.pending.map { "Changes waiting since \(time($0.since))" } ?? "Nothing waiting"
+            return .init(
+                icon: "pause", tone: .wait, title: "Paused by you since \(time(file.paused?.since))",
+                detail: "\(waiting) · click to resume", click: .resume)
+        case .goingOut:
+            return .init(
+                icon: file.direction == .out ? "arrow.up.right" : "arrow.down.left", tone: .accent,
+                title: goes(nextCheckAt: state.nextCheckAt, words: words),
+                detail: "Changed \(time(file.pending?.since)) · click to send now or pause", click: .sendOrPause)
+        case .unread:
+            if let by = file.changedBy, let at = file.changedAt {
+                let when = words.isToday(at) ? "Today \(time(at))" : time(at)
+                return .init(
+                    icon: "arrow.down.left", tone: .accent, title: "Changed by \(by.name)",
+                    detail: "\(when) · first shared by \(file.sharedBy.short), \(day(file.sharedAt))", click: .nothing)
+            }
+            return .init(
+                icon: "arrow.down.left", tone: .accent, title: "From \(file.sharedBy.name)",
+                detail: "Shared \(day(file.sharedAt))", click: .nothing)
+        case .inStep(.out):
+            return .init(
+                icon: "arrow.up.right", tone: .grey, title: "Shared with the team",
+                detail: with(["Since \(day(file.sharedAt))", file.sentAt.map { "last sent \(todayTime($0))" }]),
+                click: .nothing)
+        case .inStep(.in):
+            return .init(
+                icon: "arrow.down.left", tone: .grey, title: "From \(file.sharedBy.name)",
+                detail: with(["Shared \(day(file.sharedAt))", file.changedAt.map { "last change \(day($0))" }]),
+                click: .nothing)
+        }
+    }
+}
+
+/// The row's menu for a team file (ZJ1): what each state offers. An item that does not apply is absent, never greyed.
+struct TeamFileMenu: Equatable, Sendable {
+    var sendNow = false
+    var pause = false
+    var resume = false
+    var stop = true
+
+    static func make(_ file: TeamFile) -> TeamFileMenu {
+        if file.conflict != nil {
+            // Two versions: the person chooses first. Stop is refused by the gateway and opens the file.
+            return TeamFileMenu()
+        }
+        if file.paused != nil { return TeamFileMenu(resume: true) }
+        return TeamFileMenu(sendNow: file.pending != nil, pause: true)
+    }
+}
+
+extension AppModel {
+    /// The team file at an absolute path, when it is under an agreement on this Mac.
+    func teamFile(at absolutePath: String) -> TeamFile? {
+        guard team != nil, let state = teamState else { return nil }
+        return state.files.first { teamAbsolutePath($0.path) == absolutePath }
+    }
+
+    func teamSendNow(_ file: TeamFile) {
+        send(.teamSendNow(TeamSendNow(paths: [file.path], id: teamRequestId())))
+    }
+
+    func teamSetPaused(_ file: TeamFile, _ paused: Bool) {
+        send(.teamSendingSet(TeamSendingSet(paths: [file.path], paused: paused, id: teamRequestId())))
+    }
+
+    /// Stop syncing. With two versions the person chooses first: the file opens on its banner instead.
+    func teamStop(_ file: TeamFile) {
+        if file.conflict != nil {
+            teamOpen(file.path)
+            if let chat = shownChat, let team { appendNotice("\(team.label) · Choose a version first", to: chat) }
+            return
+        }
+        send(.teamStop(TeamStop(paths: [file.path], id: teamRequestId())))
+    }
+
+    func teamSetInterval(_ minutes: Int) {
+        send(.teamIntervalSet(TeamIntervalSet(minutes: minutes, id: teamRequestId())))
+    }
+
+    /// The person opened a team file: its unread mark clears for the version they opened.
+    func teamOpened(absolutePath: String) {
+        guard let file = teamFile(at: absolutePath), file.unread else { return }
+        send(.teamSeen(TeamSeen(path: file.path, rev: file.rev)))
+    }
+}

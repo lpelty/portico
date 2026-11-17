@@ -383,6 +383,11 @@ struct FileRow: View {
         return model.documentMode ? model.documentFile == path : model.current[node.chat]?.location == path
     }
 
+    private var teamFile: TeamFile? {
+        guard !node.dir, let path = absolutePath else { return nil }
+        return model.teamFile(at: path)
+    }
+
     var body: some View {
         FileLine(
             icon: icon, folder: node.dir, name: node.name, subtitle: subtitle,
@@ -394,12 +399,17 @@ struct FileRow: View {
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
+            // v0.27 (ZJ4): a file under a team agreement wears its one mark at the right edge.
+            if let teamFile, let state = model.teamState {
+                TeamMarkView(file: teamFile, state: state)
+            }
         }
         .tip(absolutePath ?? node.name)
         .onTapGesture {
             if node.dir { toggle?(); return }
             guard let path = absolutePath else { return }
             model.reveal(file: path, in: node.chat)
+            model.teamOpened(absolutePath: path)
         }
         .contextMenu { menu }
         .modifier(DragFile(path: absolutePath))
@@ -428,6 +438,9 @@ struct FileRow: View {
             if node.dir {
                 Divider()
                 Button("List again") { model.refreshFiles(chat: node.chat) }
+            }
+            if let teamFile, let state = model.teamState {
+                TeamFileMenuItems(file: teamFile, state: state)
             }
         }
     }
