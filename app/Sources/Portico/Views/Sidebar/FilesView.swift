@@ -441,6 +441,9 @@ struct FileRow: View {
             }
             if let teamFile, let state = model.teamState {
                 TeamFileMenuItems(file: teamFile, state: state)
+            } else if !node.dir, model.canShareWithTeam(absolutePath: path) {
+                Divider()
+                Button("Share with team…") { model.teamShareStart(absolutePaths: [path]) }
             }
         }
     }

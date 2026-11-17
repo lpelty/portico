@@ -271,6 +271,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var teamState: TeamState?
     /// The arrival (`latest.id`) whose quiet strip line has left: a message was sent since it showed.
     @Published private(set) var teamQuietGone: String?
+    /// The share dialog, while it is open (v0.27, ZJ2).
+    @Published var teamShare: TeamShareSession?
     /// Where the last arrival given a conversation line is kept; the tests give their own.
     var teamDefaults: UserDefaults = .standard
     /// Per chat, the attachment paths queued in the input bar: the Files
@@ -1367,10 +1369,10 @@ final class AppModel: ObservableObject {
             teamStateArrived(state)
 
         case .teamResult(let result):
-            teamResultArrived(result)
+            if !teamShareResultArrived(result) { teamResultArrived(result) }
 
-        case .teamShareDraft:
-            break
+        case .teamShareDraft(let draft):
+            teamShareDraftArrived(draft)
 
         case .error(let error):
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).

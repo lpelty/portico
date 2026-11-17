@@ -73,6 +73,7 @@ struct MainWindow: View {
         }
         .background(Theme.window)
         .askToLogDialog(model)
+        .teamShareDialog(model)
         .newSpaceSheet(model)
         .gatewayConfirmDialog(model, place: .window)
         .onChange(of: model.settingsOpenRequests) { openSettings() }
