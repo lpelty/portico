@@ -269,6 +269,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var updateVersion: String?
     /// The team knowledge snapshot (`team.state`); nil until a gateway that has it sends one.
     @Published private(set) var teamState: TeamState?
+    /// The arrival (`latest.id`) whose quiet strip line has left: a message was sent since it showed.
+    @Published private(set) var teamQuietGone: String?
+    /// Where the last arrival given a conversation line is kept; the tests give their own.
+    var teamDefaults: UserDefaults = .standard
     /// Per chat, the attachment paths queued in the input bar: the Files
     /// pane and drag-and-drop add here; a send clears the chat's list.
     @Published private(set) var draftAttachments: [Int: [String]] = [:]
@@ -1360,8 +1364,12 @@ final class AppModel: ObservableObject {
 
         case .teamState(let state):
             teamState = state
+            teamStateArrived(state)
 
-        case .teamResult, .teamShareDraft:
+        case .teamResult(let result):
+            teamResultArrived(result)
+
+        case .teamShareDraft:
             break
 
         case .error(let error):
@@ -2552,6 +2560,8 @@ final class AppModel: ObservableObject {
         pendingSends[chat] = PendingSend(
             id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
         send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: id)))
+        // v0.27: the quiet team line leaves when the next message is sent.
+        teamQuietGone = teamState?.latest?.id
         if fromComposer {
             draftAttachments[chat] = nil
             drafts[chat] = nil

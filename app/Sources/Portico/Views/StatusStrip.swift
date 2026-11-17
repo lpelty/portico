@@ -122,7 +122,8 @@ struct StatusStripPresentation: Equatable, Sendable {
     /// (`restart`: the stale-config button shows, with its words unless
     /// `restartWords` is false; `update`: the version offered).
     func width(
-        at fit: Fit, restart: Bool, restartWords: Bool = true, update: String?, metrics: Metrics = .system
+        at fit: Fit, restart: Bool, restartWords: Bool = true, update: String?, team: [CGFloat] = [],
+        metrics: Metrics = .system
     ) -> CGFloat {
         func labelled(_ icon: Symbol, _ text: CGFloat) -> CGFloat {
             metrics.symbol(icon) + Measure.iconGap + text
@@ -142,6 +143,7 @@ struct StatusStripPresentation: Equatable, Sendable {
                 restartWords
                     ? labelled(Measure.restartIcon, metrics.text(Self.restartText)) : metrics.symbol(Measure.restartIcon))
         }
+        segments += team
         if let update {
             segments.append(
                 fit == .full
@@ -157,6 +159,8 @@ struct StatusStripPresentation: Equatable, Sendable {
     struct Layout: Equatable, Sendable {
         var fit: Fit
         var restartWords: Bool
+        /// v0.27: how much the team notices say.
+        var team: TeamStripPresentation.Fit = .full
     }
 
     /// The fullest layout that fits `width`. The other segments shrink
@@ -166,13 +170,24 @@ struct StatusStripPresentation: Equatable, Sendable {
     /// left full, so whenever the viewer was open). A width not measured
     /// yet (the first frame) is the full strip, so it does not flash
     /// minimal first.
-    func layout(width: CGFloat?, restart: Bool, update: String?, metrics: Metrics = .system) -> Layout {
+    ///
+    /// v0.27 (ZJ3): with team notices the rest of the strip shortens first
+    /// and they keep their words; then the quiet line folds to its icon,
+    /// then the words shorten, then each notice is its icon. None disappears.
+    func layout(
+        width: CGFloat?, restart: Bool, update: String?, team: TeamStripPresentation = .none,
+        metrics: Metrics = .system
+    ) -> Layout {
         guard let width else { return Layout(fit: .full, restartWords: true) }
-        for fit in Fit.allCases
-        where self.width(at: fit, restart: restart, update: update, metrics: metrics) <= width {
-            return Layout(fit: fit, restartWords: true)
+        let teamFits: [TeamStripPresentation.Fit] = team.notices.isEmpty ? [.full] : TeamStripPresentation.Fit.allCases
+        for teamFit in teamFits {
+            let extra = team.widths(at: teamFit, metrics: metrics)
+            for fit in teamFit == .full ? Fit.allCases : [.minimal]
+            where self.width(at: fit, restart: restart, update: update, team: extra, metrics: metrics) <= width {
+                return Layout(fit: fit, restartWords: true, team: teamFit)
+            }
         }
-        return Layout(fit: .minimal, restartWords: !restart)
+        return Layout(fit: .minimal, restartWords: !restart, team: teamFits.last ?? .full)
     }
 
     /// The fullest fit that fits `width`; `minimal` when none does.
@@ -258,8 +273,10 @@ struct StatusStrip: View {
 
     var body: some View {
         let strip = model.statusStrip(gateway: supervisor.status)
+        let team = model.teamStrip
         let layout = strip.layout(
-            width: width, restart: model.configStale, update: model.offeredUpdate, metrics: .scaled(textScale))
+            width: width, restart: model.configStale, update: model.offeredUpdate, team: team,
+            metrics: .scaled(textScale))
         let fit = layout.fit
         let menuOnScreen = strip.model(at: fit) != nil && strip.modelMenu?.menu == true && model.shownChat != nil
         HStack(spacing: StatusStripPresentation.Measure.spacing) {
@@ -289,6 +306,9 @@ struct StatusStrip: View {
             }
             if model.configStale {
                 restartButton(compact: !layout.restartWords)
+            }
+            ForEach(team.notices) { notice in
+                TeamNoticeView(notice: notice, fit: layout.team) { model.teamAct(notice.kind) }
             }
             if let version = model.offeredUpdate {
                 updateButton(version, compact: fit != .full)

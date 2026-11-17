@@ -366,7 +366,7 @@ struct HelloClient: Codable, Equatable, Sendable {
         MarkStore.capability, Models.capability, ThreadProposal.capability, ViewerAct.showCapability,
         Service.stuckCapability, AppOpen.capability, UserText.attachmentsCapability,
         FilesRootsSet.capability, FilesEdited.capability, AgentActivity.tasksCapability,
-        DeploymentMessage.capability, commentsCapability, SigninWait.capability,
+        DeploymentMessage.capability, commentsCapability, SigninWait.capability, TeamState.capability,
     ]
 
     /// v0.23: this app shows and writes comments in Markdown files (comment

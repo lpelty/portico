@@ -2322,6 +2322,11 @@ arrival's `id` are opaque strings the deployment makes. The app hands
 them back and never reads them. A person is `{name, short}`: the display
 name, and the one a short line uses. The app never shortens a name.
 
+**Paths.** A `path` in these kinds is relative to the deployment's first
+root (the first of `hello.roots`), or absolute when the file is
+elsewhere. The app resolves it that way to open the file, and names a
+file it asks to share the same way.
+
 **Requests are done once.** Every app → gateway kind below that carries
 an `id` is answered by a `team.result` with that `id`. The same `id` sent
 again is answered with the first outcome and nothing is repeated; a
