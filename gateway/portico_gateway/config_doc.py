@@ -94,6 +94,7 @@ KEY_DOCS: dict[str, KeyDoc] = {
     "brand.accent": KeyDoc("The accent colour, CSS hex.", 'accent = "#3B6EF5"'),
     "brand.icon": KeyDoc("An image for the mark; a flat square is rounded in the macOS icon shape.", 'icon = "/path/to/icon.png"'),
     "brand.header_image": KeyDoc("An absolute path to an image that replaces the mark and name in the toolbar, 28 pt tall (SVG or PDF stays sharp).", 'header_image = "/path/to/lockup.svg"'),
+    "brand.header_image_light": KeyDoc("An absolute path to the header image for the light appearance, when `header_image` only reads on a dark window; without it `header_image` is drawn in both.", 'header_image_light = "/path/to/lockup-light.svg"'),
     "brand.version": KeyDoc("The deployment's version; the About panel shows it in place of the app's.", 'version = "1.4.0"'),
     "brand.about": KeyDoc('The About panel\'s text under the version; {app_version} and {built} are filled in, "" shows nothing.', 'about = "Questions: help@example.com"'),
     "brand.app_icon": KeyDoc("A 1024×1024 PNG for the app bundle (bin/install); never sent to the app.", 'app_icon = "~/icons/app.png"', applies=REINSTALL),

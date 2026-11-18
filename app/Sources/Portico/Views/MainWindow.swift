@@ -212,6 +212,8 @@ struct MainColumn: View {
 /// title bar.
 struct MainToolbar: View {
     @EnvironmentObject private var model: AppModel
+    /// The header image follows the window's appearance (v0.26.7).
+    @Environment(\.colorScheme) private var colorScheme
 
     private var items: [ToolbarLayout.Item] {
         ToolbarLayout.items(
@@ -246,7 +248,7 @@ struct MainToolbar: View {
             .disabled(model.awaitingFirstSession)
         case .brand:
             HStack(spacing: 8) {
-                if let header = model.brand.headerImage {
+                if let header = model.brand.headerImage(light: colorScheme == .light) {
                     HeaderImage(image: header, label: model.brand.name)
                 } else {
                     BrandMark(brand: model.brand)

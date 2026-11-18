@@ -129,6 +129,10 @@ class Brand(Strict):
     # v0.7: an image (absolute path) the toolbar shows in place of the mark
     # and the name, e.g. the deployment's lockup.
     header_image: str | None = None
+    # v0.26.7: the image for the light appearance, when the one above only
+    # reads on a dark window (a white lockup). Without it, header_image is
+    # drawn in both.
+    header_image_light: str | None = None
     # v0.20.1: the deployment's version, which the About panel shows, and the
     # panel's text under it ({app_version} and {built} are filled in by the app).
     version: str | None = None

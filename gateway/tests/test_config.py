@@ -489,6 +489,23 @@ def test_a_relative_header_image_stops_the_load(tmp_path: Path) -> None:
     assert load_config(path).brand.for_hello().header_image == str(Path("~/lockup.svg").expanduser())
 
 
+def test_the_light_header_image_is_checked_and_sent_like_the_other(tmp_path: Path) -> None:
+    """v0.26.7 (PORT-76): ``brand.header_image_light`` is an absolute path too, and reaches ``hello``."""
+    path = tmp_path / "config.toml"
+    path.write_text('[brand]\nname = "Front Door"\nagent_name = "Helper"\nheader_image_light = "lockup-light.svg"\n')
+    with pytest.raises(ConfigError, match="brand.header_image_light"):
+        load_config(path)
+    path.write_text(
+        '[brand]\nname = "Front Door"\nagent_name = "Helper"\n'
+        'header_image = "/x/lockup.svg"\nheader_image_light = "~/lockup-light.svg"\n'
+    )
+    brand = load_config(path).brand.for_hello()
+    assert brand.header_image == "/x/lockup.svg"
+    assert brand.header_image_light == str(Path("~/lockup-light.svg").expanduser())
+    path.write_text('[brand]\nname = "Front Door"\nagent_name = "Helper"\nheader_image = "/x/lockup.svg"\n')
+    assert load_config(path).brand.for_hello().header_image_light is None
+
+
 
 def test_the_about_box_keys_reach_hello(tmp_path: Path) -> None:
     # v0.20.1: the deployment's version and the About panel's text go to the

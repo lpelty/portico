@@ -1194,6 +1194,18 @@
           "default": null,
           "title": "Header Image"
         },
+        "header_image_light": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Header Image Light"
+        },
         "icon": {
           "anyOf": [
             {
@@ -6589,6 +6601,18 @@
           ],
           "title": "State",
           "type": "string"
+        },
+        "view": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "View"
         }
       },
       "required": [

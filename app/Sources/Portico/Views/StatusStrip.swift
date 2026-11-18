@@ -261,6 +261,7 @@ struct StatusStrip: View {
         let layout = strip.layout(
             width: width, restart: model.configStale, update: model.offeredUpdate, metrics: .scaled(textScale))
         let fit = layout.fit
+        let menuOnScreen = strip.model(at: fit) != nil && strip.modelMenu?.menu == true && model.shownChat != nil
         HStack(spacing: StatusStripPresentation.Measure.spacing) {
             if let modelText = strip.model(at: fit) {
                 if let menu = strip.modelMenu, menu.menu, let chat = model.shownChat {
@@ -301,6 +302,15 @@ struct StatusStrip: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status: \(strip.text)")
+        // `/model` (v0.26.7): open the menu; with no menu on screen (a
+        // narrow strip drops the model), the choices as one line instead.
+        .onChange(of: model.modelMenuRequests) {
+            if menuOnScreen {
+                modelMenuShown = true
+            } else if let chat = model.shownChat {
+                model.listModels(chat: chat)
+            }
+        }
     }
 
     private func segment(_ icon: StatusStripPresentation.Symbol, _ text: String, help: String? = nil) -> some View {

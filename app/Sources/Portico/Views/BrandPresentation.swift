@@ -50,8 +50,18 @@ struct BrandPresentation: Equatable {
     /// `brand.header_image` names; `nil` when there is none or it cannot be
     /// read, and the toolbar shows the mark and the name. Read once per
     /// version of the file, as the icon is.
-    var headerImage: NSImage? {
-        guard let path = brand?.headerImage?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
+    var headerImage: NSImage? { Self.image(at: brand?.headerImage) }
+
+    /// The header image for the window's appearance (v0.26.7): in the light
+    /// appearance the one `brand.header_image_light` names, when it is set
+    /// and can be read; otherwise `headerImage`, as before.
+    func headerImage(light: Bool) -> NSImage? {
+        if light, let image = Self.image(at: brand?.headerImageLight) { return image }
+        return headerImage
+    }
+
+    private static func image(at path: String?) -> NSImage? {
+        guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
         return BrandIconCache.shared.icon(at: (path as NSString).expandingTildeInPath)?.image
     }
 
