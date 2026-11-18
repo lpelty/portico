@@ -765,6 +765,27 @@ async def test_the_sample_keeps_what_is_typed_into_the_teams_version_while_there
     assert state.files[0].conflict is None and state.files[0].pending is None
 
 
+async def test_the_sample_a_removed_file_does_not_take_the_saved_version_with_it(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    site.sim("seed")
+    state = await site.check()
+    await site.monitor.request("req-1", "get", {"shares": [state.waiting[0].id]})
+    calendar = site.root / "_team/release-calendar.md"
+    assert (await site.monitor.request("req-p", "sending", {"paths": ["_team/release-calendar.md"], "paused": True})).ok
+    calendar.write_text("my version\n")
+    site.sim("change", "release-calendar.md")
+    await site.check()  # two versions: mine is saved
+    saved = site.root / "_team/.mine/release-calendar.md"
+    assert saved.read_text() == "my version\n"
+    calendar.write_text("typed into the team's version\n")
+    site.sim("remove", "release-calendar.md")
+    await site.check()
+    assert not calendar.exists()
+    assert saved.read_text() == "my version\n", "the saved version is left where it is"
+    kept = [p for p in saved.parent.iterdir() if p.name.startswith("release-calendar.edited-")]
+    assert [p.read_text() for p in kept] == ["typed into the team's version\n"]
+
+
 async def test_the_sample_use_my_version_keeps_what_was_typed_into_the_teams(tmp_path: Path) -> None:
     site = SampleSite(tmp_path)
     plan = site.root / "plan.md"
