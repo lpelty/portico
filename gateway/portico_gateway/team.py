@@ -33,7 +33,9 @@ The requests and their answers:
     was last shown: ``latest`` covers every arrival after it, so arrivals
     while no app was attached are announced as one. A check that cannot
     reach the source still prints the rows it knows, with ``reach`` saying so.
-``get``  ``{"shares": [id]}``. Accept and bring in these shares.
+``get``  ``{"shares": [id], "announced": id?}``. Accept and bring in these
+    shares. ``announced`` is as for ``check``, as it stands now: the
+    arrival this Get makes does not repeat one an app was already shown.
 ``send``  ``{"paths": [path]}``. Send these files' changes now.
 ``sending``  ``{"paths": [path], "paused": bool}``. Pause or resume.
 ``stop``  ``{"paths": [path]}``. Stop syncing on this Mac.
@@ -131,6 +133,16 @@ def _short(text: str) -> str:
 
 def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _kept_time(stamp: object) -> datetime | None:
+    """A moment ``_iso`` wrote into ``team.json``, or None for anything else."""
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 def _kill(pid: int) -> None:
@@ -311,7 +323,8 @@ class TeamMonitor:
         self._drafts: dict[str, Draft] = {}
         self._reach: Literal["ok", "unreachable", "refused", "never"] = "never"
         self._reach_reason: str | None = None
-        self._last_ok: datetime | None = None
+        # Kept across a restart: while the team cannot be reached, the app still says when it last was.
+        self._last_ok: datetime | None = _kept_time(kept.get("last_ok"))
         self._next: datetime = self._clock()
         self._source_state = SourceState()
         self._getting: list[str] | None = None
@@ -408,11 +421,13 @@ class TeamMonitor:
     def _apply(self, state: SourceState) -> None:
         self._source_state = state
         self._reach, self._reach_reason = state.reach, state.reach_reason
+        held = {row.path for row in state.files}
+        gone = any(path not in held for path in self._seen)
+        if gone:
+            self._seen = {path: rev for path, rev in self._seen.items() if path in held}
         if state.reach == "ok":
             self._last_ok = self._clock()
-        held = {row.path for row in state.files}
-        if any(path not in held for path in self._seen):
-            self._seen = {path: rev for path, rev in self._seen.items() if path in held}
+        if gone or state.reach == "ok":
             self._save()
 
     async def set_interval(self, minutes: int) -> None:
@@ -510,6 +525,7 @@ class TeamMonitor:
                     payload["shares"] = [share for share in payload.get("shares", []) if share in offered]
                     if not payload["shares"]:
                         return self._made(True)
+                    payload["announced"] = self._announced
                     self._getting = list(payload["shares"])
                     await self.publish()
                 try:
@@ -662,6 +678,7 @@ class TeamMonitor:
             "interval_minutes": self.interval_minutes,
             "seen": self._seen,
             "announced": self._announced,
+            "last_ok": _iso(self._last_ok) if self._last_ok is not None else None,
             "outcomes": self._outcomes,
         }
         tmp = self.path.with_name(f".{self.path.name}.tmp")

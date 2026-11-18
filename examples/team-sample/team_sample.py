@@ -29,7 +29,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -73,6 +72,18 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def write_whole(path: Path, data: bytes) -> None:
+    """Put ``data`` at ``path`` in one step: a run cut off part-way leaves the old file, never half of the new one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def copy_whole(from_path: Path, to_path: Path) -> None:
+    write_whole(to_path, from_path.read_bytes())
+
+
 class Source:
     """The folder standing in for the team source: ``index.json`` and ``files/<name>``."""
 
@@ -108,8 +119,7 @@ class Source:
 
     def put(self, name: str, from_path: Path, by: str, share: str | None = None, note: str | None = None) -> None:
         """A new file, or a new version of one, from ``by``."""
-        self.content(name).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(from_path, self.content(name))
+        copy_whole(from_path, self.content(name))
         entry = self.files.get(name)
         if entry is None:
             self.files[name] = {"rev": 1, "by": person(by), "at": now(), "share": share, "note": note}
@@ -173,10 +183,15 @@ class Sample:
         if entry["direction"] != "in":
             return
         if target.is_file() and digest(target) != entry["hash"]:
-            kept = self.root / MINE_FOLDER / name
-            kept.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(target, kept)
+            copy_whole(target, self.root / MINE_FOLDER / name)
         target.unlink(missing_ok=True)
+
+    def keep_edits(self, name: str, entry: dict[str, Any]) -> None:
+        """While a file has two versions, the one at its path may be edited too: keep that before it is replaced."""
+        target = self.root / entry["path"]
+        if target.is_file() and digest(target) != entry["hash"]:
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            copy_whole(target, self.root / MINE_FOLDER / f"{Path(name).stem}.edited-{stamp}{Path(name).suffix}")
 
     def push(self, name: str, entry: dict[str, Any]) -> None:
         """This Mac's version becomes the team's."""
@@ -189,8 +204,7 @@ class Sample:
     def pull(self, name: str, entry: dict[str, Any]) -> None:
         """The team's version replaces the one at the file's path."""
         target = self.root / entry["path"]
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(self.source.content(name), target)
+        copy_whole(self.source.content(name), target)
         remote = self.source.files[name]
         entry["rev"] = remote["rev"]
         entry["hash"] = digest(target)
@@ -214,10 +228,11 @@ class Sample:
             remote_new = remote["rev"] > entry["rev"]
             if remote_new and not send_only:
                 if entry.get("conflict") or local_changed:
-                    if not entry.get("conflict"):
+                    if entry.get("conflict"):
+                        self.keep_edits(name, entry)
+                    else:
                         mine = f"{MINE_FOLDER}/{name}"
-                        (self.root / mine).parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copyfile(self.root / entry["path"], self.root / mine)
+                        copy_whole(self.root / entry["path"], self.root / mine)
                         entry["conflict"] = {"mine": {"path": mine, "at": now()}}
                     self.pull(name, entry)
                     entry["conflict"]["id"] = f"c-{name}-{remote['rev']}"
@@ -248,7 +263,7 @@ class Sample:
     def join_arrivals(self, announced: str | None = None) -> None:
         """One ``latest`` for every arrival an app has not been shown, and one summary file for it.
 
-        ``announced`` comes with ``check``; it is kept, so a Get between two checks knows it too.
+        ``announced`` comes with ``check`` and with ``get``: what an app was last shown, as it stands now.
         """
         if announced is not None:
             self.local.data["announced"] = announced
@@ -378,7 +393,7 @@ class Sample:
             accepted.append({**share, "files": paths})
         if accepted:
             self.local.arrival("new", {"files": [f for s in accepted for f in s["files"]], "shares": accepted})
-            self.join_arrivals()
+            self.join_arrivals(request.get("announced"))
         return self.answer(failed)
 
     def send(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -391,6 +406,9 @@ class Sample:
                 failed.append({"path": path, "reason": "This file is not shared."})
             elif entry.get("paused_since"):
                 failed.append({"path": path, "reason": "Sending is paused for this file"})
+            elif self.source.files.get(name, {}).get("rev", 0) > entry["rev"] and self.note_local_change(entry):
+                # Nothing is sent over a version this Mac has not seen; the next check brings it in as a second version.
+                failed.append({"path": path, "reason": "The team changed this file too. Its version arrives at the next check."})
         self.sync(only=set(request.get("paths", [])), send_only=True)
         return self.answer(failed)
 
@@ -433,11 +451,13 @@ class Sample:
                 # The team's version moved on since the last check: bring it in, and let the person look again.
                 self.sync(only={path})
                 return self.answer([{"path": path, "reason": "The team's version changed. Look again before choosing."}])
-            shutil.copyfile(mine, self.root / entry["path"])
+            self.keep_edits(name, entry)
+            copy_whole(mine, self.root / entry["path"])
             self.push(name, entry)
         else:
-            entry["hash"] = digest(self.root / entry["path"])
+            # The team's version stays. Anything typed into it since it arrived is a change of the person's, sent as one.
             entry["pending_since"] = None
+            self.note_local_change(entry)
         mine.unlink(missing_ok=True)
         entry["conflict"] = None
         return self.answer()
@@ -497,29 +517,35 @@ class Sample:
                 start = spans[i - 1][1]
             elif i + 1 < len(spans):
                 end = spans[i + 1][0]
-            (self.root / path).write_text(text[:start] + text[end:], encoding="utf-8")
+            write_whole(self.root / path, (text[:start] + text[end:]).encode("utf-8"))
             return
 
     def share(self, request: dict[str, Any]) -> dict[str, Any]:
         if self.offline():
             return self.answer(reason=self.offline())
         failed = []
-        share = self.source.new_share()
+        names: list[str] = []
         for path in request.get("paths", []):
             name = Path(path).name
             if not (self.root / path).is_file():
                 failed.append({"path": path, "reason": "This file could not be read."})
-            elif name in self.source.files:
+            elif name in self.source.files or name in names:
                 failed.append({"path": path, "reason": "The team already has a file with this name."})
-            else:
-                # Only now, and only for a file that is going: what the person chose to take out.
-                for finding in request.get("remove", []):
-                    if finding.get("path") == path:
-                        self.take_out(finding)
-                self.source.put(name, self.root / path, self.local.me, share=share, note=request.get("note"))
-                self.local.held[name] = {"path": path, "direction": "out", "rev": 1, "hash": digest(self.root / path), "sent_at": now()}
-                if name in self.local.data["stopped"]:
-                    self.local.data["stopped"].remove(name)
+            names.append(name)
+        if failed:
+            # All of the share or none of it: no file is changed or sent when one of them cannot go.
+            return self.answer(failed)
+        share = self.source.new_share()
+        for path in request.get("paths", []):
+            name = Path(path).name
+            # Only now, and only for a file that is going: what the person chose to take out.
+            for finding in request.get("remove", []):
+                if finding.get("path") == path:
+                    self.take_out(finding)
+            self.source.put(name, self.root / path, self.local.me, share=share, note=request.get("note"))
+            self.local.held[name] = {"path": path, "direction": "out", "rev": 1, "hash": digest(self.root / path), "sent_at": now()}
+            if name in self.local.data["stopped"]:
+                self.local.data["stopped"].remove(name)
         return self.answer(failed)
 
 

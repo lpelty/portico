@@ -574,10 +574,11 @@ struct ChangedFileRow: View {
             icon: FileIcon.systemName(for: name), name: name,
             disclosure: (depth: 0, expanded: nil), selected: isShown
         ) {
-            if let at { CompactTime(date: at) }
-            // v0.27: a team file wears its mark wherever its row appears.
+            // v0.27: a team file wears its mark wherever its row appears, in place of the date text.
             if let file = model.teamFile(at: path), let state = model.teamState {
                 TeamMarkView(file: file, state: state)
+            } else if let at {
+                CompactTime(date: at)
             }
         }
         .tip(path)
@@ -726,7 +727,10 @@ struct BookmarkRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if let at {
+            // v0.27: a team file wears its mark here too, in place of the date text.
+            if let file = model.teamFile(at: path), let state = model.teamState {
+                TeamMarkView(file: file, state: state)
+            } else if let at {
                 CompactTime(date: at)
             }
         }

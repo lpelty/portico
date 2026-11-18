@@ -340,6 +340,17 @@ async def test_the_same_request_sent_twice_at_once_runs_once(tmp_path: Path) -> 
     assert heard.states[-1].getting is None
 
 
+async def test_a_get_carries_what_an_app_was_last_shown(tmp_path: Path) -> None:
+    scripted = Scripted()
+    scripted.state["waiting"] = [share("s-1")]
+    scripted.state["latest"] = {"id": "a-4", "kind": "changed", "at": TS, "summary": "_team/_summary.md", "files": ["_team/x.md"]}
+    mon, heard = monitor(tmp_path, scripted)
+    await mon.check()  # the app is shown a-4 by this check's snapshot
+    assert scripted.named("check")[-1] == {"announced": None}
+    await mon.request("req-1", "get", {"shares": ["s-1"]})
+    assert scripted.named("get") == [{"shares": ["s-1"], "announced": "a-4"}]
+
+
 async def test_a_second_get_while_the_first_runs_does_not_ask_for_what_already_came(tmp_path: Path) -> None:
     # A double click: two requests, two ids. The second finds nothing still offered and is done, with no error.
     scripted = Scripted()
@@ -658,17 +669,17 @@ async def test_the_sample_a_get_after_a_shown_change_announces_only_what_is_new(
     site.sim("seed")
     state = await site.check()
     await site.monitor.request("req-1", "get", {"shares": [state.waiting[0].id]})
-    await site.check()  # the app was shown the Get's arrival
+    # A teammate's change and another teammate's share land between the same two checks.
     site.sim("change", "release-calendar.md")
-    state = await site.check()
-    assert state.latest is not None and state.latest.kind == "changed"
     extra = tmp_path / "b.md"
     extra.write_text("b\n")
     site.sim("share", "--as", "Sam Ortiz", str(extra))
-    state = await site.check()  # the change was shown; the new share waits
+    state = await site.check()  # the one check that shows the change and offers the share
+    assert state.latest is not None and (state.latest.kind, state.latest.files) == ("changed", ["_team/release-calendar.md"])
     await site.monitor.request("req-2", "get", {"shares": [state.waiting[0].id]})
     latest = site.heard.states[-1].latest
     assert latest is not None and (latest.kind, latest.files) == ("new", ["_team/b.md"]), "the shown change is not announced again"
+    assert latest.by is None, "the change's author is not the new share's"
 
 
 async def test_the_sample_never_deletes_changes_that_were_not_sent(tmp_path: Path) -> None:
@@ -714,6 +725,123 @@ async def test_the_sample_use_my_version_does_not_overwrite_a_newer_team_version
     now = site.heard.states[-1].files[0].conflict
     assert now is not None and now.id != conflict.id and plan.read_text().endswith("Priya's second.\n")
     assert (site.root / now.mine.path).read_text() == "# Plan\n\nMine.\n"
+
+
+async def test_the_sample_keeps_what_is_typed_into_the_teams_version_while_there_are_two(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    plan = site.root / "plan.md"
+    plan.write_text("# Plan\n")
+    await site.check()
+    await site.monitor.prepare("d-1", ["plan.md"])
+    await settle(site.monitor, "d-1")
+    assert (await site.monitor.share("d-1", site.heard.drafts[-1].rev, None, [], False)).ok
+    assert (await site.monitor.request("req-p", "sending", {"paths": ["plan.md"], "paused": True})).ok
+    plan.write_text("# Plan\n\nMine.\n")
+    site.sim("change", "--text", "Priya's first.", "plan.md")
+    await site.check()
+    mine = site.root / "_team/.mine/plan.md"
+    assert mine.read_text() == "# Plan\n\nMine.\n"
+
+    # The viewer opens the file at its own path: a merge by hand is typed there.
+    merged = plan.read_text() + "\nMerged by hand.\n"
+    plan.write_text(merged)
+    site.sim("change", "--text", "Priya's second.", "plan.md")
+    state = await site.check()
+    assert plan.read_text().endswith("Priya's second.\n"), "the team's newer version is at the file's path"
+    kept = [p for p in mine.parent.iterdir() if p.name.startswith("plan.edited-")]
+    assert [p.read_text() for p in kept] == [merged], "what was typed into the team's version is kept beside it"
+    assert mine.read_text() == "# Plan\n\nMine.\n"
+
+    # Use the team's version, after typing into it again: the typing is a change of the person's, and it is sent.
+    conflict = state.files[0].conflict
+    assert conflict is not None
+    typed = plan.read_text() + "\nOne more line of mine.\n"
+    plan.write_text(typed)
+    assert (await site.monitor.request("req-r", "resolve", {"path": "plan.md", "conflict": conflict.id, "use": "team"})).ok
+    assert plan.read_text() == typed
+    assert (await site.monitor.request("req-u", "sending", {"paths": ["plan.md"], "paused": False})).ok
+    state = await site.check()
+    assert (site.source / "files" / "plan.md").read_text() == typed, "it was not taken as in step and dropped"
+    assert state.files[0].conflict is None and state.files[0].pending is None
+
+
+async def test_the_sample_use_my_version_keeps_what_was_typed_into_the_teams(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    plan = site.root / "plan.md"
+    plan.write_text("# Plan\n")
+    await site.check()
+    await site.monitor.prepare("d-1", ["plan.md"])
+    await settle(site.monitor, "d-1")
+    assert (await site.monitor.share("d-1", site.heard.drafts[-1].rev, None, [], False)).ok
+    assert (await site.monitor.request("req-p", "sending", {"paths": ["plan.md"], "paused": True})).ok
+    plan.write_text("# Plan\n\nMine.\n")
+    site.sim("change", "--text", "Priya's.", "plan.md")
+    state = await site.check()
+    conflict = state.files[0].conflict
+    assert conflict is not None
+    typed = plan.read_text() + "\nTyped into the team's version.\n"
+    plan.write_text(typed)
+    assert (await site.monitor.request("req-r", "resolve", {"path": "plan.md", "conflict": conflict.id, "use": "mine"})).ok
+    assert plan.read_text() == "# Plan\n\nMine.\n"
+    kept = [p for p in (site.root / "_team/.mine").iterdir() if p.name.startswith("plan.edited-")]
+    assert [p.read_text() for p in kept] == [typed]
+
+
+async def test_the_sample_shares_all_of_several_files_or_none(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    theirs = tmp_path / "notes.md"
+    theirs.write_text("Priya's notes\n")
+    site.sim("share", str(theirs))
+    first, second = site.root / "a.md", site.root / "notes.md"
+    text = "# A\n\npersonal: my own line\n\nThe rest.\n"
+    first.write_text(text)
+    second.write_text("my notes\n")
+    await site.check()
+    await site.monitor.prepare("d-1", ["a.md", "notes.md"])
+    await settle(site.monitor, "d-1")
+    draft = site.heard.drafts[-1]
+    assert len(draft.findings) == 1
+    for _ in range(2):  # Share, and Share again
+        result = await site.monitor.share("d-1", draft.rev, None, [draft.findings[0].id], False)
+        assert not result.ok and result.failed is not None
+        assert [(f.path, f.reason) for f in result.failed] == [("notes.md", "The team already has a file with this name.")]
+        assert first.read_text() == text, "nothing was taken out of a file that did not go"
+        assert not (site.source / "files" / "a.md").exists(), "and it was not shared"
+    assert site.heard.states[-1].files == []
+
+
+async def test_the_sample_send_now_says_so_when_the_team_changed_the_file_first(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    plan = site.root / "plan.md"
+    plan.write_text("# Plan\n")
+    await site.check()
+    await site.monitor.prepare("d-1", ["plan.md"])
+    await settle(site.monitor, "d-1")
+    assert (await site.monitor.share("d-1", site.heard.drafts[-1].rev, None, [], False)).ok
+    plan.write_text("# Plan\n\nMine.\n")
+    site.sim("change", "--text", "Priya's.", "plan.md")  # not yet seen by a check
+    result = await site.monitor.request("req-s", "send", {"paths": ["plan.md"]})
+    assert not result.ok and result.failed is not None and result.failed[0].path == "plan.md"
+    assert (site.source / "files" / "plan.md").read_text().endswith("Priya's.\n"), "the team's version was not written over"
+    state = await site.check()
+    assert state.files[0].conflict is not None, "the next check shows both versions"
+
+
+async def test_the_sample_restarted_while_unreachable_still_says_when_it_last_checked(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    site.sim("seed")
+    state = await site.check()
+    await site.monitor.request("req-1", "get", {"shares": [state.waiting[0].id]})
+    good = (await site.check()).last_ok_at
+    assert good is not None
+    site.sim("reach", "unreachable")
+    again = SampleSite.__new__(SampleSite)  # the gateway starts again on the same state
+    again.heard = Heard()
+    again.monitor = TeamMonitor(TeamSource(site.commands, timeout=20.0), site.state, again.heard.state, again.heard.draft)
+    await again.monitor.check()
+    state = again.heard.states[-1]
+    assert state.reach == "unreachable" and len(state.files) == 2
+    assert state.last_ok_at == good, "the rows are not shown as checked just now"
 
 
 # --- the server ---------------------------------------------------------------------------

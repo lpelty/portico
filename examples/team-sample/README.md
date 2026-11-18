@@ -62,7 +62,10 @@ The rest needs no switch:
   change summary.
 - `<root>/_team/.mine/`: your version of a file that has two versions, and
   changes you had not sent when a file from the team left (Stop syncing,
-  or its removal from the team). Nothing unsent is deleted.
+  or its removal from the team). What you type into the team's version
+  while a file has two versions is kept here too, as
+  `<name>.edited-<time>`, before a newer version or your own replaces it.
+  Nothing unsent is deleted.
 
 File names are the team's keys here: two people cannot share files with
 the same name. A real team source would not have that limit.
