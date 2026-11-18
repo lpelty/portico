@@ -632,7 +632,7 @@ TEAM_KEYS = frozenset({"team"})
 
 
 def check_team(config_path: Path) -> Check:
-    """Team knowledge (v0.27): off, on with every request answered, or which requests nothing answers. Runs no command."""
+    """Team knowledge (v0.27): off, on with every request answered, or which requests nothing answers. Runs no [team] command (it imports the plug-ins, as the plug-in check does, to see their hooks)."""
     try:
         config = load_config(config_path)
     except ConfigError as e:

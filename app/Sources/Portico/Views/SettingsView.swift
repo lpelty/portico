@@ -215,7 +215,8 @@ struct GeneralSettingsTab: View {
     @EnvironmentObject private var settings: Settings
     @EnvironmentObject private var model: AppModel
     var body: some View {
-        let titles = GeneralSettingsPresentation.sectionTitles(capabilities: model.hello?.capabilities ?? [])
+        let titles = GeneralSettingsPresentation.sectionTitles(
+            capabilities: model.hello?.capabilities ?? [], team: model.team?.label)
         SettingsPage {
             SettingsSection("Folder") {
                 SettingsRow("Works in", help: "The folder new sessions work in. A session that is already going keeps its folder.") {
@@ -264,7 +265,7 @@ struct GeneralSettingsTab: View {
                 }
                 .disabled(!GeneralSettingsPresentation.checksHTMLEnabled(canSee: model.agentCanSee))
             }
-            if let team = model.team {
+            if let team = model.team, titles.contains(team.label) {
                 SettingsSection(team.label) {
                     SettingsRow(
                         GeneralSettingsPresentation.teamCheckLabel,

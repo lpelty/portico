@@ -130,6 +130,7 @@ class Local:
         self.data.setdefault("stopped", [])
         self.data.setdefault("unannounced", [])
         self.data.setdefault("latest", None)
+        self.data.setdefault("announced", None)
         self.data.setdefault("next_arrival", 1)
 
     @property
@@ -166,6 +167,17 @@ class Sample:
             entry["pending_since"] = now()
         return changed or bool(entry.get("pending_since"))
 
+    def let_go(self, name: str, entry: dict[str, Any]) -> None:
+        """A file from the team leaves the team folder. Changes made here and never sent are kept beside it."""
+        target = self.root / entry["path"]
+        if entry["direction"] != "in":
+            return
+        if target.is_file() and digest(target) != entry["hash"]:
+            kept = self.root / MINE_FOLDER / name
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(target, kept)
+        target.unlink(missing_ok=True)
+
     def push(self, name: str, entry: dict[str, Any]) -> None:
         """This Mac's version becomes the team's."""
         self.source.put(name, self.root / entry["path"], self.local.me)
@@ -195,8 +207,7 @@ class Sample:
             remote = self.source.files.get(name)
             if remote is None:
                 # Removed from the team: a copy from someone else leaves; the person's own file stays.
-                if entry["direction"] == "in":
-                    (self.root / entry["path"]).unlink(missing_ok=True)
+                self.let_go(name, entry)
                 del self.local.held[name]
                 continue
             local_changed = self.note_local_change(entry)
@@ -234,8 +245,14 @@ class Sample:
                 share["note"] = remote["note"]
         return list(shares.values())
 
-    def join_arrivals(self, announced: str | None) -> None:
-        """One ``latest`` for every arrival an app has not been shown, and one summary file for it."""
+    def join_arrivals(self, announced: str | None = None) -> None:
+        """One ``latest`` for every arrival an app has not been shown, and one summary file for it.
+
+        ``announced`` comes with ``check``; it is kept, so a Get between two checks knows it too.
+        """
+        if announced is not None:
+            self.local.data["announced"] = announced
+        announced = self.local.data["announced"]
         latest = self.local.data["latest"]
         pending = self.local.data["unannounced"]
         if latest is not None and announced == latest["id"]:
@@ -361,7 +378,7 @@ class Sample:
             accepted.append({**share, "files": paths})
         if accepted:
             self.local.arrival("new", {"files": [f for s in accepted for f in s["files"]], "shares": accepted})
-            self.join_arrivals(None)
+            self.join_arrivals()
         return self.answer(failed)
 
     def send(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -398,8 +415,7 @@ class Sample:
             elif entry.get("conflict"):
                 failed.append({"path": path, "reason": "Choose a version first"})
             else:
-                if entry["direction"] == "in":
-                    (self.root / entry["path"]).unlink(missing_ok=True)
+                self.let_go(name, entry)
                 del self.local.held[name]
                 self.local.data["stopped"].append(name)
         return self.answer(failed)
@@ -413,6 +429,10 @@ class Sample:
         if request.get("use") == "mine":
             if self.offline():
                 return self.answer(reason=self.offline())
+            if self.source.files.get(name, {}).get("rev", 0) > entry["rev"]:
+                # The team's version moved on since the last check: bring it in, and let the person look again.
+                self.sync(only={path})
+                return self.answer([{"path": path, "reason": "The team's version changed. Look again before choosing."}])
             shutil.copyfile(mine, self.root / entry["path"])
             self.push(name, entry)
         else:
@@ -422,28 +442,40 @@ class Sample:
         entry["conflict"] = None
         return self.answer()
 
-    def paragraphs(self, path: str) -> list[str]:
+    def read(self, path: str) -> str | None:
         try:
-            text = (self.root / path).read_text(encoding="utf-8")
+            return (self.root / path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
+            return None
+
+    def paragraphs(self, path: str) -> list[tuple[int, int, str]]:
+        """Each paragraph of the file as (start, end, text): runs of text between blank lines."""
+        text = self.read(path)
+        if text is None:
             return []
-        return [p for p in re.split(r"\n\s*\n", text)]
+        spans, start = [], 0
+        for gap in re.finditer(r"\n[ \t]*\n\s*", text):
+            spans.append((start, gap.start(), text[start:gap.start()]))
+            start = gap.end()
+        spans.append((start, len(text), text[start:]))
+        # A paragraph ends at its last character: the file's final newline is not part of it.
+        return [(a, a + len(body.rstrip()), body.rstrip()) for a, _, body in spans if body.strip()]
+
+    @staticmethod
+    def finding_id(path: str, paragraph: str) -> str:
+        return "f-" + hashlib.sha1(f"{path}\0{' '.join(paragraph.split())}".encode()).hexdigest()[:10]
 
     def share_check(self, request: dict[str, Any]) -> dict[str, Any]:
         if self.source.flags.get("check_fails"):
             return {"findings": [], "error": "The check for personal material could not finish."}
         findings = []
         for path in request.get("paths", []):
-            n = 0
-            for paragraph in self.paragraphs(path):
-                if not paragraph.strip():
-                    continue
-                n += 1
+            for n, (_, _, paragraph) in enumerate(self.paragraphs(path), start=1):
                 if EMAIL.search(paragraph) or MARKED.match(paragraph):
                     text = " ".join(paragraph.split())
                     findings.append(
                         {
-                            "id": "f-" + hashlib.sha1(f"{path}\0{text}".encode()).hexdigest()[:10],
+                            "id": self.finding_id(path, paragraph),
                             "path": path,
                             "text": text if len(text) <= 200 else text[:199] + "…",
                             "location": f"Paragraph {n}",
@@ -452,19 +484,25 @@ class Sample:
         return {"findings": findings}
 
     def take_out(self, finding: dict[str, Any]) -> None:
+        """Cut one paragraph and the blank lines before it (after it, for the first). Nothing else changes."""
         path = finding["path"]
-        kept = []
-        for paragraph in self.paragraphs(path):
-            text = " ".join(paragraph.split())
-            if "f-" + hashlib.sha1(f"{path}\0{text}".encode()).hexdigest()[:10] != finding["id"]:
-                kept.append(paragraph)
-        (self.root / path).write_text("\n\n".join(kept), encoding="utf-8")
+        text = self.read(path)
+        if text is None:
+            return
+        spans = self.paragraphs(path)
+        for i, (start, end, paragraph) in enumerate(spans):
+            if self.finding_id(path, paragraph) != finding["id"]:
+                continue
+            if i > 0:
+                start = spans[i - 1][1]
+            elif i + 1 < len(spans):
+                end = spans[i + 1][0]
+            (self.root / path).write_text(text[:start] + text[end:], encoding="utf-8")
+            return
 
     def share(self, request: dict[str, Any]) -> dict[str, Any]:
         if self.offline():
             return self.answer(reason=self.offline())
-        for finding in request.get("remove", []):
-            self.take_out(finding)
         failed = []
         share = self.source.new_share()
         for path in request.get("paths", []):
@@ -474,6 +512,10 @@ class Sample:
             elif name in self.source.files:
                 failed.append({"path": path, "reason": "The team already has a file with this name."})
             else:
+                # Only now, and only for a file that is going: what the person chose to take out.
+                for finding in request.get("remove", []):
+                    if finding.get("path") == path:
+                        self.take_out(finding)
                 self.source.put(name, self.root / path, self.local.me, share=share, note=request.get("note"))
                 self.local.held[name] = {"path": path, "direction": "out", "rev": 1, "hash": digest(self.root / path), "sent_at": now()}
                 if name in self.local.data["stopped"]:

@@ -125,6 +125,40 @@ final class TeamShareTests: XCTestCase {
         XCTAssertEqual(send.rev, "2")
     }
 
+    func testOnceShareIsPressedCancelDoesNothingUntilTheResult() throws {
+        // A share under way cannot be called back, so the dialog never claims it was.
+        let (model, sent) = model()
+        model.teamShareStart(absolutePaths: ["/Users/someone/work/research/Research plan.md"])
+        let id = try XCTUnwrap(model.teamShare?.id)
+        model.apply(.teamShareDraft(draft(id, rev: "2")))
+        model.teamShareSend()
+        let before = sent.frames.count
+        model.teamShareCancel()
+        XCTAssertNotNil(model.teamShare, "the dialog stays")
+        XCTAssertEqual(sent.frames.count, before, "no cancel is sent")
+        model.apply(.teamResult(TeamResult(ok: true, id: id)))
+        XCTAssertNil(model.teamShare)
+    }
+
+    func testAShareWhoseResultWasLostIsAskedAgainByTheSameId() throws {
+        let (model, sent) = model()
+        model.teamShareStart(absolutePaths: ["/Users/someone/work/research/Research plan.md"])
+        let id = try XCTUnwrap(model.teamShare?.id)
+        model.apply(.teamShareDraft(draft(id, rev: "2")))
+        model.teamShareSend()
+        var hello = HelloServer(
+            protocol: protocolVersion, gatewayVersion: "0.27.0", epoch: "e",
+            brand: Brand(name: "Portico", agentName: "Acme"), actions: [],
+            roots: [Root(name: "work", path: "/Users/someone/work")], commands: [], capabilities: [])
+        hello.team = TeamHello(label: "Team knowledge", folder: "_team", intervals: [15, 30, 60])
+        model.apply(.hello(hello))  // the connection came back
+        guard case .teamShareSend(let again)? = sent.frames.last else { return XCTFail("expected the same share again") }
+        XCTAssertEqual([again.id, again.rev], [id, "2"])
+        model.apply(.error(ErrorMessage(code: "gateway.error", message: "team.share.send failed: disk full", id: id)))
+        XCTAssertEqual(model.teamShare?.sending, false, "an error frees the dialog")
+        XCTAssertEqual(model.teamShare?.refusal, "team.share.send failed: disk full")
+    }
+
     func testCancelSendsCancelAndAnotherSharesDraftIsNotTaken() throws {
         let (model, sent) = model()
         model.teamShareStart(absolutePaths: ["/Users/someone/work/research/Research plan.md"])

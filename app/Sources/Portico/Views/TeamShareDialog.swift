@@ -77,6 +77,7 @@ struct TeamShareDialog: View {
                     Button("Cancel") { model.teamShareCancel() }
                         .buttonStyle(PillButtonStyle(kind: .quiet))
                         .keyboardShortcut(.cancelAction)
+                        .disabled(session.sending)
                     Button(session.shareLabel) { model.teamShareSend() }
                         .buttonStyle(PillButtonStyle(kind: .primary(model.brand.accent ?? Theme.accent)))
                         .keyboardShortcut(.defaultAction)

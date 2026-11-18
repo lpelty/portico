@@ -173,6 +173,7 @@ final class AppModel: ObservableObject {
             if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
             if let selected { noteThreadSeen(chat: selected) }
             releaseHeldDeploymentMessages()
+            teamCatchUp()
         }
     }
     /// The first `chat.list` of this run has arrived (v0.6). Until then the
@@ -271,6 +272,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var teamState: TeamState?
     /// The arrival (`latest.id`) whose quiet strip line has left: a message was sent since it showed.
     @Published private(set) var teamQuietGone: String?
+    /// Team lines that had no conversation to go to (none was shown); written when one is.
+    var teamHeldNotices: [String] = []
+    /// The Get whose result has not come: a second click meanwhile sends nothing.
+    var teamGetPending: String?
     /// The share dialog, while it is open (v0.27, ZJ2).
     @Published var teamShare: TeamShareSession?
     /// Where the last arrival given a conversation line is kept; the tests give their own.
@@ -1077,6 +1082,7 @@ final class AppModel: ObservableObject {
         // replays may hold it (or the old connection lost it).
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
+        teamReconnected()
         // A `chat.remove` out on the lost connection is unconfirmed: its images stay.
         pendingRemovals = [:]
         extraRoots = []
@@ -1378,6 +1384,7 @@ final class AppModel: ObservableObject {
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
             if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
+            teamShareErrorArrived(error)
             applySpaceError(error)
             applyAppRefusal(error)
             applyMcpError(error)

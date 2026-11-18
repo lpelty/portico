@@ -242,9 +242,11 @@ extension AppModel {
         guard let state = teamState else { return }
         switch kind {
         case .get:
-            guard !state.waiting.isEmpty else { return }
+            guard !state.waiting.isEmpty, teamGetPending == nil else { return }
             // The shares the person was shown; one that arrives after the click waits for its own.
-            send(.teamGet(TeamGet(shares: state.waiting.map(\.id), id: teamRequestId())))
+            let id = teamRequestId()
+            teamGetPending = id
+            send(.teamGet(TeamGet(shares: state.waiting.map(\.id), id: id)))
         case .getting:
             break
         case .unreachable:
@@ -267,23 +269,35 @@ extension AppModel {
 
     /// A new snapshot: the conversation gets one line per arrival, and a new arrival's quiet line shows again.
     func teamStateArrived(_ state: TeamState) {
-        guard let latest = state.latest, let team else { return }
-        guard teamDefaults.string(forKey: Self.teamLatestShownKey) != latest.id else { return }
-        teamDefaults.set(latest.id, forKey: Self.teamLatestShownKey)
-        if let chat = shownChat {
+        teamCatchUp()
+    }
+
+    /// Write what the conversation is owed: the latest arrival's line, once, and any line that was held.
+    /// With no conversation shown nothing is marked as written; it is tried again when one is shown
+    /// (a selection, the next snapshot).
+    func teamCatchUp() {
+        guard let chat = shownChat, let team else { return }
+        if let latest = teamState?.latest, teamDefaults.string(forKey: Self.teamLatestShownKey) != latest.id {
+            teamDefaults.set(latest.id, forKey: Self.teamLatestShownKey)
             appendNotice(TeamStripPresentation.conversationLine(latest, label: team.label), to: chat)
         }
+        let held = teamHeldNotices
+        teamHeldNotices = []
+        for line in held { appendNotice(line, to: chat) }
     }
 
     /// A request's outcome: what was not done is said in the conversation, in the deployment's words.
     func teamResultArrived(_ result: TeamResult) {
-        guard !result.ok, let chat = shownChat, let team else { return }
+        if result.id == teamGetPending { teamGetPending = nil }
+        guard !result.ok, let team else { return }
         var reasons = (result.failed ?? []).map(\.reason)
         if reasons.isEmpty, let reason = result.reason { reasons = [reason] }
         var seen: [String] = []
         for reason in reasons where !seen.contains(reason) { seen.append(reason) }
         guard !seen.isEmpty else { return }
-        appendNotice("\(team.label) · \(seen.joined(separator: " · "))", to: chat)
+        // With no conversation shown the line waits for one, so a failure is never said nowhere.
+        teamHeldNotices.append("\(team.label) · \(seen.joined(separator: " · "))")
+        teamCatchUp()
     }
 
     static let teamLatestShownKey = "team.latestShown"

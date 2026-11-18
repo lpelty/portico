@@ -2327,8 +2327,9 @@ root (the first of `hello.roots`), or absolute when the file is
 elsewhere. The app resolves it that way to open the file, and names a
 file it asks to share the same way.
 
-**Requests are done once.** Every app → gateway kind below that carries
-an `id` is answered by a `team.result` with that `id`. The same `id` sent
+**Requests are done once.** `team.get`, `team.send_now`,
+`team.sending.set`, `team.stop`, `team.resolve` and `team.share.send` are
+each answered by a `team.result` with the request's `id`. The same `id` sent
 again is answered with the first outcome and nothing is repeated; a
 gateway keeps outcomes across a restart for at least a day. An app that
 saw no result sends the same request again and learns what happened.

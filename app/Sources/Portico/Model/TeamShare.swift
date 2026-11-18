@@ -20,6 +20,8 @@ struct TeamShareSession: Equatable, Sendable {
     var sending = false
     /// Why the last Share was not done, in the deployment's words.
     var refusal: String? = nil
+    /// The Share that is out, to ask again by the same id if the connection is lost before its result.
+    var sent: TeamShareSend? = nil
 
     static let title = "Share with team"
     static let noteCaption = "Optional. The note goes with the files, so the team knows what they are for."
@@ -124,15 +126,34 @@ extension AppModel {
         guard var session = teamShare, let message = session.send() else { return }
         session.sending = true
         session.refusal = nil
+        session.sent = message
         teamShare = session
         send(.teamShareSend(message))
     }
 
-    /// Closed or cancelled: nothing is shared and no file was changed.
+    /// Closed or cancelled: nothing is shared and no file was changed. Not once Share was
+    /// pressed: a share under way cannot be called back, so the dialog stays until its result.
     func teamShareCancel() {
-        guard let session = teamShare else { return }
+        guard let session = teamShare, !session.sending else { return }
         teamShare = nil
         send(.teamShareCancel(TeamShareCancel(id: session.id)))
+    }
+
+    /// A new connection: a Share or a Get whose result never came is asked again by the same id.
+    /// The gateway does a request once, so this only learns what happened.
+    func teamReconnected() {
+        teamGetPending = nil
+        if let session = teamShare, session.sending, let sent = session.sent {
+            send(.teamShareSend(sent))
+        }
+    }
+
+    /// The gateway could not carry out the open share's request: the dialog says so and can be used again.
+    func teamShareErrorArrived(_ error: ErrorMessage) {
+        guard var session = teamShare, session.sending, error.id == session.id else { return }
+        session.sending = false
+        session.refusal = error.message
+        teamShare = session
     }
 
     func teamShareDraftArrived(_ draft: TeamShareDraft) {

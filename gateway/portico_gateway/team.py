@@ -502,11 +502,16 @@ class TeamMonitor:
             row = self._row(payload["path"])
             if row is None or row.conflict is None or row.conflict.id != payload["conflict"]:
                 return self._made(False, VERSION_CHANGED, [TeamFailure(path=payload["path"], reason=VERSION_CHANGED)])
-        if name == "get":
-            self._getting = list(payload.get("shares", []))
-            await self.publish()
         try:
             async with self._lock:
+                if name == "get":
+                    # Only what is still offered: a second Get for shares the first one brought in has nothing to do.
+                    offered = {share.id for share in self._source_state.waiting}
+                    payload["shares"] = [share for share in payload.get("shares", []) if share in offered]
+                    if not payload["shares"]:
+                        return self._made(True)
+                    self._getting = list(payload["shares"])
+                    await self.publish()
                 try:
                     answer: SourceAnswer = _parse(SourceAnswer, await self.source.call(name, payload))
                 except NoSource as e:
@@ -608,6 +613,8 @@ class TeamMonitor:
         else:
             # A file may have changed since the check: check again before anything is sent.
             findings, error = await self._findings(draft.paths)
+            if self._drafts.get(id) is not draft:
+                return self._made(False, DRAFT_GONE)  # cancelled while the check ran again: nothing is shared
             if error != draft.check_error or [f.id for f in findings] != [f.id for f in draft.findings]:
                 draft.findings, draft.check_error = findings, error
                 draft.rev += 1

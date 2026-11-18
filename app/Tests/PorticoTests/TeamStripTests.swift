@@ -205,6 +205,39 @@ final class TeamStripTests: XCTestCase {
         XCTAssertEqual(notices(model).count, 2, "a new arrival is a new line")
     }
 
+    func testAnArrivalWithNoConversationShownKeepsItsLineUntilOneIs() {
+        // The gateway's order at launch: the snapshot comes before any conversation is selected.
+        let (model, _) = model()
+        model.selected = nil
+        model.apply(.teamState(state(latest: changed([priya], ["_team/a.md"]))))
+        XCTAssertEqual(notices(model), [], "nowhere to write it yet")
+        model.selected = 1
+        XCTAssertEqual(notices(model).count, 1, "written once a conversation is shown")
+        model.apply(.teamState(state(latest: changed([priya], ["_team/a.md"]))))
+        XCTAssertEqual(notices(model).count, 1, "and only once")
+    }
+
+    func testAFailureWithNoConversationShownIsSaidWhenOneIs() {
+        let (model, _) = model()
+        model.selected = nil
+        model.apply(.teamResult(TeamResult(ok: false, reason: "The team source could not be reached.", id: "team-9")))
+        XCTAssertEqual(notices(model), [])
+        model.selected = 1
+        XCTAssertEqual(notices(model), ["Team knowledge · The team source could not be reached."])
+    }
+
+    func testASecondClickOnGetSendsNothingUntilTheFirstIsAnswered() {
+        let (model, sent) = model()
+        model.apply(.teamState(state(waiting: [share("s-1", priya, ["a.md"])])))
+        model.teamAct(.get)
+        model.teamAct(.get)
+        let gets = sent.frames.compactMap { if case .teamGet(let get) = $0 { get } else { nil } }
+        XCTAssertEqual(gets.count, 1)
+        model.apply(.teamResult(TeamResult(ok: true, id: gets[0].id)))
+        model.teamAct(.get)
+        XCTAssertEqual(sent.frames.compactMap { if case .teamGet(let get) = $0 { get } else { nil } }.count, 2)
+    }
+
     func testTheQuietLineLeavesWhenTheNextMessageIsSent() {
         let (model, _) = model()
         model.apply(.teamState(state(latest: changed([priya], ["_team/a.md"]))))

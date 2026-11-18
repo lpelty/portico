@@ -575,9 +575,16 @@ struct ChangedFileRow: View {
             disclosure: (depth: 0, expanded: nil), selected: isShown
         ) {
             if let at { CompactTime(date: at) }
+            // v0.27: a team file wears its mark wherever its row appears.
+            if let file = model.teamFile(at: path), let state = model.teamState {
+                TeamMarkView(file: file, state: state)
+            }
         }
         .tip(path)
-        .onTapGesture { model.reveal(file: path, in: chat) }
+        .onTapGesture {
+            model.reveal(file: path, in: chat)
+            model.teamOpened(absolutePath: path)
+        }
         .contextMenu {
             Button("Open in viewer") { model.reveal(file: path, in: chat) }
             Button("Add to chat") { model.attach([path], to: chat) }

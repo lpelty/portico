@@ -65,6 +65,10 @@ SAMPLE = Path(__file__).resolve().parents[2] / "examples" / "team-sample" / "tea
 REQUESTS = ("check", "get", "send", "sending", "stop", "resolve", "share_check", "share")
 
 
+def share(id: str) -> dict[str, Any]:
+    return {"id": id, "by": PRIYA, "files": [f"{id}.md"]}
+
+
 def row(path: str, **kw: Any) -> dict[str, Any]:
     return {"path": path, "direction": "in", "rev": "r-1", "shared_by": PRIYA, "shared_at": TS, **kw}
 
@@ -306,8 +310,10 @@ async def test_an_arrival_is_remembered_as_announced_only_once_an_app_was_shown_
 
 async def test_a_request_is_done_once_and_answered_again_after_a_restart(tmp_path: Path) -> None:
     scripted = Scripted()
+    scripted.state["waiting"] = [share("s-1"), share("s-2")]
     scripted.answers["get"] = {"ok": False, "failed": [{"share": "s-2", "reason": "Try again."}], "state": scripted.state}
     mon, _ = monitor(tmp_path, scripted)
+    await mon.check()
     first = await mon.request("req-1", "get", {"shares": ["s-1", "s-2"]})
     assert (first.id, first.ok) == ("req-1", False) and first.failed is not None and first.failed[0].share == "s-2"
     second = await mon.request("req-1", "get", {"shares": ["s-1", "s-2"]})
@@ -320,8 +326,10 @@ async def test_a_request_is_done_once_and_answered_again_after_a_restart(tmp_pat
 
 async def test_the_same_request_sent_twice_at_once_runs_once(tmp_path: Path) -> None:
     scripted = Scripted()
-    scripted.gate = asyncio.Event()
+    scripted.state["waiting"] = [share("s-1")]
     mon, heard = monitor(tmp_path, scripted)
+    await mon.check()
+    scripted.gate = asyncio.Event()
     one = asyncio.create_task(mon.request("req-1", "get", {"shares": ["s-1"]}))
     two = asyncio.create_task(mon.request("req-1", "get", {"shares": ["s-1"]}))
     await asyncio.sleep(0.05)
@@ -330,6 +338,24 @@ async def test_the_same_request_sent_twice_at_once_runs_once(tmp_path: Path) -> 
     results = await asyncio.gather(one, two)
     assert [r.ok for r in results] == [True, True] and len(scripted.named("get")) == 1
     assert heard.states[-1].getting is None
+
+
+async def test_a_second_get_while_the_first_runs_does_not_ask_for_what_already_came(tmp_path: Path) -> None:
+    # A double click: two requests, two ids. The second finds nothing still offered and is done, with no error.
+    scripted = Scripted()
+    scripted.state["waiting"] = [share("s-1")]
+    mon, heard = monitor(tmp_path, scripted)
+    await mon.check()
+    scripted.gate = asyncio.Event()
+    arrived = {"reach": "ok", "waiting": [], "files": [row("_team/s-1.md")]}
+    scripted.answers["get"] = {"ok": True, "state": arrived}
+    first = asyncio.create_task(mon.request("req-a", "get", {"shares": ["s-1"]}))
+    second = asyncio.create_task(mon.request("req-b", "get", {"shares": ["s-1"]}))
+    await asyncio.sleep(0.05)
+    scripted.gate.set()
+    results = await asyncio.gather(first, second)
+    assert [r.ok for r in results] == [True, True] and len(scripted.named("get")) == 1
+    assert heard.states[-1].getting is None and [f.path for f in heard.states[-1].files] == ["_team/s-1.md"]
 
 
 async def test_a_request_the_deployment_cannot_run_is_a_result_not_a_crash(tmp_path: Path) -> None:
@@ -457,6 +483,20 @@ async def test_a_check_that_cannot_finish_offers_share_anyway(tmp_path: Path) ->
     assert anyway.ok and scripted.named("share")[0]["unchecked"] is True
 
 
+async def test_cancel_while_share_checks_again_shares_nothing(tmp_path: Path) -> None:
+    scripted = Scripted()
+    mon, _ = monitor(tmp_path, scripted)
+    await mon.prepare("d-1", ["plan.md"])
+    await settle(mon, "d-1")
+    scripted.gate = asyncio.Event()  # Share's own check, before anything is sent
+    pressed = asyncio.create_task(mon.share("d-1", "2", None, [], False))
+    await asyncio.sleep(0.05)
+    await mon.cancel("d-1")
+    scripted.gate.set()
+    result = await pressed
+    assert not result.ok and scripted.named("share") == [], "cancelled before anything reached the team"
+
+
 async def test_cancel_drops_the_draft_and_nothing_is_shared(tmp_path: Path) -> None:
     scripted = Scripted()
     mon, _ = monitor(tmp_path, scripted)
@@ -531,12 +571,12 @@ async def test_the_sample_share_pause_two_versions_and_stop(tmp_path: Path) -> N
     assert plan.read_text() == original, "the check changes nothing"
     shared = await site.monitor.share("d-1", draft.rev, "The plan", [draft.findings[0].id], False)
     assert shared.ok
-    assert plan.read_text() == "# Plan\n\nShip in December.", "the paragraph was taken out at Share"
+    assert plan.read_text() == "# Plan\n\nShip in December.\n", "only the paragraph went: the rest is as it was"
     (mine,) = site.heard.states[-1].files
     assert (mine.path, mine.direction, mine.shared_by.short) == ("notes/plan.md", "out", "Larry")
 
     # A change here goes out at the next check.
-    plan.write_text(plan.read_text() + "\n\nAnd January.\n")
+    plan.write_text(plan.read_text() + "\nAnd January.\n")
     state = await site.check()
     assert state.files[0].pending is None and state.files[0].rev == "r-2" and state.files[0].sent_at is not None
 
@@ -584,6 +624,96 @@ async def test_the_sample_unreachable_keeps_rows_and_sends_when_reachable_again(
     assert (await site.monitor.request("req-2", "stop", {"paths": ["_team/review-template.md"]})).ok
     state = await site.check()
     assert state.files == [] and state.waiting == [], "a stopped file is not offered again"
+
+
+async def test_the_sample_take_it_out_touches_nothing_else_and_nothing_at_all_when_refused(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    notes = site.root / "notes.md"
+    text = "# Notes\n\n\nFirst.\n\n```\ncode\n\nmore code\n```\n\nPrivate: only for me.\n\nLast.\n"
+    notes.write_text(text)
+    await site.check()
+    await site.monitor.prepare("d-1", ["notes.md"])
+    await settle(site.monitor, "d-1")
+    draft = site.heard.drafts[-1]
+    (found,) = draft.findings
+    assert found.text == "Private: only for me."
+
+    # The team already has a file of this name: the share is refused, and the person's file is untouched.
+    other = tmp_path / "theirs" / "notes.md"
+    other.parent.mkdir()
+    other.write_text("theirs\n")
+    site.sim("share", "--as", "Priya Raman", str(other))
+    refused = await site.monitor.share("d-1", draft.rev, None, [found.id], False)
+    assert not refused.ok and refused.failed is not None and "already has a file" in refused.failed[0].reason
+    assert notes.read_text() == text
+
+    site.sim("remove", "notes.md")
+    done = await site.monitor.share("d-1", site.heard.drafts[-1].rev, None, [found.id], False)
+    assert done.ok
+    assert notes.read_text() == text.replace("\n\nPrivate: only for me.", ""), "the blank lines and the code block are as they were"
+
+
+async def test_the_sample_a_get_after_a_shown_change_announces_only_what_is_new(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    site.sim("seed")
+    state = await site.check()
+    await site.monitor.request("req-1", "get", {"shares": [state.waiting[0].id]})
+    await site.check()  # the app was shown the Get's arrival
+    site.sim("change", "release-calendar.md")
+    state = await site.check()
+    assert state.latest is not None and state.latest.kind == "changed"
+    extra = tmp_path / "b.md"
+    extra.write_text("b\n")
+    site.sim("share", "--as", "Sam Ortiz", str(extra))
+    state = await site.check()  # the change was shown; the new share waits
+    await site.monitor.request("req-2", "get", {"shares": [state.waiting[0].id]})
+    latest = site.heard.states[-1].latest
+    assert latest is not None and (latest.kind, latest.files) == ("new", ["_team/b.md"]), "the shown change is not announced again"
+
+
+async def test_the_sample_never_deletes_changes_that_were_not_sent(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    site.sim("seed")
+    state = await site.check()
+    await site.monitor.request("req-1", "get", {"shares": [state.waiting[0].id]})
+    template = site.root / "_team/review-template.md"
+    assert (await site.monitor.request("req-p", "sending", {"paths": ["_team/review-template.md"], "paused": True})).ok
+    template.write_text("my unsent edit\n")
+    assert (await site.monitor.request("req-s", "stop", {"paths": ["_team/review-template.md"]})).ok
+    assert not template.exists(), "the team's copy leaves the team folder"
+    assert (site.root / "_team/.mine/review-template.md").read_text() == "my unsent edit\n", "the unsent changes are kept"
+
+    calendar = site.root / "_team/release-calendar.md"
+    calendar.write_text("another unsent edit\n")
+    site.sim("reach", "unreachable")
+    await site.check()
+    site.sim("remove", "release-calendar.md")
+    site.sim("reach", "ok")
+    await site.check()
+    assert not calendar.exists() and (site.root / "_team/.mine/release-calendar.md").read_text() == "another unsent edit\n"
+
+
+async def test_the_sample_use_my_version_does_not_overwrite_a_newer_team_version(tmp_path: Path) -> None:
+    site = SampleSite(tmp_path)
+    plan = site.root / "plan.md"
+    plan.write_text("# Plan\n")
+    await site.check()
+    await site.monitor.prepare("d-1", ["plan.md"])
+    await settle(site.monitor, "d-1")
+    assert (await site.monitor.share("d-1", site.heard.drafts[-1].rev, None, [], False)).ok
+    assert (await site.monitor.request("req-p", "sending", {"paths": ["plan.md"], "paused": True})).ok
+    plan.write_text("# Plan\n\nMine.\n")
+    site.sim("change", "--text", "Priya's first.", "plan.md")
+    state = await site.check()
+    conflict = state.files[0].conflict
+    assert conflict is not None
+    site.sim("change", "--text", "Priya's second.", "plan.md")  # after the check the person's choice rests on
+    refused = await site.monitor.request("req-r", "resolve", {"path": "plan.md", "conflict": conflict.id, "use": "mine"})
+    assert not refused.ok
+    assert (site.source / "files" / "plan.md").read_text().endswith("Priya's second.\n"), "the team's newer version is still the team's"
+    now = site.heard.states[-1].files[0].conflict
+    assert now is not None and now.id != conflict.id and plan.read_text().endswith("Priya's second.\n")
+    assert (site.root / now.mine.path).read_text() == "# Plan\n\nMine.\n"
 
 
 # --- the server ---------------------------------------------------------------------------
@@ -677,7 +807,7 @@ async def test_a_share_over_the_socket(team_server: GatewayServer, tmp_path: Pat
         assert isinstance(frames[-1], TeamResult) and frames[-1].ok
         rows = [f for f in frames if isinstance(f, TeamState)][-1].files
         assert [(f.path, f.direction) for f in rows] == [("plan.md", "out")]
-        assert plan.read_text() == "# Plan"
+        assert plan.read_text() == "# Plan\n"
     finally:
         await conn.close()
 
