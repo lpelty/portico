@@ -173,6 +173,7 @@ final class AppModel: ObservableObject {
             if let selected, selected == heldViewer { applyViewerRestore(chat: selected) }
             if let selected { noteThreadSeen(chat: selected) }
             releaseHeldDeploymentMessages()
+            teamCatchUp()
         }
     }
     /// The first `chat.list` of this run has arrived (v0.6). Until then the
@@ -267,6 +268,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var restarting = false
     /// The version the deployment's update check found (`update.available`).
     @Published private(set) var updateVersion: String?
+    /// The team knowledge snapshot (`team.state`); nil until a gateway that has it sends one.
+    @Published private(set) var teamState: TeamState?
+    /// The arrival (`latest.id`) whose quiet strip line has left: a message was sent since it showed.
+    @Published private(set) var teamQuietGone: String?
+    /// Team lines that had no conversation to go to (none was shown); written when one is.
+    var teamHeldNotices: [String] = []
+    /// The Get whose result has not come: a second click meanwhile sends nothing.
+    var teamGetPending: String?
+    /// The share dialog, while it is open (v0.27, ZJ2).
+    @Published var teamShare: TeamShareSession?
+    /// Where the last arrival given a conversation line is kept; the tests give their own.
+    var teamDefaults: UserDefaults = .standard
     /// Per chat, the attachment paths queued in the input bar: the Files
     /// pane and drag-and-drop add here; a send clears the chat's list.
     @Published private(set) var draftAttachments: [Int: [String]] = [:]
@@ -403,7 +416,7 @@ final class AppModel: ObservableObject {
     /// The tab to go back to when the document view closes.
     var filesTabBeforeDocument: FilesTab?
 
-    enum FilesTab: String, Sendable { case folder, bookmarks }
+    enum FilesTab: String, Sendable { case folder, bookmarks, shared }
 
     /// One directory in one root of one chat's Files pane.
     struct FilesKey: Hashable, Sendable {
@@ -1069,6 +1082,7 @@ final class AppModel: ObservableObject {
         // replays may hold it (or the old connection lost it).
         for chat in Array(pendingSends.keys) { pendingSends[chat]?.afterOpen = false }
         hello = incoming
+        teamReconnected()
         // A `chat.remove` out on the lost connection is unconfirmed: its images stay.
         pendingRemovals = [:]
         extraRoots = []
@@ -1356,10 +1370,21 @@ final class AppModel: ObservableObject {
         case .updateAvailable(let update):
             updateVersion = update.version
 
+        case .teamState(let state):
+            teamState = state
+            teamStateArrived(state)
+
+        case .teamResult(let result):
+            if !teamShareResultArrived(result) { teamResultArrived(result) }
+
+        case .teamShareDraft(let draft):
+            teamShareDraftArrived(draft)
+
         case .error(let error):
             // A refused `chat.remove` keeps the chat's images (v0.19 §8.2).
             if let id = error.id { pendingRemovals[id] = nil }
             lastError = error
+            teamShareErrorArrived(error)
             applySpaceError(error)
             applyAppRefusal(error)
             applyMcpError(error)
@@ -1840,7 +1865,7 @@ final class AppModel: ObservableObject {
         case .hello, .chatList, .chatState, .chatHistory, .chatLive, .filesList, .filesRoots, .statusSet, .error,
             .contextUsage, .sessionRenewed, .filesResults, .configStale, .updateAvailable, .sessionLogged, .servicesStatus,
             .chatQueued, .chatQueue, .chatCommands, .viewerAct, .spacesList, .models, .threadProposal, .appCallResult, .mcpServers,
-            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait:
+            .pluginsState, .pluginsDetails, .pluginsOptions, .deploymentMessage, .signinWait, .teamState, .teamResult, .teamShareDraft:
             break
         }
     }
@@ -2544,6 +2569,8 @@ final class AppModel: ObservableObject {
         pendingSends[chat] = PendingSend(
             id: id, text: trimmed, attachments: attachments, fromComposer: fromComposer, afterOpen: isLoading(chat: chat))
         send(.messageSend(MessageSend(chat: chat, text: trimmed, attachments: attachments, id: id)))
+        // v0.27: the quiet team line leaves when the next message is sent.
+        teamQuietGone = teamState?.latest?.id
         if fromComposer {
             draftAttachments[chat] = nil
             drafts[chat] = nil

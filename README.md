@@ -321,6 +321,10 @@ def services_status():               # v0.8: the services menu's rows instead of
 
 async def restart_services():        # v0.8: Restart all services instead of [deployment] restart
     ...                              # sync or async; return False or raise = failed
+
+def team_check(request):             # v0.27: team knowledge, instead of [team] check; sync or async
+    return {"reach": "ok", "waiting": [], "files": []}   # likewise team_get, team_send, team_sending,
+                                     # team_stop, team_resolve, team_share_check, team_share
 ```
 
 `ctx` carries `chat` (the number), `folder`, `log_prompt`, `send` and
@@ -329,7 +333,10 @@ session live);
 `chat` is the session's `ChatSummary` (title, created, compactions, ...).
 For `on_renew`, `search`, `services_status` and `restart_services` the
 last plug-in listed that defines one wins; the last two take precedence
-over `[deployment]`.
+over `[deployment]`. The same holds for each `team_` hook over its
+`[team]` command; `gateway/portico_gateway/team.py` gives what each one
+is asked and answers, and `examples/team-sample/` answers all eight from
+one folder.
 A module that is missing, fails to import, or names another API number
 stops the gateway at start with one line saying which; `bin/doctor` checks
 each configured plug-in the same way. `examples/plugin/` holds a complete

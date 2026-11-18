@@ -296,6 +296,21 @@ from .messages import (
     ViewerResult,
     ViewerSettings,
     ServicesStatus,
+    TEAM_CAPABILITY,
+    TeamCheck,
+    TeamGet,
+    TeamIntervalSet,
+    TeamResolve,
+    TeamResult,
+    TeamSeen,
+    TeamSendingSet,
+    TeamSendNow,
+    TeamShareCancel,
+    TeamShareDraft,
+    TeamSharePrepare,
+    TeamShareSend,
+    TeamState,
+    TeamStop,
     SpaceAct,
     SpaceInfo,
     SpaceRefresh,
@@ -349,6 +364,8 @@ from . import spaces as spaces_mod
 from .spaces import Space, SpaceError, SpacesWatcher
 from .viewer import MARKS_CAPABILITY, SHOW_CAPABILITY, STOPPED, VIEWER_CAPABILITY, ViewerBridge
 from .titles import REPLY_CHARS, TITLE_TIMEOUT, Titler, generate_title
+from .team import INTERVALS as TEAM_INTERVALS
+from .team import TeamMonitor, TeamSource
 from .update import UPDATE_CHECK_SECONDS, check_for_update
 
 log = logging.getLogger(__name__)
@@ -642,6 +659,8 @@ def for_app(msg: Any, capabilities: frozenset[str]) -> Any:
             msg = msg.model_copy(
                 update={"services": [s.model_copy(update={"state": "down"}) if s.state == "stuck" else s for s in msg.services]}
             )
+    if isinstance(msg, (TeamState, TeamResult, TeamShareDraft)) and TEAM_CAPABILITY not in capabilities:
+        return None
     if isinstance(msg, SpacesList) and SPACES_CAPABILITY not in capabilities:
         return None  # v0.12: an app that did not declare spaces.v1 cannot decode spaces.list
     if isinstance(msg, DeploymentMessage) and DEPLOYMENT_MESSAGE_CAPABILITY not in capabilities:
@@ -1148,6 +1167,15 @@ class GatewayServer:
             restart_all=restart_all,
             status_label=status_label,
         )
+        # v0.27: team knowledge. A plug-in's ``team_`` hooks, else the ``[team]`` commands; started with ``serve``.
+        self.team = TeamMonitor(
+            TeamSource(config.team.commands(), self.plugins.team, timeout),
+            state.path,
+            publish=self._publish_team,
+            publish_draft=self.broadcast,
+            label=config.team.label,
+            folder=config.team.folder,
+        )
         # Lifecycle: ``before_first_chat`` runs once per launch; ``stop`` runs once.
         self._preflight_done = False
         self._preflight_lock = asyncio.Lock()
@@ -1229,6 +1257,20 @@ class GatewayServer:
         self.register("service.restart", self.on_service_restart)
         self.register("services.restart_all", self.on_services_restart_all)
         self.register("sessions.clear", self.on_sessions_clear)
+        for type_name, handler in (
+            ("team.check", self.on_team_check),
+            ("team.interval.set", self.on_team_interval_set),
+            ("team.seen", self.on_team_seen),
+            ("team.get", self.on_team_request),
+            ("team.send_now", self.on_team_request),
+            ("team.sending.set", self.on_team_request),
+            ("team.stop", self.on_team_request),
+            ("team.resolve", self.on_team_request),
+            ("team.share.prepare", self.on_team_share_prepare),
+            ("team.share.send", self.on_team_request),
+            ("team.share.cancel", self.on_team_share_cancel),
+        ):
+            self.register(type_name, handler)
         self.register("thread.start", self.on_thread_start)
         self.register("thread.dismiss", self.on_thread_dismiss)
         self.register("thread.close", self.on_thread_close)
@@ -1333,6 +1375,8 @@ class GatewayServer:
             self._spawn(self._watch_updates(), name="portico-update-check")
         if self.services.active:
             self._spawn(self.services.run(), name="portico-services")
+        if self.team.active:
+            self._spawn(self.team.run(), name="portico-team")
         if self.spaces_watcher is not None:
             self.spaces_watcher.spaces = await asyncio.to_thread(self.spaces_watcher.scan)
             self._spawn(self.spaces_watcher.run(), name="portico-spaces")
@@ -1354,6 +1398,7 @@ class GatewayServer:
         if app is not None:
             await app.close(CLOSE_GOING_AWAY, "gateway stopping")
         self._cancel_preflight()
+        self.team.close()
         for task in list(self._tasks):
             task.cancel()
         probe, self._probe_task = self._probe_task, None
@@ -1641,6 +1686,11 @@ class GatewayServer:
         await self._send(conn, ServicesStatus(ts=_now(), services=self.services.snapshot()))
         if self.spaces_watcher is not None:
             await self._send(conn, self._spaces_frame(self.spaces_watcher.spaces))
+        if self.team.active and TEAM_CAPABILITY in _capabilities(conn):
+            # v0.27: team knowledge as it stands; an arrival that waited for an app is announced now.
+            snapshot = self.team.snapshot()
+            await self._send(conn, snapshot)
+            self.team.note_delivered(snapshot, True)
         # v0.22: from here the poll may send this connection messages; before, one
         # could have gone out ahead of ``hello`` and been refused by the app.
         _mark_hello_sent(conn)
@@ -3904,6 +3954,85 @@ class GatewayServer:
         except Exception as e:
             log.exception("services: restart all failed")
             await self._send(conn, self.error("services.restart_failed", f"services.restart_all failed: {e}", id=msg.id))
+
+    # --- handlers: team knowledge (v0.27) ---------------------------------------------
+
+    async def _publish_team(self, state: TeamState) -> bool:
+        """Send the snapshot to the attached app; whether an app that draws team knowledge got it."""
+        app = self._app
+        if app is None or TEAM_CAPABILITY not in _capabilities(app):
+            return False
+        await self._send(app, state)
+        return True
+
+    def _team_on(self) -> TeamMonitor:
+        if not self.team.active:
+            raise ProtocolError("team.off", "this deployment has no team knowledge")
+        return self.team
+
+    async def on_team_check(self, msg: TeamCheck, conn: ServerConnection) -> None:
+        """Check now; the ``team.state`` that follows is the answer."""
+        self._team_on().check_now()
+
+    async def on_team_interval_set(self, msg: TeamIntervalSet, conn: ServerConnection) -> None:
+        team = self._team_on()
+        if msg.minutes not in TEAM_INTERVALS:
+            allowed = ", ".join(str(m) for m in TEAM_INTERVALS)
+            raise ProtocolError("team.interval", f"the interval must be one of {allowed} minutes")
+        await team.set_interval(msg.minutes)
+
+    async def on_team_seen(self, msg: TeamSeen, conn: ServerConnection) -> None:
+        await self._team_on().seen(msg.path, msg.rev)
+
+    async def on_team_share_prepare(self, msg: TeamSharePrepare, conn: ServerConnection) -> None:
+        team = self._team_on()
+        if not msg.id:
+            raise ProtocolError("team.no_id", "team.share.prepare needs an id: it names the draft")
+        refused = await team.prepare(msg.id, msg.paths)
+        if refused is not None:
+            await self._send(conn, refused)
+
+    async def on_team_share_cancel(self, msg: TeamShareCancel, conn: ServerConnection) -> None:
+        if msg.id:
+            await self._team_on().cancel(msg.id)
+
+    async def on_team_request(
+        self, msg: TeamGet | TeamSendNow | TeamSendingSet | TeamStop | TeamResolve | TeamShareSend, conn: ServerConnection
+    ) -> None:
+        """A request the deployment carries out, done once per ``id`` and answered by ``team.result``.
+
+        It runs beside the app's other frames: a Get may take as long as the deployment's command does.
+        """
+        self._team_on()
+        if not msg.id:
+            raise ProtocolError("team.no_id", f"{msg.type} needs an id: its team.result answers by it")
+        self._spawn(self._team_task(msg, conn), name="portico-team-request")
+
+    async def _team_task(
+        self, msg: TeamGet | TeamSendNow | TeamSendingSet | TeamStop | TeamResolve | TeamShareSend, conn: ServerConnection
+    ) -> None:
+        team, id = self.team, msg.id or ""
+        try:
+            if isinstance(msg, TeamGet):
+                result = await team.request(id, "get", {"shares": msg.shares})
+            elif isinstance(msg, TeamSendNow):
+                result = await team.request(id, "send", {"paths": msg.paths})
+            elif isinstance(msg, TeamSendingSet):
+                result = await team.request(id, "sending", {"paths": msg.paths, "paused": msg.paused})
+            elif isinstance(msg, TeamStop):
+                result = await team.request(id, "stop", {"paths": msg.paths})
+            elif isinstance(msg, TeamResolve):
+                result = await team.request(id, "resolve", {"path": msg.path, "conflict": msg.conflict, "use": msg.use})
+            else:
+                result = await team.share(id, msg.rev, msg.note, msg.remove, bool(msg.unchecked))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.exception("%s failed", msg.type)
+            await self._send(conn, self.error("gateway.error", f"{msg.type} failed: {e}", id=msg.id))
+            return
+        # The app that asked may be gone; the one attached now hears the outcome.
+        await self.broadcast(result)
 
     async def on_session_mode(self, msg: SessionMode, conn: ServerConnection) -> None:
         """Change the session's permission mode: the running engine at once, every later engine from the record.

@@ -54,6 +54,8 @@ TASKS_CAPABILITY = "tasks.v1"
 # deployment (``deployment.message``) above the message box. Only such an app
 # is sent one; with none attached, the gateway keeps them for the next hello.
 DEPLOYMENT_MESSAGE_CAPABILITY = "messages.deployment.v1"
+# v0.27: the app can draw team knowledge; ``team.*`` goes only to such an app.
+TEAM_CAPABILITY = "team.v1"
 # v0.25: replayed history (``chat.history`` from the transcript) carries each
 # entry's real time, and ``no_time`` where no entry matched; an older gateway
 # stamps its replay with the time of the replay.
@@ -902,6 +904,8 @@ class HelloServer(Envelope):
     # v0.25: the Labs items (built-in Preview features the config turned on,
     # then plug-ins' Local items). Absent when there are none, and from an older gateway.
     labs: list[LabItem] | None = None
+    # v0.27: the deployment has team knowledge. Absent when it has none, and from an older gateway.
+    team: TeamHello | None = None
 
 
 class ChatList(Envelope):
@@ -1246,6 +1250,230 @@ class UpdateAvailable(Envelope):
 
     type: Literal["update.available"] = "update.available"
     version: str
+
+
+# --- team knowledge (v0.27, ``team.v1``) --------------------------------------
+#
+# The deployment makes every identifier here (``rev``, a share's ``id``, a
+# conflict's ``id``, an arrival's ``id``); the app hands them back unread.
+
+
+class TeamHello(Strict):
+    """``hello.team``: the deployment has team knowledge. Absent, the app shows none of it."""
+
+    label: str
+    folder: str
+    intervals: list[int]
+
+
+class TeamPerson(Strict):
+    """``name`` is the display name; ``short`` is what the strip uses. The app never shortens a name."""
+
+    name: str
+    short: str
+
+
+class TeamShare(Strict):
+    """One share: who, which files (names in ``waiting``, paths in ``latest``), and the note that came with it."""
+
+    id: str
+    by: TeamPerson
+    files: list[str]
+    note: str | None = None
+
+
+class TeamLatest(Strict):
+    """The last arrival the agent can now use. One line in the conversation per ``id``."""
+
+    id: str
+    kind: Literal["new", "changed"]
+    at: str
+    summary: str
+    files: list[str]
+    shares: list[TeamShare] | None = None
+    by: list[TeamPerson] | None = None
+
+
+class TeamSince(Strict):
+    """``since``: for ``pending`` the earliest change not yet sent; for ``paused`` when the pause began."""
+
+    since: str
+
+
+class TeamMine(Strict):
+    path: str
+    at: str
+
+
+class TeamConflict(Strict):
+    """Two versions: the row's ``path`` holds the team's, ``mine.path`` the person's saved one."""
+
+    id: str
+    mine: TeamMine
+
+
+class TeamFile(Strict):
+    """One file under an agreement on this Mac. Each fact stands alone; the app derives the one mark."""
+
+    path: str
+    direction: Literal["in", "out"]
+    rev: str
+    shared_by: TeamPerson
+    shared_at: str
+    changed_by: TeamPerson | None = None
+    changed_at: str | None = None
+    unread: bool = False
+    pending: TeamSince | None = None
+    paused: TeamSince | None = None
+    sent_at: str | None = None
+    conflict: TeamConflict | None = None
+    summary: str | None = None
+
+
+class TeamState(Envelope):
+    """Everything the app draws for team knowledge, in one snapshot (``team.v1``).
+
+    Sent after ``hello`` and whenever anything in it changes; each replaces
+    the last. A reading, not history: no ``seq``.
+    """
+
+    type: Literal["team.state"] = "team.state"
+    reach: Literal["ok", "unreachable", "refused", "never"]
+    reach_reason: str | None = None
+    last_ok_at: str | None = None
+    next_check_at: str
+    interval_minutes: int
+    waiting: list[TeamShare] = []
+    getting: list[str] | None = None
+    latest: TeamLatest | None = None
+    files: list[TeamFile] = []
+
+
+class TeamFailure(Strict):
+    """What a request could not do: a file (``path``) or a share (``share``), and one plain line."""
+
+    path: str | None = None
+    share: str | None = None
+    reason: str
+
+
+class TeamResult(Envelope):
+    """The outcome of a ``team.*`` request, by its ``id``. ``ok`` only when all of it was done.
+
+    The same ``id`` sent again is answered with the first outcome and nothing is repeated.
+    """
+
+    type: Literal["team.result"] = "team.result"
+    ok: bool
+    reason: str | None = None
+    failed: list[TeamFailure] | None = None
+
+
+class TeamFinding(Strict):
+    id: str
+    path: str
+    text: str
+    location: str
+
+
+class TeamShareDraft(Envelope):
+    """The check for personal material on a share being prepared. Each replaces the last for its ``id``.
+
+    With ``chat`` the gateway started it (the person asked in that
+    conversation) and the app draws a card there instead of the dialog.
+    """
+
+    type: Literal["team.share.draft"] = "team.share.draft"
+    rev: str
+    paths: list[str]
+    note: str | None = None
+    checking: bool
+    # The check could not finish: one plain line. The dialog then offers Share anyway.
+    check_error: str | None = None
+    findings: list[TeamFinding] = []
+
+
+class TeamGet(Envelope):
+    """Get and accept these shares, by the ids the person was shown."""
+
+    type: Literal["team.get"] = "team.get"
+    shares: list[str]
+
+
+class TeamCheck(Envelope):
+    """Check now."""
+
+    type: Literal["team.check"] = "team.check"
+
+
+class TeamIntervalSet(Envelope):
+    """Set how often the check runs: one of ``hello.team.intervals``. Kept across restarts."""
+
+    type: Literal["team.interval.set"] = "team.interval.set"
+    minutes: int
+
+
+class TeamSeen(Envelope):
+    """The person opened this version of the file. No result."""
+
+    type: Literal["team.seen"] = "team.seen"
+    path: str
+    rev: str
+
+
+class TeamSendNow(Envelope):
+    """Send these files' pending changes at once."""
+
+    type: Literal["team.send_now"] = "team.send_now"
+    paths: list[str]
+
+
+class TeamSendingSet(Envelope):
+    """Pause or resume sending for these files."""
+
+    type: Literal["team.sending.set"] = "team.sending.set"
+    paths: list[str]
+    paused: bool
+
+
+class TeamStop(Envelope):
+    """Stop syncing these files on this Mac."""
+
+    type: Literal["team.stop"] = "team.stop"
+    paths: list[str]
+
+
+class TeamResolve(Envelope):
+    """Choose between two versions: the person's (``mine``) or the team's (``team``)."""
+
+    type: Literal["team.resolve"] = "team.resolve"
+    path: str
+    conflict: str
+    use: Literal["mine", "team"]
+
+
+class TeamSharePrepare(Envelope):
+    """The person chose Share on these files. Nothing is sent to the team. ``id`` names the draft."""
+
+    type: Literal["team.share.prepare"] = "team.share.prepare"
+    paths: list[str]
+
+
+class TeamShareSend(Envelope):
+    """The person pressed Share on the draft ``id`` at ``rev``. Only now does anything reach the team."""
+
+    type: Literal["team.share.send"] = "team.share.send"
+    rev: str
+    note: str | None = None
+    remove: list[str] = []
+    # Share anyway: the person saw ``check_error`` and chose to share without the check.
+    unchecked: bool | None = None
+
+
+class TeamShareCancel(Envelope):
+    """The draft ``id`` was closed. Nothing is shared and no file was changed."""
+
+    type: Literal["team.share.cancel"] = "team.share.cancel"
 
 
 class AgentCommand(Strict):
@@ -1753,6 +1981,17 @@ CLIENT_TYPES: tuple[type[Envelope], ...] = (
     SigninOpen,
     SigninStop,
     SigninCode,
+    TeamGet,
+    TeamCheck,
+    TeamIntervalSet,
+    TeamSeen,
+    TeamSendNow,
+    TeamSendingSet,
+    TeamStop,
+    TeamResolve,
+    TeamSharePrepare,
+    TeamShareSend,
+    TeamShareCancel,
 )
 
 SERVER_TYPES: tuple[type[Envelope], ...] = (
@@ -1806,6 +2045,9 @@ SERVER_TYPES: tuple[type[Envelope], ...] = (
     AppCancelled,
     AppCallResult,
     SigninWait,
+    TeamState,
+    TeamResult,
+    TeamShareDraft,
     Error,
 )
 
@@ -1899,7 +2141,7 @@ def example_messages() -> dict[str, BaseModel]:
     """One hand-filled example per message type, keyed ``<direction>.<type>``."""
     examples: list[BaseModel] = [
         # app -> gateway
-        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY, SIGNIN_CAPABILITY]),
+        HelloClient(ts=_TS, app_version="0.23.0", capabilities=["agents.v1", "queue.v1", "viewer.v1", "spaces.v1", "viewer.marks.v1", "models.v1", "threads.v1", "viewer.show.v1", SERVICES_STUCK_CAPABILITY, "apps.v1", "messages.attachments.v1", "files.extra.v1", "files.edited.v1", TASKS_CAPABILITY, DEPLOYMENT_MESSAGE_CAPABILITY, COMMENTS_CAPABILITY, SIGNIN_CAPABILITY, TEAM_CAPABILITY]),
         ChatNew(ts=_TS, id="req-1", folder=_FOLDER),
         ChatOpen(ts=_TS, chat=1, since=41),
         ChatStop(ts=_TS, chat=1),
@@ -1962,6 +2204,17 @@ def example_messages() -> dict[str, BaseModel]:
         SigninOpen(ts=_TS, chat=1),
         SigninStop(ts=_TS, chat=1),
         SigninCode(ts=_TS, chat=1, code="pasted-from-the-browser"),
+        TeamGet(ts=_TS, id="req-50", shares=["share-7"]),
+        TeamCheck(ts=_TS),
+        TeamIntervalSet(ts=_TS, minutes=30),
+        TeamSeen(ts=_TS, path="_team/release-calendar.md", rev="r-41"),
+        TeamSendNow(ts=_TS, id="req-51", paths=["research/round-2/Research plan.md"]),
+        TeamSendingSet(ts=_TS, id="req-52", paths=["research/round-2/Research plan.md"], paused=True),
+        TeamStop(ts=_TS, id="req-53", paths=["_team/review-template.md"]),
+        TeamResolve(ts=_TS, id="req-54", path="specs/export-workaround.md", conflict="c-3", use="mine"),
+        TeamSharePrepare(ts=_TS, id="draft-9", paths=["research/round-2/Research plan.md", "research/round-2/interview-guide.md"]),
+        TeamShareSend(ts=_TS, id="draft-9", rev="d-2", note="Round 2 plan and guide.", remove=["f-1"]),
+        TeamShareCancel(ts=_TS, id="draft-9"),
         SessionLog(ts=_TS, id="req-6", chat=14),
         ServiceRestart(ts=_TS, id="req-7", service="memory"),
         ServicesRestartAll(ts=_TS, id="req-8"),
@@ -2370,6 +2623,76 @@ def example_messages() -> dict[str, BaseModel]:
             ts=_TS, chat=1, turn=4, state="waiting", kind="aws-sso", title="Sign in again to continue",
             body="Your sign-in to AWS has run out. Sign in in your browser; this conversation carries on by itself when you're done.",
             can_open=True, started=_TS, url="https://device.sso.us-east-1.amazonaws.com/", code="QKXW-RTBN",
+        ),
+        TeamState(
+            ts=_TS,
+            reach="ok",
+            last_ok_at=_TS,
+            next_check_at=_TS,
+            interval_minutes=15,
+            waiting=[
+                TeamShare(
+                    id="share-7",
+                    by=TeamPerson(name="Priya Raman", short="Priya"),
+                    files=["Research plan.md", "interview-guide.md"],
+                    note="Round 2 plan and guide. The final index is waiting on your corpus list.",
+                )
+            ],
+            latest=TeamLatest(
+                id="a-12",
+                kind="changed",
+                at=_TS,
+                summary="_team/_summary.md",
+                files=["specs/export-workaround.md"],
+                by=[TeamPerson(name="Priya Raman", short="Priya")],
+            ),
+            files=[
+                TeamFile(
+                    path="specs/export-workaround.md",
+                    direction="out",
+                    rev="r-12",
+                    shared_by=TeamPerson(name="Larry Example", short="Larry"),
+                    shared_at=_TS,
+                    changed_by=TeamPerson(name="Priya Raman", short="Priya"),
+                    changed_at=_TS,
+                    unread=True,
+                    summary="_team/_summary.md",
+                ),
+                TeamFile(
+                    path="research/round-2/Research plan.md",
+                    direction="out",
+                    rev="r-3",
+                    shared_by=TeamPerson(name="Larry Example", short="Larry"),
+                    shared_at=_TS,
+                    pending=TeamSince(since=_TS),
+                    sent_at=_TS,
+                ),
+                TeamFile(
+                    path="_team/release-calendar.md",
+                    direction="in",
+                    rev="r-41",
+                    shared_by=TeamPerson(name="Sam Castellanos", short="Sam"),
+                    shared_at=_TS,
+                    paused=TeamSince(since=_TS),
+                    conflict=TeamConflict(id="c-3", mine=TeamMine(path="_team/.mine/release-calendar.md", at=_TS)),
+                ),
+            ],
+        ),
+        TeamResult(ts=_TS, id="req-50", ok=False, failed=[TeamFailure(share="share-8", reason="The file could not be downloaded.")]),
+        TeamShareDraft(
+            ts=_TS,
+            id="draft-9",
+            rev="d-2",
+            paths=["research/round-2/Research plan.md", "research/round-2/interview-guide.md"],
+            checking=False,
+            findings=[
+                TeamFinding(
+                    id="f-1",
+                    path="research/round-2/Research plan.md",
+                    text="Names a colleague and how they handled the last round.",
+                    location="paragraph 3",
+                )
+            ],
         ),
         Error(ts=_TS, chat=1, id="req-2", code="chat.busy", message="a turn is already running in chat 1"),
     ]

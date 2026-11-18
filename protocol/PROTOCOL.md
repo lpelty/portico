@@ -104,7 +104,8 @@ with `task`; see Subagents and workflows); v0.22: `messages.deployment.v1`
 `comments.v1` (it shows and writes comments in Markdown files; see
 [Comments](#comments-v023)), declared for future use; v0.25: `signin.v1`
 (it docks the sign-in card from `signin.wait`; see
-[Signing in again](#signing-in-again-v025)). Absent
+[Signing in again](#signing-in-again-v025)); v0.27: `team.v1` (it draws
+team knowledge; see [Team knowledge](#team-knowledge-v027)). Absent
 (an older app) is the empty list. A gateway before v0.10 is strict about
 fields and refuses a `hello` carrying `capabilities` with
 `error code=protocol.invalid`; an app that may meet one sends it only to a
@@ -2295,6 +2296,185 @@ running sign-in command's standard input. Never logged. Refused with an
 (the wait's kind takes no pasted code: only `wants_code` kinds do),
 `signin.invalid_code` (not one line of printable ASCII, or over 256
 characters), `signin.not_running` (no sign-in command is running).
+
+## Team knowledge *(v0.27)*
+
+A deployment may keep files that a team shares: a person shares a file
+once and its changes then go to the team by themselves; a person accepts
+a shared file once and it then stays in step by itself. The app draws
+this (a notice in the strip, a mark on a file's row, a Shared list, a
+share dialog) and asks for the few things a person decides. It never
+knows what the team source is, how a file is indexed, how a change is
+detected or sent, where a second version is kept, or what counts as
+personal: the deployment answers, through the gateway.
+
+**Capability.** An app that draws this lists `team.v1` in its `hello`. A
+gateway sends the kinds below only to such an app. A gateway whose
+deployment has team knowledge says so in its own `hello`:
+`team?: {label, folder, intervals}`. `label` is the deployment's name for
+it ("Team knowledge"); the app writes no name of its own. `folder` is
+where files from other people live (`_team`). `intervals` is the list of
+check intervals, in minutes, the setting offers. Without `hello.team` the
+app shows none of this.
+
+**Identifiers.** `rev`, a share's `id`, a conflict's `id` and an
+arrival's `id` are opaque strings the deployment makes. The app hands
+them back and never reads them. A person is `{name, short}`: the display
+name, and the one a short line uses. The app never shortens a name.
+
+**Paths.** A `path` in these kinds is relative to the deployment's first
+root (the first of `hello.roots`), or absolute when the file is
+elsewhere. The app resolves it that way to open the file, and names a
+file it asks to share the same way.
+
+**Requests are done once.** `team.get`, `team.send_now`,
+`team.sending.set`, `team.stop`, `team.resolve` and `team.share.send` are
+each answered by a `team.result` with the request's `id`. The same `id` sent
+again is answered with the first outcome and nothing is repeated; a
+gateway keeps outcomes across a restart for at least a day. An app that
+saw no result sends the same request again and learns what happened.
+One exception: a `team.share.send` carries its draft's `id`, so a refused
+one is not kept and the person's next Share on that draft is carried out;
+only a Share that was done is answered again without repeating it.
+
+**The reference gateway.** It asks the deployment through a `[team]`
+table (one command per request: `check`, `get`, `send`, `sending`,
+`stop`, `resolve`, `share_check`, `share`) or a plug-in's hooks of the
+same names with `team_` in front, which take precedence. Each reads its
+request as JSON and answers in JSON; `gateway/portico_gateway/team.py`
+gives each shape, [CONFIGURATION.md](../CONFIGURATION.md) the keys, and
+`examples/team-sample/` a stand-in team source that answers all eight.
+The gateway itself keeps the timer, the chosen interval, which versions
+the person has opened, and each request's outcome.
+
+### `team.state` — `TeamState`
+Everything the app draws, in one snapshot. Sent after `hello` and
+whenever anything in it changes; each replaces the last. A reading, not
+history: no `seq`.
+
+- `reach`: `ok`, `unreachable` or `refused`, how the last check ended;
+  `never` before the first. `reach_reason?`: one plain line when it is
+  `unreachable` or `refused`.
+- `last_ok_at?`: when a check last succeeded. `next_check_at`: when the
+  next one runs. `interval_minutes`: the interval in force; this is the
+  one place it is stated.
+- `waiting: [{id, by, files, note?}]`: the shares the person has not
+  accepted. `files` are names. Nothing in `waiting` is on the person's
+  Mac in any form the agent can read, and a file the person stopped
+  syncing is never offered here again.
+- `getting?`: the ids of the shares a `team.get` is bringing in now.
+- `latest?: {id, kind, at, summary, files, shares?, by?}`: the last
+  arrival the agent can now use. `kind` is `new` (after a `team.get`;
+  `shares` repeats the accepted entries with their notes) or `changed`
+  (arrived by itself; `by` lists the people). `files` are paths.
+  `summary` is the path of the one change summary, with a part for each
+  share when there were several. Set only when the deployment says the
+  files are in use, never when a download ends. Only the latest is kept:
+  arrivals while no app is attached are joined into one.
+- `files`: one row per file under an agreement on this Mac (below).
+
+A check that fails sets `reach` and leaves `last_ok_at` alone; changes
+waiting to go out stay waiting and go at the first check that succeeds.
+
+The app shows one line in the conversation for each `latest.id` it has
+not shown before, so a repeated snapshot adds none. While `reach` is not
+`ok` it calls no file up to date.
+
+**A file's row.** Each fact stands alone; none hides another.
+
+| Field | Meaning |
+|---|---|
+| `path` | The file, as `files.list` names it. An `out` file is wherever the person keeps it; an `in` file is under `hello.team.folder` |
+| `direction` | `out` (the person shared it) or `in` (it came from someone else) |
+| `rev` | The version now at `path` |
+| `shared_by`, `shared_at` | Who first shared it, and when |
+| `changed_by?`, `changed_at?` | The last change that arrived from someone else |
+| `unread` | A change arrived that the person has not opened |
+| `pending?` | `{since}`: the file changed here and has not gone out; `since` is the earliest such change |
+| `paused?` | `{since}`: sending is paused for this file |
+| `sent_at?` | When this Mac's changes last went out |
+| `conflict?` | `{id, mine: {path, at}}`: two versions. `path` holds the team's; `mine.path` is the person's saved version, readable as any file is |
+| `summary?` | The change summary, when the one kept covers this file's last arrival |
+
+The app shows one mark per row, the first of these that holds:
+`conflict`, `paused`, `pending`, `unread`, otherwise in step.
+
+Rules the gateway keeps: while a file has a `conflict`, nothing of it
+goes out and its saved version is removed only by `team.resolve`; a
+further change from the team replaces the version at `path` and gives
+the conflict a new `id`. A pause holds outgoing changes only and
+survives a conflict and its resolution. A file removed from the team
+source loses its row at the next check: an `in` copy leaves the team
+folder, an `out` file stays where it is as an ordinary file, and a saved
+version is left where it is.
+
+### `team.result` — `TeamResult`
+`id`, `ok`, `reason?`, `failed?: [{path?, share?, reason}]`. `ok` is true
+only when everything asked was done; otherwise `failed` names what was
+not, and the rest was done. A `team.state` follows any change.
+
+### `team.get` — `TeamGet` *(app → gateway)*
+`id`, `shares`: get and accept these shares, by the ids the person was
+shown. A share that arrives after the click waits for its own. A share
+comes in whole or stays in `waiting`; when one of several fails, the
+others are accepted and `team.result` names the one that was not.
+
+### `team.check` — `TeamCheck` *(app → gateway)*
+Check now.
+
+### `team.interval.set` — `TeamIntervalSet` *(app → gateway)*
+`minutes`: one of `hello.team.intervals`. Kept across restarts; answered
+by the `team.state` that follows.
+
+### `team.seen` — `TeamSeen` *(app → gateway)*
+`path`, `rev`: the person opened this version. `unread` clears only if
+`rev` is still the row's. No result.
+
+### `team.send_now` — `TeamSendNow` *(app → gateway)*
+`id`, `paths`: send these files' pending changes at once, not at the
+next check. A paused file is refused with a reason.
+
+### `team.sending.set` — `TeamSendingSet` *(app → gateway)*
+`id`, `paths`, `paused`: pause or resume sending. A send already under
+way finishes; the pause holds from the next one.
+
+### `team.stop` — `TeamStop` *(app → gateway)*
+`id`, `paths`: stop syncing these files on this Mac. An `in` file leaves
+the team folder and what the agent retrieves; an `out` file stays in
+place as an ordinary file. Nobody else's copy changes. Refused for a
+file with a `conflict`: the person chooses a version first.
+
+### `team.resolve` — `TeamResolve` *(app → gateway)*
+`id`, `path`, `conflict`, `use`. `use` is `mine` (the person's version
+becomes the team's, sent at once whether or not the file is paused) or
+`team` (the saved version is discarded). Refused, with nothing
+discarded, when `conflict` is no longer the row's id. To compare, the
+app reads `path` and `mine.path`.
+
+### `team.share.prepare` — `TeamSharePrepare` *(app → gateway)*
+`id`, `paths`: the person chose to share these files. Nothing is sent to
+the team. `id` names the draft from here on.
+
+### `team.share.draft` — `TeamShareDraft`
+`id`, `rev`, `paths`, `note?`, `checking`, `check_error?`,
+`findings: [{id, path, text, location}]`, `chat?`. The deployment's
+check for personal material. Sent again with a new `rev` whenever it
+changes (`checking` going false, or a file changing under the draft);
+each replaces the last. `check_error` is one plain line when the check
+could not finish. With `chat` the gateway started the draft because the
+person asked in that conversation, and `note` is the agent's.
+
+### `team.share.send` — `TeamShareSend` *(app → gateway)*
+`id`, `rev`, `note?`, `remove`, `unchecked?`: the person pressed Share.
+Only now does anything reach the team source. Each finding id in
+`remove` is taken out of the person's own file first, since that file is
+the shared file. Sent while `checking` is true, the gateway finishes the
+check first. Refused, with a new draft sent, when `rev` is not the
+draft's latest or the check then finds something the person has not
+seen. `unchecked: true` shares after a `check_error`, without the check.
+
+### `team.share.cancel` — `TeamShareCancel` *(app → gateway)*
+`id`: the draft was closed. Nothing is shared and no file was changed.
 
 ## Services *(v0.4)*
 

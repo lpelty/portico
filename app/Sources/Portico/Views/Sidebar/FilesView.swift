@@ -65,7 +65,7 @@ struct FilesView: View {
             .padding(.top, 18)
             .padding(.bottom, 6)
             .padding(.horizontal, 16)
-            FilesTabSwitch(selection: $model.filesTab)
+            FilesTabSwitch(selection: $model.filesTab, shared: model.team != nil)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
             switch model.filesTab {
@@ -78,6 +78,14 @@ struct FilesView: View {
                 }
             case .bookmarks:
                 BookmarksView(chat: chat)
+            case .shared:
+                // v0.27 (ZJ1). A gateway without team knowledge has no such tab: the folders show.
+                header
+                if model.team != nil {
+                    TeamSharedView(chat: chat, filter: filter)
+                } else {
+                    tree
+                }
             }
         }
     }
@@ -383,6 +391,11 @@ struct FileRow: View {
         return model.documentMode ? model.documentFile == path : model.current[node.chat]?.location == path
     }
 
+    private var teamFile: TeamFile? {
+        guard !node.dir, let path = absolutePath else { return nil }
+        return model.teamFile(at: path)
+    }
+
     var body: some View {
         FileLine(
             icon: icon, folder: node.dir, name: node.name, subtitle: subtitle,
@@ -394,12 +407,17 @@ struct FileRow: View {
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
+            // v0.27 (ZJ4): a file under a team agreement wears its one mark at the right edge.
+            if let teamFile, let state = model.teamState {
+                TeamMarkView(file: teamFile, state: state)
+            }
         }
         .tip(absolutePath ?? node.name)
         .onTapGesture {
             if node.dir { toggle?(); return }
             guard let path = absolutePath else { return }
             model.reveal(file: path, in: node.chat)
+            model.teamOpened(absolutePath: path)
         }
         .contextMenu { menu }
         .modifier(DragFile(path: absolutePath))
@@ -428,6 +446,12 @@ struct FileRow: View {
             if node.dir {
                 Divider()
                 Button("List again") { model.refreshFiles(chat: node.chat) }
+            }
+            if let teamFile, let state = model.teamState {
+                TeamFileMenuItems(file: teamFile, state: state)
+            } else if !node.dir, model.canShareWithTeam(absolutePath: path) {
+                Divider()
+                Button("Share with team…") { model.teamShareStart(absolutePaths: [path]) }
             }
         }
     }
@@ -550,10 +574,18 @@ struct ChangedFileRow: View {
             icon: FileIcon.systemName(for: name), name: name,
             disclosure: (depth: 0, expanded: nil), selected: isShown
         ) {
-            if let at { CompactTime(date: at) }
+            // v0.27: a team file wears its mark wherever its row appears, in place of the date text.
+            if let file = model.teamFile(at: path), let state = model.teamState {
+                TeamMarkView(file: file, state: state)
+            } else if let at {
+                CompactTime(date: at)
+            }
         }
         .tip(path)
-        .onTapGesture { model.reveal(file: path, in: chat) }
+        .onTapGesture {
+            model.reveal(file: path, in: chat)
+            model.teamOpened(absolutePath: path)
+        }
         .contextMenu {
             Button("Open in viewer") { model.reveal(file: path, in: chat) }
             Button("Add to chat") { model.attach([path], to: chat) }
@@ -695,7 +727,10 @@ struct BookmarkRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if let at {
+            // v0.27: a team file wears its mark here too, in place of the date text.
+            if let file = model.teamFile(at: path), let state = model.teamState {
+                TeamMarkView(file: file, state: state)
+            } else if let at {
                 CompactTime(date: at)
             }
         }
@@ -753,13 +788,17 @@ enum FileIcon {
 /// macOS, so this is drawn by hand.
 struct FilesTabSwitch: View {
     @Binding var selection: AppModel.FilesTab
+    /// v0.27: the Shared tab, only when the deployment has team knowledge.
+    var shared = false
 
     static let foldersTitle = "Folders"
+    static let sharedTitle = "Shared"
 
     var body: some View {
         HStack(spacing: 2) {
             item(Self.foldersTitle, .folder)
             item("Bookmarks", .bookmarks)
+            if shared { item(Self.sharedTitle, .shared) }
         }
         .padding(2)
         .background(Theme.control, in: RoundedRectangle(cornerRadius: 6))

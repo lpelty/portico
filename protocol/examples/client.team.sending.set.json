@@ -1,0 +1,9 @@
+{
+  "id": "req-52",
+  "paths": [
+    "research/round-2/Research plan.md"
+  ],
+  "paused": true,
+  "ts": "2026-10-27T12:00:00Z",
+  "type": "team.sending.set"
+}

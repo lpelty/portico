@@ -1,0 +1,2 @@
+# The Pen file is a design tool's export (tens of thousands of lines of JSON): a diff of it is not read by a person.
+design/portico.pen -diff

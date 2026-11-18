@@ -25,6 +25,8 @@ enum Theme {
         /// Pen only (ruling 15): the code never draws these; AppKit draws the real window buttons.
         case shadow, windowClose, windowMinimize, windowZoom
         case logo1, logo2, logo3, logo4, logo5, logo6, logo7, logo8, logo9, logo10
+        /// Pen only: the edge colours of the window-recognition design (rows BF and BG), not built yet.
+        case window1Edge, window2Edge, window3Edge, window4Edge
     }
 
     static let palette: [Token: (light: String, dark: String)] = [
@@ -94,6 +96,10 @@ enum Theme {
         .logo8: ("#5D6874", "#5D6874"),
         .logo9: ("#3F8CD1", "#3F8CD1"),
         .logo10: ("#7A8A3F", "#7A8A3F"),
+        .window1Edge: ("#B0C5FA", "#30447B"),
+        .window2Edge: ("#F1C3A9", "#71432A"),
+        .window3Edge: ("#A1D3CD", "#21534E"),
+        .window4Edge: ("#CABCEA", "#4A3C6B"),
     ]
 
     /// MCP servers' badge colours, in AR1's order.

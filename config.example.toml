@@ -90,6 +90,29 @@
 ## One command printing {"services": [...]} rows that replace the [[services]] checks.
 ## e.g. status = "my-tool status --json"  (not set by default)
 
+# [team]
+## What the app calls team knowledge.
+# label = "Team knowledge"
+## The folder, under the person's root, where files from other people live.
+# folder = "_team"
+## Turns team knowledge on. Sends what is due, brings in what changed, and prints the whole state as
+## JSON. Like every [team] command it reads its request as JSON on stdin.
+## e.g. check = "my-tool team check"  (not set by default)
+## Accepts and brings in the shares the person pressed Get on.
+## e.g. get = "my-tool team get"  (not set by default)
+## Sends the named files' changes now (Send changes now).
+## e.g. send = "my-tool team send"  (not set by default)
+## Pauses or resumes sending for the named files.
+## e.g. sending = "my-tool team sending"  (not set by default)
+## Stops syncing the named files on this Mac.
+## e.g. stop = "my-tool team stop"  (not set by default)
+## Applies the person's choice between two versions of a file.
+## e.g. resolve = "my-tool team resolve"  (not set by default)
+## Checks files for personal material before a share; changes nothing.
+## e.g. share_check = "my-tool team share-check"  (not set by default)
+## Takes out what the person chose to, then shares the files with the team.
+## e.g. share = "my-tool team share"  (not set by default)
+
 ## Buttons in the input bar; each sends its text.
 # [[actions]]
 #   label = "Review"    ## required

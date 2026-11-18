@@ -130,6 +130,20 @@ EXPECTED_KEYS = {
     "client.signin.open",
     "client.signin.stop",
     "client.signin.code",
+    "client.team.get",
+    "client.team.check",
+    "client.team.interval.set",
+    "client.team.seen",
+    "client.team.send_now",
+    "client.team.sending.set",
+    "client.team.stop",
+    "client.team.resolve",
+    "client.team.share.prepare",
+    "client.team.share.send",
+    "client.team.share.cancel",
+    "server.team.state",
+    "server.team.result",
+    "server.team.share.draft",
 }
 
 
@@ -153,7 +167,8 @@ def test_every_type_has_schema_def_and_example():
     # app.call_tool, app.message, app.context, app.reload, app.open, app.result, app.cancelled, app.call_result
     # v0.22's space.act, deployment.message
     # v0.25's signin.wait, signin.open, signin.stop, signin.code
-    assert len(ex) == 108
+    # v0.27's team.* (11 app → gateway, 3 gateway → app)
+    assert len(ex) == 122
     assert set(ex) == EXPECTED_KEYS
 
 
