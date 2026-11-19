@@ -704,6 +704,42 @@ async def test_the_sample_never_deletes_changes_that_were_not_sent(tmp_path: Pat
     assert not calendar.exists() and (site.root / "_team/.mine/release-calendar.md").read_text() == "another unsent edit\n"
 
 
+async def test_the_sample_never_writes_over_or_deletes_a_copy_already_kept(tmp_path: Path) -> None:
+    """Edits kept when a file left the team survive a later file of the same name having two versions (PORT-83)."""
+    site = SampleSite(tmp_path)
+    site.sim("seed")
+    state = await site.check()
+    await site.monitor.request("req-1", "get", {"shares": [state.waiting[0].id]})
+    calendar = site.root / "_team/release-calendar.md"
+    assert (await site.monitor.request("req-p", "sending", {"paths": ["_team/release-calendar.md"], "paused": True})).ok
+    calendar.write_text("first unsent edit\n")
+    site.sim("remove", "release-calendar.md")
+    await site.check()
+    first = site.root / "_team/.mine/release-calendar.md"
+    assert not calendar.exists() and first.read_text() == "first unsent edit\n"
+
+    # A new file of the same name is shared, held, edited here and changed by the team: two versions.
+    again = tmp_path / "release-calendar.md"
+    again.write_text("# Release calendar\n\nA new one.\n")
+    site.sim("share", str(again))
+    state = await site.check()
+    await site.monitor.request("req-2", "get", {"shares": [state.waiting[0].id]})
+    assert (await site.monitor.request("req-q", "sending", {"paths": ["_team/release-calendar.md"], "paused": True})).ok
+    calendar.write_text("second unsent edit\n")
+    site.sim("change", "--text", "Priya's line.", "release-calendar.md")
+    state = await site.check()
+    (row,) = [f for f in state.files if f.path == "_team/release-calendar.md"]
+    conflict = row.conflict
+    assert conflict is not None and conflict.mine.path != "_team/.mine/release-calendar.md", "a path of its own"
+    assert (site.root / conflict.mine.path).read_text() == "second unsent edit\n"
+    assert first.read_text() == "first unsent edit\n", "the copy kept earlier is not written over"
+
+    resolve = {"path": "_team/release-calendar.md", "conflict": conflict.id, "use": "team"}
+    assert (await site.monitor.request("req-r", "resolve", resolve)).ok
+    assert not (site.root / conflict.mine.path).exists(), "resolve removes the saved version of its own conflict"
+    assert first.read_text() == "first unsent edit\n", "and no other file"
+
+
 async def test_the_sample_use_my_version_does_not_overwrite_a_newer_team_version(tmp_path: Path) -> None:
     site = SampleSite(tmp_path)
     plan = site.root / "plan.md"
