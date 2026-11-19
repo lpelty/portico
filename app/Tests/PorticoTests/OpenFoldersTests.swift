@@ -48,7 +48,20 @@ final class OpenFoldersTests: XCTestCase {
     /// it is on disk, and it stays folded after a restart.
     func testATopLevelFolderFoldsAndStaysFolded() {
         let model = model()
+        var sent: [ClientMessage] = []
+        model.outbound = { sent.append($0) }
+        let entries = [Entry(name: "docs", dir: true, size: nil)]
+        model.listFiles(chat: 1, root: "Vault", path: "")
+        guard case .filesList(let request)? = sent.last else { return XCTFail("expected files.list, got \(sent)") }
+        model.apply(.filesList(FilesList(root: "Vault", path: "", entries: entries, chat: 1, id: request.id)))
+        sent = []
         XCTAssertFalse(model.isRootFolded(chat: 1, root: "Vault"))
+        model.toggleRoot(chat: 1, root: "Vault")
+        XCTAssertTrue(model.isRootFolded(chat: 1, root: "Vault"))
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "Vault", path: ""), entries, "folding keeps the listing")
+        model.toggleRoot(chat: 1, root: "Vault")
+        XCTAssertEqual(model.fileEntries(chat: 1, root: "Vault", path: ""), entries)
+        XCTAssertTrue(sent.isEmpty, "folding and unfolding change only what is drawn: no request")
         model.toggleRoot(chat: 1, root: "Vault")
         XCTAssertTrue(model.isRootFolded(chat: 1, root: "Vault"))
         XCTAssertTrue(model.isRootFolded(chat: 2, root: "Vault"), "the vault is the same folder in every chat")
