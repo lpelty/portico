@@ -259,6 +259,9 @@ final class GatewayControlsTests: XCTestCase {
         XCTAssertTrue(model.viewService(row))
         XCTAssertEqual(model.current[3]?.location, "http://localhost:8080/ui", "that address and no other")
         XCTAssertTrue(model.isViewerShown(for: 3))
+        let shown = try XCTUnwrap(model.current[3])
+        XCTAssertEqual(shown.media, .url, "a web address is a page")
+        XCTAssertEqual(ArtifactPresentation(artifact: shown).media, .url, "the viewer draws it as a page, not as a file it cannot show")
         XCTAssertFalse(model.viewService(ServicesPresentation.row(Service(id: "search", name: "Search", state: .up))), "no address, nothing opens")
     }
 
